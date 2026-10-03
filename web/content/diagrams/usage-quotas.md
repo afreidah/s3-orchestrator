@@ -15,7 +15,7 @@ Every call the orchestrator makes to a backend is admitted against that backend'
 
 Providers group operations into billing classes with separate allowances, and they disagree about the grouping. GCS meters uploads, copies and listings from a small Class A allowance, reads from a Class B allowance ten times its size, and does not bill deletes at all. B2 inverts it: uploads and deletes are free, downloads and listings are charged from two different classes. OCI meters every request from one pooled allowance. IDrive e2 does not meter requests at all.
 
-Charging every operation against a single `api_request_limit` forces a bad choice: set it to the strictest class and the rest of the headroom is wasted, set it to the loosest and the strict one is blown. In production that second failure took a GCS backend out of service on a 5,000 upload allowance while its 50,000 read allowance sat 98.7% unused - and because the read path checks the same counter, the backend stopped serving reads too.
+Charging every operation against a single `api_request_limit` forces a bad choice: set it to the strictest class and the rest of the headroom is wasted, set it to the loosest and the strict one is blown. On a GCS backend with a 5,000 upload allowance and a 50,000 read allowance, a single limit set for uploads takes the backend out of service once uploads are spent while nearly all of its read allowance is unused - and because the read path checks the same counter, the backend stops serving reads too.
 
 A backend therefore declares **pools**: named budgets, each covering a set of operations.
 
@@ -46,7 +46,7 @@ Admission is the same check on both paths; only the consequence differs. A **wri
 
 #### Where the counters live
 
-A charge lands in the counter backend first - local atomics, or Redis when it is configured for multi-instance deployments - and is flushed to Postgres every 30 seconds, or every 10 when a budget is close to its ceiling. Admission reads **baseline + unflushed**: the DB figure the metrics collector last loaded, plus what this process has spent since. Enforcement is deliberately approximate, bounded by one flush interval of concurrent traffic, because exact enforcement would need a lock on every request.
+A charge lands in the counter backend first - local atomics, or Redis when it is configured for multi-instance deployments - and is flushed to the metadata store (SQLite by default, or PostgreSQL) every 30 seconds (`usage_flush.interval`). With `usage_flush.adaptive_enabled: true` (default false), the interval drops to `usage_flush.fast_interval` (default 5s) once any budget passes `usage_flush.adaptive_threshold` (default 0.8). Admission reads **baseline + unflushed**: the DB figure the metrics collector last loaded, plus what this process has spent since. Enforcement is deliberately approximate, bounded by one flush interval of concurrent traffic, because exact enforcement would need a lock on every request.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -93,14 +93,14 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     '    ISDEL -->|yes| UNGATED[Never Refused]:::success',
     '    ISDEL -->|no| RESOLVE[Resolve the Pools<br>this Operation Charges]:::process',
     '',
-    '    RESOLVE --> UNMET{Listed as<br>unmetered?}:::decision',
+    '    RESOLVE --> BYTECHK{Egress and ingress<br>within limits?}:::filter',
+    '    BYTECHK -->|no| REFUSE[Backend Refused]:::reject',
+    '    BYTECHK -->|yes| UNMET{Listed as<br>unmetered?}:::decision',
     '    UNMET -->|yes| NOPOOL[Charged to<br>No Budget]:::process',
     '    UNMET -->|no| POOLCHK{Every charged pool<br>has headroom?}:::filter',
     '',
-    '    POOLCHK -->|no| REFUSE[Backend Refused]:::reject',
-    '    POOLCHK -->|yes| BYTECHK{Egress and ingress<br>within limits?}:::filter',
-    '    BYTECHK -->|no| REFUSE',
-    '    BYTECHK -->|yes| ADMIT[Admitted]:::success',
+    '    POOLCHK -->|no| REFUSE',
+    '    POOLCHK -->|yes| ADMIT[Admitted]:::success',
     '',
     '    REFUSE --> WRITEOUT[Write: next backend,<br>or 507 if none]:::reject',
     '    REFUSE --> READOUT[Read: next copy,<br>or 429 SlowDown]:::reject',
@@ -114,6 +114,7 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     '    COUNTER --> FLUSH[Usage Flusher<br>every 30s]:::process',
     '    FLUSH --> TABLES[backend_usage and<br>backend_request_usage]:::storage',
     '    TABLES --> BASELINE[Collector Reloads<br>Baselines]:::process',
+    '    BASELINE --> BYTECHK',
     '    BASELINE --> POOLCHK',
     '',
     '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
@@ -159,12 +160,12 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     CALL: {
       title: 'Backend Call',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Every call that reaches a provider passes through here, whatever asked for it: a client GET or PUT, a replication copy, a rebalance move, a scrub read, a reconcile listing page, or one of the bulk rewrite passes.</p><p>Client traffic and background work draw on the same budgets deliberately. A fleet-wide pass is the largest consumer of a metered backend, and one that spent freely while client reads were refused on the counter it ran up would be the wrong way round.</p><p><a href="../write-path/">Write path &rarr;</a> &middot; <a href="../read-path/">Read path &rarr;</a></p>'
+      body: '<p>Every call that reaches a provider passes through here, whatever asked for it: a client GET or PUT, a replication copy, a rebalance move, a scrub read, a reconcile listing page, one of the bulk rewrite passes, or a circuit breaker health check, which is admitted and charged as <code>HeadBucket</code>.</p><p>Client traffic and background work draw on the same budgets deliberately. A fleet-wide pass is the largest consumer of a metered backend, and one that spent freely while client reads were refused on the counter it ran up would be the wrong way round.</p><p><a href="../write-path/">Write path &rarr;</a> &middot; <a href="../read-path/">Read path &rarr;</a></p>'
     },
     OPNAME: {
       title: 'Name the Operation',
       badge: 'process', badgeText: 'classification',
-      body: '<p>The charge carries which operation it is - <code>s3op.Operation</code>, a closed set of thirteen - rather than a count of calls.</p><p>A count cannot be priced. Providers bill an upload and a read from different allowances and some operations not at all, so "one API call" is not enough information to settle the charge. The same vocabulary is what config validates operation names against and what the per-operation metric labels use, so the three cannot drift apart.</p><p>Operations: <code>PutObject</code>, <code>GetObject</code>, <code>HeadObject</code>, <code>DeleteObject</code>, <code>DeleteObjects</code>, <code>CopyObject</code>, <code>ListObjects</code>, <code>ListObjectsV2</code>, <code>CreateMultipartUpload</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, <code>GetParts</code>.</p>'
+      body: '<p>The charge carries which operation it is - <code>s3op.Operation</code>, a closed set of fourteen - rather than a count of calls.</p><p>A count cannot be priced. Providers bill an upload and a read from different allowances and some operations not at all, so "one API call" is not enough information to settle the charge. The same vocabulary is what config validates operation names against and what the per-operation metric labels use, so the three cannot drift apart.</p><p>Operations: <code>PutObject</code>, <code>GetObject</code>, <code>HeadObject</code>, <code>DeleteObject</code>, <code>DeleteObjects</code>, <code>CopyObject</code>, <code>ListObjects</code>, <code>ListObjectsV2</code>, <code>CreateMultipartUpload</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, <code>GetParts</code>, <code>HeadBucket</code>. Backend circuit breaker health checks are admitted and charged as <code>HeadBucket</code>.</p>'
     },
     ISDEL: {
       title: 'Delete?',
@@ -189,7 +190,7 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     NOPOOL: {
       title: 'Charged to No Budget',
       badge: 'process', badgeText: 'recorded, unbilled',
-      body: '<p>The call still increments the backend\'s request total in <code>backend_usage.api_requests</code>. It simply charges no pool, so no budget moves toward refusing anything.</p><p>Recording it matters: the total is the honest answer to "how much did we use this backend", and an operator reading a request count should see the requests that were made, not the subset someone is billed for.</p><p>This is the half of the old behaviour that was wrong in production. Roughly 47% of one backend\'s counted operations were deletes the provider gives away, and charging them is what exhausted its budget.</p>'
+      body: '<p>The call still increments the backend\'s request total in <code>backend_usage.api_requests</code>. It simply charges no pool, so no budget moves toward refusing anything.</p><p>Recording it matters: the total is the honest answer to "how much did we use this backend", and an operator reading a request count should see the requests that were made, not the subset someone is billed for.</p><p>Free operations can be a large share of what a backend does: deletes can be close to half of a backend\'s operations, and charging them against a budget the provider does not apply to them exhausts it early.</p>'
     },
     POOLCHK: {
       title: 'Pool Headroom',
@@ -199,12 +200,12 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     BYTECHK: {
       title: 'Byte Limits',
       badge: 'filter', badgeText: 'admission',
-      body: '<p><code>egress_byte_limit</code> and <code>ingress_byte_limit</code> are checked the same way, against the same baseline-plus-unflushed view.</p><p>These stay scalar because providers do not class bytes: a gigabyte out is a gigabyte out, whichever call moved it. Only requests needed pooling.</p><p>The size charged is the size that will actually cross the link - the encoded bytes for a compressed object, the envelope for an encrypted one - not the logical size the client sees.</p>'
+      body: '<p><code>egress_byte_limit</code> is checked first, then <code>ingress_byte_limit</code>, both against the same baseline-plus-unflushed view the pools use. The pool check runs after both pass.</p><p>On a GET the size is known only once the backend has answered, so the egress check for the bytes runs after the call. A read refused there has already been charged one request.</p><p>Write admission also drops a backend whose per-backend <code>max_object_size</code> is smaller than the upload.</p><p>These stay scalar because providers do not class bytes: a gigabyte out is a gigabyte out, whichever call moved it. Only requests needed pooling.</p><p>The size charged is the size that will actually cross the link - the encoded bytes for a compressed object, the envelope for an encrypted one - not the logical size the client sees.</p>'
     },
     REFUSE: {
       title: 'Backend Refused',
       badge: 'reject', badgeText: 'over budget',
-      body: '<p>This backend cannot absorb the operation. Nothing is charged, because nothing was sent.</p><p>The refusal is per backend, not per request: a fleet is only out of budget when every eligible backend is, which is what makes overflow to another provider the normal response to one hitting its ceiling.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation,limit_type}</p>'
+      body: '<p>This backend cannot absorb the operation. A refusal before the call charges nothing, because nothing was sent. A read refused on egress after the backend answered is charged one request and no bytes.</p><p>The refusal is per backend, not per request: a fleet is only out of budget when every eligible backend is, which is what makes overflow to another provider the normal response to one hitting its ceiling.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation,limit_type}</p>'
     },
     WRITEOUT: {
       title: 'Write: Overflow or 507',
@@ -219,7 +220,7 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     ADMIT: {
       title: 'Admitted',
       badge: 'success', badgeText: 'within budget',
-      body: '<p>Every pool the operation charges has room, and both byte dimensions do too.</p><p>Admission and accounting live on one type (<code>accounting.Recorder</code>) so a caller holding it can always ask before spending. They were once separate surfaces, and every path recorded what it spent while only some asked first, which kept the counters truthful while the budget was spent unchecked.</p>'
+      body: '<p>Every pool the operation charges has room, and both byte dimensions do too.</p><p>Admission and accounting live on one type (<code>accounting.Recorder</code>) so a caller holding it can always ask before spending. With recording and asking on separate surfaces, a path could record what it spent without asking first, which keeps the counters truthful while the budget is spent unchecked.</p>'
     },
     CALLBE: {
       title: 'Call the Backend',
@@ -234,22 +235,22 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     COUNTER: {
       title: 'Counter Backend',
       badge: 'storage', badgeText: 'in-memory or Redis',
-      body: '<p>Charges land in memory first: per-backend atomics by default, or Redis when configured, which shares counters across instances so a fleet enforces one budget rather than one per process.</p><p>Pool counters live in a single Redis hash per backend and period, so a flush can enumerate exactly the pools that were charged without scanning the keyspace or being told which pools config currently declares.</p><p>Redis failures fall back to the local counters and replay them on recovery, pools included.</p>'
+      body: '<p>Charges land in memory first: per-backend atomics by default, or Redis when configured, which shares counters across instances so a fleet enforces one budget rather than one per process.</p><p>Pool counters live in a single Redis hash per backend and period, so a flush can enumerate exactly the pools that were charged without scanning the keyspace or being told which pools config currently declares.</p><p>Redis failures fall back to the local counters. On recovery the local deltas, pools included, are replayed to Redis in one pipeline. If that pipeline fails, only the totals are put back on the local counters for the next attempt; the pool deltas are dropped.</p>'
     },
     FLUSH: {
       title: 'Usage Flusher',
       badge: 'process', badgeText: 'every 30s',
-      body: '<p>Reads and resets the counters, then writes the deltas to Postgres. Interval shortens to <code>fast_interval</code> when any budget - a byte limit or a request pool - passes <code>adaptive_threshold</code>, because that is when enforcement accuracy starts to matter.</p><p>Totals and pool counts are flushed separately, and each half restores only what it failed to write. Putting back a pool delta after the totals had landed would double-count it on the next pass.</p><p><b>Advisory lock</b>: <code>LockUsageFlush = 1007</code>.</p><p><a href="../background-services/">Background services &rarr;</a></p>'
+      body: '<p>Reads and resets the counters, then writes the deltas to the metadata store (SQLite by default, or PostgreSQL). Runs every <code>usage_flush.interval</code> (default 30s).</p><p>With <code>usage_flush.adaptive_enabled: true</code> (default false), the interval shortens to <code>fast_interval</code> (default 5s) when any budget - a byte limit or a request pool - passes <code>adaptive_threshold</code> (default 0.8), because that is when enforcement accuracy starts to matter.</p><p>Totals and pool counts are flushed separately, and each half restores only what it failed to write. Putting back a pool delta after the totals had landed would double-count it on the next pass.</p><p><b>Advisory lock</b>: <code>LockUsageFlush = 1007</code>, taken only when Redis counters are configured, so one instance flushes the shared counters. Without Redis each instance flushes its own counters without a lock.</p><p><a href="../background-services/">Background services &rarr;</a></p>'
     },
     TABLES: {
-      title: 'Postgres Counters',
+      title: 'Metadata Store Counters',
       badge: 'storage', badgeText: 'monthly rows',
       body: '<p><code>backend_usage(backend_name, period, api_requests, egress_bytes, ingress_bytes)</code> holds the totals; <code>backend_request_usage(backend_name, period, pool, requests)</code> holds one row per budget.</p><p>Both are keyed by calendar month (<code>YYYY-MM</code>), so a period rolls over on its own with no reset job. Both use additive <code>ON CONFLICT</code> upserts, so several instances flushing at once converge instead of overwriting each other.</p><p>Bytes stay columnar because their dimensions are fixed; pool counts are keyed because their names come from config and change with it.</p><p><a href="../database-schema/">Database schema &rarr;</a></p>'
     },
     BASELINE: {
       title: 'Reload Baselines',
       badge: 'process', badgeText: 'closes the loop',
-      body: '<p>The metrics collector reads both tables for the current period and seeds the tracker\'s baselines, which is what makes a restarted process pick up mid-month rather than starting from zero.</p><p>Both halves are loaded together: seeding the totals without the pool counts would admit work against a budget already spent.</p><p>Baselines reset on period rollover and when a backend is drained, since its rows are gone.</p>'
+      body: '<p>The metrics collector reads both tables for the current period and seeds the tracker\'s baselines, which is what makes a restarted process pick up mid-month rather than starting from zero.</p><p>Both halves are loaded together: seeding the totals without the pool counts would admit work against a budget already spent.</p><p>Baselines reset on period rollover and when a backend is removed, since its rows are gone. Draining a backend leaves them in place.</p>'
     }
   };
 

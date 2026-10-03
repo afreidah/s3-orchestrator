@@ -1,11 +1,11 @@
 ---
-description: "Interactive state machine for the three-state circuit breaker shared by the database wrapper and every per-backend wrapper."
+description: "Interactive state machine for the circuit breaker that guards the database, each backend, and the Redis counter backend."
 title: "Circuit Breaker"
 linkTitle: "Circuit Breaker"
 weight: 4
 ---
 
-Three-state circuit breaker state machine shared by the database wrapper (`CircuitBreakerStore`) and per-backend wrapper (`CircuitBreakerBackend`). **Hover over any component** for implementation details.
+State machine of `breaker.CircuitBreaker`, the one breaker type used in three places. The database breaker wraps every SQL call in the store driver (SQLite or PostgreSQL) and recovers through half-open probing: after the open timeout, one real query is let through as a probe. Backend breakers (`CircuitBreakerBackend`, enabled with `backend_circuit_breaker.enabled`) and the Redis counter breaker use external recovery instead: while open no call reaches the backend or Redis, and only a separate health check closes them, going straight from open to closed. **Hover over any component** for implementation details.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -45,18 +45,19 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
 (function() {
   var diagramSrc = [
     'flowchart TD',
-    '    CALL([CBCall /<br>CBCallNoResult]):::entry --> PRE{PreCheck}:::decision',
+    '    CALL([cb.Call /<br>cb.CallNoResult]):::entry --> PRE{PreCheck}:::decision',
     '',
     '    PRE -->|state = closed| EXEC[Execute<br>Operation]:::process',
     '',
-    '    PRE -->|state = open| TIMEOUT{Open Timeout<br>Elapsed?}:::decision',
-    '    TIMEOUT -->|no| SENTINEL[Return Sentinel<br>Error]:::reject',
-    '    TIMEOUT -->|yes| PROBE{Probe Slot<br>Available?}:::decision',
+    '    PRE -->|open, backend breaker| SENTINEL[Return Sentinel<br>Error]:::reject',
+    '    PRE -->|open, database breaker| TIMEOUT{Open Timeout<br>Elapsed?<br>database only}:::decision',
+    '    TIMEOUT -->|no| SENTINEL',
+    '    TIMEOUT -->|yes| PROBE{Probe Slot<br>Available?<br>database only}:::decision',
     '    PROBE -->|CAS fails| SENTINEL',
-    '    PROBE -->|CAS ok| HALFOPEN[Transition<br>to Half-Open]:::process',
+    '    PROBE -->|CAS ok| HALFOPEN[Transition<br>to Half-Open<br>database only]:::process',
     '    HALFOPEN --> EXEC',
     '',
-    '    PRE -->|state = half-open| STALE{Probe Stale?<br>> 2 min}:::decision',
+    '    PRE -->|state = half-open| STALE{Probe Stale?<br>over 2 min<br>database only}:::decision',
     '    STALE -->|no| SENTINEL',
     '    STALE -->|yes / watchdog| REOPEN2[Reset to<br>Open]:::reject',
     '',
@@ -64,15 +65,19 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     '    POST -->|not a circuit error| SUCCESS[Return<br>Result]:::success',
     '',
     '    POST -->|circuit error| FAIL[Increment<br>Failures]:::filter',
-    '    FAIL --> WASHO{Was<br>Half-Open?}:::decision',
-    '    WASHO -->|yes| REOPEN[Transition<br>to Open]:::reject',
-    '    WASHO -->|no| THRESH{Failures<br>>= Threshold?}:::decision',
+    '    FAIL --> WASHO{Was<br>Half-Open?<br>database only}:::decision',
+    '    WASHO -->|yes| REOPEN[Transition<br>to Open<br>database only]:::reject',
+    '    WASHO -->|no| THRESH{Failures at<br>Threshold?}:::decision',
     '    THRESH -->|no| PASSTHRU[Return<br>Original Error]:::process',
     '    THRESH -->|yes| TRIP[Transition<br>to Open]:::reject',
     '',
-    '    POST -->|success + half-open| RECOVER[Transition<br>to Closed]:::success',
+    '    POST -->|success + half-open| RECOVER[Transition<br>to Closed<br>database only]:::success',
     '    RECOVER --> RESET[Reset Failure<br>Counter]:::process',
     '    RESET --> SUCCESS',
+    '',
+    '    WATCHDOG([Backend and Redis<br>Health Check Loop]):::entry --> HEALTH{Health Check<br>Passes?}:::decision',
+    '    HEALTH -->|no| BACKOFF[Stay Open,<br>Check Again Later]:::reject',
+    '    HEALTH -->|yes| EXTRECOVER[Recover:<br>Open to Closed]:::success',
     '',
     '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
     '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
@@ -116,44 +121,44 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
 
   var nodeInfo = {
     CALL: {
-      title: 'CBCall / CBCallNoResult',
+      title: 'cb.Call / cb.CallNoResult',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Generic call wrappers that guard any operation with circuit breaker logic. <code>CBCall[T]</code> handles functions returning <code>(T, error)</code>, while <code>CBCallNoResult</code> handles <code>error</code>-only functions.</p><p>Used by <code>CircuitBreakerBackend</code> (wraps all S3 operations: PutObject, GetObject, HeadObject, DeleteObject) and <code>CircuitBreakerStore</code> (wraps all PostgreSQL metadata operations).</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
+      body: '<p>Methods on <code>breaker.CircuitBreaker</code> that guard one operation. <code>cb.Call(fn)</code> handles functions returning <code>(T, error)</code>; <code>cb.CallNoResult(fn)</code> handles <code>error</code>-only functions.</p><p><code>CircuitBreakerBackend</code> guards PutObject, GetObject, HeadObject, DeleteObject and CopyObject this way. The database breaker runs the same PreCheck and PostCheck around every SQL Exec, Query and QueryRow in the store driver (SQLite or PostgreSQL).</p><p>The Redis counter backend never calls PreCheck. It only feeds call results to PostCheck to count failures.</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
     },
     PRE: {
       title: 'PreCheck',
       badge: 'decision', badgeText: 'state machine gate',
-      body: '<p><code>cb.PreCheck()</code> is the entry gate that inspects the current circuit state under a mutex lock.</p><p><b>Closed</b>: returns <code>nil</code> &mdash; all calls pass through to the real operation.<br><b>Open</b>: checks if <code>openTimeout</code> has elapsed since <code>lastFailure</code>. If not, returns the sentinel error immediately (no I/O).<br><b>Half-Open</b>: returns sentinel &mdash; only the single probe request is allowed through.</p><p>This is the fast-rejection path: open circuits never touch the real backend or database.</p>'
+      body: '<p><code>cb.PreCheck()</code> is the entry gate that inspects the current circuit state under a mutex lock.</p><p><b>Closed</b>: returns <code>nil</code> &mdash; all calls pass through to the real operation.<br><b>Open, backend breaker</b>: always returns the sentinel error. Backend breakers never go half-open.<br><b>Open, database breaker</b>: checks if <code>openTimeout</code> plus jitter has elapsed since <code>lastFailure</code>. If not, returns the sentinel error immediately (no I/O).<br><b>Half-Open</b> (database only): returns sentinel &mdash; only the single probe request is allowed through.</p><p>This is the fast-rejection path: open circuits never touch the real backend or database.</p>'
     },
     EXEC: {
       title: 'Execute Operation',
       badge: 'process', badgeText: 'real call',
-      body: '<p>Calls the wrapped function &mdash; the actual S3 backend call or database query. This only runs when PreCheck returns <code>nil</code> (circuit closed, or probe allowed through).</p><p>For backends: <code>cb.real.PutObject()</code>, <code>cb.real.GetObject()</code>, etc.<br>For database: <code>cb.real.GetObjectLocation()</code>, <code>cb.real.RecordObject()</code>, etc.</p><p>The result and error are passed to PostCheck for state machine evaluation.</p>'
+      body: '<p>Calls the wrapped function &mdash; the actual S3 backend call or database query. This only runs when PreCheck returns <code>nil</code> (circuit closed, or the database probe allowed through).</p><p>For backends: <code>cb.inner.PutObject()</code>, <code>cb.inner.GetObject()</code>, etc.<br>For database: <code>inner.Exec()</code>, <code>inner.Query()</code>, <code>inner.QueryRow()</code> on the wrapped sqlc DBTX (PostgreSQL), or the matching <code>database/sql</code> calls (SQLite).</p><p>The result and error are passed to PostCheck for state machine evaluation.</p>'
     },
     TIMEOUT: {
-      title: 'Open Timeout Elapsed?',
+      title: 'Open Timeout Elapsed? (database only)',
       badge: 'decision', badgeText: 'recovery timer',
-      body: '<p>Checks <code>time.Since(cb.lastFailure) >= cb.openTimeout + cb.probeJitter</code>.</p><p>Configurable per circuit breaker type:<br><b>Database</b>: <code>circuit_breaker.open_timeout</code> (default: 15s)<br><b>Backend</b>: <code>backend_circuit_breaker.open_timeout</code> (default: 5m)<br><b>Redis</b>: <code>counters.redis.open_timeout</code> (default: 15s)</p><p>A random <code>probeJitter</code> of up to <code>openTimeout/4</code> is added on each open transition to prevent multiple circuit breakers from probing simultaneously after a shared failure event.</p><p>Until the timeout + jitter elapses, all requests receive the sentinel error without any I/O.</p>'
+      body: '<p>Checks <code>time.Since(cb.lastFailure) >= cb.openTimeout + cb.probeJitter</code>. This check runs only for the database breaker.</p><p><b>Database</b>: <code>circuit_breaker.open_timeout</code> (default: 15s).</p><p>The same setting means something else for the other breakers:<br><b>Backend</b>: <code>backend_circuit_breaker.open_timeout</code> (default: 5m, applies only when <code>backend_circuit_breaker.enabled: true</code>) is the delay before the first health check.<br><b>Redis</b>: <code>redis.open_timeout</code> (default: 15s) has no effect on recovery; Redis is PINGed every 5s while in fallback.</p><p>A random <code>probeJitter</code> of up to <code>openTimeout/4</code> is added on each open transition to prevent multiple circuit breakers from probing simultaneously after a shared failure event.</p><p>Until the timeout + jitter elapses, all requests receive the sentinel error without any I/O.</p>'
     },
     SENTINEL: {
       title: 'Return Sentinel Error',
       badge: 'reject', badgeText: 'fast rejection',
-      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; triggers write failover to the next eligible backend, or broadcast-read fallback.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: <code>ErrDBUnavailable</code> &mdash; falls back to local in-memory counters.</p><p>The manager\'s <code>excludeUnhealthy()</code> filter uses <code>ProbeEligible()</code> to pre-screen backends before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
+      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; a write fails over to the next eligible backend, and a read fails over to the next replica.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: an internal <code>redis unavailable</code> error &mdash; the counter backend switches to local in-memory counters.</p><p>The registry\'s <code>ExcludeUnhealthy</code> drops every backend whose breaker is open before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
     },
     PROBE: {
-      title: 'Probe Slot Available?',
+      title: 'Probe Slot Available? (database only)',
       badge: 'decision', badgeText: 'atomic CAS',
-      body: '<p><code>cb.probeInFlight.CompareAndSwap(false, true)</code> &mdash; atomic compare-and-swap ensures exactly <b>one</b> probe request passes through at a time.</p><p>If a probe is already in flight (another goroutine won the CAS), this request gets the sentinel error. This prevents a thundering herd of probe requests when multiple goroutines detect the timeout simultaneously.</p><p>The <code>probeInFlight</code> flag is cleared in both <code>onSuccess()</code> (probe succeeded, circuit closes) and <code>onFailure()</code> (probe failed, circuit re-opens).</p>'
+      body: '<p>Database breaker only. <code>cb.probeInFlight.CompareAndSwap(false, true)</code> &mdash; atomic compare-and-swap ensures exactly <b>one</b> probe request passes through at a time.</p><p>If a probe is already in flight (another goroutine won the CAS), this request gets the sentinel error. This prevents a thundering herd of probe requests when multiple goroutines detect the timeout simultaneously.</p><p>The <code>probeInFlight</code> flag is cleared in both <code>onSuccess()</code> (probe succeeded, circuit closes) and <code>onFailure()</code> (probe failed, circuit re-opens).</p>'
     },
     HALFOPEN: {
-      title: 'Transition to Half-Open',
+      title: 'Transition to Half-Open (database only)',
       badge: 'process', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateHalfOpen)</code> &mdash; allows exactly one probe request through to test whether the backend or database has recovered.</p><p>Logs: <code>"Circuit breaker half-open: probing"</code> with <code>open_duration</code> showing how long the circuit was open.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="open", to="half-open"}<br>Gauge: s3o_circuit_breaker_state{name} = 2</p>'
+      body: '<p><code>cb.transition(StateHalfOpen)</code> &mdash; allows exactly one real query through to test whether the database has recovered. Backend and Redis breakers never enter this state.</p><p>Logs: <code>"half-open: probing"</code> with <code>component=circuit_breaker</code>, <code>breaker_name</code>, and <code>open_duration</code> showing how long the circuit was open.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="open", to="half-open"}<br>Gauge: s3o_circuit_breaker_state{name} = 2</p>'
     },
     POST: {
       title: 'PostCheck / Error Filter',
       badge: 'decision', badgeText: 'result evaluation',
-      body: '<p><code>cb.PostCheck(err)</code> passes the operation result through the pluggable error filter (<code>cb.isError(err)</code>) to decide whether it counts as a circuit-breaker failure.</p><p><b>Backend filter</b> (<code>isBackendError</code>): all non-nil errors count &mdash; any backend error is a genuine failure (network, auth, etc.).</p><p><b>Database filter</b> (<code>isDBError</code>): exempts application-level errors (<code>S3Error</code>, <code>ErrNoSpaceAvailable</code>) that indicate the DB is reachable but the request is invalid. Only infrastructure errors (connection refused, timeout) trip the breaker.</p><p>If the error passes the filter, flows to failure handling. If not (or nil), flows to success.</p>'
+      body: '<p><code>cb.PostCheck(err)</code> passes the operation result through the pluggable error filter (<code>cb.isError(err)</code>) to decide whether it counts as a circuit-breaker failure.</p><p><b>Backend filter</b> (<code>isBackendError</code>): counts only errors with no HTTP status (connection refused, DNS, TLS, reset), 5xx, 429, 401 and 403. Other statuses, such as a missing key or a failed precondition, do not count. Context cancellation and deadline errors do not count either.</p><p><b>Database filter</b> (<code>isDBError</code>): exempts application-level errors (<code>S3Error</code>, <code>ErrNoSpaceAvailable</code>) and the no-rows sentinels (<code>sql.ErrNoRows</code>, <code>pgx.ErrNoRows</code>). Every other error trips the breaker.</p><p>If the error passes the filter, flows to failure handling. If not (or nil), flows to success.</p>'
     },
     SUCCESS: {
       title: 'Return Result',
@@ -163,22 +168,22 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     FAIL: {
       title: 'Increment Failures',
       badge: 'filter', badgeText: 'failure tracking',
-      body: '<p><code>cb.onFailure()</code> increments <code>cb.failures++</code> and records <code>cb.lastFailure = time.Now()</code>.</p><p>The failure counter tracks <b>consecutive</b> failures. It is reset to 0 on any successful call via <code>onSuccess()</code>. This means intermittent errors (occasional timeouts in otherwise healthy traffic) do not trip the breaker.</p><p>The <code>lastFailure</code> timestamp is used to calculate when the <code>openTimeout</code> elapses for probe eligibility.</p>'
+      body: '<p><code>cb.onFailure()</code> increments <code>cb.failures++</code> and records <code>cb.lastFailure = time.Now()</code>.</p><p>The failure counter tracks <b>consecutive</b> failures. It is reset to 0 on any successful call via <code>onSuccess()</code>. This means intermittent errors (occasional timeouts in otherwise healthy traffic) do not trip the breaker.</p><p>The <code>lastFailure</code> timestamp is used by the database breaker to calculate when the <code>openTimeout</code> elapses for probe eligibility.</p>'
     },
     WASHO: {
-      title: 'Was Half-Open?',
+      title: 'Was Half-Open? (database only)',
       badge: 'decision', badgeText: 'probe result',
-      body: '<p>If the circuit was in <code>stateHalfOpen</code> when the failure occurred, the probe request failed &mdash; the backend or database is still down.</p><p>The <code>probeInFlight</code> atomic flag is cleared (<code>Store(false)</code>) so a future probe can be attempted after the open timeout elapses again.</p><p>The circuit transitions directly back to open without waiting for the failure threshold.</p>'
+      body: '<p>Only the database breaker can be half-open. If it was in <code>StateHalfOpen</code> when the failure occurred, the probe query failed &mdash; the database is still down.</p><p>The <code>probeInFlight</code> atomic flag is cleared (<code>Store(false)</code>) so a future probe can be attempted after the open timeout elapses again.</p><p>The circuit transitions directly back to open without waiting for the failure threshold.</p>'
     },
     REOPEN: {
-      title: 'Transition to Open (probe failed)',
+      title: 'Transition to Open (probe failed, database only)',
       badge: 'reject', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateOpen)</code> &mdash; probe failed, circuit re-opens. The <code>lastFailure</code> timestamp resets the open timeout window.</p><p>Logs: <code>"Circuit breaker reopened: probe failed"</code> with current failure count.</p><p>The cycle repeats: after <code>openTimeout</code> elapses, another single probe will be attempted.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="half-open", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
+      body: '<p><code>cb.transition(StateOpen)</code> &mdash; the database probe failed, circuit re-opens. The <code>lastFailure</code> timestamp resets the open timeout window, and a new jitter is drawn.</p><p>Logs: <code>"reopened: probe failed"</code> with <code>component=circuit_breaker</code>, <code>breaker_name</code>, and the current failure count.</p><p>The cycle repeats: after <code>openTimeout</code> plus jitter elapses, another single probe is attempted.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="half-open", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
     },
     THRESH: {
       title: 'Failures >= Threshold?',
       badge: 'decision', badgeText: 'threshold check',
-      body: '<p>Compares <code>cb.failures >= cb.failThreshold</code>.</p><p>Configurable thresholds:<br><b>Database</b>: <code>circuit_breaker.failure_threshold</code> (default: 3)<br><b>Backend</b>: <code>backend_circuit_breaker.failure_threshold</code> (default: 5)<br><b>Redis</b>: <code>counters.redis.failure_threshold</code> (default: 3)</p><p>Below threshold, the error is returned to the caller as-is (not replaced with the sentinel), allowing the caller to handle it normally while the breaker continues tracking.</p>'
+      body: '<p>Compares <code>cb.failures >= cb.failThreshold</code>.</p><p>Configurable thresholds:<br><b>Database</b>: <code>circuit_breaker.failure_threshold</code> (default: 3)<br><b>Backend</b>: <code>backend_circuit_breaker.failure_threshold</code> (default: 5)<br><b>Redis</b>: <code>redis.failure_threshold</code> (default: 3)</p><p>Backend values apply only when <code>backend_circuit_breaker.enabled: true</code> (default: false).</p><p>Below threshold, the error is returned to the caller as-is (not replaced with the sentinel), allowing the caller to handle it normally while the breaker continues tracking.</p>'
     },
     PASSTHRU: {
       title: 'Return Original Error',
@@ -188,12 +193,42 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     TRIP: {
       title: 'Transition to Open (threshold reached)',
       badge: 'reject', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateOpen)</code> &mdash; consecutive failure threshold reached. The circuit opens, and <code>cb.openedAt</code> is recorded for duration tracking.</p><p>Logs: <code>"Circuit breaker opened: failure threshold reached"</code> with failure count and threshold.</p><p>The original error is replaced with the sentinel error (<code>ErrBackendUnavailable</code> or <code>ErrDBUnavailable</code>) so callers always see the canonical error type.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="closed", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
+      body: '<p><code>cb.transition(StateOpen)</code> &mdash; consecutive failure threshold reached. The circuit opens, and <code>cb.openedAt</code> is recorded for duration tracking.</p><p>Logs: <code>"opened: failure threshold reached"</code> with <code>component=circuit_breaker</code>, <code>breaker_name</code>, failure count, threshold and the last error.</p><p>PostCheck wraps the sentinel around the original error with <code>fmt.Errorf("%w: %w", sentinel, err)</code>. Callers match the sentinel with <code>errors.Is</code>, and logs still show what actually failed.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="closed", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
     },
     RECOVER: {
-      title: 'Transition to Closed (recovered)',
+      title: 'Transition to Closed (database only)',
       badge: 'success', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateClosed)</code> &mdash; probe succeeded, the backend or database is healthy again.</p><p>Logs: <code>"Circuit breaker closed: recovered"</code> with <code>degraded_duration</code> showing total time spent in open + half-open states.</p><p>The <code>probeInFlight</code> flag is cleared and all subsequent requests pass through normally.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="half-open", to="closed"}<br>Gauge: s3o_circuit_breaker_state{name} = 0</p>'
+      body: '<p><code>cb.transition(StateClosed)</code> &mdash; the database probe succeeded, the database is healthy again.</p><p>Logs: <code>"closed: recovered"</code> with <code>component=circuit_breaker</code>, <code>breaker_name</code>, and <code>degraded_duration</code> showing total time spent in open + half-open states.</p><p>The <code>probeInFlight</code> flag is cleared and all subsequent requests pass through normally.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name="database", from="half-open", to="closed"}<br>Gauge: s3o_circuit_breaker_state{name} = 0</p>'
+    },
+    STALE: {
+      title: 'Probe Stale? (database only)',
+      badge: 'decision', badgeText: 'stale probe check',
+      body: '<p>While the database breaker is half-open, every other call gets the sentinel error. PreCheck also checks how long the current probe has been in flight.</p><p>If it has been 2 minutes or more (<code>probeTimeout</code>), the probe is treated as abandoned and the breaker resets to open. Otherwise the call is refused and the probe keeps running.</p>'
+    },
+    REOPEN2: {
+      title: 'Reset to Open (stale probe, database only)',
+      badge: 'reject', badgeText: 'state transition',
+      body: '<p>A half-open probe that has been in flight for 2 minutes or more is treated as abandoned, for example when PostCheck was never called. The breaker clears the probe flag and goes back to open, so a later request can probe again.</p><p>PreCheck does this when a request arrives. The breaker watchdog also does it on its 5s tick through <code>ResetStaleProbe()</code>, so a stale probe is cleared even with no traffic.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name="database", from="half-open", to="open"}</p>'
+    },
+    WATCHDOG: {
+      title: 'Backend and Redis Health Check Loop',
+      badge: 'entry', badgeText: 'external recovery',
+      body: '<p>Backend and Redis breakers never let a real call through as a probe. A separate loop checks the dependency while the breaker is open.</p><p><b>Backend</b>: the breaker watchdog ticks every 5s and calls <code>RecoveryProber.Probe</code> for each backend. The first health check runs <code>max(open_timeout, 5s)</code> after the circuit opens.</p><p><b>Redis</b>: a background goroutine PINGs Redis every 5s while the counter backend is in fallback.</p>'
+    },
+    HEALTH: {
+      title: 'Health Check Passes?',
+      badge: 'decision', badgeText: 'out-of-band check',
+      body: '<p><b>Backend</b>: a <code>HeadBucket</code> call on the wrapped backend, bypassing the breaker, with a 10s timeout. Each check is admitted and charged against the backend\'s usage budget as <code>HeadBucket</code>. A check the budget would refuse is skipped until there is room.</p><p><b>Redis</b>: a <code>PING</code>. On success, the local counter deltas collected during the outage are replayed to Redis in one pipeline before the breaker closes.</p>'
+    },
+    BACKOFF: {
+      title: 'Stay Open, Check Again Later',
+      badge: 'reject', badgeText: 'still down',
+      body: '<p>The circuit stays open and every call keeps getting the sentinel error.</p><p><b>Backend</b>: the wait before the next check doubles after each failure, capped at <code>max(5m, open_timeout)</code>. Logs: <code>"health check failed; circuit stays open"</code> with <code>next_check_in</code>.</p><p><b>Redis</b>: the next PING runs on the next 5s tick.</p>'
+    },
+    EXTRECOVER: {
+      title: 'Recover: Open to Closed',
+      badge: 'success', badgeText: 'state transition',
+      body: '<p><code>cb.Recover()</code> moves the breaker straight from open to closed, with no half-open step. It clears probe state and resets the failure counter, so the breaker again tolerates the configured threshold of failures.</p><p>Logs: <code>"closed: recovered"</code> with <code>component=circuit_breaker</code>, <code>breaker_name</code>, and <code>degraded_duration</code>.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="open", to="closed"}<br>Gauge: s3o_circuit_breaker_state{name} = 0</p>'
     },
     RESET: {
       title: 'Reset Failure Counter',

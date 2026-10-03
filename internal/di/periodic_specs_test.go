@@ -54,6 +54,7 @@ func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 			Buckets: provisioning.NewDeclared(),
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
+		worker.NewDrainerService(f.stack.Runtime, f.stack.Drainer, locker),
 	}
 	out := make([]*tickrunner.Service, 0, len(runners))
 	for _, r := range runners {
@@ -158,6 +159,7 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 		"rebalancer",
 		"replicator",
 		"over-replication",
+		"drain",
 		"lifecycle",
 		"scrubber",
 	}

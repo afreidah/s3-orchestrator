@@ -137,7 +137,7 @@ or a count of never-checked copies while the first sweep is still running.
 Reading the columns:
 
 - **HEALTH** - the backend's circuit-breaker state; `unhealthy` means the breaker has tripped and the backend is being skipped.
-- **DRAIN** - `draining` while a drain is evacuating the backend, otherwise `-`.
+- **DRAIN** - `draining` while a drain is evacuating the backend, `drained` once it has finished, `failed` when it stopped on an error, otherwise `-`. A backend in any of the three takes no new writes.
 - **USED** / **LIMIT** / **USE%** - quota bytes used against the configured limit (`-` when no limit is set), and the fill percentage that follows from them.
 - **OBJECTS** - object copies the backend holds.
 - **API** / **INGRESS** / **EGRESS** - request count and bytes transferred for the current usage period, shown in the title bar.

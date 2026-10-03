@@ -77,6 +77,19 @@ const (
 	OutcomeError   = "error"
 )
 
+// Plus adds two tallies, for a cycle that runs its work as several batches.
+func (s WorkSummary) Plus(o WorkSummary) WorkSummary {
+	return WorkSummary{
+		Planned:   s.Planned + o.Planned,
+		Attempted: s.Attempted + o.Attempted,
+		Succeeded: s.Succeeded + o.Succeeded,
+		Failed:    s.Failed + o.Failed,
+		Skipped:   s.Skipped + o.Skipped,
+		Deferred:  s.Deferred + o.Deferred,
+		Duration:  s.Duration + o.Duration,
+	}
+}
+
 // Outcome classifies the cycle for its runs-total metric: success (work done,
 // no failures), partial (some succeeded, some failed), failed (only failures),
 // or empty (nothing succeeded or failed). Reporting the tally rather than a

@@ -36,18 +36,11 @@ type Stores interface {
 	core.UsageFlusher
 }
 
-// DrainReader reports which backends have finished draining. Nil-able, and a
-// deployment without drain skips nothing.
-type DrainReader interface {
-	CompletedBackends() map[string]bool
-}
-
-// Deps groups the constructor parameters. Drain is the only optional one.
+// Deps groups the constructor parameters.
 type Deps struct {
 	Usage  *counter.UsageTracker
 	Quota  *counter.QuotaTracker
 	Stores Stores
-	Drain  DrainReader
 }
 
 // Service flushes usage counters to the store and reconciles the drift the
@@ -59,34 +52,25 @@ type Service struct {
 	usage  *counter.UsageTracker
 	quota  *counter.QuotaTracker
 	stores Stores
-	drain  DrainReader
 	cfg    syncutil.AtomicConfig[config.UsageFlushConfig]
 }
 
-// New constructs the service. Usage, Quota and Stores are required; a nil Drain
-// leaves the flush skipping nothing, which is what a deployment that never
-// drains a backend wants.
+// New constructs the service. Usage, Quota and Stores are required.
 func New(d *Deps) *Service {
 	must.NotNil("d", d)
 	must.NotNil("d.Usage", d.Usage)
 	must.NotNil("d.Quota", d.Quota)
 	must.NotNil("d.Stores", d.Stores)
-	return &Service{usage: d.Usage, quota: d.Quota, stores: d.Stores, drain: d.Drain}
+	return &Service{usage: d.Usage, quota: d.Quota, stores: d.Stores}
 }
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// FlushUsage writes the accumulated in-memory counters to the store. Backends
-// that have finished draining are skipped: their rows, backend_usage included,
-// are already gone, so flushing them would write back what the drain removed.
+// FlushUsage writes the accumulated in-memory counters to the store.
 func (s *Service) FlushUsage(ctx context.Context) error {
-	var skip map[string]bool
-	if s.drain != nil {
-		skip = s.drain.CompletedBackends()
-	}
-	return s.usage.FlushUsage(ctx, s.stores, skip)
+	return s.usage.FlushUsage(ctx, s.stores)
 }
 
 // ReconcileUsage recomputes each backend's stored byte count from the object

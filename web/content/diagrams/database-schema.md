@@ -5,7 +5,7 @@ linkTitle: "Database Schema"
 weight: 8
 ---
 
-Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any table** for column details and usage context.
+Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (`internal/store/sqlite`) implements the same tables and the `backend_capacity` view. **Hover over any table** for column details and usage context.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -113,6 +113,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        BYTEA encryption_key',
     '        TEXT key_id',
     '        BIGINT plaintext_size',
+    '        TEXT plaintext_etag',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -217,8 +218,19 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '',
     '    grants {',
     '        TEXT user_id "PK, FK"',
-    '        TEXT bucket_name PK',
+    '        TEXT resource_kind PK',
+    '        TEXT resource_name PK',
+    '        TEXT permissions',
     '        TIMESTAMPTZ created_at',
+    '    }',
+    '',
+    '    backend_drains {',
+    '        TEXT backend_name PK',
+    '        TEXT state',
+    '        BIGINT objects_moved',
+    '        TEXT last_error',
+    '        TIMESTAMPTZ started_at',
+    '        TIMESTAMPTZ finished_at',
     '    }',
     '',
     '    backend_quotas ||--o{ backend_quota_stripes : "striped byte total"',
@@ -233,7 +245,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '    multipart_uploads ||--o{ multipart_parts : "upload parts"',
     '    object_locations ||--o{ object_tags : "tag set, by object_key only"',
     '    users ||--o{ credentials : "keypairs proving one identity"',
-    '    users ||--o{ grants : "buckets this identity reaches"'
+    '    users ||--o{ grants : "resources this identity reaches"'
   ].join('\n');
 
   mermaid.initialize({
@@ -250,7 +262,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     backend_quotas: {
       title: 'backend_quotas',
       badge: 'core', badgeText: 'core table',
-      body: '<p>Central registry of S3 backends. Every other table references this via <code>backend_name</code> foreign key. Created at startup from config; quota limits synced on each boot via <code>UpsertQuotaLimit</code>.</p>' +
+      body: '<p>Central registry of S3 backends. These tables reference it through a <code>backend_name</code> foreign key: <code>object_locations</code>, <code>backend_quota_stripes</code> (ON DELETE CASCADE), <code>multipart_uploads</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code> and <code>pending_objects</code>. <code>object_tags</code>, <code>notification_outbox</code>, <code>buckets</code>, <code>users</code>, <code>credentials</code>, <code>grants</code> and <code>backend_drains</code> do not. Created at startup from config; quota limits synced on each boot via <code>UpsertQuotaLimit</code>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY</td></tr>' +
         '<tr><td>bytes_limit</td><td>BIGINT</td><td>Quota cap (0 = unlimited)</td></tr>' +
@@ -314,7 +326,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, served from the row rather than from whichever backend replies (nullable)</td></tr>' +
         '<tr><td>user_metadata</td><td>JSONB</td><td>The x-amz-meta-* set. An empty object means the object has none; NULL means nobody has looked yet, which is what a row predating identity capture holds (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE the listing projection &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag) &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -363,6 +375,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Per-part nonce + wrapped DEK</td></tr>' +
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original part size</td></tr>' +
+        '<tr><td>plaintext_etag</td><td>TEXT</td><td>MD5 of the bytes the client sent for this part (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Part upload time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (upload_id, part_number)</p>' +
         '<p>Used by: UploadPart (UpsertPart), CompleteMultipartUpload (GetParts &mdash; ordered by part_number), quota calculation (SUM of inflight part sizes JOINed to uploads).</p>' +
@@ -400,9 +413,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>claimed_at</td><td>TIMESTAMPTZ</td><td>NULL when unclaimed; set by ClaimPendingCleanups, cleared by RetryCleanupItem</td></tr>' +
         '<tr><td>claimed_by</td><td>TEXT</td><td>Stable instance identifier (hostname-XXXXXXXX) of the worker that holds the claim; observability only</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts &lt; 10 (partial index, supports the ClaimPendingCleanups order-by-created_at filter without a sort)</p>' +
-        '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min). The worker uses ClaimPendingCleanups (UPDATE...WHERE id IN (SELECT...FOR UPDATE SKIP LOCKED)) so concurrent ticks across instances return disjoint row sets; rows whose claim is older than <code>cleanup_queue.claim_grace_period</code> (default 5m) are reclaimable. On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
+        '<p>Used by: <code>Coordinator.EnqueueCleanup()</code> at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator, drain, scrubber, pending reaper), and the <a href="../background-services/">cleanup-queue</a> background worker (runs every 1 min). The worker uses ClaimPendingCleanups, a CTE that selects candidate rows FOR UPDATE SKIP LOCKED and then runs UPDATE ... FROM the candidate set, so concurrent ticks across instances return disjoint row sets; rows whose claim is older than <code>cleanup_queue.claim_grace_period</code> (default 5m) are reclaimable. On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
         '<p class="ac-metric">Key queries: EnqueueCleanup, ClaimPendingCleanups (worker), GetPendingCleanups (admin/dashboard), CompleteCleanupItem (atomic delete + orphan_bytes decrement CTE), UpdateCleanupRetry, CountPendingCleanups, MoveCleanupToDLQ</p>' +
-        '<p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total, s3o_cleanup_queue_processed_total, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend} &bull; Audit events: cleanup_queue.processed, cleanup_queue.claim_recovered, cleanup_queue.exhausted_to_dlq</p>'
+        '<p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total{reason}, s3o_cleanup_queue_processed_total{status=success|success_absent|retry|exhausted}, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_enqueue_failures_total{backend,reason,stage} &bull; Audit events: cleanup_queue.processed, cleanup_queue.already_absent, cleanup_queue.claim_recovered, cleanup_queue.exhausted_to_dlq</p>'
     },
     cleanup_dlq: {
       title: 'cleanup_dlq',
@@ -421,14 +434,15 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>moved_at</td><td>TIMESTAMPTZ</td><td>When the row was graduated</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Final backend-delete failure</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_dlq_backend (backend_name)</p>' +
-        '<p>Written by: <a href="../background-services/">cleanupQueueService</a> on retry exhaustion via <code>core.MoveCleanupToDLQ</code> (single transaction: read queue row, insert here, delete queue row).</p>' +
-        '<p class="ac-metric">Key queries: InsertCleanupDLQ, CountCleanupDLQ</p>' +
-        '<p class="ac-metric">Metrics: cleanup_dlq_depth (gauge), cleanup_dlq_enqueued_total{backend} (counter)</p>'
+        '<p>Written by: the <a href="../background-services/">cleanup-queue</a> worker on retry exhaustion via <code>core.MoveCleanupToDLQ</code> (single transaction: read queue row, insert here, delete queue row).</p>' +
+        '<p>Admin routes: <code>GET /admin/api/cleanup-dlq</code> lists the rows, optionally for one backend. <code>POST /admin/api/cleanup-dlq/requeue</code> moves rows back into <code>cleanup_queue</code> in one statement, with attempts reset, so the worker retries them.</p>' +
+        '<p class="ac-metric">Key queries: InsertCleanupDLQ, CountCleanupDLQ, ListCleanupDLQ, RequeueCleanupDLQ</p>' +
+        '<p class="ac-metric">Metrics: s3o_cleanup_dlq_depth (gauge), s3o_cleanup_dlq_enqueued_total{backend} (counter)</p>'
     },
     pending_objects: {
       title: 'pending_objects',
       badge: 'cleanup', badgeText: 'in-flight intents',
-      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>InsertPendingIntent</code> immediately before the backend PUT and deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
+      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>Store.InsertPendingIfFits</code> (SQL <code>InsertPendingObjectIfFits</code>) immediately before the backend PUT. That one statement claims the space against the <code>backend_capacity</code> view and records the intent, and inserts nothing when the backend has no room or is draining. The row is deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
         '<p>The row is also what admission counts: a backend\'s headroom is its committed rows minus the intents it is holding, so bytes in flight occupy the backend for every instance rather than only the one writing them. That is why the pattern cannot be turned off.</p>' +
         '<p>A write placing several copies at once inserts one intent per copy, and clears every intent for its key on commit apart from the ones its own uploads are still running under. Those surviving rows are what each late copy reads as proof that nothing newer has taken the key. See the <a href="../write-path/">write path</a>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
@@ -451,8 +465,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted - the reaper cannot tell its bytes from an older object at the same path, so it drops the row and removes them, and replication rebuilds the copy from one the client was told about</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name) &bull; idx_pending_objects_key (object_key) for the by-key clear every commit runs</p>' +
-        '<p>Used by: <code>writepath.Coordinator.InsertPendingIntent</code> (inserts on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper claims rows individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>; no advisory lock is required because two reapers ticking concurrently always pick disjoint sets.</p>' +
-        '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth, s3o_detached_uploads_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded</p>'
+        '<p>Used by: <code>writepath.Coordinator.ClaimWriteTarget</code> and <code>ClaimWriteCopies</code> (insert through <code>InsertPendingIfFits</code> on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper runs under advisory lock 1011 (<code>LockPendingReaper</code>), which the notification drainer currently shares. Its stale scan is a plain SELECT; promotion re-reads the row with a plain <code>FOR UPDATE</code> through <code>LockPendingForUpdate</code>, so a row already resolved elsewhere is a no-op.</p>' +
+        '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|superseded|companion_kept|companion_discarded|ambiguous|already_resolved}, s3o_pending_intents_depth, s3o_detached_uploads_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded, pending_reaper.companion_kept, pending_reaper.companion_discarded</p>'
     },
     notification_outbox: {
       title: 'notification_outbox',
@@ -465,11 +479,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>endpoint_url</td><td>TEXT</td><td>Webhook destination URL</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Enqueue time</td></tr>' +
         '<tr><td>next_retry</td><td>TIMESTAMPTZ</td><td>Earliest delivery attempt time</td></tr>' +
-        '<tr><td>attempts</td><td>INT</td><td>Delivery attempt count (max 10)</td></tr>' +
+        '<tr><td>attempts</td><td>INT</td><td>Delivery attempt count. The row is removed after the endpoint\'s max_retries (default 3)</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Most recent delivery error</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_notification_outbox_pending (next_retry) WHERE attempts &lt; 10 (partial index)</p>' +
-        '<p>Used by: <a href="../../guides/event-notifications/">event notifications</a> &mdash; emit() inserts rows, drainOnce() processes and delivers them via HTTP POST with optional HMAC signing.</p>' +
-        '<p class="ac-metric">Metrics: notification_sent_total, notification_failed_total, notification_dropped_total, notification_queue_depth</p>'
+        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_notification_outbox_pending (next_retry) WHERE attempts &lt; 10 (partial index; the 10 is only a ceiling, since rows are removed at max_retries)</p>' +
+        '<p>Used by: <a href="../../guides/event-notifications/">event notifications</a> &mdash; emit() inserts rows, drainOnce() processes and delivers them via HTTP POST with optional HMAC signing. The drainer runs every 2 seconds, reads 50 rows per batch, and retries a failed delivery after 2^attempts seconds, capped at 64 seconds. It runs under advisory lock 1011, which it currently shares with the pending reaper.</p>' +
+        '<p class="ac-metric">Metrics: s3o_notification_sent_total{endpoint,event_type}, s3o_notification_failed_total{endpoint,event_type}, s3o_notification_dropped_total, s3o_notification_queue_depth, s3o_notification_store_errors_total{operation}, s3o_notification_duration_seconds{endpoint}</p>'
     },
     buckets: {
       title: 'buckets',
@@ -506,19 +520,37 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>disabled</td><td>BOOLEAN</td><td>A disabled row never reaches the registry, so it authenticates nothing while the record of what it did survives</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Issue time</td></tr>' +
         '<tr><td>last_used_at</td><td>TIMESTAMPTZ</td><td>NULL for a keypair that has never authenticated</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on access_key_id &bull; FK on user_id</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on access_key_id &bull; idx_credentials_user (user_id)</p>' +
         '<p>Used by: <a href="../../godoc/auth/">auth.BucketRegistry</a> (read into the request-time lookup on every assembly) &bull; <code>ops.Provisioning</code> issue and revoke. A revoke rebuilds and swaps the registry before it returns, so the keypair stops authenticating on the next request rather than the next restart.</p>'
     },
     grants: {
       title: 'grants',
       badge: 'provisioning', badgeText: 'provisioning',
-      body: '<p>Pairs a user with a bucket it may reach. This is what authorises a request: the credential proves the user, and the user is asked whether it holds a grant on the bucket in the URL path. A user holding none authenticates and reaches nothing.</p>' +
+      body: '<p>Pairs a user with a resource it may act on and the permissions it carries there. This is what authorises a request: the credential proves the user, and the user is asked whether it holds a grant on the bucket in the URL path, or on the backend or orchestrator a control-plane call names. A user holding none authenticates and reaches nothing.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk fk">user_id</td><td>TEXT</td><td>PRIMARY KEY part; REFERENCES users(id) ON DELETE RESTRICT</td></tr>' +
-        '<tr><td class="pk">bucket_name</td><td>TEXT</td><td>PRIMARY KEY part. Deliberately no foreign key: a config-declared bucket has no row here to reference</td></tr>' +
+        '<tr><td class="pk">resource_kind</td><td>TEXT</td><td>PRIMARY KEY part: bucket, backend, or orchestrator. Defaults to bucket</td></tr>' +
+        '<tr><td class="pk">resource_name</td><td>TEXT</td><td>PRIMARY KEY part; empty for orchestrator. Deliberately no foreign key: a config-declared bucket has no row here to reference</td></tr>' +
+        '<tr><td>permissions</td><td>TEXT</td><td>Comma-separated permission names; empty means every permission</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Grant time</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on (user_id, bucket_name)</p>' +
-        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.Merge</a> (joins each user onto the buckets it reaches). A grant naming a bucket neither source declares is reported as a notice and skipped rather than failing startup, since a bucket can leave the config file while the grant stays behind.</p>'
+        '<p class="ac-idx"><b>Indexes:</b> PK on (user_id, resource_kind, resource_name)</p>' +
+        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.Merge</a> (joins each user onto the buckets it reaches). Backend and orchestrator grants authorize the admin routes (<code>transport/admin/handler_routes.go</code>). A grant naming a bucket neither source declares is reported as a notice and skipped rather than failing startup, since a bucket can leave the config file while the grant stays behind.</p>'
+    },
+    backend_drains: {
+      title: 'backend_drains',
+      badge: 'core', badgeText: 'drain record',
+      body: '<p>One row per backend with a drain, from the moment it starts until it is cancelled or the backend is removed. The row is the drain: admission refuses a backend that has one, in any state, and the drain worker moves the objects off while it is in progress, so a restart resumes a drain rather than forgetting it.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY. No foreign key to backend_quotas, so the record outlives that row</td></tr>' +
+        '<tr><td>state</td><td>TEXT</td><td>draining, drained, or failed, enforced by the backend_drains_state_check CHECK constraint</td></tr>' +
+        '<tr><td>objects_moved</td><td>BIGINT</td><td>Objects moved off so far</td></tr>' +
+        '<tr><td>last_error</td><td>TEXT</td><td>Why a failed drain stopped</td></tr>' +
+        '<tr><td>started_at</td><td>TIMESTAMPTZ</td><td>When the drain started, or last restarted</td></tr>' +
+        '<tr><td>finished_at</td><td>TIMESTAMPTZ</td><td>NULL while in progress</td></tr></table>' +
+        '<p>The <code>backend_capacity</code> view joins it: per backend, the limit, stored, orphan and in-flight bytes, the bytes still available, and <code>accepting_writes</code>, false while the backend has a drain record. Every admission test reads that view.</p>' +
+        '<p>Used by: <a href="../../godoc/drain/">drain.Manager</a> (start, cancel, progress) &bull; the drain worker (progress, completion, failure) &bull; admission through <code>backend_capacity</code></p>' +
+        '<p class="ac-metric">Key queries: StartDrain, ListDrains, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearDrain</p>' +
+        '<p class="ac-metric">Metrics: s3o_drain_active, s3o_drain_objects_moved_total, s3o_drain_bytes_moved_total &bull; Audit events: storage.DrainStart, storage.DrainCancel, storage.DrainMove, storage.DrainRemoveReplica, storage.DrainComplete &bull; Events: backend.drain.completed, backend.drain.failed</p>'
     }
   };
 
@@ -582,7 +614,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants'];
+      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants', 'backend_drains'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -609,8 +641,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 
 | Symbol | Meaning |
 |--------|---------|
-| <span style="color:#2a9d73">**PK**</span> | Primary key column |
-| <span style="color:#5ec9a0">**FK**</span> | Foreign key reference |
+| <span style="color:#f0883e">**PK**</span> | Primary key column |
+| <span style="color:#bc8cff">**FK**</span> | Foreign key reference |
 | `\|\|--o{` | One-to-many relationship |
 | <span style="color:#f0883e">**BIGSERIAL**</span> | Auto-incrementing surrogate key |
 | <span style="color:#4aaa8a">**text_pattern_ops**</span> | B-tree index optimized for LIKE prefix queries |
@@ -634,7 +666,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | **buckets** | Virtual buckets declared through the provisioning API rather than the config file | `name` |
 | **users** | The identity a credential proves, which grants are held by | `id` |
 | **credentials** | One keypair proving one user; several may name the same user | `access_key_id` |
-| **grants** | Pairs a user with a bucket it may reach | `(user_id, bucket_name)` |
+| **grants** | Pairs a user with a bucket, a backend, or the orchestrator, and the permissions it carries there | `(user_id, resource_kind, resource_name)` |
+| **backend_drains** | A backend's drain record; admission refuses a backend that has one | `backend_name` |
 
 ### Schema Migrations
 
@@ -662,8 +695,12 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00020_multipart_tagging` | Add `tagging` to `multipart_uploads`, holding a query-string-encoded tag set from `CreateMultipartUpload` until completion. One column rather than a child table, since these are only ever read whole for one upload and never filtered by tag. Nullable, and NULL means the upload carried no tags, which is what every pre-existing row is |
 | `00021_object_identity` | Add `etag`, `content_type` and `user_metadata` to `object_locations` and `pending_objects`, plus `plaintext_etag` to `multipart_parts`. What a HEAD reports stops depending on which copy answers: with compression or encryption on, the backend's own ETag describes the stored bytes rather than the object the client wrote |
 | `00022_object_write_time` | Backfill `created_at` to the object's write time across every copy of a key, taking the earliest. It reaches clients as `Last-Modified`, so a replica stamped when it was made had an unmodified object reporting a different time depending on which copy served it |
-| `00023_listing_covering_index` | Add a covering index on `(object_key COLLATE "C", created_at)` for the listing's DISTINCT ON. Carrying `created_at` as a key column rather than INCLUDE payload is what removes the per-group sort, since INCLUDE columns satisfy a projection but not an ORDER BY. Measured on 360k rows: 3017 buffers and an incremental sort, down to an index-only scan |
+| `00023_listing_covering_index` | Add `idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag)` for the listing's DISTINCT ON, and drop `idx_object_locations_key_collate_c`. Carrying `created_at` as a key column rather than INCLUDE payload is what removes the per-group sort, since INCLUDE columns satisfy a projection but not an ORDER BY. Measured on 360k rows: 3017 buffers and an incremental sort, down to an index-only scan |
 | `00024_request_pool_usage` | Add `backend_request_usage`, counting calls per named request budget. `backend_usage.api_requests` counts every call, which reports correctly but admits wrongly: providers meter operation classes separately, and charging a delete against an upload budget locks a backend out while its read allowance sits unused. Pools are additive, so these rows do not sum to `api_requests` |
 | `00025_striped_quota_counters` | Add `backend_quota_stripes` and move `bytes_used` onto it. One row per backend meant every write charging a backend took the same row lock and serialized behind the others; a writer now picks its stripe from the object key, so charge and credit for one key meet on one row while different keys never wait. Stripes are signed rather than clamped, because the backfill puts pre-existing bytes on stripe zero and deleting one of those objects credits whichever stripe its key hashes to |
 | `00026_pending_intent_role` | Add `role` to `pending_objects` (`primary` or `companion`, defaulting to primary) and `idx_pending_objects_key`. An intent had meant one thing - this write replaces what the key held - and a write placing copies on several backends at once needs the other, since promoting one of its intents must not delete the copies its siblings committed. The index is for the by-key clear every commit now runs |
 | `00027_bucket_provisioning` | Add `buckets`, `users`, `credentials` and `grants`, so a virtual bucket and the credentials reaching it can be declared without a config edit and a reload. A credential resolves to a user holding grants rather than carrying a bucket column, because scoped access adds grant types and more than one grant per user; putting the bucket on the credential would have to be unwound to get there. `grants.bucket_name` deliberately carries no foreign key: a config-declared bucket has no row to reference |
+| `00028_grant_permissions` | Add `permissions` to `grants`, a comma-separated list, so a bucket can be granted read-only. Empty means every permission, and existing grants are left empty rather than narrowed, so clients working before the upgrade keep working |
+| `00029_grant_resource` | Rename `grants.bucket_name` to `resource_name` and add `resource_kind` (bucket, backend, or a deployment-wide control-plane kind that `00030` renames to `orchestrator`), moving the primary key to `(user_id, resource_kind, resource_name)`. Control-plane actions such as draining a backend are not operations on a bucket, so a grant has to be able to name something else. Every existing row is a bucket grant; the down path discards the rest |
+| `00030_grant_orchestrator_kind` | Rename the resource kind `instance` to `orchestrator`, since the grant covers every process of a deployment rather than one. The reader accepts both spellings, so a deployment that has not run this still authorizes its existing grants |
+| `00031_backend_drains` | Add `backend_drains`, the durable record of each backend's drain, and the `backend_capacity` view every admission test reads. A drain was held in the memory of the process that started it, so a restart forgot it and other instances never saw it. With the record in the database, admission refuses a drained backend on every instance, and the drain worker resumes a drain after a restart |

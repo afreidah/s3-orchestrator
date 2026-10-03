@@ -811,6 +811,20 @@ func (mr *MockFleetOpsMockRecorder) BackendOrder() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockFleetOps)(nil).BackendOrder))
 }
 
+// ExcludeDraining mocks base method.
+func (m *MockFleetOps) ExcludeDraining(eligible []string) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExcludeDraining", eligible)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// ExcludeDraining indicates an expected call of ExcludeDraining.
+func (mr *MockFleetOpsMockRecorder) ExcludeDraining(eligible any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExcludeDraining", reflect.TypeOf((*MockFleetOps)(nil).ExcludeDraining), eligible)
+}
+
 // UpdateQuotaMetrics mocks base method.
 func (m *MockFleetOps) UpdateQuotaMetrics(ctx context.Context) error {
 	m.ctrl.T.Helper()

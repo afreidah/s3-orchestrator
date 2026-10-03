@@ -227,7 +227,7 @@ func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
 // credential that proved it, plus, when the SigV4 seed signature declares a
 // streaming payload, the StreamingMaterial the transport layer needs to verify
 // and decode the chunk chain. The streaming return is nil for non-streaming
-// requests, presigned URLs, and proxy-token authentication.
+// requests and presigned URLs.
 //
 // Which buckets the caller may reach is the user's to answer, so the transport
 // asks it rather than comparing a name it was handed.

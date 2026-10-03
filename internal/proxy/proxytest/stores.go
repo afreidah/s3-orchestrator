@@ -11,7 +11,6 @@
 package proxytest
 
 import (
-	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -149,14 +148,9 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 	return rt
 }
 
-// NewUsage builds the usage service over a runtime and store. drain may be nil,
-// which leaves the flush skipping nothing.
-func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore, dm *drain.Manager) *usage.Service {
-	deps := usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}
-	if dm != nil {
-		deps.Drain = dm
-	}
-	return usage.New(&deps)
+// NewUsage builds the usage service over a runtime and store.
+func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore) *usage.Service {
+	return usage.New(&usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores})
 }
 
 // -------------------------------------------------------------------------
@@ -172,6 +166,7 @@ type Stack struct {
 	Objects      *object.Manager
 	Multipart    *multipart.Manager
 	Drain        *drain.Manager
+	Drainer      *worker.Drainer
 	Usage        *usage.Service
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
 }
@@ -243,24 +238,21 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		BackendTimeout:               opts.BackendTimeout,
 	})
 
-	cleanup := worker.NewCleanupWorker(worker.CleanupWorkerDeps{
-		Ops: rt, Store: store, Concurrency: cleanupConcurrency,
-		InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,
-	})
-	processCleanup := func(ctx context.Context) (int, int) {
-		sum := cleanup.ProcessCleanupQueue(ctx)
-		return sum.Succeeded, sum.Failed
-	}
-	dm := drain.New(rt, coord, store, store, store, mp.AbortMultipartUploadsOnBackend, processCleanup)
+	dm := drain.New(rt, store, store, store)
 	rt.SetDrainChecker(dm)
 
 	return &Stack{
-		Runtime:      rt,
-		Coord:        coord,
-		Objects:      om,
-		Multipart:    mp,
-		Drain:        dm,
-		Usage:        NewUsage(rt, store, dm),
+		Runtime:   rt,
+		Coord:     coord,
+		Objects:   om,
+		Multipart: mp,
+		Drain:     dm,
+		Drainer: worker.NewDrainer(worker.DrainerDeps{
+			Ops: rt, Placement: coord, Store: store,
+			AbortUploads: mp.AbortMultipartUploadsOnBackend,
+			OnRecords:    dm.SetStates,
+		}),
+		Usage:        NewUsage(rt, store),
 		IntegrityCfg: integrityCfg,
 	}
 }
@@ -280,6 +272,7 @@ type Workers struct {
 	PendingReaper          *worker.PendingReaper
 	Scrubber               *worker.Scrubber
 	Drain                  *drain.Manager
+	Drainer                *worker.Drainer
 }
 
 // WorkerFeatures carries the stored-form layers a worker has to undo to read an
@@ -334,6 +327,7 @@ func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features Work
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		Drain: s.Drain,
+		Drain:   s.Drain,
+		Drainer: s.Drainer,
 	}
 }

@@ -53,7 +53,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
   var diagramSrc = [
     'flowchart TD',
     '    REQ([S3 Request]):::start --> AC{Admission<br>Controller}:::decision',
-    '    AC -->|disabled| RL',
+    '    AC -->|no pool configured| RL',
     '    AC -->|global pool| GSEM[Global<br>Semaphore]:::pool',
     '    AC -->|split pools| SPLIT{Write?}:::decision',
     '    SPLIT -->|PUT/POST/DEL| WSEM[Write Sem]:::pool',
@@ -70,26 +70,27 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     '    RL{Rate<br>Limiter}:::decision',
     '    RL -->|disabled or ok| AUTH',
     '    RL -->|exceeded| R429[429 SlowDown]:::reject',
-    '    AUTH[SigV4 / Presigned / Token<br>Auth]:::process --> AUTHOK{Valid?}:::decision',
+    '    AUTH[SigV4 / Presigned<br>Auth]:::process --> AUTHOK{Valid?}:::decision',
     '    AUTHOK -->|no| R403[403 Denied]:::reject',
     '    AUTHOK -->|yes| ROUTE{Method<br>Routing}:::decision',
     '    ROUTE -->|PUT| SZ{Size<br>Check}:::decision',
     '    SZ -->|no Content-Length| R411[411]:::reject',
     '    SZ -->|too large| R413[413]:::reject',
     '    SZ -->|ok| CAP{Backend<br>Capacity?}:::decision',
-    '    CAP -->|none available| R507[507 No Space]:::reject',
+    '    CAP -->|none eligible| R507[507 No Space]:::reject',
     '    CAP -->|ok, 100-Continue| WRITE[PutObject]:::write',
     '    ROUTE -->|GET/HEAD| READ[GetObject<br>HeadObject]:::read',
     '    ROUTE -->|DELETE| DEL[DeleteObject]:::write',
     '    WRITE --> CBW{Circuit<br>Breaker}:::cb',
     '    READ --> CBR{Circuit<br>Breaker}:::cb',
     '    DEL --> CBD{Circuit<br>Breaker}:::cb',
-    '    CBW -->|open| R502W[502]:::reject',
-    '    CBW -->|ok/probe| OK_W[200 OK]:::success',
+    '    WRITE -->|claim finds no room| R507',
+    '    CBW -->|failover| CBW',
+    '    CBW -->|every backend failed| R502W[502]:::reject',
+    '    CBW -->|ok| OK_W[200 OK]:::success',
     '    CBR -->|failover| CBR',
-    '    CBR -->|ok/probe| OK_R[200 / 206]:::success',
-    '    CBD -->|open| R502D[502]:::reject',
-    '    CBD -->|ok/probe| OK_D[204]:::success',
+    '    CBR -->|ok| OK_R[200 / 206]:::success',
+    '    CBD -->|ok, or enqueued for retry| OK_D[204]:::success',
     '    classDef start fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
     '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
     '    classDef process fill:#1c2128,stroke:#8b949e,color:#e6edf3',
@@ -135,17 +136,17 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     REQ: {
       title: 'S3 Request',
       badge: 'process', badgeText: 'entry point',
-      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries an AWS SigV4 <code>Authorization</code> header or presigned URL query parameters, along with HTTP method and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) for audit correlation through the entire pipeline.</p>'
+      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries an AWS SigV4 <code>Authorization</code> header or presigned URL query parameters, along with HTTP method and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) in <code>Server.ServeHTTP</code>, which runs inside the admission and rate-limit middleware. Load-shed, admission and rate-limit rejections therefore carry no <code>X-Amz-Request-Id</code>.</p>'
     },
     AC: {
       title: 'Admission Controller',
       badge: 'decision', badgeText: 'middleware',
-      body: '<p>Channel-based semaphore that caps concurrent in-flight operations. Prevents backend overload under burst traffic.</p><p>Three modes: <b>disabled</b> (passthrough), <b>global pool</b> (single <code>chan struct{}</code> for all ops), or <b>split pools</b> (separate read/write channels).</p><p>The semaphore is shared between HTTP requests and background services (rebalancer, replicator, over-replication cleaner, cleanup worker), so <code>max_concurrent_requests</code> is the total budget for all backend operations.</p><p>Config: <code>admission.max_concurrent</code> (global) or <code>admission.max_reads</code> / <code>admission.max_writes</code> (split).</p>'
+      body: '<p>Channel-based semaphore that caps concurrent in-flight operations. Prevents backend overload under burst traffic.</p><p><b>Global pool</b>: one <code>chan struct{}</code> for all requests, sized by <code>server.max_concurrent_requests</code> (default 1000). Used when split mode is not configured.<br><b>Split pools</b>: separate read and write channels, used when both <code>server.max_concurrent_reads</code> and <code>server.max_concurrent_writes</code> are above zero.</p><p>There is no switch to turn admission off. When all three settings are 0, <code>max_concurrent_requests</code> defaults to 1000. No middleware is installed only when exactly one of reads or writes is set and <code>max_concurrent_requests</code> is 0.</p><p>Background workers (cleanup, drainer, over_replication, pending_reaper, rebalancer, replicator) acquire from the same runtime semaphore. In global mode that is the one pool shared by everything. In split mode it is the write pool: HTTP writes share it with the workers, and the HTTP read pool is separate.</p>'
     },
     GSEM: {
       title: 'Global Semaphore',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Single buffered channel shared by all request types (GET, PUT, DELETE, HEAD, POST).</p><p>Capacity set by <code>admission.max_concurrent</code>. Each in-flight request holds one slot; released on handler return via <code>defer</code>.</p>'
+      body: '<p>Single buffered channel shared by all request types (GET, PUT, DELETE, HEAD, POST).</p><p>Capacity set by <code>server.max_concurrent_requests</code> (default 1000). Each in-flight request holds one slot; released on handler return via <code>defer</code>. Background workers draw from the same pool.</p>'
     },
     SPLIT: {
       title: 'Write Check',
@@ -155,17 +156,17 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     WSEM: {
       title: 'Write Semaphore',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Dedicated buffered channel for write operations (PUT/POST/DELETE).</p><p>Capacity set by <code>admission.max_writes</code>. Prevents write storms from consuming all server resources.</p>'
+      body: '<p>Dedicated buffered channel for write operations (PUT/POST/DELETE).</p><p>Capacity set by <code>server.max_concurrent_writes</code>. This is the runtime semaphore that background workers also acquire from, so size it for HTTP writes and worker traffic together.</p>'
     },
     RSEM: {
       title: 'Read Semaphore',
       badge: 'pool', badgeText: 'concurrency pool',
-      body: '<p>Dedicated buffered channel for read operations (GET/HEAD).</p><p>Capacity set by <code>admission.max_reads</code>. Ensures reads remain responsive even under heavy write load.</p>'
+      body: '<p>Dedicated buffered channel for read operations (GET/HEAD).</p><p>Capacity set by <code>server.max_concurrent_reads</code>. Used only by HTTP reads, so reads remain responsive under heavy write or worker load.</p>'
     },
     SHED: {
       title: 'Load Shed Pressure',
       badge: 'decision', badgeText: 'probabilistic',
-      body: '<p>Probabilistic early rejection before the hard concurrency limit. When pool occupancy exceeds <code>shed_threshold</code> (e.g. 0.8 = 80%), rejection probability ramps <b>linearly</b> from 0% at threshold to 100% at full capacity.</p><p>Formula: <code>p = (occupancy - threshold) / (capacity - threshold)</code></p><p>Uses <code>math/rand.Float64()</code> coin flip. Set <code>shed_threshold: 0</code> to disable.</p>'
+      body: '<p>Probabilistic early rejection before the hard concurrency limit, set by <code>server.load_shed_threshold</code> (e.g. 0.8 = 80%). Rejection probability ramps <b>linearly</b> from 0% at the threshold to 100% at full capacity.</p><p>In slots: <code>t = int(threshold * capacity)</code>, <code>p = (occupancy - t) / (capacity - t)</code>. Shedding starts when occupancy reaches <code>t</code>.</p><p>Uses a <code>math/rand/v2</code> <code>Float64()</code> coin flip. Set <code>server.load_shed_threshold: 0</code> (the default) to disable.</p>'
     },
     R503S: {
       title: '503 SlowDown (Shed)',
@@ -185,12 +186,12 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     R503H: {
       title: '503 SlowDown (Hard)',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Hard admission rejection: the wait timer expired without acquiring a semaphore slot, or the client disconnected.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3o_admission_rejections_total</p>'
+      body: '<p>Hard admission rejection: no slot was free, and the wait timer (if any) expired without acquiring one.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p>If the client disconnects during the wait, nothing is written and <code>s3o_admission_client_canceled_total</code> is incremented instead.</p><p class="ac-metric">Metric: s3o_admission_rejections_total</p>'
     },
     RL: {
       title: 'Rate Limiter',
       badge: 'decision', badgeText: 'middleware',
-      body: '<p>Per-IP token bucket rate limiter using <code>golang.org/x/time/rate</code>.</p><p>Extracts client IP from <code>RemoteAddr</code> or <code>X-Forwarded-For</code> (rightmost untrusted IP when request arrives from a trusted proxy CIDR).</p><p>Config: <code>rate_limit.requests_per_sec</code>, <code>rate_limit.burst</code>, <code>rate_limit.trusted_proxies</code>.</p><p>Background goroutine cleans stale per-IP entries every <code>cleanup_interval</code> (default 1m). Disabled when <code>rate_limit</code> section is absent.</p>'
+      body: '<p>Per-IP token bucket rate limiter using <code>golang.org/x/time/rate</code>.</p><p>Extracts client IP from <code>RemoteAddr</code> or <code>X-Forwarded-For</code> (rightmost untrusted IP when request arrives from a trusted proxy CIDR).</p><p>Enabled by <code>rate_limit.enabled: true</code> (default false). Config: <code>rate_limit.requests_per_sec</code> (default 100), <code>rate_limit.burst</code> (default 200), <code>rate_limit.trusted_proxies</code>.</p><p>Background goroutine evicts per-IP entries older than <code>cleanup_max_age</code> (default 5m) every <code>cleanup_interval</code> (default 1m).</p>'
     },
     R429: {
       title: '429 SlowDown',
@@ -205,12 +206,12 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     AUTHOK: {
       title: 'Signature Valid?',
       badge: 'decision', badgeText: 'verification',
-      body: '<p>Compares the computed signature against the request\'s signature using <code>crypto/subtle.ConstantTimeCompare</code> (timing-safe).</p><p>On success, resolves the access key &rarr; virtual bucket via <code>BucketRegistry</code>, enabling multi-tenant per-bucket credential isolation.</p>'
+      body: '<p>Compares the computed signature against the request\'s signature using <code>hmac.Equal</code> (timing-safe).</p><p>On success, the access key resolves to a user. Authorization then checks that the user\'s grants reach the bucket and carry the permission the operation needs.</p>'
     },
     R403: {
       title: '403 Access Denied',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Authentication failure. Either <code>SignatureDoesNotMatch</code> (bad secret / tampered request) or <code>InvalidAccessKeyId</code> (unknown credentials).</p>'
+      body: '<p>Every authentication failure (bad signature, unknown access key, missing credentials, expired request) returns <code>AccessDenied</code> with no further detail. The reason is logged and audited on the server.</p><p>Authorization also returns 403 <code>AccessDenied</code> when the user cannot reach the bucket, or when the grant lacks the permission the operation needs.</p>'
     },
     ROUTE: {
       title: 'Method Routing',
@@ -235,32 +236,32 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     CAP: {
       title: 'Backend Capacity Check',
       badge: 'decision', badgeText: 'early rejection',
-      body: '<p><code>CanAcceptWrite(contentLength)</code> &mdash; checks if <b>any</b> backend has enough free quota for this upload.</p><p>Runs <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3o_early_rejections_total</p>'
+      body: '<p><code>CanAcceptWrite(contentLength)</code> &mdash; checks if <b>any</b> backend is eligible for this upload. It calls <code>EligibleForWrite</code>, which drops draining backends and backends whose circuit breaker is open, then backends over a monthly usage limit (the PutObject request pools, <code>ingress_byte_limit</code>) and backends whose per-backend <code>max_object_size</code> is smaller than the upload.</p><p>It does not check storage byte quota. That is decided later, after the body is buffered, by the pending-intent insert that claims room on a backend.</p><p>Runs <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3o_early_rejections_total</p>'
     },
     R507: {
       title: '507 Insufficient Storage',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>No backend has enough free quota for this upload. All backends are either at capacity or their circuit breakers are open.</p><p>Response: <code>507 Insufficient Storage</code> with <code>InsufficientStorage</code> error code.</p>'
+      body: '<p><b>Before the body</b>: no backend is eligible. Every backend is draining, has an open circuit breaker, is over a monthly usage limit, or has a per-backend <code>max_object_size</code> below the upload size.</p><p><b>After the body</b>: the pending-intent claim found no backend with enough free storage quota for the upload.</p><p>Response: <code>507 Insufficient Storage</code> with <code>InsufficientStorage</code> error code.</p>'
     },
     WRITE: {
       title: 'PutObject',
       badge: 'write', badgeText: 'write operation',
-      body: '<p>Streams the request body to the selected backend. Backend chosen by routing strategy (<code>spread</code>, <code>fill</code>, or <code>manual</code>).</p><p>Records object metadata (key, size, ETag, backend, content-type) in PostgreSQL. User metadata (<code>x-amz-meta-*</code>) stored as JSONB.</p><p>On backend failure, the failed partial write is enqueued to the <code>cleanup_queue</code> for async retry with exponential backoff.</p>'
+      body: '<p>Writes the request body to the selected backend. The order backends are tried in comes from <code>routing_strategy</code>: <code>pack</code> (default) or <code>spread</code>. A pending-intent insert claims room on the backend before the upload; if no backend has room, the client gets 507.</p><p>Records object metadata (key, size, ETag, backend, content-type, user metadata) in the metadata store (SQLite by default, or PostgreSQL).</p><p>On a backend error the pending intent is left for the pending reaper, which checks the backend and either commits or drops it. The write then fails over to the next eligible backend.</p>'
     },
     READ: {
       title: 'GetObject / HeadObject',
       badge: 'read', badgeText: 'read operation',
-      body: '<p>Retrieves the object from the backend that holds it (looked up in PostgreSQL metadata).</p><p>Supports <code>Range</code> requests (206 Partial Content with <code>Content-Range</code>), conditional requests (<code>If-None-Match</code> &rarr; 304, <code>If-Match</code> &rarr; 412).</p><p>Streams body directly to client via a shared buffer pool &mdash; no full-object buffering in memory. On read failure, automatically fails over to other backends that hold a replica.</p>'
+      body: '<p>Retrieves the object from the backend that holds it (looked up in the metadata store).</p><p>Supports <code>Range</code> requests (206 Partial Content with <code>Content-Range</code>), conditional requests (<code>If-None-Match</code> &rarr; 304, <code>If-Match</code> &rarr; 412).</p><p>Streams body directly to client via a shared buffer pool &mdash; no full-object buffering in memory. On read failure, automatically fails over to other backends that hold a replica.</p>'
     },
     DEL: {
       title: 'DeleteObject',
       badge: 'write', badgeText: 'write operation',
-      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>Removes the object from <b>all</b> backends that hold a copy, then deletes the metadata row from PostgreSQL.</p><p>Failed backend deletions are enqueued to the <code>cleanup_queue</code> with exponential backoff (1m to 24h, max 10 attempts).</p>'
+      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>Deletes the metadata rows first, then fans out the backend deletes for <b>every</b> copy through <code>DeleteOrEnqueue</code>.</p><p>A copy whose backend delete fails, or whose backend circuit is open, is enqueued to the <code>cleanup_queue</code> for retry with exponential backoff (1m to 24h, max 10 attempts). The client still gets 204.</p>'
     },
     CBW: {
       title: 'Circuit Breaker (Write)',
       badge: 'cb', badgeText: 'circuit breaker',
-      body: '<p>Three-state circuit breaker wrapping each backend: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without hitting the backend. Probe-eligible backends (open + timeout elapsed) are allowed through <code>excludeUnhealthy()</code> to prevent deadlock when all backends trip simultaneously.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metric: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Per-backend circuit breaker: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>closed</b> once an out-of-band <code>HeadBucket</code> health check passes. Backend breakers have no half-open state and never send a client request as a probe.</p><p><code>ExcludeUnhealthy</code> removes every backend whose circuit is open before placement. When all are open, <code>CanAcceptWrite</code> fails and the client gets 507 before sending the body.</p><p>A backend error during the upload fails over to the next eligible backend. 502 is the generic fallback when every attempted backend fails.</p><p>Config: <code>backend_circuit_breaker.enabled</code> (default false), <code>backend_circuit_breaker.failure_threshold</code>, <code>backend_circuit_breaker.open_timeout</code>. The <code>circuit_breaker.*</code> keys configure the database breaker.</p><p class="ac-metric">Metric: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     CBR: {
       title: 'Circuit Breaker (Read)',
@@ -270,22 +271,17 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     CBD: {
       title: 'Circuit Breaker (Delete)',
       badge: 'cb', badgeText: 'circuit breaker',
-      body: '<p>Same circuit breaker logic as writes. If the backend is down, the delete fails with 502 and the orphaned object is enqueued to the <code>cleanup_queue</code> for later retry.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Same circuit breaker as writes. A backend failure or open circuit does not fail the delete: the copy is enqueued to the <code>cleanup_queue</code> for later retry and the client gets 204.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     R502W: {
       title: '502 Bad Gateway (Write)',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Backend unavailable: circuit breaker is open and not yet probe-eligible (open timeout hasn\'t elapsed).</p><p>The client should retry with a different backend or wait for the circuit to transition to half-open.</p>'
-    },
-    R502D: {
-      title: '502 Bad Gateway (Delete)',
-      badge: 'reject', badgeText: 'rejection',
-      body: '<p>Backend unavailable for delete. The orphaned object data will be cleaned up asynchronously by the <code>cleanup_queue</code> worker.</p>'
+      body: '<p>Generic fallback when every backend the write tried returned an error. Each failed attempt left its pending intent for the pending reaper.</p><p>Response: <code>502 Bad Gateway</code> with <code>InternalError</code>.</p>'
     },
     OK_W: {
       title: '200 OK (Write)',
       badge: 'success', badgeText: 'success',
-      body: '<p>Object stored successfully. Response includes the <code>ETag</code> header (MD5 of the uploaded content).</p><p>Metadata recorded in PostgreSQL: key, size, ETag, backend name, content-type, user metadata, timestamps.</p>'
+      body: '<p>Object stored successfully. Response includes the <code>ETag</code> header (MD5 of the uploaded content).</p><p>Metadata recorded in the metadata store (SQLite by default, or PostgreSQL): key, size, ETag, backend name, content-type, user metadata, timestamps.</p>'
     },
     OK_R: {
       title: '200 / 206 (Read)',

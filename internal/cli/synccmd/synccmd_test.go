@@ -314,6 +314,26 @@ func TestImportPage_SkipsKeyWithPendingDelete(t *testing.T) {
 	}
 }
 
+// TestRefuseDrained_RefusesABackendWithADrainRecord verifies sync proceeds on a
+// backend with no drain record and refuses one that has any.
+func TestRefuseDrained_RefusesABackendWithADrainRecord(t *testing.T) {
+	ctx := context.Background()
+	_, adminDB := freshStore(t)
+	if err := refuseDrained(ctx, adminDB, "b1"); err != nil {
+		t.Fatalf("refuseDrained with no drain record: %v", err)
+	}
+	drains, ok := adminDB.(core.DrainStore)
+	if !ok {
+		t.Fatalf("store %T does not record drains", adminDB)
+	}
+	if _, err := drains.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := refuseDrained(ctx, adminDB, "b1"); err == nil {
+		t.Error("refuseDrained let sync import onto a draining backend")
+	}
+}
+
 // TestRun_BackendInitFails_ReturnsExitCodeOne covers the runtime where the
 // backend can be configured but the configured S3 endpoint is unreachable.
 // We invoke Run with a dry-run so we don't actually need a live MinIO; the

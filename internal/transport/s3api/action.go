@@ -82,8 +82,8 @@ const (
 // but not delete still has to be able to abandon its own failed upload, or it
 // leaks parts it cannot clean up. CopyObject and UploadPartCopy need read as
 // well as write, because they read the source they name; copies are same-bucket
-// today, so both land on the one grant. Tag operations need only Tags in either
-// direction, matching how object metadata is granted as one intent.
+// today, so both land on the one grant. Reading a tag set needs Read, like
+// reading the object; replacing or removing one needs Tags.
 var requiredPermissions = map[Action]core.PermissionSet{
 	ActionHeadBucket:          core.PermListBuckets,
 	ActionGetBucketLocation:   core.PermListBuckets,

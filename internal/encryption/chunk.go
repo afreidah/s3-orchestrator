@@ -12,7 +12,7 @@
 //   [header 32 bytes][chunk-0][chunk-1]...[chunk-N]
 //
 // Header: magic "SENC" (4B), version 0x01 (1B), chunk_size big-endian (4B),
-// reserved zeros (23B).
+// base nonce (12B), reserved zeros (11B).
 //
 // Each chunk: nonce (12B) + ciphertext (up to chunk_size bytes) + tag (16B).
 // -------------------------------------------------------------------------------
@@ -349,7 +349,8 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 // 32-byte DEK per object, newEncryptReader generates a fresh random base nonce
 // per call, and chunk indices are sequential within one object, so the XOR
 // produces a unique nonce per chunk. A re-uploaded plaintext gets a different
-// DEK and base nonce, and PutObject re-encrypts with a fresh DEK on every retry.
+// DEK and base nonce. A PutObject encrypts once and every retry replays that
+// same ciphertext, so no nonce is ever reused under a DEK with other bytes.
 //
 // Relaxing the DEK-per-object invariant would require replacing this with
 // random per-chunk nonces or a NIST-compliant counter mode.

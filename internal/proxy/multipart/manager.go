@@ -182,16 +182,6 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 	)
 	defer span.End()
 
-	// Pick a backend with available quota (estimate 0 bytes since final size is
-	// unknown). Nothing is claimed here: the parts arrive later and each is
-	// counted against the backend by its own row as it lands.
-	backendName, err := mp.coord.PickWriteTarget(span, operation, 0)
-	if err != nil {
-		return "", "", err
-	}
-
-	uploadID := audit.NewID()
-
 	// Generate the upload-level DEK now so every UploadPart and the
 	// assembled object's CompleteMultipartUpload share one wrapped DEK.
 	// The packed format mirrors object_locations.encryption_key:
@@ -214,17 +204,19 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 		keyID = kid
 	}
 
-	if err := mp.stores.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	// The final size is unknown, so nothing is claimed: each part is counted
+	// against the backend by its own row as it lands.
+	uploadID := audit.NewID()
+	backendName, err := mp.coord.ClaimUploadTarget(ctx, span, operation, &core.CreateMultipartUploadParams{
 		UploadID:      uploadID,
 		ObjectKey:     key,
-		BackendName:   backendName,
 		ContentType:   req.ContentType,
 		Metadata:      req.Metadata,
 		EncryptionKey: encryptionKey,
 		KeyID:         keyID,
 		Tags:          req.Tags,
-	}); err != nil {
-		observe.RecordSpanError(span, err)
+	})
+	if err != nil {
 		return "", "", err
 	}
 

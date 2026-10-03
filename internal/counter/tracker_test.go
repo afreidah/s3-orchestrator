@@ -530,7 +530,7 @@ func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
 		},
 	}
 
-	err := tracker.FlushUsage(context.Background(), mockFlusher, nil)
+	err := tracker.FlushUsage(context.Background(), mockFlusher)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -551,25 +551,6 @@ func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
 	}
 }
 
-// TestFlushUsage_SkipsBackendsInSkipMap verifies the flush usage skips backends in skip map path by exercising tracker.Record, tracker.FlushUsage, context.Background.
-func TestFlushUsage_SkipsBackendsInSkipMap(t *testing.T) {
-	t.Parallel()
-	backend := NewLocalCounterBackend([]string{"b1"})
-	tracker := NewUsageTracker(backend, nil)
-	tracker.RecordN("b1", s3op.GetObject, 10)
-
-	called := false
-	mockFlusher := &mockUsageFlusher{fn: func(_, _ string, _, _, _ int64) error {
-		called = true
-		return nil
-	}}
-
-	_ = tracker.FlushUsage(context.Background(), mockFlusher, map[string]bool{"b1": true})
-	if called {
-		t.Error("should skip backends in skip map")
-	}
-}
-
 // TestFlushUsage_RestoresOnError verifies the flush usage restores on error contract.
 func TestFlushUsage_RestoresOnError(t *testing.T) {
 	t.Parallel()
@@ -581,7 +562,7 @@ func TestFlushUsage_RestoresOnError(t *testing.T) {
 		return errors.New("db down")
 	}}
 
-	err := tracker.FlushUsage(context.Background(), mockFlusher, nil)
+	err := tracker.FlushUsage(context.Background(), mockFlusher)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -606,7 +587,7 @@ func TestFlushUsage_RestoresPoolsOnPoolError(t *testing.T) {
 		poolFn: func(_, _ string, _ core.PoolUsage) error { return errors.New("db down") },
 	}
 
-	if err := tracker.FlushUsage(context.Background(), mockFlusher, nil); err == nil {
+	if err := tracker.FlushUsage(context.Background(), mockFlusher); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := cb.Load("b1", FieldAPIRequests); got != 0 {

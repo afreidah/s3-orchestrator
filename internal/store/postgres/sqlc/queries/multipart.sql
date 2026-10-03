@@ -9,9 +9,21 @@
 -- stale-upload sweep used by the multipart cleanup background worker.
 -- -----------------------------------------------------------------------------
 
--- name: CreateMultipartUpload :exec
+-- name: CreateMultipartUpload :execrows
+-- Records the upload only if its backend accepts writes, read from the same view
+-- every other admission test uses. Nothing is claimed against the backend's room
+-- here: each part is counted by its own row as it lands. Zero rows affected
+-- means the backend is being drained and the caller should try the next one.
+--
+-- Every parameter is cast because it appears in a SELECT list, where a bare
+-- parameter takes no type from the INSERT target.
 INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());
+SELECT @upload_id::text, @object_key::text, @backend_name::text,
+       sqlc.narg('content_type')::text, sqlc.narg('metadata')::jsonb,
+       sqlc.narg('encryption_key')::bytea, sqlc.narg('key_id')::text,
+       sqlc.narg('tagging')::text, NOW()
+FROM backend_capacity c
+WHERE c.backend_name = @backend_name::text AND c.accepting_writes;
 
 -- name: GetMultipartUpload :one
 -- tagging rides along because CompleteMultipartUpload applies the set the

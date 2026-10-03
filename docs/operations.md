@@ -118,13 +118,15 @@ Each refusal names what is in the way and returns a non-zero exit code, so a scr
 
 Draining migrates all objects off a backend to other backends without data loss. Use this when decommissioning a backend but preserving all stored objects.
 
+A drain is a record in the metadata database. Starting one writes the record, and from that moment every instance refuses new writes to the backend: PUTs, copies, new replicas and new multipart uploads all go elsewhere. The drain worker moves the objects off on its next tick, under an advisory lock, so one instance does the moving. Because the record is in the database, a restart resumes a drain in progress and keeps a finished drain's backend out of placement.
+
 1. **Start the drain:**
 
    ```bash
    s3-orchestrator admin drain <backend-name>
    ```
 
-   This immediately excludes the backend from new writes (PutObject and CreateMultipartUpload skip it) and begins migrating objects in batches of 100. Any in-progress multipart uploads on the backend are aborted first.
+   The drain worker picks the drain up within its 10-second tick. Each pass aborts the backend's open multipart uploads, then moves its objects off 100 at a time. An object that also has a copy on another backend loses only its copy on the draining one; an object the draining backend holds the only copy of is copied to the least-utilized eligible backend, its database row moved there, and the source bytes deleted.
 
 2. **Monitor progress:**
 
@@ -132,18 +134,17 @@ Draining migrates all objects off a backend to other backends without data loss.
    s3-orchestrator admin drain-status <backend-name>
    ```
 
-   Returns objects remaining, bytes remaining, objects moved so far, and whether the drain is still active. Poll this periodically until `active` is `false` and `objects_remaining` is `0`.
+   Returns the drain's `state` (`draining`, `drained`, or `failed`), objects moved so far, and, while it is in progress, the objects and bytes still on the backend. A failed drain also carries the error that stopped it.
 
-3. **Wait for completion.** The drain runs as a background goroutine. Each object is read from the source backend, written to the least-utilized eligible backend, and the database record is atomically swapped via compare-and-swap. Failed moves are logged but don't stop the drain.
+3. **Wait for `drained`.** The drain finishes only once nothing it moves is left on the backend: no object rows, no writes that were admitted before the drain and are still uploading, and no multipart uploads. Until then it stays `draining` and the worker checks again each tick. Objects that fail to move are retried on the next tick rather than skipped. [Unmanaged](admin-api.md#objects-the-orchestrator-does-not-own) objects, which reconcile found outside every virtual bucket prefix, are left where they are and do not hold the drain up; removing the backend deletes their rows.
 
-4. **Remove the backend from config and restart:**
+4. **Remove the backend:**
 
    ```bash
-   # Edit config.yaml - remove the backend entry
-   # Restart or redeploy the orchestrator
+   s3-orchestrator admin remove-backend <backend-name>
    ```
 
-   After drain completes, `DeleteBackendData` cleans up remaining database records (usage, quota, cleanup queue) automatically. Removing the backend from config on restart prevents it from being re-initialized.
+   Then remove the backend from the config and restart or redeploy. Removing the backend deletes its remaining database records, including the drain record. A drained backend left in the config stays out of placement, so there is no rush, but its usage and quota records stay until it is removed.
 
 **Cancelling a drain:**
 
@@ -151,13 +152,15 @@ Draining migrates all objects off a backend to other backends without data loss.
 s3-orchestrator admin drain-cancel <backend-name>
 ```
 
-Objects already moved are not rolled back. The backend becomes eligible for new writes again.
+Cancelling clears the drain record, whatever its state, and the backend accepts new writes again. A drain in progress stops before its next page of 100. Objects already moved are not moved back.
+
+**When a drain fails:** a drain that hits an error it cannot retry, such as the backend's object listing failing or the backend no longer being configured, is marked `failed` with the reason. The backend stays out of placement. Run `drain` again to restart it from the objects still on the backend, or `drain-cancel` to put the backend back into service.
 
 **Metrics to watch during drain:**
 
 | Metric | Description |
 |--------|-------------|
-| `s3o_drain_active` | `1` while a drain is in progress |
+| `s3o_drain_active` | Number of backends with a drain in progress |
 | `s3o_drain_objects_moved_total` | Objects successfully migrated |
 | `s3o_drain_bytes_moved_total` | Bytes migrated |
 
@@ -189,17 +192,13 @@ The `--purge` flag without `--confirm` shows a preview of what would be destroye
 
 After removing, edit the config to remove the backend entry and restart.
 
-> **Note:** You cannot remove a backend that is currently draining. Cancel the drain first with `drain-cancel`.
+> **Note:** You cannot remove a backend while its drain is in progress. Wait for it to finish, or cancel it first with `drain-cancel`.
 
-### Important: update the config after drain or remove
+### Update the config after removing a backend
 
-Drain and remove state is held in memory only - it is **not** persisted to the database. This means:
+**SIGHUP does not remove backends** - config reload only updates quota limits and usage limits. The backend map is set at startup and cannot be modified at runtime. If the service restarts with a removed backend still in the config, `SyncQuotaLimits` re-creates its quota record and the backend is re-initialized as a fresh, empty backend eligible for new writes. No data is lost, but the decommissioned backend starts receiving traffic again.
 
-- **If the service restarts with a drained/removed backend still in the config**, `SyncQuotaLimits` re-creates the backend's quota record and the backend is re-initialized as a fresh, empty backend eligible for new writes. No data is lost, but the decommissioned backend silently starts receiving traffic again.
-- **If the service crashes during an active drain**, all drain progress is lost. The backend reverts to active on restart. You would need to restart the drain.
-- **SIGHUP does not remove backends** - config reload only updates quota limits and usage limits. The in-memory backend map is set at startup and cannot be modified at runtime.
-
-**Always remove the backend from the config file and restart (or redeploy) after a drain or remove operation completes.** The dashboard UI shows a pulsing "Draining" badge on backends with an active drain so you can monitor progress visually.
+**Always remove the backend from the config file and restart (or redeploy) after removing it.** The dashboard shows a pulsing "Draining" badge while a drain is in progress, "Drained" once it has finished, and "Drain failed" with the reason on hover when it stopped on an error.
 
 ### Adjusting quotas
 

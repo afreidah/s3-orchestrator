@@ -23,10 +23,15 @@ func (q *Queries) CountActiveMultipartUploadsByPrefix(ctx context.Context, prefi
 	return count, err
 }
 
-const createMultipartUpload = `-- name: CreateMultipartUpload :exec
+const createMultipartUpload = `-- name: CreateMultipartUpload :execrows
 
 INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+SELECT $1::text, $2::text, $3::text,
+       $4::text, $5::jsonb,
+       $6::bytea, $7::text,
+       $8::text, NOW()
+FROM backend_capacity c
+WHERE c.backend_name = $3::text AND c.accepting_writes
 `
 
 type CreateMultipartUploadParams struct {
@@ -50,8 +55,15 @@ type CreateMultipartUploadParams struct {
 // prefix-scoped listing the S3 ListMultipartUploads handler needs, and the
 // stale-upload sweep used by the multipart cleanup background worker.
 // -----------------------------------------------------------------------------
-func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipartUploadParams) error {
-	_, err := q.db.Exec(ctx, createMultipartUpload,
+// Records the upload only if its backend accepts writes, read from the same view
+// every other admission test uses. Nothing is claimed against the backend's room
+// here: each part is counted by its own row as it lands. Zero rows affected
+// means the backend is being drained and the caller should try the next one.
+//
+// Every parameter is cast because it appears in a SELECT list, where a bare
+// parameter takes no type from the INSERT target.
+func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipartUploadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createMultipartUpload,
 		arg.UploadID,
 		arg.ObjectKey,
 		arg.BackendName,
@@ -61,7 +73,10 @@ func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipart
 		arg.KeyID,
 		arg.Tagging,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteMultipartUpload = `-- name: DeleteMultipartUpload :exec

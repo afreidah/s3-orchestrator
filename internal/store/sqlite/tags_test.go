@@ -170,7 +170,7 @@ func TestMultipartTags_SurviveCreateToComplete(t *testing.T) {
 	ctx := context.Background()
 
 	tags := []core.Tag{{Key: "zeta", Value: "3"}, {Key: "alpha", Value: "1"}}
-	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	if _, err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
 		UploadID:    "upload-1",
 		ObjectKey:   "bucket/big",
 		BackendName: "backend-a",
@@ -200,7 +200,7 @@ func TestMultipartTags_UntaggedUploadReadsEmpty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	if _, err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
 		UploadID:    "upload-2",
 		ObjectKey:   "bucket/plain",
 		BackendName: "backend-a",

@@ -118,6 +118,13 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// The view goes first: it reads the quota and pending tables that
+		// older steps rebuild, and SQLite refuses to alter a table a view
+		// depends on.
+		{19, func() {
+			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			exec("drop backend_drains", `DROP TABLE IF EXISTS backend_drains`)
+		}},
 		// Rebuilt rather than column-dropped: the primary key moved onto the
 		// resource, and SQLite cannot take it back off in place any more than
 		// the migration could put it on.
@@ -208,12 +215,12 @@ func seedBytesUsed(t *testing.T, s *Store, backend string, used int64) {
 // mustCreateUpload creates a multipart upload, failing the test on error.
 func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 	t.Helper()
-	if err := s.CreateMultipartUpload(context.Background(), &core.CreateMultipartUploadParams{
+	if created, err := s.CreateMultipartUpload(context.Background(), &core.CreateMultipartUploadParams{
 		UploadID:    uploadID,
 		ObjectKey:   key,
 		BackendName: backend,
-	}); err != nil {
-		t.Fatalf("CreateMultipartUpload(%s): %v", uploadID, err)
+	}); err != nil || !created {
+		t.Fatalf("CreateMultipartUpload(%s) = %v, %v", uploadID, created, err)
 	}
 }
 
@@ -908,7 +915,7 @@ func TestListBackendQuotaUsage_CountsInflightParts(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	if _, err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
 		UploadID:    "upload-inflight",
 		ObjectKey:   "bucket/big",
 		BackendName: "backend-a",
@@ -1123,7 +1130,7 @@ func TestListParts_PagesAfterMarker(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	if _, err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
 		UploadID: "upload-pages", ObjectKey: "bucket/big.bin", BackendName: "backend-a",
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
@@ -1164,7 +1171,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	meta := map[string]string{"Content-Type": "image/png"}
-	err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+	_, err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
 		UploadID:    "upload-1",
 		ObjectKey:   "bucket/photo.png",
 		BackendName: "backend-a",

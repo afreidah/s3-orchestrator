@@ -11,46 +11,46 @@ Envelope encryption and decryption paths for S3 objects using chunked AES-256-GC
 
 ### How it works
 
-When encryption is enabled, every object stored through the S3 Orchestrator is encrypted before it leaves the server. The system uses **envelope encryption** — a two-layer key scheme where each object gets its own throwaway key, and that key is itself encrypted by a master key. Encryption is optional — see the [configuration reference](../../docs/user-guide/) for how to enable it.
+When encryption is enabled, every object stored through the S3 Orchestrator is encrypted before it leaves the server. The system uses **envelope encryption** - a two-layer key scheme where each object gets its own throwaway key, and that key is itself encrypted by a master key. Encryption is optional - see the [encryption guide](../../docs/encryption/) for how to enable it.
 
 #### Key concepts
 
-- **DEK (Data Encryption Key)** — A random 32-byte (256-bit) key generated fresh for every object. This is the key that actually encrypts the data. No two objects share a DEK, so compromising one object's key reveals nothing about any other object.
+- **DEK (Data Encryption Key)** - A random 32-byte (256-bit) key generated fresh for every object. This is the key that actually encrypts the data. No two objects share a DEK, so compromising one object's key reveals nothing about any other object.
 
-- **Master key** — A long-lived key managed by a key provider (Vault Transit, a config value, or a key file). The master key never touches the data directly — it only encrypts and decrypts DEKs. This means the master key can be rotated without re-encrypting every object.
+- **Master key** - A long-lived key managed by a key provider (Vault Transit, a config value, or a key file). The master key never touches the data directly - it only encrypts and decrypts DEKs. This means the master key can be rotated without re-encrypting every object.
 
-- **Nonce** — A 12-byte random value that ensures the same plaintext encrypted with the same key produces different ciphertext each time. The system generates one **base nonce** per object, then mathematically derives a unique nonce for each chunk by XORing the base nonce with the chunk's index number.
+- **Nonce** - A 12-byte random value that ensures the same plaintext encrypted with the same key produces different ciphertext each time. The system generates one **base nonce** per object, then mathematically derives a unique nonce for each chunk by XORing the base nonce with the chunk's index number.
 
-- **AES-256-GCM** — The encryption algorithm. GCM mode provides both confidentiality (data is unreadable) and authenticity (any tampering is detected). Each chunk produces a 16-byte authentication tag that acts as a tamper seal.
+- **AES-256-GCM** - The encryption algorithm. GCM mode provides both confidentiality (data is unreadable) and authenticity (any tampering is detected). Each chunk produces a 16-byte authentication tag that acts as a tamper seal.
 
 #### Encrypting an object (write path)
 
 1. **Generate a DEK**: 32 random bytes from the OS cryptographic random source.
-2. **Wrap the DEK**: The master key encrypts the DEK via the configured key provider (e.g., Vault Transit API call). This produces a **wrapped DEK** — an opaque blob that can only be unwrapped by the same master key.
+2. **Wrap the DEK**: The master key encrypts the DEK via the configured key provider (e.g., Vault Transit API call). This produces a **wrapped DEK** - an opaque blob that can only be unwrapped by the same master key.
 3. **Generate a base nonce**: 12 random bytes.
-4. **Write the header**: A 32-byte header is prepended to the ciphertext stream — `"SENC"` magic bytes, format version, chunk size, and the base nonce.
+4. **Write the header**: A 32-byte header is prepended to the ciphertext stream - `"SENC"` magic bytes, format version, chunk size, and the base nonce.
 5. **Encrypt chunk by chunk** (default 64 KiB per chunk):
    - Read up to one chunk of plaintext.
    - Derive this chunk's nonce: take the base nonce and XOR the chunk index into its last 8 bytes.
    - Encrypt the chunk with AES-256-GCM using the DEK and the derived nonce. This produces ciphertext + a 16-byte auth tag.
    - Write to the output: `nonce (12 bytes) | ciphertext | auth tag (16 bytes)`.
    - Repeat until all plaintext is consumed.
-6. **Upload the ciphertext stream** (header + chunks) to the S3 backend.
-7. **Store metadata in PostgreSQL**: the wrapped DEK, the master key ID, the base nonce (packed together as `baseNonce || wrappedDEK` in the `encryption_key` column), and the plaintext size.
+6. **Upload the ciphertext** (header + chunks) to the S3 backend. The ciphertext is produced once per write and buffered (in memory up to 32 MiB, in a temp file above that), so every upload attempt and every copy sends identical bytes.
+7. **Store metadata in the metadata store**: the wrapped DEK, the master key ID, the base nonce (packed together as `baseNonce || wrappedDEK` in the `encryption_key` column), and the plaintext size.
 
-The plaintext DEK is never stored anywhere — it exists only in memory during the encryption operation.
+The plaintext DEK is never stored anywhere - it exists only in memory during the encryption operation.
 
 "Plaintext" here means whatever the encryptor was handed, which is not always the object the client wrote. With [compression](../../docs/compression/) also enabled, the object is encoded first - ciphertext does not compress - so the encryptor's input is the compressed stream and `plaintext_size` records that. The client's own size lives in `logical_size`. With compression off the two are the same and `logical_size` is unset.
 
 #### Decrypting an object (read path)
 
-1. **Retrieve metadata from PostgreSQL**: the wrapped DEK, key ID, and base nonce.
+1. **Retrieve metadata from the metadata store**: the wrapped DEK, key ID, and base nonce.
 2. **Unwrap the DEK**: The key provider decrypts the wrapped DEK using the master key identified by the stored key ID, recovering the original 32-byte DEK.
 3. **Parse the header**: Read the 32-byte header from the ciphertext stream to get the chunk size and base nonce.
 4. **Decrypt chunk by chunk**:
    - Read one chunk: `nonce (12B) | ciphertext | auth tag (16B)`.
-   - Verify the nonce matches the expected value (base nonce XOR chunk index) — this detects reordering or insertion attacks.
-   - Decrypt with AES-256-GCM, which also verifies the auth tag — if the data was tampered with, decryption fails.
+   - Verify the nonce matches the expected value (base nonce XOR chunk index) - this detects reordering or insertion attacks.
+   - Decrypt with AES-256-GCM, which also verifies the auth tag - if the data was tampered with, decryption fails.
    - Stream the plaintext to the client.
 
 #### Range requests (partial reads)
@@ -59,7 +59,7 @@ When a client requests a byte range (e.g., `Range: bytes=1000-2000`), the system
 
 1. **Translate the plaintext byte range to ciphertext byte range**: figure out which chunks contain the requested bytes, accounting for the 32-byte header and 28-byte overhead per chunk.
 2. **Fetch only those chunks** from the S3 backend using a range request.
-3. **Decrypt just the fetched chunks** (typically 1–2 chunks for a small range).
+3. **Decrypt just the fetched chunks** (typically one or two chunks for a small range).
 4. **Slice the plaintext** to the exact requested bytes and stream them to the client.
 
 The base nonce is stored in the database specifically so range decryption can derive per-chunk nonces without fetching the ciphertext header from the backend.
@@ -179,17 +179,17 @@ The base nonce is stored in the database specifically so range decryption can de
     PLAIN: {
       title: 'Plaintext Stream',
       badge: 'entry', badgeText: 'encrypt entry',
-      body: '<p>Incoming plaintext body from <code>PutObject</code>. The body is passed through <code>io.TeeReader</code> to simultaneously compute an MD5 digest for the client-facing ETag.</p><p>The <code>Encryptor.Encrypt(ctx, body, plaintextSize)</code> method orchestrates the full envelope encryption pipeline.</p>'
+      body: '<p>Plaintext body from <code>PutObject</code>, already buffered by the write path. The MD5 for the client-facing ETag (and the optional SHA-256 content hash) were computed over the client\'s bytes during that buffering pass, before compression or encryption.</p><p>The <code>Encryptor.Encrypt(ctx, body, plaintextSize)</code> method runs the envelope encryption pipeline. It does not compute the ETag.</p>'
     },
     DEK: {
       title: 'Generate Random 256-bit DEK',
       badge: 'process', badgeText: 'key generation',
-      body: '<p>Generates a 32-byte (256-bit) Data Encryption Key using <code>crypto/rand.Read(dek)</code>. Each object gets a unique DEK &mdash; no key reuse across objects.</p><p>On write retries (failover to another backend), a <b>fresh DEK and nonce</b> are generated, producing different ciphertext for each attempt.</p>'
+      body: '<p>Generates a 32-byte (256-bit) Data Encryption Key using <code>crypto/rand.Read(dek)</code>. Each object gets a unique DEK &mdash; no key reuse across objects.</p><p>A <code>PutObject</code> encrypts once, before the failover loop. Every attempt and every copy sends the same ciphertext.</p><p>Multipart uploads wrap one DEK at <code>CreateMultipartUpload</code> and reuse it for every part through <code>EncryptWithDEK</code>, which draws a fresh base nonce per part.</p>'
     },
     WRAP: {
       title: 'WrapDEK via KeyProvider',
       badge: 'storage', badgeText: 'key wrapping',
-      body: '<p><code>provider.WrapDEK(ctx, dek)</code> encrypts the plaintext DEK with the master key. Returns <code>(wrappedDEK, keyID, error)</code>.</p><p>The <code>keyID</code> identifies which master key was used, enabling key rotation via <code>MultiKeyProvider</code>. The wrapped DEK and keyID are stored in PostgreSQL alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="encrypt"}</p>'
+      body: '<p><code>provider.WrapDEK(ctx, dek)</code> encrypts the plaintext DEK with the master key. Returns <code>(wrappedDEK, keyID, error)</code>.</p><p>The <code>keyID</code> identifies which master key was used, enabling key rotation via <code>MultiKeyProvider</code>. The wrapped DEK and keyID are stored in the metadata store alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="encrypt"}, counted once per completed encrypt after <code>Encrypt</code> returns, not per wrap call</p>'
     },
     PROVIDER: {
       title: 'Key Provider Type',
@@ -214,7 +214,7 @@ The base nonce is stored in the database specifically so range decryption can de
     CHUNK: {
       title: 'Read Plaintext Chunk',
       badge: 'process', badgeText: 'chunking',
-      body: '<p><code>io.ReadFull(src, plain[:chunkSize])</code> reads up to <code>chunkSize</code> bytes (default 65536 bytes; configurable 4 KiB-1 MiB, power of two). The last chunk may be shorter.</p><p>Streaming design: <code>encryptReader</code> implements <code>io.Reader</code>, encrypting one chunk per <code>Read()</code> call. No need to buffer the entire object in memory.</p>'
+      body: '<p><code>io.ReadFull(src, plain[:chunkSize])</code> reads up to <code>chunkSize</code> bytes (default 65536 bytes; configurable 4 KiB-1 MiB, power of two). The last chunk may be shorter.</p><p>Streaming design: <code>encryptReader</code> implements <code>io.Reader</code>, encrypting one chunk per <code>Read()</code> call. <code>PutObject</code> materializes its output once (in memory up to 32 MiB, in a temp file above that) so every upload attempt replays the same bytes.</p>'
     },
     NONCE: {
       title: 'Derive Per-Chunk Nonce',
@@ -229,22 +229,22 @@ The base nonce is stored in the database specifically so range decryption can de
     MORE: {
       title: 'More Chunks?',
       badge: 'decision', badgeText: 'loop control',
-      body: '<p>The <code>encryptReader.Read()</code> loop continues until <code>io.ReadFull</code> returns <code>io.EOF</code> or <code>io.ErrUnexpectedEOF</code> (last partial chunk), at which point <code>srcDone = true</code>.</p><p>The <code>md5FinalizingReader</code> wrapper captures the plaintext MD5 hex digest on EOF and stores it in <code>EncryptResult.PlaintextMD5</code> for the client-facing ETag.</p>'
+      body: '<p>The <code>encryptReader.Read()</code> loop continues until <code>io.ReadFull</code> returns <code>io.EOF</code> or <code>io.ErrUnexpectedEOF</code> (last partial chunk), at which point <code>srcDone = true</code>.</p>'
     },
     CTOUT: {
       title: 'Ciphertext + Metadata',
       badge: 'success', badgeText: 'encrypt output',
-      body: '<p><code>EncryptResult</code> contains everything needed for storage:</p><p><b>Body</b>: streaming ciphertext reader (header + chunks)<br><b>CiphertextSize</b>: pre-computed via <code>ciphertextSizeExact()</code><br><b>WrappedDEK</b>: encrypted DEK bytes<br><b>KeyID</b>: master key identifier<br><b>BaseNonce</b>: 12-byte nonce for range decryption<br><b>PlaintextMD5</b>: hex MD5 (finalized on EOF)</p><p>DB stores <code>PackKeyData(baseNonce || wrappedDEK)</code> and <code>keyID</code> in the object record.</p>'
+      body: '<p><code>EncryptResult</code> contains everything needed for storage:</p><p><b>Body</b>: streaming ciphertext reader (header + chunks)<br><b>CiphertextSize</b>: pre-computed via <code>ciphertextSizeExact()</code><br><b>WrappedDEK</b>: encrypted DEK bytes<br><b>KeyID</b>: master key identifier<br><b>BaseNonce</b>: 12-byte nonce for range decryption</p><p>DB stores <code>PackKeyData(baseNonce || wrappedDEK)</code> and <code>keyID</code> in the object record.</p>'
     },
     CTIN: {
       title: 'Ciphertext (Full Object)',
       badge: 'entry', badgeText: 'decrypt entry',
-      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. The <code>Encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code> method handles the complete decryption flow.</p><p>The wrapped DEK and keyID are retrieved from PostgreSQL along with the object location metadata.</p>'
+      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. The <code>Encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code> method handles the complete decryption flow.</p><p>The wrapped DEK and keyID are retrieved from the metadata store along with the object location metadata.</p>'
     },
     UNWRAP: {
       title: 'UnwrapDEK via KeyProvider',
       badge: 'storage', badgeText: 'key unwrapping',
-      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. Falls back to primary as best-effort for unknown keyIDs.</p><p>Vault Transit: POST to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt"}</p>'
+      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. An unknown keyID has no fallback: it increments the counter below, logs an error and returns "unknown encryption key ID". The object stays unreadable until its key is added to <code>previous_keys</code>.</p><p>Vault Transit: POST to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metrics: s3o_encryption_unknown_key_id_total; s3o_encryption_operations_total{op="decrypt"} or {op="decrypt_range"}, counted in <code>DecryptStored</code> once per completed decrypt setup, not per unwrap call</p>'
     },
     PARSE: {
       title: 'Parse 32-Byte Header',
@@ -274,7 +274,7 @@ The base nonce is stored in the database specifically so range decryption can de
     PTOUT: {
       title: 'Plaintext Stream',
       badge: 'success', badgeText: 'decrypt output',
-      body: '<p>The <code>decryptReader</code> implements <code>io.Reader</code>, producing plaintext bytes that stream directly to the HTTP response. No full-object buffering required.</p><p>The client-facing ETag was pre-computed from the plaintext MD5 during encryption and stored in the DB, so no recomputation is needed during reads.</p>'
+      body: '<p>The <code>decryptReader</code> implements <code>io.Reader</code>, producing plaintext bytes that stream directly to the HTTP response. No full-object buffering required.</p><p>The ETag reported to the client is the one stored on the row at write time, so nothing is recomputed during reads.</p>'
     },
     RANGE: {
       title: 'Range Request (start-end)',
@@ -289,7 +289,7 @@ The base nonce is stored in the database specifically so range decryption can de
     FETCH: {
       title: 'Fetch Ciphertext Chunks Only',
       badge: 'storage', badgeText: 'partial fetch',
-      body: '<p>Backend <code>GetObject</code> with the translated <code>Range: bytes=ctStart-ctEnd</code> header. Only the ciphertext chunks covering the requested plaintext range are fetched &mdash; no header, no unnecessary chunks.</p><p>This is the key efficiency gain: a 1KB range from a 1GB encrypted object fetches at most 2 chunks (2MB + 56B overhead) instead of the entire ciphertext.</p>'
+      body: '<p>Backend <code>GetObject</code> with the translated <code>Range: bytes=ctStart-ctEnd</code> header. Only the ciphertext chunks covering the requested plaintext range are fetched &mdash; no header, no unnecessary chunks.</p><p>This is the key efficiency gain: a 1KB range from a 1GB encrypted object fetches at most 2 chunks instead of the entire ciphertext: 128 KiB plus 56 bytes of overhead at the default 64 KiB chunk size, or 2 MiB plus 56 bytes at the 1 MiB maximum.</p>'
     },
     RUNWRAP: {
       title: 'UnwrapDEK via KeyProvider',

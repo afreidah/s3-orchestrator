@@ -307,6 +307,29 @@ type BackendQuotaUsage struct {
 	InflightBytes int64
 }
 
+// DrainState is where a backend's drain stands. A backend in any of these
+// states is refused new writes.
+type DrainState string
+
+// Drain states. Draining is in progress, drained has moved every object off,
+// and failed stopped on an error and waits for an operator to retry or clear it.
+const (
+	DrainStateDraining DrainState = "draining"
+	DrainStateDrained  DrainState = "drained"
+	DrainStateFailed   DrainState = "failed"
+)
+
+// BackendDrain is one backend's drain record. FinishedAt is nil while the drain
+// is in progress, and LastError is set only for a failed drain.
+type BackendDrain struct {
+	BackendName  string
+	State        DrainState
+	ObjectsMoved int64
+	LastError    string
+	StartedAt    time.Time
+	FinishedAt   *time.Time
+}
+
 // Unlimited reports whether the backend has no byte ceiling. A zero
 // bytes_limit is how the schema spells "no quota enforcement".
 func (b BackendQuotaUsage) Unlimited() bool {

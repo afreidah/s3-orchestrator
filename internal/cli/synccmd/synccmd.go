@@ -70,6 +70,10 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 		return exit
 	}
 	defer adminDB.Close()
+	if err := refuseDrained(ctx, adminDB, backendCfg.Name); err != nil {
+		synccmdLogger().ErrorContext(ctx, "sync refused", "error", err)
+		return 1
+	}
 
 	s3b, err := backend.NewS3Backend(ctx, backendCfg)
 	if err != nil {
@@ -172,11 +176,12 @@ type importer interface {
 }
 
 // adminStore is the boot-time slice of the store sync needs to apply
-// migrations, reconcile quota limits, and release pool resources at
-// shutdown.
+// migrations, reconcile quota limits, check the target is not being drained,
+// and release pool resources at shutdown.
 type adminStore interface {
 	RunMigrations(ctx context.Context) error
 	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
+	ListDrains(ctx context.Context) ([]core.BackendDrain, error)
 	Close()
 }
 
@@ -223,6 +228,22 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 		return nil, nil, 1
 	}
 	return objects, adminDB, 0
+}
+
+// refuseDrained returns an error when the backend has a drain record of any
+// state. Importing onto a backend being drained re-adds rows the drain has to
+// move off, and onto a drained one resurrects what it already moved.
+func refuseDrained(ctx context.Context, store adminStore, backendName string) error {
+	drains, err := store.ListDrains(ctx)
+	if err != nil {
+		return fmt.Errorf("list drains: %w", err)
+	}
+	for i := range drains {
+		if drains[i].BackendName == backendName {
+			return fmt.Errorf("backend %q is %s; clear its drain before syncing it", backendName, drains[i].State)
+		}
+	}
+	return nil
 }
 
 // importRun is the per-run state every imported page is measured against: where

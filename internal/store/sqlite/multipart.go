@@ -26,14 +26,16 @@ import (
 // UPLOAD LIFECYCLE
 // -------------------------------------------------------------------------
 
-// CreateMultipartUpload records a new multipart upload in the database.
-func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
+// CreateMultipartUpload records a new multipart upload in the database, unless
+// its backend is being drained, which reports false. The check reads the same
+// backend_capacity view every other admission test uses.
+func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	var metaJSON []byte
 	if len(params.Metadata) > 0 {
 		var err error
 		metaJSON, err = json.Marshal(params.Metadata)
 		if err != nil {
-			return fmt.Errorf("failed to marshal metadata: %w", err)
+			return false, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 	}
 
@@ -46,16 +48,22 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 	if params.KeyID != "" {
 		keyID = params.KeyID
 	}
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 FROM backend_capacity
+		 WHERE backend_name = ? AND accepting_writes`,
 		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID,
-		core.EncodeTags(params.Tags), now,
+		core.EncodeTags(params.Tags), now, params.BackendName,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create multipart upload: %w", err)
+		return false, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to create multipart upload: %w", err)
+	}
+	return n > 0, nil
 }
 
 // GetMultipartUpload retrieves metadata for a multipart upload.

@@ -52,6 +52,7 @@ type CoordinatorStores interface {
 	core.QuotaStore
 	core.PendingStore
 	core.CleanupStore
+	CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error)
 }
 
 type Coordinator struct {
@@ -79,33 +80,45 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 // ROUTING
 // -------------------------------------------------------------------------
 
-// SelectBackendForWrite picks the target backend for a write operation using
-// the configured routing strategy and claims the bytes on it. "pack" takes the
-// first eligible backend with room, "spread" the least utilized one. Returns
-// ErrNoSpaceAvailable when no candidate has room.
+// ClaimWriteTarget picks the target backend for a write using the configured
+// routing strategy and claims the bytes on it with the write's intent. "pack"
+// takes the first eligible backend with room, "spread" the least utilized one.
+// Returns ErrNoSpaceAvailable when no candidate has room.
+func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error) {
+	name, err := w.claimFirst(eligible, func(name string) (bool, error) {
+		p.BackendName = name
+		return w.stores.InsertPendingIfFits(ctx, p)
+	})
+	if err != nil {
+		return "", err
+	}
+	// Tell the ranking what this instance just placed, or every write in the
+	// interval before the next reload ranks the candidates identically and
+	// spread stops spreading.
+	w.core.Quota().NotePlacement(name, p.SizeBytes)
+	telemetry.PendingIntentsEnqueuedTotal.Inc()
+	return name, nil
+}
+
+// claimFirst walks the eligible backends in routing order and returns the first
+// whose conditional insert accepts.
 //
-// Both the fit test and the ranking read the in-memory tracker rather than
 // The ranking reads the in-memory snapshot, which is allowed to be stale: a
 // slightly wrong order costs an uneven spread that the next refresh corrects.
-// The fit test is not allowed to be stale, so it is the intent insert itself -
-// one statement that claims the bytes only if the backend's live rows still
-// have room. Ranking proposes; the insert decides.
+// Whether a backend can take the write is not allowed to be stale, so it is
+// settled by the insert itself, one statement that reads the backend's live
+// rows. Ranking proposes; the insert decides.
 //
 // A candidate the insert declines is skipped rather than fatal: another backend
-// may still have room. Returns ErrNoSpaceAvailable when none does.
-func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error) {
+// may still accept. Returns ErrNoSpaceAvailable when none does, and wraps a
+// database error, which ends the walk.
+func (w *Coordinator) claimFirst(eligible []string, try func(name string) (bool, error)) (string, error) {
 	for _, name := range w.rankForWrite(w.core.Quota(), eligible) {
-		p.BackendName = name
-		fits, err := w.stores.InsertPendingIfFits(ctx, p)
+		ok, err := try(name)
 		if err != nil {
 			return "", fmt.Errorf("claim write target: %w", err)
 		}
-		if fits {
-			// Tell the ranking what this instance just placed, or every write
-			// in the interval before the next reload ranks the candidates
-			// identically and spread stops spreading.
-			w.core.Quota().NotePlacement(name, p.SizeBytes)
-			telemetry.PendingIntentsEnqueuedTotal.Inc()
+		if ok {
 			return name, nil
 		}
 		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
@@ -617,23 +630,30 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	return movedSize, nil
 }
 
-// PickWriteTarget names the backend a write should target without claiming
-// anything on it.
+// ClaimUploadTarget picks the backend a multipart upload will live on and
+// records the upload there, setting params.BackendName to the backend that
+// accepted it. Returns ErrInsufficientStorage when no backend is eligible, or
+// the classified selection error.
 //
-// For the writes whose bytes are accounted for by rows of their own: a
-// multipart create decides where the upload will live long before any part
-// exists, and each part is counted against the backend by its own
-// multipart_parts row as it arrives. Claiming at create time would hold bytes
-// nobody has sent yet.
-func (w *Coordinator) PickWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, error) {
-	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, size)
+// No bytes are claimed: the create decides where the upload will live long
+// before any part exists, and each part is counted against the backend by its
+// own multipart_parts row as it arrives. The insert still decides, so a backend
+// being drained declines the upload and the next candidate is tried.
+func (w *Coordinator) ClaimUploadTarget(ctx context.Context, span trace.Span, operation s3op.Operation, params *core.CreateMultipartUploadParams) (string, error) {
+	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, 0)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
 		return "", core.ErrInsufficientStorage
 	}
-	ranked := w.rankForWrite(w.core.Quota(), eligible)
-	return ranked[0], nil
+	name, err := w.claimFirst(eligible, func(name string) (bool, error) {
+		params.BackendName = name
+		return w.stores.CreateMultipartUpload(ctx, params)
+	})
+	if err != nil {
+		return "", w.core.ClassifyWriteError(span, operation.String(), err)
+	}
+	return name, nil
 }
 
 // RankReplicaTargets orders the destinations a replication copy may go to,

@@ -119,10 +119,10 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 	}, true
 }
 
-// getObjectAttempt is the per-backend callback invoked by withReadFailover
-// for GetObject. It owns the per-attempt timeout, applies usage limits,
-// translates encrypted ranges, decrypts and verifies the body, and records
-// the winning result via once. loc is nil in degraded-mode broadcasts.
+// getObjectAttempt is the per-backend callback the read failover invokes for
+// GetObject. It owns the per-attempt timeout, applies usage limits,
+// translates encrypted ranges, and decrypts and verifies the body. loc is nil
+// in degraded-mode broadcasts.
 //
 // The second return is how many bytes the backend served, which the caller
 // charges as egress. It is read before the body is turned into plaintext,

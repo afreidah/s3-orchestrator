@@ -97,7 +97,7 @@ type QuotaStore interface {
 
 // MultipartStore defines multipart upload lifecycle operations.
 type MultipartStore interface {
-	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) error
+	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) (bool, error)
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, p *RecordPartParams) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
@@ -230,6 +230,25 @@ type ExpiredObjectsLister interface {
 type BackendLifecycleStore interface {
 	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
 	DeleteBackendData(ctx context.Context, backendName string) error
+}
+
+// DrainStore persists each backend's drain record, so every instance and every
+// restart reads the same state. A backend with a record of any state is refused
+// by admission.
+//
+// StartDrain reports false when the backend is already draining or drained; a
+// failed drain is restarted. AddDrainedObjects and MarkDrainFailed act only on a
+// drain still in progress. CompleteDrain marks the drain finished only once no
+// managed object rows, intents, or multipart uploads remain on the backend, and
+// reports false while any do. ClearDrain deletes the record, which makes the backend
+// writable again, and reports whether there was one.
+type DrainStore interface {
+	StartDrain(ctx context.Context, backendName string) (bool, error)
+	ListDrains(ctx context.Context) ([]BackendDrain, error)
+	AddDrainedObjects(ctx context.Context, backendName string, moved int64) error
+	MarkDrainFailed(ctx context.Context, backendName, reason string) error
+	CompleteDrain(ctx context.Context, backendName string) (bool, error)
+	ClearDrain(ctx context.Context, backendName string) (bool, error)
 }
 
 // UsageFlusher defines the store methods used by UsageTracker.FlushUsage.

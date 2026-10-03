@@ -62,7 +62,26 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.131.x (current)
+### v0.149.x (current)
+
+**A drain is a record in the database ([#1571](https://github.com/afreidah/s3-orchestrator/issues/1571), v0.149.14)**
+
+A drain used to live in the memory of the instance that started it. A restart forgot it - a drain in progress stopped and its backend took writes again, and a finished drain's backend came back into placement once quota sync recreated its row - and no other instance ever saw it. Finishing a drain also deleted every row on the backend, including the row of a write that was still uploading when the drain started.
+
+A drain is now a row in `backend_drains`. Admission refuses a backend that has one on every instance, a new drain worker moves the objects off under an advisory lock and resumes after a restart, and the drain finishes only once nothing it moves is left on the backend. A drain that hits an error it cannot retry is recorded as `failed` with the reason, and its backend stays out of placement.
+
+**Operator action items after upgrade:**
+
+- **One migration applies automatically** (Postgres `00031`, SQLite `0019`), adding `backend_drains` and the `backend_capacity` view every admission test now reads. No existing data changes.
+- **A drain in progress at upgrade time is lost**, exactly as a restart lost it before. Start it again after the upgrade.
+- **A finished drain no longer deletes the backend's records.** Its usage and quota rows, and its cleanup queue, stay until you run `remove-backend`, which now also clears the drain record. Run it once the drain reports `drained`.
+- **`drain-cancel` clears a drain in any state**, including `drained` and `failed`, and returns the backend to service.
+- **A failed drain keeps its backend out of placement** until you run `drain` again to restart it or `drain-cancel` to clear it. Previously a failed drain reopened the backend immediately.
+- **`drain-status` reports a `state` field** (`draining`, `drained`, or `failed`), and `GET /admin/api/status` adds `drain_state` per backend. `draining` in the status response is now true only while a drain is in progress; it used to stay true after one finished.
+- **`s3o_drain_active` is set from the drain records** each drain worker tick. It still counts drains in progress, but only the instance running the drain worker reports it.
+- **Reconcile skips a backend with a drain record**, and `sync` refuses one, so objects found on it are not imported back while it drains or after it has drained.
+
+### v0.131.x
 
 **A write can place its own copies ([#1406](https://github.com/afreidah/s3-orchestrator/issues/1406), v0.130.0)**
 

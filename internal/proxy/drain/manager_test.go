@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// Drain Manager - Branch Tests
+// Drain Manager - Drain Record Tests
 //
 // Author: Alex Freidah
 //
-// Targeted unit coverage for the drain manager's move-dispatch wiring. The
-// full drain lifecycle is exercised by the integration suite; this pins the
-// slow-path branch's reason-profile selection in isolation.
+// Starting, cancelling and reporting a drain against a real SQLite store, so
+// each operation is checked by the record it leaves and by what IsDraining and
+// admission make of it.
 // -------------------------------------------------------------------------------
 
 package drain
@@ -14,72 +14,149 @@ import (
 	"context"
 	"testing"
 
-	"go.uber.org/mock/gomock"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
-// captureMover records the MoveRequest the drain manager dispatches so the
-// reason-profile wiring can be asserted without the full write coordinator.
-type captureMover struct{ req *writepath.MoveRequest }
-
-func (m *captureMover) DeleteOrEnqueue(context.Context, backend.ObjectBackend, string, string, string, int64) {
+// newRecordFleet builds a manager over two in-memory backends and a SQLite
+// store that knows them both.
+func newRecordFleet(t *testing.T) (*Manager, *sqlite.Store) {
+	t.Helper()
+	store := newSQLiteStore(t, "b1", "b2")
+	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+	})
+	return mgr, store
 }
 
-func (m *captureMover) MoveObject(_ context.Context, req *writepath.MoveRequest) (int64, error) {
-	m.req = req
-	return req.SizeBytes, nil
-}
-
-// TestCopyAndRemoveSource_UsesDrainMoveReasons verifies the slow-path drain
-// branch (no replica: stream the object to a destination) dispatches MoveObject
-// with the drain reason profile and the chosen src/dest backends.
-func TestCopyAndRemoveSource_UsesDrainMoveReasons(t *testing.T) {
+// TestStartDrain_RecordsAndRefusesWrites verifies starting a drain writes a
+// draining record, marks the backend draining without waiting for a refresh,
+// and makes admission refuse it.
+func TestStartDrain_RecordsAndRefusesWrites(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
+	ctx := context.Background()
+	mgr, store := newRecordFleet(t)
 
-	srcBe := backendtest.NewMockObjectBackend(ctrl)
-	destBe := backendtest.NewMockObjectBackend(ctrl)
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"src", "dest"}), nil)
-	// The source is past its limit and the destination is empty, so the
-	// least-utilized pick is unambiguous.
-	quotaTracker := counter.NewQuotaTracker([]string{"src", "dest"})
-	quotaTracker.SetBaselines(map[string]core.BackendQuotaUsage{
-		"src":  {BackendName: "src", BytesLimit: 100, BytesUsed: 90},
-		"dest": {BackendName: "dest", BytesLimit: 100},
-	})
-	inf := infra.New(&infra.Config{
-		Backends: map[string]backend.ObjectBackend{"src": srcBe, "dest": destBe},
-		Order:    []string{"src", "dest"},
-		Usage:    usage,
-		Quota:    quotaTracker,
-	})
-
-	// Each drain dependency takes its own role, so an unexpected store call
-	// fails the test rather than being silently absorbed.
-	objects := storetest.NewMockObjectStore(ctrl)
-	quota := storetest.NewMockQuotaStore(ctrl)
-	backendLifecycle := storetest.NewMockBackendLifecycleStore(ctrl)
-
-	mover := &captureMover{}
-	mgr := New(inf, mover, objects, quota, backendLifecycle,
-		func(context.Context, string) {},
-		func(context.Context) (int, int) { return 0, 0 })
-
-	obj := &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}
-	if !mgr.copyAndRemoveSource(context.Background(), srcBe, "src", obj) {
-		t.Fatal("copyAndRemoveSource returned false, want true")
+	if err := mgr.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
 	}
-	if mover.req == nil || mover.req.Reasons != writepath.DrainMoveReasons {
-		t.Fatalf("MoveRequest.Reasons = %+v, want DrainMoveReasons", mover.req)
+	if !mgr.IsDraining("b1") || mgr.IsDraining("b2") {
+		t.Errorf("IsDraining b1=%v b2=%v, want only b1", mgr.IsDraining("b1"), mgr.IsDraining("b2"))
 	}
-	if mover.req.SrcName != "src" || mover.req.DestName != "dest" {
-		t.Errorf("move src/dest = %q/%q, want src/dest", mover.req.SrcName, mover.req.DestName)
+	p, err := mgr.GetDrainProgress(ctx, "b1")
+	if err != nil {
+		t.Fatalf("GetDrainProgress: %v", err)
+	}
+	if !p.Active || p.State != string(core.DrainStateDraining) {
+		t.Errorf("progress = %+v, want an active draining record", p)
+	}
+	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
+	if err != nil || ok {
+		t.Errorf("admission on the draining backend = %v, %v; want refused", ok, err)
+	}
+}
+
+// TestStartDrain_Refusals verifies a drain cannot be started on a backend the
+// fleet does not have, or twice on the same backend.
+func TestStartDrain_Refusals(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr, _ := newRecordFleet(t)
+
+	if err := mgr.StartDrain(ctx, "nope"); err == nil {
+		t.Error("StartDrain accepted a backend the fleet does not have")
+	}
+	if err := mgr.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := mgr.StartDrain(ctx, "b1"); err == nil {
+		t.Error("StartDrain accepted a second drain of the same backend")
+	}
+}
+
+// TestCancelDrain_ClearsTheRecord verifies cancelling removes the record, so
+// the backend is writable again and reports no drain.
+func TestCancelDrain_ClearsTheRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr, store := newRecordFleet(t)
+
+	if err := mgr.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := mgr.CancelDrain(ctx, "b1"); err != nil {
+		t.Fatalf("CancelDrain: %v", err)
+	}
+	if mgr.IsDraining("b1") {
+		t.Error("IsDraining still true after cancel")
+	}
+	if p, err := mgr.GetDrainProgress(ctx, "b1"); err != nil || p.State != "" || p.Active {
+		t.Errorf("progress after cancel = %+v, %v; want no record", p, err)
+	}
+	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
+	if err != nil || !ok {
+		t.Errorf("admission after cancel = %v, %v; want accepted", ok, err)
+	}
+	if err := mgr.CancelDrain(ctx, "b1"); err == nil {
+		t.Error("CancelDrain succeeded on a backend with no drain")
+	}
+}
+
+// TestGetDrainProgress_ReportsAFailedDrain verifies a failed record reads back
+// inactive with its reason, and that IsDraining still holds the backend back.
+func TestGetDrainProgress_ReportsAFailedDrain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr, store := newRecordFleet(t)
+
+	if err := mgr.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := store.MarkDrainFailed(ctx, "b1", "list failed"); err != nil {
+		t.Fatalf("MarkDrainFailed: %v", err)
+	}
+	if err := mgr.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	p, err := mgr.GetDrainProgress(ctx, "b1")
+	if err != nil {
+		t.Fatalf("GetDrainProgress: %v", err)
+	}
+	if p.Active || p.State != string(core.DrainStateFailed) || p.Error != "list failed" {
+		t.Errorf("progress = %+v, want inactive, failed, with its reason", p)
+	}
+	if !mgr.IsDraining("b1") {
+		t.Error("a failed drain left the backend open to writes")
+	}
+}
+
+// TestRemoveBackend_RefusesADrainInProgress verifies a backend still being
+// drained cannot be removed, and that removing a drained one clears its record.
+func TestRemoveBackend_RefusesADrainInProgress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr, store := newRecordFleet(t)
+
+	if err := mgr.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := mgr.RemoveBackend(ctx, "b1", false, nil); err == nil {
+		t.Fatal("RemoveBackend removed a backend mid-drain")
+	}
+
+	if done, err := store.CompleteDrain(ctx, "b1"); err != nil || !done {
+		t.Fatalf("CompleteDrain = %v, %v", done, err)
+	}
+	if err := mgr.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := mgr.RemoveBackend(ctx, "b1", false, nil); err != nil {
+		t.Fatalf("RemoveBackend after the drain finished: %v", err)
+	}
+	if mgr.IsDraining("b1") {
+		t.Error("removing the backend left its drain record behind")
 	}
 }

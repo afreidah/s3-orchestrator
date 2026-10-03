@@ -359,10 +359,8 @@ type usageFlusher interface {
 
 // FlushUsage reads and resets the counter backend, then writes the
 // accumulated deltas to the database. Called periodically (every 30s).
-// On DB error, deltas are added back to avoid data loss. Backends in
-// the skip set have their counters discarded (used for drained
-// backends whose DB records are gone).
-func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip map[string]bool) error {
+// On DB error, deltas are added back to avoid data loss.
+func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher) error {
 	period := CurrentPeriod()
 	var lastErr error
 
@@ -374,10 +372,6 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip 
 
 		if apiReqs == 0 && egress == 0 && ingress == 0 && len(pools) == 0 {
 			continue
-		}
-
-		if skip[name] {
-			continue // discard -- DB records for this backend are gone
 		}
 
 		if err := store.FlushUsageDeltas(ctx, name, period, apiReqs, egress, ingress); err != nil {

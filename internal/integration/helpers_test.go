@@ -607,13 +607,12 @@ func setQuotaLimits(tb testing.TB, limit int64) {
 	})
 }
 
-// resetState truncates all object/multipart tables and re-establishes the
-// backend_quotas row for every configured backend with usage/orphans
-// zeroed. The re-sync is necessary because tests that drain a backend
-// (TestOverReplicationDrainingBackendRemovedFirst, TestDrainBackend,
-// TestDrainBackend_WriteExclusion) leave its quota row deleted via
-// runDrain -> DeleteBackendData; subsequent tests that build a manager
-// referencing all three backends would then hit FK violations on insert.
+// resetState truncates all object/multipart tables and drain records, and
+// re-establishes the backend_quotas row for every configured backend with
+// usage/orphans zeroed. The re-sync is necessary because a test that removes a
+// backend (TestRemoveBackend) leaves its quota row deleted via
+// DeleteBackendData; subsequent tests that build a manager referencing all
+// three backends would then hit FK violations on insert.
 func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
@@ -622,6 +621,7 @@ func resetState(t *testing.T) {
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
+		"DELETE FROM backend_drains",
 	} {
 		if _, err := testDB.Exec(q); err != nil {
 			t.Fatalf("resetState: %v", err)
@@ -644,7 +644,33 @@ func resetState(t *testing.T) {
 	// reload or placement keeps ordering backends by the rows just deleted.
 	refreshQuota(t)
 	testStack.Objects.LocationCache().Clear()
-	testStack.Drain.ClearState()
+	if err := testStack.Drain.Refresh(context.Background()); err != nil {
+		t.Fatalf("resetState: refresh drain states: %v", err)
+	}
+}
+
+// drainToCompletion runs drain passes over the stack until the backend's drain
+// finishes, failing the test if the drain fails or stalls. Nothing runs the
+// drainer on its own in a test, so the passes are driven here.
+func drainToCompletion(t *testing.T, ctx context.Context, st *proxytest.Stack, backend string) {
+	t.Helper()
+	const maxPasses = 20
+	for range maxPasses {
+		if _, err := st.Drainer.Drain(ctx, nil); err != nil {
+			t.Fatalf("Drain: %v", err)
+		}
+		progress, err := st.Drain.GetDrainProgress(ctx, backend)
+		if err != nil {
+			t.Fatalf("GetDrainProgress(%s): %v", backend, err)
+		}
+		switch core.DrainState(progress.State) {
+		case core.DrainStateDrained:
+			return
+		case core.DrainStateFailed:
+			t.Fatalf("drain of %s failed: %s", backend, progress.Error)
+		}
+	}
+	t.Fatalf("drain of %s did not complete in %d passes", backend, maxPasses)
 }
 
 // extraStacks holds the test-owned stacks built alongside the shared fixture.
@@ -1019,9 +1045,9 @@ func (f *FailableStore) ListBackendQuotaUsage(ctx context.Context) ([]core.Backe
 
 // CreateMultipartUpload is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
+func (f *FailableStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	if f.isFailing() {
-		return errSimulatedDBOutage
+		return false, errSimulatedDBOutage
 	}
 	return f.inner.CreateMultipartUpload(ctx, params)
 }

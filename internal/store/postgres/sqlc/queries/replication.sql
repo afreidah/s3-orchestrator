@@ -99,8 +99,9 @@ FROM (
 -- (read from the source row in the same statement), which is what the caller
 -- charges the backend so the row and the counter always agree even if a
 -- concurrent overwrite changed the source between the caller's scan and this
--- insert. ON CONFLICT, a missing source, or a target without room returns no
--- rows; the caller treats that as inserted=false and tries the next candidate.
+-- insert. ON CONFLICT, a missing source, or a target without room or being
+-- drained returns no rows; the caller treats that as inserted=false and tries
+-- the next candidate.
 --
 -- The target's headroom is tested here rather than by the caller beforehand.
 -- A replica is admitted the same way a PUT is - against live rows, inside the
@@ -118,27 +119,9 @@ INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, e
 -- target, and in the predicates below.
 SELECT @object_key::text, @target_backend::text, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
 FROM object_locations ol
-JOIN backend_quotas q ON q.backend_name = @target_backend::text
-LEFT JOIN (
-    SELECT backend_name, SUM(bytes_used) AS bytes_used
-    FROM backend_quota_stripes GROUP BY backend_name
-) s ON s.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT backend_name, SUM(size_bytes) AS inflight
-    FROM pending_objects GROUP BY backend_name
-) p ON p.backend_name = q.backend_name
+JOIN backend_capacity c ON c.backend_name = @target_backend::text
 WHERE ol.object_key = @object_key::text AND ol.backend_name = @source_backend
-  AND (q.bytes_limit = 0
-       OR q.bytes_limit
-          - GREATEST(0, COALESCE(s.bytes_used, 0))::bigint
-          - q.orphan_bytes
-          - COALESCE(m.inflight, 0)
-          - COALESCE(p.inflight, 0) >= ol.size_bytes)
+  AND c.accepting_writes
+  AND (c.available_bytes IS NULL OR c.available_bytes >= ol.size_bytes)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING size_bytes;

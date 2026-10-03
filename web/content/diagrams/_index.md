@@ -49,7 +49,7 @@ weight: 35
     <i class="fas fa-bolt landing-card-icon" style="color: #f85149;"></i>
     <div>
       <strong>Circuit Breaker</strong>
-      <p>Three-state FSM for backends and database: closed, open, half-open transitions and probe logic.</p>
+      <p>Breaker states for backends and the database: the database breaker probes through half-open, and backend breakers recover through an out-of-band health check.</p>
     </div>
   </a>
   <a class="landing-card" href="encryption/">
@@ -84,14 +84,14 @@ weight: 35
     <i class="fas fa-cogs landing-card-icon" style="color: #8b949e;"></i>
     <div>
       <strong>Background Services</strong>
-      <p>Periodic workers: replicator, rebalancer, cleanup queue, lifecycle, multipart cleanup, and usage flusher.</p>
+      <p>Periodic workers: replicator, rebalancer, over-replication cleaner, cleanup queue, pending reaper, drainer, scrubber, reconciler, lifecycle, multipart cleanup, usage flusher, and notification delivery.</p>
     </div>
   </a>
   <a class="landing-card" href="database-schema/">
     <i class="fas fa-database landing-card-icon" style="color: #4aaa8a;"></i>
     <div>
       <strong>Database Schema</strong>
-      <p>Entity-relationship diagram of the PostgreSQL metadata store: tables, columns, indexes, and relationships.</p>
+      <p>Entity-relationship diagram of the metadata store (PostgreSQL or SQLite): tables, columns, indexes, and relationships.</p>
     </div>
   </a>
 </div>

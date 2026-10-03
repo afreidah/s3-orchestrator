@@ -202,13 +202,15 @@ s3-orchestrator admin log-level
 # Change log level at runtime (no restart or SIGHUP needed)
 s3-orchestrator admin log-level -set debug
 
-# Start draining a backend (migrates all objects to other backends)
+# Start draining a backend (migrates all objects to other backends);
+# also restarts a drain that failed
 s3-orchestrator admin drain <backend-name>
 
-# Check drain progress
+# Check drain state (draining, drained, or failed) and progress
 s3-orchestrator admin drain-status <backend-name>
 
-# Cancel an active drain (objects already moved are not rolled back)
+# Clear a drain, whatever its state, and return the backend to service
+# (objects already moved are not moved back)
 s3-orchestrator admin drain-cancel <backend-name>
 
 # Remove a backend's database records (S3 objects preserved, reversible via sync)

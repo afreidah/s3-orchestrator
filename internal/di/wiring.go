@@ -14,6 +14,7 @@
 package di
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -67,6 +68,15 @@ func WireManager(inj do.Injector) error {
 		return fmt.Errorf("resolve DrainManager: %w", err)
 	}
 	rt.SetDrainChecker(dm)
+	// Loaded before the first request so a drained backend is never offered
+	// to the write path after a restart. A failure is not fatal: admission
+	// reads the records itself, and the drainer reloads them each tick.
+	if err := dm.Refresh(context.Background()); err != nil {
+		//nolint:sloglint // bootstrap warn; no request/span ctx exists during wiring
+		slog.Warn("failed to load drain states; refusing writes falls to admission until the next refresh",
+			logfmt.Component("di"),
+			"error", err)
+	}
 
 	return nil
 }

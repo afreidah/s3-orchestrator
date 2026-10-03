@@ -207,19 +207,6 @@ func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Dur
 	return nil
 }
 
-// parseNullableTime returns a *time.Time parsed from a SQLite string column,
-// or nil when the column was NULL or unparseable.
-func parseNullableTime(s sql.NullString) *time.Time {
-	if !s.Valid {
-		return nil
-	}
-	t, err := time.Parse(time.RFC3339Nano, s.String)
-	if err != nil {
-		return nil
-	}
-	return &t
-}
-
 // -------------------------------------------------------------------------
 // DEPTHS AND DLQ
 // -------------------------------------------------------------------------

@@ -41,6 +41,10 @@ type IntegrityStatus struct {
 // BackendStatus is the configured-and-live state of one backend: its quota and
 // usage counters plus circuit-breaker health and drain state.
 //
+// Draining is true only while a drain is in progress. DrainState is the drain
+// record's state (draining, drained, or failed) and empty when the backend has
+// none; a backend with any state is refused new writes.
+//
 // CompressionSavedBytes is what the compressed objects on this backend are,
 // less what they occupy. It is zero when nothing there is stored encoded,
 // which is also what an operator sees before compression is turned on.
@@ -48,6 +52,7 @@ type BackendStatus struct {
 	Name         string `json:"name"`
 	Healthy      bool   `json:"healthy"`
 	Draining     bool   `json:"draining"`
+	DrainState   string `json:"drain_state,omitempty"`
 	BytesUsed    int64  `json:"bytes_used"`
 	BytesLimit   int64  `json:"bytes_limit"`
 	ObjectCount  int64  `json:"object_count"`

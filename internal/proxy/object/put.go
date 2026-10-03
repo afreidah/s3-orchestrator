@@ -437,14 +437,14 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	// Drain-race close: a drain that started after EligibleForWrite ran
-	// could have flipped this backend to draining while the backend PUT
-	// was in flight. If finalizeDrain's DeleteBackendData runs after the
-	// commit below, the just-promoted row gets wiped and the physical
-	// bytes are orphaned. Re-check before the commit so we land on a
-	// different backend instead; the pending intent stays for the
-	// reaper, which HEADs the backend, sees no object (we just deleted
-	// the bytes), and drops the intent.
+	// A drain that started after this write claimed its target would have
+	// to move the object straight back off again. Re-check before the
+	// commit so the write lands on a different backend instead; the
+	// pending intent stays for the reaper, which HEADs the backend, sees
+	// no object (we just deleted the bytes), and drops the intent. The
+	// check reads this instance's cached drain records, so a drain started
+	// elsewhere is caught only once this instance has seen it; the drain
+	// still cannot finish while this write's intent exists.
 	if o.core.IsDraining(backendName) {
 		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
 			"key", key, "backend", backendName)

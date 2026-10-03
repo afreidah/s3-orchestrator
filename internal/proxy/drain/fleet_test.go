@@ -3,15 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Builds a drain Manager over a live fleet: a real backend runtime and write
-// coordinator, with the multipart-abort and cleanup-queue callbacks as inert
-// closures. Those two are funcs precisely so drain does not depend on the
-// multipart manager or the cleanup worker, and the tests here take the same
-// route rather than reaching through a full proxy stack.
-//
-// The narrow-mock unit tests in manager_test.go cover dispatch wiring; this
-// fixture is for the paths whose behaviour depends on real backends holding
-// real bytes.
+// Builds a drain Manager over a live fleet: a real backend runtime over the
+// supplied backends and whatever store the test hands it. The purge tests use a
+// mock store to assert the calls they care about; the drain-record tests use a
+// real SQLite store so start, cancel and progress run against actual records.
 // -------------------------------------------------------------------------------
 
 package drain
@@ -21,82 +16,64 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/mock/gomock"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
 // fleetTimeout bounds a backend call in the test fleet. Long enough that no
 // test trips it incidentally.
 const fleetTimeout = 30 * time.Second
 
-// newDrainFleet builds a drain Manager over the supplied backends with an
-// inert cleanup-queue callback. store is the wide metadata store; New narrows
-// it to the three role interfaces it declares.
-func newDrainFleet(
-	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend,
-) (*Manager, *infra.BackendRuntime) {
-	t.Helper()
-	return newDrainFleetWithCleanup(t, store, backends, nil)
+// drainStore is what New needs from a store, satisfied by both the mock union
+// and the SQLite store.
+type drainStore interface {
+	core.ObjectStore
+	core.DrainStore
+	core.BackendLifecycleStore
 }
 
-// newDrainFleetWithCleanup is newDrainFleet with a caller-supplied
-// cleanup-queue callback, for the tests that assert drain drains the queue
-// before it tears a backend down. nil means the queue is a no-op.
-func newDrainFleetWithCleanup(
-	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend,
-	processCleanup func(context.Context) (int, int),
-) (*Manager, *infra.BackendRuntime) {
+// newDrainFleet builds a drain Manager over the supplied backends and store.
+func newDrainFleet(t *testing.T, store drainStore, backends map[string]backend.ObjectBackend) (*Manager, *infra.BackendRuntime) {
 	t.Helper()
-
 	names := make([]string, 0, len(backends))
 	for name := range backends {
 		names = append(names, name)
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil)
-	// Unlimited baselines: these tests are about drain, not about quota, and an
-	// unprimed tracker would refuse every destination.
-	quota := counter.NewQuotaTracker(names)
-	baselines := make(map[string]core.BackendQuotaUsage, len(names))
-	for _, name := range names {
-		baselines[name] = core.BackendQuotaUsage{BackendName: name}
-	}
-	quota.SetBaselines(baselines)
 	rt := infra.New(&infra.Config{
 		Backends:        backends,
 		Order:           names,
 		BackendTimeout:  fleetTimeout,
 		Usage:           usage,
-		Quota:           quota,
+		Quota:           counter.NewQuotaTracker(names),
 		RoutingStrategy: config.RoutingPack,
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
-		Store: store, Usage: usage, BackendNames: names,
-	}))
-
-	if processCleanup == nil {
-		processCleanup = func(context.Context) (int, int) { return 0, 0 }
-	}
-	// Both callbacks are funcs so drain depends on neither the multipart
-	// manager nor the cleanup worker. Nothing here aborts uploads.
-	mgr := New(rt, writepath.New(rt, store), store, store, store,
-		func(context.Context, string) {}, processCleanup)
+	mgr := New(rt, store, store, store)
 	rt.SetDrainChecker(mgr)
 	return mgr, rt
 }
 
-// newPermissiveStore returns a union store mock answering every read with an
-// empty result, so a drain test states only the queries it asserts on.
-func newPermissiveStore(t *testing.T) *storetest.MockMetadataStore {
+// newSQLiteStore returns an in-memory SQLite store with a quota row for each
+// named backend, so drain records and admission behave as they do in a
+// deployment.
+func newSQLiteStore(t *testing.T, backends ...string) *sqlite.Store {
 	t.Helper()
-	m := storetest.NewMockMetadataStore(gomock.NewController(t))
-	storetest.Permissive(m)
-	return m
+	ctx := context.Background()
+	s, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(s.Close)
+	cfgs := make([]config.BackendConfig, len(backends))
+	for i, name := range backends {
+		cfgs[i] = config.BackendConfig{Name: name, QuotaBytes: 1 << 30}
+	}
+	if err := s.SyncQuotaLimits(ctx, cfgs); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	return s
 }

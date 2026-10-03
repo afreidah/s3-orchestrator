@@ -49,15 +49,16 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    GET([GetObject<br>Request]):::entry --> DCACHE{Object Data<br>Cache?}:::decision',
     '',
     '    DCACHE -->|hit| CACHESTREAM[Return Cached<br>Response]:::success',
+    '    CACHESTREAM --> STREAM',
     '    DCACHE -->|miss or range req| DBLOOKUP[DB Lookup:<br>GetAllObjectLocations]:::storage',
     '',
     '    DBLOOKUP -->|not found| R404[404 Not<br>Found]:::reject',
     '    DBLOOKUP -->|DB unavailable| CACHE{Location<br>Cache?}:::decision',
     '    DBLOOKUP -->|ok| COPIES[Iterate Copies<br>with Failover]:::process',
     '',
-    '    CACHE -->|hit + success| STREAM',
+    '    CACHE -->|hit + success| METRICS',
     '    CACHE -->|miss or fail| FANOUT[Broadcast to<br>All Backends]:::process',
-    '    FANOUT -->|first success| STREAM',
+    '    FANOUT -->|first success| METRICS',
     '    FANOUT -->|all fail| BFAIL[Return Last<br>Error]:::reject',
     '',
     '    COPIES --> ULIMIT{Usage Limit<br>Check}:::filter',
@@ -67,7 +68,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '',
     '    COMP -->|no| FETCH[Backend<br>GetObject]:::process',
     '    COMP -->|yes| SEEK[Open Seekable<br>Reader]:::process',
-    '    SEEK --> FRAME[Ranged GET<br>per Frame]:::storage',
+    '    SEEK --> FRAME[Ranged GET<br>per Needed Frame]:::storage',
     '    FRAME --> FDEC{Frame<br>Encrypted?}:::decision',
     '    FDEC -->|yes| FDECRANGE[DecryptRange:<br>Ciphertext Chunks]:::process',
     '    FDEC -->|no| DECODE',
@@ -77,7 +78,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '',
     '    FETCH --> CB{Circuit<br>Breaker}:::decision',
     '    CB -->|open| FETCHFAIL',
-    '    CB -->|closed/probe| S3[S3 Backend<br>GetObject]:::storage',
+    '    CB -->|closed| S3[S3 Backend<br>GetObject]:::storage',
     '    S3 -->|error| FETCHFAIL{Fetch<br>Failed?}:::decision',
     '    S3 -->|success| EGRESSCHK',
     '',
@@ -95,17 +96,16 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    DECFULL --> INTEG',
     '',
     '    INTEG{Integrity<br>Verify?}:::decision',
-    '    INTEG -->|enabled + hash exists| VERIFY[Wrap with<br>VerifyingReader]:::process',
-    '    INTEG -->|disabled or no hash| STREAM',
-    '    VERIFY --> STREAM',
+    '    INTEG -->|enabled, full read, hash stored| VERIFY[Wrap with<br>VerifyingReader]:::process',
+    '    INTEG -->|disabled, ranged or no hash| METRICS',
+    '    VERIFY --> METRICS',
     '',
-    '    STREAM[Stream Body<br>to Client]:::process --> TAGCOUNT[Count Tags:<br>x-amz-tagging-count]:::storage',
+    '    METRICS[Charge Egress,<br>Metrics & Audit]:::process --> TAGCOUNT[Count Tags:<br>x-amz-tagging-count]:::storage',
     '    TAGCOUNT --> CACHEFILL{Cache<br>Fill?}:::decision',
-    '    CACHEFILL -->|cacheable| CACHEPUT[Store in<br>Data Cache]:::process',
-    '    CACHEFILL -->|too large or range| METRICS',
-    '    CACHEPUT --> METRICS',
-    '    METRICS[Record Usage<br>& Metrics]:::process',
-    '    METRICS --> OK[Return<br>GetObjectResult]:::success',
+    '    CACHEFILL -->|admitted| CACHEPUT[Attach<br>Cache Tee]:::process',
+    '    CACHEFILL -->|range, unknown size or too large| OK',
+    '    CACHEPUT --> OK',
+    '    OK[Return<br>GetObjectResult]:::process --> STREAM[Handler: Conditionals,<br>Stream to Client]:::success',
     '',
     '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
     '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
@@ -150,7 +150,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     GET: {
       title: 'GetObject Request',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header. Conditional request headers (<code>If-None-Match</code>, <code>If-Modified-Since</code>) are handled at the HTTP layer before reaching the storage manager.</p>'
+      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header and calls <code>GetObject</code> first. Conditional headers are evaluated afterwards against the returned ETag and Last-Modified: <code>If-Match</code>, <code>If-Unmodified-Since</code>, <code>If-None-Match</code>, <code>If-Modified-Since</code>, and <code>If-Range</code> for ranged requests.</p>'
     },
     DCACHE: {
       title: 'Object Data Cache Lookup',
@@ -160,12 +160,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHESTREAM: {
       title: 'Return Cached Response',
       badge: 'success', badgeText: 'cache hit',
-      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached, plus the tag count that fills <code>x-amz-tagging-count</code>.</p><p>The count rides on the entry because a hit reaches no database at all, which would otherwise leave the header off exactly the responses the cache serves. A tag write drops the entry, so the next read counts again.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. Audit event is emitted with <code>source=cache</code>.</p>'
+      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached, plus the tag count that fills <code>x-amz-tagging-count</code>.</p><p>The count rides on the entry because a hit reaches no database at all, which would otherwise leave the header off exactly the responses the cache serves. A tag write drops the entry, so the next read counts again.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. The <code>storage.GetObject</code> audit event is emitted with <code>backend=cache</code>. The handler then evaluates conditional headers and streams the body.</p>'
     },
     DBLOOKUP: {
       title: 'DB Lookup: GetAllObjectLocations',
-      badge: 'storage', badgeText: 'PostgreSQL',
-      body: '<p><code>store.GetAllObjectLocations(ctx, key)</code> queries PostgreSQL for all copies of the object across backends.</p><p>Returns a slice of <code>ObjectLocation</code> structs containing: backend name, size, encryption metadata (encrypted flag, wrapped DEK, key ID, plaintext size), and timestamps.</p><p>The query goes through a circuit breaker &mdash; if the DB circuit breaker is open, returns <code>ErrDBUnavailable</code> which triggers the broadcast read path.</p>'
+      badge: 'storage', badgeText: 'metadata store',
+      body: '<p><code>store.GetAllObjectLocations(ctx, key)</code> queries the metadata store (SQLite or PostgreSQL) for all copies of the object across backends, oldest first.</p><p>Returns a slice of <code>ObjectLocation</code> structs containing: backend name, size, encryption metadata (encrypted flag, wrapped DEK, key ID, plaintext size), and timestamps.</p><p>The query goes through a circuit breaker. If the DB circuit breaker is open, it returns <code>ErrDBUnavailable</code>. With <code>circuit_breaker.degraded_reads_enabled</code> on (the default) that starts the broadcast read path; with it off the request fails with 503 and nothing is broadcast.</p>'
     },
     R404: {
       title: '404 Not Found',
@@ -175,7 +175,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHE: {
       title: 'Location Cache Lookup',
       badge: 'decision', badgeText: 'degraded mode',
-      body: '<p>When the DB is unavailable, the system enters degraded mode and checks the in-memory location cache first.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3o_degraded_reads_total, s3o_degraded_cache_hits_total</p>'
+      body: '<p>When the DB is unavailable and <code>circuit_breaker.degraded_reads_enabled</code> is on, the system enters degraded mode and checks the in-memory location cache first. With the setting off, the request fails with 503 instead.</p><p>Degraded reads only serve unencrypted objects. With an encryptor configured, every degraded GET attempt fails with <code>ErrServiceUnavailable</code> because there is no row to unwrap the DEK from, so the client gets 503.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3o_degraded_reads_total, s3o_degraded_cache_hits_total</p>'
     },
     FANOUT: {
       title: 'Broadcast to All Backends',
@@ -185,17 +185,17 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     BFAIL: {
       title: 'Return Last Error (Broadcast)',
       badge: 'reject', badgeText: 'all backends failed',
-      body: '<p>All backends failed during broadcast read. Returns the last error wrapped with "all backends failed during degraded read".</p><p>The HTTP handler distinguishes <code>ErrObjectNotFound</code> (404) from backend errors (502) based on the error type.</p>'
+      body: '<p>All backends failed during broadcast read. Returns the last backend error wrapped with "all backends failed during degraded read".</p><p>A backend 404 is not turned into <code>ErrObjectNotFound</code>, so the handler answers 502 <code>InternalError</code> even when every backend said 404. A 404 <code>NoSuchKey</code> is returned only when no backend could be attempted.</p><p class="ac-metric">Metric: s3o_degraded_broadcast_mixed_outcomes_total (a mix of 404 and other errors)</p>'
     },
     COPIES: {
       title: 'Iterate Copies with Failover',
       badge: 'process', badgeText: 'failover loop',
-      body: '<p><code>readpath.Failover.Read</code> iterates through all copies returned by the DB lookup. Each copy is tried in order (primary first, then replicas).</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p class="ac-metric">Span attribute: s3o.failover=true (when primary fails)</p>'
+      body: '<p><code>readpath.Failover.Read</code> iterates through all copies returned by the DB lookup. There is no primary: copies are tried in store order, oldest first. A row naming a backend that is not configured is skipped.</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p>On success the per-operation metric is recorded for the winning backend.</p><p class="ac-metric">Span attribute: s3o.failover=true (when the winner is not the first row)</p>'
     },
     ULIMIT: {
       title: 'Usage Limit Check (Pre-fetch)',
       badge: 'filter', badgeText: 'quota check',
-      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more read without exceeding its monthly limits. The operation is named rather than counted, so only the request pools a <code>GetObject</code> belongs to are consulted &mdash; a backend out of upload budget still serves reads. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="GetObject", direction="read"}</p>'
+      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more read without exceeding its monthly limits. The operation is named rather than counted, so only the request pools a <code>GetObject</code> belongs to are consulted &mdash; a backend out of upload budget still serves reads. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="GetObject", limit_type="read"}, incremented once, only when every copy was skipped for limits</p>'
     },
     RLIMIT: {
       title: '429 Usage Limit Exceeded',
@@ -213,9 +213,9 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       body: '<p><code>codec.DecompressRanged(ctx, fetcher, compressedSize)</code> reads the seek table from the trailing skippable frame, which is what maps a logical offset to the frame holding it.</p><p>The size handed to the decoder is the compressed stream\'s size, not the stored size: for an encrypted copy the stored bytes are its ciphertext, so the figure comes from <code>plaintext_size</code> rather than <code>size_bytes</code>.</p><p>Reading the table is itself a ranged fetch, so the object metadata (content type, ETag, user metadata) is captured from that first response rather than paid for with a separate HEAD.</p>'
     },
     FRAME: {
-      title: 'Ranged GET per Frame',
+      title: 'Ranged GET per Needed Frame',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p><code>storedRangeFetcher.FetchRange()</code> turns a request for part of the compressed stream into one ranged backend GET.</p><p>Each fetch is charged its own API call and its own egress, on the bytes that actually left the backend. A compressed read makes one call per frame it touches, so charging once per client request would under-report all but the first.</p><p>The usage limit is re-checked per fetch, before and after the response size is known, exactly as the uncompressed path checks it once.</p><p class="ac-metric">Metric: s3o_compression_fetched_bytes_total</p>'
+      body: '<p><code>storedRangeFetcher.FetchRange()</code> turns a request for part of the compressed stream into one ranged backend GET.</p><p>The seek table is read with one speculative 8 KiB fetch of the object\'s tail. Frames that fall inside that tail are served from it with no further GET; every other frame the read touches costs one ranged GET.</p><p>Each fetch is charged its own API call and its own egress, on the bytes that actually left the backend, so charging once per client request would under-report all but the first.</p><p>The usage limit is re-checked per fetch, before and after the response size is known, exactly as the uncompressed path checks it once.</p><p class="ac-metric">Metric: s3o_compression_fetched_bytes_total</p>'
     },
     FDEC: {
       title: 'Frame Encrypted?',
@@ -225,12 +225,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     FDECRANGE: {
       title: 'DecryptRange: Ciphertext Chunks',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
+      body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt_range"}</p>'
     },
     DECODE: {
       title: 'Decode Frames: zstd',
       badge: 'process', badgeText: 'decompression',
-      body: '<p>Frames are decoded as the client reads, not up front. Each is independently decodable, which is what makes an entry point every <code>chunk_size</code> possible instead of only at byte zero.</p><p>A decode failure here is reported against <code>s3o_compression_errors_total{operation="decode"}</code>, which deserves an alert on any value: an encode failure costs one write, a decode failure means stored bytes cannot be read back.</p><p class="ac-metric">Metrics: s3o_compression_errors_total{operation="decode"}, s3o_compression_served_bytes_total</p>'
+      body: '<p>Frames are decoded as the client reads, not up front. Each is independently decodable, which is what makes an entry point every <code>chunk_size</code> possible instead of only at byte zero.</p><p><code>s3o_compression_errors_total{operation="decode"}</code> counts only failures to open the seek table or to seek to the range start, which fail over to the next copy. A frame that fails to decode later, while the body streams, ends the response but is not counted.</p><p class="ac-metric">Metrics: s3o_compression_errors_total{operation="decode"}, s3o_compression_served_bytes_total</p>'
     },
     SLICE: {
       title: 'Slice to Client Range',
@@ -240,12 +240,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     FETCH: {
       title: 'Backend GetObject',
       badge: 'process', badgeText: 'fetch',
-      body: '<p>Calls <code>backend.GetObject(ctx, key, actualRange)</code> through the circuit breaker wrapper.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The timeout context (<code>o.withTimeout(ctx)</code>) applies a per-backend deadline from <code>backend_timeout</code> config.</p>'
+      body: '<p>Calls <code>backend.GetObject(ctx, key, actualRange)</code> through the circuit breaker wrapper.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The call is made through <code>o.core.GetWithTimeout(ctx, backend, key, actualRange)</code>, which applies a per-backend deadline from <code>backend_timeout</code> config.</p>'
     },
     CB: {
       title: 'Circuit Breaker',
       badge: 'decision', badgeText: 'circuit breaker',
-      body: '<p><code>CircuitBreakerBackend.GetObject()</code> wraps the real S3 call with <code>CBCall()</code>:</p><p><b>PreCheck</b>: if circuit is open and not probe-eligible, return <code>ErrBackendUnavailable</code> immediately.<br><b>On success</b>: if half-open, transition to closed (recovered).<br><b>On failure</b>: increment failure counter; if threshold reached, open the circuit.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p><code>CircuitBreakerBackend.GetObject()</code> runs the real S3 call through the breaker\'s <code>Call()</code>. Backend breakers use external recovery.</p><p><b>Open</b>: every call is refused with <code>ErrBackendUnavailable</code>. Client requests never probe the backend.<br><b>On failure</b>: network errors, 5xx, 429, 401 and 403 count toward the threshold; 404, 416 and context cancellation do not. Reaching the threshold opens the circuit.<br><b>Recovery</b>: out of band only. The watchdog ticks every 5s and runs a <code>HeadBucket</code> health check when one is due, doubling the wait after each failure. The circuit closes once a check passes.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     S3: {
       title: 'S3 Backend GetObject',
@@ -270,32 +270,32 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     DECRYPT: {
       title: 'Decrypt Needed?',
       badge: 'decision', badgeText: 'decryption check',
-      body: '<p>Checks if this copy\'s DB record has <code>Encrypted: true</code> and the encryptor is configured. Three paths:</p><p>1. <b>Encrypted + range request</b>: use <code>DecryptRange()</code> on fetched ciphertext chunks<br>2. <b>Encrypted, full read</b>: use <code>Decrypt()</code> on the entire ciphertext stream<br>3. <b>Plaintext</b>: pass body through directly</p>'
+      body: '<p>Before the fetch, <code>core.ValidateEncryptionMetadata</code> rejects a row whose encryption fields contradict each other. After the fetch, for a read that starts at byte 0, the leading bytes are compared with the row\'s encrypted flag (<code>verifyStoredEnvelope</code> via <code>PeekEnvelope</code>). Either disagreement increments the mismatch counter and fails over to the next copy.</p><p>Then checks if this copy\'s row has <code>Encrypted: true</code> and the encryptor is configured. Three paths:</p><p>1. <b>Encrypted + range request</b>: decrypt the fetched ciphertext chunks for the requested range<br>2. <b>Encrypted, full read</b>: decrypt the entire ciphertext stream<br>3. <b>Plaintext</b>: pass body through directly</p><p class="ac-metric">Metric: s3o_encryption_flag_mismatch_total (label "get")</p>'
     },
     DECRANGE: {
       title: 'DecryptRange: Chunk Slice',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p>Envelope decryption for range requests:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.DecryptRange(ctx, body, wrappedDEK, keyID, rangeResult, baseNonce)</code></p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>wrapReader()</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
+      body: '<p>Envelope decryption for range requests: <code>decryptResponse</code> calls <code>encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, rng)</code>, which unpacks the base nonce and wrapped DEK from the stored key blob itself.</p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>ioutilx.ReadCloser</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt_range"}</p>'
     },
     DECFULL: {
       title: 'Decrypt: Full Stream',
       badge: 'process', badgeText: 'full decryption',
-      body: '<p>Envelope decryption for full reads:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code></p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt"}</p>'
+      body: '<p>Envelope decryption for full reads: <code>decryptResponse</code> calls <code>encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)</code>, which unpacks the wrapped DEK from the stored key blob itself. The body is wrapped with <code>ioutilx.ReadCloser</code> so Close reaches the original HTTP body.</p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt"}</p>'
     },
     INTEG: {
       title: 'Integrity Verify?',
       badge: 'decision', badgeText: 'integrity check',
-      body: '<p>Checks if <code>integrity.enabled</code> and <code>integrity.verify_on_read</code> are true, and the object has a stored content hash.</p><p>If all conditions are met, the body is wrapped with a <code>VerifyingReader</code>. If not, the body passes through directly.</p>'
+      body: '<p>Checks if <code>integrity.enabled</code> and <code>integrity.verify_on_read</code> are true, the request is not ranged, and the object has a stored content hash.</p><p>If all conditions are met, the body is wrapped with a <code>VerifyingReader</code>. If not, the body passes through directly. Ranged reads are never verified, because the stored hash covers the whole object; the scrubber covers them.</p>'
     },
     VERIFY: {
       title: 'Wrap with VerifyingReader',
       badge: 'process', badgeText: 'integrity',
-      body: '<p><code>VerifyingReader</code> wraps the response body and computes SHA-256 incrementally as data streams through to the client.</p><p>When the reader reaches EOF, it compares the computed hash to the stored <code>content_hash</code>. On mismatch, the corrupted copy is enqueued for cleanup via <code>DeleteOrEnqueue()</code>.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metrics: s3o_integrity_checks_total{operation="read"}, s3o_integrity_errors_total{operation="read"}</p>'
+      body: '<p><code>VerifyingReader</code> wraps the response body and computes SHA-256 incrementally as data streams through to the client.</p><p>When the reader reaches EOF, it compares the computed hash to the stored <code>content_hash</code>. On mismatch, the corrupted copy is sent to <code>DeleteOrEnqueue()</code> and its location row is dropped (<code>dropCorruptedLocation</code>), so the replicator rebuilds the missing copy.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metric: s3o_integrity_errors_total{operation="read"} (s3o_integrity_checks_total counts only replicate and scrub checks)</p>'
     },
     STREAM: {
-      title: 'Stream Body to Client',
-      badge: 'process', badgeText: 'streaming',
-      body: '<p>The (possibly decrypted) response body streams directly to the HTTP client. Uses <code>sync.Once</code> to protect the result assignment when parallel broadcast is enabled &mdash; only the first successful response is returned, and losing responses have their bodies closed.</p><p>The body is an <code>io.ReadCloser</code>; the HTTP handler streams it to the response writer and closes it when done.</p>'
+      title: 'Handler: Conditionals, Stream to Client',
+      badge: 'success', badgeText: 'streaming',
+      body: '<p>The HTTP handler sets the validator headers and evaluates the conditional headers against the returned ETag and Last-Modified. A failed precondition answers 304 or 412 without a body. If <code>If-Range</code> does not match, the partial body is discarded and the object is fetched again in full.</p><p>Otherwise the (possibly decrypted) body streams to the client. The body is an <code>io.ReadCloser</code>; the handler closes it when done.</p><p>With parallel broadcast, the first successful result read from the scheduler\'s channel wins. Losing probes are cancelled and their bodies closed in the background.</p>'
     },
     TAGCOUNT: {
       title: 'Count Tags',
@@ -305,22 +305,22 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHEFILL: {
       title: 'Cache Fill Decision',
       badge: 'decision', badgeText: 'cache fill',
-      body: '<p>After a successful backend fetch, decides whether to store the response in the object data cache for future reads.</p><p>Objects are cached when: the data cache is enabled, the request is a full read (not a range request), and the object size does not exceed <code>cache.max_object_size</code>.</p><p>The response body is read into memory, stored in the cache, and replaced with a <code>bytes.Reader</code> so the HTTP handler can still stream it to the client.</p>'
+      body: '<p>After a successful backend fetch, <code>populateObjectCache</code> decides whether to tee the response into the object data cache.</p><p>The tee is attached when the data cache is enabled, the request is a full read (not a range request), the size is known and positive, and <code>Admit(size)</code> accepts it (the size does not exceed <code>cache.max_object_size</code>). Otherwise the body streams through with no proxy-side buffering.</p>'
     },
     CACHEPUT: {
-      title: 'Store in Data Cache',
+      title: 'Attach Cache Tee',
       badge: 'process', badgeText: 'cache store',
-      body: '<p>Stores the object data, content type, ETag, user metadata, and tag count in the in-memory LRU cache via <code>objectCache.Put()</code>.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
+      body: '<p>The body is wrapped in <code>newCacheTeeBody</code>, which copies bytes into a pre-sized buffer as they stream to the client. Only a clean read of exactly the expected size calls <code>objectCache.PutBytes()</code>, storing the data, content type, ETag, user metadata, and tag count. A client disconnect, a mid-stream error or a short read caches nothing.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
     },
     METRICS: {
-      title: 'Record Usage & Metrics',
+      title: 'Charge Egress, Metrics & Audit',
       badge: 'process', badgeText: 'telemetry',
-      body: '<p><code>Record(backendName, GetObject, egress=wireBytes, ingress=0)</code> increments the monthly usage counters in the counter backend, charging the backend&#39;s request total and every budget pool containing <code>GetObject</code>.</p><p>The egress charged is what crossed the backend link, which is not the size the client is served. Decryption happens on this side of that link, so an encrypted object is served as a smaller plaintext than the ciphertext fetched, and a ranged read of one crosses whole chunks to serve a slice.</p><p>A compressed read is not charged here at all: it meters itself per frame inside the fetcher, and adding the logical size on top would double-count the larger of the two figures.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
+      body: '<p>Runs once <code>failover.Read</code> returns a winner. <code>o.core.Acct().Egress(s3op.GetObject, backendName, wireBytes)</code> increments the monthly usage counters in the counter backend, charging the backend&#39;s request total and every budget pool containing <code>GetObject</code>.</p><p>The egress charged is what crossed the backend link, which is not the size the client is served. Decryption happens on this side of that link, so an encrypted object is served as a smaller plaintext than the ciphertext fetched, and a ranged read of one crosses whole chunks to serve a slice.</p><p>A compressed read is not charged here at all: it meters itself per frame inside the fetcher, and adding the logical size on top would double-count the larger of the two figures.</p><p>The per-operation metric was already recorded inside the failover loop through <code>Acct().Operation</code>. If the winner was not the first row, the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
     },
     OK: {
       title: 'Return GetObjectResult',
-      badge: 'success', badgeText: 'success',
-      body: '<p>Returns <code>GetObjectResult</code> containing: Body (io.ReadCloser), Size (plaintext size for encrypted objects), ContentType, ETag, LastModified, Metadata, and ContentRange (for range requests).</p><p>The HTTP handler sets response headers and streams the body to the client. For encrypted objects, the size and ETag reflect plaintext values for S3 client compatibility.</p>'
+      badge: 'process', badgeText: 'result',
+      body: '<p>Returns <code>GetObjectResult</code> containing: Body (io.ReadCloser), Size (plaintext size for encrypted objects), ContentType, ETag, LastModified, Metadata, ContentRange (for range requests), and the tag count.</p><p>No body bytes have been read yet. For encrypted objects, the size and ETag reflect plaintext values for S3 client compatibility.</p>'
     }
   };
 

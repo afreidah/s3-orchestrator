@@ -460,35 +460,14 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKe
 	return srcLoc.SizeBytes, true, nil
 }
 
-// backendHasRoom reports whether a backend can take size more bytes, judged
-// against the same four terms every other admission test uses: the striped
-// total, orphans awaiting cleanup, incomplete multipart parts, and the intents
-// of writes in progress. A bytes_limit of zero is unlimited.
+// backendHasRoom reports whether a backend accepts a write of size more bytes,
+// judged against backend_capacity, the view every admission test reads.
 func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string, size int64) (bool, error) {
 	var fits bool
 	if err := a.tx.QueryRowContext(ctx, `
-		SELECT q.bytes_limit = 0
-		       OR q.bytes_limit
-		          - MAX(0, COALESCE(s.bytes_used, 0))
-		          - q.orphan_bytes
-		          - COALESCE(m.inflight, 0)
-		          - COALESCE(p.inflight, 0) >= ?
-		FROM backend_quotas q
-		LEFT JOIN (
-			SELECT backend_name, SUM(bytes_used) AS bytes_used
-			FROM backend_quota_stripes GROUP BY backend_name
-		) s ON s.backend_name = q.backend_name
-		LEFT JOIN (
-			SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-			FROM multipart_uploads mu
-			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-			GROUP BY mu.backend_name
-		) m ON m.backend_name = q.backend_name
-		LEFT JOIN (
-			SELECT backend_name, SUM(size_bytes) AS inflight
-			FROM pending_objects GROUP BY backend_name
-		) p ON p.backend_name = q.backend_name
-		WHERE q.backend_name = ?`, size, backendName).Scan(&fits); err != nil {
+		SELECT accepting_writes AND (available_bytes IS NULL OR available_bytes >= ?)
+		FROM backend_capacity
+		WHERE backend_name = ?`, size, backendName).Scan(&fits); err != nil {
 		return false, fmt.Errorf("check backend headroom: %w", err)
 	}
 	return fits, nil

@@ -25,7 +25,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	data := &dashboard.Data{
 		BackendOrder:      []string{"b1", "b2"},
 		UnhealthyBackends: map[string]bool{"b2": true},
-		DrainingBackends:  map[string]drain.Progress{"b1": {}},
+		DrainingBackends:  map[string]drain.Progress{"b1": {Active: true, State: "draining"}},
 		QuotaStats: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -42,8 +42,8 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 
 	// b1: healthy (absent from unhealthy), draining (present), counters mapped.
 	b1 := got[0]
-	if !b1.Healthy || !b1.Draining {
-		t.Errorf("b1 health/drain = %v/%v, want true/true", b1.Healthy, b1.Draining)
+	if !b1.Healthy || !b1.Draining || b1.DrainState != "draining" {
+		t.Errorf("b1 health/drain/state = %v/%v/%q, want true/true/draining", b1.Healthy, b1.Draining, b1.DrainState)
 	}
 	if b1.BytesUsed != 100 || b1.BytesLimit != 1000 || b1.ObjectCount != 7 {
 		t.Errorf("b1 quota/count = %+v", b1)

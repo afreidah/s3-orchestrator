@@ -45,11 +45,13 @@ type BackendSyncer interface {
 }
 
 // FleetOps is the fleet-wide surface the reconciler walks and republishes:
-// the backends to visit, and the quota gauges to refresh once a pass has
-// changed what they report. *infra.BackendRuntime satisfies it.
+// the backends to visit, which of them have a drain record, and the quota
+// gauges to refresh once a pass has changed what they report.
+// *infra.BackendRuntime satisfies it.
 type FleetOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 	BackendOrder() []string
+	ExcludeDraining(eligible []string) []string
 }
 
 // UsageReconciler corrects the drift in the incrementally maintained byte
@@ -131,7 +133,7 @@ func (r *Reconciler) run(ctx context.Context) {
 
 	var totalImported, totalSkipped int
 
-	for _, backendName := range r.fleet.BackendOrder() {
+	for _, backendName := range r.scannable() {
 		bucket := bucketNames[0]
 
 		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucket, bucketNames)
@@ -184,6 +186,26 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 	audit.Log(ctx, "usage.reconcile", slog.Int("backends_corrected", len(adjustments)))
 }
 
+// scannable returns the backends a reconcile may scan: every backend without a
+// drain record. Objects found on a draining backend would be imported back
+// onto it, re-adding rows the drain has to chase, and on a drained one they
+// would resurrect what the drain moved off.
+func (r *Reconciler) scannable() []string {
+	return r.fleet.ExcludeDraining(r.fleet.BackendOrder())
+}
+
+// backendsFor returns the backends an operator-driven reconcile scans: the one
+// named, refused when it has a drain record, or every scannable backend.
+func (r *Reconciler) backendsFor(backendName string) ([]string, error) {
+	if backendName == "" {
+		return r.scannable(), nil
+	}
+	if len(r.fleet.ExcludeDraining([]string{backendName})) == 0 {
+		return nil, fmt.Errorf("backend %q has a drain record; reconcile skips it", backendName)
+	}
+	return []string{backendName}, nil
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
@@ -206,11 +228,9 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 		return nil, fmt.Errorf("no buckets declared")
 	}
 
-	var backends []string
-	if backendName != "" {
-		backends = []string{backendName}
-	} else {
-		backends = r.fleet.BackendOrder()
+	backends, err := r.backendsFor(backendName)
+	if err != nil {
+		return nil, err
 	}
 
 	total := &ReconcileResult{}

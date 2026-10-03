@@ -344,11 +344,20 @@ func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
 	m.backends.drain.err = nil
 	if msg.progress != nil && !msg.progress.Active {
 		m.backends.drain = drainWatch{}
-		m.status = &actionStatus{ok: true, text: "drain finished on " + msg.backend}
+		m.status = drainEndStatus(msg.backend, msg.progress)
 		refresh := m.loadStatus()
 		return m, refresh
 	}
 	return m, nil
+}
+
+// drainEndStatus reports how a followed drain ended: finished, or failed with
+// the reason the drain recorded.
+func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) *actionStatus {
+	if p.State == "failed" {
+		return &actionStatus{ok: false, text: "drain failed on " + backend + ": " + p.Error}
+	}
+	return &actionStatus{ok: true, text: "drain finished on " + backend}
 }
 
 // onDrainTick polls again while a drain is still being followed. The ticker
@@ -441,7 +450,7 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		rows = append(rows, table.Row{
 			b.Name,
 			backendHealth(b.Healthy),
-			backendDrain(b.Draining),
+			backendDrain(b.DrainState),
 			humanize.Bytes(b.BytesUsed),
 			limit,
 			usePct,
@@ -473,12 +482,13 @@ func backendHealth(healthy bool) string {
 	return "unhealthy"
 }
 
-// backendDrain renders whether a backend is draining.
-func backendDrain(draining bool) string {
-	if draining {
-		return "draining"
+// backendDrain renders a backend's drain state: draining, drained, or failed,
+// and a dash when it has no drain.
+func backendDrain(state string) string {
+	if state == "" {
+		return "-"
 	}
-	return "-"
+	return state
 }
 
 // backendsView composes the pane's full-screen layout.

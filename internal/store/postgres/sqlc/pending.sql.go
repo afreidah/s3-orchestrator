@@ -179,28 +179,10 @@ SELECT $1, $2, $3::text, $4::bigint,
        $5, $6, $7, $8, $9,
        $10, $11, $12, $13,
        $14, $15, $16, $17
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT backend_name, SUM(bytes_used) AS bytes_used
-    FROM backend_quota_stripes GROUP BY backend_name
-) s ON s.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT backend_name, SUM(size_bytes) AS inflight
-    FROM pending_objects GROUP BY backend_name
-) p ON p.backend_name = q.backend_name
-WHERE q.backend_name = $3::text
-  AND (q.bytes_limit = 0
-       OR q.bytes_limit
-          - GREATEST(0, COALESCE(s.bytes_used, 0))::bigint
-          - q.orphan_bytes
-          - COALESCE(m.inflight, 0)
-          - COALESCE(p.inflight, 0) >= $4::bigint)
+FROM backend_capacity c
+WHERE c.backend_name = $3::text
+  AND c.accepting_writes
+  AND (c.available_bytes IS NULL OR c.available_bytes >= $4::bigint)
 `
 
 type InsertPendingObjectIfFitsParams struct {
@@ -241,13 +223,12 @@ type InsertPendingObjectIfFitsParams struct {
 // is what makes the limit hold across a fleet: every instance's committed
 // bytes, orphans, and writes in progress are rows here, so two instances
 // admitting at once are judged against the same totals. Zero rows affected
-// means the backend had no room and the caller should try the next candidate.
-//
-// bytes_limit = 0 is unlimited, matching every other reader of the column.
+// means the backend had no room or is being drained, and the caller should try
+// the next candidate.
 // backend_name and size_bytes are cast explicitly because they appear both
 // here and in the headroom test below. A bare parameter in a SELECT list takes
 // no type from the INSERT target the way one in VALUES does, so Postgres would
-// otherwise deduce them from the arithmetic in the WHERE, come out with
+// otherwise deduce them from the comparison in the WHERE, come out with
 // integer, and reject the statement for contradicting the bigint column.
 func (q *Queries) InsertPendingObjectIfFits(ctx context.Context, arg InsertPendingObjectIfFitsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertPendingObjectIfFits,

@@ -25,7 +25,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -397,7 +396,7 @@ func TestCompression_DrainMovesCompressedObjectsIntact(t *testing.T) {
 	if err := h.stack.Drain.StartDrain(ctx, source); err != nil {
 		t.Fatalf("StartDrain(%s): %v", source, err)
 	}
-	h.waitDrainComplete(source, 60*time.Second)
+	h.drainToCompletion(source)
 
 	if remaining := h.locationsOn(source); remaining != 0 {
 		t.Errorf("%s still has %d rows after drain", source, remaining)

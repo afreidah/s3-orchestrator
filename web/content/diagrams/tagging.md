@@ -69,11 +69,14 @@ An inline header is parsed and checked before the request body is read. Refusing
     '',
     '    VALIDATE{"Valid set?<br>10 tags, 128 / 256"}:::filter -->|no| REJECT[400 InvalidTag<br>or BadRequest]:::reject',
     '    VALIDATE -->|"yes, multipart"| HOLD[Hold on<br>multipart_uploads.tagging]:::process',
-    '    VALIDATE -->|yes| LOCK[Lock the object key]:::process',
+    '    VALIDATE -->|"yes, PutObject or CopyObject"| RECORD[Record object and tags<br>in one transaction]:::process',
+    '    VALIDATE -->|"yes, PutObjectTagging"| LOCK[Lock the object key]:::process',
     '',
     '    HOLD --> DONE([CompleteMultipartUpload]):::entry',
-    '    DONE --> LOCK',
+    '    DONE --> RECORD',
+    '    RECORD --> TAGS',
     '',
+    '    DELT([DeleteObjectTagging]):::entry --> LOCK',
     '    LOCK --> EXISTS{Key holds<br>a copy?}:::decision',
     '    EXISTS -->|no| NOKEY[404 NoSuchKey]:::reject',
     '    EXISTS -->|yes| REPLACE[Delete existing rows,<br>insert the new set]:::process',
@@ -82,7 +85,8 @@ An inline header is parsed and checked before the request body is read. Refusing
     '    DROP([PutObject overwrite<br>DeleteObject<br>last copy removed]):::entry --> CLEAR[Clear the set in the<br>object transaction]:::process',
     '    CLEAR --> TAGS[("object_tags<br>one set per object key")]:::storage',
     '',
-    '    GETT([GetObjectTagging]):::entry --> READ[Read the set<br>for the key]:::storage',
+    '    GETT([GetObjectTagging]):::entry -->|key holds no copies| NOKEY',
+    '    GETT -->|key holds a copy| READ[Read the set<br>for the key]:::storage',
     '    TAGS --> READ',
     '    READ --> SORT[Sort by tag key]:::process',
     '    SORT --> SERVE[TagSet to client<br>200, empty if none]:::success',
@@ -171,25 +175,35 @@ An inline header is parsed and checked before the request body is read. Refusing
       badge: 'entry', badgeText: 'entry point',
       body: '<p>The held set is re-parsed and applied to the object the completion produces, in the same transaction that records the object. It was already validated at create, so what lands here has been checked.</p>'
     },
+    RECORD: {
+      title: 'Record object and tags in one transaction',
+      badge: 'process', badgeText: 'transaction',
+      body: '<p><code>PutObject</code>, <code>CompleteMultipartUpload</code> and <code>CopyObject</code> write the tag set inside <code>RecordObject</code>. The transaction takes the key lock, records the new copies, and replaces the key\'s tag rows with the set the write carried.</p><p>There is no existence check on this path, because the write is what creates the object. An untagged write still clears any rows left at the key.</p>'
+    },
+    DELT: {
+      title: 'DeleteObjectTagging',
+      badge: 'entry', badgeText: 'entry point',
+      body: '<p>Removes the whole tag set. There is no set to validate, so it goes straight to the key lock and the existence check.</p><p>A key holding no copies answers <code>404 NoSuchKey</code>. Deleting a set that is already empty answers <code>204</code>.</p>'
+    },
     LOCK: {
       title: 'Per-key advisory lock',
       badge: 'process', badgeText: 'concurrency',
-      body: '<p>Every tag operation is keyed by object key alone and takes the key lock before touching a row, the same lock the write path uses.</p><p>On Postgres this is <code>pg_advisory_xact_lock</code>; on SQLite it is a no-op, since a single writer already serialises.</p><p>This is the operation that <code>make loadtest-tagging</code> concentrates on: drive it against a small seed to put several requests on the same keys.</p>'
+      body: '<p>Tag writes are keyed by object key alone and take the key lock before touching a row, the same lock the write path uses. <code>PutObjectTagging</code> and <code>DeleteObjectTagging</code> take it here; the object write paths take it inside the record transaction. Tag reads do not take it.</p><p>On Postgres this is <code>pg_advisory_xact_lock</code>; on SQLite it is a no-op, since a single writer already serialises.</p><p>This is the operation that <code>make loadtest-tagging</code> concentrates on: drive it against a small seed to put several requests on the same keys.</p>'
     },
     EXISTS: {
       title: 'Does the key hold an object?',
       badge: 'decision', badgeText: 'guard',
-      body: '<p>Tags belong to an object, so a key holding no copies has nothing to attach them to.</p><p>Checked inside the transaction, under the lock, rather than before it: a check outside would race with a concurrent delete of the last copy.</p>'
+      body: '<p>Tags belong to an object, so a key holding no copies has nothing to attach them to. Only <code>PutObjectTagging</code> and <code>DeleteObjectTagging</code> run this check (<code>requireObjectExists</code>); the object write paths are creating the copies themselves.</p><p>Checked inside the transaction, under the lock, rather than before it: a check outside would race with a concurrent delete of the last copy.</p>'
     },
     NOKEY: {
       title: '404 NoSuchKey',
       badge: 'reject', badgeText: 'rejected',
-      body: '<p>Writing tags to a key that holds no copies is refused.</p><p><code>GetObjectTagging</code> on an object that exists but carries no tags is <b>not</b> this case: it answers <code>200</code> with an empty <code>TagSet</code>, because the object is there and simply has nothing on it. Clearing an already-empty set succeeds for the same reason.</p>'
+      body: '<p>Writing or deleting tags on a key that holds no copies is refused, and so is <code>GetObjectTagging</code> on such a key.</p><p><code>GetObjectTagging</code> on an object that exists but carries no tags is <b>not</b> this case: it answers <code>200</code> with an empty <code>TagSet</code>, because the object is there and simply has nothing on it. Clearing an already-empty set succeeds for the same reason.</p>'
     },
     REPLACE: {
       title: 'Replace the set',
       badge: 'process', badgeText: 'transaction',
-      body: '<p>A delete of the key\'s existing rows followed by an insert of the new ones, inside one transaction. Replacement rather than merge, matching <code>PutObjectTagging</code>.</p><p>Ten tags per object caps how many rows a single key can add, which is what keeps the delete-then-insert cheap.</p>'
+      body: '<p>A delete of the key\'s existing rows followed by an insert of the new ones, inside one transaction. Replacement rather than merge, matching <code>PutObjectTagging</code>. <code>DeleteObjectTagging</code> deletes the rows and inserts nothing.</p><p>Ten tags per object caps how many rows a single key can add, which is what keeps the delete-then-insert cheap.</p>'
     },
     TAGS: {
       title: 'object_tags',
@@ -209,7 +223,7 @@ An inline header is parsed and checked before the request body is read. Refusing
     GETT: {
       title: 'GetObjectTagging',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Reads the stored set. Never reaches a backend, because the set lives in the metadata store rather than on any provider.</p><p>The admin API exposes the same set as JSON at <code>/admin/api/objects/tags/{key}</code>, under the same lock, for <code>adminctl</code>, the dashboard and the TUI.</p>'
+      body: '<p>Reads the stored set. Never reaches a backend, because the set lives in the metadata store rather than on any provider.</p><p>Runs an existence check and then reads the set, both without the key lock. A key holding no copies answers <code>404 NoSuchKey</code>.</p><p>The admin API exposes the same set as JSON at <code>/admin/api/objects/tags/{key}</code> through the same path, for <code>adminctl</code>, the dashboard and the TUI. There a key holding no copies answers a JSON <code>404</code>.</p>'
     },
     READ: {
       title: 'Read the set',
@@ -234,7 +248,7 @@ An inline header is parsed and checked before the request body is read. Refusing
     COUNT: {
       title: 'Count the set',
       badge: 'storage', badgeText: 'metadata store',
-      body: '<p>A <code>count(*)</code> on the primary key prefix, which is an index-only scan over the one key\'s rows. The read path needs the size of the set, not its contents.</p><p>A separate query rather than a subquery folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count has no business on a per-copy row those callers read.</p>'
+      body: '<p>A <code>count(*)</code> on the primary key prefix, which is an index-only scan over the one key\'s rows. The read path needs the size of the set, not its contents. The count takes no key lock.</p><p>A separate query rather than a subquery folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count has no business on a per-copy row those callers read.</p>'
     },
     HDR: {
       title: 'x-amz-tagging-count',

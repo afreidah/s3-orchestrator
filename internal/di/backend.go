@@ -577,24 +577,14 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 // ProvideUsageService constructs the usage service: the flush of in-memory
 // counters into the store, and the reconcile that corrects the drift the
 // incremental counter accumulates.
-//
-// Drain is assigned only when one was built. Storing a nil *drain.Manager in
-// the interface field would leave it non-nil to the service, which would then
-// call through it on every flush.
 func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 	r := newResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
-	drainManager := r.Resolve[*drain.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
-
-	deps := usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}
-	if drainManager != nil {
-		deps.Drain = drainManager
-	}
-	return usage.New(&deps), nil
+	return usage.New(&usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}), nil
 }
 
 // admissionSemFor returns the shared admission semaphore the runtime holds.

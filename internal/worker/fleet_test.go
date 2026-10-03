@@ -12,6 +12,7 @@
 package worker
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -168,6 +169,19 @@ func newRebalancerFor(
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
 	return NewRebalancer(rt, coord, store)
+}
+
+// newDrainerFor builds a Drainer over a fleet of the named backends. Aborting
+// uploads is a no-op; a test that asserts on it builds its own.
+func newDrainerFor(
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+) *Drainer {
+	t.Helper()
+	rt, coord := newFleet(t, store, backends, opts)
+	return NewDrainer(DrainerDeps{
+		Ops: rt, Placement: coord, Store: store,
+		AbortUploads: func(context.Context, string) {},
+	})
 }
 
 // newOverRepFor builds an OverReplicationCleaner over a fleet of the named

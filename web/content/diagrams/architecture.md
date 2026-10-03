@@ -7,6 +7,8 @@ weight: -1
 
 High-level architecture of the S3 Orchestrator showing the request path, storage layer, background services, and observability. **Hover over any component** for implementation details.
 
+The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush and the backend circuit breaker watchdog, which run in every mode.
+
 <style>
   #ac-diagram { margin: 1rem 0; }
 
@@ -52,21 +54,21 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
   var diagramSrc = [
     'flowchart TD',
     '    CLIENT([S3 Client]):::entry --> HTTP[HTTP Server<br>TLS / Timeouts]:::middleware',
-    '    HTTP --> ADMIT[Admission Control<br>& Rate Limiter]:::middleware',
-    '    ADMIT --> AUTH[SigV4 / Presigned / Token<br>Authentication]:::middleware',
-    '    AUTH --> ROUTE{Request<br>Router}:::middleware',
-    '',
-    '    ROUTE -->|PUT/GET/HEAD/DELETE| OBJMGR[Object<br>Manager]:::handler',
-    '    ROUTE -->|multipart| MPMGR[Multipart<br>Manager]:::handler',
-    '    ROUTE -->|list/head bucket| BUCKETS[Bucket<br>Operations]:::handler',
+    '    HTTP --> ROUTE{Path<br>Router}:::middleware',
     '    ROUTE -->|/admin/| ADMIN[Admin<br>API]:::handler',
     '    ROUTE -->|/ui/| WEBUI[Web<br>Dashboard]:::handler',
+    '    ROUTE -->|S3 API| ADMIT[Admission Control<br>& Rate Limiter]:::middleware',
+    '    ADMIT --> AUTH[SigV4 / Presigned<br>Authentication]:::middleware',
+    '',
+    '    AUTH -->|PUT/GET/HEAD/DELETE| OBJMGR[Object<br>Manager]:::handler',
+    '    AUTH -->|multipart| MPMGR[Multipart<br>Manager]:::handler',
+    '    AUTH -->|list/head bucket| BUCKETS[Bucket<br>Operations]:::handler',
     '',
     '    OBJMGR --> DCACHE[Object Data<br>Cache]:::storage',
     '    DCACHE -->|miss| COMP{Compression}:::storage',
     '    COMP --> ENC{Encryption}:::storage',
     '    MPMGR --> ENC',
-    '    ENC -->|enabled| VAULT[Key Provider<br>Vault / KMS]:::data',
+    '    ENC -->|enabled| VAULT[Key Provider<br>Master key / Vault]:::data',
     '    ENC --> SELECT[Backend Selection<br>& Failover]:::storage',
     '',
     '    SELECT --> CB1[Circuit<br>Breaker]:::storage',
@@ -74,14 +76,14 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     '    CB1 --> BE2[S3 Backend 2]:::data',
     '    CB1 --> BEN[S3 Backend N]:::data',
     '',
-    '    OBJMGR --> CACHE[Location<br>Cache]:::storage',
-    '    CACHE --> DBCB[DB Circuit<br>Breaker]:::storage',
+    '    OBJMGR --> DBCB[DB Circuit<br>Breaker]:::storage',
     '    MPMGR --> DBCB',
     '    BUCKETS --> DBCB',
     '    ADMIN --> OBJMGR',
     '    WEBUI --> OBJMGR',
-    '    DBCB --> PG[(PostgreSQL)]:::data',
+    '    DBCB --> PG[(Metadata store<br>PostgreSQL or SQLite)]:::data',
     '    DBCB -->|open| BROADCAST[Broadcast<br>Reads]:::storage',
+    '    BROADCAST --> CACHE[Location<br>Cache]:::storage',
     '    BROADCAST --> CB1',
     '',
     '    USAGE[Usage Tracker<br>& Quota Enforcement]:::background',
@@ -101,6 +103,12 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     '    OVERREP --> PG',
     '    PENDREAP[Pending<br>Reaper]:::background --> PG',
     '    PENDREAP --> CB1',
+    '    DRAIN[Drainer]:::background --> SELECT',
+    '    DRAIN --> PG',
+    '    SCRUB[Scrubber]:::background --> CB1',
+    '    SCRUB --> PG',
+    '    RECON[Reconciler]:::background --> CB1',
+    '    RECON --> PG',
     '',
     '    HTTP --> PROM[Prometheus<br>Metrics]:::observability',
     '    HTTP --> TEMPO[OpenTelemetry<br>Tracing]:::observability',
@@ -159,22 +167,22 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     ADMIT: {
       title: 'Admission Control & Rate Limiter',
       badge: 'middleware', badgeText: 'middleware',
-      body: '<p><b>Admission Control:</b> Channel-based semaphore limiting concurrent in-flight requests. Global pool or separate read/write pools. Probabilistic load shedding ramps rejection from <code>shed_threshold</code> to capacity. Optional brief wait before hard rejection.</p><p><b>Rate Limiter:</b> Per-IP token bucket using <code>golang.org/x/time/rate</code>. Extracts real client IP via X-Forwarded-For with trusted proxy CIDR validation.</p><p><a href="../admission-control/" style="color:#34b882">See detailed admission control flow diagram &rarr;</a></p>'
+      body: '<p>Both run before authentication, so a request is admitted or rejected before its signature is checked.</p><p><b>Admission Control:</b> Wraps only the S3 surface. Channel-based semaphore limiting concurrent in-flight requests. Global pool or separate read/write pools. Probabilistic load shedding ramps rejection from <code>server.load_shed_threshold</code> to capacity. Optional brief wait before hard rejection (<code>server.admission_wait</code>).</p><p><b>Rate Limiter:</b> Wraps the S3 surface and the admin API, not the dashboard. Per-IP token bucket using <code>golang.org/x/time/rate</code>. Extracts real client IP via X-Forwarded-For with trusted proxy CIDR validation.</p><p><a href="../admission-control/" style="color:#34b882">See detailed admission control flow diagram &rarr;</a></p>'
     },
     AUTH: {
       title: 'SigV4 / Presigned Authentication',
       badge: 'middleware', badgeText: 'authentication',
-      body: '<p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters. Reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>The signing key is derived per request rather than cached so timing remains constant for known and unknown access keys alike. Presigned URLs validated via <code>X-Amz-Expires</code> (max 7 days).</p><p>Streaming-payload PUTs are validated end-to-end: the seed signature authenticates the request envelope, and a chunk-validating reader verifies each chained per-chunk signature (or the trailer signature for the unsigned-trailer variant) before any byte reaches storage.</p><p><code>BucketRegistry</code> resolves an access key to the user behind it, and that user answers whether it holds a grant on the bucket in the URL path. The registry is assembled from both sources a deployment declares credentials in - the config file and the store - and swapped whole behind an atomic pointer, so a credential issued or revoked through the provisioning API takes effect on the next request rather than the next restart.</p>'
+      body: '<p>Runs inside the S3 handler, after admission control and the rate limiter. The admin API and the dashboard authenticate inside their own handlers.</p><p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters. Reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>The signing key is derived per request rather than cached so timing remains constant for known and unknown access keys alike. Presigned URLs validated via <code>X-Amz-Expires</code> (max 7 days).</p><p>Streaming-payload PUTs are validated end-to-end: the seed signature authenticates the request envelope, and a chunk-validating reader verifies each chained per-chunk signature (or the trailer signature for the unsigned-trailer variant) before any byte reaches storage.</p><p><code>BucketRegistry</code> resolves an access key to the user behind it, and that user answers whether it holds a grant on the bucket in the URL path. The registry is assembled from both sources a deployment declares credentials in - the config file and the store - and swapped whole behind an atomic pointer, so a credential issued or revoked through the provisioning API takes effect without a restart. The instance that handled the call rebuilds at once; other instances rebuild when the change arrives on the Redis provisioning channel, and without Redis only the handling instance rebuilds.</p>'
     },
     ROUTE: {
-      title: 'Request Router',
+      title: 'Path Router',
       badge: 'middleware', badgeText: 'dispatcher',
-      body: '<p>Dispatches by HTTP method, path, and query parameters:</p><p><b>Objects:</b> PUT, GET, HEAD, DELETE, CopyObject<br><b>Multipart:</b> CreateUpload, UploadPart, Complete, Abort, ListParts<br><b>Buckets:</b> ListObjects (v1/v2), HeadBucket, ListBuckets<br><b>Batch:</b> DeleteObjects (up to 1000 keys)<br><b>Admin:</b> /admin/* endpoints<br><b>UI:</b> /ui/* dashboard</p>'
+      body: '<p>The server mux splits requests by path before any middleware runs:</p><p><b>/admin/:</b> admin API, behind the rate limiter<br><b>UI path:</b> dashboard (<code>ui.path</code>, default <code>/ui</code>)<br><b>/health, /health/ready:</b> health checks<br><b>/:</b> the S3 API, behind admission control and the rate limiter</p><p>After authentication the S3 handler dispatches by HTTP method, path, and query parameters:</p><p><b>Objects:</b> PUT, GET, HEAD, DELETE, CopyObject<br><b>Multipart:</b> CreateUpload, UploadPart, Complete, Abort, ListParts<br><b>Buckets:</b> ListObjects (v1/v2), HeadBucket, ListBuckets<br><b>Batch:</b> DeleteObjects (up to 1000 keys)</p>'
     },
     OBJMGR: {
       title: 'Object Manager',
       badge: 'handler', badgeText: 'core handler',
-      body: '<p>CRUD operations with automatic failover. <b>PutObject</b>: filters backends by quota/health/draining, selects via routing strategy (spread/pack), retries on failure. <b>GetObject</b>: checks location cache, queries DB, streams from backend with failover to replicas. Supports Range requests and conditional headers.</p><p><b>DeleteObject</b>: removes from all backends + DB metadata. Failed deletions enqueued to <code>cleanup_queue</code>.</p><p><b>CanAcceptWrite</b>: pre-flight check before body transmission (Expect: 100-Continue).</p><p><a href="../write-path/">Write path diagram &rarr;</a> · <a href="../read-path/">Read path diagram &rarr;</a></p>'
+      body: '<p>CRUD operations with automatic failover. <b>PutObject</b>: filters backends by quota/health/draining, selects via routing strategy (spread/pack), retries on failure. <b>GetObject</b>: queries the metadata store for the object\'s copies, streams from a backend with failover to replicas. Supports Range requests and conditional headers.</p><p><b>DeleteObject</b>: removes from all backends + DB metadata. Failed deletions enqueued to <code>cleanup_queue</code>.</p><p><b>CanAcceptWrite</b>: pre-flight check before body transmission (Expect: 100-Continue).</p><p><a href="../write-path/">Write path diagram &rarr;</a> &middot; <a href="../read-path/">Read path diagram &rarr;</a></p>'
     },
     MPMGR: {
       title: 'Multipart Manager',
@@ -184,12 +192,12 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     BUCKETS: {
       title: 'Bucket Operations',
       badge: 'handler', badgeText: 'handler',
-      body: '<p><b>ListObjects</b> (v1 and v2): paginated listing from PostgreSQL with prefix filtering, delimiter support, and CommonPrefixes for directory simulation.</p><p><b>HeadBucket</b>: returns 200 if bucket exists (credential validation). <b>ListBuckets</b>: returns authorized bucket. <b>GetBucketVersioning</b>: always returns disabled (not supported).</p>'
+      body: '<p><b>ListObjects</b> (v1 and v2): paginated listing from the metadata store with prefix filtering, delimiter support, and CommonPrefixes for directory simulation.</p><p><b>HeadBucket</b>: returns 200 if bucket exists (credential validation). <b>ListBuckets</b>: returns every bucket on which the caller\'s grants carry <code>list-buckets</code>. <b>GetBucketVersioning</b>: always returns disabled (not supported).</p>'
     },
     ADMIN: {
       title: 'Admin API',
       badge: 'handler', badgeText: 'handler',
-      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Takes the same SigV4-signed credential the S3 surface does, and each route declares the permission a caller\'s grant has to carry.</p><p><b>Triggers:</b> flush-usage, rebalance, replicate, cleanup-queue, encrypt-existing.<br><b>Monitoring:</b> health, config, dashboard stats, object listing, worker health (<code>/admin/api/workers</code>).<br><b>Drain:</b> start/check/cancel backend decommissioning (moves all objects to other backends).</p>'
+      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Takes the same SigV4-signed credential the S3 surface does, and each route declares the permission a caller\'s grant has to carry.</p><p><b>Triggers:</b> usage-flush, usage-reconcile, replicate, rebalance, lifecycle, over-replication, scrub, reconcile, backfill-checksums, encrypt-existing, decrypt-existing, compress-existing, decompress-existing, cache flush.<br><b>Status:</b> status, reload-status, workers, cleanup-queue, cleanup-dlq, replication, cache, log-level.<br><b>Backends:</b> drain start, progress and cancel (moves all objects to other backends); backend removal.<br><b>Provisioning:</b> buckets, users, credentials and grants.</p><p>Health checks are <code>/health</code> and <code>/health/ready</code> on the main mux, not admin routes.</p>'
     },
     WEBUI: {
       title: 'Web Dashboard',
@@ -212,19 +220,19 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
       body: '<p>Transparent envelope encryption when <code>encryption.enabled: true</code>.</p><p><b>Write:</b> generate random 256-bit DEK &rarr; wrap with master key &rarr; AES-256-GCM stream encrypt (64 KiB chunks) &rarr; store ciphertext + wrapped DEK in DB.</p><p><b>Read:</b> unwrap DEK &rarr; stream decrypt. <b>Range reads:</b> calculate affected chunks, fetch and decrypt only those.</p><p>ETag is MD5 of plaintext for S3 client compatibility.</p><p><a href="../encryption/">Encryption flow diagram &rarr;</a></p>'
     },
     VAULT: {
-      title: 'Key Provider (Vault / KMS)',
-      badge: 'data', badgeText: 'external',
-      body: '<p>Master key management for envelope encryption. Wraps/unwraps per-object Data Encryption Keys (DEKs).</p><p>Supports HashiCorp Vault Transit engine or cloud KMS. Key rotation supported with zero-downtime via key versioning &mdash; old DEKs remain decryptable.</p>'
+      title: 'Key Provider (Master key / Vault)',
+      badge: 'data', badgeText: 'key source',
+      body: '<p>Master key management for envelope encryption. Wraps/unwraps per-object Data Encryption Keys (DEKs).</p><p>Exactly one key source: <code>encryption.master_key</code> (inline base64), <code>encryption.master_key_file</code>, or <code>encryption.vault</code> (HashiCorp Vault Transit). For rotation, <code>encryption.previous_keys</code> lists old master keys that are used only to unwrap, so existing DEKs stay decryptable.</p>'
     },
     SELECT: {
       title: 'Backend Selection & Failover',
       badge: 'storage', badgeText: 'routing',
-      body: '<p>Selects target backend using configured strategy:</p><p><b>spread:</b> picks least-utilized backend (equalizes storage across backends).<br><b>pack:</b> fills backends in order (consolidates storage, frees later backends).</p><p><b>Write failover:</b> on backend failure, removes from eligible list and retries next backend. <b>Read failover:</b> tries all replicas until one succeeds.</p><p><code>excludeUnhealthy()</code> filters circuit-broken backends but allows probe-eligible ones through to prevent deadlock.</p>'
+      body: '<p>Selects target backend using configured strategy:</p><p><b>spread:</b> picks least-utilized backend (equalizes storage across backends).<br><b>pack:</b> fills backends in order (consolidates storage, frees later backends).</p><p><b>Write failover:</b> on backend failure, removes from eligible list and retries next backend. <b>Read failover:</b> tries all replicas until one succeeds.</p><p><code>ExcludeUnhealthy</code> removes every backend whose circuit breaker is open, and <code>ExcludeDraining</code> removes draining ones. A client request is never sent to an open backend as a probe.</p>'
     },
     CB1: {
       title: 'Backend Circuit Breakers',
       badge: 'storage', badgeText: 'resilience',
-      body: '<p>Per-backend three-state circuit breaker: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without I/O. Probe-eligible backends (open + timeout elapsed) allowed through to prevent deadlock when all backends trip.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metrics: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Optional per-backend breaker: <b>closed</b> (healthy) &rarr; <b>open</b> after N consecutive failures &rarr; <b>closed</b> once an out-of-band health check passes. Counted failures are network errors, 5xx, 429, and credential rejections (401/403).</p><p>When open, every call returns <code>ErrBackendUnavailable</code> immediately without I/O. Client requests are never used as probes. After <code>open_timeout</code>, the watchdog (5s tick) sends a <code>HeadBucket</code> health check, and the breaker closes when it passes.</p><p>Config: <code>backend_circuit_breaker.enabled</code> (default off), <code>backend_circuit_breaker.failure_threshold</code> (default 5), <code>backend_circuit_breaker.open_timeout</code> (default 5m). The <code>circuit_breaker.*</code> keys configure the database breaker.</p><p class="ac-metric">Metrics: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     BE1: {
       title: 'S3 Backend',
@@ -244,27 +252,27 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     CACHE: {
       title: 'Location Cache',
       badge: 'storage', badgeText: 'caching',
-      body: '<p>In-memory cache mapping object keys to their backend locations. Avoids a DB query on every read.</p><p>TTL-based eviction with background cleanup goroutine. Invalidated on write (PutObject, DeleteObject, CopyObject) to ensure consistency.</p><p>Cache miss falls through to PostgreSQL query.</p>'
+      body: '<p>In-memory cache mapping object keys to the backend that last served them during a degraded read. Used only by broadcast reads while the database breaker is open; normal reads always query the metadata store.</p><p>A degraded read tries the cached backend first and falls back to the broadcast if that fails. The winner of each broadcast is cached. Entries expire after <code>circuit_breaker.cache_ttl</code> (default 60s) and are removed when the object is written or deleted.</p>'
     },
     DBCB: {
       title: 'DB Circuit Breaker',
       badge: 'storage', badgeText: 'resilience',
-      body: '<p>Circuit breaker wrapping the PostgreSQL metadata store. Detects DB outages and returns <code>ErrDBUnavailable</code> sentinel.</p><p>When open, the ObjectManager triggers <b>broadcast reads</b>: parallel fan-out to all backends, returning the first successful response. Allows reads to continue during DB downtime.</p><p>Only actual DB errors trip the breaker; application-level errors (ErrNoSpaceAvailable, S3Error) are excluded.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Circuit breaker wrapping the metadata store. Detects DB outages and returns <code>ErrDBUnavailable</code> sentinel.</p><p>When open, reads fall back to <b>broadcast reads</b>: the backends are tried in turn (in parallel when <code>circuit_breaker.parallel_broadcast</code> is on) and the first successful response is returned. Writes return 503. <code>circuit_breaker.degraded_reads_enabled: false</code> turns the fallback off so reads fail fast too.</p><p>Only actual DB errors trip the breaker; application-level errors (ErrNoSpaceAvailable, S3Error) are excluded.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     PG: {
-      title: 'PostgreSQL',
+      title: 'Metadata store (PostgreSQL or SQLite)',
       badge: 'data', badgeText: 'metadata store',
-      body: '<p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>object_locations</code>, <code>object_tags</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code>, <code>pending_objects</code>, <code>notification_outbox</code>.</p><p>Uses advisory locks for distributed worker coordination. Connection pool: pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations applied automatically on startup.</p>'
+      body: '<p><code>database.driver</code> selects <code>sqlite</code> (the default, single instance) or <code>postgres</code> (required for multiple instances). When the driver is unset, setting <code>database.host</code> selects PostgreSQL.</p><p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>object_locations</code>, <code>object_tags</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_quota_stripes</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>backend_drains</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code>, <code>pending_objects</code>, <code>notification_outbox</code>, <code>buckets</code>, <code>users</code>, <code>credentials</code>, <code>grants</code>.</p><p>Write admission reads the <code>backend_capacity</code> view, which derives each backend\'s available bytes from its quota, used and orphan bytes, in-flight multipart parts and pending intents, and marks a draining backend as not accepting writes.</p><p>Background workers coordinate through advisory locks. On PostgreSQL the connection pool is pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations are applied automatically on startup.</p>'
     },
     BROADCAST: {
       title: 'Broadcast Reads',
       badge: 'storage', badgeText: 'fallback',
-      body: '<p>Degraded-mode read path activated when the DB circuit breaker is open. Sends parallel GET requests to all backends simultaneously.</p><p>Returns the first successful response, cancels remaining in-flight requests. Allows reads to continue during PostgreSQL outages as long as at least one backend holds the object.</p><p><a href="../read-path/">Read path diagram &rarr;</a></p>'
+      body: '<p>Degraded-mode read path used when the DB circuit breaker is open. It first tries the backend the location cache holds for the key, then the backends in configured order.</p><p>By default the backends are tried one at a time. With <code>circuit_breaker.parallel_broadcast: true</code> they are probed at once, capped by <code>circuit_breaker.degraded_broadcast_parallelism</code> (0 is uncapped), and the remaining probes are cancelled when one succeeds.</p><p>Reads continue during a metadata store outage as long as at least one backend holds the object. <code>circuit_breaker.degraded_reads_enabled: false</code> turns this path off.</p><p><a href="../read-path/">Read path diagram &rarr;</a></p>'
     },
     USAGE: {
       title: 'Usage Tracker & Quota Enforcement',
       badge: 'background', badgeText: 'quota',
-      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes, and one count per configured request pool. Effective usage = DB baseline + unflushed in-memory deltas.</p><p>Requests are budgeted per pool because providers meter operation classes separately: an upload and a read draw on different allowances, and some operations are not billed at all. Every call is still counted against the request total, whether or not a budget charges it.</p><p><code>BackendsWithinLimits()</code> filters backends exceeding their configured limits before every write. Flushes deltas to DB every 30s (adaptive: 10s when near limit).</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
+      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes, and one count per configured request pool. Effective usage = DB baseline + unflushed in-memory deltas.</p><p>Requests are budgeted per pool because providers meter operation classes separately: an upload and a read draw on different allowances, and some operations are not billed at all. Every call is still counted against the request total, whether or not a budget charges it.</p><p>Writes pick from <code>EligibleForWrite</code>, which drops draining and circuit-broken backends and then applies the usage filter (<code>UsageTracker.WithinLimits</code> plus the per-backend max object size). Flushes deltas to DB every <code>usage_flush.interval</code> (default 30s). With <code>usage_flush.adaptive_enabled: true</code>, the interval drops to <code>usage_flush.fast_interval</code> (default 5s) when a backend nears a limit.</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
     },
     COUNTER: {
       title: 'Counter Backend',
@@ -274,12 +282,12 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     REPL: {
       title: 'Replicator',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Stream-copies to backends with available quota (binary copy, no re-encryption). Skips backends that have been unhealthy longer than <code>unhealthy_threshold</code>.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Stream-copies to backends with available quota (binary copy, no re-encryption).</p><p>A copy on a backend whose breaker has been open longer than <code>replication.unhealthy_threshold</code> (default 10m) stops counting toward the factor, so a replacement is made elsewhere.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     REBAL: {
       title: 'Rebalancer',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Redistributes objects across backends to optimize storage utilization. Runs every 6 hours under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: GET from source &rarr; PUT to target (binary stream copy, no re-encryption) &rarr; delete from source &rarr; update DB.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Redistributes objects across backends to optimize storage utilization. Disabled by default (<code>rebalance.enabled</code>). Runs every <code>rebalance.interval</code> (default 6 hours) under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: stream copy from source to target (binary copy, no re-encryption) &rarr; swap the DB location with compare-and-swap &rarr; delete the source copy.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     CLEAN: {
       title: 'Cleanup Queue',
@@ -289,7 +297,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     LIFE: {
       title: 'Lifecycle Expiration',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Automatic object expiration with configurable prefix rules. Runs hourly under advisory lock.</p><p>Example: <code>prefix: temp/, days: 30</code> deletes all objects under <code>temp/</code> older than 30 days. Calls ObjectManager.DeleteObject for proper cleanup across all backends.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Automatic object expiration. Each rule filters on <code>prefix</code>, <code>tags</code>, or both, and sets <code>expiration_days</code>. Runs hourly under advisory lock.</p><p>Example: <code>prefix: temp/, expiration_days: 30</code> deletes all objects under <code>temp/</code> older than 30 days. Calls ObjectManager.DeleteObject for proper cleanup across all backends.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     MPCLEAN: {
       title: 'Multipart Cleanup',
@@ -299,12 +307,27 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     OVERREP: {
       title: 'Over-Replication Cleaner',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every 6 hours under advisory lock.</p><p>Preserves geographically diverse copies when possible. Frees up quota on backends holding unnecessary duplicates.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every <code>replication.worker_interval</code> (default 5 minutes) under advisory lock <code>LockOverReplication</code> (1008).</p><p>Copies are scored by backend state: copies on draining backends go first, then copies on circuit-broken backends, then copies on the most utilized healthy backends. Frees up quota where it is scarcest.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     PENDREAP: {
       title: 'Pending Reaper',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Resolves unresolved <code>pending_objects</code> rows from the write-path PUT-before-COMMIT pattern. If the orchestrator died between the backend PUT and the metadata commit, this worker is what makes the orphan recoverable: it HEADs the backend and either promotes the intent (HEAD 200) or drops it (HEAD 404).</p><p>Runs every <code>write_path.pending_pattern.reaper_tick</code> (default 1 min), processing intents older than <code>min_age</code> (default 5 min) in batches of <code>batch_size</code> (default 50) with concurrency 4. Per-row claim via <code>SELECT ... FOR UPDATE SKIP LOCKED</code> &mdash; no advisory lock.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a> &middot; <a href="../write-path/">Write path diagram &rarr;</a></p>'
+      body: '<p>Resolves unresolved <code>pending_objects</code> rows from the write-path PUT-before-COMMIT pattern. If the orchestrator died between the backend PUT and the metadata commit, this worker is what makes the orphan recoverable: it HEADs the backend and either promotes the intent (HEAD 200) or drops it (HEAD 404).</p><p>Runs every <code>write_path.pending_pattern.reaper_tick</code> (default 1 min), processing intents older than <code>min_age</code> (default 5 min) in batches of <code>batch_size</code> (default 50) with concurrency 4. Each tick runs under advisory lock <code>LockPendingReaper</code> (1011), and each intent is re-read under <code>FOR UPDATE</code> before it is resolved. The notification outbox drainer takes the same lock ID.</p><p>Every write records an intent, so the reaper has no enable switch. It is registered in <code>worker</code> and <code>all</code> mode, and is skipped only if it fails to build, which is logged as a warning.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a> &middot; <a href="../write-path/">Write path diagram &rarr;</a></p>'
+    },
+    DRAIN: {
+      title: 'Drainer',
+      badge: 'background', badgeText: 'background worker',
+      body: '<p>Works backend drains. A drain is a <code>backend_drains</code> row, the durable record of the drain\'s state, created through the admin API (<code>POST /admin/api/backends/{name}/drain</code>). Cancelling the drain clears the row.</p><p>Runs every 10s under advisory lock <code>LockDrain</code> (1006). Each pass moves a draining backend\'s objects to other backends until the drain finishes or stalls. A backend with a drain record accepts no new writes, because <code>backend_capacity</code> marks it as not accepting writes.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+    },
+    SCRUB: {
+      title: 'Scrubber',
+      badge: 'background', badgeText: 'background worker',
+      body: '<p>Integrity verification. Reads a batch of objects that have stored SHA-256 hashes, undoes encryption and compression, and checks the content still matches. Corrupted copies are enqueued for cleanup.</p><p>Runs only when <code>integrity.enabled</code> is true and <code>integrity.scrubber_interval</code> is set, under advisory lock <code>LockScrubber</code> (1010). A copy verified within <code>integrity.scrubber_min_age</code> (default 24h) is skipped.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+    },
+    RECON: {
+      title: 'Reconciler',
+      badge: 'background', badgeText: 'background worker',
+      body: '<p>Scans each backend\'s bucket and imports objects the metadata store does not track, such as orphans from failed writes or manual uploads, so quota accounting stays accurate.</p><p>Registered only when <code>reconcile.enabled</code> is true. Runs every <code>reconcile.interval</code> (default 24h) under advisory lock <code>LockReconcile</code> (1009).</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     PROM: {
       title: 'Prometheus Metrics',

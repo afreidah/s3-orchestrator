@@ -3,14 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Implements the Postgres engine bindings for the backend_quotas table:
-// per-backend bytes_used, bytes_limit, and orphan_bytes tracking. Carries
-// the read-side eligibility queries the write path uses for backend
-// routing (GetBackendWithSpace, GetLeastUtilizedBackend) and the per-tx
-// increment / decrement primitives core/ uses to keep quota in lockstep
-// with object_locations changes. Increment is guarded so the UPDATE
-// touches zero rows when the limit would be exceeded, surfacing as
-// ErrNoSpaceAvailable.
+// Implements the Postgres engine bindings for backend quotas: per-backend
+// limits, the striped byte counters, orphan bytes, and the usage listing the
+// quota tracker refreshes its baselines from. Admission itself is tested
+// against the backend_capacity view inside the statements that claim space.
 // -------------------------------------------------------------------------------
 
 package postgres

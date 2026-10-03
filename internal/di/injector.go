@@ -110,9 +110,8 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideUsageService)
 }
 
-// registerWorkers wires the background workers and the drain manager.
-// PendingReaper and Reconciler register only when their feature is on
-// (pending-write pattern enabled / worker-side mode).
+// registerWorkers wires the background workers and the drain manager. The
+// Reconciler registers only in worker-side modes.
 func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
 	do.Provide(inj, ProvideReplicator)
@@ -124,6 +123,7 @@ func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvidePendingReaper)
 	do.Provide(inj, ProvideScrubber)
 	do.Provide(inj, ProvideDrainManager)
+	do.Provide(inj, ProvideDrainer)
 	if mode.IsWorker() {
 		do.Provide(inj, ProvideReconciler)
 	}

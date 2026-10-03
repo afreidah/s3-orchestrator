@@ -105,16 +105,9 @@ func (f *fakeStores) ListBackendQuotaUsage(_ context.Context) ([]core.BackendQuo
 	return f.baselines, f.baselineErr
 }
 
-// fakeDrain reports a fixed completed set.
-type fakeDrain struct {
-	completed map[string]bool
-}
-
-func (d fakeDrain) CompletedBackends() map[string]bool { return d.completed }
-
 // newService wires the service over a local counter backend holding one
 // recorded API call per backend, so a flush has something to write.
-func newService(t *testing.T, stores Stores, drain DrainReader) *Service {
+func newService(t *testing.T, stores Stores) *Service {
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.Record("b1", s3op.GetObject, 0, 0)
@@ -123,41 +116,21 @@ func newService(t *testing.T, stores Stores, drain DrainReader) *Service {
 		Usage:  tracker,
 		Quota:  counter.NewQuotaTracker([]string{"b1", "b2"}),
 		Stores: stores,
-		Drain:  drain,
 	})
 }
 
-// TestFlushUsage_NilDrainFlushesEverything pins the deployment that never
-// drains a backend: with no drain reader the flush skips nothing.
-func TestFlushUsage_NilDrainFlushesEverything(t *testing.T) {
+// TestFlushUsage_WritesEveryBackend verifies a flush writes the counters of
+// every backend that recorded usage.
+func TestFlushUsage_WritesEveryBackend(t *testing.T) {
 	t.Parallel()
 	stores := newFakeStores()
-	s := newService(t, stores, nil)
+	s := newService(t, stores)
 
 	if err := s.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage: %v", err)
 	}
 	if len(stores.flushed) != 2 {
 		t.Errorf("flushed = %v, want both backends", stores.flushed)
-	}
-}
-
-// TestFlushUsage_SkipsCompletedDrains covers the reason the service holds the
-// drain reader at all: a drained backend's rows are gone, so flushing its
-// counters would write back what the drain removed.
-func TestFlushUsage_SkipsCompletedDrains(t *testing.T) {
-	t.Parallel()
-	stores := newFakeStores()
-	s := newService(t, stores, fakeDrain{completed: map[string]bool{"b1": true}})
-
-	if err := s.FlushUsage(context.Background()); err != nil {
-		t.Fatalf("FlushUsage: %v", err)
-	}
-	if _, ok := stores.flushed["b1"]; ok {
-		t.Errorf("flushed = %v, want no write for the drained backend", stores.flushed)
-	}
-	if _, ok := stores.flushed["b2"]; !ok {
-		t.Errorf("flushed = %v, want the remaining backend written", stores.flushed)
 	}
 }
 
@@ -169,7 +142,7 @@ func TestFlushUsage_SurfacesStoreError(t *testing.T) {
 	sentinel := errors.New("write failed")
 	stores := newFakeStores()
 	stores.flushErr = sentinel
-	s := newService(t, stores, nil)
+	s := newService(t, stores)
 
 	if err := s.FlushUsage(context.Background()); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want %v", err, sentinel)
@@ -182,7 +155,7 @@ func TestReconcileUsage_ForwardsStoreResult(t *testing.T) {
 	t.Parallel()
 	stores := newFakeStores()
 	stores.reconciled = map[string]int64{"b1": -42}
-	s := newService(t, stores, nil)
+	s := newService(t, stores)
 
 	got, err := s.ReconcileUsage(context.Background())
 	if err != nil {
@@ -201,7 +174,7 @@ func TestReconcileUsage_ForwardsStoreResult(t *testing.T) {
 // because no other instance shares them.
 func TestRedisCounterConfigured_LocalBackend(t *testing.T) {
 	t.Parallel()
-	s := newService(t, newFakeStores(), nil)
+	s := newService(t, newFakeStores())
 
 	if s.RedisCounterConfigured() {
 		t.Error("RedisCounterConfigured = true for a local counter backend")
@@ -212,7 +185,7 @@ func TestRedisCounterConfigured_LocalBackend(t *testing.T) {
 // without a flush config and returns whatever was last stored.
 func TestConfig_NilUntilStored(t *testing.T) {
 	t.Parallel()
-	s := newService(t, newFakeStores(), nil)
+	s := newService(t, newFakeStores())
 
 	if got := s.Config(); got != nil {
 		t.Fatalf("Config = %v before a store, want nil", got)

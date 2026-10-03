@@ -133,6 +133,21 @@ func (mr *MockCoordinatorStoresMockRecorder) CountObjectsByPrefix(ctx, prefix an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectsByPrefix", reflect.TypeOf((*MockCoordinatorStores)(nil).CountObjectsByPrefix), ctx, prefix)
 }
 
+// CreateMultipartUpload mocks base method.
+func (m *MockCoordinatorStores) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateMultipartUpload", ctx, params)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateMultipartUpload indicates an expected call of CreateMultipartUpload.
+func (mr *MockCoordinatorStoresMockRecorder) CreateMultipartUpload(ctx, params any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMultipartUpload", reflect.TypeOf((*MockCoordinatorStores)(nil).CreateMultipartUpload), ctx, params)
+}
+
 // DecrementOrphanBytes mocks base method.
 func (m *MockCoordinatorStores) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
 	m.ctrl.T.Helper()

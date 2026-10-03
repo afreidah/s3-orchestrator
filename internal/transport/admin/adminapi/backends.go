@@ -33,11 +33,13 @@ type BackendOperationResponse struct {
 	Backend string `json:"backend"`
 }
 
-// DrainProgressResponse is a snapshot of an in-flight drain. Active is false
-// when no drain is running for the backend, in which case the counters are
-// zero. Error carries the failure that stopped a drain, when one did.
+// DrainProgressResponse is a snapshot of a backend's drain. State is draining,
+// drained, or failed, and empty when the backend has no drain record. Active is
+// true only while the drain is in progress, and the remaining counts are read
+// only then. Error carries the failure that stopped a drain, when one did.
 type DrainProgressResponse struct {
 	Active           bool   `json:"active"`
+	State            string `json:"state,omitempty"`
 	ObjectsRemaining int64  `json:"objects_remaining"`
 	BytesRemaining   int64  `json:"bytes_remaining"`
 	ObjectsMoved     int64  `json:"objects_moved"`

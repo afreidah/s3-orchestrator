@@ -793,7 +793,7 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 		logLevel:     &lv,
 		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
-	t.Cleanup(func() { _ = h.drain.CancelDrain("b1") })
+	t.Cleanup(func() { _ = h.drain.CancelDrain(context.Background(), "b1") })
 
 	mux := http.NewServeMux()
 	h.Register(mux)

@@ -66,6 +66,19 @@ func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
 
+// parseNullableTime returns a *time.Time parsed from a nullable timestamp
+// column, or nil when the column was NULL or unparseable.
+func parseNullableTime(s sql.NullString) *time.Time {
+	if !s.Valid {
+		return nil
+	}
+	t, err := parseTime(s.String)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
 // -------------------------------------------------------------------------
 // NULLABLE COLUMN HELPERS
 // -------------------------------------------------------------------------

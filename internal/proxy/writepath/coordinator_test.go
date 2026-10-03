@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/mock/gomock"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -87,6 +89,7 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{srcName, destName}), nil)
 	c := infra.New(&infra.Config{
 		Backends:       map[string]s3be.ObjectBackend{srcName: src, destName: dest},
+		Order:          []string{srcName, destName},
 		BackendTimeout: 5 * time.Second,
 		Usage:          usage,
 		Quota:          counter.NewQuotaTracker([]string{srcName, destName}),
@@ -482,5 +485,72 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for unregistered backend")
+	}
+}
+
+// testSpan returns a no-op span for calls that take one.
+func testSpan(t *testing.T) trace.Span {
+	t.Helper()
+	_, sp := noop.NewTracerProvider().Tracer("test").Start(context.Background(), "test")
+	t.Cleanup(func() { sp.End() })
+	return sp
+}
+
+// TestClaimUploadTarget_SkipsADecliningBackend verifies an upload the first
+// candidate's insert declines, as a draining backend does, is recorded on the
+// next candidate instead.
+func TestClaimUploadTarget_SkipsADecliningBackend(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	var tried []string
+	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.CreateMultipartUploadParams) (bool, error) {
+			tried = append(tried, p.BackendName)
+			return len(tried) == 2, nil
+		}).Times(2)
+
+	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
+	params := &core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"}
+	name, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload, params)
+	if err != nil {
+		t.Fatalf("ClaimUploadTarget: %v", err)
+	}
+	if name != "b" || params.BackendName != "b" {
+		t.Errorf("claimed %q (params %q), want b after a declined", name, params.BackendName)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(tried, want) {
+		t.Errorf("tried %v, want %v in order", tried, want)
+	}
+}
+
+// TestClaimUploadTarget_EveryBackendDeclines verifies the claim reports no space
+// when no candidate accepts the upload.
+func TestClaimUploadTarget_EveryBackendDeclines(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, nil).Times(2)
+
+	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
+	_, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
+		&core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"})
+	if err == nil {
+		t.Fatal("claimed an upload target when every backend declined")
+	}
+}
+
+// TestClaimUploadTarget_DatabaseErrorEndsTheWalk verifies a store error is
+// returned at once rather than read as a decline and tried elsewhere.
+func TestClaimUploadTarget_DatabaseErrorEndsTheWalk(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, errors.New("db down")).Times(1)
+
+	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
+	if _, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
+		&core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"}); err == nil {
+		t.Fatal("ClaimUploadTarget returned no error for a database failure")
 	}
 }

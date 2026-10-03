@@ -3,90 +3,50 @@
 //
 // Author: Alex Freidah
 //
-// Provides two backend lifecycle operations: drain (migrate all objects off a
-// backend to other backends, then clean up DB records) and remove (drop all
-// DB records for a backend, optionally purging S3 objects). Drain runs as a
-// background goroutine; remove is synchronous.
+// The operator side of two backend lifecycle operations. A drain is a record in
+// the metadata store: starting one writes it, cancelling one clears it, and the
+// drainer worker moves the objects off while it is in progress. Remove drops
+// every database record for a backend, optionally purging its stored objects,
+// and runs synchronously.
 // -------------------------------------------------------------------------------
 
 package drain
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
-// Runtime is the backend-runtime slice the Manager needs: fleet
-// enumeration, per-backend copy/delete primitives, and usage accounting.
-// Defined here at the consumer so *infra.BackendRuntime satisfies it
-// structurally without the drain package importing infra.
+// purgePageSize is how many of a backend's objects one purge page removes.
+const purgePageSize = 100
+
+// Runtime is the backend-runtime slice the Manager needs: the fleet and the
+// delete primitive a purge uses. Defined here at the consumer so
+// *infra.BackendRuntime satisfies it structurally without the drain package
+// importing infra.
 type Runtime interface {
 	Backends() map[string]backend.ObjectBackend
-	GetBackend(name string) (backend.ObjectBackend, error)
-	BackendOrder() []string
-	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error)
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
-	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
 }
 
-// Mover funnels deletes and cross-backend moves through the write
-// coordinator's shared primitives (orphan cleanup, MoveObjectLocation
-// CAS, source-delete accounting). *writepath.Coordinator satisfies it.
-type Mover interface {
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
-	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
-}
-
-// drainState tracks a single in-progress drain operation.
-type drainState struct {
-	cancel       context.CancelFunc
-	done         chan struct{}
-	errVal       atomic.Pointer[error] // set on completion; accessed from multiple goroutines
-	moved        atomic.Int64          // objects successfully moved
-	gaugeDecOnce sync.Once             // guards DrainActive.Dec(); see decrementActiveGauge
-}
-
-// setErr stores the completion error atomically.
-func (s *drainState) setErr(err error) { s.errVal.Store(&err) }
-
-// getErr loads the completion error atomically. Returns nil when unset.
-func (s *drainState) getErr() error {
-	if p := s.errVal.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// decrementActiveGauge fires telemetry.DrainActive.Dec() exactly once
-// per drainState across every termination path (success, abort,
-// cancel). The sync.Once prevents the cancel-races-completion path
-// from decrementing twice when finalizeDrain (or abortDrainWithError)
-// fires first and CancelDrain then wakes from <-state.done.
-func (s *drainState) decrementActiveGauge() {
-	s.gaugeDecOnce.Do(func() { telemetry.DrainActive.Dec() })
-}
-
-// Progress holds the current state of a drain operation.
+// Progress holds the current state of a drain operation. Active is true while
+// the drain is in progress; State is empty for a backend with no drain record.
 type Progress struct {
 	Active           bool   `json:"active"`
+	State            string `json:"state,omitempty"`
 	ObjectsRemaining int64  `json:"objects_remaining"`
 	BytesRemaining   int64  `json:"bytes_remaining"`
 	ObjectsMoved     int64  `json:"objects_moved"`
@@ -94,457 +54,183 @@ type Progress struct {
 }
 
 // Manager handles draining and removing backends.
+//
+// states caches every backend's drain state from the records, so IsDraining
+// answers on the write path without a query. It is refreshed whenever this
+// manager starts or cancels a drain and whenever the drainer reads the records.
+// A stale entry only costs a ranking: admission reads the records itself.
 type Manager struct {
 	log              *slog.Logger
 	infra            Runtime
-	mover            Mover
 	objects          core.ObjectStore
-	quota            core.QuotaStore
+	drains           core.DrainStore
 	backendLifecycle core.BackendLifecycleStore
-
-	abortMultipartUploads func(ctx context.Context, backendName string)
-	processCleanupQueue   func(ctx context.Context) (processed, failed int)
-
-	draining sync.Map // map[string]*drainState  -  backends being drained
+	states           atomic.Pointer[map[string]core.DrainState]
 }
 
 // New creates a Manager.
-func New(
-	infra Runtime,
-	mover Mover,
-	objects core.ObjectStore,
-	quota core.QuotaStore,
-	backendLifecycle core.BackendLifecycleStore,
-	abortMultipartUploads func(ctx context.Context, backendName string),
-	processCleanupQueue func(ctx context.Context) (processed, failed int),
-) *Manager {
+func New(infra Runtime, objects core.ObjectStore, drains core.DrainStore, backendLifecycle core.BackendLifecycleStore) *Manager {
 	must.NotNil("infra", infra)
-	must.NotNil("mover", mover)
 	must.NotNil("objects", objects)
-	must.NotNil("quota", quota)
+	must.NotNil("drains", drains)
 	must.NotNil("backendLifecycle", backendLifecycle)
-	must.NotNil("abortMultipartUploads", abortMultipartUploads)
-	must.NotNil("processCleanupQueue", processCleanupQueue)
 	return &Manager{
-		infra:                 infra,
-		mover:                 mover,
-		objects:               objects,
-		quota:                 quota,
-		backendLifecycle:      backendLifecycle,
-		abortMultipartUploads: abortMultipartUploads,
-		processCleanupQueue:   processCleanupQueue, log: slog.Default().With(logfmt.Component("drain"))}
+		infra:            infra,
+		objects:          objects,
+		drains:           drains,
+		backendLifecycle: backendLifecycle,
+		log:              slog.Default().With(logfmt.Component("drain")),
+	}
 }
 
-// IsDraining reports whether the named backend is currently being drained.
+// IsDraining reports whether the named backend has a drain record of any
+// state. A drained or failed backend is refused writes as much as one in
+// progress.
 func (d *Manager) IsDraining(name string) bool {
-	_, ok := d.draining.Load(name)
+	_, ok := d.stateOf(name)
 	return ok
 }
 
-// CompletedBackends returns the names of backends whose drain has finished
-// (the goroutine closed state.done) and whose state is still in the map.
-// FlushUsage uses this to skip backends whose backend_usage rows have
-// already been deleted by the drain finalizer.
-func (d *Manager) CompletedBackends() map[string]bool {
-	completed := make(map[string]bool)
-	d.draining.Range(func(key, val any) bool {
-		state := val.(*drainState)
-		select {
-		case <-state.done:
-			completed[key.(string)] = true
-		default:
-		}
-		return true
-	})
-	return completed
-}
-
-// ClearState removes all entries from the draining map. Used by tests
-// to reset state between runs.
-func (d *Manager) ClearState() {
-	d.draining.Range(func(key, _ any) bool {
-		d.draining.Delete(key)
-		return true
-	})
-}
-
-// noopCancel is the cancel func stored on drainState entries seeded by
-// the test helpers. CancelDrain still calls this and waits on done, but
-// no real goroutine is running so there is nothing to cancel.
-func noopCancel() {
-	// Intentionally empty: test-seeded states have no goroutine to stop.
-}
-
-// SeedActiveForTest stores an active (not-yet-completed) drain entry for
-// the named backend. Lets tests put the manager in the "draining" state
-// without launching the full StartDrain goroutine.
-func (d *Manager) SeedActiveForTest(name string) {
-	d.draining.Store(name, &drainState{
-		cancel: noopCancel,
-		done:   make(chan struct{}),
-	})
-}
-
-// SeedCompletedForTest stores a drain-completed entry (done channel
-// closed) for the named backend. FlushUsage and the dashboard treat the
-// backend as fully drained.
-func (d *Manager) SeedCompletedForTest(name string) {
-	state := &drainState{
-		cancel: noopCancel,
-		done:   make(chan struct{}),
+// Refresh reloads the cached drain states from the records.
+func (d *Manager) Refresh(ctx context.Context) error {
+	drains, err := d.drains.ListDrains(ctx)
+	if err != nil {
+		return fmt.Errorf("list drains: %w", err)
 	}
-	close(state.done)
-	d.draining.Store(name, state)
+	d.SetStates(drains)
+	return nil
+}
+
+// SetStates replaces the cached drain states with the given records. The
+// drainer hands it the records each pass reads.
+func (d *Manager) SetStates(drains []core.BackendDrain) {
+	states := make(map[string]core.DrainState, len(drains))
+	for i := range drains {
+		states[drains[i].BackendName] = drains[i].State
+	}
+	d.states.Store(&states)
+}
+
+// stateOf returns the cached drain state of the named backend, and false when
+// it has no drain record.
+func (d *Manager) stateOf(name string) (core.DrainState, bool) {
+	states := d.states.Load()
+	if states == nil {
+		return "", false
+	}
+	state, ok := (*states)[name]
+	return state, ok
 }
 
 // -------------------------------------------------------------------------
 // DRAIN
 // -------------------------------------------------------------------------
 
-// StartDrain begins draining a backend by migrating all objects to other
-// backends. The drain runs in a background goroutine. New writes are
-// excluded from the draining backend immediately.
+// StartDrain records a drain for the backend, or restarts a failed one. From
+// that moment admission refuses the backend, and the drainer moves its objects
+// off on its next tick.
 func (d *Manager) StartDrain(ctx context.Context, name string) error {
 	if _, ok := d.infra.Backends()[name]; !ok {
 		return fmt.Errorf("backend %q not found", name)
 	}
-	// Detach cancellation/deadline from the caller's ctx (the drain runs in
-	// a background goroutine that must outlive the HTTP request) but
-	// preserve its values  -  trace IDs, audit request ID, OTel baggage  -
-	// so spans started under drainCtx still link back to the request that
-	// initiated the drain. CancelDrain + ctx.Done() in the worker loop
-	// provide the explicit shutdown hooks.
-	drainCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	state := &drainState{
-		cancel: cancel,
-		done:   make(chan struct{}),
+	started, err := d.drains.StartDrain(ctx, name)
+	if err != nil {
+		return err
 	}
-	if _, loaded := d.draining.LoadOrStore(name, state); loaded {
-		cancel()
-		return fmt.Errorf("backend %q is already draining", name)
+	if !started {
+		return fmt.Errorf("backend %q is already draining or drained", name)
 	}
-
-	telemetry.DrainActive.Inc()
-	d.log.InfoContext(ctx, "starting backend drain", "backend", name)
-
-	go d.runDrain(drainCtx, name, state)
+	d.refreshAfterChange(ctx)
+	audit.Log(ctx, "storage.DrainStart", slog.String("backend", name))
+	d.log.InfoContext(ctx, "backend drain started", "backend", name)
 	return nil
 }
 
-// GetDrainProgress returns the current state of a drain operation.
+// GetDrainProgress returns the state of the backend's drain. Objects and bytes
+// remaining are read live while the drain is in progress.
 func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*Progress, error) {
-	val, ok := d.draining.Load(name)
-	if !ok {
-		return &Progress{Active: false}, nil
-	}
-
-	state := val.(*drainState)
-	progress := &Progress{
-		Active:       true,
-		ObjectsMoved: state.moved.Load(),
-	}
-
-	// Check if drain has completed
-	select {
-	case <-state.done:
-		progress.Active = false
-		if err := state.getErr(); err != nil {
-			progress.Error = err.Error()
-		}
-		return progress, nil
-	default:
-	}
-
-	// Query live stats from DB
-	count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
+	drains, err := d.drains.ListDrains(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get backend stats: %w", err)
+		return nil, fmt.Errorf("list drains: %w", err)
 	}
-	progress.ObjectsRemaining = count
-	progress.BytesRemaining = bytes
-
-	return progress, nil
-}
-
-// CancelDrain stops an active drain operation. If the drain has already
-// completed, it clears the "drained" state so the backend becomes eligible
-// for writes again. Objects already moved are not rolled back.
-func (d *Manager) CancelDrain(name string) error {
-	val, ok := d.draining.Load(name)
-	if !ok {
-		return fmt.Errorf("backend %q is not draining", name)
-	}
-
-	state := val.(*drainState)
-
-	// If already completed, just clear the state.
-	select {
-	case <-state.done:
-		d.draining.Delete(name)
-		d.log.InfoContext(context.Background(), "cleared drained state", "backend", name)
-		return nil
-	default:
-	}
-
-	state.cancel()
-	<-state.done
-	d.draining.Delete(name)
-	state.decrementActiveGauge()
-	d.log.InfoContext(context.Background(), "cancelled backend drain", "backend", name)
-	return nil
-}
-
-// runDrain is the background goroutine that migrates objects off a backend.
-func (d *Manager) runDrain(ctx context.Context, name string, state *drainState) {
-	defer close(state.done)
-
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	ctx, span := telemetry.StartSpan(ctx, "Drain",
-		telemetry.AttrOperation.String("drain"),
-		telemetry.AttrBackendName.String(name),
-	)
-	defer span.End()
-
-	d.abortMultipartUploads(ctx, name)
-	srcBackend, _ := d.infra.GetBackend(name)
-
-	if err := d.migrateBackendObjects(ctx, name, state, srcBackend); err != nil {
-		d.abortDrainWithError(name, state, err)
-		return
-	}
-	d.finalizeDrain(ctx, name, state)
-}
-
-// migrateBackendObjects walks the source backend's tracked objects in pages
-// and migrates each one. Returns ctx.Err() on cancellation, the store error
-// on a list failure, or nil when every page has been processed.
-func (d *Manager) migrateBackendObjects(ctx context.Context, name string, state *drainState, srcBackend backend.ObjectBackend) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
-		if err != nil {
-			d.log.ErrorContext(ctx, "failed to list objects", slog.String("backend", name), "error", err)
-			return err
-		}
-		if len(objects) == 0 {
-			return nil
-		}
-
-		for i := range objects {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if d.DrainOneObject(ctx, srcBackend, name, &objects[i]) {
-				state.moved.Add(1)
-				telemetry.DrainObjectsMoved.Inc()
-				telemetry.DrainBytesMoved.Add(float64(objects[i].SizeBytes))
-			}
-		}
-	}
-}
-
-// abortDrainWithError records the failure on state, drops the entry from
-// d.draining (so the backend becomes eligible for writes again on next
-// reload), and clears the active-drain gauge. Single source of truth for
-// the bail-out invariant.
-func (d *Manager) abortDrainWithError(name string, state *drainState, err error) {
-	state.setErr(err)
-	d.draining.Delete(name)
-	state.decrementActiveGauge()
-	event.Publish(event.BackendDrainFailed, name, map[string]any{
-		"backend":       name,
-		"objects_moved": state.moved.Load(),
-		"error":         err.Error(),
-	})
-}
-
-// finalizeDrain runs after a successful migration. Flushes pending cleanup
-// queue items so they are not dropped by the subsequent DeleteBackendData,
-// then removes all DB records and clears the active-drain gauge. The entry
-// in d.draining stays so the dashboard reports "Drained" and the backend
-// remains excluded from new writes until removed from config.
-func (d *Manager) finalizeDrain(ctx context.Context, name string, state *drainState) {
-	processed, failed := d.processCleanupQueue(ctx)
-	if processed > 0 || failed > 0 {
-		d.log.InfoContext(ctx, "flushed cleanup queue before removing backend data",
-			"backend", name, "processed", processed, "failed", failed)
-	}
-
-	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
-		d.log.ErrorContext(ctx, "failed to clean up backend data", slog.String("backend", name), "error", err)
-		state.setErr(err)
-	}
-
-	state.decrementActiveGauge()
-
-	audit.Log(ctx, "storage.DrainComplete",
-		slog.String("backend", name),
-		slog.Int64("objects_moved", state.moved.Load()),
-	)
-	event.Publish(event.BackendDrainCompleted, name, map[string]any{
-		"backend":       name,
-		"objects_moved": state.moved.Load(),
-	})
-	d.log.InfoContext(ctx, "backend drain complete", "backend", name, "objects_moved", state.moved.Load())
-}
-
-// DrainOneObject moves a single object from the draining backend to another.
-// If the object already has a replica on another backend, the source copy is
-// simply removed (no data transfer needed). Returns true on success.
-func (d *Manager) DrainOneObject(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {
-	locations, err := d.objects.GetAllObjectLocations(ctx, obj.ObjectKey)
-	if err != nil {
-		d.log.WarnContext(ctx, "failed to look up object locations",
-			slog.String("key", obj.ObjectKey), "error", err)
-		return false
-	}
-	if other := findOtherBackend(locations, srcName); other != "" {
-		return d.removeReplicaSource(ctx, srcBackend, srcName, obj, other)
-	}
-	return d.copyAndRemoveSource(ctx, srcBackend, srcName, obj)
-}
-
-// findOtherBackend returns the first backend in locations that isn't
-// srcName, or "" if every location is on the source backend.
-func findOtherBackend(locations []core.ObjectLocation, srcName string) string {
-	for i := range locations {
-		if locations[i].BackendName != srcName {
-			return locations[i].BackendName
-		}
-	}
-	return ""
-}
-
-// removeReplicaSource handles the fast-path drain branch: a replica
-// exists on another backend, so the source-side row and bytes can be
-// dropped without a data transfer.
-func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation, replicaBackend string) bool {
-	_, err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName)
-	if err != nil {
-		d.log.WarnContext(ctx, "failed to delete source location",
-			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), "error", err)
-		return false
-	}
-	d.mover.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
-
-	audit.Log(ctx, "storage.DrainRemoveReplica",
-		slog.String("key", obj.ObjectKey),
-		slog.String("removed_from", srcName),
-		slog.String("exists_on", replicaBackend),
-	)
-	return true
-}
-
-// copyAndRemoveSource handles the slow-path drain branch: no replica
-// exists, so the object is streamed to a destination backend, the
-// metadata location is moved atomically, and the source bytes are then
-// deleted. The shared StreamCopy + MoveObjectLocation + cleanup +
-// accounting logic lives in writepath.Coordinator.MoveObject;
-// this helper picks the destination, calls MoveObject, and emits the
-// drain-specific audit on success.
-func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {
-	destName, destBackend, ok := d.pickDrainDestination(ctx, srcName, obj)
-	if !ok {
-		return false
-	}
-
-	movedSize, err := d.mover.MoveObject(ctx, &writepath.MoveRequest{
-		Key:         obj.ObjectKey,
-		SizeBytes:   obj.SizeBytes,
-		SrcBackend:  srcBackend,
-		SrcName:     srcName,
-		DestBackend: destBackend,
-		DestName:    destName,
-		Reasons:     writepath.DrainMoveReasons,
-	})
-	if err != nil {
-		if !errors.Is(err, writepath.ErrMoveStale) {
-			d.log.WarnContext(ctx, "drain move failed",
-				slog.String("key", obj.ObjectKey),
-				slog.String("src_backend", srcName),
-				slog.String("dst_backend", destName),
-				"error", err)
-		}
-		return false
-	}
-
-	audit.Log(ctx, "storage.DrainMove",
-		slog.String("key", obj.ObjectKey),
-		slog.String("src_backend", srcName),
-		slog.String("dst_backend", destName),
-		slog.Int64("size", movedSize),
-	)
-	return true
-}
-
-// pickDrainDestination chooses the least-utilized non-draining destination
-// backend that can accept the object. Returns ok=false (with a logged
-// reason) when no destination is reachable.
-func (d *Manager) pickDrainDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, backend.ObjectBackend, bool) {
-	filtered := make([]string, 0, len(d.infra.BackendOrder()))
-	for _, name := range d.infra.BackendOrder() {
-		if name == srcName || d.IsDraining(name) {
+	for i := range drains {
+		if drains[i].BackendName != name {
 			continue
 		}
-		filtered = append(filtered, name)
+		rec := &drains[i]
+		p := &Progress{
+			Active:       rec.State == core.DrainStateDraining,
+			State:        string(rec.State),
+			ObjectsMoved: rec.ObjectsMoved,
+			Error:        rec.LastError,
+		}
+		if p.Active {
+			count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get backend stats: %w", err)
+			}
+			p.ObjectsRemaining = count
+			p.BytesRemaining = bytes
+		}
+		return p, nil
 	}
-	destName, ok := d.leastUtilizedWithRoom(filtered, obj.SizeBytes)
-	if !ok {
-		d.log.WarnContext(ctx, "no destination backend available",
-			slog.String("key", obj.ObjectKey), slog.Int64("size_bytes", obj.SizeBytes))
-		return "", nil, false
-	}
-	destBackend, err := d.infra.GetBackend(destName)
-	if err != nil {
-		d.log.ErrorContext(ctx, "destination backend not found", "backend", destName)
-		return "", nil, false
-	}
-	return destName, destBackend, true
+	return &Progress{}, nil
 }
 
-// leastUtilizedWithRoom picks the emptiest candidate that can still take size
-// bytes, reading the same in-memory view the write path is admitted against so
-// a drain and a client write cannot disagree about where there is room.
-func (d *Manager) leastUtilizedWithRoom(candidates []string, size int64) (string, bool) {
-	quota := d.infra.Quota()
-	for _, name := range quota.RankByUtilization(candidates) {
-		if quota.Available(name) >= size {
-			return name, true
-		}
+// CancelDrain clears the backend's drain record, which makes it writable again.
+// A drain in progress stops before its next page; objects already moved are
+// not moved back.
+func (d *Manager) CancelDrain(ctx context.Context, name string) error {
+	cleared, err := d.drains.ClearDrain(ctx, name)
+	if err != nil {
+		return err
 	}
-	return "", false
+	if !cleared {
+		return fmt.Errorf("backend %q is not draining", name)
+	}
+	d.refreshAfterChange(ctx)
+	audit.Log(ctx, "storage.DrainCancel", slog.String("backend", name))
+	d.log.InfoContext(ctx, "backend drain cleared", "backend", name)
+	return nil
+}
+
+// refreshAfterChange reloads the cached states after this manager changed a
+// record. A failure is logged and left to the next refresh: the record is
+// already written, and admission reads it directly.
+func (d *Manager) refreshAfterChange(ctx context.Context) {
+	if err := d.Refresh(ctx); err != nil {
+		d.log.WarnContext(ctx, "failed to refresh drain states", logfmt.Err(err))
+	}
 }
 
 // -------------------------------------------------------------------------
 // REMOVE
 // -------------------------------------------------------------------------
 
-// RemoveBackend deletes all database records for a backend. If purge is true
-// and the backend is reachable, also deletes objects from the backend's S3
-// storage. This is destructive and cannot be undone. observer, when non-nil,
-// receives a start and end step per object purged.
+// RemoveBackend deletes all database records for a backend, its drain record
+// included. If purge is true and the backend is reachable, also deletes objects
+// from the backend's S3 storage. This is destructive and cannot be undone.
+// observer, when non-nil, receives a start and end step per object purged.
 func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, observer progress.Observer) error {
-	if d.IsDraining(name) {
+	if state, ok := d.stateOf(name); ok && state == core.DrainStateDraining {
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
 
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
-	// Optionally purge objects from the actual S3 backend
 	if purge {
-		be, ok := d.infra.Backends()[name]
-		if ok {
+		if be, ok := d.infra.Backends()[name]; ok {
 			d.PurgeBackendObjects(ctx, be, name, observer)
 		}
 	}
 
-	// Delete all DB records in FK-safe order
 	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
 		return fmt.Errorf("failed to delete backend data: %w", err)
 	}
+	if _, err := d.drains.ClearDrain(ctx, name); err != nil {
+		return fmt.Errorf("failed to clear drain record: %w", err)
+	}
+	d.refreshAfterChange(ctx)
 
 	audit.Log(ctx, "storage.RemoveBackend",
 		slog.String("backend", name),
@@ -563,11 +249,11 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 // and their metadata rows. Best-effort: per-key failures are logged
 // and the loop continues. Bails on a page whose every DeleteObjectLocation
 // fails so a persistent DB error (constraint, partition, conflict)
-// cannot pin the loop on the same 100 rows forever; the same rows
+// cannot pin the loop on the same rows forever; the same rows
 // would otherwise list-and-fail until the process was restarted.
 func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string, observer progress.Observer) {
 	for {
-		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
+		objects, err := d.objects.ListObjectsByBackend(ctx, name, purgePageSize)
 		if err != nil {
 			d.log.ErrorContext(ctx, "failed to list objects for purge",
 				slog.String("backend", name), "error", err)

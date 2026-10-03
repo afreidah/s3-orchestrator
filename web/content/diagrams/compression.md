@@ -24,8 +24,8 @@ Splitting into independently decodable frames gives one entry point per chunk, a
 1. **Check the size floor**: objects below `min_size` are stored verbatim, because a seek table and per-frame headers cost more than a small object saves.
 2. **Encode**: the buffered body is encoded into a second buffer, one frame per `chunk_size`, with the seek table appended.
 3. **Check the ratio floor**: an encoding above `min_ratio` of the original size is discarded and the object stored verbatim. The decision is made by encoding and measuring, not by sampling, because entropy is not uniform across an object.
-4. **Admit against the encoded size**: unlike encryption, whose overhead is a fixed function of the size, an encoder only reports its output once it has run. A compressed write is therefore admitted after encoding rather than before.
-5. **Encrypt, if enabled**: compression runs first, in that order only, because ciphertext does not compress.
+4. **Encrypt, if enabled**: compression runs first, in that order only, because ciphertext does not compress. A verbatim object is encrypted the same way.
+5. **Admit against the final upload size**: unlike encryption, whose overhead is a fixed function of the size, an encoder only reports its output once it has run. A write that reached the encoder is therefore admitted after its body is prepared, against the bytes that will be uploaded (encoded, then enveloped when encrypted). Each upload attempt then claims capacity on its target backend.
 6. **Upload and record the stored form**: `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size`. A NULL algorithm is the ledger's way of saying the bytes are verbatim, so no separate boolean can drift out of step with it.
 
 #### Reading an object
@@ -34,7 +34,7 @@ A compressed copy is never served by a whole-object GET. The codec drives the re
 
 1. **Read the seek table** from the trailing skippable frame, which maps a logical offset to the frame holding it.
 2. **Map the client's range** onto the frames covering it.
-3. **Fetch those frames** with one ranged backend GET each, decrypting them first when the copy is an envelope.
+3. **Fetch those frames** with one ranged backend GET each, decrypting them first when the copy is an envelope. The seek table read pulls the last 8 KiB of the object in one fetch, and frames inside that tail need no further GET.
 4. **Decode and slice** to the exact bytes the client asked for.
 
 Each frame fetch is charged its own API call and egress, on the bytes that actually left the backend. Charging once per client request would under-report all but the first.
@@ -82,22 +82,22 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
 (function() {
   var diagramSrc = [
     'flowchart TD',
-    '    PUT([PutObject or<br>Multipart Complete]):::entry --> MINSIZE{size >=<br>min_size?}:::filter',
+    '    PUT([PutObject or<br>Multipart Complete]):::entry --> MINSIZE{size at least<br>min_size?}:::filter',
     '',
     '    MINSIZE -->|no| VERBATIM[Store Verbatim]:::process',
     '    MINSIZE -->|yes| ENCODE[Encode: one zstd frame<br>per chunk_size]:::process',
     '    ENCODE --> SEEKTBL[Append Seek Table<br>skippable frame]:::process',
-    '    SEEKTBL --> RATIO{encoded <= min_ratio<br>of original?}:::filter',
+    '    SEEKTBL --> RATIO{encoded within min_ratio<br>of original?}:::filter',
     '',
     '    RATIO -->|no| DISCARD[Discard Encoding]:::reject',
     '    DISCARD --> VERBATIM',
-    '    RATIO -->|yes| ADMIT[Admit on<br>Encoded Size]:::filter',
+    '    RATIO -->|yes| ENCRYPT{Encryption<br>Enabled?}:::decision',
+    '    VERBATIM --> ENCRYPT',
     '',
-    '    ADMIT --> ENCRYPT{Encryption<br>Enabled?}:::decision',
-    '    ENCRYPT -->|yes| ENVELOPE[Encrypt the<br>Encoded Stream]:::process',
-    '    ENCRYPT -->|no| UPLOAD',
-    '    ENVELOPE --> UPLOAD[Upload to<br>Backend]:::storage',
-    '    VERBATIM --> UPLOAD',
+    '    ENCRYPT -->|yes| ENVELOPE[Encrypt the<br>Prepared Body]:::process',
+    '    ENCRYPT -->|no| ADMIT',
+    '    ENVELOPE --> ADMIT[Admit on<br>Upload Size]:::filter',
+    '    ADMIT --> UPLOAD[Upload to<br>Backend]:::storage',
     '',
     '    UPLOAD --> ROW[Record Stored Form<br>on the Ledger Row]:::success',
     '',
@@ -106,7 +106,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     '    ISCOMP -->|yes| RDTABLE[Fetch Seek Table]:::storage',
     '',
     '    RDTABLE --> MAPFRAME[Map Range to<br>Covering Frames]:::process',
-    '    MAPFRAME --> FETCHF[Ranged GET<br>per Frame]:::storage',
+    '    MAPFRAME --> FETCHF[Ranged GET<br>per Needed Frame]:::storage',
     '    FETCHF --> DECR{Copy<br>Encrypted?}:::decision',
     '',
     '    DECR -->|yes| DECRYPTF[Decrypt Ciphertext<br>Chunks]:::process',
@@ -159,7 +159,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     PUT: {
       title: 'PutObject or Multipart Complete',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Both write paths encode, and both encode once. A single PUT encodes ahead of the failover loop, so a retry replays already-encoded bytes and rebuilds only the encryption layer.</p><p>A multipart upload is encoded when its parts are assembled, not part by part as they arrive. Its chunk layout therefore owes nothing to the part sizes the client chose, which matters because those are arbitrary: a client picking 8 MiB parts and one picking 500 MiB parts produce identically seekable objects.</p><p><a href="../write-path/">Write path diagram &rarr;</a></p>'
+      body: '<p>Both write paths encode, and both encode once. A single PUT encodes and encrypts once, ahead of the failover loop, so a retry rewinds and resends the same materialized ciphertext (or encoded bytes when encryption is off).</p><p>A multipart upload is encoded when its parts are assembled, not part by part as they arrive. Its chunk layout therefore owes nothing to the part sizes the client chose, which matters because those are arbitrary: a client picking 8 MiB parts and one picking 500 MiB parts produce identically seekable objects.</p><p><a href="../write-path/">Write path diagram &rarr;</a></p>'
     },
     MINSIZE: {
       title: 'Size Floor (min_size)',
@@ -169,7 +169,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     ENCODE: {
       title: 'Encode: zstd Frames',
       badge: 'process', badgeText: 'encoding',
-      body: '<p>The buffered body is encoded into a second buffer as one independently decodable zstd frame per <code>chunk_size</code> of input (default 1 MiB, range 16 KiB to 64 MiB).</p><p>Both buffers are held until the upload settles: the encoded copy has to replay on every failover attempt, and the plaintext is what it was encoded from. Bodies above 32 MiB spill to a self-unlinking tempfile rather than being held on the heap.</p><p>The level is a name rather than a number - <code>fastest</code>, <code>default</code>, <code>better</code>, <code>best</code> - because zstd collapses its numeric 1-19 range into four buckets, and a numeric setting would let an operator express a distinction the encoder discards.</p><p><a href="../../docs/compression/">Compression reference &rarr;</a></p>'
+      body: '<p>The buffered body is encoded into a second buffer as one independently decodable zstd frame per <code>chunk_size</code> of input (default 1 MiB, range 16 KiB to 64 MiB).</p><p>Each stage releases the buffer it consumed: the plaintext is freed as soon as the encoding is kept, and the encoding is freed once the ciphertext exists. Only the final payload is held through the failover loop. Bodies above 32 MiB spill to a self-unlinking tempfile rather than being held on the heap.</p><p>The level is a name rather than a number - <code>fastest</code>, <code>default</code>, <code>better</code>, <code>best</code> - because zstd collapses its numeric 1-19 range into four buckets, and a numeric setting would let an operator express a distinction the encoder discards.</p><p><a href="../../docs/compression/">Compression reference &rarr;</a></p>'
     },
     SEEKTBL: {
       title: 'Seek Table',
@@ -184,12 +184,12 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     DISCARD: {
       title: 'Discard Encoding',
       badge: 'reject', badgeText: 'not worth storing',
-      body: '<p>The encoded buffer is released and the plan goes back to describing the plaintext it was made from.</p><p>Storing an encoding that did not shrink buys nothing and costs a decode on every later read of that object, which is the trade the floor exists to refuse.</p><p>On a fleet of media or archives most objects land here. That is a healthy run, not a broken one, which is why a rewrite pass counts these as skipped rather than failed.</p>'
+      body: '<p>On a single PUT the encoded buffer is released and the plan goes back to the plaintext it was made from. On multipart completion the plaintext is not kept, so a rejected encoding is decoded back out of its buffer and that decoded stream is uploaded.</p><p>Storing an encoding that did not shrink buys nothing and costs a decode on every later read of that object, which is the trade the floor exists to refuse.</p><p>On a fleet of media or archives most objects land here. That is a healthy run, not a broken one, which is why a rewrite pass counts these as skipped rather than failed.</p>'
     },
     ADMIT: {
-      title: 'Admit on Encoded Size',
+      title: 'Admit on Upload Size',
       badge: 'filter', badgeText: 'quota check',
-      body: '<p>Placement and usage admission run against the bytes that will actually occupy the backend.</p><p>This is the one asymmetry with encryption. An envelope is a header plus a tag per chunk, a fixed function of the size, so an encrypted write is admitted before it starts. An encoder only reports its output size once it has run, so a compressed write cannot be - and admitting it on the logical size would turn away a write that fits.</p><p>That is why the ratio and size floors are evaluated before this point and the quota check after.</p>'
+      body: '<p>Usage admission (<code>EligibleForWrite</code>) runs against <code>plan.uploadSize</code>, the bytes that will actually be uploaded: the encoding, enveloped when encryption is on.</p><p>This is the one asymmetry with encryption. An envelope is a header plus a tag per chunk, a fixed function of the size, so a write below <code>min_size</code> is admitted on its enveloped size before its body is buffered. An encoder only reports its output size once it has run, so a write that reaches the encoder cannot be - and admitting it on the logical size would turn away a write that fits.</p><p>That is why buffering, encoding, the ratio check and encryption all run before this point. The per-backend capacity claim happens later, on each upload attempt, in <code>ClaimWriteTarget</code>.</p>'
     },
     ENCRYPT: {
       title: 'Encryption Enabled?',
@@ -197,9 +197,9 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
       body: '<p>Compression runs before encryption, in that order only, because ciphertext does not compress.</p><p>That ordering makes the compressed stream the encryptor\'s input, which is what <code>plaintext_size</code> records - the pre-encryption size, not the object the client wrote. The client\'s own size lives in <code>logical_size</code>.</p><p><a href="../encryption/">Encryption flow diagram &rarr;</a></p>'
     },
     ENVELOPE: {
-      title: 'Encrypt the Encoded Stream',
+      title: 'Encrypt the Prepared Body',
       badge: 'process', badgeText: 'envelope',
-      body: '<p>The encoded stream is wrapped in an AES-256-GCM envelope exactly as an unencoded body would be: a fresh data key per object, a 32-byte header, and a nonce plus auth tag per encryption chunk.</p><p>The two chunk sizes are independent. Compression frames are <code>compression.chunk_size</code> of logical input; encryption chunks are <code>encryption.chunk_size</code> of the compressed stream.</p>'
+      body: '<p>The prepared body, encoded or verbatim, is wrapped in an AES-256-GCM envelope once, before the failover loop. An encoded stream is treated exactly as an unencoded body would be: a fresh data key per object, a 32-byte header, and a nonce plus auth tag per encryption chunk.</p><p>The two chunk sizes are independent. Compression frames are <code>compression.chunk_size</code> of logical input; encryption chunks are <code>encryption.chunk_size</code> of the compressed stream.</p>'
     },
     VERBATIM: {
       title: 'Store Verbatim',
@@ -237,9 +237,9 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
       body: '<p>The client\'s <code>Range</code> is in logical coordinates, against the size the client wrote. The seek table turns that into the set of frames covering it.</p><p>This is the payoff for chunking. A range costs the frames it covers rather than the object, so the cost of a partial read is proportional to the bytes asked for.</p>'
     },
     FETCHF: {
-      title: 'Ranged GET per Frame',
+      title: 'Ranged GET per Needed Frame',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>One ranged backend GET per frame the read touches.</p><p>Each is charged its own API call and its own egress, on the bytes that actually left the backend. Charging once per client request would under-report all but the first.</p><p>Read amplification is exactly the sum of these against what the client was served. If it climbs toward the average object size, reads have regressed to fetching whole objects and decoding them - a change nothing else would surface except the backend bill.</p><p class="ac-metric">Metrics: s3o_compression_fetched_bytes_total, s3o_compression_served_bytes_total</p>'
+      body: '<p>One ranged backend GET per frame the read touches. The seek table read is one speculative 8 KiB fetch of the tail, and frames inside that tail are served from it with no further GET.</p><p>Each is charged its own API call and its own egress, on the bytes that actually left the backend. Charging once per client request would under-report all but the first.</p><p>Read amplification is exactly the sum of these against what the client was served. If it climbs toward the average object size, reads have regressed to fetching whole objects and decoding them - a change nothing else would surface except the backend bill.</p><p class="ac-metric">Metrics: s3o_compression_fetched_bytes_total, s3o_compression_served_bytes_total</p>'
     },
     DECR: {
       title: 'Copy Encrypted?',
@@ -249,12 +249,12 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     DECRYPTF: {
       title: 'Decrypt Ciphertext Chunks',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested - and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
+      body: '<p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested - and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{op="decrypt_range"}</p>'
     },
     DECODEF: {
       title: 'Decode Frames',
       badge: 'process', badgeText: 'decompression',
-      body: '<p>Frames are decoded as the client reads, not up front. Each is independently decodable, which is what makes an entry point every <code>chunk_size</code> possible instead of only at byte zero.</p><p>A decode failure means bytes already stored cannot be read back, which is a different severity from an encode failure costing one write. It deserves an alert on any value.</p><p class="ac-metric">Metric: s3o_compression_errors_total{operation="decode"}</p>'
+      body: '<p>Frames are decoded as the client reads, not up front. Each is independently decodable, which is what makes an entry point every <code>chunk_size</code> possible instead of only at byte zero.</p><p><code>s3o_compression_errors_total{operation="decode"}</code> counts only failures to open the seek table or to seek to the range start, which fail over to the next copy. A frame that fails to decode later, while the body streams, ends the response but is not counted.</p><p class="ac-metric">Metric: s3o_compression_errors_total{operation="decode"}</p>'
     },
     SLICEF: {
       title: 'Slice to Client Range',
@@ -264,7 +264,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     PLAINREAD: {
       title: 'Whole-object GET',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>A verbatim copy is read the way it always was: one GET, with any client range passed through to the backend unchanged, since the stored bytes are already in the coordinates the client used.</p>'
+      body: '<p>A verbatim copy is read with one GET. When it is unencrypted, any client range is passed through to the backend unchanged, since the stored bytes are already in the coordinates the client used.</p><p>When it is encrypted, the range is translated to whole ciphertext chunks, which are fetched and decrypted, and the plaintext is sliced to the requested bytes.</p>'
     },
     SERVE: {
       title: 'Stream to Client',

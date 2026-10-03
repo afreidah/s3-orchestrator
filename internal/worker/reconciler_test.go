@@ -24,12 +24,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 )
 
+// noDrains has the fleet report no backend as draining, so every backend it
+// lists is scanned.
+func noDrains(fleet *MockFleetOps) {
+	fleet.EXPECT().ExcludeDraining(gomock.Any()).DoAndReturn(func(names []string) []string { return names }).AnyTimes()
+}
+
 // TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising gomock.NewController, r.Run, context.Background.
 func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})
 	r.Run(context.Background()) // should not panic
@@ -41,6 +48,7 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
@@ -59,6 +67,7 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
@@ -79,6 +88,7 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
@@ -97,6 +107,7 @@ func TestReconciler_ReconcileUsageError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
@@ -114,6 +125,7 @@ func TestReconcile_AllBackends(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
@@ -140,6 +152,41 @@ func TestReconcile_AllBackends(t *testing.T) {
 	}
 }
 
+// TestReconciler_SkipsDrainingBackends verifies a pass never scans a backend
+// with a drain record, so nothing found on it is imported back.
+func TestReconciler_SkipsDrainingBackends(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
+	usageRec := NewMockUsageReconciler(ctrl)
+
+	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
+	fleet.EXPECT().ExcludeDraining([]string{"b1", "b2"}).Return([]string{"b2"})
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 0, nil)
+	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
+
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
+	r.Run(context.Background())
+}
+
+// TestReconcile_RefusesANamedDrainingBackend verifies an explicit reconcile of
+// a backend with a drain record is refused rather than importing onto it.
+func TestReconcile_RefusesANamedDrainingBackend(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	fleet := NewMockFleetOps(ctrl)
+	fleet.EXPECT().ExcludeDraining([]string{"b1"}).Return(nil)
+
+	r := NewReconciler(&ReconcilerDeps{
+		Syncer: NewMockBackendSyncer(ctrl), Fleet: fleet, Usage: NewMockUsageReconciler(ctrl),
+		Buckets: declaredBuckets("unified"),
+	})
+	if _, err := r.Reconcile(context.Background(), "b1"); err == nil {
+		t.Fatal("Reconcile of a draining backend returned no error")
+	}
+}
+
 // TestReconcile_SingleBackend verifies the reconcile single backend contract.
 // Asserts that unexpected error:.
 func TestReconcile_SingleBackend(t *testing.T) {
@@ -147,6 +194,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", []string{"unified"}).
@@ -173,6 +221,7 @@ func TestReconcile_NoBuckets(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
+	noDrains(fleet)
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})

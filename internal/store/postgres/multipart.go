@@ -36,22 +36,22 @@ const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
 // UPLOAD LIFECYCLE
 // -------------------------------------------------------------------------
 
-// CreateMultipartUpload records a new multipart upload in the database.
-// Encryption fields on params are persisted so every UploadPart against
-// the row can reuse the same wrapped DEK; they are zero-length when
-// proxy-side encryption is disabled.
-func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
+// CreateMultipartUpload records a new multipart upload in the database, unless
+// its backend is being drained, which reports false. Encryption fields on params
+// are persisted so every UploadPart against the row can reuse the same wrapped
+// DEK; they are zero-length when proxy-side encryption is disabled.
+func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	var metaJSON []byte
 	if len(params.Metadata) > 0 {
 		var err error
 		metaJSON, err = json.Marshal(params.Metadata)
 		if err != nil {
-			return fmt.Errorf("failed to marshal metadata: %w", err)
+			return false, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 	}
 	keyIDPtr := strPtr(params.KeyID)
 	contentTypePtr := strPtr(params.ContentType)
-	err := s.queries.CreateMultipartUpload(ctx, db.CreateMultipartUploadParams{
+	n, err := s.queries.CreateMultipartUpload(ctx, db.CreateMultipartUploadParams{
 		UploadID:      params.UploadID,
 		ObjectKey:     params.ObjectKey,
 		BackendName:   params.BackendName,
@@ -62,9 +62,9 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		Tagging:       strPtr(core.EncodeTags(params.Tags)),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create multipart upload: %w", err)
+		return false, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
 // nilIfEmptyBytes returns nil when b is zero-length so the column lands

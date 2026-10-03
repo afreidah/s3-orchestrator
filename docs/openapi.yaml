@@ -1213,6 +1213,8 @@ components:
                 compression_saved_bytes:
                     format: int64
                     type: integer
+                drain_state:
+                    type: string
                 draining:
                     type: boolean
                 egress_bytes:
@@ -1630,6 +1632,8 @@ components:
                 objects_remaining:
                     format: int64
                     type: integer
+                state:
+                    type: string
             required:
                 - active
                 - objects_remaining

@@ -16,9 +16,8 @@ import (
 )
 
 // TestMain is the package's test entry point. Silences slog so the drain tests
-// do not flood the test log, and runs goleak.VerifyTestMain: a drain runs as a
-// background goroutine that outlives the call starting it, so cancellation not
-// actually stopping one is the failure this package most needs caught.
+// do not flood the test log, and runs goleak.VerifyTestMain so a test that
+// leaves a store or backend goroutine running fails.
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	goleak.VerifyTestMain(m)

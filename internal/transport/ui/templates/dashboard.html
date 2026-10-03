@@ -109,8 +109,8 @@
           {{$unverified := index $.Data.UnverifiedObjectCounts .}}
           {{$drain := index $.Data.DrainingBackends .}}
           {{$unhealthy := index $.Data.UnhealthyBackends .}}
-          <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{else if $unhealthy}} class="row-degraded"{{end}}>
-            <td>{{.}}{{if $drain.Active}} <span class="badge badge-draining">Draining</span>{{else if $drain.ObjectsMoved}} <span class="badge badge-drained">Drained</span>{{else if $unhealthy}} <span class="badge badge-degraded">Degraded</span>{{end}}</td>
+          <tr{{if eq $drain.State "draining"}} class="row-draining"{{else if eq $drain.State "drained"}} class="row-drained"{{else if or (eq $drain.State "failed") $unhealthy}} class="row-degraded"{{end}}>
+            <td>{{.}}{{if eq $drain.State "draining"}} <span class="badge badge-draining">Draining</span>{{else if eq $drain.State "drained"}} <span class="badge badge-drained">Drained</span>{{else if eq $drain.State "failed"}} <span class="badge badge-degraded" title="{{$drain.Error}}">Drain failed</span>{{else if $unhealthy}} <span class="badge badge-degraded">Degraded</span>{{end}}</td>
             <td class="num">{{formatBytes $stat.BytesUsed}}</td>
             <td class="num">{{if ne $stat.OrphanBytes 0}}<span class="orphan-value">{{formatBytes $stat.OrphanBytes}}</span>{{else}}&mdash;{{end}}</td>
             <td class="num">

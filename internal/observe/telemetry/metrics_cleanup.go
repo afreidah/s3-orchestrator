@@ -165,15 +165,12 @@ var (
 		},
 	)
 
-	// DrainActive is the live count of in-flight drain operations.
-	// Inc'd on StartDrain and Dec'd on completion (success, cancel, or
-	// abort) so concurrent drains across different backends do not
-	// clobber each other's state the way a Set(0)/Set(1) gauge would.
-	// 0 means no drains are running.
+	// DrainActive is the number of backends whose drain record is in
+	// progress, set from the records by the drainer on each tick.
 	DrainActive = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_drain_active",
-			Help: "Count of in-flight backend drain operations (Inc/Dec so concurrent drains compose)",
+			Help: "Number of backends with a drain in progress",
 		},
 	)
 

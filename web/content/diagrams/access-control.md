@@ -21,7 +21,7 @@ The permissions are a bitmask - `list`, `read`, `write`, `delete`, `tags`, `list
 
 #### Why one registry
 
-The registry is assembled from both places a deployment declares credentials - the config file and the store - and published behind an atomic pointer. A credential issued or revoked through the provisioning API takes effect on the next request rather than the next restart, and the S3 path, the admin API and the dashboard all read the same pointer, so none of them can disagree about who a key belongs to.
+The registry is assembled from both places a deployment declares credentials - the config file and the store - and published behind an atomic pointer. A credential issued or revoked through the provisioning API takes effect without a restart. The instance that handled the call rebuilds its registry before answering. Other instances rebuild when the change is announced on the Redis provisioning channel; without Redis, only the handling instance rebuilds. The S3 path, the admin API and the dashboard all read the same pointer, so on one instance none of them can disagree about who a key belongs to.
 
 That is also what makes the root credential unremarkable. `auth.root` merges in as a user holding every permission on every resource; it reaches everything because of what it holds, not because the request path checks for it.
 
@@ -80,7 +80,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     '    REG[("BucketRegistry<br>access key to user")]:::storage --> LOOKUP',
     '',
     '    LOOKUP[Resolve the credential<br>to its user]:::storage --> VERIFY',
-    '    VERIFY{"Secret proves it?<br>constant time"}:::filter -->|no| UNAUTH[401 Unauthorized]:::reject',
+    '    VERIFY{"Secret proves it?<br>constant time"}:::filter -->|no| UNAUTH[Not authenticated<br>S3 API: 403 AccessDenied<br>admin API, dashboard: 401]:::reject',
     '    VERIFY -->|yes| WHO[Authenticated user<br>and the grants it holds]:::process',
     '',
     '    WHO --> SURFACE{Which surface?}:::decision',
@@ -153,12 +153,12 @@ An access key the registry does not hold still computes a full HMAC, against a f
     FORM: {
       title: 'Dashboard login',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>The login form takes an access key and secret rather than a password of its own. Any credential the deployment holds logs in - the root keypair, or one the provisioning API issued.</p><p>The keypair is presented whole rather than as a signature, so this is the one path that compares the secret directly. Both halves are always compared, so a wrong access key costs the same work as a wrong secret and the response cannot be used to learn which was which.</p>'
+      body: '<p>The login form takes an access key and secret rather than a password of its own. Any credential the deployment holds can be presented - the root keypair, or one the provisioning API issued - but only a user holding <code>admin-read</code> on the orchestrator signs in. A valid credential without it gets <code>403</code> and the message "This credential cannot use the dashboard."; a wrong keypair gets <code>401</code>.</p><p>The keypair is presented whole rather than as a signature, so this is the one path that compares the secret directly. Both halves are always compared, so a wrong access key costs the same work as a wrong secret and the response cannot be used to learn which was which.</p>'
     },
     KEY: {
       title: 'Take the access key',
       badge: 'process', badgeText: 'parse',
-      body: '<p>The access key is the first field of the credential scope, in the header or in <code>X-Amz-Credential</code>. It names an identity; it proves nothing on its own.</p><p>Access key IDs are globally unique across every bucket and both sources. A key claimed twice has no unambiguous identity, so assembly refuses it and the deployment fails to start rather than resolving to whichever was written last.</p>'
+      body: '<p>The access key is the first field of the credential scope, in the header or in <code>X-Amz-Credential</code>. It names an identity; it proves nothing on its own.</p><p>Access key IDs are unique across every bucket and both sources. Two config credentials claiming the same key have no unambiguous identity, so assembly refuses them and the deployment fails to start. A stored credential that collides with a config one is shadowed: the config credential wins, and the collision is reported as a <code>NoticeCredentialShadowed</code> notice.</p>'
     },
     CFG: {
       title: 'The config file',
@@ -178,7 +178,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     REG: {
       title: 'BucketRegistry',
       badge: 'storage', badgeText: 'in memory',
-      body: '<p>Maps an access key to the credential that holds it and the user behind it, and holds each user\'s grants. Read on every request; rebuilt only when the config reloads or a provisioning call changes a row.</p><p>One registry serves all three surfaces, which is what stops the S3 path and the admin API from disagreeing about who a key belongs to.</p><p>The root user carries a wildcard over buckets as well as a grant on each declared one, so it reaches a bucket created after the registry was built without needing a rebuild to notice.</p>'
+      body: '<p>Maps an access key to the credential that holds it and the user behind it, and holds each user\'s grants. Read on every request; rebuilt only when the config reloads or a provisioning call changes a row. The instance that handled the provisioning call rebuilds at once; other instances rebuild when the change arrives on the Redis provisioning channel, and without Redis only the handling instance rebuilds.</p><p>One registry serves all three surfaces, which is what stops the S3 path and the admin API from disagreeing about who a key belongs to.</p><p>The root user carries a wildcard over buckets as well as a grant on each declared one, so it reaches a bucket created after the registry was built without needing a rebuild to notice.</p>'
     },
     LOOKUP: {
       title: 'Resolve the credential',
@@ -191,9 +191,9 @@ An access key the registry does not hold still computes a full HMAC, against a f
       body: '<p>For a signed request: reconstruct the canonical request and the string-to-sign, derive the signing key through the HMAC-SHA256 chain <code>secret &rarr; date &rarr; region &rarr; service &rarr; signing key</code>, and compare with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>The signing key is derived per request rather than cached, so a cache hit cannot make a known key faster than an unknown one. Header auth tolerates &plusmn;15 minutes of clock skew; a presigned URL is checked against its own <code>X-Amz-Expires</code>.</p><p>For a dashboard login: the submitted secret is compared against the stored one, in constant time, with the same dummy-secret equalisation.</p>'
     },
     UNAUTH: {
-      title: '401 Unauthorized',
+      title: 'Not authenticated',
       badge: 'reject', badgeText: 'rejected',
-      body: '<p>The caller proved nothing: no signature, an access key the registry does not hold, or a signature that does not verify. All three answer identically, so a refusal does not say whether the key exists.</p><p>Distinct from <code>403</code>, which means the caller proved an identity that holds too little. A client that is authenticated but ungranted gets <code>403</code>, which is the clearer answer for a credential that has been created but not yet granted anything.</p><p>The audit entry for a rejection names no user, because none was proved.</p>'
+      body: '<p>The caller proved nothing: no signature, an access key the registry does not hold, or a signature that does not verify. All three answer identically, so a refusal does not say whether the key exists.</p><p>The S3 API answers <code>403 AccessDenied</code>, as AWS does, so on that surface a failed authentication and a refused grant carry the same status. The admin API answers <code>401</code>, as do a failed dashboard login and a dashboard API call without a valid session.</p><p>The log line and the <code>s3.AuthFailure</code> audit entry carry the reason. The audit entry names no user, because none was proved.</p>'
     },
     WHO: {
       title: 'The authenticated user',
@@ -213,7 +213,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     BUCKET: {
       title: 'Bucket from the path',
       badge: 'process', badgeText: 'routing',
-      body: '<p>The first path segment names the virtual bucket. The admin API\'s object routes take the same namespace, so <code>/admin/api/objects/photos/cat.jpg</code> is authorized against the <code>photos</code> grant exactly as the S3 path would be.</p><p>A prefix naming no single bucket - the empty prefix, or a partial name like <code>pho</code> - cannot be authorized against one grant and is refused. The empty prefix is the whole namespace, and a partial name spans every bucket it prefixes.</p>'
+      body: '<p>The first path segment names the virtual bucket. The admin API\'s object routes take the same namespace, so <code>/admin/api/objects/photos/cat.jpg</code> is authorized against the <code>photos</code> grant exactly as the S3 path would be.</p><p>A prefix naming no single bucket - the empty prefix, or a partial name like <code>pho</code> - cannot be authorized against one grant. The empty prefix is the whole namespace, and a partial name spans every bucket it prefixes. It is allowed only when the user holds a bucket wildcard carrying the permission, and refused otherwise.</p>'
     },
     REACH: {
       title: 'Does the user reach it?',
@@ -223,7 +223,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     BITS: {
       title: 'Does the grant carry the bit?',
       badge: 'filter', badgeText: 'permission',
-      body: '<p>Six data-plane permissions, as bits 0-5 of a <code>uint64</code>: <code>list-buckets</code>, <code>list</code>, <code>read</code>, <code>write</code>, <code>delete</code>, <code>tags</code>. The operation the request names decides which bits are required, and the check requires <b>all</b> of them.</p><p>A bucket grant recording none carries all six, because rows predate the vocabulary and carried full access before it existed.</p><p>The admin permissions occupy bits 8 and up, a disjoint range, so a data-plane set can never be read as an administrative one by accident.</p>'
+      body: '<p>Six data-plane permissions, as bits 0-5 of a <code>uint64</code>: <code>list-buckets</code>, <code>list</code>, <code>read</code>, <code>write</code>, <code>delete</code>, <code>tags</code>. The operation the request names decides which bits are required, and the check requires <b>all</b> of them.</p><p>A bucket grant recording none carries all six, because rows predate the vocabulary and carried full access before it existed.</p><p>The ten admin permissions occupy bits 6 through 15, a disjoint range, so a data-plane set can never be read as an administrative one by accident.</p>'
     },
     RES: {
       title: 'The resource a route declares',
@@ -243,12 +243,12 @@ An access key the registry does not hold still computes a full HMAC, against a f
     FORBID: {
       title: '403 Forbidden',
       badge: 'reject', badgeText: 'rejected',
-      body: '<p>The caller proved an identity, and that identity holds too little: no grant on the resource, or a grant that does not carry the permission the operation needs.</p><p>Refused before the operation runs, so a request the store never sees is a request that was refused rather than one that failed.</p><p>Distinct from <code>401</code>, which means nothing was proved at all. Keeping them apart is what lets an operator tell a bad key from an ungranted one.</p>'
+      body: '<p>The caller proved an identity, and that identity holds too little: no grant on the resource, or a grant that does not carry the permission the operation needs.</p><p>Refused before the operation runs, so a request the store never sees is a request that was refused rather than one that failed.</p><p>On the S3 API this is <code>403 AccessDenied</code>, the same status a failed authentication gets; the log line and audit entry carry the reason. On the admin API and the dashboard a failed authentication is <code>401</code>, so there the status alone tells a bad key from an ungranted one.</p>'
     },
     ALLOW: {
       title: 'The request proceeds',
       badge: 'success', badgeText: 'authorized',
-      body: '<p>The operation runs, and the audit entry names the user that took it.</p><p>Everything past this point - admission control, routing, replication, the storage layer - treats the request as authorized and never re-derives who the caller is.</p><p><a href="../../docs/authentication/">Authentication reference &rarr;</a></p>'
+      body: '<p>The operation runs, and the audit entry names the user that took it.</p><p>Admission control and the rate limiter have already run by this point; they wrap the S3 handler and act before authentication. Everything past this point - routing, replication, the storage layer - treats the request as authorized and never re-derives who the caller is.</p><p><a href="../../docs/authentication/">Authentication reference &rarr;</a></p>'
     }
   };
 
@@ -393,10 +393,10 @@ Carried by a grant on a **bucket**.
   <tr><th>Bit</th><th>Mask</th><th>Value</th><th>Name</th><th>Allows</th></tr>
   <tr><td class="c-bit">0</td><td class="c-mask">0x0001</td><td class="c-dec">1</td><td class="c-name n-data">list-buckets</td><td class="c-what">Knowing the bucket exists - it appears in a bucket listing</td></tr>
   <tr><td class="c-bit">1</td><td class="c-mask">0x0002</td><td class="c-dec">2</td><td class="c-name n-data">list</td><td class="c-what">Enumerating the objects inside it</td></tr>
-  <tr><td class="c-bit">2</td><td class="c-mask">0x0004</td><td class="c-dec">4</td><td class="c-name n-data">read</td><td class="c-what">Fetching an object body, and presigning one</td></tr>
+  <tr><td class="c-bit">2</td><td class="c-mask">0x0004</td><td class="c-dec">4</td><td class="c-name n-data">read</td><td class="c-what">Fetching an object body, reading its tag set, and presigning one</td></tr>
   <tr><td class="c-bit">3</td><td class="c-mask">0x0008</td><td class="c-dec">8</td><td class="c-name n-data">write</td><td class="c-what">Storing an object, copying one in, running a multipart upload</td></tr>
   <tr><td class="c-bit">4</td><td class="c-mask">0x0010</td><td class="c-dec">16</td><td class="c-name n-data">delete</td><td class="c-what">Removing a key, a batch of them, or a whole prefix</td></tr>
-  <tr><td class="c-bit">5</td><td class="c-mask">0x0020</td><td class="c-dec">32</td><td class="c-name n-data">tags</td><td class="c-what">Reading and writing an object's tag set</td></tr>
+  <tr><td class="c-bit">5</td><td class="c-mask">0x0020</td><td class="c-dec">32</td><td class="c-name n-data">tags</td><td class="c-what">Replacing or removing an object's tag set</td></tr>
   <tr class="total"><td class="c-bit"></td><td class="c-mask">0x003F</td><td class="c-dec">63</td><td class="c-name">all</td><td class="c-what">Every data-plane permission, and what an empty bucket grant carries</td></tr>
 </table>
 
@@ -408,16 +408,16 @@ Carried by a grant on a **backend** or on the **orchestrator**.
 
 <table class="bittab">
   <tr><th>Bit</th><th>Mask</th><th>Value</th><th>Name</th><th>Allows</th></tr>
-  <tr><td class="c-bit">6</td><td class="c-mask">0x0040</td><td class="c-dec">64</td><td class="c-name n-admin">admin-read</td><td class="c-what">Status, worker health, reload status, object locations, drain status</td></tr>
-  <tr><td class="c-bit">7</td><td class="c-mask">0x0080</td><td class="c-dec">128</td><td class="c-name n-admin">admin-logs</td><td class="c-what">Reading buffered log entries</td></tr>
-  <tr><td class="c-bit">8</td><td class="c-mask">0x0100</td><td class="c-dec">256</td><td class="c-name n-admin">admin-maintain</td><td class="c-what">Repair passes: scrub, checksum backfill, reconcile, replicate, rebalance</td></tr>
+  <tr><td class="c-bit">6</td><td class="c-mask">0x0040</td><td class="c-dec">64</td><td class="c-name n-admin">admin-read</td><td class="c-what">Status, reload status, worker health, replication and over-replication status, the cleanup queue and DLQ, cache stats, the log level, drain progress</td></tr>
+  <tr><td class="c-bit">7</td><td class="c-mask">0x0080</td><td class="c-dec">128</td><td class="c-name n-admin">admin-logs</td><td class="c-what">Reading buffered log entries, capturing a trace snapshot</td></tr>
+  <tr><td class="c-bit">8</td><td class="c-mask">0x0100</td><td class="c-dec">256</td><td class="c-name n-admin">admin-maintain</td><td class="c-what">Repair and upkeep passes: scrub, checksum backfill, reconcile, replicate, rebalance, lifecycle, usage flush, usage reconcile, over-replication cleanup, cleanup-DLQ requeue</td></tr>
   <tr><td class="c-bit">9</td><td class="c-mask">0x0200</td><td class="c-dec">512</td><td class="c-name n-admin">admin-convert</td><td class="c-what">Rewrite passes: encrypt, decrypt, compress and decompress existing objects</td></tr>
   <tr><td class="c-bit">10</td><td class="c-mask">0x0400</td><td class="c-dec">1024</td><td class="c-name n-admin">admin-keys</td><td class="c-what">Rotating the encryption master key</td></tr>
   <tr><td class="c-bit">11</td><td class="c-mask">0x0800</td><td class="c-dec">2048</td><td class="c-name n-admin">admin-cache</td><td class="c-what">Flushing and invalidating the object data cache</td></tr>
   <tr><td class="c-bit">12</td><td class="c-mask">0x1000</td><td class="c-dec">4096</td><td class="c-name n-admin">admin-drain</td><td class="c-what">Starting and cancelling a backend drain</td></tr>
   <tr><td class="c-bit">13</td><td class="c-mask">0x2000</td><td class="c-dec">8192</td><td class="c-name n-admin">admin-decommission</td><td class="c-what">Removing a backend, including purging its objects</td></tr>
   <tr><td class="c-bit">14</td><td class="c-mask">0x4000</td><td class="c-dec">16384</td><td class="c-name n-admin">admin-config</td><td class="c-what">Changing runtime configuration, such as the log level</td></tr>
-  <tr><td class="c-bit">15</td><td class="c-mask">0x8000</td><td class="c-dec">32768</td><td class="c-name n-admin">admin-provision</td><td class="c-what">Creating and removing buckets, users, credentials and grants</td></tr>
+  <tr><td class="c-bit">15</td><td class="c-mask">0x8000</td><td class="c-dec">32768</td><td class="c-name n-admin">admin-provision</td><td class="c-what">Reading the provisioning view; creating, changing and removing buckets, users, credentials and grants</td></tr>
   <tr class="total"><td class="c-bit"></td><td class="c-mask">0xFFC0</td><td class="c-dec">65472</td><td class="c-name">admin-all</td><td class="c-what">Every control-plane permission</td></tr>
 </table>
 
@@ -425,13 +425,13 @@ Each is split from its neighbour where a real principal wants one and not the ot
 
 ### Setting bits
 
-A grant is built by OR-ing together the bits it was written with. `grant add -permissions list,read` combines two masks into the one integer the `permissions` column holds:
+A grant is built by OR-ing together the bits it was written with. `grant add -permissions list,read` stores the names `list,read` in the `permissions` column; when the registry is assembled, those names become two masks combined into one in-memory set:
 
 ```text
      list        000010       2
   OR read        000100       4
      ------------------------------
-   = stored      000110       6
+   = held        000110       6
 ```
 
 Rendering it back is the reverse walk over the same table, which is why a set always prints in one fixed order and two equal grants read identically.
@@ -492,9 +492,11 @@ An empty **backend or orchestrator** grant carries nothing (`0`). No control-pla
 
 ### Combining grants
 
-Merging two sets is an `OR`, which is how a user's grants from config and from the store come together. A wildcard grant is the exception: a **named** grant replaces the wildcard for the bucket it names rather than being OR-ed into it.
+Each user comes from one source, config or store, so grants are never merged across the two. Where two grants of one user do meet, the rule depends on the resource.
 
-That has to be a replacement, because OR-ing would make a carve-out impossible to express. A user granted broad `read` across every bucket could never be narrowed to `list-buckets` on the one holding secrets - the broader bit would always survive the union.
+On the control plane they combine with an `OR`: a grant on a named backend and a grant on `backend:*` are unioned when that backend is checked. A control-plane grant is written to widen access, so there is no carve-out to preserve.
+
+On buckets, a **named** grant replaces the wildcard for the bucket it names rather than being OR-ed into it. That has to be a replacement, because OR-ing would make a carve-out impossible to express. A user granted broad `read` across every bucket could never be narrowed to `list-buckets` on the one holding secrets - the broader bit would always survive the union.
 
 ## Legend
 

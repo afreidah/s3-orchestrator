@@ -8,6 +8,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type BackendCapacity struct {
+	BackendName     string
+	BytesLimit      int64
+	BytesUsed       int64
+	OrphanBytes     int64
+	InflightBytes   int64
+	AvailableBytes  int64
+	AcceptingWrites bool
+}
+
+type BackendDrain struct {
+	BackendName  string
+	State        string
+	ObjectsMoved int64
+	LastError    *string
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+}
+
 type BackendQuota struct {
 	BackendName string
 	BytesLimit  int64

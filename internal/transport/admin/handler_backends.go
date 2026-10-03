@@ -67,6 +67,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.DrainProgressResponse{
 		Active:           progress.Active,
+		State:            progress.State,
 		ObjectsRemaining: progress.ObjectsRemaining,
 		BytesRemaining:   progress.BytesRemaining,
 		ObjectsMoved:     progress.ObjectsMoved,
@@ -74,10 +75,11 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCancelDrain cancels an active drain operation.
+// handleCancelDrain clears a backend's drain record, stopping a drain in
+// progress and making a drained or failed backend writable again.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.drain.CancelDrain(name); err != nil {
+	if err := h.drain.CancelDrain(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
 		return

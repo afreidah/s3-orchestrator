@@ -78,32 +78,12 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 }
 
 // ListBackendQuotaUsage returns each backend's ceiling and the byte totals a
-// write is judged against, for the quota tracker's baseline refresh. The
-// in-flight join mirrors GetBackendWithSpace: parts of uploads that have not
-// completed occupy the backend without appearing in bytes_used.
+// write is judged against, for the quota tracker's baseline refresh. The figures
+// come from backend_capacity, the same view admission tests against.
 func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT q.backend_name, q.bytes_limit,
-		       COALESCE(MAX(0, s.bytes_used), 0),
-		       q.orphan_bytes,
-		       COALESCE(m.inflight, 0) + COALESCE(p.inflight, 0) AS inflight_bytes
-		FROM backend_quotas q
-		LEFT JOIN (
-			SELECT backend_name, SUM(bytes_used) AS bytes_used
-			FROM backend_quota_stripes
-			GROUP BY backend_name
-		) s ON s.backend_name = q.backend_name
-		LEFT JOIN (
-			SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-			FROM multipart_uploads mu
-			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-			GROUP BY mu.backend_name
-		) m ON m.backend_name = q.backend_name
-		LEFT JOIN (
-			SELECT backend_name, SUM(size_bytes) AS inflight
-			FROM pending_objects
-			GROUP BY backend_name
-		) p ON p.backend_name = q.backend_name`)
+		SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
+		FROM backend_capacity`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query backend quota usage: %w", err)
 	}

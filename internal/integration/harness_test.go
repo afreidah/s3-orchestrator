@@ -510,25 +510,10 @@ func (h *harness) replicate(factor int) {
 	}
 }
 
-// waitDrainComplete polls until the drain of backendName reports inactive.
-func (h *harness) waitDrainComplete(backendName string, timeout time.Duration) {
+// drainToCompletion runs drain passes until backendName's drain finishes.
+func (h *harness) drainToCompletion(backendName string) {
 	h.t.Helper()
-	ctx := context.Background()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		progress, err := h.stack.Drain.GetDrainProgress(ctx, backendName)
-		if err != nil {
-			h.t.Fatalf("GetDrainProgress(%s): %v", backendName, err)
-		}
-		if !progress.Active {
-			if progress.Error != "" {
-				h.t.Fatalf("drain of %s failed: %s", backendName, progress.Error)
-			}
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	h.t.Fatalf("drain of %s did not complete within %s", backendName, timeout)
+	drainToCompletion(h.t, context.Background(), h.stack, backendName)
 }
 
 // -------------------------------------------------------------------------

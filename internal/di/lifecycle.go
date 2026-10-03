@@ -44,7 +44,8 @@ type lifecycleWorkerSet struct {
 	replicator    *worker.Replicator
 	overRep       *worker.OverReplicationCleaner
 	scrubber      *worker.Scrubber
-	pendingReaper *worker.PendingReaper // nil when the pending pattern is off
+	drainer       *worker.Drainer
+	pendingReaper *worker.PendingReaper // nil when its construction failed
 }
 
 // -------------------------------------------------------------------------
@@ -64,23 +65,22 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 		replicator: r.Resolve[*worker.Replicator](),
 		overRep:    r.Resolve[*worker.OverReplicationCleaner](),
 		scrubber:   r.Resolve[*worker.Scrubber](),
+		drainer:    r.Resolve[*worker.Drainer](),
 	}
 	if r.err != nil {
 		return ws, r.err
 	}
-	// PendingReaper is conditionally registered: the provider is
-	// only present when cfg.WritePath.PendingPattern.IsEnabled() is
-	// true. do.Invoke returns an error for both "not registered" (
-	// feature off) and "registered but constructor failed". WireManager
-	// has already logged the Failed case via Optional[*worker.PendingReaper];
-	// here we just take the nil value either way.
+	// PendingReaper is always provided, so an error here means its
+	// constructor failed. WireManager has already logged that case via
+	// Optional[*worker.PendingReaper]; here we take the nil value and the
+	// service is not registered.
 	ws.pendingReaper, _ = do.Invoke[*worker.PendingReaper](i)
 	return ws, nil
 }
 
 // registerWorkerServices registers the worker-mode lifecycle services
 // (multipart cleanup, cleanup queue, pending reaper, rebalancer,
-// replicator, over-replication, lifecycle, scrubber) on sm.
+// replicator, over-replication, drain, lifecycle, scrubber) on sm.
 func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *infra.BackendRuntime, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
 	sm.Register("multipart-cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
@@ -90,6 +90,7 @@ func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *in
 	sm.Register("rebalancer", worker.NewRebalancerService(rt, ws.rebalancer, locker))
 	sm.Register("replicator", worker.NewReplicatorService(rt, ws.replicator, locker))
 	sm.Register("over-replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
+	sm.Register("drain", worker.NewDrainerService(rt, ws.drainer, locker))
 	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
 	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }

@@ -42,6 +42,20 @@ func (m *MockMetadataStore) EXPECT() *MockMetadataStoreMockRecorder {
 	return m.recorder
 }
 
+// AddDrainedObjects mocks base method.
+func (m *MockMetadataStore) AddDrainedObjects(ctx context.Context, backendName string, moved int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddDrainedObjects", ctx, backendName, moved)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddDrainedObjects indicates an expected call of AddDrainedObjects.
+func (mr *MockMetadataStoreMockRecorder) AddDrainedObjects(ctx, backendName, moved any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddDrainedObjects", reflect.TypeOf((*MockMetadataStore)(nil).AddDrainedObjects), ctx, backendName, moved)
+}
+
 // BackendObjectStats mocks base method.
 func (m *MockMetadataStore) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
 	m.ctrl.T.Helper()
@@ -103,6 +117,21 @@ func (mr *MockMetadataStoreMockRecorder) CleanupQueueDepth(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockMetadataStore)(nil).CleanupQueueDepth), ctx)
 }
 
+// ClearDrain mocks base method.
+func (m *MockMetadataStore) ClearDrain(ctx context.Context, backendName string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearDrain", ctx, backendName)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClearDrain indicates an expected call of ClearDrain.
+func (mr *MockMetadataStoreMockRecorder) ClearDrain(ctx, backendName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearDrain", reflect.TypeOf((*MockMetadataStore)(nil).ClearDrain), ctx, backendName)
+}
+
 // Close mocks base method.
 func (m *MockMetadataStore) Close() {
 	m.ctrl.T.Helper()
@@ -144,6 +173,21 @@ func (m *MockMetadataStore) CompleteCleanupItem(ctx context.Context, id int64) e
 func (mr *MockMetadataStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).CompleteCleanupItem), ctx, id)
+}
+
+// CompleteDrain mocks base method.
+func (m *MockMetadataStore) CompleteDrain(ctx context.Context, backendName string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompleteDrain", ctx, backendName)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CompleteDrain indicates an expected call of CompleteDrain.
+func (mr *MockMetadataStoreMockRecorder) CompleteDrain(ctx, backendName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteDrain", reflect.TypeOf((*MockMetadataStore)(nil).CompleteDrain), ctx, backendName)
 }
 
 // CompleteNotification mocks base method.
@@ -308,11 +352,12 @@ func (mr *MockMetadataStoreMockRecorder) CreateGrant(ctx, g any) *gomock.Call {
 }
 
 // CreateMultipartUpload mocks base method.
-func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
+func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateMultipartUpload", ctx, params)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CreateMultipartUpload indicates an expected call of CreateMultipartUpload.
@@ -1057,6 +1102,21 @@ func (mr *MockMetadataStoreMockRecorder) ListDirectoryChildren(ctx, prefix, star
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDirectoryChildren", reflect.TypeOf((*MockMetadataStore)(nil).ListDirectoryChildren), ctx, prefix, startAfter, maxKeys)
 }
 
+// ListDrains mocks base method.
+func (m *MockMetadataStore) ListDrains(ctx context.Context) ([]core.BackendDrain, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListDrains", ctx)
+	ret0, _ := ret[0].([]core.BackendDrain)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListDrains indicates an expected call of ListDrains.
+func (mr *MockMetadataStoreMockRecorder) ListDrains(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDrains", reflect.TypeOf((*MockMetadataStore)(nil).ListDrains), ctx)
+}
+
 // ListEncryptedLocations mocks base method.
 func (m *MockMetadataStore) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
 	m.ctrl.T.Helper()
@@ -1235,6 +1295,20 @@ func (m *MockMetadataStore) ListUsers(ctx context.Context) ([]core.User, error) 
 func (mr *MockMetadataStoreMockRecorder) ListUsers(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUsers", reflect.TypeOf((*MockMetadataStore)(nil).ListUsers), ctx)
+}
+
+// MarkDrainFailed mocks base method.
+func (m *MockMetadataStore) MarkDrainFailed(ctx context.Context, backendName, reason string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkDrainFailed", ctx, backendName, reason)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkDrainFailed indicates an expected call of MarkDrainFailed.
+func (mr *MockMetadataStoreMockRecorder) MarkDrainFailed(ctx, backendName, reason any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkDrainFailed", reflect.TypeOf((*MockMetadataStore)(nil).MarkDrainFailed), ctx, backendName, reason)
 }
 
 // MarkObjectCompressed mocks base method.
@@ -1572,6 +1646,21 @@ func (m *MockMetadataStore) SetGrant(ctx context.Context, g *core.Grant) error {
 func (mr *MockMetadataStoreMockRecorder) SetGrant(ctx, g any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGrant", reflect.TypeOf((*MockMetadataStore)(nil).SetGrant), ctx, g)
+}
+
+// StartDrain mocks base method.
+func (m *MockMetadataStore) StartDrain(ctx context.Context, backendName string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StartDrain", ctx, backendName)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// StartDrain indicates an expected call of StartDrain.
+func (mr *MockMetadataStoreMockRecorder) StartDrain(ctx, backendName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartDrain", reflect.TypeOf((*MockMetadataStore)(nil).StartDrain), ctx, backendName)
 }
 
 // SweepStaleCleanupQueueRows mocks base method.

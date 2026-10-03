@@ -25,8 +25,21 @@ func TestBackendHealthAndDrain(t *testing.T) {
 	if backendHealth(true) != "healthy" || backendHealth(false) != "unhealthy" {
 		t.Error("backendHealth mapping wrong")
 	}
-	if backendDrain(true) != "draining" || backendDrain(false) != "-" {
+	if backendDrain("draining") != "draining" || backendDrain("failed") != "failed" || backendDrain("") != "-" {
 		t.Error("backendDrain mapping wrong")
+	}
+}
+
+// TestDrainEndStatus reports a drain that finished as a success and one that
+// failed as a failure carrying its reason.
+func TestDrainEndStatus(t *testing.T) {
+	t.Parallel()
+	if s := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "drained"}); !s.ok {
+		t.Errorf("drained = %+v, want ok", s)
+	}
+	s := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "failed", Error: "list failed"})
+	if s.ok || !strings.Contains(s.text, "list failed") {
+		t.Errorf("failed = %+v, want not ok with the reason", s)
 	}
 }
 
@@ -34,7 +47,7 @@ func TestRowsFromBackends(t *testing.T) {
 	t.Parallel()
 	rows := rowsFromBackends([]adminapi.BackendStatus{
 		{Name: "b1", Healthy: true, BytesUsed: 2048, BytesLimit: 4096, ObjectCount: 3, APIRequests: 9, IngressBytes: 1024, EgressBytes: 512},
-		{Name: "b2", Healthy: false, Draining: true, BytesUsed: 0, BytesLimit: 0},
+		{Name: "b2", Healthy: false, Draining: true, DrainState: "draining", BytesUsed: 0, BytesLimit: 0},
 	})
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))

@@ -75,6 +75,9 @@ The schema currently provisions:
 | `cleanup_dlq` | Dead-letter for `cleanup_queue` rows that exhausted retries; surfaces unrecoverable orphans for operator action |
 | `pending_objects` | In-flight PUT intents recorded before the backend write so a DB outage can't silently destroy the prior copy. Carries the same stored-form columns as `object_locations`, so an intent the reaper promotes describes bytes that can actually be read |
 | `notification_outbox` | Durable webhook event delivery queue |
+| `backend_drains` | One row per backend with a [drain](operations.md#draining-a-backend), from the moment it starts until it is cancelled or the backend is removed: its state (`draining`, `drained`, or `failed`), objects moved, the error that stopped a failed drain, and when it started and finished. No foreign key to `backend_quotas`, so the record outlives that row |
+
+The schema also defines one view, `backend_capacity`: per backend, the byte limit, stored bytes, orphan bytes, in-flight bytes (incomplete multipart parts plus the intents of writes still uploading), the bytes still available (NULL when there is no limit), and whether the backend accepts writes, which it does not while it has a drain record. Every admission test reads it, so a pending intent, a replica, and a multipart upload are all refused by the same definition, and the quota tracker refreshes its baselines from the same figures.
 
 Quota updates are transactional: object location inserts/deletes and quota counter changes happen atomically.
 

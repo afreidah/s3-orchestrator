@@ -23,6 +23,7 @@ import (
 // a typo lands.
 const (
 	WorkerNameCleanup         = "cleanup"
+	WorkerNameDrainer         = "drainer"
 	WorkerNameOverReplication = "over_replication"
 	WorkerNamePendingReaper   = "pending_reaper"
 	WorkerNameRebalancer      = "rebalancer"

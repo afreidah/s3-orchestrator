@@ -15,7 +15,6 @@
 package di
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/samber/do/v2"
@@ -176,19 +175,17 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	return w, nil
 }
 
-// ProvidePendingReaper constructs the pending-reaper worker. The
-// provider is registered in NewInjector only when the pending pattern
-// is enabled, so reaching this function implies the feature is on.
-// Any nil dependency at this point is a wiring bug, not a "feature
-// off" signal — it surfaces as an error so Optional[*worker.PendingReaper]
-// reports Failed instead of conflating it with Disabled.
+// ProvidePendingReaper constructs the pending-reaper worker. It is always
+// provided, since every write claims its bytes with an intent. A nil
+// dependency here is a wiring bug and surfaces as an error, so
+// Optional[*worker.PendingReaper] reports Failed.
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
 	}
 	if c.Stores == nil {
-		return nil, fmt.Errorf("pending pattern enabled but MetadataStore resolved to nil")
+		return nil, fmt.Errorf("pending reaper: MetadataStore resolved to nil")
 	}
 	r := worker.NewPendingReaper(worker.PendingReaperDeps{
 		Ops:       c.Runtime,
@@ -252,34 +249,39 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	}), nil
 }
 
-// ProvideDrainManager constructs the drain manager from the backend
-// runtime (fleet/copy/delete primitives), the write coordinator (its
-// mover), the opened store for the object/quota/lifecycle role surfaces,
-// the multipart manager's abort hook, and the cleanup worker's queue
-// flush.
+// ProvideDrainManager constructs the drain manager, the operator side of a
+// drain, from the backend runtime and the opened store's object, drain and
+// backend-lifecycle roles.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	r := newResolver(i)
 	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
-	coord := r.ResolveNamed[*writepath.Coordinator]("WriteCoordinator")
 	stores := r.ResolveNamed[metadataStore]("MetadataStore")
-	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
-	cleanup := r.ResolveNamed[*worker.CleanupWorker]("CleanupWorker")
 	if r.err != nil {
 		return nil, r.err
 	}
-	// drain wants a (processed, failed) callback; adapt the WorkSummary return
-	// so drain stays decoupled from worker.WorkSummary.
-	processCleanup := func(ctx context.Context) (int, int) {
-		sum := cleanup.ProcessCleanupQueue(ctx)
-		return sum.Succeeded, sum.Failed
+	return drain.New(rt, stores, stores, stores), nil
+}
+
+// ProvideDrainer constructs the drain worker. It hands every set of drain
+// records it reads to the drain manager, which is what keeps IsDraining current
+// on the instance that runs it, and aborts a drained backend's open uploads
+// through the multipart manager.
+func ProvideDrainer(i do.Injector) (*worker.Drainer, error) {
+	c, err := resolveWorkerCore(i)
+	if err != nil {
+		return nil, err
 	}
-	return drain.New(
-		rt,
-		coord,
-		stores,
-		stores,
-		stores,
-		mp.AbortMultipartUploadsOnBackend,
-		processCleanup,
-	), nil
+	r := newResolver(i)
+	dm := r.Resolve[*drain.Manager]()
+	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
+	if r.err != nil {
+		return nil, r.err
+	}
+	return worker.NewDrainer(worker.DrainerDeps{
+		Ops:          c.Runtime,
+		Placement:    c.Coord,
+		Store:        c.Stores,
+		AbortUploads: mp.AbortMultipartUploadsOnBackend,
+		OnRecords:    dm.SetStates,
+	}), nil
 }

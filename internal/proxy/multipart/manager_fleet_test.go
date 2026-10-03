@@ -66,12 +66,12 @@ type multipartObjectCall struct {
 	Tags         []core.Tag       // the set the create call carried, applied at complete
 }
 
-func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *core.CreateMultipartUploadParams) error {
-	return func(_ context.Context, params *core.CreateMultipartUploadParams) error {
+func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *core.CreateMultipartUploadParams) (bool, error) {
+	return func(_ context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.create = append(c.create, *params)
-		return err
+		return err == nil, err
 	}
 }
 
@@ -955,7 +955,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).AnyTimes()
+		Return(false, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
@@ -1147,10 +1147,10 @@ func TestUploadPart_ReusesSharedDEK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) error {
+		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 			encKey = params.EncryptionKey
 			keyID = params.KeyID
-			return nil
+			return true, nil
 		}).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, uploadID string) (*core.MultipartUpload, error) {
@@ -1187,10 +1187,10 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) error {
+		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 			encKey = params.EncryptionKey
 			keyID = params.KeyID
-			return nil
+			return true, nil
 		}).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, uploadID string) (*core.MultipartUpload, error) {

@@ -104,35 +104,11 @@ SET bytes_used = EXCLUDED.bytes_used;
 
 -- name: ListBackendQuotaUsage :many
 -- Every backend's ceiling and what occupies it: the striped byte total, orphans
--- awaiting cleanup, and the writes that have not landed yet.
---
--- In-flight is the parts of incomplete multipart uploads plus the intents of
--- single-object PUTs still in progress. Both describe bytes on their way to a
--- backend that no object_locations row covers, and both are rows every instance
--- can read - which is what makes the figure fleet-wide rather than a view of
--- what this process happens to have started.
-SELECT q.backend_name,
-       q.bytes_limit,
-       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
-       q.orphan_bytes,
-       (COALESCE(m.inflight, 0) + COALESCE(p.inflight, 0))::bigint AS inflight_bytes
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT backend_name, SUM(bytes_used) AS bytes_used
-    FROM backend_quota_stripes
-    GROUP BY backend_name
-) s ON s.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-LEFT JOIN (
-    SELECT backend_name, SUM(size_bytes) AS inflight
-    FROM pending_objects
-    GROUP BY backend_name
-) p ON p.backend_name = q.backend_name;
+-- awaiting cleanup, and the writes that have not landed yet. The figures come
+-- from backend_capacity, the same view admission tests against, and they are
+-- rows every instance can read, which is what makes them fleet-wide.
+SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
+FROM backend_capacity;
 
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

@@ -42,7 +42,7 @@ import (
 func TestCreateMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 			Return(&core.MultipartUpload{
 				UploadID:    "test-upload-id",
@@ -87,7 +87,7 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
-			Return(&core.S3Error{
+			Return(false, &core.S3Error{
 				StatusCode: 500,
 				Code:       "InternalError",
 				Message:    "db error",
@@ -112,7 +112,7 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 			Return(&core.MultipartUpload{
 				UploadID:    "test-upload-id",
@@ -791,7 +791,7 @@ func TestCreateMultipartUpload_PerBucketLimit_BelowAllows(t *testing.T) {
 	ts, _ := newTestServerWithMultipartLimit(t, 5, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().CountActiveMultipartUploads(gomock.Any(), gomock.Any()).
 			Return(int64(1), nil).AnyTimes()
-		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 			Return(&core.MultipartUpload{
 				UploadID:    "upl-1",

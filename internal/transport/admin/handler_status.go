@@ -79,15 +79,16 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // backendStatuses maps a dashboard snapshot onto the shared status wire type,
 // one entry per backend in display order. A backend absent from UnhealthyBackends
-// is healthy; presence in DrainingBackends marks it draining.
+// is healthy; its entry in DrainingBackends carries its drain state.
 func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 	backends := make([]adminapi.BackendStatus, 0, len(data.BackendOrder))
 	for _, name := range data.BackendOrder {
-		_, draining := data.DrainingBackends[name]
+		drain := data.DrainingBackends[name]
 		bs := adminapi.BackendStatus{
-			Name:     name,
-			Healthy:  !data.UnhealthyBackends[name],
-			Draining: draining,
+			Name:       name,
+			Healthy:    !data.UnhealthyBackends[name],
+			Draining:   drain.Active,
+			DrainState: drain.State,
 		}
 		if qs, ok := data.QuotaStats[name]; ok {
 			bs.BytesUsed = qs.BytesUsed

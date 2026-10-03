@@ -34,12 +34,12 @@ var (
 		[]string{"op", "error_type"},
 	)
 
-	// EncryptionUnknownKeyIDTotal counts decryption attempts where the keyID
-	// was not found in the configured keys, triggering a primary key fallback.
+	// EncryptionUnknownKeyIDTotal counts decryption attempts refused because
+	// the keyID was not found in the configured keys.
 	EncryptionUnknownKeyIDTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "s3o_encryption_unknown_key_id_total",
-			Help: "Decryption attempts with unknown keyID (primary key fallback)",
+			Help: "Decryption attempts refused because the keyID matches no configured key",
 		},
 	)
 

@@ -2367,12 +2367,14 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		t.Fatalf("expected 3 backends, got %v", backends)
 	}
 
-	// Mark the first backend draining so the cleaner scores its copy lowest,
-	// without launching the real drain goroutine -- that would race the
-	// explicit Clean below and remove the copy itself.
+	// Start a drain of the first backend so the cleaner scores its copy lowest.
+	// Nothing runs drain passes here, so the drain itself does not race the
+	// explicit Clean below.
 	drainTarget := backends[0]
-	st.Drain.SeedActiveForTest(drainTarget)
-	defer st.Drain.ClearState()
+	if err := st.Drain.StartDrain(ctx, drainTarget); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	defer func() { _ = st.Drain.CancelDrain(ctx, drainTarget) }()
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
@@ -4168,7 +4170,7 @@ func TestDrainBackend(t *testing.T) {
 	if err := testStack.Drain.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
-	waitDrainComplete(t, ctx, "minio-1", 30*time.Second)
+	drainToCompletion(t, ctx, testStack, "minio-1")
 
 	assertObjectsOnBackend(t, keys, "minio-2")
 	ws.assertIntact(ctx, "after drain")
@@ -4183,32 +4185,6 @@ func assertObjectsOnBackend(t *testing.T, keys []string, wantBackend string) {
 		if b := queryObjectBackend(t, key); b != wantBackend {
 			t.Errorf("object %s on %s, want %s", key, b, wantBackend)
 		}
-	}
-}
-
-// waitDrainComplete polls GetDrainProgress until it reports inactive
-// or the deadline elapses. Surfaces a stored error string if the drain
-// finished unsuccessfully.
-func waitDrainComplete(t *testing.T, ctx context.Context, backend string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.After(timeout)
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("drain of %s did not complete within %s", backend, timeout)
-		default:
-		}
-		progress, err := testStack.Drain.GetDrainProgress(ctx, backend)
-		if err != nil {
-			t.Fatalf("GetDrainProgress: %v", err)
-		}
-		if !progress.Active {
-			if progress.Error != "" {
-				t.Fatalf("drain failed: %s", progress.Error)
-			}
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -4265,23 +4241,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 		t.Errorf("new object during drain on %s, want minio-2", b)
 	}
 
-	// Wait for drain to finish.
-	deadline := time.After(30 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("drain did not complete within 30s")
-		default:
-		}
-		progress, err := testStack.Drain.GetDrainProgress(ctx, "minio-1")
-		if err != nil {
-			t.Fatalf("GetDrainProgress: %v", err)
-		}
-		if !progress.Active {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	drainToCompletion(t, ctx, testStack, "minio-1")
 }
 
 // TestRemoveBackend verifies the remove backend contract.

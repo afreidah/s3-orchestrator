@@ -221,7 +221,7 @@ Key metrics to alert on:
 | `s3o_pending_intents_enqueued_total` | Rate of PUT intents inserted (write-path PUT-before-COMMIT pattern). Should track the PutObject rate closely; a sustained gap suggests the pending pattern is bypassed |
 | `s3o_pending_intents_resolved_total{status}` | Pending intents resolved by status (`committed` = atomic commit happy path, `promoted` = reaper found backend object and promoted the intent, `dropped` = reaper found HEAD 404 and dropped the intent, `ambiguous` = HEAD failed for non-404 reasons, `already_resolved` = race). A sustained `ambiguous` rate means the reaper cannot reach the backend |
 | `s3o_pending_intents_depth` | Current unresolved intents. Alert when consistently above the `batch_size` of the reaper - the reaper is not keeping up |
-| `s3o_drain_active` | Count of in-flight backend drain operations (Inc/Dec so concurrent drains compose); 0 means no drains are running. Page on `s3o_drain_active > 0 for 6h` (drain stuck) |
+| `s3o_drain_active` | Number of backends with a drain in progress, set from the drain records on each drain worker tick; 0 means no drains are running. Page on `s3o_drain_active > 0 for 6h` (drain stuck) |
 | `s3o_drain_race_aborted_total` | PutObject attempts aborted after drain started mid-write. Any non-zero rate is benign (the orchestrator recovers automatically) but a sustained rate suggests longer-than-expected gaps between `EligibleForWrite` and the backend PUT - typically very large objects against a fast-draining backend |
 | `time() - s3o_worker_last_success_timestamp_seconds{service="..."}` | Alert when greater than the worker's expected tick interval times a margin (e.g. `> 4 * interval`) - the service has not completed a successful tick in that window |
 | `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 - the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
@@ -321,13 +321,13 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_worker_last_success_timestamp_seconds` | Gauge | service | Unix time of the most recent successful tick per service |
 | `s3o_worker_consecutive_failures` | Gauge | service | Consecutive failed ticks per service since the last success |
 | `s3o_audit_events_total` | Counter | event | Audit log entries emitted |
-| `s3o_drain_active` | Gauge | - | Count of in-flight backend drain operations |
+| `s3o_drain_active` | Gauge | - | Number of backends with a drain in progress |
 | `s3o_drain_objects_moved_total` | Counter | - | Objects migrated during drain |
 | `s3o_drain_bytes_moved_total` | Counter | - | Bytes migrated during drain |
 | `s3o_drain_race_aborted_total` | Counter | - | PutObject attempts aborted after drain started mid-write |
 | `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations |
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
-| `s3o_encryption_unknown_key_id_total` | Counter | - | Decryption attempts with unknown keyID (primary key fallback) |
+| `s3o_encryption_unknown_key_id_total` | Counter | - | Decryption attempts refused because the keyID matches no configured key |
 | `s3o_encryption_flag_mismatch_total` | Counter | component | Copies whose stored bytes disagreed with their recorded encryption flag |
 | `s3o_import_classified_total` | Counter | source, decision | Discovered objects imported, by what their bytes were classified as (`plaintext`, `adopted_key`, `unreadable`, `compressed`) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing |

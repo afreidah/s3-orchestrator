@@ -186,9 +186,9 @@ When a backend enters the draining state:
 
 - The replicator **excludes it from target selection** — no new replicas are placed on a draining backend
 - The over-replication cleaner **prioritizes removing copies from draining backends** (score 0), so excess copies are cleaned from the draining backend first
-- The drain manager handles its own object migration independently — if an object already has a replica on another backend, the drain manager simply deletes the draining copy without any data transfer
+- The drain worker handles its own object migration independently — if an object already has a replica on another backend, the drain worker simply deletes the draining copy without any data transfer
 
-Draining and replication do not compete. The drain manager moves or deletes objects from the draining backend, while the replicator ensures the target factor is maintained on the remaining healthy backends.
+Draining and replication do not compete. The drain worker moves or deletes objects from the draining backend, while the replicator ensures the target factor is maintained on the remaining healthy backends. A backend whose drain has finished or failed stays excluded from replica placement until its drain is cleared or the backend is removed.
 
 ## Rebalancer Interaction
 
