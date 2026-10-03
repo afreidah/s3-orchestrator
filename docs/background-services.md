@@ -11,7 +11,7 @@ The orchestrator runs a set of long-running background workers that keep the met
 
 | Task | Interval | Advisory Lock | Description |
 |------|----------|:---:|-------------|
-| **Usage flush + metrics** | configurable (default 30s) | When Redis configured | Flushes usage counters to PostgreSQL, then refreshes quota stats, usage baselines, object counts, and multipart counts. Updates Prometheus gauges. Adaptive mode shortens interval near limits. Advisory lock is acquired whenever Redis is configured (regardless of health) to prevent double-counting during recovery. |
+| **Usage flush + metrics** | configurable (default 30s) | When Redis configured | Flushes usage counters to the metadata store, then refreshes quota stats, usage baselines, object counts, and multipart counts, and reloads the cached drain states. Runs on every instance in every mode. Updates Prometheus gauges. Adaptive mode shortens interval near limits. Advisory lock is acquired whenever Redis is configured (regardless of health) to prevent double-counting during recovery. |
 | **Stale multipart cleanup** | 1h | Yes | Aborts multipart uploads older than 24h and deletes their temporary part objects. |
 | **Cleanup queue** | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). On the tenth consecutive failure the row graduates to `cleanup_dlq` for operator action; `orphan_bytes` stays incremented because the bytes are still on disk. |
 | **Rebalancer** | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |

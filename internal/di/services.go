@@ -54,17 +54,20 @@ type usageFlushService struct {
 	flusher usageFlushOps
 	tracker nearLimitReporter
 	fleet   quotaMetricsRefresher
+	drains  drainStateRefresher
 	locker  tickrunner.AdvisoryLocker
 	log     *slog.Logger
 }
 
 // UsageFlushDeps groups what the flush tick draws on: the usage service that
-// owns the flush, the counters that say whether to tick faster, and the
-// runtime that republishes the gauges afterwards.
+// owns the flush, the counters that say whether to tick faster, the runtime
+// that republishes the gauges afterwards, and the drain manager whose cached
+// drain states the tick reloads.
 type UsageFlushDeps struct {
 	Flusher usageFlushOps
 	Tracker nearLimitReporter
 	Fleet   quotaMetricsRefresher
+	Drains  drainStateRefresher
 	Locker  tickrunner.AdvisoryLocker
 }
 
@@ -74,10 +77,12 @@ func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
 	must.NotNil("d.Flusher", d.Flusher)
 	must.NotNil("d.Tracker", d.Tracker)
 	must.NotNil("d.Fleet", d.Fleet)
+	must.NotNil("d.Drains", d.Drains)
 	return &usageFlushService{
 		flusher: d.Flusher,
 		tracker: d.Tracker,
 		fleet:   d.Fleet,
+		drains:  d.Drains,
 		locker:  d.Locker,
 		log:     tickrunner.ComponentLogger("usage_flush"),
 	}
@@ -152,6 +157,13 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	// After the flush, so the lock holder's baseline includes what it wrote.
 	if err := s.fleet.RefreshUsageBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "usage baseline refresh failed", "error", err)
+	}
+
+	// This service runs on every instance in every mode, while the drain
+	// worker that also refreshes the cache runs on one instance at a time.
+	// A stale cache only costs ranking: admission reads the records itself.
+	if err := s.drains.Refresh(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "drain state refresh failed", "error", err)
 	}
 }
 

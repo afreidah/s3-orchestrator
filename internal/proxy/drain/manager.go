@@ -57,8 +57,9 @@ type Progress struct {
 //
 // states caches every backend's drain state from the records, so IsDraining
 // answers on the write path without a query. It is refreshed whenever this
-// manager starts or cancels a drain and whenever the drainer reads the records.
-// A stale entry only costs a ranking: admission reads the records itself.
+// manager starts or cancels a drain, on every usage-flush tick, and whenever
+// the drainer reads the records. A stale entry only costs a ranking: admission
+// reads the records itself.
 type Manager struct {
 	log              *slog.Logger
 	infra            Runtime
@@ -149,32 +150,43 @@ func (d *Manager) StartDrain(ctx context.Context, name string) error {
 // GetDrainProgress returns the state of the backend's drain. Objects and bytes
 // remaining are read live while the drain is in progress.
 func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*Progress, error) {
+	rec, err := d.record(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil {
+		return &Progress{}, nil
+	}
+	p := &Progress{
+		Active:       rec.State == core.DrainStateDraining,
+		State:        string(rec.State),
+		ObjectsMoved: rec.ObjectsMoved,
+		Error:        rec.LastError,
+	}
+	if p.Active {
+		count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get backend stats: %w", err)
+		}
+		p.ObjectsRemaining = count
+		p.BytesRemaining = bytes
+	}
+	return p, nil
+}
+
+// record reads the backend's drain record from the store, bypassing the cache,
+// and returns nil when it has none.
+func (d *Manager) record(ctx context.Context, name string) (*core.BackendDrain, error) {
 	drains, err := d.drains.ListDrains(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list drains: %w", err)
 	}
 	for i := range drains {
-		if drains[i].BackendName != name {
-			continue
+		if drains[i].BackendName == name {
+			return &drains[i], nil
 		}
-		rec := &drains[i]
-		p := &Progress{
-			Active:       rec.State == core.DrainStateDraining,
-			State:        string(rec.State),
-			ObjectsMoved: rec.ObjectsMoved,
-			Error:        rec.LastError,
-		}
-		if p.Active {
-			count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get backend stats: %w", err)
-			}
-			p.ObjectsRemaining = count
-			p.BytesRemaining = bytes
-		}
-		return p, nil
 	}
-	return &Progress{}, nil
+	return nil, nil
 }
 
 // CancelDrain clears the backend's drain record, which makes it writable again.
@@ -211,8 +223,15 @@ func (d *Manager) refreshAfterChange(ctx context.Context) {
 // included. If purge is true and the backend is reachable, also deletes objects
 // from the backend's S3 storage. This is destructive and cannot be undone.
 // observer, when non-nil, receives a start and end step per object purged.
+//
+// The drain check reads the record rather than the cache, because a drain
+// started or cancelled on another instance may not be cached here yet.
 func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, observer progress.Observer) error {
-	if state, ok := d.stateOf(name); ok && state == core.DrainStateDraining {
+	rec, err := d.record(ctx, name)
+	if err != nil {
+		return err
+	}
+	if rec != nil && rec.State == core.DrainStateDraining {
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
 

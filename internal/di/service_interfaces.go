@@ -49,6 +49,12 @@ type quotaMetricsRefresher interface {
 	RefreshUsageBaselines(ctx context.Context) error
 }
 
+// drainStateRefresher reloads this instance's cached drain states from the
+// drain records. *drain.Manager satisfies it.
+type drainStateRefresher interface {
+	Refresh(ctx context.Context) error
+}
+
 // sharedChannelWatcher is the *counter.RedisCounterBackend subscription the
 // provisioning watcher listens on.
 type sharedChannelWatcher interface {

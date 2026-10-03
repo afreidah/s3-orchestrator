@@ -287,6 +287,22 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 	}
 }
 
+// TestRemoveBackend_DrainLookupFails verifies a backend is not removed when its
+// drain record cannot be read.
+func TestRemoveBackend_DrainLookupFails(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListDrains(gomock.Any()).Return(nil, errors.New("db down"))
+	store.EXPECT().DeleteBackendData(gomock.Any(), gomock.Any()).Times(0)
+	storetest.Permissive(store)
+
+	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()})
+	if err := mgr.RemoveBackend(context.Background(), "b1", false, nil); err == nil {
+		t.Fatal("RemoveBackend removed a backend whose drain record could not be read")
+	}
+}
+
 // TestPurgeBackendObjects_ListObjectsFails returns early on a list
 // failure.
 func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {

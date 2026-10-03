@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -108,6 +109,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	usageSvc := r.Resolve[*usage.Service]()
 	registry := r.Resolve[*breaker.Registry]()
 	locker := r.Resolve[core.AdvisoryLocker]()
+	drainManager := r.Resolve[*drain.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -123,6 +125,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		Flusher: usageSvc,
 		Tracker: rt.Usage(),
 		Fleet:   rt,
+		Drains:  drainManager,
 		Locker:  locker,
 	}))
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))

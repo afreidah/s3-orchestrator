@@ -89,6 +89,23 @@ type recordingFleet struct {
 	calls *[]string
 }
 
+// recordingDrains records each drain-state refresh into the shared call log.
+type recordingDrains struct {
+	err   error
+	calls *[]string
+}
+
+func (r recordingDrains) Refresh(_ context.Context) error {
+	*r.calls = append(*r.calls, "RefreshDrains")
+	return r.err
+}
+
+// noDrains is a drain-state refresher with nothing to refresh, for tests that
+// do not look at the drain cache.
+type noDrains struct{}
+
+func (noDrains) Refresh(_ context.Context) error { return nil }
+
 func (r recordingFleet) UpdateFleetMetrics(_ context.Context) error {
 	*r.calls = append(*r.calls, "UpdateFleetMetrics")
 	return r.err
@@ -121,6 +138,7 @@ func (f *servicesFixture) flushDeps(locker tickrunner.AdvisoryLocker) *UsageFlus
 		Flusher: f.stack.Usage,
 		Tracker: f.stack.Runtime.Usage(),
 		Fleet:   f.stack.Runtime,
+		Drains:  f.stack.Drain,
 		Locker:  locker,
 	}
 }
@@ -266,13 +284,14 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 // baselines, or its limit checks run against a stale baseline indefinitely,
 // and must load the holder's fleet snapshot rather than serve its own.
 // Without Redis the losing locker proves no lock is taken, since the flush
-// would otherwise be skipped. Store errors are logged and never cut the tick
-// short.
+// would otherwise be skipped. Every instance reloads its drain states last,
+// whatever happened to the lock. Store errors are logged and never cut the
+// tick short.
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
-	single := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines"}
-	won := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines"}
+	single := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines", "RefreshDrains"}
+	won := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshDrains"}
 
 	tests := []struct {
 		name   string
@@ -281,7 +300,7 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		err    error
 		want   []string
 	}{
-		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines"}},
+		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshDrains"}},
 		{"redis lock won", true, acquiringLocker{}, nil, won},
 		{"no redis takes no lock", false, fakeLocker{}, nil, single},
 		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, won},
@@ -294,6 +313,7 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 				Flusher: recordingFlusher{redis: tt.redis, err: tt.err, calls: &calls},
 				Tracker: neverNearLimit{},
 				Fleet:   recordingFleet{err: tt.err, calls: &calls},
+				Drains:  recordingDrains{err: tt.err, calls: &calls},
 				Locker:  tt.locker,
 			}).(*usageFlushService)
 

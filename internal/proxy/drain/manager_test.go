@@ -160,3 +160,37 @@ func TestRemoveBackend_RefusesADrainInProgress(t *testing.T) {
 		t.Error("removing the backend left its drain record behind")
 	}
 }
+
+// TestRemoveBackend_ReadsTheRecordNotTheCache runs two managers over one store,
+// the way two instances share a database. A drain started on one must stop the
+// other from removing the backend before its cache has refreshed, and a cancel
+// on one must let the other remove it.
+func TestRemoveBackend_ReadsTheRecordNotTheCache(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	starter, store := newRecordFleet(t)
+	remover, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+	})
+	if err := remover.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	if err := starter.StartDrain(ctx, "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if err := remover.RemoveBackend(ctx, "b1", false, nil); err == nil {
+		t.Fatal("RemoveBackend removed a backend another instance is draining")
+	}
+
+	if err := remover.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := starter.CancelDrain(ctx, "b1"); err != nil {
+		t.Fatalf("CancelDrain: %v", err)
+	}
+	if err := remover.RemoveBackend(ctx, "b1", false, nil); err != nil {
+		t.Fatalf("RemoveBackend after another instance cancelled the drain: %v", err)
+	}
+}

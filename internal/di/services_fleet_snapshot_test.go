@@ -158,6 +158,7 @@ func TestUsageFlushService_LockLoserServesHolderFleetSnapshot(t *testing.T) {
 			Flusher: sharedCounterFlusher{},
 			Tracker: rt.Usage(),
 			Fleet:   rt,
+			Drains:  noDrains{},
 			Locker:  locker,
 		}).(*usageFlushService).flushTick(context.Background())
 	}

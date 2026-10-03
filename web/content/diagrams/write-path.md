@@ -188,7 +188,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     DRAIN: {
       title: 'Exclude Draining',
       badge: 'filter', badgeText: 'drain filter',
-      body: '<p>Removes backends that have a drain record: draining, drained, or failed.</p><p>Reads this instance\'s cached copy of the <code>backend_drains</code> records. It is loaded at startup, refreshed when this instance starts, cancels, or removes a drain, and refreshed on each drain worker pass, which runs only on the instance holding the drain lock. The cache only shapes the candidate list; the intent insert decides, reading the records through the <code>backend_capacity</code> view, so a write ranked against a stale cache is refused rather than admitted.</p>'
+      body: '<p>Removes backends that have a drain record: draining, drained, or failed.</p><p>Reads this instance\'s cached copy of the <code>backend_drains</code> records. It is loaded at startup, refreshed when this instance starts, cancels, or removes a drain, and reloaded on every usage-flush tick (default 30s), which runs on every instance; the instance running the drain worker also refreshes it on each pass. The cache only shapes the candidate list; the intent insert decides, reading the records through the <code>backend_capacity</code> view, so a write ranked against a stale cache is refused rather than admitted.</p>'
     },
     HEALTH: {
       title: 'Exclude Unhealthy',
