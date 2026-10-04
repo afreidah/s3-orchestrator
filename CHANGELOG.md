@@ -3,6 +3,48 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.150.0] - 2026-10-04
+
+### Fixed
+- fix(store): store each write's bytes under a path of its own (#1588)
+- fix(drain): refresh drain states on every usage-flush tick (#1587)
+- fix(drain): keep drain state in the database (#1585)
+- fix(s3): report the size the client uploaded for encrypted parts (#1583)
+- fix(replication): count every live intent of a write, whatever its role (#1573)
+- fix(metrics): serve the same worker gauges on every instance (#1569)
+- fix(ui): authorize dashboard actions against the user's grants (#1568)
+- fix(grafana): show the fleet once and label per-instance series (#1567)
+- fix(breaker): recover backend breakers with a health check, not client requests (#1560)
+- fix(s3): page ListParts by max-parts and part-number-marker (#1558)
+- fix(provisioning): apply provisioning changes on every instance (#1551)
+- fix(store): stop a discarded copy deleting the copy landing after it (#1527) (#1552)
+- fix(metrics): share the fleet snapshot between instances through Redis (#1547)
+- fix(usage): refresh usage baselines on every instance, not just the flush-lock holder (#1542)
+- fix(integrity): stop the scrubber re-reading copies it just verified (#1540)
+- fix(s3): restore Harbor multipart upload compatibility (#1532)
+- fix(auth): support AWS unsigned checksum trailers (#1533)
+
+### Improved
+- update CHANGELOG.md for v0.148.4 (#1530)
+
+### Documentation
+- Document replayable uploads and test transient backend retries (#1576)
+
+### Dependencies
+- chore(deps): bump the npm_and_yarn group across 1 directory with 2 updates (#1582)
+- chore(deps): bump the minor-and-patch group with 2 updates (#1581)
+- chore(deps): bump the aws-sdk group with 4 updates (#1580)
+- chore(deps): bump the actions group with 3 updates (#1579)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#1543)
+- chore(deps): bump the minor-and-patch group with 2 updates (#1544)
+- chore(deps): bump the actions group with 4 updates (#1545)
+
+### Other
+- stop shadowing predeclared identifiers (#1561)
+- ci(release): author changelog commits as the maintainer (#1556)
+- run both local demos as a three-instance fleet behind Traefik (#1549)
+- cover access control, tagging and the Terraform provider in the README (#1531)
+
 ## [0.148.4] - 2026-09-21
 
 ### Added
