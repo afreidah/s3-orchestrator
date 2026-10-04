@@ -56,8 +56,7 @@ func TestInspectView_TagsSurviveTheFrame(t *testing.T) {
 	m := modelWith(nil, "p/", &fakeLister{})
 	m.width, m.height = 120, 24
 	m.mode = modeInspect
-	m.insp.table = newTable()
-	m.resizeInspector()
+	m.insp.table = newTable(inspectorColumns)
 	m.applyLocations(&adminapi.ObjectLocationsResponse{
 		Locations: []adminapi.ObjectLocation{{Backend: "minio-1"}, {Backend: "minio-2"}},
 	})

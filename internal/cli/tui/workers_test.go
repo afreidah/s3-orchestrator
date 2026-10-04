@@ -69,8 +69,7 @@ func TestApplyWorkers(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.workers = workersView{loading: true, unavailable: "stale", table: newTable()}
-	m.resizeWorkers()
+	m.workers = workersView{loading: true, unavailable: "stale", table: newTable(workerColumns)}
 	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "scrubber"}}})
 
 	if m.workers.loading || m.workers.unavailable != "" || m.workers.err != nil {
@@ -99,24 +98,24 @@ func TestApplyWorkersErr_SeparatesUnavailable(t *testing.T) {
 	}
 }
 
-func TestWorkersBodyView_States(t *testing.T) {
+func TestWorkersBody_States(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
 	m.workers = workersView{err: errors.New("boom")}
-	if got := m.workersBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText(m.workersBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
 	m.workers = workersView{unavailable: "worker health not available"}
-	if got := m.workersBodyView(); !strings.Contains(got, "worker health not available") {
+	if got := bodyText(m.workersBody()); !strings.Contains(got, "worker health not available") {
 		t.Errorf("unavailable body = %q", got)
 	}
 	m.workers = workersView{loading: true}
-	if got := m.workersBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText(m.workersBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
 	m.workers = workersView{}
-	if got := m.workersBodyView(); !strings.Contains(got, "no workers registered") {
+	if got := bodyText(m.workersBody()); !strings.Contains(got, "no workers registered") {
 		t.Errorf("empty body = %q", got)
 	}
 }
@@ -144,7 +143,7 @@ func TestHandleWorkersKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionWorkers
-	m.workers = workersView{table: newTable()}
+	m.workers = workersView{table: newTable(workerColumns)}
 
 	m.handleWorkersKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionWorkers) {

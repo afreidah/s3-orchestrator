@@ -115,8 +115,7 @@ func (m *model) scrubKey(key string) tea.Cmd {
 // openInspector switches to the inspector pane for key and kicks off its load.
 func (m *model) openInspector(key string) (tea.Model, tea.Cmd) {
 	m.mode = modeInspect
-	m.insp = inspector{key: key, loading: true, table: newTable()}
-	m.resizeInspector()
+	m.insp = inspector{key: key, loading: true, table: newTable(inspectorColumns)}
 	return m, tea.Batch(m.loadLocations(key), m.loadTags(key))
 }
 
@@ -219,31 +218,20 @@ func scrubSummary(copies []adminapi.CopyScrubResult) (bool, string) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeInspector fits the inspector columns and viewport to the window, capping
-// the backend column so short names don't sprawl on a wide terminal. The table
-// yields three rows to the title, the footer and the tag line, because the frame
-// clips whatever the body renders past its height.
-func (m *model) resizeInspector() {
-	const (
-		fixed   = 12 + 12 + 6 + 14 + 5 + 12 + 18 + 10 // size, logical, comp, created, enc, key id, hash, verified
-		cols    = 9
-		nameCap = 24
-		chrome  = 3
-	)
-	backendWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
-	m.insp.table.SetColumns([]table.Column{
-		{Title: "BACKEND", Width: backendWidth},
-		{Title: "SIZE", Width: 12},
-		{Title: "LOGICAL", Width: 12},
-		{Title: "COMP", Width: 6},
-		{Title: "CREATED", Width: 14},
-		{Title: "ENC", Width: 5},
-		{Title: "KEY ID", Width: 12},
-		{Title: "HASH", Width: 18},
-		{Title: "VERIFIED", Width: 10},
-	})
-	m.insp.table.SetWidth(m.contentWidth())
-	m.insp.table.SetHeight(max(m.height-chrome, 3))
+// inspectorColumns declares the copy table's columns. The backend is capped so
+// short names don't sprawl on a wide terminal. A narrow terminal keeps what
+// compares one copy against another (size, hash, verification) and drops the
+// key ID and creation time first.
+var inspectorColumns = []columnSpec{
+	{title: "BACKEND", min: 8, max: 24, priority: 9},
+	{title: "SIZE", min: 12, max: 12, priority: 8},
+	{title: "LOGICAL", min: 12, max: 12, priority: 3},
+	{title: "COMP", min: 6, max: 6, priority: 4},
+	{title: "CREATED", min: 14, max: 14, priority: 2},
+	{title: "ENC", min: 5, max: 5, priority: 5},
+	{title: "KEY ID", min: 12, max: 12, priority: 1},
+	{title: "HASH", min: 18, max: 18, priority: 7},
+	{title: "VERIFIED", min: 10, max: 10, priority: 6},
 }
 
 // rowsFromLocations builds inspector rows in the same order as the ledger so
@@ -288,7 +276,7 @@ func compressionMark(l *adminapi.ObjectLocation) string {
 
 // inspectView composes the inspector's full-screen layout.
 func (m *model) inspectView() string {
-	return m.frame(m.inspectHeaderView(), m.inspectFooterView(), m.inspectBodyView())
+	return m.frame(m.inspectHeaderView(), m.inspectFooterView(), m.inspectBody()...)
 }
 
 // inspectHeaderView renders the title bar with the key and copy count.
@@ -305,14 +293,14 @@ func (m *model) inspectFooterView() string {
 	return m.footer("up/down move - esc back - r reload - S scrub - q quit")
 }
 
-// inspectBodyView renders the current content: an error, the loading indicator,
-// an empty notice, or the copy table.
-func (m *model) inspectBodyView() string {
-	return m.paneBody(m.insp.err, "", m.insp.loading, func() string {
+// inspectBody renders the current content: an error, the loading indicator, an
+// empty notice, or the tag line above the copy table.
+func (m *model) inspectBody() []pane {
+	return m.paneBody(m.insp.err, "", m.insp.loading, func() []pane {
 		if len(m.insp.locations) == 0 {
-			return pathStyle.Render("(no copies found)")
+			return []pane{textPane(pathStyle.Render("(no copies found)"))}
 		}
-		return m.inspectTagsView() + "\n" + m.insp.table.View()
+		return []pane{textPane(m.inspectTagsView()), m.tablePane(&m.insp.table, inspectorColumns)}
 	})
 }
 

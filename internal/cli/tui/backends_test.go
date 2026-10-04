@@ -117,8 +117,7 @@ func TestApplyStatus(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.backends = backendsView{loading: true, table: newTable()}
-	m.resizeBackends()
+	m.backends = backendsView{loading: true, table: newTable(backendColumns)}
 	m.applyStatus(&adminapi.StatusResponse{
 		DBHealthy:   true,
 		UsagePeriod: "2026-07",
@@ -132,19 +131,19 @@ func TestApplyStatus(t *testing.T) {
 	}
 }
 
-func TestBackendsBodyView_States(t *testing.T) {
+func TestBackendsBody_States(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.backends.err = errors.New("boom")
-	if got := m.backendsBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText(m.backendsBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
 	m.backends = backendsView{loading: true}
-	if got := m.backendsBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText(m.backendsBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
 	m.backends = backendsView{}
-	if got := m.backendsBodyView(); !strings.Contains(got, "no backends") {
+	if got := bodyText(m.backendsBody()); !strings.Contains(got, "no backends") {
 		t.Errorf("empty body = %q", got)
 	}
 }
@@ -168,7 +167,7 @@ func TestHandleBackendsKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionBackends
-	m.backends = backendsView{table: newTable()}
+	m.backends = backendsView{table: newTable(backendColumns)}
 
 	// esc returns focus to the sidebar, cursor on the current section.
 	m.handleBackendsKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -287,7 +286,6 @@ func backendsModel(t *testing.T, f *fakeLister) *model {
 	m := initialModel(f)
 	m.section = sectionBackends
 	m.width, m.height = 120, 30
-	m.resizeBackends()
 	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
 		{Name: "minio-a", Healthy: true},
 		{Name: "minio-b", Healthy: true},

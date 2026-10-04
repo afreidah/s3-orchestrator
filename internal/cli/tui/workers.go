@@ -111,24 +111,15 @@ func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeWorkers fits the workers columns and viewport to the window.
-func (m *model) resizeWorkers() {
-	const (
-		fixed   = 12 + 12 + 7 // last ok, last fail, fails
-		cols    = 5
-		nameCap = 28
-	)
-	nameWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
-	errWidth := max(m.contentWidth()-nameWidth-fixed-cols*tableCellPad, 8)
-	m.workers.table.SetColumns([]table.Column{
-		{Title: "WORKER", Width: nameWidth},
-		{Title: "LAST OK", Width: 12},
-		{Title: "LAST FAIL", Width: 12},
-		{Title: "FAILS", Width: 7},
-		{Title: "LAST ERROR", Width: errWidth},
-	})
-	m.workers.table.SetWidth(m.contentWidth())
-	m.workers.table.SetHeight(max(m.height-3, 3))
+// workerColumns declares the workers table's columns. The name is capped and
+// the last error takes the rest. A narrow terminal keeps which workers are
+// failing and why, and drops the tick times first.
+var workerColumns = []columnSpec{
+	{title: "WORKER", min: 8, max: 28, priority: 5},
+	{title: "LAST OK", min: 12, max: 12, priority: 2},
+	{title: "LAST FAIL", min: 12, max: 12, priority: 1},
+	{title: "FAILS", min: 7, max: 7, priority: 4},
+	{title: "LAST ERROR", min: 8, max: 0, priority: 3},
 }
 
 // rowsFromWorkers builds table rows from the health snapshot, in the same order
@@ -160,7 +151,7 @@ func tickAge(t time.Time) string {
 
 // workersPaneView composes the pane's full-screen layout.
 func (m *model) workersPaneView() string {
-	return m.frame(m.workersHeaderView(), m.workersFooterView(), m.workersBodyView())
+	return m.frame(m.workersHeaderView(), m.workersFooterView(), m.workersBody()...)
 }
 
 // workersHeaderView renders the title bar with the worker count and how many
@@ -189,13 +180,13 @@ func (m *model) workersFooterView() string {
 	return m.footer("up/down move - r reload - tab nav - q quit")
 }
 
-// workersBodyView renders the current content: an error, a not-wired notice,
-// the loading indicator, or the workers table.
-func (m *model) workersBodyView() string {
-	return m.paneBody(m.workers.err, m.workers.unavailable, m.workers.loading, func() string {
+// workersBody renders the current content: an error, a not-wired notice, the
+// loading indicator, or the workers table.
+func (m *model) workersBody() []pane {
+	return m.paneBody(m.workers.err, m.workers.unavailable, m.workers.loading, func() []pane {
 		if len(m.workers.rows) == 0 {
-			return pathStyle.Render("(no workers registered)")
+			return []pane{textPane(pathStyle.Render("(no workers registered)"))}
 		}
-		return m.workers.table.View()
+		return []pane{m.tablePane(&m.workers.table, workerColumns)}
 	})
 }

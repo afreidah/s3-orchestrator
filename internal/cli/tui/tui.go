@@ -114,31 +114,12 @@ func initialModel(client adminClient) *model {
 	fi := textinput.New()
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
-	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
-	m.backends = backendsView{table: newTable()}
-	m.buckets = bucketsView{table: newTable()}
-	m.workers = workersView{table: newTable()}
-	m.cleanup = cleanupView{queue: newTable(), dlq: newTable()}
-	// Seed the browser and backends columns up front. The initial loads can be
-	// delivered before the first WindowSizeMsg, and SetRows on a column-less
-	// table panics in the table's row renderer.
-	m.resizeTable()
-	m.resizeBackends()
-	m.resizeBuckets()
-	m.resizeWorkers()
-	m.resizeCleanup()
+	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: fi}
+	m.backends = backendsView{table: newTable(backendColumns)}
+	m.buckets = bucketsView{table: newTable(bucketColumns)}
+	m.workers = workersView{table: newTable(workerColumns)}
+	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
 	return m
-}
-
-// newTable builds a focused table styled to match the browser: a bold accent
-// header and the shared selected-row highlight.
-func newTable() table.Model {
-	t := table.New(table.WithFocused(true))
-	st := table.DefaultStyles()
-	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("39"))
-	st.Selected = selectedStyle
-	t.SetStyles(st)
-	return t
 }
 
 // reselect puts the cursor back on the row whose key is prev after the table's
@@ -306,14 +287,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.resizeTable()
-		m.resizeInspector()
-		m.resizeBackends()
-		m.resizeBuckets()
-		m.resizeWorkers()
-		m.resizeCleanup()
 		m.resizeLogs()
-		m.resizeOps()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -506,18 +480,12 @@ func (m *model) ascend() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resizeTable fits the table columns and viewport to the current window. The
-// height reserves one title row plus the two-line footer (hints + status).
-func (m *model) resizeTable() {
-	cw := m.contentWidth()
-	nameWidth := max(cw-24, 10)
-	m.table.SetColumns([]table.Column{
-		{Title: "NAME", Width: nameWidth},
-		{Title: "TYPE", Width: 5},
-		{Title: "SIZE", Width: 12},
-	})
-	m.table.SetWidth(cw)
-	m.table.SetHeight(max(m.height-3, 3))
+// fileColumns declares the listing table's columns. The name takes whatever
+// width the type and size leave.
+var fileColumns = []columnSpec{
+	{title: "NAME", min: 10, max: 0, priority: 3},
+	{title: "TYPE", min: 5, max: 5, priority: 1},
+	{title: "SIZE", min: 12, max: 12, priority: 2},
 }
 
 // rowsFromEntries builds table rows from the domain entries, in the same order
@@ -582,30 +550,22 @@ func (m *model) contentView() string {
 	if m.mode == modeInspect {
 		return m.inspectView()
 	}
-	return m.frame(m.headerView(), m.footerView(), m.bodyView())
-}
-
-// frame stacks a header, a body sized to fill the remaining height, and a
-// footer into the full-screen layout shared by the browser and the inspector.
-func (m *model) frame(header, footer, body string) string {
-	bodyHeight := max(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
-	rendered := lipgloss.NewStyle().Width(m.contentWidth()).Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
-	return lipgloss.JoinVertical(lipgloss.Left, header, rendered, footer)
+	return m.frame(m.headerView(), m.footerView(), m.body()...)
 }
 
 // paneBody renders the three states every pane reports the same way - a load
 // that failed, a pane this deployment did not wire, and a load still in flight
-// - and defers to content for the pane's own rendering. Panes whose data is
+// - and defers to content for the pane's own panes. Panes whose data is
 // always present pass an empty unavailable. Shared so the states a user reads
 // as "something is wrong" cannot drift apart between panes.
-func (m *model) paneBody(err error, unavailable string, loading bool, content func() string) string {
+func (m *model) paneBody(err error, unavailable string, loading bool, content func() []pane) []pane {
 	switch {
 	case err != nil:
-		return errStyle.Render("error: " + err.Error())
+		return []pane{textPane(errStyle.Render("error: " + err.Error()))}
 	case unavailable != "":
-		return pathStyle.Render("(" + unavailable + ")")
+		return []pane{textPane(pathStyle.Render("(" + unavailable + ")"))}
 	case loading:
-		return m.spinner.View() + " loading..."
+		return []pane{textPane(m.spinner.View() + " loading...")}
 	default:
 		return content()
 	}
@@ -644,21 +604,19 @@ func (m *model) footerView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, matches, hints)
 }
 
-// bodyView renders the current content: an error, the loading indicator, an
+// body renders the current content: an error, the loading indicator, an
 // empty or no-matches notice, or the row list.
-func (m *model) bodyView() string {
-	switch {
-	case m.err != nil:
-		return errStyle.Render("error: " + m.err.Error())
-	case m.loading:
-		return m.spinner.View() + " loading..."
-	case len(m.entries) == 0:
-		return pathStyle.Render("(empty)")
-	case len(m.visible) == 0:
-		return pathStyle.Render("(no matches)")
-	default:
-		return m.table.View()
-	}
+func (m *model) body() []pane {
+	return m.paneBody(m.err, "", m.loading, func() []pane {
+		switch {
+		case len(m.entries) == 0:
+			return []pane{textPane(pathStyle.Render("(empty)"))}
+		case len(m.visible) == 0:
+			return []pane{textPane(pathStyle.Render("(no matches)"))}
+		default:
+			return []pane{m.tablePane(&m.table, fileColumns)}
+		}
+	})
 }
 
 // -------------------------------------------------------------------------

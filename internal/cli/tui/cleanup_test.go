@@ -33,8 +33,7 @@ func cleanupModel(t *testing.T) *model {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionCleanup
-	m.cleanup = cleanupView{queue: newTable(), dlq: newTable()}
-	m.resizeCleanup()
+	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
 	m.applyCleanup(cleanupLoadedMsg{
 		queue: &adminapi.CleanupQueueResponse{
 			Depth: 7,
@@ -193,8 +192,7 @@ func TestArmRequeue_EmptyDLQ(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionCleanup
-	m.cleanup = cleanupView{tab: cleanupTabDLQ, queue: newTable(), dlq: newTable()}
-	m.resizeCleanup()
+	m.cleanup = cleanupView{tab: cleanupTabDLQ, queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
 
 	m.handleCleanupKey(key("R"))
 	if m.confirm != nil {
@@ -244,27 +242,27 @@ func TestApplyCleanupRequeued_Error(t *testing.T) {
 	}
 }
 
-func TestCleanupBodyView_States(t *testing.T) {
+func TestCleanupBody_States(t *testing.T) {
 	t.Parallel()
 	m := cleanupModel(t)
 
 	m.cleanup.err = errors.New("boom")
-	if got := m.cleanupBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText(m.cleanupBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
 	m.cleanup.err = nil
 	m.cleanup.loading = true
-	if got := m.cleanupBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText(m.cleanupBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
 
 	// An empty queue is good news, so it reads as a state rather than an absence.
-	m.cleanup = cleanupView{queue: newTable(), dlq: newTable()}
-	if got := m.cleanupBodyView(); !strings.Contains(got, "cleanup queue is empty") {
+	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
+	if got := bodyText(m.cleanupBody()); !strings.Contains(got, "cleanup queue is empty") {
 		t.Errorf("empty queue body = %q", got)
 	}
 	m.cleanup.tab = cleanupTabDLQ
-	if got := m.cleanupBodyView(); !strings.Contains(got, "no dead-lettered cleanups") {
+	if got := bodyText(m.cleanupBody()); !strings.Contains(got, "no dead-lettered cleanups") {
 		t.Errorf("empty dlq body = %q", got)
 	}
 }

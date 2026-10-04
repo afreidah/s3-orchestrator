@@ -102,25 +102,29 @@ func TestApplyCacheErr_SeparatesDisabled(t *testing.T) {
 	}
 }
 
-func TestCacheBodyView_States(t *testing.T) {
+func TestCacheBody_States(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
 	m.cache = cacheView{err: errors.New("boom")}
-	if got := m.cacheBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText(m.cacheBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
 	m.cache = cacheView{unavailable: "object data caching is disabled"}
-	if got := m.cacheBodyView(); !strings.Contains(got, "disabled") {
+	if got := bodyText(m.cacheBody()); !strings.Contains(got, "disabled") {
 		t.Errorf("disabled body = %q", got)
 	}
 	m.cache = cacheView{loading: true}
-	if got := m.cacheBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText(m.cacheBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
 	m.cache = cacheView{}
-	if got := m.cacheBodyView(); !strings.Contains(got, "no cache data") {
+	if got := bodyText(m.cacheBody()); !strings.Contains(got, "no cache data") {
 		t.Errorf("empty body = %q", got)
+	}
+	m.cache = cacheView{snap: &adminapi.CacheStatsResponse{Entries: 3}}
+	if got := bodyText(m.cacheBody()); !strings.Contains(got, "entries") {
+		t.Errorf("stats body = %q", got)
 	}
 }
 

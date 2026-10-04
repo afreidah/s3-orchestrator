@@ -220,7 +220,6 @@ func (m *model) openBackendActions() (tea.Model, tea.Cmd) {
 	m.section = sectionOps
 	m.navFocus = false
 	m.ops = opsView{actions: backendActions(), backend: name}
-	m.resizeOps()
 	return m, nil
 }
 
@@ -392,30 +391,22 @@ func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeBackends fits the backends columns and viewport to the window, capping
-// the name column so short backend names don't sprawl on a wide terminal.
-func (m *model) resizeBackends() {
-	const (
-		fixed   = 9 + 8 + 12 + 12 + 6 + 10 + 10 + 12 + 12 + 12 // health..saved incl use%
-		cols    = 11
-		nameCap = 24
-	)
-	nameWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
-	m.backends.table.SetColumns([]table.Column{
-		{Title: "BACKEND", Width: nameWidth},
-		{Title: "HEALTH", Width: 9},
-		{Title: "DRAIN", Width: 8},
-		{Title: "USED", Width: 12},
-		{Title: "LIMIT", Width: 12},
-		{Title: "USE%", Width: 6},
-		{Title: "OBJECTS", Width: 10},
-		{Title: "API", Width: 10},
-		{Title: "INGRESS", Width: 12},
-		{Title: "EGRESS", Width: 12},
-		{Title: "SAVED", Width: 12},
-	})
-	m.backends.table.SetWidth(m.contentWidth())
-	m.backends.table.SetHeight(max(m.height-3, 3)) // 2-line header + 1-line footer
+// backendColumns declares the backends table's columns. The name is capped so
+// short backend names don't sprawl on a wide terminal. A narrow terminal keeps
+// whether each backend is up, how full it is, and whether it is draining, and
+// drops the period counters first.
+var backendColumns = []columnSpec{
+	{title: "BACKEND", min: 8, max: 24, priority: 11},
+	{title: "HEALTH", min: 9, max: 9, priority: 10},
+	{title: "DRAIN", min: 8, max: 8, priority: 8},
+	{title: "USED", min: 12, max: 12, priority: 7},
+	{title: "LIMIT", min: 12, max: 12, priority: 5},
+	{title: "USE%", min: 6, max: 6, priority: 9},
+	{title: "OBJECTS", min: 10, max: 10, priority: 6},
+	{title: "API", min: 10, max: 10, priority: 2},
+	{title: "INGRESS", min: 12, max: 12, priority: 3},
+	{title: "EGRESS", min: 12, max: 12, priority: 4},
+	{title: "SAVED", min: 12, max: 12, priority: 1},
 }
 
 // rowsFromBackends builds table rows from the status snapshot, in the same
@@ -475,7 +466,7 @@ func backendDrain(state string) string {
 
 // backendsView composes the pane's full-screen layout.
 func (m *model) backendsPaneView() string {
-	return m.frame(m.backendsHeaderView(), m.backendsFooterView(), m.backendsBodyView())
+	return m.frame(m.backendsHeaderView(), m.backendsFooterView(), m.backendsBody()...)
 }
 
 // backendsHeaderView renders the title bar with the backend count and DB health.
@@ -618,13 +609,13 @@ func (m *model) backendsFooterView() string {
 	return m.footer(hints)
 }
 
-// backendsBodyView renders the current content: an error, the loading
-// indicator, an empty notice, or the backends table.
-func (m *model) backendsBodyView() string {
-	return m.paneBody(m.backends.err, "", m.backends.loading, func() string {
+// backendsBody renders the current content: an error, the loading indicator,
+// an empty notice, or the backends table.
+func (m *model) backendsBody() []pane {
+	return m.paneBody(m.backends.err, "", m.backends.loading, func() []pane {
 		if len(m.backends.rows) == 0 {
-			return pathStyle.Render("(no backends)")
+			return []pane{textPane(pathStyle.Render("(no backends)"))}
 		}
-		return m.backends.table.View()
+		return []pane{m.tablePane(&m.backends.table, backendColumns)}
 	})
 }

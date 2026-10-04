@@ -218,40 +218,25 @@ func (m *model) armRequeue() (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeCleanup fits both tables' columns and viewports to the window. They are
-// sized together so a tab switch never reflows the pane.
-func (m *model) resizeCleanup() {
-	const (
-		queueFixed = 14 + 10 + 7 + 10 // backend, size, attempts, claimed
-		queueCols  = 5
-		dlqFixed   = 14 + 10 + 7 + 10 // backend, size, attempts, moved
-		dlqCols    = 5
-		keyCap     = 60
-	)
-	height := max(m.height-3, 3)
-
-	queueKey := fitFirstColumn(m.contentWidth(), queueFixed, queueCols, keyCap)
-	m.cleanup.queue.SetColumns([]table.Column{
-		{Title: "OBJECT KEY", Width: queueKey},
-		{Title: "BACKEND", Width: 14},
-		{Title: "SIZE", Width: 10},
-		{Title: "TRIES", Width: 7},
-		{Title: "CLAIMED", Width: 10},
-	})
-	m.cleanup.queue.SetWidth(m.contentWidth())
-	m.cleanup.queue.SetHeight(height)
-
-	dlqKey := fitFirstColumn(m.contentWidth(), dlqFixed, dlqCols, keyCap)
-	m.cleanup.dlq.SetColumns([]table.Column{
-		{Title: "OBJECT KEY", Width: dlqKey},
-		{Title: "BACKEND", Width: 14},
-		{Title: "SIZE", Width: 10},
-		{Title: "TRIES", Width: 7},
-		{Title: "MOVED", Width: 10},
-	})
-	m.cleanup.dlq.SetWidth(m.contentWidth())
-	m.cleanup.dlq.SetHeight(height)
-}
+// cleanupQueueColumns and cleanupDLQColumns declare the two listings' columns.
+// The key and the backend are what an operator acts on, so a narrow terminal
+// drops the claim or move time first.
+var (
+	cleanupQueueColumns = []columnSpec{
+		{title: "OBJECT KEY", min: 8, max: 60, priority: 5},
+		{title: "BACKEND", min: 14, max: 14, priority: 4},
+		{title: "SIZE", min: 10, max: 10, priority: 2},
+		{title: "TRIES", min: 7, max: 7, priority: 3},
+		{title: "CLAIMED", min: 10, max: 10, priority: 1},
+	}
+	cleanupDLQColumns = []columnSpec{
+		{title: "OBJECT KEY", min: 8, max: 60, priority: 5},
+		{title: "BACKEND", min: 14, max: 14, priority: 4},
+		{title: "SIZE", min: 10, max: 10, priority: 2},
+		{title: "TRIES", min: 7, max: 7, priority: 3},
+		{title: "MOVED", min: 10, max: 10, priority: 1},
+	}
+)
 
 // rowsFromCleanupQueue builds table rows from the pending listing, in the same
 // order so the table cursor indexes straight into the rows.
@@ -291,7 +276,7 @@ func rowsFromCleanupDLQ(items []adminapi.CleanupDLQItem) []table.Row {
 
 // cleanupPaneView composes the pane's full-screen layout.
 func (m *model) cleanupPaneView() string {
-	return m.frame(m.cleanupHeaderView(), m.cleanupFooterView(), m.cleanupBodyView())
+	return m.frame(m.cleanupHeaderView(), m.cleanupFooterView(), m.cleanupBody()...)
 }
 
 // cleanupHeaderView renders the title bar with both depths, marking the active
@@ -317,19 +302,19 @@ func (m *model) cleanupFooterView() string {
 	return m.footer(hints)
 }
 
-// cleanupBodyView renders the current content: an error, the loading indicator,
+// cleanupBody renders the current content: an error, the loading indicator,
 // an empty notice, or the active listing.
-func (m *model) cleanupBodyView() string {
-	return m.paneBody(m.cleanup.err, "", m.cleanup.loading, func() string {
+func (m *model) cleanupBody() []pane {
+	return m.paneBody(m.cleanup.err, "", m.cleanup.loading, func() []pane {
 		if m.cleanupOnDLQ() {
 			if len(m.cleanup.dlqRows) == 0 {
-				return statusOKStyle.Render("(no dead-lettered cleanups)")
+				return []pane{textPane(statusOKStyle.Render("(no dead-lettered cleanups)"))}
 			}
-			return m.cleanup.dlq.View()
+			return []pane{m.tablePane(&m.cleanup.dlq, cleanupDLQColumns)}
 		}
 		if len(m.cleanup.queueRows) == 0 {
-			return statusOKStyle.Render("(cleanup queue is empty)")
+			return []pane{textPane(statusOKStyle.Render("(cleanup queue is empty)"))}
 		}
-		return m.cleanup.queue.View()
+		return []pane{m.tablePane(&m.cleanup.queue, cleanupQueueColumns)}
 	})
 }

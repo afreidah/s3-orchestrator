@@ -533,15 +533,9 @@ func opsResultLine(e *adminstream.Event) string {
 	}
 }
 
-// resizeOps fits the output viewport to the window below the header and footer.
-func (m *model) resizeOps() {
-	m.ops.vp.Width = m.contentWidth()
-	m.ops.vp.Height = max(m.height-3, 3)
-}
-
 // opsPaneView composes the pane's full-screen layout.
 func (m *model) opsPaneView() string {
-	return m.frame(m.opsHeaderView(), m.opsFooterView(), m.opsBodyView())
+	return m.frame(m.opsHeaderView(), m.opsFooterView(), m.opsBody())
 }
 
 // opsHeaderView renders the title bar: the menu prompt, or the active action
@@ -576,15 +570,15 @@ func (m *model) opsFooterView() string {
 	}
 }
 
-// opsBodyView renders the menu or the streamed output.
-func (m *model) opsBodyView() string {
+// opsBody renders the menu or the streamed output.
+func (m *model) opsBody() pane {
 	if !m.ops.showOut {
-		return m.opsMenuView()
+		return textPane(m.opsMenuView())
 	}
 	if m.ops.running && len(m.ops.lines) == 0 {
-		return m.spinner.View() + " starting..."
+		return textPane(m.spinner.View() + " starting...")
 	}
-	return m.ops.vp.View()
+	return m.viewportPane(&m.ops.vp)
 }
 
 // opsMenuView renders the action list with the cursor marker.

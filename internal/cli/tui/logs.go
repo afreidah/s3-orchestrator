@@ -123,11 +123,10 @@ func (m *model) handleLogsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeLogs fits the logs viewport to the window (below the two-line header
-// and one-line footer) and re-renders its content at the new width.
+// resizeLogs re-renders the log lines at the new width, since each message is
+// truncated to the width left after the fixed columns. The viewport itself is
+// sized by its pane.
 func (m *model) resizeLogs() {
-	m.logs.vp.Width = m.contentWidth()
-	m.logs.vp.Height = max(m.height-3, 3)
 	m.logs.vp.SetContent(m.renderLogLines())
 }
 
@@ -180,7 +179,7 @@ func logMessage(e *adminapi.LogEntry) string {
 
 // logsPaneView composes the pane's full-screen layout.
 func (m *model) logsPaneView() string {
-	return m.frame(m.logsHeaderView(), m.logsFooterView(), m.logsBodyView())
+	return m.frame(m.logsHeaderView(), m.logsFooterView(), m.logsBody()...)
 }
 
 // logsHeaderView renders the title bar (entry count + level filter) plus the
@@ -202,13 +201,13 @@ func (m *model) logsFooterView() string {
 	return m.footer("up/down move - L level - r reload - tab nav - q quit")
 }
 
-// logsBodyView renders the current content: an error, the loading indicator, an
+// logsBody renders the current content: an error, the loading indicator, an
 // empty notice, or the scrolling log viewport.
-func (m *model) logsBodyView() string {
-	return m.paneBody(m.logs.err, "", m.logs.loading, func() string {
+func (m *model) logsBody() []pane {
+	return m.paneBody(m.logs.err, "", m.logs.loading, func() []pane {
 		if len(m.logs.entries) == 0 {
-			return pathStyle.Render("(no log entries)")
+			return []pane{textPane(pathStyle.Render("(no log entries)"))}
 		}
-		return m.logs.vp.View()
+		return []pane{m.viewportPane(&m.logs.vp)}
 	})
 }

@@ -49,7 +49,6 @@ func bucketsModel(t *testing.T) *model {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionBuckets
-	m.resizeBuckets()
 	m.applyBuckets(bucketSnapshot())
 	return m
 }
@@ -65,7 +64,7 @@ func TestBucketsTable_MarksTheSource(t *testing.T) {
 	t.Parallel()
 	m := bucketsModel(t)
 
-	got := m.buckets.table.View()
+	got := m.bucketsPaneView()
 	for _, want := range []string{"from-config", "config", "from-store", "store"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("table missing %q:\n%s", want, got)
@@ -142,7 +141,7 @@ func TestBucketsBody_Empty(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.applyBuckets(&adminapi.ProvisioningResponse{})
 
-	if got := m.bucketsBodyView(); !strings.Contains(got, "no buckets declared") {
+	if got := bodyText(m.bucketsBody()); !strings.Contains(got, "no buckets declared") {
 		t.Errorf("body = %q, want the empty notice", got)
 	}
 }
@@ -154,7 +153,7 @@ func TestBucketsBody_RendersNotices(t *testing.T) {
 	m := bucketsModel(t)
 	m.buckets.notices = []adminapi.Notice{{Kind: "dangling_grant", Detail: "grant names bucket \"gone\""}}
 
-	got := m.bucketsBodyView()
+	got := m.bucketsPaneView()
 	if !strings.Contains(got, "dangling_grant") || !strings.Contains(got, "gone") {
 		t.Errorf("body swallowed the notice:\n%s", got)
 	}

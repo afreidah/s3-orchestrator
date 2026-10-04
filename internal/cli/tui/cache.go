@@ -98,7 +98,7 @@ func (m *model) handleCacheKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // cachePaneView composes the pane's full-screen layout.
 func (m *model) cachePaneView() string {
-	return m.frame(m.cacheHeaderView(), m.cacheFooterView(), m.cacheBodyView())
+	return m.frame(m.cacheHeaderView(), m.cacheFooterView(), m.cacheBody()...)
 }
 
 // cacheHeaderView renders the title bar.
@@ -112,14 +112,14 @@ func (m *model) cacheFooterView() string {
 	return m.footer("r reload - tab nav - q quit")
 }
 
-// cacheBodyView renders the current content: an error, a disabled notice, the
+// cacheBody renders the current content: an error, a disabled notice, the
 // loading indicator, or the summary.
-func (m *model) cacheBodyView() string {
-	return m.paneBody(m.cache.err, m.cache.unavailable, m.cache.loading, func() string {
+func (m *model) cacheBody() []pane {
+	return m.paneBody(m.cache.err, m.cache.unavailable, m.cache.loading, func() []pane {
 		if m.cache.snap == nil {
-			return pathStyle.Render("(no cache data)")
+			return []pane{textPane(pathStyle.Render("(no cache data)"))}
 		}
-		return m.cacheStats()
+		return []pane{textPane(m.cacheStats())}
 	})
 }
 

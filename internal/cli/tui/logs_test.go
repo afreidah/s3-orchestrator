@@ -41,8 +41,8 @@ func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
+	m.section = sectionLogs
 	m.logs = logsView{loading: true}
-	m.resizeLogs()
 
 	m.applyLogs(&adminapi.LogsResponse{Entries: []adminapi.LogEntry{
 		{Level: "INFO", Message: "one"},
@@ -55,8 +55,9 @@ func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	if len(m.logs.entries) != 3 {
 		t.Fatalf("entries = %d, want 3", len(m.logs.entries))
 	}
-	// The viewport shows the rendered lines.
-	view := m.logs.vp.View()
+	// The viewport shows the rendered lines once its pane sizes it, even though
+	// it scrolled to the bottom before it had a height.
+	view := m.logsPaneView()
 	for _, want := range []string{"one", "two", "three", "WARN", "ERROR"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("viewport missing %q:\n%s", want, view)
@@ -70,7 +71,6 @@ func TestHandleLogsKey_BackAndReload(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.section = sectionLogs
 	m.logs = logsView{}
-	m.resizeLogs()
 
 	// esc returns focus to the sidebar, cursor on the current section.
 	m.handleLogsKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -109,19 +109,19 @@ func TestLogsHeaderView_ShowsLevelFilter(t *testing.T) {
 	}
 }
 
-func TestLogsBodyView_States(t *testing.T) {
+func TestLogsBody_States(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.logs.err = errors.New("boom")
-	if got := m.logsBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText(m.logsBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
 	m.logs = logsView{loading: true}
-	if got := m.logsBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText(m.logsBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
 	m.logs = logsView{}
-	if got := m.logsBodyView(); !strings.Contains(got, "no log entries") {
+	if got := bodyText(m.logsBody()); !strings.Contains(got, "no log entries") {
 		t.Errorf("empty body = %q", got)
 	}
 }

@@ -107,7 +107,7 @@ func (m *model) handleReplicationKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // replicationPaneView composes the pane's full-screen layout.
 func (m *model) replicationPaneView() string {
-	return m.frame(m.replicationHeaderView(), m.replicationFooterView(), m.replicationBodyView())
+	return m.frame(m.replicationHeaderView(), m.replicationFooterView(), m.replicationBody()...)
 }
 
 // replicationHeaderView renders the title bar with the auto-refresh cadence.
@@ -121,14 +121,14 @@ func (m *model) replicationFooterView() string {
 	return m.footer("r reload - tab nav - q quit")
 }
 
-// replicationBodyView renders the current content: an error, the first-load
+// replicationBody renders the current content: an error, the first-load
 // indicator, an empty notice, or the snapshot summary.
-func (m *model) replicationBodyView() string {
-	return m.paneBody(m.replication.err, "", m.replication.loading, func() string {
+func (m *model) replicationBody() []pane {
+	return m.paneBody(m.replication.err, "", m.replication.loading, func() []pane {
 		if m.replication.snap == nil {
-			return pathStyle.Render("(no replication data)")
+			return []pane{textPane(pathStyle.Render("(no replication data)"))}
 		}
-		return m.replicationStats()
+		return []pane{textPane(m.replicationStats())}
 	})
 }
 

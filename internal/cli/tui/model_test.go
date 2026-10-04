@@ -20,7 +20,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -134,11 +133,6 @@ func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
 	m.prefix = prefix
 	m.entries = entries
-	m.table.SetColumns([]table.Column{
-		{Title: "NAME", Width: 20},
-		{Title: "TYPE", Width: 5},
-		{Title: "SIZE", Width: 12},
-	})
 	m.refreshVisible()
 	return m
 }
@@ -172,19 +166,19 @@ func TestParentPrefix(t *testing.T) {
 	}
 }
 
-func TestBodyView(t *testing.T) {
+func TestBody(t *testing.T) {
 	t.Parallel()
-	if got := (&model{err: errors.New("boom")}).bodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText((&model{err: errors.New("boom")}).body()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
-	if got := (&model{loading: true, spinner: spinner.New()}).bodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText((&model{loading: true, spinner: spinner.New()}).body()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
-	if got := (&model{}).bodyView(); !strings.Contains(got, "empty") {
+	if got := bodyText((&model{}).body()); !strings.Contains(got, "empty") {
 		t.Errorf("empty body = %q", got)
 	}
 	// loaded rows all filtered out renders a distinct notice
-	if got := (&model{entries: []entry{{name: "a"}}}).bodyView(); !strings.Contains(got, "no matches") {
+	if got := bodyText((&model{entries: []entry{{name: "a"}}}).body()); !strings.Contains(got, "no matches") {
 		t.Errorf("no-matches body = %q", got)
 	}
 }

@@ -77,29 +77,9 @@ func (m *model) contentWidth() int {
 	return 24
 }
 
-// tableCellPad is the horizontal padding the bubbles table adds to every cell
-// (one column on each side); the rendered table is this much wider per column
-// than the sum of the declared column widths.
-const tableCellPad = 2
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// fitFirstColumn sizes a table's leading name column to fill whatever the fixed
-// columns and per-cell padding leave, capped so short names don't sprawl across
-// a wide terminal and floored so it never collapses. cols is the total column
-// count (including the name column) so the padding budget is exact.
-func fitFirstColumn(contentWidth, fixedSum, cols, maxWidth int) int {
-	budget := contentWidth - fixedSum - cols*tableCellPad
-	if budget > maxWidth {
-		return maxWidth
-	}
-	if budget < 8 {
-		return 8
-	}
-	return budget
-}
 
 // navBack hands focus back to the nav with the cursor on the section the user
 // is leaving, so stepping out and back in lands where they were. Every content
@@ -121,24 +101,20 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	// current data and shows the loading state only before its first result.
 	case sectionBackends:
 		m.backends.loading = m.backends.rows == nil
-		m.resizeBackends()
 		cmd := m.fetch(pollStatus)
 		return m, cmd
 	case sectionBuckets:
 		m.buckets.loading = m.buckets.rows == nil
-		m.resizeBuckets()
 		cmd := m.fetch(pollBuckets)
 		return m, cmd
 	case sectionReplication:
 		return m.enterReplication()
 	case sectionWorkers:
 		m.workers.loading = m.workers.rows == nil
-		m.resizeWorkers()
 		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	case sectionCleanup:
 		m.cleanup.loading = m.cleanup.queueRows == nil && m.cleanup.dlqRows == nil
-		m.resizeCleanup()
 		cmd := m.fetch(pollCleanup)
 		return m, cmd
 	case sectionCache:
@@ -149,11 +125,9 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		// Entering from the nav is always the fleet-wide menu. A backend-scoped
 		// one is opened by the backends pane, which fills these in itself.
 		m.ops = opsView{actions: opsActions()}
-		m.resizeOps()
 		return m, nil
 	case sectionLogs:
 		m.logs = logsView{loading: true}
-		m.resizeLogs()
 		cmd := m.loadLogs()
 		return m, cmd
 	}

@@ -22,6 +22,8 @@ A persistent left navigation bar switches between sections; the content area to 
 
 The pane that currently has keyboard focus renders with a bright title bar while the other is muted, so it is always clear whether keys drive the sidebar or the content.
 
+Every table fits the terminal's width. In a narrow terminal the less important columns are dropped first (on Backends, `SAVED` and the period counters) and come back when the window widens.
+
 Browsing is read-only: the listing, inspector, and every status pane issue `GET` requests to the admin API and never mutate state. The Ops menu and the Cleanup pane's requeue are the exceptions, and both ask before they act.
 
 ![The Files section listing a prefix of objects and sub-directories, with the navigation sidebar](/docs/images/tui-files.png?classes=lightbox)

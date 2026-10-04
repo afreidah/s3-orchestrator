@@ -138,8 +138,7 @@ func TestHandleInspectKey(t *testing.T) {
 	m = modelWith(nil, "p/", &fakeLister{})
 	m.width, m.height = 80, 24
 	m.mode = modeInspect
-	m.insp.table = newTable()
-	m.resizeInspector()
+	m.insp.table = newTable(inspectorColumns)
 	m.applyLocations(&adminapi.ObjectLocationsResponse{Locations: []adminapi.ObjectLocation{{Backend: "b1"}, {Backend: "b2"}}})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	if m.insp.table.Cursor() != 1 {
@@ -147,15 +146,15 @@ func TestHandleInspectKey(t *testing.T) {
 	}
 }
 
-func TestInspectBodyView(t *testing.T) {
+func TestInspectBody(t *testing.T) {
 	t.Parallel()
-	if got := (&model{insp: inspector{err: errors.New("boom")}}).inspectBodyView(); !strings.Contains(got, "boom") {
+	if got := bodyText((&model{insp: inspector{err: errors.New("boom")}}).inspectBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
-	if got := (&model{spinner: spinner.New(), insp: inspector{loading: true}}).inspectBodyView(); !strings.Contains(got, "loading") {
+	if got := bodyText((&model{spinner: spinner.New(), insp: inspector{loading: true}}).inspectBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
-	if got := (&model{}).inspectBodyView(); !strings.Contains(got, "no copies") {
+	if got := bodyText((&model{}).inspectBody()); !strings.Contains(got, "no copies") {
 		t.Errorf("empty body = %q", got)
 	}
 }

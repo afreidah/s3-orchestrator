@@ -122,23 +122,14 @@ func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeBuckets fits the buckets columns and viewport to the window.
-func (m *model) resizeBuckets() {
-	const (
-		fixed   = 9 + 6 // multipart, source
-		cols    = 4
-		nameCap = 32
-	)
-	nameWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
-	usersWidth := max(m.contentWidth()-nameWidth-fixed-cols*tableCellPad, 8)
-	m.buckets.table.SetColumns([]table.Column{
-		{Title: "BUCKET", Width: nameWidth},
-		{Title: "MULTIPART", Width: 9},
-		{Title: "SOURCE", Width: 6},
-		{Title: "REACHED BY", Width: usersWidth},
-	})
-	m.buckets.table.SetWidth(m.contentWidth())
-	m.buckets.table.SetHeight(max(m.height-3, 3))
+// bucketColumns declares the buckets table's columns. The name is capped and
+// the grants take the rest, since a long list of identities is what needs the
+// width.
+var bucketColumns = []columnSpec{
+	{title: "BUCKET", min: 8, max: 32, priority: 4},
+	{title: "MULTIPART", min: 9, max: 9, priority: 1},
+	{title: "SOURCE", min: 6, max: 6, priority: 2},
+	{title: "REACHED BY", min: 8, max: 0, priority: 3},
 }
 
 // rowsFromBuckets builds table rows in the order the response listed them, so
@@ -202,7 +193,7 @@ func grantOn(u *adminapi.User, bucket string) (string, bool) {
 
 // bucketsPaneView composes the pane's full-screen layout.
 func (m *model) bucketsPaneView() string {
-	return m.frame(m.bucketsHeaderView(), m.bucketsFooterView(), m.bucketsBodyView())
+	return m.frame(m.bucketsHeaderView(), m.bucketsFooterView(), m.bucketsBody()...)
 }
 
 // bucketsHeaderView renders the title bar with the bucket count and how many
@@ -232,26 +223,28 @@ func (m *model) bucketsFooterView() string {
 	return m.footer("up/down move - r reload - tab nav - q quit")
 }
 
-// bucketsBodyView renders the current content: an error, a not-wired notice,
-// the loading indicator, or the buckets table with anything the merge reported.
-func (m *model) bucketsBodyView() string {
-	return m.paneBody(m.buckets.err, m.buckets.unavailable, m.buckets.loading, func() string {
+// bucketsBody renders the current content: an error, a not-wired notice, the
+// loading indicator, or the buckets table with anything the merge reported
+// below it.
+func (m *model) bucketsBody() []pane {
+	return m.paneBody(m.buckets.err, m.buckets.unavailable, m.buckets.loading, func() []pane {
 		if len(m.buckets.rows) == 0 {
-			return pathStyle.Render("(no buckets declared)")
+			return []pane{textPane(pathStyle.Render("(no buckets declared)"))}
 		}
-		return m.buckets.table.View() + m.bucketNoticesView()
+		body := []pane{m.tablePane(&m.buckets.table, bucketColumns)}
+		if len(m.buckets.notices) > 0 {
+			body = append(body, textPane(m.bucketNoticesView()))
+		}
+		return body
 	})
 }
 
 // bucketNoticesView renders what the merge of the two sources found worth
 // reporting, so a dangling grant is visible without reading the server log.
 func (m *model) bucketNoticesView() string {
-	if len(m.buckets.notices) == 0 {
-		return ""
+	lines := make([]string, len(m.buckets.notices))
+	for i, n := range m.buckets.notices {
+		lines[i] = statusErrStyle.Render(n.Kind) + " " + pathStyle.Render(n.Detail)
 	}
-	var b strings.Builder
-	for _, n := range m.buckets.notices {
-		fmt.Fprintf(&b, "\n%s %s", statusErrStyle.Render(n.Kind), pathStyle.Render(n.Detail))
-	}
-	return b.String()
+	return strings.Join(lines, "\n")
 }

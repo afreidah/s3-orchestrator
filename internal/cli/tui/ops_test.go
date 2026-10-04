@@ -57,7 +57,6 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 	m.width, m.height = 100, 20
 	m.section = sectionOps
 	m.ops.actions = opsActions()
-	m.resizeOps()
 
 	// accepting the action switches to the output view before any request runs.
 	m.enterOpsOutput("Scrub")
@@ -97,7 +96,6 @@ func TestOps_AcceptEntersOutputImmediately(t *testing.T) {
 	m.width, m.height = 100, 20
 	m.section = sectionOps
 	m.ops.actions = opsActions()
-	m.resizeOps()
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter}) // arms the confirm
 	if m.confirm == nil {
@@ -124,7 +122,6 @@ func TestOps_CancelStaysOnMenu(t *testing.T) {
 	m.width, m.height = 100, 20
 	m.section = sectionOps
 	m.ops.actions = opsActions()
-	m.resizeOps()
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})

@@ -102,19 +102,19 @@ func TestHandleReplicationKey(t *testing.T) {
 	}
 }
 
-// TestReplicationBodyView renders each state.
-func TestReplicationBodyView(t *testing.T) {
+// TestReplicationBody renders each state.
+func TestReplicationBody(t *testing.T) {
 	t.Parallel()
-	if got := (&model{replication: replicationView{err: errNope}}).replicationBodyView(); !strings.Contains(got, "nope") {
+	if got := bodyText((&model{replication: replicationView{err: errNope}}).replicationBody()); !strings.Contains(got, "nope") {
 		t.Errorf("error body = %q", got)
 	}
-	if got := (&model{replication: replicationView{snap: nil}}).replicationBodyView(); !strings.Contains(got, "no replication data") {
+	if got := bodyText((&model{replication: replicationView{snap: nil}}).replicationBody()); !strings.Contains(got, "no replication data") {
 		t.Errorf("empty body = %q", got)
 	}
 	m := &model{replication: replicationView{snap: &adminapi.ReplicationStatusResponse{
 		Factor: 2, UnderReplicated: 143, OverReplicated: 12, ComputedAt: time.Now(),
 	}}}
-	got := m.replicationBodyView()
+	got := bodyText(m.replicationBody())
 	for _, want := range []string{"factor", "143", "under-replicated", "12", "over-replicated", "ago"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stats body %q missing %q", got, want)

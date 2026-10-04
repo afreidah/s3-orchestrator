@@ -41,25 +41,6 @@ func TestContentWidth_FloorAndSubtraction(t *testing.T) {
 	}
 }
 
-func TestFitFirstColumn(t *testing.T) {
-	t.Parallel()
-	const fixed, cols, maxWidth = 80, 9, 24
-	// wide terminal: capped so short names don't sprawl.
-	if got := fitFirstColumn(400, fixed, cols, maxWidth); got != maxWidth {
-		t.Errorf("wide: got %d, want cap %d", got, maxWidth)
-	}
-	// narrow terminal: floored at 8, never collapses.
-	if got := fitFirstColumn(40, fixed, cols, maxWidth); got != 8 {
-		t.Errorf("narrow: got %d, want floor 8", got)
-	}
-	// middle: budget falls between the floor and the cap, so it fills the
-	// leftover after the fixed columns and cell padding.
-	want := 110 - fixed - cols*tableCellPad // = 12
-	if got := fitFirstColumn(110, fixed, cols, maxWidth); got != want {
-		t.Errorf("mid: got %d, want %d", got, want)
-	}
-}
-
 func TestHandleNavKey_CursorBoundsAndOpen(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
