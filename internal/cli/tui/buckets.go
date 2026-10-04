@@ -72,11 +72,19 @@ func (m *model) loadBuckets() tea.Cmd {
 
 // applyBuckets folds a loaded snapshot into the pane state.
 func (m *model) applyBuckets(resp *adminapi.ProvisioningResponse) {
+	prev := ""
+	if c := m.buckets.table.Cursor(); c >= 0 && c < len(m.buckets.rows) {
+		prev = m.buckets.rows[c].Name
+	}
 	m.buckets.rows = resp.Buckets
 	m.buckets.users = resp.Users
 	m.buckets.notices = resp.Notices
 	m.buckets.table.SetRows(rowsFromBuckets(resp.Buckets, resp.Users))
-	m.buckets.table.SetCursor(0)
+	keys := make([]string, len(resp.Buckets))
+	for i := range resp.Buckets {
+		keys[i] = resp.Buckets[i].Name
+	}
+	reselect(&m.buckets.table, keys, prev)
 	m.buckets.loading = false
 	m.buckets.unavailable = ""
 	m.buckets.err = nil
@@ -100,8 +108,8 @@ func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.buckets.loading = true
-		cmd := m.loadBuckets()
+		m.buckets.loading = m.buckets.rows == nil
+		cmd := m.fetch(pollBuckets)
 		return m, cmd
 	}
 

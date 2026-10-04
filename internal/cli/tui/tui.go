@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -85,6 +86,7 @@ type model struct {
 	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
 	cache       cacheView       // cache pane state, populated when section is sectionCache
 	ops         opsView         // ops pane state, populated when section is sectionOps
+	poll        poller          // when each pane's endpoint was last requested, and which are in flight
 	files       fileAction      // the Files pane's in-flight transfer, if any
 	prefix      string          // the prefix currently listed ("" is the root)
 	entries     []entry         // every loaded row under the current prefix
@@ -139,6 +141,18 @@ func newTable() table.Model {
 	return t
 }
 
+// reselect puts the cursor back on the row whose key is prev after the table's
+// rows were replaced, so a refresh does not move the operator's selection.
+// keys lists the new rows' keys in row order. A row that has gone keeps the
+// cursor at the same position, clamped to the new last row.
+func reselect(t *table.Model, keys []string, prev string) {
+	idx := slices.Index(keys, prev)
+	if idx < 0 {
+		idx = min(t.Cursor(), len(keys)-1)
+	}
+	t.SetCursor(max(idx, 0))
+}
+
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
@@ -186,17 +200,23 @@ func entriesFromPage(prefix string, page *adminapi.ObjectListResponse) []entry {
 // BUBBLE TEA LOOP
 // -------------------------------------------------------------------------
 
-// Init fires the first load of the root prefix and starts the spinner ticking.
+// Init fires the first load of the root prefix and starts the spinner and the
+// poller ticking.
 func (m *model) Init() tea.Cmd {
 	// Fetch status alongside the first listing so the sidebar's DB-health
 	// indicator is populated from startup, on any section.
-	return tea.Batch(m.loadObjects(m.prefix, ""), m.loadStatus(), m.spinner.Tick)
+	return tea.Batch(m.loadObjects(m.prefix, ""), m.fetch(pollStatus), m.spinner.Tick, pollTick())
 }
 
-// Update handles one message and returns the next state. The backends pane's
-// own messages are dispatched first, by the pane, so its drain bookkeeping
-// lives with the code that reads it rather than swelling this switch.
+// Update handles one message and returns the next state. A result the poller
+// was waiting on clears its in-flight mark first, whichever pane applies it.
+// The backends pane's own messages are dispatched next, by the pane, so its
+// drain bookkeeping lives with the code that reads it rather than swelling
+// this switch.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if t, ok := pollTargetOf(msg); ok {
+		m.poll.inFlight[t] = false
+	}
 	if model, cmd, handled := m.updateBackends(msg); handled {
 		return model, cmd
 	}
@@ -244,8 +264,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case replicationErrMsg:
 		m.applyReplicationErr(msg.err)
 		return m, nil
-	case replicationTickMsg:
-		return m.onReplicationTick()
+	case pollTickMsg:
+		return m.onPollTick(msg.now)
 	case workersLoadedMsg:
 		m.applyWorkers(msg.resp)
 		return m, nil

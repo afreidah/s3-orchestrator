@@ -117,31 +117,33 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	m.navFocus = false
 	m.navCursor = int(s)
 	switch s {
+	// The polled panes keep what the poller already fetched, so a pane opens on
+	// current data and shows the loading state only before its first result.
 	case sectionBackends:
-		m.backends = backendsView{loading: true, table: newTable()}
+		m.backends.loading = m.backends.rows == nil
 		m.resizeBackends()
-		cmd := m.loadStatus()
+		cmd := m.fetch(pollStatus)
 		return m, cmd
 	case sectionBuckets:
-		m.buckets = bucketsView{loading: true, table: newTable()}
+		m.buckets.loading = m.buckets.rows == nil
 		m.resizeBuckets()
-		cmd := m.loadBuckets()
+		cmd := m.fetch(pollBuckets)
 		return m, cmd
 	case sectionReplication:
 		return m.enterReplication()
 	case sectionWorkers:
-		m.workers = workersView{loading: true, table: newTable()}
+		m.workers.loading = m.workers.rows == nil
 		m.resizeWorkers()
-		cmd := m.loadWorkers()
+		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	case sectionCleanup:
-		m.cleanup = cleanupView{loading: true, queue: newTable(), dlq: newTable()}
+		m.cleanup.loading = m.cleanup.queueRows == nil && m.cleanup.dlqRows == nil
 		m.resizeCleanup()
-		cmd := m.loadCleanup()
+		cmd := m.fetch(pollCleanup)
 		return m, cmd
 	case sectionCache:
 		m.cache.loading = m.cache.snap == nil
-		cmd := m.loadCache()
+		cmd := m.fetch(pollCache)
 		return m, cmd
 	case sectionOps:
 		// Entering from the nav is always the fleet-wide menu. A backend-scoped

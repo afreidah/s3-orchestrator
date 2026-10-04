@@ -5,10 +5,10 @@
 //
 // Read-only pane over the cluster's replication health, fetched from the admin
 // replication endpoint: the configured factor and the current under- and
-// over-replicated object counts. The pane auto-refreshes on a ticker while it
-// is the active section (the counts drift constantly as workers reconcile), so
-// entering it starts a self-perpetuating tick that lapses once the user leaves.
-// Reached with "p"; "esc" returns focus to the nav, "r" forces a refresh.
+// over-replicated object counts. The shared poller keeps the snapshot fresh
+// (the counts drift constantly as workers reconcile), so the pane is current
+// whenever it is opened. Reached with "p"; "esc" returns focus to the nav, "r"
+// forces a refresh.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -25,15 +25,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// replicationRefreshInterval is how often the pane re-fetches the snapshot while
-// it is the active section.
-const replicationRefreshInterval = 3 * time.Second
-
 // replicationView holds the state of the replication status pane.
 type replicationView struct {
 	snap    *adminapi.ReplicationStatusResponse // last snapshot, nil until the first load
 	loading bool                                // a fetch is in flight (only shown on the first load)
-	ticking bool                                // the auto-refresh ticker is running
 	err     error                               // last fetch error, surfaced only when there is no snapshot yet
 }
 
@@ -49,9 +44,6 @@ type replicationLoadedMsg struct {
 // replicationErrMsg carries a failed replication fetch.
 type replicationErrMsg struct{ err error }
 
-// replicationTickMsg fires on the auto-refresh interval while the pane is active.
-type replicationTickMsg struct{}
-
 // loadReplication returns a command that fetches the replication snapshot off
 // the main loop, delivering a replicationLoadedMsg or replicationErrMsg.
 func (m *model) loadReplication() tea.Cmd {
@@ -65,36 +57,17 @@ func (m *model) loadReplication() tea.Cmd {
 	}
 }
 
-// replicationTick schedules the next auto-refresh tick.
-func (m *model) replicationTick() tea.Cmd {
-	return tea.Tick(replicationRefreshInterval, func(time.Time) tea.Msg { return replicationTickMsg{} })
-}
-
 // -------------------------------------------------------------------------
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
-// enterReplication kicks off the first (or a repeat) load and, if not already
-// running, starts the auto-refresh ticker. The last snapshot is kept across
-// visits so re-entering shows data immediately instead of a spinner flash.
+// enterReplication refreshes the snapshot on entry. The poller keeps it fresh
+// between visits, so re-entering shows data immediately instead of a spinner
+// flash.
 func (m *model) enterReplication() (tea.Model, tea.Cmd) {
 	m.replication.loading = m.replication.snap == nil
-	cmds := []tea.Cmd{m.loadReplication()}
-	if !m.replication.ticking {
-		m.replication.ticking = true
-		cmds = append(cmds, m.replicationTick())
-	}
-	return m, tea.Batch(cmds...)
-}
-
-// onReplicationTick refreshes the snapshot and reschedules, but only while the
-// pane is still active; once the user has navigated away the ticker lapses.
-func (m *model) onReplicationTick() (tea.Model, tea.Cmd) {
-	if m.section != sectionReplication {
-		m.replication.ticking = false
-		return m, nil
-	}
-	return m, tea.Batch(m.loadReplication(), m.replicationTick())
+	cmd := m.fetch(pollReplication)
+	return m, cmd
 }
 
 // applyReplication folds a loaded snapshot into the pane state.
@@ -122,7 +95,7 @@ func (m *model) handleReplicationKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.navBack()
 	case "r":
 		m.replication.loading = m.replication.snap == nil
-		cmd := m.loadReplication()
+		cmd := m.fetch(pollReplication)
 		return m, cmd
 	}
 	return m, nil
@@ -139,7 +112,7 @@ func (m *model) replicationPaneView() string {
 
 // replicationHeaderView renders the title bar with the auto-refresh cadence.
 func (m *model) replicationHeaderView() string {
-	title := fmt.Sprintf("replication   auto-refresh %ds", int(replicationRefreshInterval/time.Second))
+	title := fmt.Sprintf("replication   auto-refresh %ds", int(pollIntervals[pollReplication]/time.Second))
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 

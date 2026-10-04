@@ -86,7 +86,7 @@ func (m *model) handleCacheKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.navBack()
 	case "r":
 		m.cache.loading = m.cache.snap == nil
-		cmd := m.loadCache()
+		cmd := m.fetch(pollCache)
 		return m, cmd
 	}
 	return m, nil

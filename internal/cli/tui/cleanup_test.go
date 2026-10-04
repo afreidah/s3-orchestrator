@@ -143,8 +143,8 @@ func TestHandleCleanupKey_BackAndReload(t *testing.T) {
 
 	m.navFocus = false
 	_, cmd := m.handleCleanupKey(key("r"))
-	if !m.cleanup.loading || cmd == nil {
-		t.Fatalf("reload: loading=%v cmd=%v", m.cleanup.loading, cmd)
+	if cmd == nil || !m.poll.inFlight[pollCleanup] {
+		t.Fatalf("reload: cmd=%v in-flight=%v, want a fetch", cmd, m.poll.inFlight[pollCleanup])
 	}
 	if _, ok := cmd().(cleanupLoadedMsg); !ok {
 		t.Errorf("reload result = %#v, want cleanupLoadedMsg", cmd())
@@ -218,8 +218,8 @@ func TestApplyCleanupRequeued(t *testing.T) {
 		}
 	}
 	// The depths just changed, so the pane must refetch rather than show stale ones.
-	if !m.cleanup.loading || cmd == nil {
-		t.Errorf("requeue did not trigger a reload: loading=%v cmd=%v", m.cleanup.loading, cmd)
+	if cmd == nil || !m.poll.inFlight[pollCleanup] {
+		t.Errorf("requeue did not trigger a reload: cmd=%v in-flight=%v", cmd, m.poll.inFlight[pollCleanup])
 	}
 }
 

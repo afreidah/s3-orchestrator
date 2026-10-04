@@ -63,9 +63,17 @@ func (m *model) loadWorkers() tea.Cmd {
 
 // applyWorkers folds a loaded snapshot into the pane state.
 func (m *model) applyWorkers(resp *adminapi.WorkersResponse) {
+	prev := ""
+	if c := m.workers.table.Cursor(); c >= 0 && c < len(m.workers.rows) {
+		prev = m.workers.rows[c].Name
+	}
 	m.workers.rows = resp.Workers
 	m.workers.table.SetRows(rowsFromWorkers(resp.Workers))
-	m.workers.table.SetCursor(0)
+	keys := make([]string, len(resp.Workers))
+	for i := range resp.Workers {
+		keys[i] = resp.Workers[i].Name
+	}
+	reselect(&m.workers.table, keys, prev)
 	m.workers.loading = false
 	m.workers.unavailable = ""
 	m.workers.err = nil
@@ -89,8 +97,8 @@ func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.workers.loading = true
-		cmd := m.loadWorkers()
+		m.workers.loading = m.workers.rows == nil
+		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	}
 

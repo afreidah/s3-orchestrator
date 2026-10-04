@@ -64,42 +64,28 @@ func TestApplyReplicationErr(t *testing.T) {
 	}
 }
 
-// TestEnterReplication starts the ticker once and does not double-start it on a
-// repeat visit while the previous ticker is still live.
+// TestEnterReplication fetches on the first visit with the spinner showing,
+// does not send a second request while the first is in flight, and shows no
+// spinner on a later visit once a snapshot exists.
 func TestEnterReplication(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	if _, cmd := m.enterReplication(); cmd == nil {
-		t.Fatal("first enter: expected load + tick batch")
+		t.Fatal("first enter: expected a fetch")
 	}
-	if !m.replication.ticking || !m.replication.loading {
-		t.Errorf("first enter: ticking=%v loading=%v, want both true", m.replication.ticking, m.replication.loading)
+	if !m.replication.loading {
+		t.Error("first enter should show the spinner")
 	}
-	// a snapshot arrives, then a repeat visit: no spinner, ticker still marked.
-	m.applyReplication(&adminapi.ReplicationStatusResponse{Factor: 2})
-	m.enterReplication()
+	if _, cmd := m.enterReplication(); cmd != nil {
+		t.Error("re-entering while the first fetch is in flight should not send another")
+	}
+
+	m.Update(replicationLoadedMsg{resp: &adminapi.ReplicationStatusResponse{Factor: 2}})
+	if _, cmd := m.enterReplication(); cmd == nil {
+		t.Error("re-entering after the fetch landed should refresh")
+	}
 	if m.replication.loading {
-		t.Error("repeat enter with a snapshot should not show the spinner")
-	}
-	if !m.replication.ticking {
-		t.Error("repeat enter should keep the ticker running")
-	}
-}
-
-// TestOnReplicationTick reschedules while the pane is active and lapses once the
-// user has navigated away.
-func TestOnReplicationTick(t *testing.T) {
-	t.Parallel()
-	m := initialModel(&fakeLister{})
-	m.section = sectionReplication
-	m.replication.ticking = true
-	if _, cmd := m.onReplicationTick(); cmd == nil {
-		t.Error("active tick: expected a reschedule command")
-	}
-
-	m.section = sectionBackends
-	if _, cmd := m.onReplicationTick(); cmd != nil || m.replication.ticking {
-		t.Errorf("inactive tick: cmd=%v ticking=%v, want nil + stopped", cmd, m.replication.ticking)
+		t.Error("re-entering with a snapshot should not show the spinner")
 	}
 }
 

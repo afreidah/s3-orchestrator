@@ -76,7 +76,7 @@ The TUI opens on the Files section at the root prefix. Move the selection with t
 | `/` | Filter the current listing by substring |
 | `s` | Cycle the sort order (name / size) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
-| `r` | Reload the current view |
+| `r` | Refresh the current view now |
 | `q` / `ctrl+c` | Quit |
 
 Long prefixes load lazily - scrolling past the bottom of a truncated page pulls the next batch, so you can walk a bucket with millions of keys without loading it all at once.
@@ -143,7 +143,7 @@ Reading the columns:
 - **API** / **INGRESS** / **EGRESS** - request count and bytes transferred for the current usage period, shown in the title bar.
 - **SAVED** - bytes compression kept off this backend, summed across its copies.
 
-The title bar also reports the metadata database health and the usage period the counters cover. Press `r` to refresh the snapshot. This is the interactive equivalent of `s3-orchestrator admin status`.
+The title bar also reports the metadata database health and the usage period the counters cover. The snapshot refreshes every 10 seconds; press `r` to refresh it now. This is the interactive equivalent of `s3-orchestrator admin status`.
 
 ## Step 5: Watch recent activity
 

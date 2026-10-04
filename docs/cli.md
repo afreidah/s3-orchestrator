@@ -452,8 +452,10 @@ s3-orchestrator tui
 | `/` | Filter the current listing by substring |
 | `s` | Cycle the sort order (name / size) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
-| `r` | Reload the current view |
+| `r` | Refresh the current view now |
 | `q` / `ctrl+c` | Quit |
+
+The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
 
 The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 
@@ -465,15 +467,15 @@ A copy reading `never` under `VERIFIED` has a recorded hash that nothing has eve
 
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
-The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). Press `r` to refresh the snapshot.
+The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). The snapshot refreshes every 10 seconds; press `r` to refresh it now.
 
 Three admin actions act on the highlighted row, each behind a confirmation naming that backend so a keystroke on the wrong row cannot start work on it: `d` drains every copy off it, `R` reconciles metadata against its storage, and `Q` requeues its dead-lettered cleanups. Backend removal is deliberately not here - it is irreversible with `purge=true` and stays an `admin remove-backend` operation, behind its two-phase confirmation.
 
-A drain runs for as long as it takes, so the pane follows it: once accepted, a line under the stats reports the objects moved and what remains, refreshed every couple of seconds until the drain finishes or is cancelled. Press `x` to cancel the drain the pane is following; copies already moved stay moved. The key is only offered while a drain is in flight.
+A drain runs for as long as it takes, so the TUI follows it: once accepted, a line under the stats reports the objects moved and what remains, refreshed every couple of seconds until the drain finishes or is cancelled. It keeps following while you look at other panes, and the footer reports when the drain finishes or fails, wherever you are. Press `x` to cancel the drain the pane is following; copies already moved stay moved. The key is only offered while a drain is in flight.
 
 The metadata database health is also shown persistently at the bottom of the sidebar (`db ok` green / `db DOWN` red), fetched at startup so it is visible from every section.
 
-The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It auto-refreshes every few seconds while it is the active section (the counts drift constantly as workers reconcile), so the view stays live without a keypress; the ticker stops once you leave. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads a snapshot the metrics collector already computes on its own interval, polling it is cheap.
+The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It refreshes every 3 seconds whichever pane is showing (the counts drift constantly as workers reconcile), so the view is live the moment you open it. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads a snapshot the metrics collector already computes on its own interval, polling it is cheap.
 
 The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. A proxy-only deployment registers no worker pool, and the pane says so rather than reporting an error.
 

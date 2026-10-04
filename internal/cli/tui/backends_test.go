@@ -385,8 +385,8 @@ func TestDrain_StartsPollsAndFinishes(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("a started drain should schedule a poll")
 	}
-	if !m.backends.drain.ticking {
-		t.Error("the poll ticker should be running")
+	if !m.backends.drain.following {
+		t.Error("the poller should be following the accepted drain")
 	}
 
 	// an active reading renders the counts
@@ -459,22 +459,6 @@ func TestDrain_CancelOnlyWhileFollowing(t *testing.T) {
 	}
 	if msg := accept(t, m); f.drainCancelled != "minio-a" {
 		t.Errorf("CancelDrain got %q (msg %#v), want minio-a", f.drainCancelled, msg)
-	}
-}
-
-// TestDrain_TickLapsesOffPane asserts the poll loop stops once the operator
-// navigates away, rather than polling forever in the background.
-func TestDrain_TickLapsesOffPane(t *testing.T) {
-	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
-	m.backends.drain = drainWatch{backend: "minio-a", ticking: true}
-	m.section = sectionFiles
-
-	if _, cmd := m.onDrainTick(); cmd != nil {
-		t.Error("the ticker should lapse once the pane is not active")
-	}
-	if m.backends.drain.ticking {
-		t.Error("ticking should be cleared when the ticker lapses")
 	}
 }
 
@@ -590,7 +574,7 @@ func TestSelectedBackend_EmptyTable(t *testing.T) {
 func TestDrainProgress_PollErrorKeepsWatching(t *testing.T) {
 	t.Parallel()
 	m := backendsModel(t, &fakeLister{})
-	m.backends.drain = drainWatch{backend: "minio-a", ticking: true}
+	m.backends.drain = drainWatch{backend: "minio-a", following: true}
 
 	m.applyDrainProgress(drainProgressMsg{backend: "minio-a", err: errors.New("timeout")})
 	if m.backends.drain.backend != "minio-a" {
@@ -598,23 +582,6 @@ func TestDrainProgress_PollErrorKeepsWatching(t *testing.T) {
 	}
 	if m.backends.drain.err == nil {
 		t.Error("a failed poll should be recorded for the header")
-	}
-}
-
-// TestDrain_TickContinuesWhileActive asserts the poll loop reschedules itself
-// while the drain is still running and the pane is still in view.
-func TestDrain_TickContinuesWhileActive(t *testing.T) {
-	t.Parallel()
-	f := &fakeLister{drainProgress: []*adminapi.DrainProgressResponse{{Active: true, ObjectsMoved: 1}}}
-	m := backendsModel(t, f)
-	m.backends.drain = drainWatch{backend: "minio-a", ticking: true}
-
-	_, cmd := m.onDrainTick()
-	if cmd == nil {
-		t.Fatal("an active drain on the visible pane should keep polling")
-	}
-	if cmd() == nil {
-		t.Error("the scheduled poll produced no message")
 	}
 }
 

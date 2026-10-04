@@ -99,18 +99,48 @@ func (m *model) requeueDLQ(backend string) tea.Cmd {
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
-// applyCleanup folds both loaded listings into the pane state.
+// applyCleanup folds both loaded listings into the pane state, keeping each
+// table's highlighted row selected across the refresh.
 func (m *model) applyCleanup(msg cleanupLoadedMsg) {
+	prevQueue := keyAt(cleanupQueueKeys(m.cleanup.queueRows), m.cleanup.queue.Cursor())
+	prevDLQ := keyAt(cleanupDLQKeys(m.cleanup.dlqRows), m.cleanup.dlq.Cursor())
 	m.cleanup.queueDepth = msg.queue.Depth
 	m.cleanup.dlqDepth = msg.dlq.Depth
 	m.cleanup.queueRows = msg.queue.Items
 	m.cleanup.dlqRows = msg.dlq.Items
 	m.cleanup.queue.SetRows(rowsFromCleanupQueue(msg.queue.Items))
 	m.cleanup.dlq.SetRows(rowsFromCleanupDLQ(msg.dlq.Items))
-	m.cleanup.queue.SetCursor(0)
-	m.cleanup.dlq.SetCursor(0)
+	reselect(&m.cleanup.queue, cleanupQueueKeys(msg.queue.Items), prevQueue)
+	reselect(&m.cleanup.dlq, cleanupDLQKeys(msg.dlq.Items), prevDLQ)
 	m.cleanup.loading = false
 	m.cleanup.err = nil
+}
+
+// cleanupQueueKeys identifies queue rows by their row ID.
+func cleanupQueueKeys(items []adminapi.CleanupQueueItem) []string {
+	keys := make([]string, len(items))
+	for i := range items {
+		keys[i] = strconv.FormatInt(items[i].ID, 10)
+	}
+	return keys
+}
+
+// cleanupDLQKeys identifies dead-lettered rows by backend and object key,
+// since the listing carries no row ID.
+func cleanupDLQKeys(items []adminapi.CleanupDLQItem) []string {
+	keys := make([]string, len(items))
+	for i := range items {
+		keys[i] = items[i].Backend + "\x00" + items[i].ObjectKey
+	}
+	return keys
+}
+
+// keyAt returns the key at index i, or "" when i is out of range.
+func keyAt(keys []string, i int) string {
+	if i < 0 || i >= len(keys) {
+		return ""
+	}
+	return keys[i]
 }
 
 // applyCleanupRequeued reports the requeue outcome in the footer and reloads,
@@ -128,8 +158,7 @@ func (m *model) applyCleanupRequeued(msg cleanupRequeuedMsg) (tea.Model, tea.Cmd
 		ok:   true,
 		text: fmt.Sprintf("requeued %s from %s", countOf(int(msg.resp.Requeued), "row", "rows"), scope),
 	}
-	m.cleanup.loading = true
-	cmd := m.loadCleanup()
+	cmd := m.fetch(pollCleanup)
 	return m, cmd
 }
 
@@ -140,8 +169,8 @@ func (m *model) handleCleanupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.cleanup.loading = true
-		cmd := m.loadCleanup()
+		m.cleanup.loading = m.cleanup.queueRows == nil && m.cleanup.dlqRows == nil
+		cmd := m.fetch(pollCleanup)
 		return m, cmd
 	case "t":
 		if m.cleanupOnDLQ() {
