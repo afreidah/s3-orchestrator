@@ -179,7 +179,7 @@ func logMessage(e *adminapi.LogEntry) string {
 
 // logsPaneView composes the pane's full-screen layout.
 func (m *model) logsPaneView() string {
-	return m.frame(m.logsHeaderView(), m.logsFooterView(), m.logsBody()...)
+	return m.frame(m.logsHeaderView(), m.hintFooter(), m.logsBody()...)
 }
 
 // logsHeaderView renders the title bar (entry count + level filter) plus the
@@ -194,11 +194,6 @@ func (m *model) logsHeaderView() string {
 		logTimeWidth, "TIME", logLevelWidth, "LEVEL", logComponentWidth, "COMPONENT", "MESSAGE")
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title) + "\n" +
 		colHeaderStyle.Width(m.contentWidth()).Render(cols)
-}
-
-// logsFooterView renders the logs key hints.
-func (m *model) logsFooterView() string {
-	return m.footer("up/down move - L level - r reload - tab nav - q quit")
 }
 
 // logsBody renders the current content: an error, the loading indicator, an

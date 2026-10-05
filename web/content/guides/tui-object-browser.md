@@ -84,10 +84,14 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring |
-| `s` | Cycle the sort order (name / size) |
+| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
+| `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Refresh the current view now |
+| `?` | Show every key the current pane answers; any key closes it |
 | `q` / `ctrl+c` | Quit |
+
+The footer lists only each pane's main keys; press `?` for the rest. Tables sort on the values behind each column, so `900 MiB` sorts below `1.2 GiB`, and the sorted column's header is marked `^` or `v`. An action's result shows in the footer until the next keypress; the Dashboard keeps every result from the session under **recent actions**.
 
 Long prefixes load lazily - scrolling past the bottom of a truncated page pulls the next batch, so you can walk a bucket with millions of keys without loading it all at once.
 

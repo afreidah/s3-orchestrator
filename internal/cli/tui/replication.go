@@ -107,18 +107,13 @@ func (m *model) handleReplicationKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // replicationPaneView composes the pane's full-screen layout.
 func (m *model) replicationPaneView() string {
-	return m.frame(m.replicationHeaderView(), m.replicationFooterView(), m.replicationBody()...)
+	return m.frame(m.replicationHeaderView(), m.hintFooter(), m.replicationBody()...)
 }
 
 // replicationHeaderView renders the title bar with the auto-refresh cadence.
 func (m *model) replicationHeaderView() string {
 	title := fmt.Sprintf("replication   auto-refresh %ds", int(pollIntervals[pollReplication]/time.Second))
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
-}
-
-// replicationFooterView renders the replication key hints.
-func (m *model) replicationFooterView() string {
-	return m.footer("r reload - tab nav - q quit")
 }
 
 // replicationBody renders the current content: an error, the first-load

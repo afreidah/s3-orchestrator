@@ -106,17 +106,17 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		cmd := m.refreshDashboard()
 		return m, cmd
 	case sectionBackends:
-		m.backends.loading = m.backends.rows == nil
+		m.backends.loading = !m.backends.list.loaded()
 		cmd := m.fetch(pollStatus)
 		return m, cmd
 	case sectionBuckets:
-		m.buckets.loading = m.buckets.rows == nil
+		m.buckets.loading = !m.buckets.list.loaded()
 		cmd := m.fetch(pollBuckets)
 		return m, cmd
 	case sectionReplication:
 		return m.enterReplication()
 	case sectionWorkers:
-		m.workers.loading = m.workers.rows == nil
+		m.workers.loading = !m.workers.list.loaded()
 		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	case sectionCleanup:

@@ -33,7 +33,7 @@ func cleanupModel(t *testing.T) *model {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionCleanup
-	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
+	m.cleanup = newCleanupView()
 	m.applyCleanup(cleanupLoadedMsg{
 		queue: &adminapi.CleanupQueueResponse{
 			Depth: 7,
@@ -89,8 +89,8 @@ func TestApplyCleanup(t *testing.T) {
 	if m.cleanup.queueDepth != 7 || m.cleanup.dlqDepth != 3 {
 		t.Errorf("depths = %d / %d, want 7 / 3", m.cleanup.queueDepth, m.cleanup.dlqDepth)
 	}
-	if len(m.cleanup.queue.Rows()) != 1 || len(m.cleanup.dlq.Rows()) != 1 {
-		t.Errorf("table rows = %d / %d", len(m.cleanup.queue.Rows()), len(m.cleanup.dlq.Rows()))
+	if len(m.cleanup.queue.table.Rows()) != 1 || len(m.cleanup.dlq.table.Rows()) != 1 {
+		t.Errorf("table rows = %d / %d", len(m.cleanup.queue.table.Rows()), len(m.cleanup.dlq.table.Rows()))
 	}
 }
 
@@ -192,7 +192,8 @@ func TestArmRequeue_EmptyDLQ(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.section = sectionCleanup
-	m.cleanup = cleanupView{tab: cleanupTabDLQ, queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
+	m.cleanup = newCleanupView()
+	m.cleanup.tab = cleanupTabDLQ
 
 	m.handleCleanupKey(key("R"))
 	if m.confirm != nil {
@@ -257,7 +258,7 @@ func TestCleanupBody_States(t *testing.T) {
 	}
 
 	// An empty queue is good news, so it reads as a state rather than an absence.
-	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
+	m.cleanup = newCleanupView()
 	if got := bodyText(m.cleanupBody()); !strings.Contains(got, "cleanup queue is empty") {
 		t.Errorf("empty queue body = %q", got)
 	}
@@ -267,16 +268,16 @@ func TestCleanupBody_States(t *testing.T) {
 	}
 }
 
-// TestCleanupFooterView_OffersRequeueOnlyOnDLQ asserts the hints do not
+// TestCleanupFooter_OffersRequeueOnlyOnDLQ asserts the hints do not
 // advertise an action the active listing cannot perform.
-func TestCleanupFooterView_OffersRequeueOnlyOnDLQ(t *testing.T) {
+func TestCleanupFooter_OffersRequeueOnlyOnDLQ(t *testing.T) {
 	t.Parallel()
 	m := cleanupModel(t)
-	if got := m.cleanupFooterView(); strings.Contains(got, "requeue") {
+	if got := m.hintFooter(); strings.Contains(got, "requeue") {
 		t.Errorf("pending footer offers requeue: %q", got)
 	}
 	m.cleanup.tab = cleanupTabDLQ
-	if got := m.cleanupFooterView(); !strings.Contains(got, "requeue") {
+	if got := m.hintFooter(); !strings.Contains(got, "requeue") {
 		t.Errorf("dlq footer = %q, want a requeue hint", got)
 	}
 }

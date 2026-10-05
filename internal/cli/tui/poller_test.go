@@ -177,7 +177,7 @@ func TestPoller_DrainWithNoBackendSendsNothing(t *testing.T) {
 func TestRefresh_KeepsTheSelectedBackend(t *testing.T) {
 	t.Parallel()
 	m := backendsModel(t, &fakeLister{})
-	m.backends.table.SetCursor(1)
+	m.backends.list.table.SetCursor(1)
 
 	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
 		{Name: "minio-c"}, {Name: "minio-a"}, {Name: "minio-b"},

@@ -69,14 +69,14 @@ func TestApplyWorkers(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.workers = workersView{loading: true, unavailable: "stale", table: newTable(workerColumns)}
+	m.workers.loading, m.workers.unavailable = true, "stale"
 	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "scrubber"}}})
 
 	if m.workers.loading || m.workers.unavailable != "" || m.workers.err != nil {
 		t.Errorf("state = %+v", m.workers)
 	}
-	if len(m.workers.rows) != 1 || len(m.workers.table.Rows()) != 1 {
-		t.Errorf("rows=%d tableRows=%d", len(m.workers.rows), len(m.workers.table.Rows()))
+	if len(m.workers.list.items) != 1 || len(m.workers.list.table.Rows()) != 1 {
+		t.Errorf("items=%d tableRows=%d", len(m.workers.list.items), len(m.workers.list.table.Rows()))
 	}
 }
 
@@ -124,7 +124,7 @@ func TestWorkersHeaderView_CountAndFailing(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.workers.rows = []adminapi.WorkerHealth{{Name: "a"}, {Name: "b", ConsecutiveFailures: 2}}
+	m.workers.list.setItems([]adminapi.WorkerHealth{{Name: "a"}, {Name: "b", ConsecutiveFailures: 2}})
 	out := m.workersHeaderView()
 	for _, want := range []string{"2 registered", "1 failing"} {
 		if !strings.Contains(out, want) {
@@ -133,7 +133,7 @@ func TestWorkersHeaderView_CountAndFailing(t *testing.T) {
 	}
 
 	// An all-healthy fleet says nothing about failures rather than "0 failing".
-	m.workers.rows = []adminapi.WorkerHealth{{Name: "a"}}
+	m.workers.list.setItems([]adminapi.WorkerHealth{{Name: "a"}})
 	if out := m.workersHeaderView(); strings.Contains(out, "failing") {
 		t.Errorf("healthy header mentions failing: %q", out)
 	}
@@ -143,7 +143,7 @@ func TestHandleWorkersKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionWorkers
-	m.workers = workersView{table: newTable(workerColumns)}
+	m.workers = newWorkersView()
 
 	m.handleWorkersKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionWorkers) {

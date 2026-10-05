@@ -173,8 +173,8 @@ func TestCompressionCoverage_ReportsFleetSaving(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := &model{}
-			m.backends.rows = tt.rows
+			m := &model{backends: newBackendsView()}
+			m.backends.list.setItems(tt.rows)
 
 			got := m.compressionCoverage()
 			if tt.want == "" {

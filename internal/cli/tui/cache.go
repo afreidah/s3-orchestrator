@@ -98,18 +98,12 @@ func (m *model) handleCacheKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // cachePaneView composes the pane's full-screen layout.
 func (m *model) cachePaneView() string {
-	return m.frame(m.cacheHeaderView(), m.cacheFooterView(), m.cacheBody()...)
+	return m.frame(m.cacheHeaderView(), m.hintFooter(), m.cacheBody()...)
 }
 
 // cacheHeaderView renders the title bar.
 func (m *model) cacheHeaderView() string {
 	return m.contentTitleStyle().Width(m.contentWidth()).Render("object cache")
-}
-
-// cacheFooterView renders the cache key hints. Flushing lives on the Ops menu,
-// which owns instance-wide actions.
-func (m *model) cacheFooterView() string {
-	return m.footer("r reload - tab nav - q quit")
 }
 
 // cacheBody renders the current content: an error, a disabled notice, the

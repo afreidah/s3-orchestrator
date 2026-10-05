@@ -78,7 +78,7 @@ func TestBucketsTable_ShowsWhoReachesEach(t *testing.T) {
 	t.Parallel()
 	m := bucketsModel(t)
 
-	rows := rowsFromBuckets(m.buckets.rows, m.buckets.users)
+	rows := rowsFromBuckets(m.buckets.list.items)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}

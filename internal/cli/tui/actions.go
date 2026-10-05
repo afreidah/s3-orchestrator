@@ -14,7 +14,9 @@
 package tui
 
 import (
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,6 +50,17 @@ type actionStatus struct {
 	ok   bool
 	text string
 }
+
+// loggedAction is one action result kept in the session log, with when it
+// was reported.
+type loggedAction struct {
+	at time.Time
+	actionStatus
+}
+
+// actionLogLimit is how many results the session log keeps; older ones are
+// dropped.
+const actionLogLimit = 200
 
 // inputPrompt collects the one value an action needs before it can be armed:
 // the key to invalidate, the prefix to sweep, the key id to rotate away from.
@@ -136,6 +149,17 @@ func (m *model) handleConfirmKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.confirm = nil
 		return m, nil
+	}
+}
+
+// report shows an action's result in the footer and records it in the
+// session log, so it is still there after the next keypress clears the
+// footer.
+func (m *model) report(ok bool, text string) {
+	m.status = &actionStatus{ok: ok, text: text}
+	m.actionLog = append(m.actionLog, loggedAction{at: time.Now(), actionStatus: *m.status})
+	if over := len(m.actionLog) - actionLogLimit; over > 0 {
+		m.actionLog = slices.Delete(m.actionLog, 0, over)
 	}
 }
 

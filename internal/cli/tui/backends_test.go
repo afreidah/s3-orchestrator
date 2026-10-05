@@ -34,12 +34,12 @@ func TestBackendHealthAndDrain(t *testing.T) {
 // failed as a failure carrying its reason.
 func TestDrainEndStatus(t *testing.T) {
 	t.Parallel()
-	if s := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "drained"}); !s.ok {
-		t.Errorf("drained = %+v, want ok", s)
+	if ok, text := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "drained"}); !ok {
+		t.Errorf("drained = %q, want ok", text)
 	}
-	s := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "failed", Error: "list failed"})
-	if s.ok || !strings.Contains(s.text, "list failed") {
-		t.Errorf("failed = %+v, want not ok with the reason", s)
+	ok, text := drainEndStatus("b1", &adminapi.DrainProgressResponse{State: "failed", Error: "list failed"})
+	if ok || !strings.Contains(text, "list failed") {
+		t.Errorf("failed = %v %q, want not ok with the reason", ok, text)
 	}
 }
 
@@ -95,10 +95,10 @@ func TestBackendsStatsLine(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.backends.dbHealthy = true
-	m.backends.rows = []adminapi.BackendStatus{
+	m.backends.list.setItems([]adminapi.BackendStatus{
 		{Name: "a", BytesUsed: 2048, BytesLimit: 4096},
 		{Name: "b", BytesUsed: 1024, BytesLimit: 4096},
-	}
+	})
 	// total 3 KiB / 8 KiB = 37%, db healthy.
 	got := m.backendsStatsLine()
 	for _, want := range []string{"db:", "healthy", "total:", "37%"} {
@@ -117,7 +117,7 @@ func TestApplyStatus(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.backends = backendsView{loading: true, table: newTable(backendColumns)}
+	m.backends.loading = true
 	m.applyStatus(&adminapi.StatusResponse{
 		DBHealthy:   true,
 		UsagePeriod: "2026-07",
@@ -126,8 +126,8 @@ func TestApplyStatus(t *testing.T) {
 	if m.backends.loading || !m.backends.dbHealthy || m.backends.usagePeriod != "2026-07" {
 		t.Errorf("state = %+v", m.backends)
 	}
-	if len(m.backends.rows) != 1 || len(m.backends.table.Rows()) != 1 {
-		t.Errorf("rows=%d tableRows=%d", len(m.backends.rows), len(m.backends.table.Rows()))
+	if len(m.backends.list.items) != 1 || len(m.backends.list.table.Rows()) != 1 {
+		t.Errorf("items=%d tableRows=%d", len(m.backends.list.items), len(m.backends.list.table.Rows()))
 	}
 }
 
@@ -138,11 +138,12 @@ func TestBackendsBody_States(t *testing.T) {
 	if got := bodyText(m.backendsBody()); !strings.Contains(got, "boom") {
 		t.Errorf("error body = %q", got)
 	}
-	m.backends = backendsView{loading: true}
+	m.backends = newBackendsView()
+	m.backends.loading = true
 	if got := bodyText(m.backendsBody()); !strings.Contains(got, "loading") {
 		t.Errorf("loading body = %q", got)
 	}
-	m.backends = backendsView{}
+	m.backends = newBackendsView()
 	if got := bodyText(m.backendsBody()); !strings.Contains(got, "no backends") {
 		t.Errorf("empty body = %q", got)
 	}
@@ -152,7 +153,7 @@ func TestBackendsHeaderView_CountAndDBHealth(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.backends.rows = []adminapi.BackendStatus{{Name: "b1"}, {Name: "b2"}}
+	m.backends.list.setItems([]adminapi.BackendStatus{{Name: "b1"}, {Name: "b2"}})
 	m.backends.dbHealthy = true
 	m.backends.usagePeriod = "2026-07"
 	out := m.backendsHeaderView()
@@ -167,7 +168,7 @@ func TestHandleBackendsKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionBackends
-	m.backends = backendsView{table: newTable(backendColumns)}
+	m.backends = newBackendsView()
 
 	// esc returns focus to the sidebar, cursor on the current section.
 	m.handleBackendsKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -338,7 +339,7 @@ func TestBackendActions_ActOnTheSecondRow(t *testing.T) {
 	t.Parallel()
 	f := &fakeLister{}
 	m := backendsModel(t, f)
-	m.backends.table.SetCursor(1)
+	m.backends.list.table.SetCursor(1)
 
 	m.handleBackendsKey(key("R"))
 	if !strings.Contains(m.confirm.text, "minio-b") {
@@ -493,12 +494,12 @@ func TestBackendActions_ReportOutcomes(t *testing.T) {
 func TestBackendsFooter_OffersCancelWhileDraining(t *testing.T) {
 	t.Parallel()
 	m := backendsModel(t, &fakeLister{})
-	if strings.Contains(m.backendsFooterView(), "cancel drain") {
+	if strings.Contains(m.hintFooter(), "cancel drain") {
 		t.Error("cancel offered with no drain in flight")
 	}
 
 	m.backends.drain = drainWatch{backend: "minio-a"}
-	if !strings.Contains(m.backendsFooterView(), "cancel drain") {
+	if !strings.Contains(m.hintFooter(), "cancel drain") {
 		t.Error("cancel not offered while a drain is being followed")
 	}
 }

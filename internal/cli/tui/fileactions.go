@@ -222,11 +222,11 @@ func (m *model) updateFileActions(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 // known, so the operator agrees to a number rather than to a directory name.
 func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "count " + msg.prefix + ": " + msg.err.Error()}
+		m.report(false, "count "+msg.prefix+": "+msg.err.Error())
 		return m, nil
 	}
 	if msg.count == 0 {
-		m.status = &actionStatus{ok: true, text: "nothing under " + msg.prefix}
+		m.report(true, "nothing under "+msg.prefix)
 		return m, nil
 	}
 
@@ -244,10 +244,10 @@ func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 // applyObjectDeleted reports one removal and reloads the listing it came from.
 func (m *model) applyObjectDeleted(msg objectDeletedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "delete " + msg.key + ": " + msg.err.Error()}
+		m.report(false, "delete "+msg.key+": "+msg.err.Error())
 		return m, nil
 	}
-	m.status = &actionStatus{ok: true, text: "deleted " + msg.key}
+	m.report(true, "deleted "+msg.key)
 	reload := m.reloadListing()
 	return m, reload
 }
@@ -255,11 +255,10 @@ func (m *model) applyObjectDeleted(msg objectDeletedMsg) (tea.Model, tea.Cmd) {
 // applyPrefixDeleted reports how many objects a prefix delete removed.
 func (m *model) applyPrefixDeleted(msg prefixDeletedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "delete " + msg.prefix + ": " + msg.err.Error()}
+		m.report(false, "delete "+msg.prefix+": "+msg.err.Error())
 		return m, nil
 	}
-	m.status = &actionStatus{ok: true,
-		text: fmt.Sprintf("deleted %s under %s", countOf(msg.deleted, "object", "objects"), msg.prefix)}
+	m.report(true, fmt.Sprintf("deleted %s under %s", countOf(msg.deleted, "object", "objects"), msg.prefix))
 	reload := m.reloadListing()
 	return m, reload
 }
@@ -300,8 +299,7 @@ func (m *model) onTransferTick() (tea.Model, tea.Cmd) {
 func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 	m.files.transfer = nil
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false,
-			text: fmt.Sprintf("%s %s: %s", msg.kind.verb(), msg.key, msg.err.Error())}
+		m.report(false, fmt.Sprintf("%s %s: %s", msg.kind.verb(), msg.key, msg.err.Error()))
 		return m, nil
 	}
 
@@ -309,8 +307,7 @@ func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.kind == transferUpload {
 		where = msg.key
 	}
-	m.status = &actionStatus{ok: true,
-		text: fmt.Sprintf("%s %s (%s)", msg.kind.past(), where, humanize.Bytes(msg.moved))}
+	m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), where, humanize.Bytes(msg.moved)))
 	if msg.kind == transferUpload {
 		reload := m.reloadListing()
 		return m, reload

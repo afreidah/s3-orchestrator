@@ -181,12 +181,12 @@ func (m *model) armScrubKey() (tea.Model, tea.Cmd) {
 func (m *model) applyScrubKey(msg scrubKeyMsg) (tea.Model, tea.Cmd) {
 	m.insp.scrubbing = false
 	if msg.err != nil {
-		m.status = &actionStatus{text: "scrub failed: " + msg.err.Error()}
+		m.report(false, "scrub failed: "+msg.err.Error())
 		return m, nil
 	}
 
 	ok, summary := scrubSummary(msg.resp.Copies)
-	m.status = &actionStatus{ok: ok, text: summary}
+	m.report(ok, summary)
 	m.insp.loading = true
 	cmd := m.loadLocations(m.insp.key)
 	return m, cmd
@@ -276,7 +276,7 @@ func compressionMark(l *adminapi.ObjectLocation) string {
 
 // inspectView composes the inspector's full-screen layout.
 func (m *model) inspectView() string {
-	return m.frame(m.inspectHeaderView(), m.inspectFooterView(), m.inspectBody()...)
+	return m.frame(m.inspectHeaderView(), m.hintFooter(), m.inspectBody()...)
 }
 
 // inspectHeaderView renders the title bar with the key and copy count.
@@ -286,11 +286,6 @@ func (m *model) inspectHeaderView() string {
 		title += "   verifying..."
 	}
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
-}
-
-// inspectFooterView renders the inspector key hints.
-func (m *model) inspectFooterView() string {
-	return m.footer("up/down move - esc back - r reload - S scrub - q quit")
 }
 
 // inspectBody renders the current content: an error, the loading indicator, an

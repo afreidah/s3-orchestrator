@@ -70,23 +70,47 @@ func (m *model) handleDashboardKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // dashboardPaneView composes the dashboard's full-screen layout.
 func (m *model) dashboardPaneView() string {
-	return m.frame(m.dashboardHeaderView(), m.footer("r reload - tab nav - q quit"), m.dashboardBody()...)
+	return m.frame(m.dashboardHeaderView(), m.hintFooter(), m.dashboardBody()...)
 }
 
 // dashboardHeaderView renders the title bar with the backend count.
 func (m *model) dashboardHeaderView() string {
-	title := fmt.Sprintf("dashboard   %d backends", len(m.backends.rows))
+	title := fmt.Sprintf("dashboard   %d backends", len(m.backends.list.received))
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 
-// dashboardBody renders the capacity block above the summary block. It waits
-// for the first status snapshot, since every figure but replication comes
-// from it; a status error is shown in its place.
+// dashboardBody renders the capacity block above the summary block, and the
+// session's action log below them once anything has been run. It waits for
+// the first status snapshot, since every figure but replication comes from
+// it; a status error is shown in its place.
 func (m *model) dashboardBody() []pane {
 	loading := m.dbHealthy == nil && m.backends.err == nil
 	return m.paneBody(m.backends.err, "", loading, func() []pane {
-		return []pane{textPane(m.dashboardCapacity()), textPane(""), textPane(m.dashboardSummary())}
+		body := []pane{textPane(m.dashboardCapacity()), textPane(""), textPane(m.dashboardSummary())}
+		if len(m.actionLog) > 0 {
+			body = append(body, textPane(""), m.actionLogPane())
+		}
+		return body
 	})
+}
+
+// actionLogPane lists the results of the actions run this session, newest
+// last, under a heading. It takes the rows the dashboard has spare and shows
+// as many of the newest results as fit.
+func (m *model) actionLogPane() pane {
+	return pane{height: 2, grows: true, render: func(height int) string {
+		entries := m.actionLog[max(len(m.actionLog)-(height-1), 0):]
+		lines := make([]string, 0, len(entries)+1)
+		lines = append(lines, colHeaderStyle.Render("recent actions"))
+		for _, e := range entries {
+			style := statusOKStyle
+			if !e.ok {
+				style = statusErrStyle
+			}
+			lines = append(lines, pathStyle.Render(e.at.Format("15:04:05"))+"  "+style.Render(e.text))
+		}
+		return strings.Join(lines, "\n")
+	}}
 }
 
 // capacityRow is one line of the capacity block: a backend, or the fleet
@@ -104,10 +128,10 @@ type capacityRow struct {
 // after the widest name and the widest figures, so the figures line up and no
 // line wraps while there is room for a bar of the minimum width.
 func (m *model) dashboardCapacity() string {
-	rows := make([]capacityRow, 0, len(m.backends.rows)+1)
+	rows := make([]capacityRow, 0, len(m.backends.list.received)+1)
 	var used, limit int64
-	for i := range m.backends.rows {
-		b := &m.backends.rows[i]
+	for i := range m.backends.list.received {
+		b := &m.backends.list.received[i]
 		used += b.BytesUsed
 		if b.BytesLimit > 0 {
 			limit += b.BytesLimit
@@ -253,8 +277,8 @@ func dashboardEncryption(plaintext int64) string {
 // dashboardCompression renders what compression is saving across the fleet.
 func (m *model) dashboardCompression() string {
 	var saved int64
-	for i := range m.backends.rows {
-		saved += m.backends.rows[i].CompressionSavedBytes
+	for i := range m.backends.list.received {
+		saved += m.backends.list.received[i].CompressionSavedBytes
 	}
 	if saved <= 0 {
 		return pathStyle.Render("nothing stored compressed")
@@ -266,8 +290,8 @@ func (m *model) dashboardCompression() string {
 // current usage period.
 func (m *model) dashboardUsage() string {
 	var requests, ingress, egress int64
-	for i := range m.backends.rows {
-		b := &m.backends.rows[i]
+	for i := range m.backends.list.received {
+		b := &m.backends.list.received[i]
 		requests += b.APIRequests
 		ingress += b.IngressBytes
 		egress += b.EgressBytes

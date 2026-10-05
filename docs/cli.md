@@ -473,10 +473,14 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring |
-| `s` | Cycle the sort order (name / size) |
+| `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
+| `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Refresh the current view now |
+| `?` | Show every key the current pane answers; any key closes it |
 | `q` / `ctrl+c` | Quit |
+
+The footer lists only each pane's main keys; `?` shows the rest. The sorted column's header is marked `^` (ascending) or `v` (descending). An action's result appears in the footer until the next keypress, and every result from the session is also listed under **recent actions** at the bottom of the Dashboard.
 
 The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. The Dashboard reads those same snapshots and makes no requests of its own. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
 

@@ -359,7 +359,7 @@ func (m *model) applyOpsStream(msg opsStreamMsg) (tea.Model, tea.Cmd) {
 		m.ops.running = false
 		m.ops.stream = nil
 		m.appendOpsLine(errStyle.Render("error: " + msg.err.Error()))
-		m.status = &actionStatus{ok: false, text: msg.label + " failed"}
+		m.report(false, msg.label+" failed")
 		return m, nil
 	}
 	m.ops.stream = msg.stream
@@ -373,7 +373,7 @@ func (m *model) applyOpsEvent(e *adminstream.Event) (tea.Model, tea.Cmd) {
 	}
 	if e.Kind == adminstream.KindResult {
 		ok := e.Outcome != adminstream.OutcomeFailed
-		m.status = &actionStatus{ok: ok, text: m.ops.label + ": " + e.Outcome}
+		m.report(ok, m.ops.label+": "+e.Outcome)
 	}
 	return m, readOps(m.ops.stream)
 }
@@ -387,7 +387,7 @@ func (m *model) applyOpsDone(msg opsDoneMsg) (tea.Model, tea.Cmd) {
 	m.ops.running = false
 	if msg.err != nil {
 		m.appendOpsLine(errStyle.Render("stream error: " + msg.err.Error()))
-		m.status = &actionStatus{ok: false, text: m.ops.label + " failed"}
+		m.report(false, m.ops.label+" failed")
 	}
 	return m, nil
 }
@@ -535,7 +535,7 @@ func opsResultLine(e *adminstream.Event) string {
 
 // opsPaneView composes the pane's full-screen layout.
 func (m *model) opsPaneView() string {
-	return m.frame(m.opsHeaderView(), m.opsFooterView(), m.opsBody())
+	return m.frame(m.opsHeaderView(), m.hintFooter(), m.opsBody())
 }
 
 // opsHeaderView renders the title bar: the menu prompt, or the active action
@@ -556,18 +556,6 @@ func (m *model) opsHeaderView() string {
 		title = scope + "   " + m.ops.label + "   " + state
 	}
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
-}
-
-// opsFooterView renders the ops key hints for the current view.
-func (m *model) opsFooterView() string {
-	switch {
-	case m.ops.showOut && m.ops.running:
-		return m.footer("running - up/down scroll - q quit")
-	case m.ops.showOut:
-		return m.footer("up/down scroll - esc back - q quit")
-	default:
-		return m.footer("up/down move - enter run - tab nav - q quit")
-	}
 }
 
 // opsBody renders the menu or the streamed output.

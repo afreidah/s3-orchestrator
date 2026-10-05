@@ -103,6 +103,8 @@ type model struct {
 	confirm     *confirmPrompt  // armed confirmation for a pending write action, if any
 	prompt      *inputPrompt    // armed input prompt for an action that needs a value, if any
 	status      *actionStatus   // result of the last action, shown until the next keypress
+	actionLog   []loggedAction  // every action result this session, oldest first
+	help        bool            // the keymap overlay is showing in place of the pane
 	dbHealthy   *bool           // metadata DB health from the last status fetch (nil = unknown)
 	width       int             // terminal width from the last WindowSizeMsg
 	height      int             // terminal height from the last WindowSizeMsg
@@ -115,10 +117,10 @@ func initialModel(client adminClient) *model {
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
 	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: fi}
-	m.backends = backendsView{table: newTable(backendColumns)}
-	m.buckets = bucketsView{table: newTable(bucketColumns)}
-	m.workers = workersView{table: newTable(workerColumns)}
-	m.cleanup = cleanupView{queue: newTable(cleanupQueueColumns), dlq: newTable(cleanupDLQColumns)}
+	m.backends = newBackendsView()
+	m.buckets = newBucketsView()
+	m.workers = newWorkersView()
+	m.cleanup = newCleanupView()
 	return m
 }
 
@@ -296,12 +298,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey applies global keys (quit, nav focus, section jumps) then routes the
-// rest to the focused nav or the active section's view. While the filter input
-// is capturing, the browser gets every key so typing is never intercepted.
 // handleGlobalKey applies the keys that mean the same thing in every pane:
-// quit, the nav toggle, and the single-letter section jumps. Reports whether
-// the key was one of them, so the caller can route on to the active pane.
+// quit, the nav toggle, help, and the single-letter section jumps. Reports
+// whether the key was one of them, so the caller can route on to the active
+// pane.
 func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch key.String() {
 	case "q", "ctrl+c":
@@ -312,27 +312,24 @@ func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			m.navCursor = int(m.section)
 		}
 		return m, nil, true
+	case "?":
+		m.help = true
+		return m, nil, true
 	}
 
-	sections := map[string]section{
-		"g": sectionDashboard,
-		"f": sectionFiles,
-		"b": sectionBackends,
-		"v": sectionBuckets,
-		"p": sectionReplication,
-		"w": sectionWorkers,
-		"u": sectionCleanup,
-		"c": sectionCache,
-		"l": sectionLogs,
-		"o": sectionOps,
-	}
-	if s, ok := sections[key.String()]; ok {
-		model, cmd := m.selectSection(s)
-		return model, cmd, true
+	for _, s := range sectionKeys {
+		if s.key == key.String() {
+			model, cmd := m.selectSection(s.sec)
+			return model, cmd, true
+		}
 	}
 	return m, nil, false
 }
 
+// handleKey applies global keys (quit, nav focus, help, section jumps) then
+// routes the rest to the focused nav or the active section's view. While the
+// filter input is capturing, the browser gets every key so typing is never
+// intercepted, and while the help is showing any key closes it.
 func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// An armed prompt captures the next key before anything else: the input
 	// first, since typing a key or prefix must never reach the pane below.
@@ -342,8 +339,13 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		return m.handleConfirmKey(key)
 	}
-	// Any keypress dismisses a lingering action-result line.
+	// Any keypress dismisses a lingering action-result line; the session log
+	// keeps it.
 	m.status = nil
+	if m.help {
+		m.help = false
+		return m, nil
+	}
 
 	if m.section == sectionFiles && m.mode == modeBrowse && m.filtering {
 		return m.handleFilterKey(key)
@@ -527,6 +529,9 @@ func (m *model) View() string {
 
 // contentView renders the active section's pane for the area beside the nav.
 func (m *model) contentView() string {
+	if m.help {
+		return m.helpPaneView()
+	}
 	if m.section == sectionDashboard {
 		return m.dashboardPaneView()
 	}
@@ -607,8 +612,7 @@ func (m *model) footerView() string {
 		status = line
 	}
 	matches := pathStyle.Width(m.contentWidth()).Render(status)
-	hints := m.footer("up/down move - enter open - D download - U upload - X delete - / filter - tab nav - q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, matches, hints)
+	return lipgloss.JoinVertical(lipgloss.Left, matches, m.hintFooter())
 }
 
 // body renders the current content: an error, the loading indicator, an

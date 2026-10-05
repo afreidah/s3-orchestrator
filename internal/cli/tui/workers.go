@@ -28,11 +28,16 @@ import (
 
 // workersView holds the state of the worker health pane.
 type workersView struct {
-	rows        []adminapi.WorkerHealth // one entry per registered background service
-	table       table.Model             // scrolling table over the workers
-	loading     bool                    // a fetch is in flight
-	unavailable string                  // set when the deployment registers no workers
-	err         error                   // last fetch error, if any
+	list        sortTable[adminapi.WorkerHealth] // one entry per registered background service
+	loading     bool                             // a fetch is in flight
+	unavailable string                           // set when the deployment registers no workers
+	err         error                            // last fetch error, if any
+}
+
+// newWorkersView builds the pane's empty state.
+func newWorkersView() workersView {
+	return workersView{list: newSortTable(workerColumns, workerSorts, rowsFromWorkers,
+		func(w *adminapi.WorkerHealth) string { return w.Name })}
 }
 
 // -------------------------------------------------------------------------
@@ -63,17 +68,7 @@ func (m *model) loadWorkers() tea.Cmd {
 
 // applyWorkers folds a loaded snapshot into the pane state.
 func (m *model) applyWorkers(resp *adminapi.WorkersResponse) {
-	prev := ""
-	if c := m.workers.table.Cursor(); c >= 0 && c < len(m.workers.rows) {
-		prev = m.workers.rows[c].Name
-	}
-	m.workers.rows = resp.Workers
-	m.workers.table.SetRows(rowsFromWorkers(resp.Workers))
-	keys := make([]string, len(resp.Workers))
-	for i := range resp.Workers {
-		keys[i] = resp.Workers[i].Name
-	}
-	reselect(&m.workers.table, keys, prev)
+	m.workers.list.setItems(resp.Workers)
 	m.workers.loading = false
 	m.workers.unavailable = ""
 	m.workers.err = nil
@@ -97,13 +92,12 @@ func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.workers.loading = m.workers.rows == nil
+		m.workers.loading = !m.workers.list.loaded()
 		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	}
 
-	var cmd tea.Cmd
-	m.workers.table, cmd = m.workers.table.Update(key)
+	cmd := m.workers.list.update(key)
 	return m, cmd
 }
 
@@ -120,6 +114,16 @@ var workerColumns = []columnSpec{
 	{title: "LAST FAIL", min: 12, max: 12, priority: 1},
 	{title: "FAILS", min: 7, max: 7, priority: 4},
 	{title: "LAST ERROR", min: 8, max: 0, priority: 3},
+}
+
+// workerSorts orders the workers table by every column. The tick times sort
+// by when they happened, so a worker that never recorded one sorts first.
+var workerSorts = map[string]func(a, b *adminapi.WorkerHealth) int{
+	"WORKER":     by(func(w *adminapi.WorkerHealth) string { return w.Name }),
+	"LAST OK":    by(func(w *adminapi.WorkerHealth) int64 { return w.LastSuccess.UnixNano() }),
+	"LAST FAIL":  by(func(w *adminapi.WorkerHealth) int64 { return w.LastFailure.UnixNano() }),
+	"FAILS":      by(func(w *adminapi.WorkerHealth) int { return w.ConsecutiveFailures }),
+	"LAST ERROR": by(func(w *adminapi.WorkerHealth) string { return w.LastError }),
 }
 
 // rowsFromWorkers builds table rows from the health snapshot, in the same order
@@ -151,14 +155,14 @@ func tickAge(t time.Time) string {
 
 // workersPaneView composes the pane's full-screen layout.
 func (m *model) workersPaneView() string {
-	return m.frame(m.workersHeaderView(), m.workersFooterView(), m.workersBody()...)
+	return m.frame(m.workersHeaderView(), m.hintFooter(), m.workersBody()...)
 }
 
 // workersHeaderView renders the title bar with the worker count and how many
 // are currently failing.
 func (m *model) workersHeaderView() string {
-	title := fmt.Sprintf("workers   %d registered", len(m.workers.rows))
-	if failing := failingWorkers(m.workers.rows); failing > 0 {
+	title := fmt.Sprintf("workers   %d registered", len(m.workers.list.received))
+	if failing := failingWorkers(m.workers.list.received); failing > 0 {
 		title += fmt.Sprintf("   %d failing", failing)
 	}
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
@@ -175,18 +179,13 @@ func failingWorkers(workers []adminapi.WorkerHealth) int {
 	return n
 }
 
-// workersFooterView renders the workers key hints.
-func (m *model) workersFooterView() string {
-	return m.footer("up/down move - r reload - tab nav - q quit")
-}
-
 // workersBody renders the current content: an error, a not-wired notice, the
 // loading indicator, or the workers table.
 func (m *model) workersBody() []pane {
 	return m.paneBody(m.workers.err, m.workers.unavailable, m.workers.loading, func() []pane {
-		if len(m.workers.rows) == 0 {
+		if len(m.workers.list.received) == 0 {
 			return []pane{textPane(pathStyle.Render("(no workers registered)"))}
 		}
-		return []pane{m.tablePane(&m.workers.table, workerColumns)}
+		return []pane{m.workers.list.pane(m)}
 	})
 }

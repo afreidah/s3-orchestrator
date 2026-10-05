@@ -36,16 +36,26 @@ const (
 // cleanupView holds the state of the cleanup pane. Both listings load together
 // so the header can show both depths whichever tab is active.
 type cleanupView struct {
-	tab        cleanupTab                  // listing currently on screen
-	queueDepth int64                       // total pending rows, which may exceed the loaded page
-	dlqDepth   int64                       // total dead-lettered rows
-	queueRows  []adminapi.CleanupQueueItem // loaded page of pending cleanups
-	dlqRows    []adminapi.CleanupDLQItem   // loaded page of dead-lettered cleanups
-	queue      table.Model                 // table over queueRows
-	dlq        table.Model                 // table over dlqRows
-	loaded     bool                        // a snapshot has arrived, so the depths are real
-	loading    bool                        // a fetch is in flight
-	err        error                       // last fetch error, if any
+	tab        cleanupTab                           // listing currently on screen
+	queueDepth int64                                // total pending rows, which may exceed the loaded page
+	dlqDepth   int64                                // total dead-lettered rows
+	queue      sortTable[adminapi.CleanupQueueItem] // loaded page of pending cleanups
+	dlq        sortTable[adminapi.CleanupDLQItem]   // loaded page of dead-lettered cleanups
+	loaded     bool                                 // a snapshot has arrived, so the depths are real
+	loading    bool                                 // a fetch is in flight
+	err        error                                // last fetch error, if any
+}
+
+// newCleanupView builds the pane's empty state. Queue rows are keyed by their
+// row ID; dead-lettered rows carry none, so they are keyed by backend and
+// object key.
+func newCleanupView() cleanupView {
+	return cleanupView{
+		queue: newSortTable(cleanupQueueColumns, cleanupQueueSorts, rowsFromCleanupQueue,
+			func(c *adminapi.CleanupQueueItem) string { return strconv.FormatInt(c.ID, 10) }),
+		dlq: newSortTable(cleanupDLQColumns, cleanupDLQSorts, rowsFromCleanupDLQ,
+			func(c *adminapi.CleanupDLQItem) string { return c.Backend + "\x00" + c.ObjectKey }),
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -103,63 +113,27 @@ func (m *model) requeueDLQ(backend string) tea.Cmd {
 // applyCleanup folds both loaded listings into the pane state, keeping each
 // table's highlighted row selected across the refresh.
 func (m *model) applyCleanup(msg cleanupLoadedMsg) {
-	prevQueue := keyAt(cleanupQueueKeys(m.cleanup.queueRows), m.cleanup.queue.Cursor())
-	prevDLQ := keyAt(cleanupDLQKeys(m.cleanup.dlqRows), m.cleanup.dlq.Cursor())
 	m.cleanup.queueDepth = msg.queue.Depth
 	m.cleanup.dlqDepth = msg.dlq.Depth
-	m.cleanup.queueRows = msg.queue.Items
-	m.cleanup.dlqRows = msg.dlq.Items
-	m.cleanup.queue.SetRows(rowsFromCleanupQueue(msg.queue.Items))
-	m.cleanup.dlq.SetRows(rowsFromCleanupDLQ(msg.dlq.Items))
-	reselect(&m.cleanup.queue, cleanupQueueKeys(msg.queue.Items), prevQueue)
-	reselect(&m.cleanup.dlq, cleanupDLQKeys(msg.dlq.Items), prevDLQ)
+	m.cleanup.queue.setItems(msg.queue.Items)
+	m.cleanup.dlq.setItems(msg.dlq.Items)
 	m.cleanup.loaded = true
 	m.cleanup.loading = false
 	m.cleanup.err = nil
-}
-
-// cleanupQueueKeys identifies queue rows by their row ID.
-func cleanupQueueKeys(items []adminapi.CleanupQueueItem) []string {
-	keys := make([]string, len(items))
-	for i := range items {
-		keys[i] = strconv.FormatInt(items[i].ID, 10)
-	}
-	return keys
-}
-
-// cleanupDLQKeys identifies dead-lettered rows by backend and object key,
-// since the listing carries no row ID.
-func cleanupDLQKeys(items []adminapi.CleanupDLQItem) []string {
-	keys := make([]string, len(items))
-	for i := range items {
-		keys[i] = items[i].Backend + "\x00" + items[i].ObjectKey
-	}
-	return keys
-}
-
-// keyAt returns the key at index i, or "" when i is out of range.
-func keyAt(keys []string, i int) string {
-	if i < 0 || i >= len(keys) {
-		return ""
-	}
-	return keys[i]
 }
 
 // applyCleanupRequeued reports the requeue outcome in the footer and reloads,
 // so the row counts reflect the move.
 func (m *model) applyCleanupRequeued(msg cleanupRequeuedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{text: "requeue failed: " + msg.err.Error()}
+		m.report(false, "requeue failed: "+msg.err.Error())
 		return m, nil
 	}
 	scope := "all backends"
 	if msg.resp.Backend != "" {
 		scope = msg.resp.Backend
 	}
-	m.status = &actionStatus{
-		ok:   true,
-		text: fmt.Sprintf("requeued %s from %s", countOf(int(msg.resp.Requeued), "row", "rows"), scope),
-	}
+	m.report(true, fmt.Sprintf("requeued %s from %s", countOf(int(msg.resp.Requeued), "row", "rows"), scope))
 	cmd := m.fetch(pollCleanup)
 	return m, cmd
 }
@@ -185,12 +159,11 @@ func (m *model) handleCleanupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.armRequeue()
 	}
 
-	var cmd tea.Cmd
 	if m.cleanupOnDLQ() {
-		m.cleanup.dlq, cmd = m.cleanup.dlq.Update(key)
-	} else {
-		m.cleanup.queue, cmd = m.cleanup.queue.Update(key)
+		cmd := m.cleanup.dlq.update(key)
+		return m, cmd
 	}
+	cmd := m.cleanup.queue.update(key)
 	return m, cmd
 }
 
@@ -205,11 +178,11 @@ func (m *model) armRequeue() (tea.Model, tea.Cmd) {
 		m.status = &actionStatus{text: "requeue applies to the dead-letter listing (t to switch)"}
 		return m, nil
 	}
-	idx := m.cleanup.dlq.Cursor()
-	if idx < 0 || idx >= len(m.cleanup.dlqRows) {
+	item, ok := m.cleanup.dlq.selected()
+	if !ok {
 		return m, nil
 	}
-	backend := m.cleanup.dlqRows[idx].Backend
+	backend := item.Backend
 	return m.startAction(adminAction{
 		confirm: "Requeue every dead-lettered cleanup for backend " + backend + "?",
 		run:     m.requeueDLQ(backend),
@@ -220,23 +193,52 @@ func (m *model) armRequeue() (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
+// Titles of the columns both cleanup listings share, used by the column specs
+// and the comparators alike.
+const (
+	colObjectKey = "OBJECT KEY"
+	colBackend   = "BACKEND"
+	colSize      = "SIZE"
+	colTries     = "TRIES"
+)
+
 // cleanupQueueColumns and cleanupDLQColumns declare the two listings' columns.
 // The key and the backend are what an operator acts on, so a narrow terminal
 // drops the claim or move time first.
 var (
 	cleanupQueueColumns = []columnSpec{
-		{title: "OBJECT KEY", min: 8, max: 60, priority: 5},
-		{title: "BACKEND", min: 14, max: 14, priority: 4},
-		{title: "SIZE", min: 10, max: 10, priority: 2},
-		{title: "TRIES", min: 7, max: 7, priority: 3},
+		{title: colObjectKey, min: 8, max: 60, priority: 5},
+		{title: colBackend, min: 14, max: 14, priority: 4},
+		{title: colSize, min: 10, max: 10, priority: 2},
+		{title: colTries, min: 7, max: 7, priority: 3},
 		{title: "CLAIMED", min: 10, max: 10, priority: 1},
 	}
 	cleanupDLQColumns = []columnSpec{
-		{title: "OBJECT KEY", min: 8, max: 60, priority: 5},
-		{title: "BACKEND", min: 14, max: 14, priority: 4},
-		{title: "SIZE", min: 10, max: 10, priority: 2},
-		{title: "TRIES", min: 7, max: 7, priority: 3},
+		{title: colObjectKey, min: 8, max: 60, priority: 5},
+		{title: colBackend, min: 14, max: 14, priority: 4},
+		{title: colSize, min: 10, max: 10, priority: 2},
+		{title: colTries, min: 7, max: 7, priority: 3},
 		{title: "MOVED", min: 10, max: 10, priority: 1},
+	}
+)
+
+// cleanupQueueSorts and cleanupDLQSorts order the two listings by every
+// column. MOVED sorts by when the row was dead-lettered, so an ascending sort
+// puts the oldest first.
+var (
+	cleanupQueueSorts = map[string]func(a, b *adminapi.CleanupQueueItem) int{
+		colObjectKey: by(func(c *adminapi.CleanupQueueItem) string { return c.ObjectKey }),
+		colBackend:   by(func(c *adminapi.CleanupQueueItem) string { return c.Backend }),
+		colSize:      by(func(c *adminapi.CleanupQueueItem) int64 { return c.SizeBytes }),
+		colTries:     by(func(c *adminapi.CleanupQueueItem) int32 { return c.Attempts }),
+		"CLAIMED":    by(func(c *adminapi.CleanupQueueItem) string { return c.ClaimedBy }),
+	}
+	cleanupDLQSorts = map[string]func(a, b *adminapi.CleanupDLQItem) int{
+		colObjectKey: by(func(c *adminapi.CleanupDLQItem) string { return c.ObjectKey }),
+		colBackend:   by(func(c *adminapi.CleanupDLQItem) string { return c.Backend }),
+		colSize:      by(func(c *adminapi.CleanupDLQItem) int64 { return c.SizeBytes }),
+		colTries:     by(func(c *adminapi.CleanupDLQItem) int32 { return c.Attempts }),
+		"MOVED":      by(func(c *adminapi.CleanupDLQItem) int64 { return c.MovedAt.UnixNano() }),
 	}
 )
 
@@ -278,7 +280,7 @@ func rowsFromCleanupDLQ(items []adminapi.CleanupDLQItem) []table.Row {
 
 // cleanupPaneView composes the pane's full-screen layout.
 func (m *model) cleanupPaneView() string {
-	return m.frame(m.cleanupHeaderView(), m.cleanupFooterView(), m.cleanupBody()...)
+	return m.frame(m.cleanupHeaderView(), m.hintFooter(), m.cleanupBody()...)
 }
 
 // cleanupHeaderView renders the title bar with both depths, marking the active
@@ -294,29 +296,19 @@ func (m *model) cleanupHeaderView() string {
 	return m.contentTitleStyle().Width(m.contentWidth()).Render("cleanup   " + queue + "   " + dlq)
 }
 
-// cleanupFooterView renders the cleanup key hints. Requeue is only offered on
-// the listing it applies to.
-func (m *model) cleanupFooterView() string {
-	hints := "up/down move - t dead-letter - r reload - tab nav - q quit"
-	if m.cleanupOnDLQ() {
-		hints = "up/down move - t pending - R requeue backend - r reload - tab nav - q quit"
-	}
-	return m.footer(hints)
-}
-
 // cleanupBody renders the current content: an error, the loading indicator,
 // an empty notice, or the active listing.
 func (m *model) cleanupBody() []pane {
 	return m.paneBody(m.cleanup.err, "", m.cleanup.loading, func() []pane {
 		if m.cleanupOnDLQ() {
-			if len(m.cleanup.dlqRows) == 0 {
+			if len(m.cleanup.dlq.received) == 0 {
 				return []pane{textPane(statusOKStyle.Render("(no dead-lettered cleanups)"))}
 			}
-			return []pane{m.tablePane(&m.cleanup.dlq, cleanupDLQColumns)}
+			return []pane{m.cleanup.dlq.pane(m)}
 		}
-		if len(m.cleanup.queueRows) == 0 {
+		if len(m.cleanup.queue.received) == 0 {
 			return []pane{textPane(statusOKStyle.Render("(cleanup queue is empty)"))}
 		}
-		return []pane{m.tablePane(&m.cleanup.queue, cleanupQueueColumns)}
+		return []pane{m.cleanup.queue.pane(m)}
 	})
 }

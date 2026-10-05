@@ -27,14 +27,19 @@ import (
 
 // backendsView holds the state of the backends status pane.
 type backendsView struct {
-	rows        []adminapi.BackendStatus // one entry per configured backend
-	table       table.Model              // scrolling table over the backends
-	dbHealthy   bool                     // metadata database health
-	usagePeriod string                   // period the usage counters cover
-	integrity   adminapi.IntegrityStatus // how far behind content verification is
-	loading     bool                     // a status fetch is in flight
-	err         error                    // last fetch error, if any
-	drain       drainWatch               // the drain this pane is following, if any
+	list        sortTable[adminapi.BackendStatus] // one row per configured backend, in server order until sorted
+	dbHealthy   bool                              // metadata database health
+	usagePeriod string                            // period the usage counters cover
+	integrity   adminapi.IntegrityStatus          // how far behind content verification is
+	loading     bool                              // a status fetch is in flight
+	err         error                             // last fetch error, if any
+	drain       drainWatch                        // the drain this pane is following, if any
+}
+
+// newBackendsView builds the pane's empty state.
+func newBackendsView() backendsView {
+	return backendsView{list: newSortTable(backendColumns, backendSorts, rowsFromBackends,
+		func(b *adminapi.BackendStatus) string { return b.Name })}
 }
 
 // drainWatch follows one backend's drain. The endpoints are start, poll and
@@ -167,19 +172,12 @@ func (m *model) requeueBackendDLQ(backend string) tea.Cmd {
 // applyStatus folds a loaded snapshot into the backends state, keeping the
 // highlighted backend selected across the refresh.
 func (m *model) applyStatus(resp *adminapi.StatusResponse) {
-	prev := m.selectedBackend()
-	m.backends.rows = resp.Backends
+	m.backends.list.setItems(resp.Backends)
 	m.backends.dbHealthy = resp.DBHealthy
 	m.backends.usagePeriod = resp.UsagePeriod
 	m.backends.integrity = resp.Integrity
 	healthy := resp.DBHealthy
 	m.dbHealthy = &healthy // surface globally for the sidebar indicator
-	m.backends.table.SetRows(rowsFromBackends(resp.Backends))
-	keys := make([]string, len(resp.Backends))
-	for i := range resp.Backends {
-		keys[i] = resp.Backends[i].Name
-	}
-	reselect(&m.backends.table, keys, prev)
 	m.backends.loading = false
 	m.backends.err = nil
 }
@@ -191,7 +189,7 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.backends.loading = m.backends.rows == nil
+		m.backends.loading = !m.backends.list.loaded()
 		cmd := m.fetch(pollStatus)
 		return m, cmd
 	case "d", "R", "Q", "x":
@@ -200,8 +198,7 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openBackendActions()
 	}
 
-	var cmd tea.Cmd
-	m.backends.table, cmd = m.backends.table.Update(key)
+	cmd := m.backends.list.update(key)
 	return m, cmd
 }
 
@@ -263,11 +260,7 @@ func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
 
 // selectedBackend names the highlighted row, or "" when the table is empty.
 func (m *model) selectedBackend() string {
-	cursor := m.backends.table.Cursor()
-	if cursor < 0 || cursor >= len(m.backends.rows) {
-		return ""
-	}
-	return m.backends.rows[cursor].Name
+	return m.backends.list.selectedKey()
 }
 
 // -------------------------------------------------------------------------
@@ -310,10 +303,10 @@ func (m *model) beginDrainWatch(backend string) {
 func (m *model) applyDrainStarted(msg drainStartedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.backends.drain = drainWatch{}
-		m.status = &actionStatus{ok: false, text: "drain " + msg.backend + ": " + msg.err.Error()}
+		m.report(false, "drain "+msg.backend+": "+msg.err.Error())
 		return m, nil
 	}
-	m.status = &actionStatus{ok: true, text: "draining " + msg.backend}
+	m.report(true, "draining "+msg.backend)
 	m.backends.drain.following = true
 	cmd := m.fetch(pollDrain)
 	return m, cmd
@@ -335,7 +328,7 @@ func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
 	m.backends.drain.err = nil
 	if msg.progress != nil && !msg.progress.Active {
 		m.backends.drain = drainWatch{}
-		m.status = drainEndStatus(msg.backend, msg.progress)
+		m.report(drainEndStatus(msg.backend, msg.progress))
 		refresh := m.fetch(pollStatus)
 		return m, refresh
 	}
@@ -344,22 +337,22 @@ func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
 
 // drainEndStatus reports how a followed drain ended: finished, or failed with
 // the reason the drain recorded.
-func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) *actionStatus {
+func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) (ok bool, text string) {
 	if p.State == "failed" {
-		return &actionStatus{ok: false, text: "drain failed on " + backend + ": " + p.Error}
+		return false, "drain failed on " + backend + ": " + p.Error
 	}
-	return &actionStatus{ok: true, text: "drain finished on " + backend}
+	return true, "drain finished on " + backend
 }
 
 // applyDrainCancelled ends the watch and refreshes the snapshot, so the row
 // stops reporting itself as draining.
 func (m *model) applyDrainCancelled(msg drainCancelledMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "cancel drain " + msg.backend + ": " + msg.err.Error()}
+		m.report(false, "cancel drain "+msg.backend+": "+msg.err.Error())
 		return m, nil
 	}
 	m.backends.drain = drainWatch{}
-	m.status = &actionStatus{ok: true, text: "drain cancelled on " + msg.backend}
+	m.report(true, "drain cancelled on "+msg.backend)
 	refresh := m.fetch(pollStatus)
 	return m, refresh
 }
@@ -367,11 +360,11 @@ func (m *model) applyDrainCancelled(msg drainCancelledMsg) (tea.Model, tea.Cmd) 
 // applyBackendReconciled reports what reconciling one backend changed.
 func (m *model) applyBackendReconciled(msg backendReconciledMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "reconcile " + msg.backend + ": " + msg.err.Error()}
+		m.report(false, "reconcile "+msg.backend+": "+msg.err.Error())
 		return m, nil
 	}
-	m.status = &actionStatus{ok: true, text: fmt.Sprintf("reconciled %s: imported %d, removed %d",
-		msg.backend, msg.resp.Imported, msg.resp.Removed)}
+	m.report(true, fmt.Sprintf("reconciled %s: imported %d, removed %d",
+		msg.backend, msg.resp.Imported, msg.resp.Removed))
 	refresh := m.fetch(pollStatus)
 	return m, refresh
 }
@@ -380,10 +373,10 @@ func (m *model) applyBackendReconciled(msg backendReconciledMsg) (tea.Model, tea
 // the queue for one backend.
 func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = &actionStatus{ok: false, text: "requeue " + msg.backend + ": " + msg.err.Error()}
+		m.report(false, "requeue "+msg.backend+": "+msg.err.Error())
 		return m, nil
 	}
-	m.status = &actionStatus{ok: true, text: fmt.Sprintf("requeued %d for %s", msg.resp.Requeued, msg.backend)}
+	m.report(true, fmt.Sprintf("requeued %d for %s", msg.resp.Requeued, msg.backend))
 	return m, nil
 }
 
@@ -407,6 +400,23 @@ var backendColumns = []columnSpec{
 	{title: "INGRESS", min: 12, max: 12, priority: 3},
 	{title: "EGRESS", min: 12, max: 12, priority: 4},
 	{title: "SAVED", min: 12, max: 12, priority: 1},
+}
+
+// backendSorts orders the backends table by every column. A backend with no
+// limit sorts as 0% used, and a healthy backend after an unhealthy one, so an
+// ascending sort puts the backends needing attention first.
+var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
+	"BACKEND": by(func(b *adminapi.BackendStatus) string { return b.Name }),
+	"HEALTH":  by(func(b *adminapi.BackendStatus) int { return rank(b.Healthy) }),
+	"DRAIN":   by(func(b *adminapi.BackendStatus) string { return b.DrainState }),
+	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
+	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
+	"USE%":    by(func(b *adminapi.BackendStatus) int { return usagePercent(b.BytesUsed, b.BytesLimit) }),
+	"OBJECTS": by(func(b *adminapi.BackendStatus) int64 { return b.ObjectCount }),
+	"API":     by(func(b *adminapi.BackendStatus) int64 { return b.APIRequests }),
+	"INGRESS": by(func(b *adminapi.BackendStatus) int64 { return b.IngressBytes }),
+	"EGRESS":  by(func(b *adminapi.BackendStatus) int64 { return b.EgressBytes }),
+	"SAVED":   by(func(b *adminapi.BackendStatus) int64 { return b.CompressionSavedBytes }),
 }
 
 // rowsFromBackends builds table rows from the status snapshot, in the same
@@ -466,12 +476,12 @@ func backendDrain(state string) string {
 
 // backendsView composes the pane's full-screen layout.
 func (m *model) backendsPaneView() string {
-	return m.frame(m.backendsHeaderView(), m.backendsFooterView(), m.backendsBody()...)
+	return m.frame(m.backendsHeaderView(), m.hintFooter(), m.backendsBody()...)
 }
 
 // backendsHeaderView renders the title bar with the backend count and DB health.
 func (m *model) backendsHeaderView() string {
-	title := fmt.Sprintf("backends   %d configured", len(m.backends.rows))
+	title := fmt.Sprintf("backends   %d configured", len(m.backends.list.received))
 	if m.backends.usagePeriod != "" {
 		title += "   usage period: " + m.backends.usagePeriod
 	}
@@ -514,10 +524,10 @@ func (m *model) backendsStatsLine() string {
 	}
 
 	var used, limit int64
-	for i := range m.backends.rows {
-		used += m.backends.rows[i].BytesUsed
-		if m.backends.rows[i].BytesLimit > 0 {
-			limit += m.backends.rows[i].BytesLimit
+	for i := range m.backends.list.received {
+		used += m.backends.list.received[i].BytesUsed
+		if m.backends.list.received[i].BytesLimit > 0 {
+			limit += m.backends.list.received[i].BytesLimit
 		}
 	}
 	total := "total: " + humanize.Bytes(used)
@@ -537,8 +547,8 @@ func (m *model) backendsStatsLine() string {
 // compressed.
 func (m *model) compressionCoverage() string {
 	var saved int64
-	for i := range m.backends.rows {
-		saved += m.backends.rows[i].CompressionSavedBytes
+	for i := range m.backends.list.received {
+		saved += m.backends.list.received[i].CompressionSavedBytes
 	}
 	if saved <= 0 {
 		return ""
@@ -597,24 +607,13 @@ func usagePercent(used, limit int64) int {
 	return int(used * 100 / limit)
 }
 
-// backendsFooterView renders the backends key hints. The cancel key is offered
-// only while this pane is following a drain, so it cannot read as available
-// when there is nothing to stop.
-func (m *model) backendsFooterView() string {
-	hints := "up/down move - enter actions - d drain - R reconcile - Q requeue dlq - r reload - tab nav - q quit"
-	if m.backends.drain.backend != "" {
-		hints = "x cancel drain - " + hints
-	}
-	return m.footer(hints)
-}
-
 // backendsBody renders the current content: an error, the loading indicator,
 // an empty notice, or the backends table.
 func (m *model) backendsBody() []pane {
 	return m.paneBody(m.backends.err, "", m.backends.loading, func() []pane {
-		if len(m.backends.rows) == 0 {
+		if len(m.backends.list.received) == 0 {
 			return []pane{textPane(pathStyle.Render("(no backends)"))}
 		}
-		return []pane{m.tablePane(&m.backends.table, backendColumns)}
+		return []pane{m.backends.list.pane(m)}
 	})
 }

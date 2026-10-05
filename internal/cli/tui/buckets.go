@@ -18,6 +18,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -32,13 +33,24 @@ import (
 
 // bucketsView holds the state of the buckets pane.
 type bucketsView struct {
-	rows        []adminapi.Bucket // one entry per declared bucket, both sources
-	users       []adminapi.User   // the identities that reach them, for the grant column
-	notices     []adminapi.Notice // what the merge of the two sources found
-	table       table.Model       // scrolling table over the buckets
-	loading     bool              // a fetch is in flight
-	unavailable string            // set when the endpoint reports the feature is not wired
-	err         error             // last fetch error, if any
+	list        sortTable[bucketEntry] // one entry per declared bucket, both sources
+	notices     []adminapi.Notice      // what the merge of the two sources found
+	loading     bool                   // a fetch is in flight
+	unavailable string                 // set when the endpoint reports the feature is not wired
+	err         error                  // last fetch error, if any
+}
+
+// bucketEntry is one bucket with the identities that reach it, resolved
+// against the users in the same snapshot when it loads.
+type bucketEntry struct {
+	adminapi.Bucket
+	reachedBy []string
+}
+
+// newBucketsView builds the pane's empty state.
+func newBucketsView() bucketsView {
+	return bucketsView{list: newSortTable(bucketColumns, bucketSorts, rowsFromBuckets,
+		func(b *bucketEntry) string { return b.Name })}
 }
 
 // -------------------------------------------------------------------------
@@ -72,19 +84,12 @@ func (m *model) loadBuckets() tea.Cmd {
 
 // applyBuckets folds a loaded snapshot into the pane state.
 func (m *model) applyBuckets(resp *adminapi.ProvisioningResponse) {
-	prev := ""
-	if c := m.buckets.table.Cursor(); c >= 0 && c < len(m.buckets.rows) {
-		prev = m.buckets.rows[c].Name
-	}
-	m.buckets.rows = resp.Buckets
-	m.buckets.users = resp.Users
-	m.buckets.notices = resp.Notices
-	m.buckets.table.SetRows(rowsFromBuckets(resp.Buckets, resp.Users))
-	keys := make([]string, len(resp.Buckets))
+	entries := make([]bucketEntry, len(resp.Buckets))
 	for i := range resp.Buckets {
-		keys[i] = resp.Buckets[i].Name
+		entries[i] = bucketEntry{Bucket: resp.Buckets[i], reachedBy: usersReaching(resp.Users, resp.Buckets[i].Name)}
 	}
-	reselect(&m.buckets.table, keys, prev)
+	m.buckets.list.setItems(entries)
+	m.buckets.notices = resp.Notices
 	m.buckets.loading = false
 	m.buckets.unavailable = ""
 	m.buckets.err = nil
@@ -108,13 +113,12 @@ func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.buckets.loading = m.buckets.rows == nil
+		m.buckets.loading = !m.buckets.list.loaded()
 		cmd := m.fetch(pollBuckets)
 		return m, cmd
 	}
 
-	var cmd tea.Cmd
-	m.buckets.table, cmd = m.buckets.table.Update(key)
+	cmd := m.buckets.list.update(key)
 	return m, cmd
 }
 
@@ -132,17 +136,36 @@ var bucketColumns = []columnSpec{
 	{title: "REACHED BY", min: 8, max: 0, priority: 3},
 }
 
-// rowsFromBuckets builds table rows in the order the response listed them, so
-// the table cursor indexes straight into rows.
-func rowsFromBuckets(buckets []adminapi.Bucket, users []adminapi.User) []table.Row {
+// bucketSorts orders the buckets table by every column. A multipart cap of 0
+// means unlimited, so it sorts above every real cap; REACHED BY sorts by how
+// many identities reach the bucket.
+var bucketSorts = map[string]func(a, b *bucketEntry) int{
+	"BUCKET":     by(func(b *bucketEntry) string { return b.Name }),
+	"MULTIPART":  by(func(b *bucketEntry) int { return multipartRank(b.MaxMultipartUploads) }),
+	"SOURCE":     by(func(b *bucketEntry) string { return b.Source }),
+	"REACHED BY": by(func(b *bucketEntry) int { return len(b.reachedBy) }),
+}
+
+// multipartRank orders a multipart cap with 0, which means unlimited, above
+// every real cap.
+func multipartRank(n int) int {
+	if n == 0 {
+		return math.MaxInt
+	}
+	return n
+}
+
+// rowsFromBuckets builds table rows in display order, so the table cursor
+// indexes straight into the entries.
+func rowsFromBuckets(buckets []bucketEntry) []table.Row {
 	rows := make([]table.Row, 0, len(buckets))
 	for i := range buckets {
-		b := buckets[i]
+		b := &buckets[i]
 		rows = append(rows, table.Row{
 			b.Name,
 			multipartCap(b.MaxMultipartUploads),
 			b.Source,
-			strings.Join(usersReaching(users, b.Name), ", "),
+			strings.Join(b.reachedBy, ", "),
 		})
 	}
 	return rows
@@ -193,21 +216,21 @@ func grantOn(u *adminapi.User, bucket string) (string, bool) {
 
 // bucketsPaneView composes the pane's full-screen layout.
 func (m *model) bucketsPaneView() string {
-	return m.frame(m.bucketsHeaderView(), m.bucketsFooterView(), m.bucketsBody()...)
+	return m.frame(m.bucketsHeaderView(), m.hintFooter(), m.bucketsBody()...)
 }
 
 // bucketsHeaderView renders the title bar with the bucket count and how many
 // the config file declares, since those are the read-only ones.
 func (m *model) bucketsHeaderView() string {
-	title := fmt.Sprintf("buckets   %d declared", len(m.buckets.rows))
-	if n := configBuckets(m.buckets.rows); n > 0 {
+	title := fmt.Sprintf("buckets   %d declared", len(m.buckets.list.received))
+	if n := configBuckets(m.buckets.list.received); n > 0 {
 		title += fmt.Sprintf("   %d from config (read-only)", n)
 	}
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 
 // configBuckets counts the entries the config file declares.
-func configBuckets(buckets []adminapi.Bucket) int {
+func configBuckets(buckets []bucketEntry) int {
 	n := 0
 	for i := range buckets {
 		if buckets[i].Source == adminapi.SourceConfig {
@@ -217,21 +240,15 @@ func configBuckets(buckets []adminapi.Bucket) int {
 	return n
 }
 
-// bucketsFooterView renders the buckets key hints. Nothing here writes:
-// provisioning happens through the admin CLI.
-func (m *model) bucketsFooterView() string {
-	return m.footer("up/down move - r reload - tab nav - q quit")
-}
-
 // bucketsBody renders the current content: an error, a not-wired notice, the
 // loading indicator, or the buckets table with anything the merge reported
 // below it.
 func (m *model) bucketsBody() []pane {
 	return m.paneBody(m.buckets.err, m.buckets.unavailable, m.buckets.loading, func() []pane {
-		if len(m.buckets.rows) == 0 {
+		if len(m.buckets.list.received) == 0 {
 			return []pane{textPane(pathStyle.Render("(no buckets declared)"))}
 		}
-		body := []pane{m.tablePane(&m.buckets.table, bucketColumns)}
+		body := []pane{m.buckets.list.pane(m)}
 		if len(m.buckets.notices) > 0 {
 			body = append(body, textPane(m.bucketNoticesView()))
 		}
