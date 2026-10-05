@@ -114,9 +114,8 @@ var workerOpsPaths = map[string]string{
 	"lifecycle":                "/admin/api/lifecycle",
 }
 
-// runWorkerOpsAction opens the Ops pane on the action that does the
-// highlighted worker's job and runs it, exactly as choosing it from the Ops
-// menu does.
+// runWorkerOpsAction runs the Ops action that does the highlighted worker's
+// job, confirming and streaming it in this pane.
 func (m *model) runWorkerOpsAction() (tea.Model, tea.Cmd) {
 	w, ok := m.workers.list.selected()
 	if !ok {
@@ -126,11 +125,9 @@ func (m *model) runWorkerOpsAction() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.selectSection(sectionOps)
-	for i := range m.ops.actions {
-		if m.ops.actions[i].path == path {
-			m.ops.cursor = i
-			return m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	for _, a := range maintenanceActions() {
+		if a.path == path {
+			return m.startRun(&a, opsRequest{path: a.path})
 		}
 	}
 	return m, nil

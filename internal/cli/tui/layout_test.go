@@ -285,9 +285,9 @@ func TestViewportPane_ClampsAfterGrowing(t *testing.T) {
 	m.section = sectionOps
 	m.ops = opsView{actions: opsActions()}
 	for _, line := range []string{"one", "two", "three"} {
-		m.appendOpsLine(line)
+		m.appendRunLine(line)
 	}
-	m.ops.showOut = true
+	m.run.owner, m.run.shown = sectionOps, true
 
 	view := m.contentView()
 	for _, want := range []string{"one", "two", "three"} {

@@ -58,13 +58,13 @@ func TestHintLine_StateDependentKeys(t *testing.T) {
 
 	m = initialModel(&fakeLister{})
 	m.section = sectionOps
-	m.ops.showOut, m.ops.running = true, true
+	m.run.owner, m.run.shown, m.run.running = sectionOps, true, true
 	if got := m.hintLine(); !strings.Contains(got, "up/down scroll") {
-		t.Errorf("running ops footer = %q, want scroll", got)
+		t.Errorf("running output footer = %q, want scroll", got)
 	}
-	m.ops.running = false
-	if got := m.hintLine(); !strings.Contains(got, "esc back") {
-		t.Errorf("finished ops footer = %q, want esc back", got)
+	m.run.running = false
+	if got := m.hintLine(); !strings.Contains(got, "esc close") {
+		t.Errorf("finished output footer = %q, want esc close", got)
 	}
 }
 

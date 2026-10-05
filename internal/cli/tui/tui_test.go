@@ -522,11 +522,11 @@ func TestBrowser_RunsOpsAction(t *testing.T) {
 	if fm.section != sectionOps {
 		t.Errorf("section = %v, want ops", fm.section)
 	}
-	if fm.ops.running {
-		t.Error("ops still running after result, want finished")
+	if fm.run.running {
+		t.Error("run still running after result, want finished")
 	}
-	if !strings.Contains(strings.Join(fm.ops.lines, "\n"), "moved 7 objects") {
-		t.Errorf("ops output = %q, want the result line", fm.ops.lines)
+	if !strings.Contains(strings.Join(fm.run.lines, "\n"), "moved 7 objects") {
+		t.Errorf("run output = %q, want the result line", fm.run.lines)
 	}
 }
 

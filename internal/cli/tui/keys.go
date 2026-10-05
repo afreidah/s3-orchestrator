@@ -63,6 +63,9 @@ var (
 // states, such as cancelling a drain or requeueing from the dead-letter
 // listing, are listed only while they apply.
 func (m *model) paneKeys() []keyHint {
+	if m.showingRun() {
+		return m.runKeys()
+	}
 	switch m.section {
 	case sectionFiles:
 		return m.filesKeys()
@@ -135,16 +138,18 @@ func (m *model) cleanupKeys() []keyHint {
 	return append(keys, hintSort, hintReverse, hintReload, hintNavBack)
 }
 
-// opsKeys is the ops keymap for the menu, or for the output of an action.
+// opsKeys is the ops menu's keymap.
 func (m *model) opsKeys() []keyHint {
-	switch {
-	case m.ops.showOut && m.ops.running:
+	return []keyHint{hintMove, {key: "enter", desc: "run the action", label: "run"}, hintNavBack}
+}
+
+// runKeys is the keymap of a run's output: scrolling while it streams, and
+// closing it once it has finished.
+func (m *model) runKeys() []keyHint {
+	if m.run.running {
 		return []keyHint{{key: keyUpDown, desc: "scroll the output", label: "scroll"}}
-	case m.ops.showOut:
-		return []keyHint{hintScroll, {key: "esc", desc: "back to the menu", label: "back"}}
-	default:
-		return []keyHint{hintMove, {key: "enter", desc: "run the action", label: "run"}, hintNavBack}
 	}
+	return []keyHint{hintScroll, {key: "esc", desc: "close the output", label: "close"}}
 }
 
 // globalKeys is what every pane answers, in the help overlay's order.
