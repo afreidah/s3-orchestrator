@@ -5,7 +5,7 @@ weight: 1
 ---
 
 
-This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up a fully functional instance with three MinIO backends, PostgreSQL, and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality — pick whichever you prefer.
+This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up a fully functional instance with three MinIO backends, PostgreSQL, and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality - pick whichever you prefer.
 
 ## Prerequisites
 
@@ -17,11 +17,11 @@ Both demos require:
 
 **Nomad demo** additionally requires:
 
-- [Nomad](https://developer.hashicorp.com/nomad/install) — runs in `-dev` mode, no cluster setup needed
+- [Nomad](https://developer.hashicorp.com/nomad/install) - runs in `-dev` mode, no cluster setup needed
 
 **Kubernetes demo** additionally requires:
 
-- [k3d](https://k3d.io/) — lightweight Kubernetes in Docker
+- [k3d](https://k3d.io/) - lightweight Kubernetes in Docker
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ## Starting the Demo
@@ -70,7 +70,7 @@ The demo starts several services behind the scenes:
 | **Grafana** | 13000 | Dashboard, log exploration, trace viewer |
 | **Tempo** | 3200 | Distributed tracing backend |
 | **Loki** | 3100 | Log aggregation |
-| **Alloy** | — | Log collector (ships container logs to Loki) |
+| **Alloy** | - | Log collector (ships container logs to Loki) |
 
 The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes demo creates a **k3d cluster** with a single node.
 
@@ -78,12 +78,12 @@ The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes de
 
 Both demos are pre-configured with:
 
-- **Three backends** — `minio-1`, `minio-2`, and `minio-3`, each with a 10 GB quota
-- **Replication factor 2** — every object is automatically copied to a second backend
-- **Encryption enabled** — all objects are AES-encrypted at rest
-- **Circuit breaker** — backends are automatically taken out of rotation after 3 consecutive failures
-- **Full telemetry** — 100% trace sampling, structured JSON logging with trace correlation
-- **Admin UI** — enabled with credentials `admin` / `admin`
+- **Three backends** - `minio-1`, `minio-2`, and `minio-3`, each with a 10 GB quota
+- **Replication factor 2** - every object is automatically copied to a second backend
+- **Encryption enabled** - all objects are AES-encrypted at rest
+- **Circuit breaker** - backends are automatically taken out of rotation after 3 consecutive failures
+- **Full telemetry** - 100% trace sampling, structured JSON logging with trace correlation
+- **Admin UI** - enabled, logged into with the root keypair the demo prints when it finishes
 
 The Nomad demo uses `pack` routing (fills one backend before the next). The Kubernetes demo uses `spread` routing (distributes evenly across backends). This lets you observe different storage distribution patterns in the dashboard.
 
@@ -112,33 +112,33 @@ aws --endpoint-url http://localhost:9000 s3 cp s3://photos/test.txt /tmp/test.tx
 aws --endpoint-url http://localhost:9000 s3 rm s3://photos/test.txt
 ```
 
-Any S3-compatible client works — `s3cmd`, `rclone`, `mc` (MinIO Client), or your application's S3 SDK.
+Any S3-compatible client works - `s3cmd`, `rclone`, `mc` (MinIO Client), or your application's S3 SDK.
 
 ## Admin Dashboard
 
-Open [http://localhost:9000/ui/](http://localhost:9000/ui/) and log in with `admin` / `admin`.
+Open [http://localhost:9000/ui/](http://localhost:9000/ui/) and log in with the root keypair printed in the demo's summary under "Root keypair": the access key and secret key go in the two login fields.
 
 The dashboard provides a real-time overview of the system:
 
-- **Storage Summary** — total bytes used and capacity across all backends with a progress bar
-- **Backends Table** — per-backend quota usage, object count, and active multipart uploads
-- **Monthly Usage** — API requests, egress, and ingress per backend
-- **Objects** — interactive directory tree; click folders to expand, click files to download
-- **Configuration** — virtual buckets, routing strategy, replication factor, and rate limit status
-- **Logs** — recent structured log output, filterable by severity level
+- **Storage Summary** - total bytes used and capacity across all backends with a progress bar
+- **Backends Table** - per-backend quota usage, object count, and active multipart uploads
+- **Monthly Usage** - API requests, egress, and ingress per backend
+- **Objects** - interactive directory tree; click folders to expand, click files to download
+- **Configuration** - virtual buckets, routing strategy, replication factor, and rate limit status
+- **Logs** - recent structured log output, filterable by severity level
 
 ### Management Actions
 
 The dashboard also exposes management operations:
 
-- **Upload** — upload files or entire folders via the browser; supports multi-file selection and preserves directory structure
-- **Delete** — remove individual objects or batch-delete by prefix
-- **Rebalance** — trigger an on-demand rebalance to redistribute objects across backends according to the current routing strategy
-- **Sync** — import pre-existing objects from a backend's S3 bucket into the orchestrator database (useful when adding a new backend that already has data)
+- **Upload** - upload files or entire folders via the browser; supports multi-file selection and preserves directory structure
+- **Delete** - remove individual objects or batch-delete by prefix
+- **Rebalance** - trigger an on-demand rebalance to redistribute objects across backends according to the current routing strategy
+- **Sync** - import pre-existing objects from a backend's S3 bucket into the orchestrator database (useful when adding a new backend that already has data)
 
 ## Grafana Dashboard
 
-Open [http://localhost:13000](http://localhost:13000) (no login required — anonymous admin is enabled).
+Open [http://localhost:13000](http://localhost:13000) (no login required - anonymous admin is enabled).
 
 The pre-loaded **S3 Orchestrator** dashboard is available under **Dashboard** in the left sidebar. It contains 50+ panels organized into sections. Upload some files and watch the panels update in real time.
 
@@ -156,7 +156,7 @@ Detailed HTTP-level metrics: request rate broken down by method, duration percen
 
 ### Manager Operations
 
-The backend and manager operations panels show request rate and duration at the storage layer — below the HTTP handler and above the individual S3 backends. This section also displays the circuit breaker status for each backend and the database, replication activity (pending replicas, copies created, errors, duration), rebalancer runs, the cleanup queue depth, and the cleanup DLQ depth (`s3o_cleanup_dlq_depth`) — a non-zero DLQ means at least one unrecoverable orphan needs operator action.
+The backend and manager operations panels show request rate and duration at the storage layer - below the HTTP handler and above the individual S3 backends. This section also displays the circuit breaker status for each backend and the database, replication activity (pending replicas, copies created, errors, duration), rebalancer runs, the cleanup queue depth, and the cleanup DLQ depth (`s3o_cleanup_dlq_depth`) - a non-zero DLQ means at least one unrecoverable orphan needs operator action.
 
 ![Manager Operations](/images/demo-grafana-manager.png)
 
@@ -176,7 +176,7 @@ The orchestrator exposes a Prometheus-compatible metrics endpoint at [http://loc
 
 Every S3 request generates an OpenTelemetry trace that flows to Tempo. Traced operations include S3 API requests, replication copies, rebalance moves, multipart cleanup, and cleanup queue processing.
 
-In Grafana, go to **Explore** and select the **Tempo** datasource. The default view shows recent traces searchable by service name, duration, or status. Click any trace to see the full span waterfall — the request through the orchestrator, the backend storage operation, and any replication work it triggered.
+In Grafana, go to **Explore** and select the **Tempo** datasource. The default view shows recent traces searchable by service name, duration, or status. Click any trace to see the full span waterfall - the request through the orchestrator, the backend storage operation, and any replication work it triggered.
 
 ![Tempo Explore](/images/demo-traces-explore.png)
 
@@ -184,7 +184,7 @@ Tempo also generates a **Service Graph** from the trace data, showing s3-orchest
 
 ![Service Graph](/images/demo-traces-service-graph.png)
 
-Click any node or edge in the service graph to jump to the underlying traces. Selecting an individual trace opens the span waterfall, showing the full request lifecycle — from the HTTP handler through backend storage operations and any replication work it triggered.
+Click any node or edge in the service graph to jump to the underlying traces. Selecting an individual trace opens the span waterfall, showing the full request lifecycle - from the HTTP handler through backend storage operations and any replication work it triggered.
 
 ![Trace Detail](/images/demo-traces.png)
 
@@ -206,10 +206,10 @@ Logs include structured fields like `event`, `request_id`, `backend`, `key`, `si
 
 Traces and logs are linked bidirectionally:
 
-- **Logs to traces** — log entries that contain a `trace_id` field show a **View Trace** link. Click it to jump directly to the full trace in Tempo.
-- **Traces to logs** — when viewing a trace in Tempo, click **View logs** on any span to see the corresponding log entries in Loki for that trace.
+- **Logs to traces** - log entries that contain a `trace_id` field show a **View Trace** link. Click it to jump directly to the full trace in Tempo.
+- **Traces to logs** - when viewing a trace in Tempo, click **View logs** on any span to see the corresponding log entries in Loki for that trace.
 
-This lets you start from either direction — find a slow trace and see what the application logged, or find an error log and see the full request lifecycle.
+This lets you start from either direction - find a slow trace and see what the application logged, or find an error log and see the full request lifecycle.
 
 ![Trace-to-Log Correlation](/images/demo-log-trace-correlation.png)
 
@@ -227,11 +227,11 @@ Upload several files and compare the storage distribution. The Nomad demo uses `
 
 ### Trigger a rebalance
 
-A rebalance redistributes objects according to the current routing strategy. It is useful when the routing strategy has changed or a new backend has been added — if objects are already where the strategy wants them, rebalance is a no-op.
+A rebalance redistributes objects according to the current routing strategy. It is useful when the routing strategy has changed or a new backend has been added - if objects are already where the strategy wants them, rebalance is a no-op.
 
 To see it in action with the Nomad demo:
 
-1. Upload several files — `pack` routing places them all on `minio-1` first
+1. Upload several files - `pack` routing places them all on `minio-1` first
 2. Edit the Nomad job to change the routing strategy to `spread` and redeploy
 3. Click **Rebalance** in the admin dashboard
 4. Objects migrate from `minio-1` to `minio-2` and `minio-3` until all backends are balanced
@@ -240,7 +240,7 @@ To see it in action with the Nomad demo:
 ### Test circuit breaker behavior
 
 1. Stop one of the MinIO containers: `docker stop s3-orchestrator-minio-1-1`
-2. Upload a file — the orchestrator routes to the healthy backend
+2. Upload a file - the orchestrator routes to the healthy backend
 3. Check the **Circuit Breaker** panel in Grafana to see the state transition
 4. Restart MinIO: `docker start s3-orchestrator-minio-1-1`
 5. The circuit breaker resets after 15 seconds and the backend rejoins the pool
@@ -250,8 +250,8 @@ To see it in action with the Nomad demo:
 Objects are encrypted transparently. To verify:
 
 1. Upload a file through the orchestrator
-2. Try reading it directly from MinIO at `http://localhost:19000` — the content is encrypted ciphertext
-3. Read it back through the orchestrator at `http://localhost:9000` — it is decrypted automatically
+2. Try reading it directly from MinIO at `http://localhost:19000` - the content is encrypted ciphertext
+3. Read it back through the orchestrator at `http://localhost:9000` - it is decrypted automatically
 
 ## Tearing Down
 

@@ -10,19 +10,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 <p align="center">
-  <strong><a href="https://s3-orchestrator.munchbox.cc">Project Website</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/docs/">Documentation</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/">Maximizing Free-Tier Storage</a></strong>
+  <strong><a href="https://s3-orchestrator.munchbox.cc">Project Website</a></strong> | <strong><a href="https://s3-orchestrator.munchbox.cc/docs/">Documentation</a></strong> | <strong><a href="https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/">Maximizing Free-Tier Storage</a></strong>
 </p>
 
-Most applications talk to one S3 backend, which ties them to that provider's uptime, pricing, and limits. s3-orchestrator puts a single S3 endpoint in front of any number of S3-compatible backends — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, Cloudflare R2, anything that speaks S3 — and presents them as one or more virtual buckets. It tracks where every object lives in its own database, which is what lets it enforce per-backend byte quotas, keep N copies across providers, fail reads over when one goes dark, and take a backend out of the fleet without downtime.
+Most applications talk to one S3 backend, which ties them to that provider's uptime, pricing, and limits. s3-orchestrator puts a single S3 endpoint in front of any number of S3-compatible backends - OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, Cloudflare R2, anything that speaks S3 - and presents them as one or more virtual buckets. It tracks where every object lives in its own database, which is what lets it enforce per-backend byte quotas, keep N copies across providers, fail reads over when one goes dark, and take a backend out of the fleet without downtime.
 
-Clients see one endpoint and one namespace. The backends never learn the orchestrator exists — they see ordinary S3 calls, so any provider the AWS SDK can talk to works.
+Clients see one endpoint and one namespace. The backends never learn the orchestrator exists - they see ordinary S3 calls, so any provider the AWS SDK can talk to works.
 
 <p align="center">
   <img src="docs/images/tui-backends.png" alt="The terminal browser's Backends view: twelve backends listed with health, quota used against limit, object count, API requests, ingress, egress and bytes saved by compression" width="900">
 </p>
 
 <details>
-<summary><strong>The web dashboard</strong> — storage summary, integrity and compression coverage, monthly usage against each provider's limits, object browser and live logs</summary>
+<summary><strong>The web dashboard</strong> - storage summary, integrity and compression coverage, monthly usage against each provider's limits, object browser and live logs</summary>
 
 <img src="docs/images/admin-ui.png" alt="The web dashboard, showing total used against capacity, a per-backend table of quota and usage, integrity coverage with the oldest unverified copy, encryption and compression coverage, monthly usage against each backend's request and transfer budgets, the object browser, the effective configuration, and a live log tail" width="900">
 
@@ -33,14 +33,14 @@ Clients see one endpoint and one namespace. The backends never learn the orchest
 | Audience | Use case |
 |---|---|
 | **Homelabbers** | Stack free-tier allocations from multiple providers into usable storage without paying for a single plan. |
-| **Self-hosters running MinIO** | Add automatic cloud backups to a local MinIO instance with one config change — no sync scripts or extra tooling. |
+| **Self-hosters running MinIO** | Add automatic cloud backups to a local MinIO instance with one config change - no sync scripts or extra tooling. |
 | **Small teams and startups** | Multi-cloud redundancy and encryption without the cost or complexity of enterprise storage platforms. |
-| **Anyone wanting provider independence** | Applications talk S3 to one endpoint — swap, add, or remove backends without touching a line of code. |
+| **Anyone wanting provider independence** | Applications talk S3 to one endpoint - swap, add, or remove backends without touching a line of code. |
 
 ## What it does
 
 - **Backend quotas.** Each backend carries a byte limit and writes overflow to the next when it fills, so a 20 GB allocation and a 10 GB one become one 30 GB bucket. Monthly API-request, egress and ingress caps work the same way.
-- **Replication.** Set a factor and every object lands on that many distinct backends. A background replicator makes the copies, or `write_path.parallel_copies` has the write claim its targets and upload to all of them at once, answering the client on the first copy committed — which spares the replicator a full GET of the object and the source backend's egress for every copy it would have made. Reads fail over to a surviving copy, a scrubber checks stored bytes against recorded hashes, and an over-replication worker trims the set when a recovered backend brings its copies back.
+- **Replication.** Set a factor and every object lands on that many distinct backends. A background replicator makes the copies, or `write_path.parallel_copies` has the write claim its targets and upload to all of them at once, answering the client on the first copy committed - which spares the replicator a full GET of the object and the source backend's egress for every copy it would have made. Reads fail over to a surviving copy, a scrubber checks stored bytes against recorded hashes, and an over-replication worker trims the set when a recovered backend brings its copies back.
 - **Access control.** A credential resolves to a user, and that user holds a grant on each resource it may reach: a virtual bucket for object access, a backend or the instance itself for the control plane. SigV4 and presigned URLs.
 - **Object tagging.** Key/value labels stored with the object, always on. Inline on `PutObject` and `CreateMultipartUpload`, the three `?tagging` operations, and `x-amz-tagging-directive` on a server-side copy. Lifecycle rules can filter on a tag.
 - **Encryption and compression.** Envelope encryption (AES-256-GCM; master key inline, in a file, or in Vault Transit) and chunked zstd compression. Both optional and transparent to clients; sizes, ETags and content hashes stay those of the object the client wrote. With both on, compression runs first, because ciphertext does not compress.
@@ -50,7 +50,7 @@ Clients see one endpoint and one namespace. The backends never learn the orchest
 
 ## Moving providers without downtime
 
-Point the orchestrator at the bucket you already have and import its objects into the metadata layer — nothing moves. Add the new provider and raise the replication factor, and the workers copy everything across while traffic keeps flowing. Once the copies are in place, drain the old backend and delete it from the config. No step takes the application down.
+Point the orchestrator at the bucket you already have and import its objects into the metadata layer - nothing moves. Add the new provider and raise the replication factor, and the workers copy everything across while traffic keeps flowing. Once the copies are in place, drain the old backend and delete it from the config. No step takes the application down.
 
 ## What else is out there
 
@@ -80,7 +80,7 @@ aws --endpoint-url http://localhost:9000 s3 cp /etc/hostname s3://photos/test.tx
 aws --endpoint-url http://localhost:9000 s3 ls s3://photos/
 ```
 
-Default credentials: access key `photoskey`, secret `photossecret`. Web dashboard at [localhost:9000/ui/](http://localhost:9000/ui/) (login `admin` / `admin`).
+Default credentials: access key `photoskey`, secret `photossecret`. Web dashboard at [localhost:9000/ui/](http://localhost:9000/ui/), logged into with the root keypair `AKIALOCALDEVROOT` / `local-dev-root-secret`, which `make run` prints once the server is up.
 
 Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 
@@ -94,7 +94,7 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 | From source | `git clone && make build` |
 | Terraform provider | [`afreidah/s3-orchestrator`](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) on the Terraform Registry, or the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
 
-**Database:** SQLite is embedded — no external dependencies for single-instance use. PostgreSQL 14+ is also an option and is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
+**Database:** SQLite is embedded - no external dependencies for single-instance use. PostgreSQL 14+ is also an option and is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
 
 **Generate a config interactively:** `s3-orchestrator init`.
 
@@ -132,7 +132,7 @@ cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
                                '------------ 35 GB total ---------'
 ```
 
-Metadata (object locations, quota counters, multipart state, cleanup queue) lives in PostgreSQL or SQLite. Backends only ever see plain S3 calls — no orchestrator-specific protocol, no schema requirements. Any provider that speaks the AWS SDK works.
+Metadata (object locations, quota counters, multipart state, cleanup queue) lives in PostgreSQL or SQLite. Backends only ever see plain S3 calls - no orchestrator-specific protocol, no schema requirements. Any provider that speaks the AWS SDK works.
 
 Deeper details: [docs/architecture.md](docs/architecture.md).
 
@@ -157,14 +157,14 @@ Deeper details: [docs/architecture.md](docs/architecture.md).
 | Background services reference | [docs/background-services.md](docs/background-services.md) |
 | Webhook notifications | [docs/notifications.md](docs/notifications.md) |
 | CLI subcommands | [docs/cli.md](docs/cli.md) |
-| Provisioning buckets and identities with Terraform | [Guide](https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) · [Terraform Registry](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) · [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
+| Provisioning buckets and identities with Terraform | [Guide](https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) | [Terraform Registry](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) | [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
 | UI + Admin API JSON endpoints | [docs/api-reference.md](docs/api-reference.md) |
 | Deployment (Nomad, Kubernetes, Docker) | [docs/deployment.md](docs/deployment.md) |
 | Security hardening | [docs/security-hardening.md](docs/security-hardening.md) |
 | Performance tuning | [docs/performance-tuning.md](docs/performance-tuning.md) |
 | Disaster recovery | [docs/disaster-recovery.md](docs/disaster-recovery.md) |
 | Version migration | [docs/version-migration.md](docs/version-migration.md) |
-| Benchmark trends | [Live charts](https://afreidah.github.io/s3-orchestrator/dev/bench/) · [scheduled runs](https://github.com/afreidah/s3-orchestrator/actions/workflows/benchmarks.yml) |
+| Benchmark trends | [Live charts](https://afreidah.github.io/s3-orchestrator/dev/bench/) | [scheduled runs](https://github.com/afreidah/s3-orchestrator/actions/workflows/benchmarks.yml) |
 | Coding conventions | [docs/style-guide.md](docs/style-guide.md) |
 | Build / test / contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 

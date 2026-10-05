@@ -66,7 +66,7 @@ s3o s3 ls s3://photos/
 
 ## Web dashboard
 
-The dashboard is enabled at [http://localhost:9000/ui/](http://localhost:9000/ui/) with credentials `admin` / `admin`. It reports per-backend quota and request-budget usage, browses the object tree with each object's backend placement, and uploads files or whole folders into a bucket without a client.
+The dashboard is enabled at [http://localhost:9000/ui/](http://localhost:9000/ui/). Log in with the root keypair from `config.yaml`, which `make run` also prints once the server is up: access key `AKIALOCALDEVROOT`, secret key `local-dev-root-secret`. It reports per-backend quota and request-budget usage, browses the object tree with each object's backend placement, and uploads files or whole folders into a bucket without a client.
 
 ![The dashboard's upload dialog over the object tree](/docs/images/admin-ui-upload.png)
 
@@ -79,10 +79,12 @@ Prometheus metrics are available at [http://localhost:9000/metrics](http://local
 Explore what you just stored with the terminal object browser:
 
 ```bash
+export S3O_ACCESS_KEY_ID=AKIALOCALDEVROOT
+export S3O_SECRET_ACCESS_KEY=local-dev-root-secret
 go run ./cmd/s3-orchestrator tui
 ```
 
-Navigate prefixes with the arrow keys and press `enter` on an object to open the inspector, which lists every backend copy. It reads the admin token from the local `config.yaml`. See [CLI subcommands](cli.md#tui).
+Navigate prefixes with the arrow keys and press `enter` on an object to open the inspector, which lists every backend copy. The TUI signs its requests with the root keypair from the environment and reads the address from the local `config.yaml`. See [CLI subcommands](cli.md#tui).
 
 ## Validate the config
 

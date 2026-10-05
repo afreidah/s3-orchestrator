@@ -305,10 +305,10 @@ bench-cache: ## Run cache and buffer pool benchmarks (LocationCache, TTLCache, b
 bench-usage: ## Run usage tracking benchmarks (WithinLimits, Record)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/counter/
 
-bench-quota: ## Run striped quota benchmarks (requires Docker — stripe fan-out, claim admit/decline)
+bench-quota: ## Run striped quota benchmarks (requires Docker - stripe fan-out, claim admit/decline)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m -tags integration ./internal/store/postgres/
 
-bench-integration: ## Run integration benchmarks (requires Docker — PutObject, ListObjects, Rebalance)
+bench-integration: ## Run integration benchmarks (requires Docker - PutObject, ListObjects, Rebalance)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m -tags integration ./internal/integration/
 
 bench-compare: ## Compare two benchmark runs (OLD=file NEW=file, defaults to two most recent)
@@ -369,6 +369,7 @@ fuzz-import: ## Import crashing inputs from the latest nightly fuzz CI run
 run: ## Run locally (starts MinIO backends via Docker, uses SQLite by default)
 	docker compose -f $(COMPOSE_FILE) up -d --wait minio-1 minio-2 minio-3
 	docker compose -f $(COMPOSE_FILE) run --rm minio-setup
+	@bash scripts/run-banner.sh config.yaml &
 	go run ./cmd/s3-orchestrator -config config.yaml
 
 docs: ## Serve godoc locally at http://localhost:8080
@@ -390,7 +391,7 @@ migration: ## Create a new database migration file
 
 COMPOSE_FILE := docker-compose.test.yml
 
-integration-test: ## Run integration tests (testcontainers — no docker-compose needed)
+integration-test: ## Run integration tests (testcontainers - no docker-compose needed)
 	go test -race -v -tags integration -count=1 ./internal/integration/ ./internal/store/postgres/
 
 # The image is built here rather than by the tests because the Dockerfile uses
