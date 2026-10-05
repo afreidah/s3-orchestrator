@@ -108,13 +108,11 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.cfg.Load()
-	bucketNames := make([]string, len(cfg.Buckets))
-	for i, b := range cfg.Buckets {
-		bucketNames[i] = b.Name
-	}
+	bucketNames := h.buckets.Names()
 
-	// Ensure every configured bucket appears as a top-level directory in the
-	// object tree, even when the bucket has no files yet.
+	// Ensure every declared bucket, from the config file or the store, appears
+	// as a top-level directory in the object tree, even when it has no files
+	// yet.
 	existing := make(map[string]bool, len(data.TopLevelEntries.Entries))
 	for _, e := range data.TopLevelEntries.Entries {
 		existing[e.Name] = true

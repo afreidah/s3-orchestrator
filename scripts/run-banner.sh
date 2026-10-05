@@ -14,7 +14,8 @@ config="${1:-config.yaml}"
 
 # root_value prints one field of the auth.root keypair from the config.
 root_value() {
-	awk -v field="$1:" '/^auth:/ { inauth = 1 } inauth && $1 == field { gsub(/"/, "", $2); print $2; exit }' "$config"
+	local field="$1"
+	awk -v field="$field:" '/^auth:/ { inauth = 1 } inauth && $1 == field { gsub(/"/, "", $2); print $2; exit }' "$config"
 }
 
 port=$(awk '/listen_addr:/ { gsub(/"/, "", $2); n = split($2, p, ":"); print p[n]; exit }' "$config")

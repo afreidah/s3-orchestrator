@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -570,6 +571,36 @@ func TestDashboard_Returns200HTML(t *testing.T) {
 	}
 }
 
+// TestDashboard_ListsStoreBuckets verifies a bucket provisioned in the store,
+// and absent from the config file, appears everywhere the dashboard lists
+// buckets: the configuration line, the upload and sync dialogs' choices, and
+// the object tree.
+func TestDashboard_ListsStoreBuckets(t *testing.T) {
+	t.Parallel()
+	h, mux := newTestHandler(t)
+	declared, ok := h.buckets.(*provisioning.Declared)
+	if !ok {
+		t.Fatalf("buckets = %T, want *provisioning.Declared", h.buckets)
+	}
+	declared.Set(append(slices.Clone(declared.Buckets()),
+		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore}))
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	body := w.Body.String()
+
+	if !strings.Contains(body, `<span class="tag">store-only</span>`) {
+		t.Error("configuration line does not list the store bucket")
+	}
+	if n := strings.Count(body, `<option value="store-only">`); n != 2 {
+		t.Errorf("store bucket offered in %d dialogs, want the upload and sync dialogs", n)
+	}
+	if !strings.Contains(body, `data-prefix="store-only/"`) {
+		t.Error("object tree does not show the store bucket")
+	}
+}
+
 // TestAPIDashboard_ReturnsJSON verifies the apidashboard returns json contract.
 // Asserts that status = , want 200.
 func TestAPIDashboard_ReturnsJSON(t *testing.T) {
@@ -670,16 +701,15 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 	}
 }
 
-// TestUpdateConfig_ReflectsInDashboard verifies the update config reflects in dashboard path by exercising h.UpdateConfig, httptest.NewRecorder, mux.ServeHTTP.
+// TestUpdateConfig_ReflectsInDashboard verifies a reloaded config's settings
+// reach the dashboard. The bucket list comes from the declared set, which a
+// reload updates separately; TestDashboard_ListsStoreBuckets covers it.
 func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Update config with a different routing strategy
 	newCfg := &config.Config{
-		Buckets: []config.BucketConfig{
-			{Name: "updated-bucket"},
-		},
 		RoutingStrategy: config.RoutingSpread,
 		Replication:     config.ReplicationConfig{Factor: 2},
 		RateLimit:       config.RateLimitConfig{Enabled: true},
@@ -695,9 +725,6 @@ func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 
 	if !strings.Contains(html, "spread") {
 		t.Error("dashboard should reflect updated routing strategy 'spread'")
-	}
-	if !strings.Contains(html, "updated-bucket") {
-		t.Error("dashboard should reflect updated bucket name")
 	}
 }
 
