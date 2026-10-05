@@ -140,6 +140,7 @@ func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 		"POST /admin/api/encrypt-existing":    true,
 		"POST /admin/api/decrypt-existing":    true,
 		"DELETE /admin/api/backends/{name}":   true,
+		"POST /admin/api/workers/{name}/run":  true,
 	}
 	for _, rt := range newTestHandler(t).routes() {
 		key := rt.Method + " " + rt.Pattern

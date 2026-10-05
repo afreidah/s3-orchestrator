@@ -52,7 +52,7 @@ Every other endpoint declares a permission over a **backend** or over the **inst
 | --- | --- |
 | `admin-read` | Status, workers, reload outcome, replication and over-replication counts, cleanup depths, cache utilization, the current log level, drain progress |
 | `admin-logs` | The in-memory log buffer and flight-recorder trace snapshots |
-| `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, usage flush and reconcile, cleanup DLQ requeue |
+| `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, usage flush and reconcile, cleanup DLQ requeue, running a worker now |
 | `admin-convert` | `encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing` |
 | `admin-keys` | Encryption key rotation |
 | `admin-cache` | Cache flush and per-key or per-prefix invalidation |

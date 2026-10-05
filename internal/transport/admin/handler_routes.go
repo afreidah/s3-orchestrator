@@ -72,6 +72,7 @@ const (
 	descObjectKey   = "Object key, including its bucket prefix"
 	descBucketName  = "Virtual bucket name"
 	descUserID      = "User ID"
+	descWorkerName  = "Worker name, as the worker list reports it"
 
 	descResourceName = "Name of the granted resource, or * for every one of its kind"
 	descResourceKind = "Kind of the granted resource: bucket, backend or orchestrator; defaults to bucket"
@@ -167,6 +168,15 @@ func (h *Handler) routes() []route {
 			Summary:  "Last-tick health of every background service",
 			Response: adminapi.WorkersResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
+		},
+		{
+			Method: http.MethodPost, Pattern: "/admin/api/workers/{name}/run", Handler: h.handleRunWorker,
+			Summary:  "Run one tick of a background worker now",
+			Response: adminapi.WorkerRunResponse{}, Stream: adminstream.Event{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descWorkerName},
+			},
+			Kind: core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/logs", Handler: h.handleLogs,

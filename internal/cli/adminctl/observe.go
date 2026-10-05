@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 )
 
@@ -23,10 +24,31 @@ import (
 // not supplied.
 const defaultTraceFile = "trace.bin"
 
-// cmdWorkers implements `s3-orchestrator admin workers`. Reports each
-// background worker's last-tick health; returns 503 in proxy-only mode.
-func cmdWorkers(_ []string, c *client) int {
-	return c.get("/admin/api/workers", nil)
+// cmdWorkers implements `s3-orchestrator admin workers`. With no verb it
+// reports each background worker's last-tick health; `run <name>` runs one
+// worker now. Both return 503 in proxy-only mode.
+func cmdWorkers(args []string, c *client) int {
+	if len(args) == 0 {
+		return c.get("/admin/api/workers", nil)
+	}
+	return nounCommand("workers", workerVerbs)(args, c)
+}
+
+// workerVerbs are the actions `admin workers` takes after its noun.
+var workerVerbs = []verb{
+	{Name: "run", Summary: "Run one tick of a worker now, streaming what it logs", Run: cmdRunWorker},
+}
+
+// cmdRunWorker implements `s3-orchestrator admin workers run <name>`. Runs
+// one tick of the named worker through its advisory lock and streams each
+// line it logs, then the outcome. A worker that is disabled, or that another
+// instance is running, is reported as skipped.
+func cmdRunWorker(args []string, c *client) int {
+	if len(args) != 1 {
+		fmt.Fprintln(c.stderr, "usage: s3-orchestrator admin workers run <name>")
+		return 1
+	}
+	return c.stream(http.MethodPost, "/admin/api/workers/"+url.PathEscape(args[0])+"/run", "")
 }
 
 // cmdReloadStatus implements `s3-orchestrator admin reload-status`. Reports

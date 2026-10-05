@@ -256,8 +256,24 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint
 	}
 
 	h.buf.Add(entry)
+	if tap, ok := ctx.Value(logTapKey{}).(func(LogEntry)); ok {
+		tap(entry)
+	}
 
 	return err
+}
+
+// logTapKey is the context key a log tap is stored under.
+type logTapKey struct{}
+
+// WithLogTap returns a context whose log records are also handed to tap, as
+// well as to the usual outputs. It lets a caller watch everything a piece of
+// work logs while it runs it, which is how a worker run on request streams its
+// progress. The tap follows the context, not a request id, so it still sees
+// records from work that mints its own request id. tap may be called from any
+// goroutine the work logs from, and must not block.
+func WithLogTap(ctx context.Context, tap func(LogEntry)) context.Context {
+	return context.WithValue(ctx, logTapKey{}, tap)
 }
 
 // WithAttrs returns a new TeeHandler with the given attributes added.

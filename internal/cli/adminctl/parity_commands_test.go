@@ -38,6 +38,7 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 		{"compress-existing", nil, http.MethodPost, "/admin/api/compress-existing"},
 		{"decompress-existing", nil, http.MethodPost, "/admin/api/decompress-existing"},
 		{"workers", nil, http.MethodGet, "/admin/api/workers"},
+		{"workers", []string{"run", "replication"}, http.MethodPost, "/admin/api/workers/replication/run"},
 		{"reload-status", nil, http.MethodGet, "/admin/api/reload-status"},
 		{"rotate-encryption-key", []string{"-old-key-id", "config-0"}, http.MethodPost, "/admin/api/rotate-encryption-key"},
 	}

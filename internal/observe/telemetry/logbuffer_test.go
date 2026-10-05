@@ -289,6 +289,27 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_LogTap verifies a record logged with a tapped context is
+// handed to the tap as well as the buffer, and one logged without it is not.
+func TestTeeHandler_LogTap(t *testing.T) {
+	t.Parallel()
+	buf := NewLogBuffer()
+	var out bytes.Buffer
+	logger := slog.New(NewTeeHandler(slog.NewTextHandler(&out, nil), buf))
+	var tapped []LogEntry
+	ctx := WithLogTap(context.Background(), func(e LogEntry) { tapped = append(tapped, e) })
+
+	logger.InfoContext(ctx, "tapped", "key", "a")
+	logger.InfoContext(context.Background(), "not tapped")
+
+	if len(tapped) != 1 || tapped[0].Message != "tapped" || tapped[0].Attrs["key"] != "a" {
+		t.Errorf("tapped = %+v, want the one tapped record with its attrs", tapped)
+	}
+	if got := len(buf.Entries(&LogQueryOpts{})); got != 2 {
+		t.Errorf("buffer holds %d, want both records", got)
+	}
+}
+
 // teeBufErr is the kind of error that pre-fix code path stored in the
 // ring buffer as a struct, which json.Marshal then rendered as "{}" and
 // the UI displayed as "[object Object]". Has no exported fields and no

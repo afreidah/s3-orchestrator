@@ -59,9 +59,10 @@ type Handler struct {
 	lifecycle    core.BackendLifecycleStore
 	reconciler   Reconciler
 	dbHealthy    func() bool
-	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
-	logs         logReader                      // nil when the log buffer is not wired
-	replMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
+	workerHealth func() []adminapi.WorkerHealth               // nil when lifecycle manager is not wired
+	runWorker    func(ctx context.Context, name string) error // nil when lifecycle manager is not wired
+	logs         logReader                                    // nil when the log buffer is not wired
+	replMetrics  replicationSnapshotter                       // nil when the metrics collector is not wired
 	cleanup      core.CleanupStore
 	objectCache  cache.ObjectCache
 	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
@@ -89,10 +90,11 @@ type Deps struct {
 	Provision    *ops.Provisioning
 	Drain        *drain.Manager
 	Lifecycle    core.BackendLifecycleStore
-	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
-	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
-	LogBuffer    logReader                      // nil when the log buffer is not wired
-	ReplMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
+	DBHealthy    func() bool                                  // typically *breaker.CircuitBreaker.IsHealthy
+	WorkerHealth func() []adminapi.WorkerHealth               // typically lifecycle.Manager.Health adapted
+	RunWorker    func(ctx context.Context, name string) error // typically lifecycle.Manager.RunNow
+	LogBuffer    logReader                                    // nil when the log buffer is not wired
+	ReplMetrics  replicationSnapshotter                       // nil when the metrics collector is not wired
 	Cleanup      core.CleanupStore
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
 	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
@@ -140,6 +142,7 @@ func New(d *Deps) *Handler {
 		reconciler:   d.Reconciler,
 		dbHealthy:    d.DBHealthy,
 		workerHealth: d.WorkerHealth,
+		runWorker:    d.RunWorker,
 		logs:         d.LogBuffer,
 		replMetrics:  d.ReplMetrics,
 		cleanup:      d.Cleanup,
