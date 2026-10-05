@@ -90,16 +90,6 @@ type WorkerHealth struct {
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 }
 
-// WorkerRunResponse reports one worker run on request, for a caller that did
-// not ask for the event stream. Status is "ok" when the run happened and
-// succeeded, or "skipped" when it did not run, with Reason saying why; a run
-// that fails is an error response.
-type WorkerRunResponse struct {
-	Worker string `json:"worker"`
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
-
 // UsageFlushResponse acknowledges a forced flush of the usage counters.
 type UsageFlushResponse struct {
 	Status string `json:"status"`

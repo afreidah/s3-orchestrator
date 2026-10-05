@@ -278,9 +278,7 @@ func boundedRewrite(path string) func(string) opsRequest {
 //
 // A named backend is also what says where esc goes: only the backends pane
 // opens a scoped menu, so the pane it came from is derivable rather than
-// carried, and a zero value cannot point somewhere wrong. A named worker does
-// the same for a run started from the workers pane, which shows the output
-// with no menu behind it.
+// carried, and a zero value cannot point somewhere wrong.
 type opsView struct {
 	cursor  int                     // highlighted menu row
 	showOut bool                    // showing the output pane instead of the menu
@@ -292,7 +290,6 @@ type opsView struct {
 	stream  adminclient.EventStream // live stream while running, nil when idle
 	actions []opsAction
 	backend string
-	worker  string
 }
 
 // -------------------------------------------------------------------------
@@ -444,14 +441,10 @@ func scopeToBackend(req opsRequest, backend string) opsRequest {
 }
 
 // opsBack leaves the menu for whichever section opened it: the backends pane
-// when the menu names a backend, the workers pane after a worker run, the nav
-// otherwise.
+// when the menu names a backend, the nav otherwise.
 func (m *model) opsBack() (tea.Model, tea.Cmd) {
-	switch {
-	case m.ops.backend != "":
+	if m.ops.backend != "" {
 		return m.selectSection(sectionBackends)
-	case m.ops.worker != "":
-		return m.selectSection(sectionWorkers)
 	}
 	return m.navBack()
 }
@@ -467,15 +460,11 @@ func opsAdminAction(client adminClient, a *opsAction, req opsRequest) adminActio
 }
 
 // handleOpsOutputKey drives the output pane: while an action runs only scrolling
-// is allowed; once it finishes, esc/enter returns to the menu, or to the
-// workers pane after a worker run, which has no menu behind it.
+// is allowed; once it finishes, esc/enter returns to the menu.
 func (m *model) handleOpsOutputKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.ops.running {
 		switch key.String() {
 		case "esc", "left", "h", "enter":
-			if m.ops.worker != "" {
-				return m.opsBack()
-			}
 			m.ops.showOut = false
 			return m, nil
 		}
@@ -555,11 +544,8 @@ func (m *model) opsPaneView() string {
 // be read as the fleet-wide one of the same name.
 func (m *model) opsHeaderView() string {
 	scope := "ops"
-	switch {
-	case m.ops.backend != "":
+	if m.ops.backend != "" {
 		scope = "ops   " + m.ops.backend
-	case m.ops.worker != "":
-		scope = "workers"
 	}
 	title := scope + "   select an action"
 	if m.ops.showOut {

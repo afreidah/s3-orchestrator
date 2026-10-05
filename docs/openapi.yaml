@@ -1187,30 +1187,6 @@ paths:
                                 $ref: '#/components/schemas/WorkersResponse'
                 "401":
                     description: Missing or invalid admin token
-    /admin/api/workers/{name}/run:
-        post:
-            summary: Run one tick of a background worker now
-            operationId: postWorkersNameRun
-            parameters:
-                - name: name
-                  in: path
-                  description: Worker name, as the worker list reports it
-                  required: true
-                  schema:
-                    type: string
-            responses:
-                "200":
-                    description: Success
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/WorkerRunResponse'
-                        application/x-ndjson:
-                            description: One JSON object per line while the operation runs
-                            schema:
-                                $ref: '#/components/schemas/Event'
-                "401":
-                    description: Missing or invalid admin token
 components:
     schemas:
         BackendOperationResponse:
@@ -2317,18 +2293,6 @@ components:
                 - last_success
                 - last_failure
                 - consecutive_failures
-            type: object
-        WorkerRunResponse:
-            properties:
-                reason:
-                    type: string
-                status:
-                    type: string
-                worker:
-                    type: string
-            required:
-                - worker
-                - status
             type: object
         WorkersResponse:
             properties:

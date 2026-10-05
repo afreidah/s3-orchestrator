@@ -114,20 +114,6 @@ s3-orchestrator admin workers
 Workers in proxy-only deployments return `503` from this endpoint
 because no worker pool is registered.
 
-To retry a failing worker without waiting for its interval, run one tick
-of it now with `POST /admin/api/workers/{name}/run`, by the name the
-snapshot lists (`admin-maintain` permission):
-
-```bash
-s3-orchestrator admin workers run replication
-```
-
-The tick goes through the worker's advisory lock and records its health
-like a scheduled one. Asked for a stream, the endpoint sends each line
-the tick logs as it is logged, then the outcome: `ok`, `failed` with the
-error, or `skipped` when the worker is disabled by configuration or
-another instance is running it.
-
 The same data flows into Prometheus as
 `s3o_worker_last_success_timestamp_seconds`,
 `s3o_worker_consecutive_failures`, and `s3o_worker_ticks_total{result}`

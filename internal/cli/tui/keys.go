@@ -78,7 +78,7 @@ func (m *model) paneKeys() []keyHint {
 			{key: "L", desc: "cycle the minimum level", label: "level"},
 			{key: "esc", desc: "clear the filter, then back to the nav"}, hintReload}
 	case sectionWorkers:
-		return []keyHint{hintMove, {key: "R", desc: "run the worker now and stream what it logs", label: "run"},
+		return []keyHint{hintMove, {key: "R", desc: "run the matching Ops action", label: "run"},
 			hintSort, hintReverse, hintReload, hintNavBack}
 	case sectionBuckets:
 		return []keyHint{hintMove, hintSort, hintReverse, hintReload, hintNavBack}

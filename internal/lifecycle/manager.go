@@ -12,7 +12,6 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -148,34 +147,6 @@ func (m *Manager) Health() []WorkerHealth {
 		out = append(out, h)
 	}
 	return out
-}
-
-// Errors RunNow reports when a run on request does not happen.
-var (
-	ErrUnknownWorker  = errors.New("no worker by that name")
-	ErrWorkerDisabled = errors.New("worker is not enabled on this deployment")
-	ErrWorkerBusy     = errors.New("another instance is running this worker")
-)
-
-// OnDemandRunner is the optional interface a registered service implements
-// when an operator can run it once on request. Name is the name the service
-// reports its health under, so the name an operator reads in the worker list
-// is the name they run it by.
-type OnDemandRunner interface {
-	Name() string
-	RunNow(ctx context.Context) error
-}
-
-// RunNow runs the named service once on request and reports how it went: nil
-// when it ran and succeeded, the service's error when it ran and failed, or
-// ErrUnknownWorker, ErrWorkerDisabled or ErrWorkerBusy when it did not run.
-func (m *Manager) RunNow(ctx context.Context, name string) error {
-	for _, e := range m.services {
-		if r, ok := e.runner.(OnDemandRunner); ok && r.Name() == name {
-			return r.RunNow(ctx)
-		}
-	}
-	return ErrUnknownWorker
 }
 
 // Run starts all registered services and blocks until ctx is cancelled. Each

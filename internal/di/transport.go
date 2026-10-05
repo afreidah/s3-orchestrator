@@ -289,13 +289,11 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	}
 	// lifecycle.Manager is invoked lazily so a proxy-only deployment
 	// that has no worker pool still resolves the admin handler. The
-	// closures stay nil without one, and the admin transport then returns
-	// 503 to /admin/api/workers and to running a worker.
+	// closure surfaces a nil snapshot to the admin transport, which
+	// then returns 503 to /admin/api/workers.
 	var workerHealth func() []adminapi.WorkerHealth
-	var runWorker func(ctx context.Context, name string) error
 	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
 		workerHealth = func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
-		runWorker = lm.RunNow
 	}
 	// FlightRecorder is optional — Optional[*debug.FlightRecorderService]
 	// returns a nil Value when the feature is disabled, so the admin
@@ -325,7 +323,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Lifecycle:    d.stores,
 		DBHealthy:    d.cb.IsHealthy,
 		WorkerHealth: workerHealth,
-		RunWorker:    runWorker,
 		Cleanup:      d.stores,
 		ObjectCache:  resolveOptionalCache(i),
 		FlightRec:    frRes.Value.Recorder(),

@@ -87,7 +87,7 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `D` | Download the selected object, or everything under the selected directory into a new local directory |
 | `U` | Upload a local file under a prompted key |
 | `X` | Delete the selected object, or everything under the selected directory (asks to confirm) |
-| `R` | In Workers, run one tick of the selected worker now and stream what it logs (asks to confirm) |
+| `R` | In Workers, run the Ops action that does the selected worker's job, as if chosen from the Ops menu |
 | `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
 | `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
@@ -171,7 +171,7 @@ Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recen
 
 ## Step 6: Check the background services
 
-Press `w` (or select **Workers**) for each registered background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs every tick and fails every tick is indistinguishable from a healthy one in `/health`, so this is where that difference surfaces; the title bar counts the services currently failing. To retry one, highlight it and press `R`: after a confirmation, one tick of it runs now and streams each line it logs into the output pane, the way an Ops action does, and `esc` returns to Workers when it finishes.
+Press `w` (or select **Workers**) for each registered background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs every tick and fails every tick is indistinguishable from a healthy one in `/health`, so this is where that difference surfaces; the title bar counts the services currently failing.
 
 ![The Workers section listing each background service's last-tick health](/docs/images/tui-workers.png?classes=lightbox)
 

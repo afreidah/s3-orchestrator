@@ -280,11 +280,6 @@ s3-orchestrator admin reconcile -backend backblaze
 # Show background worker last-tick health (503 in proxy-only mode)
 s3-orchestrator admin workers
 
-# Run one tick of a worker now, by the name `admin workers` lists, streaming
-# each line it logs. Skipped when the worker is disabled or another instance
-# is running it.
-s3-orchestrator admin workers run replication
-
 # Show the outcome of the last SIGHUP config reload
 s3-orchestrator admin reload-status
 
@@ -472,7 +467,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `D` | In Files, download the selected object to a prompted local path, or everything under the selected directory into a new local directory |
 | `U` | In Files, upload a local file under a prompted key |
 | `X` | In Files, delete the selected object, or everything under the selected directory (asks to confirm) |
-| `R` | In Workers, run one tick of the selected worker now and stream what it logs (asks to confirm) |
+| `R` | In Workers, run the Ops action that does the selected worker's job, as if chosen from the Ops menu |
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
@@ -510,7 +505,7 @@ The metadata database health is also shown persistently at the bottom of the sid
 
 The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It refreshes every 3 seconds whichever pane is showing (the counts drift constantly as workers reconcile), so the view is live the moment you open it. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads a snapshot the metrics collector already computes on its own interval, polling it is cheap.
 
-The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. A proxy-only deployment registers no worker pool, and the pane says so rather than reporting an error. Press `R` on a worker to run one tick of it now, after a confirmation: the run streams into the output pane line by line, as an Ops action does, and `esc` returns to Workers once it finishes. The run goes through the worker's advisory lock, so it is skipped when another instance is running the worker, and a worker its configuration switches off is refused.
+The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. A proxy-only deployment registers no worker pool, and the pane says so rather than reporting an error.
 
 The **Cleanup** section shows the cleanup queue and its dead-letter table, sourced from `GET /admin/api/cleanup-queue` and `GET /admin/api/cleanup-dlq`. Both listings share the pane, toggled with `t`, and the title bar carries both depths so a backlog in the listing you are not looking at stays visible. The depth is the true total; the listing itself is one page of it. On the dead-letter listing, `R` requeues every dead-lettered row for the selected row's backend (`POST /admin/api/cleanup-dlq/requeue`) - a whole-backend operation, which is what the confirmation names, and the pane reloads afterwards so the depths stay honest.
 

@@ -3,12 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Pane over the background services' last-tick health. A worker that is
-// running but failing every tick is indistinguishable from a healthy one in
+// Read-only pane over the background services' last-tick health. A worker that
+// is running but failing every tick is indistinguishable from a healthy one in
 // /health, so this pane exists to make that difference visible: the failure
-// count and last error sit beside the last success time. "R" runs the
-// highlighted worker now and streams the run into the ops output pane.
-// Reached with "w"; "esc" returns focus to the nav, "r" reloads.
+// count and last error sit beside the last success time. Reached with "w";
+// "esc" returns focus to the nav, "r" reloads.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -16,8 +15,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -99,34 +96,44 @@ func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	case "R":
-		return m.armRunWorker()
+		return m.runWorkerOpsAction()
 	}
 
 	cmd := m.workers.list.update(key)
 	return m, cmd
 }
 
-// armRunWorker confirms running the highlighted worker now, then streams the
-// run into the ops output pane: each line the worker logs, then the outcome.
-// esc from there returns here, where the next refresh shows the tick in the
-// worker's health.
-func (m *model) armRunWorker() (tea.Model, tea.Cmd) {
+// workerOpsPaths names the Ops action that does each worker's job, by the
+// path the action posts to. A worker missing here has no Ops action.
+var workerOpsPaths = map[string]string{
+	"rebalance":                "/admin/api/rebalance",
+	"replication":              "/admin/api/replicate",
+	"over_replication_cleanup": "/admin/api/over-replication",
+	"scrubber":                 pathScrub,
+	"reconcile":                pathReconcile,
+	"lifecycle":                "/admin/api/lifecycle",
+}
+
+// runWorkerOpsAction opens the Ops pane on the action that does the
+// highlighted worker's job and runs it, exactly as choosing it from the Ops
+// menu does.
+func (m *model) runWorkerOpsAction() (tea.Model, tea.Cmd) {
 	w, ok := m.workers.list.selected()
 	if !ok {
 		return m, nil
 	}
-	name := w.Name
-	act := &opsAction{label: "run " + name, method: http.MethodPost, path: "/admin/api/workers/" + url.PathEscape(name) + "/run"}
-	return m.startAction(adminAction{
-		confirm: "Run the " + name + " worker now?",
-		before: func(m *model) {
-			m.section = sectionOps
-			m.navFocus = false
-			m.ops = opsView{worker: name}
-			m.enterOpsOutput(act.label)
-		},
-		run: openOps(m.client, act, opsRequest{path: act.path}),
-	})
+	path, ok := workerOpsPaths[w.Name]
+	if !ok {
+		return m, nil
+	}
+	m.selectSection(sectionOps)
+	for i := range m.ops.actions {
+		if m.ops.actions[i].path == path {
+			m.ops.cursor = i
+			return m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+	}
+	return m, nil
 }
 
 // -------------------------------------------------------------------------

@@ -84,7 +84,7 @@ Commands:
   rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
   compress-existing   Store every uncompressed object as chunked zstd, or -max=N of them, -backend to scope (requires a compression codec)
   decompress-existing Rewrite every compressed object back to the bytes the client wrote, or -max=N of them, -backend to scope
-  workers             Show background worker last-tick health; workers run <name> runs one worker now
+  workers             Show background worker last-tick health
   reload-status       Show the outcome of the last SIGHUP config reload
   trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)
   cache-flush         Drop every entry from the in-memory object data cache

@@ -195,27 +195,17 @@ type Service struct {
 // Tick drives a single iteration of the work function under the same
 // lock + audit + health-recording path Run uses. Exposed for tests
 // that want to verify per-tick behaviour without spinning the full
-// ticker loop.
+// ticker loop, and for any future admin endpoint that wants to force
+// a tick.
 func (s *Service) Tick(ctx context.Context) {
-	_ = s.runOnce(ctx, s.work)
-}
-
-// RunNow implements lifecycle.OnDemandRunner: one tick on request, through
-// the same lock and health recording as a scheduled tick. A service whose
-// ShouldRun says no is refused rather than forced, since the gate is what
-// switches the work off.
-func (s *Service) RunNow(ctx context.Context) error {
-	if s.shouldRun != nil && !s.shouldRun() {
-		return lifecycle.ErrWorkerDisabled
-	}
-	return s.runOnce(ctx, s.work)
+	s.runOnce(ctx, s.work)
 }
 
 // Run implements lifecycle.Runner with a jittered first tick to
 // prevent thundering herd on the advisory lock at startup.
 func (s *Service) Run(ctx context.Context) error {
 	if s.startup != nil {
-		_ = s.runOnce(ctx, s.startup)
+		s.runOnce(ctx, s.startup)
 	}
 
 	jitter := rand.N(s.interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
@@ -233,7 +223,7 @@ func (s *Service) Run(ctx context.Context) error {
 			if s.shouldRun != nil && !s.shouldRun() {
 				continue
 			}
-			_ = s.runOnce(ctx, s.work)
+			s.runOnce(ctx, s.work)
 		case <-ctx.Done():
 			return nil
 		}
@@ -247,10 +237,8 @@ func (s *Service) Run(ctx context.Context) error {
 // runOnce creates an audit context, acquires the advisory lock, runs
 // fn, and records the resulting health state. Lock-busy and
 // shouldRun-gated ticks are accounted as "skipped" so health metrics
-// can distinguish them from outright failures. Returns the lock error,
-// lifecycle.ErrWorkerBusy when another instance holds the lock, or fn's
-// error, for the caller that ran the tick on request.
-func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) error) error {
+// can distinguish them from outright failures.
+func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) error) {
 	tickCtx := audit.WithRequestID(ctx, audit.NewID())
 	var workErr error
 	acquired, lockErr := s.locker.WithAdvisoryLock(tickCtx, s.lockID,
@@ -266,24 +254,15 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 		} else {
 			s.log.ErrorContext(ctx, "tick failed", "error", lockErr)
 		}
-		err := fmt.Errorf("advisory lock: %w", lockErr)
-		s.recordHealth(false, err)
-		return err
-	case lockErr != nil:
-		s.log.DebugContext(ctx, "tick skipped, database unavailable")
-		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
-		return lockErr
+		s.recordHealth(false, fmt.Errorf("advisory lock: %w", lockErr))
 	case !acquired:
 		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
-		return lifecycle.ErrWorkerBusy
 	case workErr != nil:
 		s.log.ErrorContext(ctx, MsgPassFailed, "error", workErr)
 		s.recordHealth(false, workErr)
-		return workErr
 	default:
 		s.recordHealth(true, nil)
-		return nil
 	}
 }
 
@@ -337,13 +316,6 @@ func (s *Service) LockID() int64 { return s.lockID }
 // invariant tests can pin "no interval is zero or pathologically
 // large."
 func (s *Service) Interval() time.Duration { return s.interval }
-
-// Compile-time checks: a Service reports its health and can be run on
-// request under the same name.
-var (
-	_ lifecycle.HealthReporter = (*Service)(nil)
-	_ lifecycle.OnDemandRunner = (*Service)(nil)
-)
 
 // Health implements lifecycle.HealthReporter. Returns a snapshot of
 // the service's last tick outcomes plus its registered name so the

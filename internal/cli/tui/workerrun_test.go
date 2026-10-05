@@ -1,78 +1,52 @@
 // -------------------------------------------------------------------------------
-// TUI - Run a Worker Tests
+// TUI - Run a Worker's Ops Action Tests
 //
 // Author: Alex Freidah
 //
-// Covers running a worker from the Workers pane: R confirms against the
-// highlighted worker, the run streams into the ops output pane under the
-// workers heading, and esc after it finishes returns to the Workers pane.
+// Covers R on the Workers pane: it opens the Ops pane on the action that does
+// the highlighted worker's job and runs it the way the Ops menu does, and
+// does nothing for a worker with no Ops action.
 // -------------------------------------------------------------------------------
 
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-// TestRunWorker_StreamsIntoTheOutputPane drives a run from the Workers pane
-// through to its result and back.
-func TestRunWorker_StreamsIntoTheOutputPane(t *testing.T) {
+// TestRunWorkerOpsAction_RunsTheMatchingOpsAction verifies R on the scrubber
+// lands on the Ops pane with the Scrub action's confirmation armed, and that
+// accepting it sends the Scrub request.
+func TestRunWorkerOpsAction_RunsTheMatchingOpsAction(t *testing.T) {
 	t.Parallel()
-	f := &fakeLister{opEvents: []adminstream.Event{
-		{Kind: adminstream.KindStart, Op: "run replication"},
-		{Kind: adminstream.KindProgress, Message: "copied object key=photos/a.jpg"},
-		{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeOK},
-	}}
+	f := &fakeLister{}
 	m := initialModel(f)
-	m.width, m.height = 120, 20
 	m.section = sectionWorkers
-	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "scrubber"}, {Name: "replication"}}})
+	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "cleanup_queue"}, {Name: "scrubber"}}})
 	m.workers.list.table.SetCursor(1)
 
 	m.handleKey(key("R"))
-	if m.confirm == nil || !strings.Contains(m.confirm.text, "replication") {
-		t.Fatalf("confirm = %+v, want one naming replication", m.confirm)
+	if m.section != sectionOps || m.ops.actions[m.ops.cursor].path != pathScrub {
+		t.Fatalf("section=%d action=%q, want the Ops pane on Scrub", m.section, m.ops.actions[m.ops.cursor].path)
 	}
-	msg := accept(t, m)
-	if m.section != sectionOps || m.ops.worker != "replication" || !m.ops.running {
-		t.Fatalf("after accepting: section=%d worker=%q running=%v", m.section, m.ops.worker, m.ops.running)
-	}
-	if f.opRequest.path != "/admin/api/workers/replication/run" {
-		t.Errorf("request path = %q", f.opRequest.path)
-	}
-
-	_, cmd := m.Update(msg)
-	for cmd != nil {
-		var next tea.Cmd
-		_, next = m.Update(cmd())
-		cmd = next
-	}
-	view := m.contentView()
-	for _, want := range []string{"workers", "run replication", "copied object key=photos/a.jpg", "done"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("output missing %q:\n%s", want, view)
-		}
-	}
-
-	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.section != sectionWorkers {
-		t.Errorf("esc after the run went to section %d, want Workers", m.section)
+	accept(t, m)
+	if f.opRequest.path != pathScrub {
+		t.Errorf("request path = %q, want %q", f.opRequest.path, pathScrub)
 	}
 }
 
-// TestRunWorker_NothingSelected verifies R does nothing on an empty list.
-func TestRunWorker_NothingSelected(t *testing.T) {
+// TestRunWorkerOpsAction_NoMatchingAction verifies R does nothing for a
+// worker no Ops action runs.
+func TestRunWorkerOpsAction_NoMatchingAction(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionWorkers
+	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "cleanup_queue"}}})
+
 	m.handleKey(key("R"))
-	if m.confirm != nil {
-		t.Error("R armed a run with no worker selected")
+	if m.section != sectionWorkers || m.confirm != nil {
+		t.Errorf("section=%d confirm=%+v, want nothing to happen", m.section, m.confirm)
 	}
 }
