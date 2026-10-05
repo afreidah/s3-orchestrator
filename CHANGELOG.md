@@ -3,6 +3,29 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.151.4] - 2026-10-05
+
+### Fixed
+- fix(ui): list buckets from the store as well as the config file (#1613)
+- fix(tui): run a worker through its Ops action (#1604)
+
+### Refactored
+- refactor(tui): stream an action's output in whichever pane starts it (#1606)
+
+### Improved
+- update CHANGELOG.md for v0.150.0
+
+### Other
+- Tokyo Night palette and a cleaner summary and configuration (#1610)
+- docs(quickstart): log into the dashboard with the root keypair (#1609)
+- run a worker now and stream what it logs (#1603)
+- download a whole prefix and filter the logs (#1602)
+- sortable tables, a help overlay and a session action log (#1600)
+- themeable colours with presets and overrides (#1599)
+- open on a fleet dashboard (#1597)
+- stack panes and fit table columns to the terminal (#1595)
+- refresh every pane from one shared poller (#1593)
+
 ## [0.150.0] - 2026-10-04
 
 ### Fixed
