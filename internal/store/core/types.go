@@ -57,9 +57,7 @@ func (i *ObjectIdentity) Complete() bool {
 // the original. CompressionLevel does not affect decoding and is carried for
 // diagnostics and for rewrite passes.
 //
-// The zero value describes bytes stored verbatim, which is also why Unmanaged
-// is negated: it is stored as the `managed` column, so a construction site that
-// omits the field cannot accidentally produce a row every worker ignores.
+// The zero value describes bytes stored verbatim.
 type StoredForm struct {
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -70,8 +68,13 @@ type StoredForm struct {
 	CompressionLevel         string
 	CompressionFormatVersion int
 	LogicalSize              int64
+}
 
-	Unmanaged bool // on the backend but outside every virtual bucket prefix: real bytes no worker acts on
+// Unreadable reports whether the form describes an envelope with no key to
+// open it, which is how import records encrypted bytes no surviving row can
+// decrypt.
+func (f *StoredForm) Unreadable() bool {
+	return f != nil && f.Encrypted && len(f.EncryptionKey) == 0
 }
 
 // ObjectLocation records that a backend currently holds a copy of a key,
@@ -82,11 +85,12 @@ type StoredForm struct {
 // It is also nil on rows from queries that do not select the column, so a
 // caller reading it wants a query that does.
 //
-// Unmanaged marks an object that exists on the backend but outside every
-// configured virtual bucket prefix: real bytes the orchestrator did not write
-// and does not act on. It is stored as the negated `managed` column, so the
-// zero value means managed and a construction site that omits it cannot
-// accidentally produce a row the workers ignore.
+// Unmanaged marks real bytes on the ledger that the orchestrator does not act
+// on or serve: an object outside every configured virtual bucket prefix, or an
+// imported envelope no key can open. They count toward quota, but no worker
+// touches them and clients cannot list or read them. It is stored as the
+// negated `managed` column, so the zero value means managed and a construction
+// site that omits it cannot accidentally produce a row the workers ignore.
 //
 // StorageKey is the path this copy occupies on its backend, and everything that
 // reads, writes or deletes the bytes uses it. A write stores its bytes under

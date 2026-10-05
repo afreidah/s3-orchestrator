@@ -62,7 +62,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.150.x (current)
+### v0.151.x (current)
+
+**Unreadable imports are unmanaged ([#1578](https://github.com/afreidah/s3-orchestrator/issues/1578), v0.151.6)**
+
+Reconcile recorded an encrypted object with no surviving key as an ordinary row. A key a client had deleted could come back into listings as an object every read refused, and the replicator copied it to more backends. Such a row is now unmanaged: it counts toward quota, S3 listings leave it out, reads answer `NoSuchKey`, and no worker acts on it. A replica copy that fails now also deletes whatever it left on the target.
+
+**Operator action items after upgrade:**
+
+- **One migration applies automatically** (Postgres `00034`, SQLite `0021`), marking existing rows that are encrypted with no key as unmanaged. Keys that only had such rows disappear from S3 listings.
+
+### v0.150.x
 
 **Each write stores its bytes under a path of its own ([#1554](https://github.com/afreidah/s3-orchestrator/issues/1554), v0.150.0)**
 

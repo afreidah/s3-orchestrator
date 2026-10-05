@@ -107,7 +107,8 @@ WHERE object_key = $1 AND backend_name = $2;
 -- LC_COLLATE. The cursor predicate carries the same collation as the ORDER BY -
 -- splitting them would page a byte-ordered scan with a locale-ordered cursor and
 -- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
--- query for not matching the leading ORDER BY expression.
+-- query for not matching the leading ORDER BY expression. Unmanaged rows are
+-- left out because clients cannot read them.
 SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
        (CASE
            WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
@@ -118,6 +119,7 @@ SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_ke
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > @start_after
+  AND managed
 ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
@@ -131,7 +133,7 @@ FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at, managed
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
@@ -546,11 +548,14 @@ ORDER BY object_key
 LIMIT @max_keys;
 
 -- name: ListObjectsDelimited :many
+-- Unmanaged rows are left out of the walk and the leaf lookup, as in
+-- ListObjectsByPrefix.
 WITH RECURSIVE walk(k) AS (
     (SELECT object_key
        FROM object_locations
       WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
         AND object_key COLLATE "C" > @start_after::text
+        AND managed
       ORDER BY object_key COLLATE "C"
       LIMIT 1)
     UNION ALL
@@ -558,6 +563,7 @@ WITH RECURSIVE walk(k) AS (
         SELECT object_key
           FROM object_locations
          WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
+           AND managed
            AND object_key COLLATE "C" > CASE
             WHEN position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) > 0 THEN
                 substr(walk.k, 1, length(@prefix::text) + position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) + length(@delim::text) - 2)
@@ -598,6 +604,7 @@ LEFT JOIN LATERAL (
            etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
+       AND o2.managed
        AND position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) = 0
      ORDER BY created_at ASC
      LIMIT 1

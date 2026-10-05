@@ -12,6 +12,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -214,6 +215,21 @@ func isLastDecryptableCopy(existing []ExistingCopy, backendName string) bool {
 	// normal encrypted case) or none are (the normal plaintext case), the
 	// caller's choice is arbitrary and safe.
 	return decryptable == 1 && target == 1 && decryptable < len(existing)
+}
+
+// ClientLocations narrows a copy lookup to the copies a client may see,
+// dropping unmanaged rows. A key left with none is reported as
+// ErrObjectNotFound, so a client asking for it gets NoSuchKey rather than a
+// failed read. Takes the lookup's results directly so a call site can wrap it.
+func ClientLocations(locs []ObjectLocation, err error) ([]ObjectLocation, error) {
+	if err != nil {
+		return nil, err
+	}
+	visible := slices.DeleteFunc(locs, func(loc ObjectLocation) bool { return loc.Unmanaged })
+	if len(visible) == 0 {
+		return nil, ErrObjectNotFound
+	}
+	return visible, nil
 }
 
 // ValidateEncryptionMetadata reports whether a location row is self-consistent

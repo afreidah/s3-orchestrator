@@ -111,7 +111,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 // to run the same lookup and will report it, and a HEAD that can be served
 // either way should not fail on the cheaper attempt.
 func (o *Manager) locationsForHead(ctx context.Context, key string) []core.ObjectLocation {
-	locs, err := o.stores.GetAllObjectLocations(ctx, key)
+	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
 	if err != nil {
 		return nil
 	}

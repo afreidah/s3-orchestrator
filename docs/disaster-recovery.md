@@ -71,7 +71,7 @@ Fully synchronous replication (holding the 200 until every copy lands) is not su
 
 Unencrypted objects survive the loss of the database. `sync` re-imports them from the backends, and they read normally afterwards.
 
-Encrypted objects do not. Each one is encrypted with its own random data key, and that key, wrapped by the master key, is stored only in the object's database row. The master key cannot recreate a data key; it can only unwrap one. Without the database, `sync` and `reconcile` re-import the encrypted objects but record them with no key, and every read of them is refused. The objects are permanently unreadable, even with the master key and every backend intact.
+Encrypted objects do not. Each one is encrypted with its own random data key, and that key, wrapped by the master key, is stored only in the object's database row. The master key cannot recreate a data key; it can only unwrap one. Without the database, `sync` and `reconcile` re-import the encrypted objects but record them as unmanaged with no key, so clients cannot list or read them. The objects are permanently unreadable, even with the master key and every backend intact.
 
 When encryption is enabled, the database backup is therefore also the key backup. Treat it with the same care as the master key:
 

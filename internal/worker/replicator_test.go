@@ -655,6 +655,8 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	ops.EXPECT().GetBackend("fail").Return(failBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{failBe}, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), &backend.CopyError{Phase: backend.CopyPhaseWrite, Err: errors.New("put object failed: 413 EntityTooLarge")})
+	// The failed copy may have left bytes on "fail", so its path is cleaned up.
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), failBe, cleanupOf("fail", "key1", "replication_orphan", int64(50)))
 
 	// "ok" backend: succeeds
 	ops.EXPECT().GetBackend("ok").Return(okBe, nil)

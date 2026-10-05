@@ -349,6 +349,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
+			// A copy can fail after its bytes reached the target, and no row
+			// will ever record them. The path is this attempt's own, so
+			// removing it cannot touch anything else.
+			r.CleanupOrphan(ctx, target, key, targetStorageKey, sizeEstimate)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			out.CopyErrors++

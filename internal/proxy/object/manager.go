@@ -200,7 +200,7 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 // S3's documented best-effort precondition semantic. ErrObjectNotFound
 // is the canonical "no row" signal and is normalised to (false, nil).
 func (o *Manager) ObjectExists(ctx context.Context, key string) (bool, error) {
-	locs, err := o.stores.GetAllObjectLocations(ctx, key)
+	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
 	if errors.Is(err, core.ErrObjectNotFound) {
 		return false, nil
 	}

@@ -892,6 +892,24 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	if len(locs[0].EncryptionKey) != 0 {
 		t.Errorf("EncryptionKey = %q, want empty", locs[0].EncryptionKey)
 	}
+	if !locs[0].Unmanaged {
+		t.Error("Unmanaged = false, want true - an unreadable row must not be listed, served or replicated")
+	}
+
+	flat, err := s.ListObjects(ctx, key, "", 10)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(flat.Objects) != 0 {
+		t.Errorf("ListObjects = %+v, want the unreadable row left out", flat.Objects)
+	}
+	delimited, err := s.ListObjectsDelimited(ctx, key, "/", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsDelimited: %v", err)
+	}
+	if len(delimited.Objects) != 0 || len(delimited.CommonPrefixes) != 0 {
+		t.Errorf("ListObjectsDelimited = %+v, want the unreadable row left out", delimited)
+	}
 }
 
 // TestPgAdapter_ImportObject_PlaintextStaysPlaintext verifies an import with no

@@ -570,3 +570,66 @@ func TestValidateEncryptionMetadata(t *testing.T) {
 		})
 	}
 }
+
+// TestClientLocations covers the narrowing every client read applies: unmanaged
+// copies drop out, a key with nothing else left reads as not found, and a
+// lookup error passes through untouched.
+func TestClientLocations(t *testing.T) {
+	t.Parallel()
+	managed := ObjectLocation{ObjectKey: "k", BackendName: "b1"}
+	unmanaged := ObjectLocation{ObjectKey: "k", BackendName: "b2", Unmanaged: true}
+	lookupErr := errors.New("db down")
+
+	tests := []struct {
+		name    string
+		locs    []ObjectLocation
+		err     error
+		want    []string
+		wantErr error
+	}{
+		{"unmanaged copy is dropped", []ObjectLocation{managed, unmanaged}, nil, []string{"b1"}, nil},
+		{"only unmanaged copies read as not found", []ObjectLocation{unmanaged}, nil, nil, ErrObjectNotFound},
+		{"lookup error passes through", nil, lookupErr, nil, lookupErr},
+		{"not found passes through", nil, ErrObjectNotFound, nil, ErrObjectNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ClientLocations(slices.Clone(tt.locs), tt.err)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			var backends []string
+			for i := range got {
+				backends = append(backends, got[i].BackendName)
+			}
+			if !slices.Equal(backends, tt.want) {
+				t.Errorf("backends = %v, want %v", backends, tt.want)
+			}
+		})
+	}
+}
+
+// TestStoredForm_Unreadable covers the form import records for an envelope no
+// key opens, which is the only form that marks an import unmanaged.
+func TestStoredForm_Unreadable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		form *StoredForm
+		want bool
+	}{
+		{"nil form is verbatim bytes", nil, false},
+		{"plaintext", &StoredForm{}, false},
+		{"encrypted with a key", &StoredForm{Encrypted: true, EncryptionKey: []byte("k")}, false},
+		{"encrypted with no key", &StoredForm{Encrypted: true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.form.Unreadable(); got != tt.want {
+				t.Errorf("Unreadable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

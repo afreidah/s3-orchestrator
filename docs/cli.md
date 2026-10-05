@@ -547,7 +547,7 @@ Import reads the start of each object to see whether it is an orchestrator encry
 
 An envelope needs the key that encrypted it. Every write mints its own key, so a matching object key is not enough to prove a stray copy belongs to the row the ledger still holds: import adopts an existing copy's key only when the object's header shows the two came from the same encryption. That is the normal case for a replica whose row was lost, and it is imported fully readable.
 
-An envelope no surviving row can decrypt is recorded as encrypted with no key. It counts toward quota, but reads of that copy fail rather than returning ciphertext, and it is counted under `s3o_import_classified_total{decision="unreadable"}`. Restore those objects from another source or delete them; the key is gone.
+An envelope no surviving row can decrypt is recorded as encrypted with no key, and as unmanaged. It counts toward quota, but clients cannot list or read it and no worker acts on it, and it is counted under `s3o_import_classified_total{decision="unreadable"}`. Restore those objects from another source or delete them; the key is gone.
 
 ### Compressed objects
 

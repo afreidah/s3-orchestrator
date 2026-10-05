@@ -136,7 +136,7 @@ A drain is a record in the metadata database. Starting one writes the record, an
 
    Returns the drain's `state` (`draining`, `drained`, or `failed`), objects moved so far, and, while it is in progress, the objects and bytes still on the backend. A failed drain also carries the error that stopped it.
 
-3. **Wait for `drained`.** The drain finishes only once nothing it moves is left on the backend: no object rows, no writes that were admitted before the drain and are still uploading, and no multipart uploads. Until then it stays `draining` and the worker checks again each tick. Objects that fail to move are retried on the next tick rather than skipped. [Unmanaged](admin-api.md#objects-the-orchestrator-does-not-own) objects, which reconcile found outside every virtual bucket prefix, are left where they are and do not hold the drain up; removing the backend deletes their rows.
+3. **Wait for `drained`.** The drain finishes only once nothing it moves is left on the backend: no object rows, no writes that were admitted before the drain and are still uploading, and no multipart uploads. Until then it stays `draining` and the worker checks again each tick. Objects that fail to move are retried on the next tick rather than skipped. [Unmanaged](admin-api.md#objects-the-orchestrator-does-not-own) objects, which reconcile found outside every virtual bucket prefix or could not decrypt, are left where they are and do not hold the drain up; removing the backend deletes their rows.
 
 4. **Remove the backend:**
 

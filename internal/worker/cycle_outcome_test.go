@@ -149,10 +149,14 @@ func (f *replicaFleet) replicator() *Replicator {
 }
 
 // copyFails makes the streaming copy of key fail, standing in for a source
-// backend that dies partway through the transfer.
+// backend that dies partway through the transfer, and expects each failed
+// attempt to clean up the path it was writing.
 func (f *replicaFleet) copyFails(key string) {
 	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), key, gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("stream copy: connection reset")).AnyTimes()
+	f.pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.ObjectKey == key && c.Reason == "replication_orphan"
+	})).MinTimes(1)
 }
 
 // copySucceeds lets every remaining copy through.

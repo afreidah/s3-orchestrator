@@ -90,7 +90,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at, etag, content_type, user_metadata
+		       created_at, last_scrubbed_at, etag, content_type, user_metadata, managed
 		FROM object_locations
 		WHERE object_key = ?
 		ORDER BY created_at ASC`, key)
@@ -114,7 +114,8 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 // ListObjects returns objects matching the given prefix, sorted by key.
 // Supports pagination via startAfter and maxKeys. Returns one extra row to
 // detect truncation. Uses a subquery with GROUP BY to deduplicate replicated
-// objects (equivalent to DISTINCT ON in PostgreSQL).
+// objects (equivalent to DISTINCT ON in PostgreSQL). Unmanaged rows are left
+// out because clients cannot read them.
 func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
@@ -137,6 +138,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 			FROM object_locations
 			WHERE object_key LIKE ? || '%' ESCAPE '\'
 			  AND object_key > ?
+			  AND managed
 			GROUP BY object_key
 		) dedup ON ol.rowid = dedup.min_rowid
 		ORDER BY ol.object_key
@@ -174,7 +176,7 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 // compute each group plus its skip bound (the CommonPrefix with its last byte
 // incremented, or the leaf key). Keys with a delimiter after the prefix fold
 // into CommonPrefixes; the rest come back as leaf objects. The delimiter must be
-// non-empty.
+// non-empty. Unmanaged rows are left out, as in ListObjects.
 func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
@@ -190,14 +192,16 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 			SELECT (
 				SELECT object_key FROM object_locations
 				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
-				  AND object_key > :startafter
+				  AND managed
+				  AND object_key >:startafter
 				ORDER BY object_key LIMIT 1
 			)
 			UNION ALL
 			SELECT (
 				SELECT object_key FROM object_locations
 				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
-				  AND object_key > CASE
+				  AND managed
+				  AND object_key >CASE
 					WHEN instr(substr(walk.k, length(:prefix) + 1), :delim) > 0 THEN
 						substr(walk.k, 1, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 2)
 						|| char(unicode(substr(walk.k, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
@@ -230,6 +234,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 		LEFT JOIN object_locations ol ON ol.rowid = (
 			SELECT MIN(rowid) FROM object_locations o2
 			WHERE o2.object_key = w.k
+			  AND o2.managed
 			  AND instr(substr(w.k, length(:prefix) + 1), :delim) = 0
 		)
 		WHERE w.k IS NOT NULL
@@ -628,10 +633,11 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 // -------------------------------------------------------------------------
 
 // scanIdentifiedObjectLocation scans a row that also selects the three
-// identity columns, which only the read path's own query does: a scrub or
-// replication row is about the bytes, not about what a client is told they
-// are. The identity columns come last so the shared scanner ahead of it stays
-// the one description of the rest of the row.
+// identity columns and the managed flag, which only the read path's own query
+// does: a scrub or replication row is about the bytes, not about what a client
+// is told they are or whether a client may see them. These columns come last
+// so the shared scanner ahead of it stays the one description of the rest of
+// the row.
 func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	var (
 		loc          core.ObjectLocation
@@ -639,8 +645,9 @@ func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 		etag         sql.NullString
 		contentType  sql.NullString
 		userMetadata sql.NullString
+		managed      bool
 	)
-	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata)
+	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata, &managed)
 	if err := rows.Scan(dest...); err != nil {
 		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}
@@ -648,6 +655,7 @@ func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 		return core.ObjectLocation{}, err
 	}
 	loc.Identity = identityFromColumns(etag, contentType, userMetadata)
+	loc.Unmanaged = !managed
 	return loc, nil
 }
 

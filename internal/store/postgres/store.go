@@ -158,7 +158,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 33
+const ExpectedSchemaVersion = 34
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -261,13 +261,15 @@ type verifiableObjectRow interface {
 }
 
 // identifiedObjectRow is a verifiable row that also selects the client-facing
-// identity columns. Only the read path's own query needs them: a replication
-// or scrub row is about the bytes, not about what a client is told they are.
+// identity columns and the managed flag. Only the read path's own query needs
+// them: a replication or scrub row is about the bytes, not about what a client
+// is told they are or whether a client may see them.
 type identifiedObjectRow interface {
 	verifiableObjectRow
 	GetEtag() *string
 	GetContentType() *string
 	GetUserMetadata() []byte
+	GetManaged() bool
 }
 
 // toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
@@ -347,6 +349,7 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectLocation {
 	out := toVerifiableObjectLocations(rows)
 	for i := range rows {
+		out[i].Unmanaged = !rows[i].GetManaged()
 		id, err := core.IdentityFromColumns(derefStr(rows[i].GetEtag()), derefStr(rows[i].GetContentType()), rows[i].GetUserMetadata())
 		if err != nil {
 			continue

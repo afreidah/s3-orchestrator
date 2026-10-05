@@ -95,7 +95,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		return "", err
 	}
 
-	locations, err := o.stores.GetAllObjectLocations(ctx, sourceKey)
+	locations, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, sourceKey))
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			observe.MarkSpanError(span, "source object not found")

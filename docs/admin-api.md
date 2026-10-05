@@ -212,11 +212,11 @@ bucket and revoking a credential stay deliberate acts.
 
 ## Objects the orchestrator does not own
 
-A backend's bucket can hold objects the orchestrator never wrote: data that predates it, or files placed there by something else. Reconcile records them at the key the backend holds them under and marks them **unmanaged**.
+A backend's bucket can hold objects the orchestrator never wrote: data that predates it, or files placed there by something else. Reconcile records them at the key the backend holds them under and marks them **unmanaged**. It does the same for an encrypted object whose key is gone (an envelope no surviving row can decrypt), because nothing can serve it.
 
-An unmanaged object counts toward the backend's `bytes_used`, because the bytes really are occupying the quota and placement decisions read those totals. Nothing else touches it: replication will not copy it, rebalance will not move it, drain will not relocate it, and scrub and checksum backfill skip it rather than spending egress reading a body the orchestrator does not manage. It is also unreachable through the S3 API, since no virtual bucket claims its key.
+An unmanaged object counts toward the backend's `bytes_used`, because the bytes really are occupying the quota and placement decisions read those totals. Nothing else touches it: replication will not copy it, rebalance will not move it, drain will not relocate it, and scrub and checksum backfill skip it rather than spending egress reading a body the orchestrator does not manage. It is also unreachable through the S3 API: S3 listings leave it out, and a read of its key answers `NoSuchKey`. A client PUT to the key replaces it, and a client DELETE removes it.
 
-To bring such an object under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object.
+To bring an object from outside every prefix under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object. An unreadable encrypted object cannot be recovered without its key; restore it from another source or delete it.
 
 ## Skipped operations
 

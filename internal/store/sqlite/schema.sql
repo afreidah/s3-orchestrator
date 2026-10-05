@@ -386,4 +386,4 @@ LEFT JOIN (
 LEFT JOIN backend_drains d ON d.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (20);
+INSERT INTO schema_version (version) VALUES (21);

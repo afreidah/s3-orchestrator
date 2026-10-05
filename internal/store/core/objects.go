@@ -547,8 +547,12 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 		// copy. The first read that has to ask the backend records what it got
 		// for every copy, so the value settles on first use instead of being
 		// guessed at import.
+		// An envelope no key opens is recorded but not managed, so it holds
+		// its quota without being replicated, listed or served. Otherwise a
+		// key the client deleted would come back as an object every read
+		// refuses.
 		loc := ObjectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
-		loc.Unmanaged = req.Unmanaged
+		loc.Unmanaged = req.Unmanaged || req.Form.Unreadable()
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {

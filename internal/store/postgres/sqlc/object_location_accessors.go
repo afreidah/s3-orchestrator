@@ -91,6 +91,7 @@ func (r GetAllObjectLocationsRow) GetLastScrubbedAt() pgtype.Timestamptz {
 func (r GetAllObjectLocationsRow) GetEtag() *string        { return r.Etag }
 func (r GetAllObjectLocationsRow) GetContentType() *string { return r.ContentType }
 func (r GetAllObjectLocationsRow) GetUserMetadata() []byte { return r.UserMetadata }
+func (r GetAllObjectLocationsRow) GetManaged() bool         { return r.Managed }
 
 // GetUnderReplicatedObjectsRow
 

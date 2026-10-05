@@ -3216,6 +3216,122 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	assertNoStray(t, "checksum backfill", unhashed)
 }
 
+// TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers covers what
+// reconcile records for an envelope no key opens. The row keeps its quota, but
+// it must not come back into client listings or reads as the key a client
+// deleted, and no worker may copy it or try to hash it.
+func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/live", "backend-a", 100)
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+		Key: "bucket/gone", Backend: "backend-a", Size: 508, Form: &core.StoredForm{Encrypted: true},
+	}); err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+
+	count, bytes, err := s.BackendObjectStats(ctx, "backend-a")
+	if err != nil {
+		t.Fatalf("BackendObjectStats: %v", err)
+	}
+	if count != 2 || bytes != 608 {
+		t.Errorf("stats = %d objects / %d bytes, want 2 / 608", count, bytes)
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, "bucket/gone")
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 1 || !locs[0].Unmanaged {
+		t.Fatalf("locations = %+v, want one unmanaged row", locs)
+	}
+
+	assertListsOnly(t, s, "bucket/live")
+
+	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10)
+	if err != nil {
+		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	}
+	assertNotQueued(t, "replication", under, "bucket/gone")
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatalf("GetObjectsWithoutHash: %v", err)
+	}
+	assertNotQueued(t, "checksum backfill", unhashed, "bucket/gone")
+}
+
+// assertListsOnly fails unless both client listings of bucket/ return exactly
+// the one key.
+func assertListsOnly(t *testing.T, s *Store, key string) {
+	t.Helper()
+	ctx := context.Background()
+	flat, err := s.ListObjects(ctx, "bucket/", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(flat.Objects) != 1 || flat.Objects[0].ObjectKey != key {
+		t.Errorf("ListObjects = %+v, want only %s", flat.Objects, key)
+	}
+	delimited, err := s.ListObjectsDelimited(ctx, "bucket/", "/", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsDelimited: %v", err)
+	}
+	if len(delimited.Objects) != 1 || delimited.Objects[0].ObjectKey != key {
+		t.Errorf("ListObjectsDelimited = %+v, want only %s", delimited.Objects, key)
+	}
+}
+
+// assertNotQueued fails when a worker candidate scan surfaced key.
+func assertNotQueued(t *testing.T, scan string, locs []core.ObjectLocation, key string) {
+	t.Helper()
+	for i := range locs {
+		if locs[i].ObjectKey == key {
+			t.Errorf("%s queued for %s", key, scan)
+		}
+	}
+}
+
+// TestRunMigrations_MarksExistingUnreadableRowsUnmanaged covers a database
+// whose unreadable rows were imported before import marked them unmanaged.
+// The upgrade hides them; a row whose key survives is left alone.
+func TestRunMigrations_MarksExistingUnreadableRowsUnmanaged(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+		Key: "bucket/gone", Backend: "backend-a", Size: 508, Form: &core.StoredForm{Encrypted: true},
+	}); err != nil {
+		t.Fatalf("ImportObject(unreadable): %v", err)
+	}
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+		Key: "bucket/kept", Backend: "backend-a", Size: 508,
+		Form: &core.StoredForm{Encrypted: true, EncryptionKey: []byte("wrapped"), PlaintextSize: 400},
+	}); err != nil {
+		t.Fatalf("ImportObject(readable): %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE object_locations SET managed = 1`); err != nil {
+		t.Fatalf("mark rows managed: %v", err)
+	}
+	rewindToSchemaVersion(t, s, expectedSchemaVersion-1)
+
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	for key, wantUnmanaged := range map[string]bool{"bucket/gone": true, "bucket/kept": false} {
+		locs, err := s.GetAllObjectLocations(ctx, key)
+		if err != nil {
+			t.Fatalf("GetAllObjectLocations(%s): %v", key, err)
+		}
+		if locs[0].Unmanaged != wantUnmanaged {
+			t.Errorf("%s unmanaged = %v, want %v", key, locs[0].Unmanaged, wantUnmanaged)
+		}
+	}
+}
+
 // assertNoStray fails when a worker candidate scan surfaced the unmanaged row.
 func assertNoStray(t *testing.T, scan string, locs []core.ObjectLocation) {
 	t.Helper()

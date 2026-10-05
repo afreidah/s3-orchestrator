@@ -168,7 +168,7 @@ func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, ke
 	defer span.End()
 	op := readOp{operation: operation, key: key, start: start, span: span}
 
-	locations, err := f.stores.GetAllObjectLocations(ctx, key)
+	locations, err := core.ClientLocations(f.stores.GetAllObjectLocations(ctx, key))
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			observe.MarkSpanError(span, "object not found")
