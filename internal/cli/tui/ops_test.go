@@ -36,7 +36,7 @@ func TestOpsMenu_NavAndArm(t *testing.T) {
 	}
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	want := opsActions()[1].confirm
-	if m.ops.showOut {
+	if m.run.shown {
 		t.Error("arming a confirm should not switch to the output view")
 	}
 	if m.confirm == nil || m.confirm.text != want {
@@ -59,27 +59,27 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 	m.ops.actions = opsActions()
 
 	// accepting the action switches to the output view before any request runs.
-	m.enterOpsOutput("Scrub")
-	if !m.ops.showOut || !m.ops.running {
-		t.Fatalf("after accept: showOut=%v running=%v", m.ops.showOut, m.ops.running)
+	m.beginRun("Scrub")
+	if !m.run.shown || !m.run.running {
+		t.Fatalf("after accept: showOut=%v running=%v", m.run.shown, m.run.running)
 	}
 	// open: the stream arrives and reading starts.
-	if _, cmd := m.applyOpsStream(opsStreamMsg{stream: adminclient.NewSliceStream(events...), label: "Scrub"}); cmd == nil {
+	if _, cmd := m.applyRunStream(runStreamMsg{stream: adminclient.NewSliceStream(events...), label: "Scrub"}); cmd == nil {
 		t.Fatal("open should return a read command")
 	}
 	// feed each event.
 	for _, e := range events {
-		m.applyOpsEvent(&e)
+		m.applyRunEvent(&e)
 	}
 	if m.status == nil || !m.status.ok || !strings.Contains(m.status.text, "ok") {
 		t.Errorf("terminal status = %+v", m.status)
 	}
 	// done: stops running.
-	m.applyOpsDone(opsDoneMsg{})
-	if m.ops.running {
+	m.applyRunDone(runDoneMsg{})
+	if m.run.running {
 		t.Error("done should clear running")
 	}
-	joined := strings.Join(m.ops.lines, "\n")
+	joined := strings.Join(m.run.lines, "\n")
 	for _, want := range []string{"scrub started", "verifying a", "OK", "done: 2 checked"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("output %q missing %q", joined, want)
@@ -103,14 +103,14 @@ func TestOps_AcceptEntersOutputImmediately(t *testing.T) {
 	}
 	m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 
-	if !m.ops.showOut || !m.ops.running {
-		t.Fatalf("after accept: showOut=%v running=%v, want the output pane", m.ops.showOut, m.ops.running)
+	if !m.run.shown || !m.run.running {
+		t.Fatalf("after accept: showOut=%v running=%v, want the output pane", m.run.shown, m.run.running)
 	}
-	if want := opsActions()[0].label; m.ops.label != want {
-		t.Errorf("label = %q, want %q", m.ops.label, want)
+	if want := opsActions()[0].label; m.run.label != want {
+		t.Errorf("label = %q, want %q", m.run.label, want)
 	}
-	if !strings.Contains(strings.Join(m.ops.lines, "\n"), "running") {
-		t.Errorf("output %v, want a running notice", m.ops.lines)
+	if !strings.Contains(strings.Join(m.run.lines, "\n"), "running") {
+		t.Errorf("output %v, want a running notice", m.run.lines)
 	}
 }
 
@@ -126,8 +126,8 @@ func TestOps_CancelStaysOnMenu(t *testing.T) {
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 
-	if m.ops.showOut || m.ops.running {
-		t.Errorf("after cancel: showOut=%v running=%v, want the menu", m.ops.showOut, m.ops.running)
+	if m.run.shown || m.run.running {
+		t.Errorf("after cancel: showOut=%v running=%v, want the menu", m.run.shown, m.run.running)
 	}
 }
 
@@ -137,15 +137,15 @@ func TestOps_OpenError(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 100, 20
-	m.applyOpsStream(opsStreamMsg{err: errNope, label: "Rebalance"})
-	if m.ops.running {
+	m.applyRunStream(runStreamMsg{err: errNope, label: "Rebalance"})
+	if m.run.running {
 		t.Error("open error should not leave the pane running")
 	}
 	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "Rebalance failed") {
 		t.Errorf("status = %+v", m.status)
 	}
-	if !strings.Contains(strings.Join(m.ops.lines, "\n"), "nope") {
-		t.Errorf("expected an error line, got %v", m.ops.lines)
+	if !strings.Contains(strings.Join(m.run.lines, "\n"), "nope") {
+		t.Errorf("expected an error line, got %v", m.run.lines)
 	}
 }
 
@@ -155,19 +155,19 @@ func TestOps_EventLines(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	// a sequential step: step_start records the label, step_end completes it.
-	if got := m.opsEventLine(&adminstream.Event{Kind: adminstream.KindStepStart, Message: "hashing k"}); got != "" {
+	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindStepStart, Message: "hashing k"}); got != "" {
 		t.Errorf("step_start should emit no line, got %q", got)
 	}
-	if got := m.opsEventLine(&adminstream.Event{Kind: adminstream.KindStepEnd, Outcome: adminstream.OutcomeOK}); !strings.Contains(got, "hashing k") || !strings.Contains(got, "OK") {
+	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindStepEnd, Outcome: adminstream.OutcomeOK}); !strings.Contains(got, "hashing k") || !strings.Contains(got, "OK") {
 		t.Errorf("step_end line = %q", got)
 	}
-	if got := m.opsEventLine(&adminstream.Event{Kind: adminstream.KindProgress, Processed: 5}); !strings.Contains(got, "processed 5") {
+	if got := m.runEventLine(&adminstream.Event{Kind: adminstream.KindProgress, Processed: 5}); !strings.Contains(got, "processed 5") {
 		t.Errorf("progress line = %q", got)
 	}
-	if got := opsResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeFailed, Error: "boom"}); !strings.Contains(got, "boom") {
+	if got := runResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeFailed, Error: "boom"}); !strings.Contains(got, "boom") {
 		t.Errorf("failed result line = %q", got)
 	}
-	if got := opsResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: "factor 1"}); !strings.Contains(got, "skipped") {
+	if got := runResultLine(&adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: "factor 1"}); !strings.Contains(got, "skipped") {
 		t.Errorf("skipped result line = %q", got)
 	}
 }
@@ -178,11 +178,39 @@ func TestOps_OutputBackToMenu(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
 	m.ops.actions = opsActions()
-	m.ops.showOut = true
-	m.ops.running = false
-	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.ops.showOut {
+	m.run.owner, m.run.shown, m.run.running = sectionOps, true, false
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.run.shown || m.section != sectionOps {
 		t.Error("esc on a finished run should return to the menu")
+	}
+}
+
+// TestOps_BackendRunNamesTheBackend verifies a run from a backend's menu names
+// the backend, so it cannot be read as the fleet-wide pass of the same name.
+func TestOps_BackendRunNamesTheBackend(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.section = sectionOps
+	m.ops = opsView{actions: backendActions(), backend: "b2"}
+	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	accept(t, m)
+	if m.run.label != backendActions()[0].label+" on b2" {
+		t.Errorf("run label = %q, want it to name b2", m.run.label)
+	}
+}
+
+// TestOps_PromptRefusedWhileRunning verifies a prompted action does not ask
+// for its value while another action is running.
+func TestOps_PromptRefusedWhileRunning(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.section = sectionOps
+	m.ops.actions = opsActions()
+	m.ops.cursor = actionNamed(t, "Invalidate one cached key")
+	m.run.running = true
+	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.prompt != nil || m.status == nil || !strings.Contains(m.status.text, "already running") {
+		t.Errorf("prompt=%+v status=%+v, want the busy notice and no prompt", m.prompt, m.status)
 	}
 }
 
@@ -323,7 +351,7 @@ func TestOpsPrompt_EscCancels(t *testing.T) {
 	if m.prompt != nil {
 		t.Error("esc should clear the prompt")
 	}
-	if m.confirm != nil || m.ops.showOut {
+	if m.confirm != nil || m.run.shown {
 		t.Error("esc should not arm or start the action")
 	}
 }

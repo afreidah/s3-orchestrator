@@ -86,6 +86,7 @@ type model struct {
 	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
 	cache       cacheView       // cache pane state, populated when section is sectionCache
 	ops         opsView         // ops pane state, populated when section is sectionOps
+	run         run             // the one action streaming its output, shown by the pane that started it
 	poll        poller          // when each pane's endpoint was last requested, and which are in flight
 	files       fileAction      // the Files pane's in-flight transfer, if any
 	prefix      string          // the prefix currently listed ("" is the root)
@@ -284,12 +285,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bucketsErrMsg:
 		m.applyBucketsErr(msg.err)
 		return m, nil
-	case opsStreamMsg:
-		return m.applyOpsStream(msg)
-	case opsEventMsg:
-		return m.applyOpsEvent(&msg.event)
-	case opsDoneMsg:
-		return m.applyOpsDone(msg)
+	case runStreamMsg:
+		return m.applyRunStream(msg)
+	case runEventMsg:
+		return m.applyRunEvent(&msg.event)
+	case runDoneMsg:
+		return m.applyRunDone(msg)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -371,9 +372,13 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handlePaneKey(key)
 }
 
-// handlePaneKey routes a key to the active section's pane. Files has two
-// panes, the listing and the inspector, chosen by mode.
+// handlePaneKey routes a key to the active section's pane, or to the run's
+// output while that pane is showing it. Files has two panes, the listing and
+// the inspector, chosen by mode.
 func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showingRun() {
+		return m.handleRunKey(key)
+	}
 	switch m.section {
 	case sectionDashboard:
 		return m.handleDashboardKey(key)
@@ -541,6 +546,9 @@ func (m *model) View() string {
 func (m *model) contentView() string {
 	if m.help {
 		return m.helpPaneView()
+	}
+	if m.showingRun() {
+		return m.runPaneView()
 	}
 	if m.section == sectionDashboard {
 		return m.dashboardPaneView()
