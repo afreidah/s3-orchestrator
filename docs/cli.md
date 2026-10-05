@@ -401,7 +401,7 @@ Every change takes effect on the next request rather than the next restart: the 
 
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a usage bar per backend with its health and drain state, the replication and verification backlogs, encryption and compression coverage, usage for the period, and the cleanup queues; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -409,6 +409,8 @@ export S3O_ACCESS_KEY_ID="$(your-secret-tool get access-key)"
 export S3O_SECRET_ACCESS_KEY="$(your-secret-tool get secret-key)"
 s3-orchestrator tui
 ```
+
+![The TUI Dashboard, where it opens: a usage bar per backend and the fleet-wide backlogs](/docs/images/tui-dashboard.png)
 
 ![The TUI Files section browsing a prefix](/docs/images/tui-files.png)
 
@@ -426,6 +428,7 @@ s3-orchestrator tui
 | Key | Action |
 |-----|--------|
 | `tab` | Move focus between the sidebar and the content area |
+| `g` | Jump to the Dashboard |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
 | `v` | Jump to the Buckets section |
@@ -455,7 +458,7 @@ s3-orchestrator tui
 | `r` | Refresh the current view now |
 | `q` / `ctrl+c` | Quit |
 
-The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
+The panes refresh on their own, so they stay current without a keypress. Backends and the sidebar's database health refresh every 10 seconds, Replication every 3, Cleanup every 10 and Buckets every 30, whichever pane is showing, so each is up to date the moment you open it. The Dashboard reads those same snapshots and makes no requests of its own. Workers and Cache refresh every 5 seconds, but only while their own pane is showing: behind a load balancer, their readings come from whichever instance answered. Logs and the Files listing refresh only when you press `r`, because you are reading and navigating them. A refresh keeps your selection on the same row.
 
 The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 

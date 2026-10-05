@@ -11,8 +11,10 @@ This guide walks through `s3-orchestrator tui`, the built-in terminal UI. It is 
 
 A persistent left navigation bar switches between sections; the content area to its right renders the active one:
 
+- **Dashboard** - where the TUI opens: a usage bar per backend with its health and drain state, the fleet total, the replication and verification backlogs, how many copies are still plaintext, what compression saves, request and transfer totals for the usage period, and the cleanup and dead-letter depths. Every figure on it is fleet-wide, so it reads the same whichever instance answers.
 - **Files** - a hierarchical listing of the object namespace, one prefix at a time (directories collapse into common prefixes, just like `aws s3 ls`). Large prefixes page in as you scroll. Opening an object swaps the content area for the **Inspector**, which lists every backend copy of that object with its size, age, encryption status, key id, and content-hash prefix - the replica-placement view that makes multi-backend storage legible.
 - **Backends** - one row per configured backend with its circuit-breaker health, drain state, quota usage, object count, and per-period request and transfer counters.
+- **Buckets** - every virtual bucket the deployment declares, whether the config file or the store declares it (config-declared buckets are read-only to the provisioning API), its multipart upload cap, and which identities reach it with what permissions.
 - **Replication** - the configured replication factor and the current under- and over-replicated object counts, refreshing on its own while the section is active.
 - **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
 - **Cleanup** - the cleanup queue and its dead-letter table, with the depth of each. The one write action here is requeueing a backend's dead-lettered rows.
@@ -25,6 +27,8 @@ The pane that currently has keyboard focus renders with a bright title bar while
 Every table fits the terminal's width. In a narrow terminal the less important columns are dropped first (on Backends, `SAVED` and the period counters) and come back when the window widens.
 
 Browsing is read-only: the listing, inspector, and every status pane issue `GET` requests to the admin API and never mutate state. The Ops menu and the Cleanup pane's requeue are the exceptions, and both ask before they act.
+
+![The Dashboard: a usage bar per backend with its health, the fleet total, and the fleet-wide backlogs and coverage](/docs/images/tui-dashboard.png?classes=lightbox)
 
 ![The Files section listing a prefix of objects and sub-directories, with the navigation sidebar](/docs/images/tui-files.png?classes=lightbox)
 
@@ -59,13 +63,15 @@ s3-orchestrator tui -addr https://s3.example.com \
 
 ## Step 2: Navigate the object namespace
 
-The TUI opens on the Files section at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and a letter jumps straight to a section.
+The TUI opens on the Dashboard; press `f` for the Files section, which starts at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and a letter jumps straight to a section.
 
 | Key | Action |
 |-----|--------|
 | `tab` | Move focus between the sidebar and the content area |
+| `g` | Jump to the Dashboard |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
+| `v` | Jump to the Buckets section |
 | `p` | Jump to the Replication section |
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |

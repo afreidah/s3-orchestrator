@@ -563,20 +563,19 @@ func (m *model) encryptionCoverage() string {
 // figure ahead of them describes only part of the fleet.
 func (m *model) integrityCoverage() string {
 	iv := m.backends.integrity
-	return integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)
+	return "verified: " + integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)
 }
 
-// integrityHeadline is the reachable half of the coverage line.
+// integrityHeadline is the reachable half of the coverage line, without its
+// label, so the backends stats line and the dashboard can each label it.
 func integrityHeadline(iv adminapi.IntegrityStatus) string {
 	if iv.NeverVerifiedCopies > 0 {
-		return "verified: " + statusErrStyle.Render(
-			fmt.Sprintf("%s never", humanize.Comma(iv.NeverVerifiedCopies)))
+		return statusErrStyle.Render(fmt.Sprintf("%s never", humanize.Comma(iv.NeverVerifiedCopies)))
 	}
 	if iv.OldestUnverifiedSeconds <= 0 {
-		return "verified: " + statusOKStyle.Render("up to date")
+		return statusOKStyle.Render("up to date")
 	}
-	return "verified: oldest " + humanize.Duration(
-		time.Duration(iv.OldestUnverifiedSeconds)*time.Second)
+	return "oldest " + humanize.Duration(time.Duration(iv.OldestUnverifiedSeconds)*time.Second)
 }
 
 // deferredSuffix names the copies no sweep can reach, or nothing when the whole

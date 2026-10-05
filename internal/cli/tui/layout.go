@@ -193,6 +193,7 @@ func (m *model) frame(header, footer string, body ...pane) string {
 	fit := lipgloss.NewStyle().Width(width)
 	header, footer = fit.Render(header), fit.Render(footer)
 	rows := max(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
+	body = fitFixedPanes(width, body)
 	heights := paneHeights(rows, body)
 
 	blocks := make([]string, len(body))
@@ -202,6 +203,22 @@ func (m *model) frame(header, footer string, body ...pane) string {
 	rendered := lipgloss.NewStyle().Width(width).Height(rows).MaxHeight(rows).
 		Render(lipgloss.JoinVertical(lipgloss.Left, blocks...))
 	return lipgloss.JoinVertical(lipgloss.Left, header, rendered, footer)
+}
+
+// fitFixedPanes wraps each fixed pane to the content width and takes its
+// height from the wrapped text, so a line too long for the terminal costs the
+// pane a row rather than pushing its last line out of view.
+func fitFixedPanes(width int, panes []pane) []pane {
+	fit := lipgloss.NewStyle().Width(width)
+	out := make([]pane, len(panes))
+	for i, p := range panes {
+		if p.grows {
+			out[i] = p
+			continue
+		}
+		out[i] = textPane(fit.Render(p.render(p.height)))
+	}
+	return out
 }
 
 // paneHeights gives every pane the rows it needs, then shares out what is left

@@ -4,9 +4,10 @@
 // Author: Alex Freidah
 //
 // The persistent left nav bar and the top-level section model. Sections are the
-// nav destinations (Files, Backends, Replication, Logs, Ops); the active section
-// drives what the content area to the right renders. The nav can take focus
-// (tab) for arrow-key selection, and letter shortcuts jump directly.
+// nav destinations (Dashboard, Files, Backends, and the status panes); the
+// active section drives what the content area to the right renders. The TUI
+// opens on the Dashboard. The nav can take focus (tab) for arrow-key
+// selection, and letter shortcuts jump directly.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -27,11 +28,13 @@ import (
 // ("Replication"), else lipgloss soft-wraps the row and mangles the layout.
 const sidebarWidth = 16
 
-// section is a top-level nav destination.
+// section is a top-level nav destination. The zero value is the Dashboard, so
+// a new model opens on it.
 type section int
 
 const (
-	sectionFiles section = iota
+	sectionDashboard section = iota
+	sectionFiles
 	sectionBackends
 	sectionBuckets
 	sectionReplication
@@ -53,6 +56,7 @@ type navEntry struct {
 // placeholders and are skipped by cursor navigation.
 func navEntries() []navEntry {
 	return []navEntry{
+		{"Dashboard", sectionDashboard, true},
 		{"Files", sectionFiles, true},
 		{"Backends", sectionBackends, true},
 		{"Buckets", sectionBuckets, true},
@@ -67,7 +71,7 @@ func navEntries() []navEntry {
 
 // selectableSections is the number of enabled nav destinations; it bounds the
 // nav cursor.
-const selectableSections = 9
+const selectableSections = 10
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -99,6 +103,9 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	switch s {
 	// The polled panes keep what the poller already fetched, so a pane opens on
 	// current data and shows the loading state only before its first result.
+	case sectionDashboard:
+		cmd := m.refreshDashboard()
+		return m, cmd
 	case sectionBackends:
 		m.backends.loading = m.backends.rows == nil
 		cmd := m.fetch(pollStatus)
@@ -114,7 +121,7 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		cmd := m.fetch(pollWorkers)
 		return m, cmd
 	case sectionCleanup:
-		m.cleanup.loading = m.cleanup.queueRows == nil && m.cleanup.dlqRows == nil
+		m.cleanup.loading = !m.cleanup.loaded
 		cmd := m.fetch(pollCleanup)
 		return m, cmd
 	case sectionCache:

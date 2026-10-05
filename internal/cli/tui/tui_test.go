@@ -292,6 +292,15 @@ func (f *fakeLister) RunOp(_ context.Context, _ *opsAction, req opsRequest) (adm
 	return adminclient.NewSliceStream(events...), nil
 }
 
+// startOnFiles starts the program at the given width and switches to the Files
+// section, since the TUI opens on the Dashboard.
+func startOnFiles(t *testing.T, f *fakeLister, width int) *teatest.TestModel {
+	t.Helper()
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(width, 24))
+	tm.Type("f")
+	return tm
+}
+
 // waitForText fails the test unless the given text appears in the output.
 func waitForText(t *testing.T, tm *teatest.TestModel, text string) {
 	t.Helper()
@@ -307,7 +316,7 @@ func TestBrowser_LoadsAndDescends(t *testing.T) {
 		"|":        {CommonPrefixes: []string{"photos/"}, Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
 		"photos/|": {Objects: []adminapi.ObjectEntry{{Key: "photos/sunset", Size: 5}}},
 	}}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+	tm := startOnFiles(t, f, 80)
 
 	waitForText(t, tm, "photos")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // descend into the highlighted photos/
@@ -334,7 +343,7 @@ func TestBrowser_HumanSizesAndFilter(t *testing.T) {
 			{Key: "gamma", Size: 10},
 		}},
 	}}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+	tm := startOnFiles(t, f, 80)
 
 	waitForText(t, tm, "2.0 KiB") // alpha's size rendered in IEC units
 	tm.Type("/")                  // focus the filter
@@ -366,7 +375,7 @@ func TestBrowser_InspectsObject(t *testing.T) {
 			}},
 		},
 	}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+	tm := startOnFiles(t, f, 80)
 
 	waitForText(t, tm, "readme")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // open the inspector on readme
@@ -400,7 +409,7 @@ func TestBrowser_OpensBackendsView(t *testing.T) {
 			},
 		},
 	}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+	tm := startOnFiles(t, f, 120)
 
 	waitForText(t, tm, "readme")
 	tm.Type("b")                          // jump to the backends section
@@ -428,7 +437,7 @@ func TestBrowser_OpensLogsView(t *testing.T) {
 			{Level: "INFO", Component: "replicator", Message: "copied-marker-xyz"},
 		}},
 	}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+	tm := startOnFiles(t, f, 120)
 
 	waitForText(t, tm, "readme")
 	tm.Type("l") // jump to the logs section
@@ -457,7 +466,7 @@ func TestBrowser_OpensReplicationView(t *testing.T) {
 			Factor: 3, UnderReplicated: 77, OverReplicated: 4, ComputedAt: time.Now(),
 		},
 	}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+	tm := startOnFiles(t, f, 120)
 
 	waitForText(t, tm, "readme")
 	tm.Type("p") // jump to the replication section
@@ -495,7 +504,7 @@ func TestBrowser_RunsOpsAction(t *testing.T) {
 			{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeOK, Message: "moved 7 objects"},
 		},
 	}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+	tm := startOnFiles(t, f, 120)
 
 	waitForText(t, tm, "readme")
 	tm.Type("o") // jump to the ops section
@@ -528,7 +537,7 @@ func TestBrowser_LoadMoreAppends(t *testing.T) {
 		"|":     {Objects: []adminapi.ObjectEntry{{Key: "alpha"}, {Key: "beta"}}, Truncated: true, Next: "beta"},
 		"|beta": {Objects: []adminapi.ObjectEntry{{Key: "gamma"}}},
 	}}
-	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+	tm := startOnFiles(t, f, 80)
 
 	waitForText(t, tm, "beta")
 	tm.Send(tea.KeyMsg{Type: tea.KeyDown}) // reach the bottom row, triggering load-more

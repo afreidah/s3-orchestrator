@@ -131,6 +131,7 @@ func (errLister) ReconcileBackend(_ context.Context, _ string) (*adminapi.Reconc
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
+	m.section = sectionFiles
 	m.prefix = prefix
 	m.entries = entries
 	m.refreshVisible()

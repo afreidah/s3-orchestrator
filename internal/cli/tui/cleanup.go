@@ -43,6 +43,7 @@ type cleanupView struct {
 	dlqRows    []adminapi.CleanupDLQItem   // loaded page of dead-lettered cleanups
 	queue      table.Model                 // table over queueRows
 	dlq        table.Model                 // table over dlqRows
+	loaded     bool                        // a snapshot has arrived, so the depths are real
 	loading    bool                        // a fetch is in flight
 	err        error                       // last fetch error, if any
 }
@@ -112,6 +113,7 @@ func (m *model) applyCleanup(msg cleanupLoadedMsg) {
 	m.cleanup.dlq.SetRows(rowsFromCleanupDLQ(msg.dlq.Items))
 	reselect(&m.cleanup.queue, cleanupQueueKeys(msg.queue.Items), prevQueue)
 	reselect(&m.cleanup.dlq, cleanupDLQKeys(msg.dlq.Items), prevDLQ)
+	m.cleanup.loaded = true
 	m.cleanup.loading = false
 	m.cleanup.err = nil
 }
@@ -169,7 +171,7 @@ func (m *model) handleCleanupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "left", "h":
 		return m.navBack()
 	case "r":
-		m.cleanup.loading = m.cleanup.queueRows == nil && m.cleanup.dlqRows == nil
+		m.cleanup.loading = !m.cleanup.loaded
 		cmd := m.fetch(pollCleanup)
 		return m, cmd
 	case "t":

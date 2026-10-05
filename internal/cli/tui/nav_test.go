@@ -100,12 +100,13 @@ func TestSidebarView_MarkersAndStates(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 80, 20
 
-	// Idle on Files: the active marker leads Files; every section renders.
+	// Idle on the Dashboard, where the TUI opens: the active marker leads it;
+	// every section renders.
 	out := m.sidebarView()
-	if !strings.Contains(out, "> Files") {
-		t.Errorf("Files should carry the active marker:\n%s", out)
+	if !strings.Contains(out, "> Dashboard") {
+		t.Errorf("Dashboard should carry the active marker:\n%s", out)
 	}
-	for _, label := range []string{"Files", "Backends", "Logs"} {
+	for _, label := range []string{"Dashboard", "Files", "Backends", "Logs"} {
 		if !strings.Contains(out, label) {
 			t.Errorf("sidebar missing %q:\n%s", label, out)
 		}
@@ -230,6 +231,7 @@ func TestSelectSection_LoadsEachPane(t *testing.T) {
 func TestHandleKey_LetterJumpsAreUnique(t *testing.T) {
 	t.Parallel()
 	jumps := map[string]section{
+		"g": sectionDashboard,
 		"f": sectionFiles,
 		"b": sectionBackends,
 		"v": sectionBuckets,

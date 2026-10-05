@@ -184,9 +184,10 @@ func entriesFromPage(prefix string, page *adminapi.ObjectListResponse) []entry {
 // Init fires the first load of the root prefix and starts the spinner and the
 // poller ticking.
 func (m *model) Init() tea.Cmd {
-	// Fetch status alongside the first listing so the sidebar's DB-health
-	// indicator is populated from startup, on any section.
-	return tea.Batch(m.loadObjects(m.prefix, ""), m.fetch(pollStatus), m.spinner.Tick, pollTick())
+	// Fetch the dashboard's snapshots alongside the first listing, so the
+	// section the TUI opens on, and the sidebar's DB-health indicator, fill
+	// in at startup rather than on the poller's first tick.
+	return tea.Batch(m.loadObjects(m.prefix, ""), m.refreshDashboard(), m.spinner.Tick, pollTick())
 }
 
 // Update handles one message and returns the next state. A result the poller
@@ -314,6 +315,7 @@ func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 
 	sections := map[string]section{
+		"g": sectionDashboard,
 		"f": sectionFiles,
 		"b": sectionBackends,
 		"v": sectionBuckets,
@@ -354,28 +356,30 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.navFocus {
 		return m.handleNavKey(key)
 	}
-	if m.section == sectionLogs {
+	return m.handlePaneKey(key)
+}
+
+// handlePaneKey routes a key to the active section's pane. Files has two
+// panes, the listing and the inspector, chosen by mode.
+func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.section {
+	case sectionDashboard:
+		return m.handleDashboardKey(key)
+	case sectionLogs:
 		return m.handleLogsKey(key)
-	}
-	if m.section == sectionReplication {
+	case sectionReplication:
 		return m.handleReplicationKey(key)
-	}
-	if m.section == sectionOps {
+	case sectionOps:
 		return m.handleOpsKey(key)
-	}
-	if m.section == sectionBackends {
+	case sectionBackends:
 		return m.handleBackendsKey(key)
-	}
-	if m.section == sectionBuckets {
+	case sectionBuckets:
 		return m.handleBucketsKey(key)
-	}
-	if m.section == sectionWorkers {
+	case sectionWorkers:
 		return m.handleWorkersKey(key)
-	}
-	if m.section == sectionCleanup {
+	case sectionCleanup:
 		return m.handleCleanupKey(key)
-	}
-	if m.section == sectionCache {
+	case sectionCache:
 		return m.handleCacheKey(key)
 	}
 	if m.mode == modeInspect {
@@ -523,6 +527,9 @@ func (m *model) View() string {
 
 // contentView renders the active section's pane for the area beside the nav.
 func (m *model) contentView() string {
+	if m.section == sectionDashboard {
+		return m.dashboardPaneView()
+	}
 	if m.section == sectionLogs {
 		return m.logsPaneView()
 	}
