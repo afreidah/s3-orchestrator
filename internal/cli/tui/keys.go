@@ -73,7 +73,10 @@ func (m *model) paneKeys() []keyHint {
 	case sectionOps:
 		return m.opsKeys()
 	case sectionLogs:
-		return []keyHint{hintScroll, {key: "L", desc: "cycle the minimum level", label: "level"}, hintReload, hintNavBack}
+		return []keyHint{hintScroll,
+			{key: "/", desc: "filter by text in the component or message", label: "filter"},
+			{key: "L", desc: "cycle the minimum level", label: "level"},
+			{key: "esc", desc: "clear the filter, then back to the nav"}, hintReload}
 	case sectionBuckets, sectionWorkers:
 		return []keyHint{hintMove, hintSort, hintReverse, hintReload, hintNavBack}
 	default:
@@ -94,7 +97,7 @@ func (m *model) filesKeys() []keyHint {
 		{key: "/", desc: "filter the listing", label: "filter"},
 		{key: "esc", desc: "clear the filter"},
 		{key: "s", desc: "sort by name or size", label: "sort"},
-		{key: "D", desc: "download the object", label: "download"},
+		{key: "D", desc: "download the object, or everything under a prefix", label: "download"},
 		{key: "U", desc: "upload a file here", label: "upload"},
 		{key: "X", desc: "delete the object or prefix", label: "delete"},
 		hintReload,

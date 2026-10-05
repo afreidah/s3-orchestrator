@@ -133,7 +133,8 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		m.ops = opsView{actions: opsActions()}
 		return m, nil
 	case sectionLogs:
-		m.logs = logsView{loading: true}
+		m.logs = newLogsView()
+		m.logs.loading = true
 		cmd := m.loadLogs()
 		return m, cmd
 	}

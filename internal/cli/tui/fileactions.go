@@ -3,9 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Write actions on the highlighted row of the object browser: download it to a
-// prompted local path, upload a local file under a prompted key, remove one
-// object, or remove everything under a directory. Every destructive action
+// Write actions on the highlighted row of the object browser: download an
+// object, or everything under a directory, to a prompted local path; upload a
+// local file under a prompted key; remove one object, or remove everything
+// under a directory. Every destructive action
 // confirms first and names what it will affect, and a prefix delete counts the
 // keys first so the operator is not agreeing to a number they cannot see.
 // -------------------------------------------------------------------------------
@@ -16,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -128,12 +130,24 @@ func (m *model) selectedEntry() (entry, string, bool) {
 	return row, m.prefix + row.name, true
 }
 
-// armDownload asks where to write the highlighted object, defaulting the
-// prompt to its base name in the working directory.
+// armDownload asks where to write the highlighted row, defaulting the prompt
+// to its base name in the working directory: a file for an object, a new
+// directory for a prefix.
 func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 	row, key, ok := m.selectedEntry()
-	if !ok || row.isDir {
-		return m, nil, true // a directory has no bytes of its own to fetch
+	if !ok || m.transferBusy() {
+		return m, nil, true
+	}
+
+	if row.isDir {
+		model, cmd := m.askForValue("Download everything under "+key+" into which new directory?",
+			filepath.Base(strings.TrimSuffix(key, "/")), func(dest string) adminAction {
+				return adminAction{
+					before: func(m *model) { m.beginTransfer(startPrefixDownload(m.client, key, dest)) },
+					run:    transferTick(),
+				}
+			})
+		return model, cmd, true
 	}
 
 	model, cmd := m.askForValue("Download "+key+" to?", filepath.Base(key), func(dest string) adminAction {
@@ -145,10 +159,24 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 	return model, cmd, true
 }
 
+// transferBusy reports whether a transfer is already running, and says so in
+// the footer. The pane follows one transfer at a time, so starting another
+// would leave the first running with nothing reporting on it.
+func (m *model) transferBusy() bool {
+	if m.files.transfer == nil {
+		return false
+	}
+	m.status = &actionStatus{text: "a transfer is already running; wait for it to finish"}
+	return true
+}
+
 // armUpload asks for the local file, then for the key to store it under. The
 // second question is armed from the update loop rather than nested inside the
 // first, since a prompt is model state and only the loop may set it.
 func (m *model) armUpload() (tea.Model, tea.Cmd, bool) {
+	if m.transferBusy() {
+		return m, nil, true
+	}
 	model, cmd := m.askFor("Upload which local file?", "/path/to/file", func(local string) adminAction {
 		return adminAction{run: func() tea.Msg { return uploadKeyPromptMsg{local: local} }}
 	})
@@ -288,14 +316,16 @@ func (m *model) onTransferTick() (tea.Model, tea.Cmd) {
 	}
 	if t.done.Load() {
 		return m, func() tea.Msg {
-			return transferDoneMsg{kind: t.kind, key: t.key, local: t.local, moved: t.moved.Load(), err: t.err}
+			return transferDoneMsg{kind: t.kind, key: t.key, local: t.local,
+				moved: t.moved.Load(), objects: t.fetched.Load(), err: t.err}
 		}
 	}
 	return m, transferTick()
 }
 
 // applyTransferDone reports the finished transfer and clears the pane's hold
-// on it. A failure names what went wrong; the partial file is already gone.
+// on it. A failure names what went wrong; the partial file or tree is already
+// gone.
 func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 	m.files.transfer = nil
 	if msg.err != nil {
@@ -303,11 +333,15 @@ func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	where := msg.local
-	if msg.kind == transferUpload {
-		where = msg.key
+	switch msg.kind {
+	case transferPrefix:
+		m.report(true, fmt.Sprintf("downloaded %s under %s to %s (%s)",
+			countOf(int(msg.objects), "object", "objects"), msg.key, msg.local, humanize.Bytes(msg.moved)))
+	case transferUpload:
+		m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), msg.key, humanize.Bytes(msg.moved)))
+	default:
+		m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), msg.local, humanize.Bytes(msg.moved)))
 	}
-	m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), where, humanize.Bytes(msg.moved)))
 	if msg.kind == transferUpload {
 		reload := m.reloadListing()
 		return m, reload

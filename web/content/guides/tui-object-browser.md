@@ -83,7 +83,10 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
-| `/` | Filter the current listing by substring |
+| `/` | Filter the current listing by substring; in Logs, filter the entries by text in the component or message |
+| `D` | Download the selected object, or everything under the selected directory into a new local directory |
+| `U` | Upload a local file under a prompted key |
+| `X` | Delete the selected object, or everything under the selected directory (asks to confirm) |
 | `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
 | `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
@@ -161,7 +164,7 @@ The title bar also reports the metadata database health and the usage period the
 
 ## Step 5: Watch recent activity
 
-Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
+Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `/` and type to keep only the entries whose component or message contains the text - `replicator`, say, or an object key that appears in an entry's attributes; `esc` clears it.
 
 ![The Logs section showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
 

@@ -113,10 +113,8 @@ type model struct {
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
 func initialModel(client adminClient) *model {
-	fi := textinput.New()
-	fi.Prompt = ""
-	fi.Placeholder = "type to filter"
-	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: fi}
+	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: newFilterInput()}
+	m.logs = newLogsView()
 	m.backends = newBackendsView()
 	m.buckets = newBucketsView()
 	m.workers = newWorkersView()
@@ -134,6 +132,15 @@ func reselect(t *table.Model, keys []string, prev string) {
 		idx = min(t.Cursor(), len(keys)-1)
 	}
 	t.SetCursor(max(idx, 0))
+}
+
+// newFilterInput builds the substring filter input the Files and Logs panes
+// share.
+func newFilterInput() textinput.Model {
+	fi := textinput.New()
+	fi.Prompt = ""
+	fi.Placeholder = "type to filter"
+	return fi
 }
 
 // -------------------------------------------------------------------------
@@ -349,6 +356,9 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.section == sectionFiles && m.mode == modeBrowse && m.filtering {
 		return m.handleFilterKey(key)
+	}
+	if m.section == sectionLogs && m.logs.filtering {
+		return m.handleLogsFilterKey(key)
 	}
 
 	if model, cmd, handled := m.handleGlobalKey(key); handled {

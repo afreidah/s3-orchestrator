@@ -315,16 +315,38 @@ func TestDeletePrefix_CountFailureReports(t *testing.T) {
 	}
 }
 
-// TestDownload_RefusesDirectory asserts the download key does nothing on a
-// directory row, which has no bytes of its own.
-func TestDownload_RefusesDirectory(t *testing.T) {
+// TestDownload_DirectoryAsksForANewDirectory asserts the download key on a
+// directory row asks where to put the tree, defaulting to the directory's
+// own name.
+func TestDownload_DirectoryAsksForANewDirectory(t *testing.T) {
 	t.Parallel()
 	m := filesModel(t, &fakeLister{})
 	m.table.SetCursor(0)
 
 	m.handleBrowseKey(key("D"))
-	if m.prompt != nil {
-		t.Error("a directory should not arm a download prompt")
+	if m.prompt == nil || !strings.Contains(m.prompt.text, "bucket/photos/") {
+		t.Fatalf("prompt = %+v, want one naming the prefix", m.prompt)
+	}
+	if got := m.prompt.input.Value(); got != "photos" {
+		t.Errorf("default directory = %q, want photos", got)
+	}
+}
+
+// TestTransfer_OneAtATime asserts neither transfer key arms a prompt while a
+// transfer is running, since the pane follows only one.
+func TestTransfer_OneAtATime(t *testing.T) {
+	t.Parallel()
+	m := filesModel(t, &fakeLister{})
+	m.files.transfer = &transfer{kind: transferDownload, key: "bucket/readme.txt"}
+
+	for _, k := range []string{"D", "U"} {
+		m.handleBrowseKey(key(k))
+		if m.prompt != nil {
+			t.Errorf("%s armed a prompt while a transfer was running", k)
+		}
+		if m.status == nil || !strings.Contains(m.status.text, "already running") {
+			t.Errorf("%s: status = %+v, want the running-transfer notice", k, m.status)
+		}
 	}
 }
 
@@ -337,7 +359,8 @@ func TestTransferLine_ReportsProgress(t *testing.T) {
 		t.Errorf("line = %q, want nothing while idle", got)
 	}
 
-	tr := &transfer{kind: transferDownload, key: "bucket/readme.txt", total: 2048}
+	tr := &transfer{kind: transferDownload, key: "bucket/readme.txt"}
+	tr.total.Store(2048)
 	tr.moved.Store(1024)
 	m.files.transfer = tr
 

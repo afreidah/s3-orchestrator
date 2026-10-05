@@ -464,7 +464,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `d` | In Backends, drain the selected backend (asks to confirm) |
 | `Q` | In Backends, requeue the selected backend's dead-lettered cleanups (asks to confirm) |
 | `x` | In Backends, cancel the drain the pane is following (asks to confirm) |
-| `D` | In Files, download the selected object to a prompted local path |
+| `D` | In Files, download the selected object to a prompted local path, or everything under the selected directory into a new local directory |
 | `U` | In Files, upload a local file under a prompted key |
 | `X` | In Files, delete the selected object, or everything under the selected directory (asks to confirm) |
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
@@ -472,7 +472,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
-| `/` | Filter the current listing by substring |
+| `/` | Filter the current listing by substring; in Logs, filter the entries by text in the component or message |
 | `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
 | `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
@@ -510,11 +510,13 @@ The **Cleanup** section shows the cleanup queue and its dead-letter table, sourc
 
 The **Cache** section shows the object data cache, sourced from `GET /admin/api/cache` - entry count, bytes held against the configured maximum, and the lifetime hit rate. The hit rate is coloured for a cache doing its job rather than a full one: green at 60% and above, amber down to 25%, red below. A cache nothing has read yet says so instead of reporting 0%, which would read as a broken cache. When object caching is disabled the endpoint answers 503 and the pane reports that as configuration, not failure.
 
-The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
+The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `/` and type to narrow the loaded entries to those whose component or message, attributes included, contains the text; the title shows how many match, `enter` keeps the filter, and `esc` clears it.
 
 Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation before it runs, and its result (or error) is reported afterwards. Instance-wide actions live on the Ops menu; an action that targets one row, such as the Cleanup pane's requeue, lives on the pane that shows the row.
 
 The **Files** section acts on objects as well as browsing them. `D` downloads the highlighted object to a prompted local path, `U` uploads a local file under a prompted key, and `X` removes the highlighted row. Both prompts start filled with a sensible answer - the object's base name, or the current prefix plus the file's name - so the usual case is a keystroke away and anything else is an edit.
+
+`D` on a directory downloads everything under it into a new local directory, mirroring the key layout beneath the prefix; the footer counts objects and bytes as they arrive. The download is all or nothing: objects land in a temporary directory beside the destination, which is renamed into place only once every object is written, and any failure removes it. A destination that already exists is refused rather than merged into, and a key that cannot be a plain relative path (one containing `..`, for instance) fails the download before anything is fetched. Folder-marker keys ending in `/` hold no bytes and are skipped. One transfer runs at a time.
 
 Deleting a directory removes everything under it, so the confirmation states how many objects that is rather than just naming the prefix: the pane counts a page of keys first and asks "Delete 128 objects under bucket/photos/?". A prefix with more objects than one page holds reads as "at least 1,000", since understating what a delete will remove is worse than being vague about the total.
 
