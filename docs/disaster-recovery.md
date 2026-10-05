@@ -8,7 +8,7 @@ This guide covers failure scenarios and recovery procedures for the S3 Orchestra
 
 The orchestrator has two required stateful components and one optional:
 
-- **PostgreSQL** stores object locations, quota counters, usage stats, multipart state, and the cleanup queue. This is the source of truth for "which object lives on which backend."
+- **PostgreSQL** stores object locations, quota counters, usage stats, multipart state, and the cleanup queue. This is the source of truth for "which object lives on which backend." When encryption is enabled it also holds the only copy of each object's wrapped data key; see [Losing PostgreSQL without a backup](#losing-postgresql-without-a-backup).
 - **Storage backends** (OCI, R2, S3, MinIO, etc.) hold the actual object data. These are independent and unaware of each other.
 - **Redis** (optional) provides shared usage counters across instances. Not a data dependency - all authoritative data lives in PostgreSQL. See [Redis Failure](#redis-failure) below.
 
@@ -66,6 +66,18 @@ If the primary backend fails before replication completes, unreplicated objects 
 A graceful shutdown waits up to 30 seconds for copies still uploading, so a planned restart does not itself create this exposure. A kill does; those copies are resolved by the pending reaper on a later tick.
 
 Fully synchronous replication (holding the 200 until every copy lands) is not supported, and is deliberate: it would put the slowest backend on the critical path of every write.
+
+## Losing PostgreSQL without a backup
+
+Unencrypted objects survive the loss of the database. `sync` re-imports them from the backends, and they read normally afterwards.
+
+Encrypted objects do not. Each one is encrypted with its own random data key, and that key, wrapped by the master key, is stored only in the object's database row. The master key cannot recreate a data key; it can only unwrap one. Without the database, `sync` and `reconcile` re-import the encrypted objects but record them with no key, and every read of them is refused. The objects are permanently unreadable, even with the master key and every backend intact.
+
+When encryption is enabled, the database backup is therefore also the key backup. Treat it with the same care as the master key:
+
+- Back it up on a schedule, and test restoring it.
+- Keep backups long enough to recover from a loss that goes unnoticed for a while.
+- Encrypt the backups at rest and restrict who can read them. A wrapped key is useless without the master key, so a stolen backup alone does not expose data, but a backup stored next to the master key does.
 
 ## Restoring PostgreSQL from Backup
 

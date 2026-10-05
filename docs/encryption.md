@@ -58,6 +58,7 @@ encryption:
 After updating the config, call the `rotate-encryption-key` admin API to re-wrap all DEKs with the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
 
 **Important notes:**
+- Each object's wrapped data key is stored only in the metadata database, so the master key alone cannot recover anything. Losing the database without a backup makes every encrypted object permanently unreadable. Back up the database as carefully as the master key; see [Losing PostgreSQL without a backup](disaster-recovery.md#losing-postgresql-without-a-backup).
 - Per-object data-encryption keys and wrapped key material are held server-side only. They are never serialized in API responses - the admin object-locations endpoint reports the `encrypted` flag and `key_id`, never the key itself.
 - Encryption is **not reloadable** - changing encryption settings requires a restart.
 - The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
