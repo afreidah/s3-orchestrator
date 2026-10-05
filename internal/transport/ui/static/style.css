@@ -1,9 +1,34 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* --- Palette ---
+   Every colour on the page is one of these roles, set to the Tokyo Night
+   palette the TUI uses by default. Tinted backgrounds mix a role colour with
+   transparency, so a tint always matches its role. Blue marks structure
+   (column headers, links, buttons, directories); green, amber and red mark
+   status. */
+:root {
+  --bg: #1a1b26;
+  --surface: #24283b;
+  --border: #3b4261;
+  --border-strong: #414868;
+  --text: #c0caf5;
+  --text-dim: #a9b1d6;
+  --muted: #737aa2;
+  --accent: #7aa2f7;
+  --accent-hover: #7dcfff;
+  --ok: #9ece6a;
+  --warn: #e0af68;
+  --error: #f7768e;
+  --danger: #db4b4b;
+  --danger-hover: #c53b53;
+  --info: #7dcfff;
+  --overlay: rgba(0, 0, 0, 0.6);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg);
+  color: var(--text);
   line-height: 1.5;
 }
 
@@ -18,7 +43,7 @@ body {
 }
 
 .login-card {
-  background: #1e293b;
+  background: var(--surface);
   border-radius: 0.5rem;
   padding: 2rem;
   width: 100%;
@@ -28,7 +53,7 @@ body {
 .login-card h1 {
   font-size: 1.25rem;
   font-weight: 600;
-  color: #f8fafc;
+  color: var(--text);
   margin-bottom: 0.15rem;
 }
 
@@ -38,7 +63,7 @@ body {
   display: block;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 0.25rem;
@@ -47,17 +72,17 @@ body {
 .login-card input {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.9rem;
   margin-bottom: 0.75rem;
 }
 
 .login-card input:focus {
   outline: none;
-  border-color: #2a9d73;
+  border-color: var(--accent);
 }
 
 .login-card button {
@@ -68,16 +93,16 @@ body {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
-  background: #2a9d73;
-  color: #0f172a;
+  background: var(--accent);
+  color: var(--bg);
   margin-top: 0.25rem;
 }
 
-.login-card button:hover { background: #34b882; }
+.login-card button:hover { background: var(--accent-hover); }
 
 .login-error {
-  background: #451a1a;
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  color: var(--error);
   padding: 0.5rem 0.75rem;
   border-radius: 0.35rem;
   font-size: 0.85rem;
@@ -90,11 +115,11 @@ header {
   align-items: center;
   justify-content: space-between;
   padding: 1rem 0;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--surface);
   margin-bottom: 1.5rem;
 }
 
-header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
+header h1 { font-size: 1.25rem; font-weight: 600; color: var(--text); }
 
 .header-logo { height: 9rem; }
 .login-logo { display: block; margin: 0 auto 0.75rem; max-width: 12rem; height: auto; }
@@ -102,10 +127,10 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 .admin-action-status {
   margin-left: 0.75rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
-.admin-action-status.error { color: #fca5a5; }
-.admin-action-status.skipped { color: #fcd34d; }
+.admin-action-status.error { color: var(--error); }
+.admin-action-status.skipped { color: var(--warn); }
 
 .badge {
   display: inline-block;
@@ -117,22 +142,22 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
   letter-spacing: 0.05em;
 }
 
-.badge-healthy { background: #166534; color: #bbf7d0; }
-.badge-degraded { background: #92400e; color: #fde68a; }
-.badge-draining { background: #1e40af; color: #bfdbfe; animation: pulse-badge 2s ease-in-out infinite; }
+.badge-healthy { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.badge-degraded { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.badge-draining { background: color-mix(in srgb, var(--info) 20%, transparent); color: var(--info); animation: pulse-badge 2s ease-in-out infinite; }
 
 @keyframes pulse-badge {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
 
-.badge-drained { background: #374151; color: #d1d5db; }
+.badge-drained { background: var(--border); color: var(--text); }
 
-.row-draining { background: rgba(30, 64, 175, 0.08); }
+.row-draining { background: color-mix(in srgb, var(--info) 8%, transparent); }
 .row-drained { opacity: 0.6; }
-.row-degraded { background: rgba(146, 64, 14, 0.08); }
+.row-degraded { background: color-mix(in srgb, var(--warn) 8%, transparent); }
 
-.meta { font-size: 0.8rem; color: #94a3b8; }
+.meta { font-size: 0.8rem; color: var(--text-dim); }
 
 .header-right {
   display: flex;
@@ -142,11 +167,11 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
 .logout-link {
   font-size: 0.8rem;
-  color: #94a3b8;
+  color: var(--text-dim);
   text-decoration: none;
 }
 
-.logout-link:hover { color: #e2e8f0; }
+.logout-link:hover { color: var(--text); }
 
 /* --- Inline action button (sits next to section headers) --- */
 .btn-action {
@@ -158,13 +183,13 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--border);
+  color: var(--text);
   vertical-align: middle;
   margin-left: 0.5rem;
 }
 
-.btn-action:hover { background: #475569; }
+.btn-action:hover { background: var(--border-strong); }
 .btn-action:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Sections --- */
@@ -173,7 +198,7 @@ section { margin-bottom: 2rem; }
 section h2 {
   font-size: 1rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--text);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-bottom: 0.75rem;
@@ -183,24 +208,24 @@ section h2 {
 table {
   width: 100%;
   border-collapse: collapse;
-  background: #1e293b;
+  background: var(--surface);
   border-radius: 0.5rem;
   overflow: hidden;
 }
 
 th, td {
   padding: 0.6rem 1rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border);
 }
 
 th {
   text-align: left;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: #0f172a;
+  background: var(--bg);
 }
 
 td { font-size: 0.85rem; }
@@ -216,14 +241,14 @@ td.key {
   word-break: break-all;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
   font-size: 0.8rem;
-  color: #2a9d73;
+  color: var(--accent);
 }
 
 .empty {
-  color: #94a3b8;
+  color: var(--text-dim);
   font-size: 0.85rem;
   padding: 1rem;
-  background: #1e293b;
+  background: var(--surface);
   border-radius: 0.5rem;
 }
 
@@ -231,7 +256,7 @@ td.key {
 .bar-track {
   width: 100%;
   height: 6px;
-  background: #334155;
+  background: var(--border);
   border-radius: 3px;
   overflow: hidden;
   margin-top: 0.25rem;
@@ -245,43 +270,79 @@ td.key {
   flex-shrink: 0;
 }
 
+.bar-ok { background: var(--ok); }
+.bar-warn { background: var(--warn); }
+.bar-error { background: var(--error); }
+.bar-unlimited { background: var(--muted); }
+
 .bar-orphan {
-  background: #ef4444;
+  background: var(--error);
   border-radius: 0 3px 3px 0;
 }
 
-.orphan-value { color: #ef4444; }
+.orphan-value { color: var(--error); }
 
-/* --- Config grid --- */
-.config-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 0.75rem;
-}
-
-.config-card {
-  background: #1e293b;
+/* --- Panel: one surface holding a section's content --- */
+.panel {
+  background: var(--surface);
   border-radius: 0.5rem;
-  padding: 0.75rem 1rem;
+  padding: 1rem 1.25rem;
 }
 
-.config-card .label {
+/* --- Storage summary --- */
+.summary-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.summary-line strong { font-size: 1.1rem; font-weight: 600; }
+.summary-pct { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.summary-note { font-size: 0.8rem; margin-top: 0.5rem; }
+
+/* --- Settings line: label/value pairs that wrap across the width like words,
+   taking only as much room as their content --- */
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 2rem;
+  font-size: 0.85rem;
+  align-items: baseline;
+}
+
+.setting-label { color: var(--muted); margin-right: 0.5rem; }
+
+.tag {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  margin-right: 0.35rem;
+  border-radius: 0.3rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.toggle-on {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  margin-right: 0.35rem;
+  border-radius: 9999px;
   font-size: 0.7rem;
   font-weight: 600;
-  color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+  color: var(--ok);
 }
 
-.config-card .value {
-  font-size: 0.95rem;
-  color: #f8fafc;
-  margin-top: 0.15rem;
-}
+.setting-off { color: var(--muted); }
 
 /* --- Object tree --- */
 .object-tree {
-  background: #1e293b;
+  background: var(--surface);
   border-radius: 0.5rem;
   padding: 0.5rem 0;
 }
@@ -301,7 +362,7 @@ td.key {
 .tree-dir > summary::before {
   content: "\25b6";
   font-size: 0.6rem;
-  color: #64748b;
+  color: var(--muted);
   transition: transform 0.15s;
   flex-shrink: 0;
 }
@@ -310,7 +371,7 @@ td.key {
   transform: rotate(90deg);
 }
 
-.tree-dir > summary:hover { background: #334155; }
+.tree-dir > summary:hover { background: var(--border); }
 
 .tree-children { padding-left: 1.25rem; }
 
@@ -321,19 +382,19 @@ td.key {
   padding: 0.3rem 1rem 0.3rem 1.85rem;
 }
 
-.tree-file:hover { background: #334155; }
+.tree-file:hover { background: var(--border); }
 
 .tree-name {
   font-size: 0.85rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
 }
 
-.tree-dir > summary .tree-name { color: #2a9d73; }
+.tree-dir > summary .tree-name { color: var(--accent); }
 
 .tree-meta {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--muted);
   margin-left: auto;
   white-space: nowrap;
 }
@@ -341,19 +402,19 @@ td.key {
 .tree-loading {
   padding: 0.3rem 1rem 0.3rem 1.85rem;
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--muted);
   font-style: italic;
 }
 
 .tree-load-more {
   padding: 0.3rem 1rem 0.3rem 1.85rem;
   font-size: 0.8rem;
-  color: #2a9d73;
+  color: var(--accent);
   cursor: pointer;
 }
 
 .tree-load-more:hover {
-  background: #334155;
+  background: var(--border);
 }
 
 /* --- Delete button --- */
@@ -364,15 +425,15 @@ td.key {
   line-height: 1;
   padding: 0.15rem 0.35rem;
   border-radius: 3px;
-  color: #64748b;
+  color: var(--muted);
   opacity: 0;
   transition: opacity 0.15s, color 0.15s;
 }
 
 .tree-file:hover .tree-action { opacity: 1; }
 .tree-dir > summary:hover .tree-action { opacity: 1; }
-.tree-download:hover { color: #60a5fa; background: #1e3a5f; }
-.tree-delete:hover { color: #f87171; background: #4a1d1d; }
+.tree-download:hover { color: var(--info); background: color-mix(in srgb, var(--info) 15%, transparent); }
+.tree-delete:hover { color: var(--error); background: color-mix(in srgb, var(--error) 15%, transparent); }
 
 /* --- Dialog centering (all dialogs) --- */
 dialog {
@@ -381,9 +442,9 @@ dialog {
 
 /* --- Confirm delete dialog --- */
 dialog#confirm-delete {
-  background: #1e293b;
-  color: #e2e8f0;
-  border: 1px solid #334155;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 0.5rem;
   padding: 1.25rem 1.5rem;
   max-width: 360px;
@@ -391,7 +452,7 @@ dialog#confirm-delete {
 }
 
 dialog#confirm-delete::backdrop {
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay);
 }
 
 .dialog-actions {
@@ -408,14 +469,14 @@ dialog#confirm-delete::backdrop {
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--border);
+  color: var(--text);
 }
 
-.dialog-actions button:hover { background: #475569; }
+.dialog-actions button:hover { background: var(--border-strong); }
 
-.btn-danger { background: #dc2626 !important; color: #fff !important; }
-.btn-danger:hover { background: #b91c1c !important; }
+.btn-danger { background: var(--danger) !important; color: var(--bg) !important; }
+.btn-danger:hover { background: var(--danger-hover) !important; }
 .btn-danger:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Upload bar --- */
@@ -433,11 +494,11 @@ dialog#confirm-delete::backdrop {
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  background: #2a9d73;
-  color: #0f172a;
+  background: var(--accent);
+  color: var(--bg);
 }
 
-.btn-upload:hover { background: #34b882; }
+.btn-upload:hover { background: var(--accent-hover); }
 
 #upload-status {
   font-size: 0.8rem;
@@ -446,9 +507,9 @@ dialog#confirm-delete::backdrop {
 
 /* --- Upload dialog --- */
 dialog#upload-dialog {
-  background: #1e293b;
-  color: #e2e8f0;
-  border: 1px solid #334155;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 0.5rem;
   padding: 1.25rem 1.5rem;
   max-width: 480px;
@@ -457,30 +518,30 @@ dialog#upload-dialog {
 }
 
 dialog#upload-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay);
 }
 
 dialog#upload-dialog input[type="text"] {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.85rem;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
 }
 
 dialog#upload-dialog input[type="text"]:focus {
   outline: none;
-  border-color: #2a9d73;
+  border-color: var(--accent);
 }
 
 .upload-label {
   display: block;
   font-size: 0.7rem;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 0.75rem;
@@ -490,17 +551,17 @@ dialog#upload-dialog input[type="text"]:focus {
 dialog#upload-dialog select {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.85rem;
   appearance: auto;
 }
 
 dialog#upload-dialog select:focus {
   outline: none;
-  border-color: #2a9d73;
+  border-color: var(--accent);
 }
 
 .upload-add-btns {
@@ -513,9 +574,9 @@ dialog#upload-dialog select:focus {
   max-height: 200px;
   overflow-y: auto;
   margin-top: 0.5rem;
-  border: 1px solid #334155;
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  background: #0f172a;
+  background: var(--bg);
 }
 
 .upload-file-list:empty {
@@ -527,36 +588,36 @@ dialog#upload-dialog select:focus {
   justify-content: space-between;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--surface);
   font-size: 0.8rem;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-  color: #e2e8f0;
+  color: var(--text);
 }
 
 .upload-file-row:last-child { border-bottom: none; }
 
 .upload-file-size {
-  color: #64748b;
+  color: var(--muted);
   font-size: 0.75rem;
   white-space: nowrap;
   margin-left: 0.5rem;
 }
 
 .upload-file-row.upload-failed {
-  color: #ef4444;
+  color: var(--error);
 }
 
 .upload-progress {
   font-size: 0.8rem;
-  color: #2a9d73;
+  color: var(--accent);
   margin-top: 0.5rem;
 }
 
 /* --- Sync dialog --- */
 dialog#sync-dialog {
-  background: #1e293b;
-  color: #e2e8f0;
-  border: 1px solid #334155;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 0.5rem;
   padding: 1.25rem 1.5rem;
   max-width: 380px;
@@ -565,14 +626,14 @@ dialog#sync-dialog {
 }
 
 dialog#sync-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay);
 }
 
 .sync-label {
   display: block;
   font-size: 0.7rem;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 0.75rem;
@@ -582,17 +643,17 @@ dialog#sync-dialog::backdrop {
 dialog#sync-dialog select {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.85rem;
   appearance: auto;
 }
 
 dialog#sync-dialog select:focus {
   outline: none;
-  border-color: #2a9d73;
+  border-color: var(--accent);
 }
 
 /* --- Logs --- */
@@ -603,8 +664,8 @@ dialog#sync-dialog select:focus {
   cursor: pointer;
   font-size: 0.7rem;
   font-weight: 500;
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--border);
+  color: var(--text);
   vertical-align: middle;
   margin-left: 0.5rem;
   appearance: auto;
@@ -613,7 +674,7 @@ dialog#sync-dialog select:focus {
 .logs-auto-label {
   font-size: 0.7rem;
   font-weight: 500;
-  color: #2a9d73;
+  color: var(--accent);
   vertical-align: middle;
   margin-left: 0.5rem;
   cursor: pointer;
@@ -624,10 +685,10 @@ dialog#sync-dialog select:focus {
 .logs-search {
   width: 100%;
   padding: 0.45rem 0.75rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 0.35rem;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 0.85rem;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
   margin-bottom: 0.5rem;
@@ -635,11 +696,11 @@ dialog#sync-dialog select:focus {
 
 .logs-search:focus {
   outline: none;
-  border-color: #2a9d73;
+  border-color: var(--accent);
 }
 
 .logs-container {
-  background: #1e293b;
+  background: var(--surface);
   border-radius: 0.5rem;
   padding: 0.5rem 0;
   max-height: 500px;
@@ -651,7 +712,7 @@ dialog#sync-dialog select:focus {
 
 .logs-empty {
   padding: 1rem;
-  color: #64748b;
+  color: var(--muted);
   font-style: italic;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
@@ -667,7 +728,7 @@ dialog#sync-dialog select:focus {
   padding: 0.15rem 1rem;
 }
 
-.log-entry-wrap:hover { background: #334155; }
+.log-entry-wrap:hover { background: var(--border); }
 
 .log-entry-detail {
   display: none;
@@ -675,15 +736,15 @@ dialog#sync-dialog select:focus {
   padding: 0.5rem 1rem 0.6rem 4.5rem;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  background: #0f172a;
-  color: #cbd5e1;
+  background: var(--bg);
+  color: var(--text);
   font-size: 0.85em;
 }
 
 .log-entry-wrap.expanded .log-entry-detail { display: block; }
 
 .log-time {
-  color: #64748b;
+  color: var(--muted);
   flex-shrink: 0;
 }
 
@@ -694,13 +755,13 @@ dialog#sync-dialog select:focus {
 }
 
 .log-msg {
-  color: #e2e8f0;
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .log-attrs {
-  color: #64748b;
+  color: var(--muted);
   margin-left: auto;
   white-space: nowrap;
   overflow: hidden;
@@ -709,13 +770,13 @@ dialog#sync-dialog select:focus {
   flex-shrink: 0;
 }
 
-.log-level-error.log-entry-wrap { border-left-color: #ef4444; }
-.log-level-error .log-lvl { color: #ef4444; }
+.log-level-error.log-entry-wrap { border-left-color: var(--error); }
+.log-level-error .log-lvl { color: var(--error); }
 
-.log-level-warn.log-entry-wrap { border-left-color: #f59e0b; }
-.log-level-warn .log-lvl { color: #f59e0b; }
+.log-level-warn.log-entry-wrap { border-left-color: var(--warn); }
+.log-level-warn .log-lvl { color: var(--warn); }
 
-.log-level-info .log-lvl { color: #22c55e; }
+.log-level-info .log-lvl { color: var(--ok); }
 
-.log-level-debug .log-lvl { color: #64748b; }
-.log-level-debug .log-msg { color: #94a3b8; }
+.log-level-debug .log-lvl { color: var(--muted); }
+.log-level-debug .log-msg { color: var(--text-dim); }

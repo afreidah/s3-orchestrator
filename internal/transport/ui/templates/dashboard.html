@@ -31,38 +31,27 @@
   <!-- Storage Summary -->
   <section>
     <h2>Storage Summary</h2>
-    <div class="config-grid">
-      <div class="config-card">
-        <div class="label">Total Used</div>
-        <div class="value">{{formatBytes .TotalBytesUsed}}</div>
+    <div class="panel">
+      <div class="summary-line">
+        {{if eq .TotalBytesLimit 0}}
+        <span><strong>{{formatBytes .TotalBytesUsed}}</strong> used, no capacity limit</span>
+        {{else}}
+        <span><strong>{{formatBytes .TotalBytesUsed}}</strong> of {{formatBytes .TotalBytesLimit}} used</span>
+        <span class="summary-pct">{{pct .TotalBytesUsed .TotalBytesLimit}}</span>
+        {{end}}
       </div>
-      <div class="config-card">
-        <div class="label">Total Capacity</div>
-        <div class="value">
-          {{- if eq .TotalBytesLimit 0}}unlimited
-          {{- else}}{{formatBytes .TotalBytesLimit}}
-          {{- end -}}
-        </div>
-      </div>
-      <div class="config-card">
-        <div class="label">Usage</div>
-        <div class="value">{{pct .TotalBytesUsed .TotalBytesLimit}}</div>
-      </div>
-      {{if ne .TotalOrphanBytes 0}}
-      <div class="config-card">
-        <div class="label">Orphan Bytes</div>
-        <div class="value orphan-value">{{formatBytes .TotalOrphanBytes}}</div>
+      {{if ne .TotalBytesLimit 0}}
+      <div class="bar-track">
+        <div class="bar-fill {{barClass .TotalBytesUsed .TotalBytesLimit}}" style="width:{{pctFloat .TotalBytesUsed .TotalBytesLimit}}%"></div>
+        {{if ne .TotalOrphanBytes 0}}
+        <div class="bar-fill bar-orphan" style="width:{{pctFloat .TotalOrphanBytes .TotalBytesLimit}}%"></div>
+        {{end}}
       </div>
       {{end}}
-    </div>
-    {{if ne .TotalBytesLimit 0}}
-    <div class="bar-track" style="margin-top:0.5rem">
-      <div class="bar-fill" style="width:{{pctFloat .TotalBytesUsed .TotalBytesLimit}}%;background:{{barColor .TotalBytesUsed .TotalBytesLimit}}"></div>
       {{if ne .TotalOrphanBytes 0}}
-      <div class="bar-fill bar-orphan" style="width:{{pctFloat .TotalOrphanBytes .TotalBytesLimit}}%"></div>
+      <div class="summary-note orphan-value">{{formatBytes .TotalOrphanBytes}} orphaned</div>
       {{end}}
     </div>
-    {{end}}
   </section>
 
   <!-- Backends -->
@@ -122,7 +111,7 @@
             <td>
               {{if ne $stat.BytesLimit 0}}
               <div class="bar-track">
-                <div class="bar-fill" style="width:{{pctFloat $stat.BytesUsed $stat.BytesLimit}}%;background:{{barColor $stat.BytesUsed $stat.BytesLimit}}"></div>
+                <div class="bar-fill {{barClass $stat.BytesUsed $stat.BytesLimit}}" style="width:{{pctFloat $stat.BytesUsed $stat.BytesLimit}}%"></div>
                 {{if ne $stat.OrphanBytes 0}}
                 <div class="bar-fill bar-orphan" style="width:{{pctFloat $stat.OrphanBytes $stat.BytesLimit}}%"></div>
                 {{end}}
@@ -169,6 +158,16 @@
           <td>Unreachable</td>
           <td class="num">{{if ne .Data.DeferredCopies 0}}<span class="orphan-value">{{formatNumber .Data.DeferredCopies}}</span>{{else}}&mdash;{{end}}</td>
           <td>Copies the sweep cannot read because their backend is over its usage limit. They are excluded from the two figures above, because a copy that can never be stamped would pin the age to the clock and no amount of scrubbing would lower it. The sweep will not clear this on its own: raise the backend's limit or wait for the period to roll over.</td>
+        </tr>
+        <tr>
+          <td>Checks run</td>
+          <td class="num">{{printf "%.0f" .Integrity.ChecksTotal}}</td>
+          <td>Hash comparisons the scrubber has performed. Objects are sampled randomly with replacement on each run, so this counts operations, not distinct objects.</td>
+        </tr>
+        <tr>
+          <td>Mismatches</td>
+          <td class="num">{{if gt .Integrity.ErrorsTotal 0.0}}<span class="orphan-value">{{printf "%.0f" .Integrity.ErrorsTotal}}</span>{{else}}0{{end}}</td>
+          <td>Hash mismatches detected. Mismatches divided by checks run is a valid corruption rate, regardless of how often the same object was sampled.</td>
         </tr>
       </tbody>
     </table>
@@ -324,71 +323,18 @@
   <!-- Configuration -->
   <section>
     <h2>Configuration</h2>
-    <div class="config-grid">
-      <div class="config-card">
-        <div class="label">Virtual Buckets</div>
-        <div class="value">{{range $i, $b := .Buckets}}{{if $i}}, {{end}}{{$b}}{{end}}</div>
-      </div>
-      <div class="config-card">
-        <div class="label">Write Routing</div>
-        <div class="value">{{.Config.RoutingStrategy}}</div>
-      </div>
-      <div class="config-card">
-        <div class="label">Replication Factor</div>
-        <div class="value">{{.Config.ReplicationFactor}}</div>
-      </div>
-      <div class="config-card">
-        <div class="label">Rebalancer</div>
-        <div class="value">
-          {{if .Config.RebalanceEnabled}}enabled ({{.Config.RebalanceStrategy}})
-          {{else}}disabled
-          {{end}}
-        </div>
-      </div>
-      <div class="config-card">
-        <div class="label">Rate Limiting</div>
-        <div class="value">
-          {{if .Config.RateLimitEnabled}}enabled
-          {{else}}disabled
-          {{end}}
-        </div>
-      </div>
-      <div class="config-card">
-        <div class="label">Encryption</div>
-        <div class="value">
-          {{if .Config.EncryptionEnabled}}enabled
-          {{else}}disabled
-          {{end}}
-        </div>
-      </div>
-      <div class="config-card">
-        <div class="label">Compression</div>
-        <div class="value">
-          {{if .Config.CompressionEnabled}}enabled
-          {{else}}disabled
-          {{end}}
-        </div>
-      </div>
-      <div class="config-card">
-        <div class="label">Integrity</div>
-        <div class="value">
-          {{if .Config.IntegrityEnabled}}enabled
-            {{if .Config.IntegrityVerifyOnRead}} (verify on read){{end}}
-            {{if .Config.IntegrityScrubberInterval}}<br><span class="meta">scrubber: {{.Config.IntegrityScrubberInterval}}</span>{{end}}
-          {{else}}disabled
-          {{end}}
-        </div>
-      </div>
-      {{if .Config.IntegrityEnabled}}
-      <div class="config-card" title="Total hash comparison operations performed by the scrubber. Objects are sampled randomly with replacement on each run, so this counts operations, not distinct objects.">
-        <div class="label">Integrity Checks</div>
-        <div class="value">{{printf "%.0f" .Integrity.ChecksTotal}}</div>
-      </div>
-      <div class="config-card" title="Hash mismatches detected. errors / checks is a valid corruption rate regardless of object overlap.">
-        <div class="label">Integrity Errors</div>
-        <div class="value{{if gt .Integrity.ErrorsTotal 0.0}} orphan-value{{end}}">{{printf "%.0f" .Integrity.ErrorsTotal}}</div>
-      </div>
-      {{end}}
+    <div class="settings">
+      <span class="setting"><span class="setting-label">Buckets</span>{{range .Buckets}}<span class="tag">{{.}}</span>{{end}}</span>
+      <span class="setting"><span class="setting-label">Routing</span>{{.Config.RoutingStrategy}}</span>
+      <span class="setting"><span class="setting-label">Replication</span>{{.Config.ReplicationFactor}}</span>
+      <span class="setting"><span class="setting-label">Rebalancer</span>{{if .Config.RebalanceEnabled}}<span class="toggle-on">on</span>{{.Config.RebalanceStrategy}}{{else}}<span class="setting-off">off</span>{{end}}</span>
+      <span class="setting"><span class="setting-label">Rate limiting</span>{{if .Config.RateLimitEnabled}}<span class="toggle-on">on</span>{{else}}<span class="setting-off">off</span>{{end}}</span>
+      <span class="setting"><span class="setting-label">Encryption</span>{{if .Config.EncryptionEnabled}}<span class="toggle-on">on</span>{{else}}<span class="setting-off">off</span>{{end}}</span>
+      <span class="setting"><span class="setting-label">Compression</span>{{if .Config.CompressionEnabled}}<span class="toggle-on">on</span>{{else}}<span class="setting-off">off</span>{{end}}</span>
+      <span class="setting"><span class="setting-label">Integrity</span>{{if .Config.IntegrityEnabled}}<span class="toggle-on">on</span>
+        {{- if .Config.IntegrityVerifyOnRead}}verify on read{{end}}
+        {{- if .Config.IntegrityScrubberInterval}}{{if .Config.IntegrityVerifyOnRead}},{{end}} scrubber every {{.Config.IntegrityScrubberInterval}}{{end}}
+        {{- else}}<span class="setting-off">off</span>{{end}}</span>
     </div>
   </section>
 

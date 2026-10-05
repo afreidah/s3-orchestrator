@@ -129,28 +129,28 @@ func TestPctFloat(t *testing.T) {
 	}
 }
 
-// TestBarColor verifies the bar color contract.
-// Asserts that barColor(, ) = , want.
-func TestBarColor(t *testing.T) {
+// TestBarClass verifies each usage band gets its bar class: ok under 70%,
+// warn from 70%, error from 90%, and unlimited with no limit.
+func TestBarClass(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		used, limit int64
 		want        string
 	}{
-		{50, 100, "#22c55e"},  // green (<70%)
-		{69, 100, "#22c55e"},  // green (69%)
-		{70, 100, "#f59e0b"},  // amber (70%)
-		{85, 100, "#f59e0b"},  // amber (85%)
-		{90, 100, "#ef4444"},  // red (90%)
-		{100, 100, "#ef4444"}, // red (100%)
-		{0, 0, "#6b7280"},     // gray (unlimited)
-		{500, 0, "#6b7280"},   // gray (unlimited)
+		{50, 100, "bar-ok"},
+		{69, 100, "bar-ok"},
+		{70, 100, "bar-warn"},
+		{85, 100, "bar-warn"},
+		{90, 100, "bar-error"},
+		{100, 100, "bar-error"},
+		{0, 0, "bar-unlimited"},
+		{500, 0, "bar-unlimited"},
 	}
 
 	for _, tt := range tests {
-		got := barColor(tt.used, tt.limit)
+		got := barClass(tt.used, tt.limit)
 		if got != tt.want {
-			t.Errorf("barColor(%d, %d) = %q, want %q", tt.used, tt.limit, got, tt.want)
+			t.Errorf("barClass(%d, %d) = %q, want %q", tt.used, tt.limit, got, tt.want)
 		}
 	}
 }

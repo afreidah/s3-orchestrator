@@ -48,7 +48,7 @@ func loadTemplates() *template.Template {
 		"formatDuration": humanize.Duration,
 		"pct":            pct,
 		"pctFloat":       pctFloat,
-		"barColor":       barColor,
+		"barClass":       barClass,
 		"joinStrings":    strings.Join,
 		"sub":            sub,
 		"ratio":          ratio,
@@ -111,18 +111,19 @@ func pctFloat(used, limit int64) float64 {
 	return v
 }
 
-// barColor returns a CSS color based on the usage percentage.
-func barColor(used, limit int64) string {
+// barClass returns the stylesheet class that colours a usage bar by how full
+// it is, so the colours come from the page's palette rather than from here.
+func barClass(used, limit int64) string {
 	if limit == 0 {
-		return "#6b7280" // gray for unlimited
+		return "bar-unlimited"
 	}
 	p := float64(used) / float64(limit) * 100
 	switch {
 	case p >= 90:
-		return "#ef4444" // red
+		return "bar-error"
 	case p >= 70:
-		return "#f59e0b" // amber
+		return "bar-warn"
 	default:
-		return "#22c55e" // green
+		return "bar-ok"
 	}
 }
