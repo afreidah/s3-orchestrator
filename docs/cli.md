@@ -422,6 +422,26 @@ s3-orchestrator tui
 | `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
 | `-access-key` | `$S3O_ACCESS_KEY_ID` | Access key ID to sign requests with |
 | `-secret-key` | `$S3O_SECRET_ACCESS_KEY` | Secret access key to sign requests with |
+| `-theme` | `$S3O_TUI_THEME`, else `dark` | Colour theme: a preset, then `slot:colour` overrides |
+
+**Themes:** the theme spec follows fzf's `--color`: an optional preset, then comma-separated `slot:colour` overrides. The presets are `dark` (Tokyo Night, the default), `light` (Tokyo Night Day, for light terminals) and `high-contrast`. A colour is a hex value (`#rgb` or `#rrggbb`) or a 256-colour code from 0 to 255. An unknown preset, unknown slot or invalid colour stops the TUI at startup with an error naming it.
+
+```bash
+s3-orchestrator tui -theme light
+export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
+```
+
+| Slot | Colours |
+|------|---------|
+| `title-bg`, `title-fg` | The title bar of the focused pane, and the text of the confirmation prompt |
+| `surface` | The title bar of the unfocused pane |
+| `accent` | The active nav entry, the focused nav divider, and table headers |
+| `header` | The logs column header and the inspector's tag label |
+| `selected-bg`, `selected-fg` | The highlighted table row |
+| `text` | Nav entries, tag values, and INFO log levels |
+| `muted` | Paths, notices, and the unfocused title text |
+| `border` | The nav divider while the content has focus |
+| `ok`, `warn`, `error` | Healthy states, warnings and the confirmation prompt, and failures |
 
 **Keys:**
 

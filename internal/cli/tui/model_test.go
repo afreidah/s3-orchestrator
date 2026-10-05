@@ -289,6 +289,13 @@ func TestHandleKey_TableDelegationAndUnknownMsg(t *testing.T) {
 	}
 }
 
+// targetOf parses args and returns only the target, for the tests that check
+// address and credential resolution.
+func targetOf(args []string) (target, error) {
+	t, _, err := parseArgs(args)
+	return t, err
+}
+
 func TestResolveTarget(t *testing.T) {
 	// The resolver falls back to these, so a shell holding a real keypair
 	// would satisfy the half-keypair case below and hide the check.
@@ -296,7 +303,7 @@ func TestResolveTarget(t *testing.T) {
 	t.Setenv("S3O_SECRET_ACCESS_KEY", "")
 
 	// flags win and the address gets an http prefix
-	got, err := resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
+	got, err := targetOf([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
 	if err != nil || got.baseAddr != "http://host:9000" {
 		t.Fatalf("flags: addr=%q err=%v", got.baseAddr, err)
 	}
@@ -305,25 +312,25 @@ func TestResolveTarget(t *testing.T) {
 	}
 
 	// an explicit scheme is left untouched
-	if got, _ := resolveTarget([]string{
+	if got, _ := targetOf([]string{
 		"-addr", "https://x", "-access-key", "AK", "-secret-key", "SK",
 	}); got.baseAddr != "https://x" {
 		t.Errorf("scheme passthrough: addr=%q", got.baseAddr)
 	}
 
 	// half a keypair proves nothing and cannot sign
-	if got, _ := resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK"}); got.signs() {
+	if got, _ := targetOf([]string{"-addr", "host:9000", "-access-key", "AK"}); got.signs() {
 		t.Error("a target holding only an access key reported that it signs")
 	}
 
 	// an unknown flag surfaces the parse error
-	if _, err := resolveTarget([]string{"-nope"}); err == nil {
+	if _, err := targetOf([]string{"-nope"}); err == nil {
 		t.Error("bad flag: expected error")
 	}
 
 	// with no flags/env and an unreadable config, resolution fails
 	t.Setenv("S3O_ADMIN_ADDR", "")
-	if _, err := resolveTarget([]string{"-config", "/no/such/file.yaml"}); err == nil {
+	if _, err := targetOf([]string{"-config", "/no/such/file.yaml"}); err == nil {
 		t.Error("missing target: expected error")
 	}
 }
@@ -335,7 +342,7 @@ func TestResolveTarget(t *testing.T) {
 func TestResolveTarget_KeypairNeedsNoConfig(t *testing.T) {
 	t.Setenv("S3O_ADMIN_ADDR", "")
 
-	got, err := resolveTarget([]string{
+	got, err := targetOf([]string{
 		"-config", "/no/such/file.yaml",
 		"-addr", "host:9000",
 		"-access-key", "AK", "-secret-key", "SK",

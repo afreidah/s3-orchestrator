@@ -129,11 +129,17 @@ func newTable(specs []columnSpec) table.Model {
 		cols[i] = table.Column{Title: s.title, Width: s.min}
 	}
 	t := table.New(table.WithFocused(true), table.WithColumns(cols))
-	st := table.DefaultStyles()
-	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("39"))
-	st.Selected = selectedStyle
-	t.SetStyles(st)
+	t.SetStyles(tableStyles())
 	return t
+}
+
+// tableStyles is the table's default styling with the theme's accent on the
+// header and the shared selected-row highlight.
+func tableStyles() table.Styles {
+	st := table.DefaultStyles()
+	st.Header = st.Header.Bold(true).Foreground(activeTheme.accent)
+	st.Selected = selectedStyle
+	return st
 }
 
 // -------------------------------------------------------------------------

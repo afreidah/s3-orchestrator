@@ -642,23 +642,36 @@ func (t target) signs() bool {
 	return t.accessKeyID != "" && t.secretKey != ""
 }
 
-// resolveTarget parses the tui flags and resolves the admin base address and
-// credential (flag -> env -> config), returning an http-prefixed base address
-// or an error describing what is missing.
-func resolveTarget(args []string) (target, error) {
+// parseArgs parses the tui flags into the theme to draw with and the admin
+// target. The theme spec comes from -theme, else $S3O_TUI_THEME, and is
+// checked first, so a bad one is reported whatever else is missing. The
+// target's address and credential resolve flag -> env -> config; the address
+// comes back http-prefixed, or an error says what is missing.
+func parseArgs(args []string) (target, theme, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
 	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
 	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
+	themeSpec := fs.String("theme", "", "Colour theme: a preset, then slot:colour overrides (overrides $S3O_TUI_THEME)")
 	if err := fs.Parse(args); err != nil {
-		return target{}, err
+		return target{}, theme{}, err
 	}
+	th, err := parseTheme(cmp.Or(*themeSpec, os.Getenv(EnvTheme)))
+	if err != nil {
+		return target{}, theme{}, err
+	}
+	t, err := resolveTarget(*configPath, *addr, *accessKey, *secretKey)
+	return t, th, err
+}
 
+// resolveTarget resolves the admin base address and credential from the flag
+// values, falling back to the environment and then the config file.
+func resolveTarget(configPath, addr, accessKey, secretKey string) (target, error) {
 	t := target{
-		accessKeyID: cmp.Or(*accessKey, os.Getenv(admintarget.EnvAccessKey)),
-		secretKey:   cmp.Or(*secretKey, os.Getenv(admintarget.EnvSecretKey)),
+		accessKeyID: cmp.Or(accessKey, os.Getenv(admintarget.EnvAccessKey)),
+		secretKey:   cmp.Or(secretKey, os.Getenv(admintarget.EnvSecretKey)),
 	}
 	if !t.signs() {
 		return target{}, errors.New("a credential is required (set -access-key and -secret-key, " +
@@ -666,8 +679,8 @@ func resolveTarget(args []string) (target, error) {
 	}
 	// The config file is only read when the address is still missing, so a
 	// keypair and an address given outright need no config on this machine.
-	baseAddr, err := admintarget.Resolve(*addr, func() (*config.Config, error) {
-		return config.LoadConfig(*configPath)
+	baseAddr, err := admintarget.Resolve(addr, func() (*config.Config, error) {
+		return config.LoadConfig(configPath)
 	})
 	if err != nil {
 		return target{}, err
@@ -686,14 +699,15 @@ func resolveTarget(args []string) (target, error) {
 	return t, nil
 }
 
-// Run resolves the admin target, starts the TUI, and returns a process exit
-// code.
+// Run resolves the admin target and theme, starts the TUI, and returns a
+// process exit code.
 func Run(args []string, _, stderr io.Writer) int { // codecov:ignore -- TUI entry point
-	t, err := resolveTarget(args)
+	t, th, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
+	useTheme(&th)
 	if _, err := tea.NewProgram(initialModel(newAPIClient(t)), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
 		return 1

@@ -61,6 +61,8 @@ s3-orchestrator tui -addr https://s3.example.com \
   -access-key "$ACCESS_KEY" -secret-key "$SECRET_KEY"
 ```
 
+The colours default to the `dark` preset (Tokyo Night). On a light terminal pass `-theme light`, or set `S3O_TUI_THEME=light` once. `high-contrast` is the third preset, and individual colours can be overridden after the preset, as in `-theme "dark,accent:#ff9e64"`. The [CLI reference](../../docs/cli/) lists every colour slot.
+
 ## Step 2: Navigate the object namespace
 
 The TUI opens on the Dashboard; press `f` for the Files section, which starts at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and a letter jumps straight to a section.

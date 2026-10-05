@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // -------------------------------------------------------------------------
@@ -197,9 +196,9 @@ func (m *model) sidebarView() string {
 	b.WriteString("\n")
 	b.WriteString(m.dbIndicator())
 
-	divider := lipgloss.Color("240")
+	divider := activeTheme.border
 	if m.navFocus {
-		divider = lipgloss.Color("39")
+		divider = activeTheme.accent
 	}
 	return sidebarStyle.BorderForeground(divider).Width(sidebarWidth).Height(m.height).Render(b.String())
 }

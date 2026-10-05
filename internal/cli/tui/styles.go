@@ -3,8 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Lipgloss styles for the browser view. Colours use 256-colour codes; Lipgloss
-// degrades them automatically on terminals with fewer colours.
+// Lipgloss styles for every pane, built from the active theme. useTheme sets
+// them once at startup, before the program draws anything, so the render
+// code reads them as fixed values. Lipgloss degrades the colours on
+// terminals with fewer of them.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -15,77 +17,83 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// -------------------------------------------------------------------------
-// PANE AND TABLE STYLES
-// -------------------------------------------------------------------------
+// activeTheme is the theme the styles were last built from. The sidebar
+// reads its border colours from it directly, because the divider changes
+// colour with focus.
+var activeTheme theme
 
-// titleStyle and the other styles the browser pane draws itself with.
+// titleStyle and the other styles the panes draw themselves with.
 //
 // The muted title is what makes focus obvious: the pane holding focus keeps the
-// bright bar, the other drops to grey. The tag label matches the column headers
-// so it reads as a field name, and its left pad aligns the line with the padded
-// table cells beneath it.
+// bright bar, the other drops to the surface colour. The tag label matches the
+// column headers so it reads as a field name, and its left pad aligns the line
+// with the padded table cells beneath it. helpStyle, navDisabledStyle and
+// logLevelDebug are faint rather than coloured, so they recede on any theme.
 var (
-	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
-	titleMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Background(lipgloss.Color("238")).Padding(0, 1)
-	pathStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // current prefix and the empty-listing notice
-	selectedStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62"))
-	helpStyle       = lipgloss.NewStyle().Faint(true)                                  // footer key hints
-	colHeaderStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // column header row
-	tagLabelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")).PaddingLeft(1)
-	tagValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	errStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+	titleStyle       lipgloss.Style
+	titleMutedStyle  lipgloss.Style
+	pathStyle        lipgloss.Style
+	selectedStyle    lipgloss.Style
+	helpStyle        lipgloss.Style
+	colHeaderStyle   lipgloss.Style
+	tagLabelStyle    lipgloss.Style
+	tagValueStyle    lipgloss.Style
+	errStyle         lipgloss.Style
+	confirmStyle     lipgloss.Style
+	statusOKStyle    lipgloss.Style
+	statusErrStyle   lipgloss.Style
+	sidebarStyle     lipgloss.Style
+	navTitleStyle    lipgloss.Style
+	navItemStyle     lipgloss.Style
+	navActiveStyle   lipgloss.Style
+	navDisabledStyle lipgloss.Style
+	logLevelDebug    lipgloss.Style
+	logLevelInfo     lipgloss.Style
+	logLevelWarn     lipgloss.Style
+	logLevelError    lipgloss.Style
 )
 
-// -------------------------------------------------------------------------
-// ACTION FEEDBACK
-// -------------------------------------------------------------------------
+func init() {
+	def := themePresets[defaultThemeName]
+	useTheme(&def)
+}
 
-// confirmStyle renders an armed action's y/N prompt in the footer; the status
-// styles render what the action reported back.
-var (
-	confirmStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214")).Padding(0, 1)
-	statusOKStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("71"))
-	statusErrStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-)
+// useTheme builds every style from t. It is called once at startup; nothing
+// renders concurrently with it.
+func useTheme(t *theme) {
+	activeTheme = *t
+	plain := lipgloss.NewStyle()
+	bold := plain.Bold(true)
 
-// -------------------------------------------------------------------------
-// NAVIGATION
-// -------------------------------------------------------------------------
+	titleStyle = bold.Foreground(t.titleFG).Background(t.titleBG).Padding(0, 1)
+	titleMutedStyle = plain.Foreground(t.muted).Background(t.surface).Padding(0, 1)
+	pathStyle = plain.Foreground(t.muted)
+	selectedStyle = bold.Foreground(t.selectedFG).Background(t.selectedBG)
+	helpStyle = plain.Faint(true)
+	colHeaderStyle = bold.Foreground(t.header)
+	tagLabelStyle = bold.Foreground(t.header).PaddingLeft(1)
+	tagValueStyle = plain.Foreground(t.text)
+	errStyle = bold.Foreground(t.err)
 
-// sidebarStyle frames the left nav with a right divider; the item styles render
-// its entries by state.
-var (
-	sidebarStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, true, false, false).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 1)
-	navTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
-	navItemStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252")) // idle
-	navActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	navDisabledStyle = lipgloss.NewStyle().Faint(true) // not yet available
-)
+	confirmStyle = bold.Foreground(t.titleFG).Background(t.warn).Padding(0, 1)
+	statusOKStyle = bold.Foreground(t.ok)
+	statusErrStyle = bold.Foreground(t.err)
 
-// -------------------------------------------------------------------------
-// LOG LEVELS
-// -------------------------------------------------------------------------
+	sidebarStyle = plain.Border(lipgloss.NormalBorder(), false, true, false, false).
+		BorderForeground(t.border).Padding(0, 1)
+	navTitleStyle = titleStyle
+	navItemStyle = plain.Foreground(t.text)
+	navActiveStyle = bold.Foreground(t.accent)
+	navDisabledStyle = plain.Faint(true)
 
-// logLevelDebug and friends colour the logs pane's LEVEL column by severity.
-// INFO carries the bulk of the entries and stays neutral so WARN and ERROR
-// stand out rather than drowning in colour. Unknown levels fall back to info.
-var (
-	logLevelDebug = lipgloss.NewStyle().Faint(true)
-	logLevelInfo  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	logLevelWarn  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	logLevelError = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-)
+	logLevelDebug = plain.Faint(true)
+	logLevelInfo = plain.Foreground(t.text)
+	logLevelWarn = bold.Foreground(t.warn)
+	logLevelError = bold.Foreground(t.err)
+}
 
-// -------------------------------------------------------------------------
-// SELECTORS
-// -------------------------------------------------------------------------
-
-// usageStyle colours a usage percentage: green under 70, yellow through 90,
-// red at or above 90, so a near-full backend stands out.
+// usageStyle colours a usage percentage: ok under 70, warn through 90, error
+// at or above 90, so a near-full backend stands out.
 func usageStyle(pct int) lipgloss.Style {
 	switch {
 	case pct >= 90:
