@@ -1253,9 +1253,13 @@ components:
                     type: string
                 status:
                     type: string
+                unreadable:
+                    format: int64
+                    type: integer
             required:
                 - status
                 - processed
+                - unreadable
                 - done
             type: object
         Bucket:

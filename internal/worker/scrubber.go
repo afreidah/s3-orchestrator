@@ -21,6 +21,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -500,6 +501,12 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, backend 
 // for the batch tally and a status for the progress stream.
 func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemResult {
 	digests, hashErr := s.readAndHash(ctx, loc)
+	if undecodable(hashErr) {
+		// No later pass could hash it either, so it is not a failure.
+		s.log.WarnContext(ctx, "skipping object that cannot be decoded",
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
+		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusUnreadable}
+	}
 	if hashErr != nil {
 		s.log.WarnContext(ctx, "failed to hash object",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
@@ -512,6 +519,12 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemRe
 	}
 	s.recordETag(ctx, loc, digests.MD5)
 	return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+}
+
+// undecodable reports whether a hashing error is permanent rather than an outage
+// that clears on its own.
+func undecodable(err error) bool {
+	return errors.Is(err, core.ErrEncryptionFlagMismatch) || errors.Is(err, errNoCodec)
 }
 
 // recordETag gives an object with no recorded ETag the one this pass just

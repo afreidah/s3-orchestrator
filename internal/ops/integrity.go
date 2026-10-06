@@ -46,10 +46,12 @@ type ScrubResult struct {
 
 // BackfillResult reports one backfill run. Done is true only when the backlog
 // drained; a run stopped by the object cap or a cancelled context reports
-// false so the caller knows more work remains.
+// false so the caller knows more work remains. Unreadable counts copies that
+// could not be decoded and were skipped.
 type BackfillResult struct {
-	Processed int
-	Done      bool
+	Processed  int
+	Unreadable int
+	Done       bool
 }
 
 // IntegrityDeps holds the collaborators Integrity requires.
@@ -166,8 +168,8 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 
 	var total int
-	done := i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, backfillCounter(observer, &total), &total)
-	return BackfillResult{Processed: total, Done: done}, nil
+	done, unreadable := i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, backfillCounter(observer, &total), &total)
+	return BackfillResult{Processed: total, Unreadable: unreadable, Done: done}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -175,23 +177,24 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 // -------------------------------------------------------------------------
 
 // drainBackfill runs backfill passes until the backlog drains, the max-objects
-// cap is hit, or the context is cancelled. Returns true only when the backlog
-// was fully drained.
-func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer, total *int) bool {
+// cap is hit, or the context is cancelled. Reports whether the backlog was
+// fully drained and how many copies were skipped as unreadable.
+func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer, total *int) (done bool, unreadable int) {
 	for offset := 0; ; {
-		_, nextOffset := i.scrubber.Backfill(ctx, batchSize, offset, backend, observer)
+		sum, nextOffset := i.scrubber.Backfill(ctx, batchSize, offset, backend, observer)
+		unreadable += sum.Skipped
 		if nextOffset == 0 {
-			return true
+			return true, unreadable
 		}
 		offset = nextOffset
 		if maxObjects > 0 && *total >= maxObjects {
-			return false
+			return false, unreadable
 		}
 		if ctx.Err() != nil {
-			return false
+			return false, unreadable
 		}
 		if pause > 0 && !sleepOrCancel(ctx, pause) {
-			return false
+			return false, unreadable
 		}
 	}
 }

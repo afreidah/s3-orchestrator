@@ -286,6 +286,10 @@ func TestBackfill_BackendError(t *testing.T) {
 	if processed != 0 {
 		t.Errorf("expected 0 processed, got %d", processed)
 	}
+	// A read error can clear on its own, so it fails rather than skipping.
+	if backfillSum.Failed != 1 || backfillSum.Skipped != 0 {
+		t.Errorf("failed = %d, skipped = %d, want 1 failed", backfillSum.Failed, backfillSum.Skipped)
+	}
 }
 
 // TestBackfill_EmptyBatch verifies the backfill empty batch contract.
@@ -459,7 +463,8 @@ func TestScrub_RefusesEnvelopeOnPlainRow(t *testing.T) {
 
 // TestBackfill_RefusesEnvelopeOnPlainRow verifies backfill never writes a hash
 // for a copy whose bytes disagree with its row. This is the path that would
-// cement the divergence permanently, since these rows have no hash yet.
+// cement the divergence permanently, since these rows have no hash yet. The
+// copy is skipped as unreadable rather than failed, since no pass can hash it.
 func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 	t.Parallel()
 	s, ops, _, be, ms := setupScrubber(t)
@@ -476,11 +481,37 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 	}, func() {}, nil)
 
 	sum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
-	if sum.Failed != 1 {
-		t.Errorf("expected 1 failed, got %d", sum.Failed)
+	if sum.Skipped != 1 || sum.Failed != 0 {
+		t.Errorf("skipped = %d, failed = %d, want 1 skipped and none failed", sum.Skipped, sum.Failed)
 	}
 	if ms.lastUpdatedHash != "" {
 		t.Errorf("no hash may be stored for a divergent copy, got %q", ms.lastUpdatedHash)
+	}
+}
+
+// TestBackfill_SkipsKeylessRow verifies a row encrypted with no key is skipped
+// as unreadable without a backend read, rather than failing every cycle.
+func TestBackfill_SkipsKeylessRow(t *testing.T) {
+	t.Parallel()
+	s, ops, _, _, ms := setupScrubber(t)
+
+	ms.objectsWithoutHash = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 100, Encrypted: true},
+	}
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	var statuses []string
+	observer := func(step progress.Step) {
+		if step.Phase == progress.PhaseEnd {
+			statuses = append(statuses, step.Status)
+		}
+	}
+	sum, _ := s.Backfill(context.Background(), 10, 0, "", observer)
+	if sum.Skipped != 1 || sum.Failed != 0 || sum.Outcome() != OutcomeEmpty {
+		t.Errorf("summary = %+v (outcome %s), want one skip and an empty outcome", sum, sum.Outcome())
+	}
+	if !slices.Equal(statuses, []string{progress.StatusUnreadable}) {
+		t.Errorf("statuses = %v, want [%s]", statuses, progress.StatusUnreadable)
 	}
 }
 

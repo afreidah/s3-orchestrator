@@ -71,8 +71,9 @@ type ScrubResponse struct {
 // backlog in batches knows when to stop.
 type BackfillChecksumsResponse struct {
 	IntegrityOutcome
-	Processed int  `json:"processed"`
-	Done      bool `json:"done"`
+	Processed  int  `json:"processed"`
+	Unreadable int  `json:"unreadable"`
+	Done       bool `json:"done"`
 }
 
 // ReconcileResponse reports a reconcile pass: objects adopted from backend

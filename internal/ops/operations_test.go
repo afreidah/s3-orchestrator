@@ -936,6 +936,27 @@ func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
 	}
 }
 
+// TestBackfillChecksums_ReportsUnreadable asserts the copies each pass skipped
+// as undecodable are summed across passes into the run's result.
+func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
+	t.Parallel()
+	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
+	gomock.InOrder(
+		scrubber.EXPECT().Backfill(gomock.Any(), 10, 0, "", gomock.Any()).
+			Return(worker.WorkSummary{Attempted: 8, Succeeded: 8, Skipped: 2}, 10),
+		scrubber.EXPECT().Backfill(gomock.Any(), 10, 10, "", gomock.Any()).
+			Return(worker.WorkSummary{Skipped: 3}, 0),
+	)
+
+	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 0, 0, "", nil)
+	if err != nil {
+		t.Fatalf("BackfillChecksums: %v", err)
+	}
+	if res.Unreadable != 5 || !res.Done {
+		t.Errorf("res = %+v, want 5 unreadable and the backlog drained", res)
+	}
+}
+
 // TestEncryptExisting_CountsUnreachableBackend asserts one location whose
 // backend is gone fails on its own rather than ending the pass.
 func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {

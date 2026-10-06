@@ -191,9 +191,10 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
-		Status:    statusOK,
-		Processed: res.Processed,
-		Done:      res.Done,
+		Status:     statusOK,
+		Processed:  res.Processed,
+		Unreadable: res.Unreadable,
+		Done:       res.Done,
 	})
 }
 
@@ -208,7 +209,7 @@ func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			return stepResult{}, err
 		}
-		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done}}, nil
+		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done, "unreadable": res.Unreadable}}, nil
 	})
 }
 

@@ -256,7 +256,9 @@ s3-orchestrator admin scrub -key photos/2024/beach.jpg
 # Scrub only one backend's copies
 s3-orchestrator admin scrub -backend wasabi-eu
 
-# Compute and store content hashes for all unhashed objects
+# Compute and store content hashes for all unhashed objects. A copy that can
+# never be decoded (its row and bytes disagree about encryption, or it is
+# compressed with no codec configured) is skipped and counted as unreadable.
 s3-orchestrator admin backfill-checksums
 
 # Hash only the copies on one backend, which is what a restored backend needs
