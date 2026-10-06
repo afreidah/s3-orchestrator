@@ -63,10 +63,14 @@ type Deps struct {
 // last-result snapshot. Construct it with New, then call Watch to start
 // the signal listener. Shutdown stops the goroutine. LastResult is
 // concurrent-safe.
+//
+// startup is the config the process started with, which non-reloadable fields
+// keep until a restart, so reloads are compared against it.
 type Coordinator struct {
-	deps  Deps
-	hooks []Hook
-	log   *slog.Logger
+	deps    Deps
+	hooks   []Hook
+	log     *slog.Logger
+	startup *config.Config
 
 	generation atomic.Int64
 	lastResult atomic.Pointer[Result]
@@ -88,9 +92,10 @@ func New(deps *Deps) *Coordinator {
 		hooks = defaultHooks(deps.Injector, deps.CertReloader, deps.LogLevel)
 	}
 	return &Coordinator{
-		deps:  *deps,
-		hooks: hooks,
-		log:   slog.Default().With(logfmt.Component("reload")),
+		deps:    *deps,
+		hooks:   hooks,
+		log:     slog.Default().With(logfmt.Component("reload")),
+		startup: deps.CfgPtr.Load(),
 	}
 }
 
@@ -146,6 +151,12 @@ func (c *Coordinator) Generation() int64 {
 	return c.generation.Load()
 }
 
+// PendingRestart lists non-reloadable fields the config in use changed since
+// startup; computed live so a failed reload cannot hide them.
+func (c *Coordinator) PendingRestart() []string {
+	return config.NonReloadableFieldsChanged(c.startup, c.deps.CfgPtr.Load())
+}
+
 // Reload performs one full reload pass. Exposed so tests and admin
 // surfaces can trigger a reload without sending a real signal.
 // Returns the result of the pass; the same value is stored on the
@@ -171,7 +182,7 @@ func (c *Coordinator) Reload() *Result {
 	result := &Result{
 		Generation:      currentGen,
 		StartedAt:       started,
-		RequiresRestart: config.NonReloadableFieldsChanged(c.deps.CfgPtr.Load(), newCfg),
+		RequiresRestart: config.NonReloadableFieldsChanged(c.startup, newCfg),
 	}
 
 	currentCfg := c.deps.CfgPtr.Load()

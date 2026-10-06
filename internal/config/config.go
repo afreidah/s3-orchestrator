@@ -5,8 +5,8 @@
 //
 // Configuration types and loader for the S3 proxy. Supports environment variable
 // expansion in YAML values using ${VAR} syntax. Types are split into domain
-// files; this file holds the root Config struct, loader, cross-field validation,
-// and hot-reload change detection.
+// files; this file holds the root Config struct, loader and its redacted
+// reverse, cross-field validation, and hot-reload change detection.
 // -------------------------------------------------------------------------------
 
 package config
@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -103,6 +104,65 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// redactedValue replaces a configured secret in MarshalRedacted's output.
+const redactedValue = "(redacted)"
+
+// MarshalRedacted renders the configuration as YAML, the form LoadConfig reads,
+// with defaults filled in and every secret replaced by a placeholder.
+func (c *Config) MarshalRedacted() ([]byte, error) {
+	return yaml.Marshal(c.redacted())
+}
+
+// redacted returns a copy of c with every secret replaced. Slices and pointed-to
+// sections are copied before they are changed, so c itself is left untouched.
+func (c *Config) redacted() *Config {
+	r := *c
+	r.Database.Password = redact(r.Database.Password)
+	r.Auth.Root.SecretAccessKey = redact(r.Auth.Root.SecretAccessKey)
+	r.UI.SessionSecret = redact(r.UI.SessionSecret)
+	r.Encryption.MasterKey = redact(r.Encryption.MasterKey)
+	r.Encryption.PreviousKeys = slices.Clone(r.Encryption.PreviousKeys)
+	for i := range r.Encryption.PreviousKeys {
+		r.Encryption.PreviousKeys[i] = redact(r.Encryption.PreviousKeys[i])
+	}
+	if r.Encryption.Vault != nil {
+		vault := *r.Encryption.Vault
+		vault.Token = redact(vault.Token)
+		r.Encryption.Vault = &vault
+	}
+	if r.Redis != nil {
+		redis := *r.Redis
+		redis.Password = redact(redis.Password)
+		r.Redis = &redis
+	}
+	r.Backends = slices.Clone(r.Backends)
+	for i := range r.Backends {
+		r.Backends[i].SecretAccessKey = redact(r.Backends[i].SecretAccessKey)
+	}
+	r.Buckets = slices.Clone(r.Buckets)
+	for i := range r.Buckets {
+		creds := slices.Clone(r.Buckets[i].Credentials)
+		for j := range creds {
+			creds[j].SecretAccessKey = redact(creds[j].SecretAccessKey)
+		}
+		r.Buckets[i].Credentials = creds
+	}
+	r.Notifications.Endpoints = slices.Clone(r.Notifications.Endpoints)
+	for i := range r.Notifications.Endpoints {
+		r.Notifications.Endpoints[i].Secret = redact(r.Notifications.Endpoints[i].Secret)
+	}
+	return &r
+}
+
+// redact replaces a set secret with redactedValue and leaves an unset one
+// empty, so the output still shows which secrets are configured.
+func redact(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return redactedValue
 }
 
 // -------------------------------------------------------------------------

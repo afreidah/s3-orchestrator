@@ -239,6 +239,7 @@ func TestHandleKey_LetterJumpsAreUnique(t *testing.T) {
 		"w": sectionWorkers,
 		"u": sectionCleanup,
 		"c": sectionCache,
+		"n": sectionConfig,
 		"l": sectionLogs,
 		"o": sectionOps,
 	}

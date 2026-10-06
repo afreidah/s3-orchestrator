@@ -39,6 +39,7 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 		{"decompress-existing", nil, http.MethodPost, "/admin/api/decompress-existing"},
 		{"workers", nil, http.MethodGet, "/admin/api/workers"},
 		{"reload-status", nil, http.MethodGet, "/admin/api/reload-status"},
+		{"config", nil, http.MethodGet, "/admin/api/config"},
 		{"rotate-encryption-key", []string{"-old-key-id", "config-0"}, http.MethodPost, "/admin/api/rotate-encryption-key"},
 	}
 
@@ -188,6 +189,28 @@ func TestCommand_TraceSnapshot_WritesFile(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "wrote 21 bytes to "+out) {
 		t.Errorf("stdout = %q, want byte-count confirmation", stdout.String())
+	}
+}
+
+// TestCommand_ConfigRendersYAML verifies config prints the log level and the
+// pending-restart fields as comments, then the YAML unescaped.
+func TestCommand_ConfigRendersYAML(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"config":"server:\n  listen_addr: :9000\n","log_level":"debug","pending_restart":["database"]}`))
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	if code := Command("config", nil, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
+	}
+	want := "# log level in effect: debug\n# pending restart: database\nserver:\n  listen_addr: :9000\n"
+	if stdout.String() != want {
+		t.Errorf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if err := renderConfig(&stdout, []byte("{not json")); err == nil {
+		t.Error("renderConfig: expected a decode error")
 	}
 }
 

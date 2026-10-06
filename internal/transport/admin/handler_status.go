@@ -56,6 +56,22 @@ func (h *Handler) handleReloadStatus(w http.ResponseWriter, _ *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, result)
 }
 
+// handleConfig returns the running configuration and the log level in effect.
+// Returns 503 when the runtime has not wired the provider.
+func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if h.liveConfig == nil {
+		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "running configuration not available")
+		return
+	}
+	resp, err := h.liveConfig()
+	if err != nil {
+		h.internalError(r.Context(), w, "failed to render configuration", err)
+		return
+	}
+	resp.LogLevel = strings.ToLower(h.logLevel.Level().String())
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
 // handleStatus returns backend health and circuit breaker state.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.dashboardOps.GetData(r.Context())

@@ -19,6 +19,7 @@ A persistent left navigation bar switches between sections; the content area to 
 - **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
 - **Cleanup** - the cleanup queue and its dead-letter table, with the depth of each. The one write action here is requeueing a backend's dead-lettered rows.
 - **Cache** - the object data cache's entry count, bytes held against its maximum, and lifetime hit rate.
+- **Config** - the configuration the server is running, as YAML with secrets redacted, under the log level in effect and any file changes that wait on a restart.
 - **Logs** - recent structured log entries from the instance's in-memory log buffer (the same source the web dashboard's logs pane reads): time, level, component, and a human-readable message with its attributes appended as `key=value` pairs.
 - **Ops** - the menu of instance-wide admin actions (rebalance, scrub, backfill, reconcile, cache flush), each behind a `y/N` confirmation.
 
@@ -78,6 +79,7 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |
 | `c` | Jump to the Cache section |
+| `n` | Jump to the Config section |
 | `l` | Jump to the Logs section |
 | `o` | Jump to the Ops section |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |

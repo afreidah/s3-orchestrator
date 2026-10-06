@@ -40,6 +40,7 @@ type fakeLister struct {
 	logs      *adminapi.LogsResponse
 	replic    *adminapi.ReplicationStatusResponse
 	workers   *adminapi.WorkersResponse
+	config    *adminapi.ConfigResponse
 	cleanupQ  *adminapi.CleanupQueueResponse
 	cleanupD  *adminapi.CleanupDLQResponse
 	cacheStat *adminapi.CacheStatsResponse
@@ -139,6 +140,13 @@ func (f *fakeLister) GetWorkers(_ context.Context) (*adminapi.WorkersResponse, e
 		return f.workers, nil
 	}
 	return &adminapi.WorkersResponse{}, nil
+}
+
+func (f *fakeLister) GetConfig(_ context.Context) (*adminapi.ConfigResponse, error) {
+	if f.config != nil {
+		return f.config, nil
+	}
+	return &adminapi.ConfigResponse{}, nil
 }
 
 func (f *fakeLister) GetCleanupQueue(_ context.Context) (*adminapi.CleanupQueueResponse, error) {

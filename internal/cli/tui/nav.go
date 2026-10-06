@@ -40,6 +40,7 @@ const (
 	sectionWorkers
 	sectionCleanup
 	sectionCache
+	sectionConfig
 	sectionLogs
 	sectionOps
 )
@@ -63,6 +64,7 @@ func navEntries() []navEntry {
 		{"Workers", sectionWorkers, true},
 		{"Cleanup", sectionCleanup, true},
 		{"Cache", sectionCache, true},
+		{"Config", sectionConfig, true},
 		{"Logs", sectionLogs, true},
 		{"Ops", sectionOps, true},
 	}
@@ -70,7 +72,7 @@ func navEntries() []navEntry {
 
 // selectableSections is the number of enabled nav destinations; it bounds the
 // nav cursor.
-const selectableSections = 10
+const selectableSections = 11
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -132,6 +134,10 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		// one is opened by the backends pane, which fills these in itself.
 		m.ops = opsView{actions: opsActions()}
 		return m, nil
+	case sectionConfig:
+		m.config.loading = m.config.resp == nil
+		cmd := m.loadConfig()
+		return m, cmd
 	case sectionLogs:
 		m.logs = newLogsView()
 		m.logs.loading = true

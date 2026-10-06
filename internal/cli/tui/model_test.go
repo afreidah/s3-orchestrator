@@ -68,6 +68,10 @@ func (errLister) GetWorkers(_ context.Context) (*adminapi.WorkersResponse, error
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetConfig(_ context.Context) (*adminapi.ConfigResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) GetCleanupQueue(_ context.Context) (*adminapi.CleanupQueueResponse, error) {
 	return nil, errors.New("nope")
 }

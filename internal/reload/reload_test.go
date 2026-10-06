@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -361,6 +362,33 @@ func TestReload_RequiresRestart_Populated(t *testing.T) {
 	if r.Status != ReloadFullSuccess {
 		t.Errorf("Status = %q, want %q (non-reloadable change is a warning, not an error)",
 			r.Status, ReloadFullSuccess)
+	}
+}
+
+// TestReload_RequiresRestart_SinceStartup verifies the list is measured from
+// the config the process started with: a change from an earlier reload is
+// still pending after a later one, and reverting the file clears it.
+func TestReload_RequiresRestart_SinceStartup(t *testing.T) {
+	path := writeYAML(t, validTestConfigYAML)
+	cfgPtr, _ := initialCfgPtr(t, path)
+	coord := New(&Deps{ConfigPath: path, CfgPtr: cfgPtr, Hooks: []Hook{}})
+
+	reloadWith := func(yaml string) []string {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
+			t.Fatalf("rewrite: %v", err)
+		}
+		return coord.Reload().RequiresRestart
+	}
+
+	listen := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`, `listen_addr: ":9999"`, 1)
+	reloadWith(listen)
+	both := strings.Replace(listen, `path: ":memory:"`, `path: "other.db"`, 1)
+	if got := reloadWith(both); !slices.Contains(got, "server.listen_addr") || !slices.Contains(got, "database") {
+		t.Errorf("after two reloads RequiresRestart = %v, want server.listen_addr and database", got)
+	}
+	if got := reloadWith(validTestConfigYAML); len(got) != 0 {
+		t.Errorf("after reverting the file RequiresRestart = %v, want none", got)
 	}
 }
 
