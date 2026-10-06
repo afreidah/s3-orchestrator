@@ -134,6 +134,7 @@ func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 		"POST /admin/api/over-replication":    true,
 		"POST /admin/api/scrub":               true,
 		"POST /admin/api/backfill-checksums":  true,
+		"POST /admin/api/unreadable":          true,
 		"POST /admin/api/reconcile":           true,
 		"POST /admin/api/compress-existing":   true,
 		"POST /admin/api/decompress-existing": true,

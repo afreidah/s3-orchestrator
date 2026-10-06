@@ -118,6 +118,15 @@ var (
 		},
 	)
 
+	// UnreadableCopies counts copies imported as encrypted with no key, which
+	// stay until an operator purges them.
+	UnreadableCopies = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_unreadable_copies",
+			Help: "Object copies encrypted with no key to decrypt them",
+		},
+	)
+
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
 	KeyRotationObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

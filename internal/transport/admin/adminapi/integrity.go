@@ -11,6 +11,8 @@
 
 package adminapi
 
+import "time"
+
 // IntegrityOutcome is the part every integrity pass reports the same way: the
 // terminal status, and why the pass did nothing when it was skipped. Status is
 // "ok" when the pass ran and "skipped" when integrity verification is
@@ -74,6 +76,28 @@ type BackfillChecksumsResponse struct {
 	Processed  int  `json:"processed"`
 	Unreadable int  `json:"unreadable"`
 	Done       bool `json:"done"`
+}
+
+// UnreadableCopy is one copy that is encrypted with no key.
+type UnreadableCopy struct {
+	Key       string    `json:"key"`
+	Backend   string    `json:"backend"`
+	SizeBytes int64     `json:"size_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// UnreadableListResponse lists copies that are encrypted with no key: up to
+// the requested limit of them, and how many exist in total.
+type UnreadableListResponse struct {
+	Total  int64            `json:"total"`
+	Copies []UnreadableCopy `json:"copies"`
+}
+
+// UnreadablePurgeResponse reports a purge of unreadable copies.
+type UnreadablePurgeResponse struct {
+	IntegrityOutcome
+	Purged int `json:"purged"`
+	Failed int `json:"failed,omitempty"`
 }
 
 // ReconcileResponse reports a reconcile pass: objects adopted from backend

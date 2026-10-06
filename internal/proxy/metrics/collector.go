@@ -42,6 +42,7 @@ type Deps interface {
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
+	CountUnreadableLocations(ctx context.Context) (int64, error)
 }
 
 // Collector records Prometheus metrics for manager-level operations and

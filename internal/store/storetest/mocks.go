@@ -309,6 +309,21 @@ func (mr *MockMetadataStoreMockRecorder) CountUnencryptedLocations(ctx any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).CountUnencryptedLocations), ctx)
 }
 
+// CountUnreadableLocations mocks base method.
+func (m *MockMetadataStore) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountUnreadableLocations", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountUnreadableLocations indicates an expected call of CountUnreadableLocations.
+func (mr *MockMetadataStoreMockRecorder) CountUnreadableLocations(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnreadableLocations", reflect.TypeOf((*MockMetadataStore)(nil).CountUnreadableLocations), ctx)
+}
+
 // CreateBucket mocks base method.
 func (m *MockMetadataStore) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	m.ctrl.T.Helper()
@@ -1280,6 +1295,21 @@ func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit 
 func (mr *MockMetadataStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnencryptedLocations), ctx, limit, after, backend)
+}
+
+// ListUnreadableLocations mocks base method.
+func (m *MockMetadataStore) ListUnreadableLocations(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUnreadableLocations", ctx, limit)
+	ret0, _ := ret[0].([]core.ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListUnreadableLocations indicates an expected call of ListUnreadableLocations.
+func (mr *MockMetadataStoreMockRecorder) ListUnreadableLocations(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnreadableLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnreadableLocations), ctx, limit)
 }
 
 // ListUsers mocks base method.

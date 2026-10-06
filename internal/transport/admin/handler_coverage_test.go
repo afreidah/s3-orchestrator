@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -356,6 +357,59 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	}
 	if resp["done"] != true {
 		t.Errorf("done = %v, want true", resp["done"])
+	}
+}
+
+// TestHandleListUnreadable_ListsCopiesAndTotal verifies the list route reports
+// each unreadable copy by key and backend, plus the total.
+func TestHandleListUnreadable_ListsCopiesAndTotal(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{unreadable: []core.ObjectLocation{
+		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508},
+	}})
+
+	w := httptest.NewRecorder()
+	h.handleListUnreadable(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/unreadable?limit=5", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.UnreadableListResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Copies) != 1 || resp.Copies[0].Key != "bucket/a" || resp.Copies[0].Backend != "b1" {
+		t.Errorf("resp = %+v, want bucket/a on b1 of 1", resp)
+	}
+}
+
+// TestHandlePurgeUnreadable_ReportsPurged verifies the purge route reports
+// how many copies it removed, buffered and streamed.
+func TestHandlePurgeUnreadable_ReportsPurged(t *testing.T) {
+	t.Parallel()
+	copies := []core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1"}, {ObjectKey: "bucket/b", BackendName: "b1"}}
+
+	h := newCoverageHandler(t)
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{unreadable: slices.Clone(copies)})
+	w := httptest.NewRecorder()
+	h.handlePurgeUnreadable(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/unreadable", nil))
+	var resp adminapi.UnreadablePurgeResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != statusOK || resp.Purged != 2 {
+		t.Errorf("resp = %+v, want ok with 2 purged", resp)
+	}
+
+	h = newCoverageHandler(t)
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{unreadable: slices.Clone(copies)})
+	w = httptest.NewRecorder()
+	h.handlePurgeUnreadable(w, streamReq("/admin/api/unreadable"))
+	events := decodeEvents(t, w.Body.Bytes())
+	last := events[len(events)-1]
+	if last.Kind != adminstream.KindResult || last.Processed != 2 {
+		t.Errorf("last event = %+v, want a result with 2 processed", last)
 	}
 }
 

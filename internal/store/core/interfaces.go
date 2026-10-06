@@ -201,6 +201,8 @@ type IntegrityStore interface {
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error)
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]ObjectLocation, error)
+	ListUnreadableLocations(ctx context.Context, limit int) ([]ObjectLocation, error)
+	CountUnreadableLocations(ctx context.Context) (int64, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
 	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)

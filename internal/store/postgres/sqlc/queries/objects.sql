@@ -479,6 +479,21 @@ WHERE content_hash IS NULL AND managed
 ORDER BY created_at ASC
 LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
 
+-- name: ListUnreadableLocations :many
+-- Copies imported as encrypted with no key, which nothing can decrypt. Purging
+-- a copy takes it out of this set, so the purge re-reads from the start rather
+-- than paging.
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
+FROM object_locations
+WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
+ORDER BY object_key, backend_name
+LIMIT sqlc.arg(row_limit);
+
+-- name: CountUnreadableLocations :one
+-- Same predicate as ListUnreadableLocations.
+SELECT count(*) FROM object_locations
+WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0);
+
 -- name: UpdateContentHash :exec
 -- Record the hash the backfill pass computed and stamp the copy as verified in
 -- the same statement. The pass read the whole body to produce the digest, so the

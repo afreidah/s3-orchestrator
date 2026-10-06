@@ -405,7 +405,6 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 	}
 
 	if actual.SHA256 != loc.ContentHash {
-		be, _ := s.deps.GetBackend(loc.BackendName)
 		s.log.ErrorContext(ctx, "integrity check failed",
 			"key", loc.ObjectKey, "backend", loc.BackendName,
 			"expected_hash", loc.ContentHash, "actual_hash", actual.SHA256)
@@ -417,35 +416,81 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 			"actual_hash":   actual.SHA256,
 			"size_bytes":    loc.SizeBytes,
 		})
-		if be != nil {
-			s.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
-				BackendName: loc.BackendName,
-				ObjectKey:   loc.ObjectKey,
-				StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
-				Reason:      "integrity_scrub_failed",
-				SizeBytes:   loc.SizeBytes,
-			})
+		if err := s.discardCopy(ctx, loc, "integrity_scrub_failed"); err != nil {
+			s.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		}
-		s.dropCorruptedLocation(ctx, loc)
 		return false, nil
 	}
 
 	return true, nil
 }
 
-// dropCorruptedLocation removes the ledger row for a discarded copy. Without
-// it the replicator still counts the copy and never rebuilds the object.
-func (s *Scrubber) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
-	_, err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName)
-	if err != nil {
-		s.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
-			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
-		return
+// discardCopy deletes a copy's bytes, or queues them for cleanup, and removes
+// its ledger row and quota. Without the row removal the replicator still counts
+// the copy and never rebuilds the object.
+func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, reason string) error {
+	if be, err := s.deps.GetBackend(loc.BackendName); err == nil {
+		s.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
+			BackendName: loc.BackendName,
+			ObjectKey:   loc.ObjectKey,
+			StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
+			Reason:      reason,
+			SizeBytes:   loc.SizeBytes,
+		})
+	}
+	if _, err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+		return err
 	}
 	audit.Log(ctx, "integrity.copy_discarded",
 		slog.String("key", loc.ObjectKey),
 		slog.String("backend", loc.BackendName),
+		slog.String("reason", reason),
 	)
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// UNREADABLE  -  copies encrypted with no key
+// -------------------------------------------------------------------------
+
+// ListUnreadable returns up to limit copies that are encrypted with no key,
+// and how many there are in total.
+func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error) {
+	locs, err := s.store.ListUnreadableLocations(ctx, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	count, err := s.store.CountUnreadableLocations(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return locs, count, nil
+}
+
+// PurgeUnreadable discards up to batchSize copies that are encrypted with no
+// key. Nothing can decrypt them, so they only hold quota.
+func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
+	locs, err := s.store.ListUnreadableLocations(ctx, batchSize)
+	if err != nil {
+		s.log.ErrorContext(ctx, "failed to list unreadable copies", "error", err)
+		return WorkSummary{}
+	}
+	runner := BatchRunner[core.ObjectLocation]{
+		Name:        "purge-unreadable",
+		Log:         s.log,
+		Concurrency: 1,
+		Observer:    observer,
+		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
+	}
+	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
+		if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
+			s.log.WarnContext(ctx, "failed to purge unreadable copy",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+			return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
+		}
+		return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+	})
 }
 
 // -------------------------------------------------------------------------

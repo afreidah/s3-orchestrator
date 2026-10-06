@@ -613,6 +613,36 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int, ba
 	return collectRows(rows, "objects without hash", scanObjectLocation)
 }
 
+// unreadablePredicate selects copies that are encrypted with no key.
+const unreadablePredicate = `encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)`
+
+// ListUnreadableLocations returns up to limit copies that are encrypted with no
+// key, which nothing can decrypt.
+func (s *Store) ListUnreadableLocations(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT object_key, backend_name, storage_key, size_bytes, created_at
+		FROM object_locations
+		WHERE `+unreadablePredicate+`
+		ORDER BY object_key, backend_name
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unreadable locations: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSlimObjectLocations(rows)
+}
+
+// CountUnreadableLocations reports how many copies are encrypted with no key.
+func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	var n int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM object_locations WHERE `+unreadablePredicate).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count unreadable locations: %w", err)
+	}
+	return n, nil
+}
+
 // UpdateContentHash records the hash the backfill pass computed and stamps the
 // copy as verified in the same statement. The pass read the whole body to
 // produce the digest, so the copy is verified by construction at that moment.

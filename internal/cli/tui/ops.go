@@ -158,6 +158,8 @@ func maintenanceActions() []opsAction {
 			"Scrub every object to verify integrity?", nil),
 		post("Backfill checksums", "/admin/api/backfill-checksums",
 			"Backfill missing object checksums?", nil),
+		post("Purge unreadable copies", "/admin/api/unreadable",
+			"Delete every copy that is encrypted with no key? Nothing can decrypt them.", nil),
 		post("Reconcile metadata", "/admin/api/reconcile",
 			"Reconcile metadata against backends?", nil),
 		post("Expire objects (lifecycle rules)", "/admin/api/lifecycle",

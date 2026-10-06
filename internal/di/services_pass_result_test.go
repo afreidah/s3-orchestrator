@@ -122,4 +122,5 @@ func expectCollectorReads(m *storetest.MockMetadataStore) {
 	m.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	m.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	m.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
+	m.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 }

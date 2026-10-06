@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -265,6 +266,7 @@ type scrubberStub struct {
 	backfillProcessed int
 	backfillMore      bool
 	backfillCalls     int
+	unreadable        []core.ObjectLocation
 }
 
 // newGrantingLocker builds an advisory locker that always takes the lock and
@@ -309,6 +311,18 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 			}
 			// One batch processed, then signal done with nextOffset=0.
 			return sum, 0
+		}).AnyTimes()
+	m.EXPECT().ListUnreadable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, int) ([]core.ObjectLocation, int64, error) {
+			return cfg.unreadable, int64(len(cfg.unreadable)), nil
+		}).AnyTimes()
+	// Purges every unreadable copy in one pass, so the next pass finds none.
+	m.EXPECT().PurgeUnreadable(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
+			n := len(cfg.unreadable)
+			trackN(observer, n, fixedKey(""))
+			cfg.unreadable = nil
+			return worker.WorkSummary{Attempted: n, Succeeded: n}
 		}).AnyTimes()
 	return m
 }

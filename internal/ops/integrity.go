@@ -31,6 +31,10 @@ import (
 // the caller asks for no size.
 const defaultBackfillBatchSize = 100
 
+// defaultUnreadableBatchSize is how many unreadable copies one list or purge
+// pass reads when the caller asks for no size.
+const defaultUnreadableBatchSize = 100
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -52,6 +56,19 @@ type BackfillResult struct {
 	Processed  int
 	Unreadable int
 	Done       bool
+}
+
+// UnreadableList reports copies that are encrypted with no key: up to the
+// requested number of them, and how many exist in total.
+type UnreadableList struct {
+	Total  int64
+	Copies []core.ObjectLocation
+}
+
+// PurgeResult reports one purge of unreadable copies.
+type PurgeResult struct {
+	Purged int
+	Failed int
 }
 
 // IntegrityDeps holds the collaborators Integrity requires.
@@ -197,6 +214,38 @@ func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int
 			return false, unreadable
 		}
 	}
+}
+
+// ListUnreadable returns up to limit copies that are encrypted with no key, and
+// the total. limit <= 0 uses the default.
+func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableList, error) {
+	if limit <= 0 {
+		limit = defaultUnreadableBatchSize
+	}
+	copies, total, err := i.scrubber.ListUnreadable(ctx, limit)
+	if err != nil {
+		return UnreadableList{}, err
+	}
+	return UnreadableList{Total: total, Copies: copies}, nil
+}
+
+// PurgeUnreadable discards every copy that is encrypted with no key, batchSize
+// at a time. Stops when a pass purges nothing, so copies that keep failing do
+// not loop forever. batchSize <= 0 uses the default.
+func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) PurgeResult {
+	if batchSize <= 0 {
+		batchSize = defaultUnreadableBatchSize
+	}
+	var res PurgeResult
+	for ctx.Err() == nil {
+		sum := i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
+		res.Purged += sum.Succeeded
+		res.Failed += sum.Failed
+		if sum.Succeeded == 0 {
+			break
+		}
+	}
+	return res
 }
 
 // backfillCounter wraps observer so each successfully hashed object bumps

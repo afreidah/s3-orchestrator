@@ -175,6 +175,19 @@ func (q *Queries) CountUnencryptedLocations(ctx context.Context) (int64, error) 
 	return count, err
 }
 
+const countUnreadableLocations = `-- name: CountUnreadableLocations :one
+SELECT count(*) FROM object_locations
+WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
+`
+
+// Same predicate as ListUnreadableLocations.
+func (q *Queries) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnreadableLocations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteObjectCopies = `-- name: DeleteObjectCopies :exec
 DELETE FROM object_locations
 WHERE object_key = $1
@@ -1566,6 +1579,51 @@ func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryp
 			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Etag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnreadableLocations = `-- name: ListUnreadableLocations :many
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
+FROM object_locations
+WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
+ORDER BY object_key, backend_name
+LIMIT $1
+`
+
+type ListUnreadableLocationsRow struct {
+	ObjectKey   string
+	BackendName string
+	StorageKey  string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
+// Copies imported as encrypted with no key, which nothing can decrypt. Purging
+// a copy takes it out of this set, so the purge re-reads from the start rather
+// than paging.
+func (q *Queries) ListUnreadableLocations(ctx context.Context, rowLimit int32) ([]ListUnreadableLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listUnreadableLocations, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnreadableLocationsRow{}
+	for rows.Next() {
+		var i ListUnreadableLocationsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.StorageKey,
+			&i.SizeBytes,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

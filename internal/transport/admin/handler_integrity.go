@@ -214,6 +214,53 @@ func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request
 }
 
 // -------------------------------------------------------------------------
+// UNREADABLE COPIES
+// -------------------------------------------------------------------------
+
+// handleListUnreadable lists copies that are encrypted with no key. Accepts an
+// optional limit query parameter.
+func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
+	limit := httputil.QueryPositiveInt(r.URL.Query().Get("limit"))
+	res, err := h.integrity.ListUnreadable(r.Context(), limit)
+	if err != nil {
+		h.internalError(r.Context(), w, "failed to list unreadable copies", err)
+		return
+	}
+	resp := adminapi.UnreadableListResponse{Total: res.Total, Copies: make([]adminapi.UnreadableCopy, 0, len(res.Copies))}
+	for i := range res.Copies {
+		c := &res.Copies[i]
+		resp.Copies = append(resp.Copies, adminapi.UnreadableCopy{
+			Key: c.ObjectKey, Backend: c.BackendName, SizeBytes: c.SizeBytes, CreatedAt: c.CreatedAt,
+		})
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// handlePurgeUnreadable deletes every copy that is encrypted with no key.
+// Accepts an optional batch_size query parameter.
+func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) {
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
+
+	if acceptsStream(r) {
+		h.streamSteps(w, "purge-unreadable", "purging", true, func(obs progress.Observer) (stepResult, error) {
+			res := h.integrity.PurgeUnreadable(r.Context(), batchSize, obs)
+			return stepResult{
+				Processed: res.Purged,
+				Fields:    map[string]any{"purged": res.Purged, "failed": res.Failed},
+			}, nil
+		})
+		return
+	}
+
+	res := h.integrity.PurgeUnreadable(r.Context(), batchSize, nil)
+	httputil.WriteJSON(w, http.StatusOK, adminapi.UnreadablePurgeResponse{
+		Status: statusOK,
+		Purged: res.Purged,
+		Failed: res.Failed,
+	})
+}
+
+// -------------------------------------------------------------------------
 // RECONCILE
 // -------------------------------------------------------------------------
 

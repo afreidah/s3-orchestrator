@@ -118,6 +118,25 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int, ba
 	return toFatObjectLocations(rows), nil
 }
 
+// ListUnreadableLocations returns up to limit copies that are encrypted with no
+// key, which nothing can decrypt.
+func (s *Store) ListUnreadableLocations(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+	rows, err := s.queries.ListUnreadableLocations(ctx, int32(max(0, min(limit, math.MaxInt32)))) //nolint:gosec // clamped
+	if err != nil {
+		return nil, fmt.Errorf("list unreadable locations: %w", err)
+	}
+	return toSlimObjectLocations(rows), nil
+}
+
+// CountUnreadableLocations reports how many copies are encrypted with no key.
+func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	n, err := s.queries.CountUnreadableLocations(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count unreadable locations: %w", err)
+	}
+	return n, nil
+}
+
 // UpdateContentHash records the hash the backfill pass computed and stamps the
 // copy as verified in the same statement, because the pass read the whole body
 // to produce the digest.

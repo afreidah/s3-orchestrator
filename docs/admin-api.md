@@ -50,9 +50,9 @@ Every other endpoint declares a permission over a **backend** or over the **inst
 
 | Permission | What it reaches |
 | --- | --- |
-| `admin-read` | Status, workers, reload outcome, replication and over-replication counts, cleanup depths, cache utilization, the current log level, drain progress |
+| `admin-read` | Status, workers, reload outcome, replication and over-replication counts, unreadable copies, cleanup depths, cache utilization, the current log level, drain progress |
 | `admin-logs` | The in-memory log buffer and flight-recorder trace snapshots |
-| `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, usage flush and reconcile, cleanup DLQ requeue |
+| `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, unreadable purge, usage flush and reconcile, cleanup DLQ requeue |
 | `admin-convert` | `encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing` |
 | `admin-keys` | Encryption key rotation |
 | `admin-cache` | Cache flush and per-key or per-prefix invalidation |
@@ -67,7 +67,7 @@ The permissions over a backend are the ones that name one: drain, decommission, 
 
 ## Streaming progress
 
-Twelve endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller sends `Accept: application/x-ndjson`:
+Thirteen endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `unreadable`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller sends `Accept: application/x-ndjson`:
 
 ```bash
 s3-orchestrator admin scrub
@@ -216,7 +216,7 @@ A backend's bucket can hold objects the orchestrator never wrote: data that pred
 
 An unmanaged object counts toward the backend's `bytes_used`, because the bytes really are occupying the quota and placement decisions read those totals. Nothing else touches it: replication will not copy it, rebalance will not move it, drain will not relocate it, and scrub and checksum backfill skip it rather than spending egress reading a body the orchestrator does not manage. It is also unreachable through the S3 API: S3 listings leave it out, and a read of its key answers `NoSuchKey`. A client PUT to the key replaces it, and a client DELETE removes it.
 
-To bring an object from outside every prefix under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object. An unreadable encrypted object cannot be recovered without its key; restore it from another source or delete it.
+To bring an object from outside every prefix under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object. An unreadable encrypted object cannot be recovered without its key; restore it from another source, or remove it. `GET /admin/api/unreadable` lists unreadable copies with their total (`limit` caps the list), and `POST /admin/api/unreadable` deletes all of them: each copy's bytes, its row and its quota. The `s3o_unreadable_copies` gauge reports how many exist.
 
 ## Skipped operations
 

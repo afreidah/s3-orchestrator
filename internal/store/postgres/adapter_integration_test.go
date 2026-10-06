@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -895,7 +896,14 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	if !locs[0].Unmanaged {
 		t.Error("Unmanaged = false, want true - an unreadable row must not be listed, served or replicated")
 	}
+	assertUnreadableHidden(t, s, key)
+}
 
+// assertUnreadableHidden fails unless key is left out of both client listings
+// and returned by the unreadable list and count.
+func assertUnreadableHidden(t *testing.T, s *Store, key string) {
+	t.Helper()
+	ctx := context.Background()
 	flat, err := s.ListObjects(ctx, key, "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
@@ -909,6 +917,17 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	}
 	if len(delimited.Objects) != 0 || len(delimited.CommonPrefixes) != 0 {
 		t.Errorf("ListObjectsDelimited = %+v, want the unreadable row left out", delimited)
+	}
+
+	unreadable, err := s.ListUnreadableLocations(ctx, 10000)
+	if err != nil {
+		t.Fatalf("ListUnreadableLocations: %v", err)
+	}
+	if !slices.ContainsFunc(unreadable, func(l core.ObjectLocation) bool { return l.ObjectKey == key }) {
+		t.Errorf("ListUnreadableLocations did not return %s", key)
+	}
+	if n, err := s.CountUnreadableLocations(ctx); err != nil || n < 1 {
+		t.Errorf("CountUnreadableLocations = %d, %v; want at least 1", n, err)
 	}
 }
 

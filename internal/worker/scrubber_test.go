@@ -489,6 +489,49 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 	}
 }
 
+// TestPurgeUnreadable_DiscardsEachCopy verifies each unreadable copy has its
+// bytes deleted or queued and its row removed, and the list reports the total.
+func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+	ms.unreadable = []core.ObjectLocation{
+		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true},
+		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 102, Encrypted: true},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/a", "unreadable_purged", int64(508)))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/b", "unreadable_purged", int64(102)))
+
+	copies, total, err := s.ListUnreadable(context.Background(), 1)
+	if err != nil || len(copies) != 1 || total != 2 {
+		t.Fatalf("ListUnreadable = %d copies, total %d, err %v; want 1 of 2", len(copies), total, err)
+	}
+
+	sum := s.PurgeUnreadable(context.Background(), 10, nil)
+	if sum.Succeeded != 2 || sum.Failed != 0 {
+		t.Errorf("summary = %+v, want 2 purged", sum)
+	}
+	if !slices.Equal(ms.deletedLocations, []string{"bucket/a@b1", "bucket/b@b1"}) {
+		t.Errorf("deleted rows = %v, want both copies", ms.deletedLocations)
+	}
+}
+
+// TestPurgeUnreadable_RowDeleteFailureFails verifies a copy whose row cannot
+// be removed is counted as failed.
+func TestPurgeUnreadable_RowDeleteFailureFails(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+	ms.unreadable = []core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true}}
+	ms.deleteLocationErr = errors.New("db down")
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, gomock.Any())
+
+	sum := s.PurgeUnreadable(context.Background(), 10, nil)
+	if sum.Failed != 1 || sum.Succeeded != 0 {
+		t.Errorf("summary = %+v, want 1 failed", sum)
+	}
+}
+
 // TestBackfill_SkipsKeylessRow verifies a row encrypted with no key is skipped
 // as unreadable without a backend read, rather than failing every cycle.
 func TestBackfill_SkipsKeylessRow(t *testing.T) {

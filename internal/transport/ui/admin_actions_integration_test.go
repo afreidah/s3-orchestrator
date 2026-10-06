@@ -56,6 +56,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	mock.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mock.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	mock.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
 	mock.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()

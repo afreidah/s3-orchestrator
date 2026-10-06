@@ -5744,7 +5744,7 @@
       "gridPos": {
         "x": 0,
         "y": 381,
-        "w": 6,
+        "w": 3,
         "h": 8
       },
       "datasource": {
@@ -5770,6 +5770,56 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short"
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 154,
+      "title": "Unreadable Copies",
+      "description": "Object copies encrypted with no key to decrypt them. Clients cannot see them and nothing can recover them; they hold quota until purged with admin unreadable --execute.",
+      "gridPos": {
+        "x": 3,
+        "y": 381,
+        "w": 3,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(s3o_unreadable_copies)",
+          "legendFormat": "unreadable copies"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
         }
       }
     },

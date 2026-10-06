@@ -63,6 +63,14 @@ func (r ListObjectsByBackendKeyAscRow) GetBackendName() string           { retur
 func (r ListObjectsByBackendKeyAscRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByBackendKeyAscRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
+// ListUnreadableLocationsRow
+
+func (r ListUnreadableLocationsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListUnreadableLocationsRow) GetStorageKey() string            { return r.StorageKey }
+func (r ListUnreadableLocationsRow) GetBackendName() string           { return r.BackendName }
+func (r ListUnreadableLocationsRow) GetSizeBytes() int64              { return r.SizeBytes }
+func (r ListUnreadableLocationsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
+
 // -------------------------------------------------------------------------
 // Fat rows (slim columns + encryption + content hash).
 // -------------------------------------------------------------------------

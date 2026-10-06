@@ -60,12 +60,13 @@ type SharedState interface {
 // marks a store read that failed, and applying the snapshot leaves the gauges
 // that read feeds as they were.
 type FleetSnapshot struct {
-	ComputedAt      time.Time                 `json:"computed_at"`
-	Quota           map[string]core.QuotaStat `json:"quota"`
-	Objects         map[string]int64          `json:"objects"`
-	Multipart       map[string]int64          `json:"multipart"`
-	Replication     *ReplicationSnapshot      `json:"replication"`
-	PlaintextCopies *int64                    `json:"plaintext_copies"`
+	ComputedAt       time.Time                 `json:"computed_at"`
+	Quota            map[string]core.QuotaStat `json:"quota"`
+	Objects          map[string]int64          `json:"objects"`
+	Multipart        map[string]int64          `json:"multipart"`
+	Replication      *ReplicationSnapshot      `json:"replication"`
+	PlaintextCopies  *int64                    `json:"plaintext_copies"`
+	UnreadableCopies *int64                    `json:"unreadable_copies"`
 }
 
 // ReplicationSnapshot is the last-computed replication state, retained so a
@@ -194,6 +195,11 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 	} else {
 		snap.PlaintextCopies = &plaintext
 	}
+	if unreadable, err := mc.store.CountUnreadableLocations(ctx); err != nil {
+		mc.log.WarnContext(ctx, "failed to count unreadable copies", logfmt.Err(err))
+	} else {
+		snap.UnreadableCopies = &unreadable
+	}
 
 	snap.ComputedAt = time.Now()
 	return snap
@@ -279,6 +285,9 @@ func (mc *Collector) applyFleet(snap *FleetSnapshot) {
 	}
 	if snap.PlaintextCopies != nil {
 		telemetry.EncryptionPlaintextCopies.Set(float64(*snap.PlaintextCopies))
+	}
+	if snap.UnreadableCopies != nil {
+		telemetry.UnreadableCopies.Set(float64(*snap.UnreadableCopies))
 	}
 }
 

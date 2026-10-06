@@ -907,6 +907,7 @@ type roleStore interface {
 type metricsAdapter struct {
 	core.DashboardStore
 	core.ReplicationStore
+	integrity core.IntegrityStore
 }
 
 // newMetricsAdapter returns a proxy.MetricsDeps-compatible value backed
@@ -915,7 +916,14 @@ func newMetricsAdapter(src roleStore) *metricsAdapter {
 	return &metricsAdapter{
 		DashboardStore:   src,
 		ReplicationStore: src,
+		integrity:        src,
 	}
+}
+
+// CountUnreadableLocations forwards to the integrity role, which the embedded
+// roles do not cover.
+func (a *metricsAdapter) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	return a.integrity.CountUnreadableLocations(ctx)
 }
 
 // envOrDefault is an integration-test fixture helper; see file header for

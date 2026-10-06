@@ -406,6 +406,10 @@ var simpleWrapperCases = []wrapperCase{
 	{"over-replication", "over-replication", nil, http.MethodGet, "/admin/api/over-replication", ""},
 	{"over-replication-execute", "over-replication", []string{"-execute"}, http.MethodPost, "/admin/api/over-replication", ""},
 	{"over-replication-execute-batch", "over-replication", []string{"-execute", "-batch-size", "200"}, http.MethodPost, "/admin/api/over-replication", "batch_size=200"},
+	{"unreadable", "unreadable", nil, http.MethodGet, "/admin/api/unreadable", ""},
+	{"unreadable-limit", "unreadable", []string{"-limit", "20"}, http.MethodGet, "/admin/api/unreadable", "limit=20"},
+	{"unreadable-execute", "unreadable", []string{"-execute"}, http.MethodPost, "/admin/api/unreadable", ""},
+	{"unreadable-execute-batch", "unreadable", []string{"-execute", "-batch-size", "50"}, http.MethodPost, "/admin/api/unreadable", "batch_size=50"},
 	{"log-level-get", "log-level", nil, http.MethodGet, "/admin/api/log-level", ""},
 	{"log-level-set", "log-level", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
 	{"scrub", "scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
@@ -893,7 +897,7 @@ func TestCommand_TextVsJSONRendering(t *testing.T) {
 func TestCommand_FlagParseErrors(t *testing.T) {
 	t.Parallel()
 	cmds := []string{
-		"object-locations", "over-replication", "log-level", "scrub",
+		"object-locations", "over-replication", "unreadable", "log-level", "scrub",
 		"backfill-checksums", "reconcile", "remove-backend",
 		"cache-invalidate", "cache-invalidate-prefix",
 	}

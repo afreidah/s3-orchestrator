@@ -752,6 +752,36 @@ func (mr *MockScrubberOpsMockRecorder) Backfill(ctx, batchSize, offset, arg3, ob
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backfill", reflect.TypeOf((*MockScrubberOps)(nil).Backfill), ctx, batchSize, offset, arg3, observer)
 }
 
+// ListUnreadable mocks base method.
+func (m *MockScrubberOps) ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUnreadable", ctx, limit)
+	ret0, _ := ret[0].([]core.ObjectLocation)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListUnreadable indicates an expected call of ListUnreadable.
+func (mr *MockScrubberOpsMockRecorder) ListUnreadable(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnreadable", reflect.TypeOf((*MockScrubberOps)(nil).ListUnreadable), ctx, limit)
+}
+
+// PurgeUnreadable mocks base method.
+func (m *MockScrubberOps) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeUnreadable", ctx, batchSize, observer)
+	ret0, _ := ret[0].(worker.WorkSummary)
+	return ret0
+}
+
+// PurgeUnreadable indicates an expected call of PurgeUnreadable.
+func (mr *MockScrubberOpsMockRecorder) PurgeUnreadable(ctx, batchSize, observer any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeUnreadable", reflect.TypeOf((*MockScrubberOps)(nil).PurgeUnreadable), ctx, batchSize, observer)
+}
+
 // Scrub mocks base method.
 func (m *MockScrubberOps) Scrub(ctx context.Context, batchSize int, arg2 string, observer progress.Observer) worker.WorkSummary {
 	m.ctrl.T.Helper()

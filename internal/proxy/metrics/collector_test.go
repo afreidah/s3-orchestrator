@@ -45,6 +45,9 @@ func (fakeReplicationDeps) GetQuotaStats(context.Context) (map[string]core.Quota
 func (f fakeReplicationDeps) CountUnencryptedLocations(context.Context) (int64, error) {
 	return f.plaintext, f.countErr
 }
+func (fakeReplicationDeps) CountUnreadableLocations(context.Context) (int64, error) {
+	return 0, nil
+}
 func (fakeReplicationDeps) GetObjectCounts(context.Context) (map[string]int64, error) {
 	return nil, nil
 }

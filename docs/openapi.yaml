@@ -1148,6 +1148,49 @@ paths:
                                 type: string
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/unreadable:
+        get:
+            summary: List copies that are encrypted with no key
+            operationId: getUnreadable
+            parameters:
+                - name: limit
+                  in: query
+                  description: Maximum copies to return
+                  required: false
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnreadableListResponse'
+                "401":
+                    description: Missing or invalid admin token
+        post:
+            summary: Delete every copy that is encrypted with no key
+            operationId: postUnreadable
+            parameters:
+                - name: batch_size
+                  in: query
+                  description: Copies purged per pass
+                  required: false
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnreadablePurgeResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/usage-flush:
         post:
             summary: Force a flush of usage counters to the database
@@ -2223,6 +2266,53 @@ components:
                 - usage_period
                 - backends
                 - integrity
+            type: object
+        UnreadableCopy:
+            properties:
+                backend:
+                    type: string
+                created_at:
+                    format: date-time
+                    type: string
+                key:
+                    type: string
+                size_bytes:
+                    format: int64
+                    type: integer
+            required:
+                - key
+                - backend
+                - size_bytes
+                - created_at
+            type: object
+        UnreadableListResponse:
+            properties:
+                copies:
+                    items:
+                        $ref: '#/components/schemas/UnreadableCopy'
+                    type: array
+                total:
+                    format: int64
+                    type: integer
+            required:
+                - total
+                - copies
+            type: object
+        UnreadablePurgeResponse:
+            properties:
+                failed:
+                    format: int64
+                    type: integer
+                purged:
+                    format: int64
+                    type: integer
+                reason:
+                    type: string
+                status:
+                    type: string
+            required:
+                - status
+                - purged
             type: object
         UpdateBucketRequest:
             properties:

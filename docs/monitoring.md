@@ -196,7 +196,8 @@ Key metrics to alert on:
 | `s3o_over_replication_errors_total` | Cleanup errors - indicates backends or metadata issues preventing excess copy removal |
 | `s3o_over_replication_key_preserved_total` | Any non-zero value means a copy set disagrees about encryption and the cleaner kept the only copy that can still be decrypted. Repair the diverged rows; until then the object stays over-replicated |
 | `s3o_encryption_flag_mismatch_total{component}` | Any non-zero value is an alert: an object's stored bytes disagree with its recorded encryption flag, so that copy cannot be read or hashed. `component` names what noticed (`get`, `head`, `scrubber`) |
-| `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded as unmanaged so its space is accounted for, and clients cannot list or read it. Restore it from elsewhere or delete it |
+| `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded as unmanaged so its space is accounted for, and clients cannot list or read it. Restore it from elsewhere, or purge it with `admin unreadable --execute` |
+| `s3o_unreadable_copies` | Any non-zero value: copies that are encrypted with no key are holding quota. List them with `admin unreadable` and purge with `--execute` |
 | `s3o_integrity_oldest_unverified_seconds` | Alert when it climbs steadily. The scrubber is not completing a sweep. It should settle around the sweep period implied by `scrubber_interval` and `scrubber_batch_size`; a rising value means the batch is too small or the interval too long for the fleet. A copy never verified at all counts from when it was written, so a fleet the sweep has not reached shows its true backlog rather than zero. Covers reachable copies only, so read it next to `s3o_integrity_deferred_copies` |
 | `s3o_integrity_never_verified_copies` | Stays non-zero on a fleet being written to, since new copies queue behind older data by design. Alert on a climbing value you did not cause, not on it being above zero. Covers reachable copies only |
 | `s3o_integrity_deferred_copies` | Alert on any sustained non-zero value. These copies sit on backends over their usage limit, so the sweep cannot read them and the two figures above describe only part of the fleet. The scrubber will not clear this on its own: raise the backend's limit, or wait for the usage period to roll over |
@@ -343,6 +344,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_compression_skipped_total` | Counter | reason | Objects stored verbatim despite compression being on (`min_size`, `min_ratio`) |
 | `s3o_compression_errors_total` | Counter | operation | Codec failures (`encode`, `decode`) |
 | `s3o_encryption_plaintext_copies` | Gauge | - | Copies still stored unencrypted; falls only when encrypt-existing is run |
+| `s3o_unreadable_copies` | Gauge | - | Copies encrypted with no key to decrypt them; falls only when they are purged |
 | `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation |
 | `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes |

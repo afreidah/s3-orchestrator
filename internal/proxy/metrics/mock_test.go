@@ -71,6 +71,21 @@ func (mr *MockDepsMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockDeps)(nil).CountUnencryptedLocations), ctx)
 }
 
+// CountUnreadableLocations mocks base method.
+func (m *MockDeps) CountUnreadableLocations(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountUnreadableLocations", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountUnreadableLocations indicates an expected call of CountUnreadableLocations.
+func (mr *MockDepsMockRecorder) CountUnreadableLocations(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnreadableLocations", reflect.TypeOf((*MockDeps)(nil).CountUnreadableLocations), ctx)
+}
+
 // GetActiveMultipartCounts mocks base method.
 func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()

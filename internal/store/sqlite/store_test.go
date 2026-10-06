@@ -3250,6 +3250,17 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 
 	assertListsOnly(t, s, "bucket/live")
 
+	unreadable, err := s.ListUnreadableLocations(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadableLocations: %v", err)
+	}
+	if len(unreadable) != 1 || unreadable[0].ObjectKey != "bucket/gone" || unreadable[0].SizeBytes != 508 {
+		t.Errorf("unreadable = %+v, want only bucket/gone", unreadable)
+	}
+	if n, err := s.CountUnreadableLocations(ctx); err != nil || n != 1 {
+		t.Errorf("CountUnreadableLocations = %d, %v; want 1", n, err)
+	}
+
 	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10)
 	if err != nil {
 		t.Fatalf("GetUnderReplicatedObjects: %v", err)

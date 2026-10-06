@@ -88,6 +88,8 @@ func Permissive(m *MockMetadataStore) {
 	r.MarkObjectScrubbed(a, a, a).Return(nil).AnyTimes()
 	r.IntegrityCoverage(a, a).Return(core.CoverageStat{}, nil).AnyTimes()
 	r.CountUnencryptedLocations(a).Return(int64(0), nil).AnyTimes()
+	r.ListUnreadableLocations(a, a).Return(nil, nil).AnyTimes()
+	r.CountUnreadableLocations(a).Return(int64(0), nil).AnyTimes()
 	r.GetStaleMultipartUploads(a, a).Return(nil, nil).AnyTimes()
 	r.GetStalePending(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetUnderReplicatedObjects(a, a, a).Return(nil, nil).AnyTimes()

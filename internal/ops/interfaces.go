@@ -190,6 +190,8 @@ type ScrubberOps interface {
 	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) worker.WorkSummary
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
 	Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (worker.WorkSummary, int)
+	ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error)
+	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary
 }
 
 // AdvisoryLocker is the cluster-wide mutual exclusion an operator-triggered

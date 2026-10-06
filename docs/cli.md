@@ -79,6 +79,7 @@ item, and a terminal `result`.
 | `reconcile` | `reconciling` | backend |
 | `replicate` | `replicating` | object key |
 | `over-replication --execute` | `removing` | object key |
+| `unreadable --execute` | `purging` | object key |
 | `lifecycle` | `expiring` | object key |
 | `remove-backend --purge --confirm` | `deleting` | object key |
 
@@ -186,6 +187,12 @@ s3-orchestrator admin rebalance
 # so a rule that matches nothing is distinguishable from one that ran and
 # found nothing expired.
 s3-orchestrator admin lifecycle
+
+# List copies encrypted with no key, and how many there are
+s3-orchestrator admin unreadable -limit 50
+
+# Delete every copy encrypted with no key: bytes, rows and quota
+s3-orchestrator admin unreadable --execute
 
 # Show count of over-replicated objects
 s3-orchestrator admin over-replication

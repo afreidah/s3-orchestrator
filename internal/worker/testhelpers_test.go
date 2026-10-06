@@ -166,6 +166,7 @@ type mockMetadataStore struct {
 	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	objectsWithoutHash  []core.ObjectLocation
+	unreadable          []core.ObjectLocation
 	allLocations        []core.ObjectLocation
 	allLocationsErr     error
 	scrubbed            []string
@@ -325,6 +326,16 @@ func (m *mockMetadataStore) IntegrityCoverage(_ context.Context, reachable []str
 		NeverVerified:       m.neverVerified,
 		Deferred:            m.deferredCopies,
 	}, m.oldestUnverifiedErr
+}
+
+// ListUnreadableLocations returns the unreadable fixture, up to limit.
+func (m *mockMetadataStore) ListUnreadableLocations(_ context.Context, limit int) ([]core.ObjectLocation, error) {
+	return m.unreadable[:min(limit, len(m.unreadable))], nil
+}
+
+// CountUnreadableLocations reports the size of the unreadable fixture.
+func (m *mockMetadataStore) CountUnreadableLocations(context.Context) (int64, error) {
+	return int64(len(m.unreadable)), nil
 }
 
 // GetObjectsWithoutHash is a stub on mockMetadataStore; returns either the test-set

@@ -34,6 +34,7 @@ import (
 const (
 	pathBackendDrain    = "/admin/api/backends/{name}/drain"
 	pathOverReplication = "/admin/api/over-replication"
+	pathUnreadable      = "/admin/api/unreadable"
 	pathLogLevel        = "/admin/api/log-level"
 	pathObjects         = "/admin/api/objects"
 	pathObject          = pathObjects + "/" + objectKeyPattern
@@ -479,6 +480,25 @@ func (h *Handler) routes() []route {
 			},
 			Stream: adminstream.Event{},
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
+		},
+		{
+			Method: http.MethodGet, Pattern: pathUnreadable, Handler: h.handleListUnreadable,
+			Summary:  "List copies that are encrypted with no key",
+			Response: adminapi.UnreadableListResponse{},
+			Params: []param{
+				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum copies to return"},
+			},
+			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
+		},
+		{
+			Method: http.MethodPost, Pattern: pathUnreadable, Handler: h.handlePurgeUnreadable,
+			Summary:  "Delete every copy that is encrypted with no key",
+			Response: adminapi.UnreadablePurgeResponse{},
+			Params: []param{
+				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Copies purged per pass"},
+			},
+			Stream: adminstream.Event{},
+			Kind:   core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/reconcile", Handler: h.handleReconcile,

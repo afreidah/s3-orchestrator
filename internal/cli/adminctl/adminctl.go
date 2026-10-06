@@ -69,6 +69,7 @@ Commands:
   replicate           Trigger one replication cycle
   rebalance           Trigger one rebalance cycle to redistribute objects across backends
   over-replication    Show or clean over-replicated objects (use --execute to clean)
+  unreadable          List copies encrypted with no key (use --execute to delete them)
   log-level           View or set the runtime log level (use -set to change)
   drain               Start draining a backend (requires backend name arg)
   drain-status        Check drain progress (requires backend name arg)
@@ -165,6 +166,7 @@ var handlers = map[string]handler{
 	"rebalance":               cmdRebalance,
 	"lifecycle":               cmdLifecycle,
 	"over-replication":        cmdOverReplication,
+	"unreadable":              cmdUnreadable,
 	"log-level":               cmdLogLevel,
 	"drain":                   cmdDrain,
 	"drain-status":            cmdDrainStatus,
