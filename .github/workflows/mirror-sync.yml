@@ -1,0 +1,33 @@
+# -------------------------------------------------------------------------------
+# s3-orchestrator - Mirror Sync Trigger
+#
+# Author: Alex Freidah
+#
+# Tells gitgogit to mirror this repo as soon as a merge lands, so the Forgejo
+# copy and the CI that runs off it start in seconds instead of waiting for the
+# next poll.
+#
+# Runs on a self-hosted runner because gitgogit is only reachable from inside
+# the cluster. The runner is ephemeral and provisioned on demand by the
+# ci-runner-scaler, which polls this repo for queued self-hosted jobs.
+# -------------------------------------------------------------------------------
+
+name: Mirror Sync
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  sync:
+    name: Trigger gitgogit
+    runs-on: self-hosted
+    steps:
+      - name: Request a mirror of this repo
+        run: curl -fsS --max-time 30 -X POST "http://gitgogit.service.consul:8080/sync/${{ github.event.repository.name }}"
