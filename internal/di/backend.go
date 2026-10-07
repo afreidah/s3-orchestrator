@@ -485,7 +485,6 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 	cb := &d.cfg.CircuitBreaker
 	objectManager := object.New(&object.Deps{
 		Core:                         d.rt,
-		BroadcastCore:                d.rt,
 		Coord:                        d.coord,
 		Stores:                       d.stores,
 		Encryptor:                    d.enc,

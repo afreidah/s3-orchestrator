@@ -221,7 +221,6 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	})
 	om := object.New(&object.Deps{
 		Core:                         rt,
-		BroadcastCore:                rt,
 		Coord:                        coord,
 		Stores:                       store,
 		Encryptor:                    opts.Encryptor,

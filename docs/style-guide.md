@@ -278,9 +278,9 @@ Group related fields with inline comments explaining non-obvious fields:
 
 ```go
 type Manager struct {
-    core        ObjectRuntime          // infrastructure subset: backends, usage, timeout, metrics
-    coord       ObjectCoordinator      // write-path helpers, shared with the multipart manager
-    stores      ObjectStores           // direct store access for read paths and quota inspection
+    core        Runtime                // infrastructure subset: backends, usage, timeout, metrics
+    coord       *writepath.Coordinator // write-path helpers, shared with the multipart manager
+    stores      Stores                 // direct store access for read paths and quota inspection
     encryptor   *encryption.Encryptor  // nil when encryption is disabled
     cache       *LocationCache         // key -> backend, consulted only in degraded mode
     objectCache objcache.ObjectCache   // nil when object data caching is disabled
@@ -294,7 +294,7 @@ type Manager struct {
 
 This codebase follows the Go-idiomatic "accept interfaces, return structs" pattern: **producer packages export concrete `*Type` values with no producer-side interface**, and **each consumer declares its own narrow interface** listing only the methods it actually calls. The concrete type satisfies every consumer's local interface because Go interfaces are structurally typed.
 
-Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`MultipartRuntime`/`MultipartCoordinator`, `ObjectRuntime`/`ObjectCoordinator`, `WriteRuntime`).
+Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 
 **Rationale:**
 - A consumer's dependency footprint is documented in its own source file.
@@ -314,13 +314,13 @@ Applied across `internal/store` (the per-role store interfaces consumed at use s
 | `internal/worker/ops_runtime.go` | Worker-side `Ops` / `CleanupOps` / `ScrubberOps` interfaces against the proxy infrastructure |
 | `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
 
-**Naming convention:** `<Consumer><Provider>` - e.g. the multipart subpackage's view of `*infra.BackendRuntime` is `MultipartRuntime`; the object subpackage's view of `*writepath.Coordinator` is `ObjectCoordinator`. The prefix names the consumer, the suffix names the producer concept.
+**Naming convention:** name the interface for the producer concept and let the package name the consumer - `multipart.Runtime` and `object.Runtime` are each package's view of `*infra.BackendRuntime`.
 
 **Constructor shape:** consumers take the interfaces, not concrete pointers. Composition-layer code (the root proxy package, DI providers) passes the concrete `*infra.BackendRuntime`, `*writepath.Coordinator`, `*object.Manager`, etc., and the concrete types satisfy the interfaces implicitly.
 
 ```go
 // internal/proxy/multipart/consumer_interfaces.go
-type MultipartRuntime interface {
+type Runtime interface {
     GetBackend(name string) (backend.ObjectBackend, error)
     Usage() *counter.UsageTracker
     WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
@@ -329,12 +329,10 @@ type MultipartRuntime interface {
 
 // internal/proxy/multipart/manager.go
 type Manager struct {
-    core  MultipartRuntime        // not *infra.BackendRuntime
-    coord MultipartCoordinator // not *writepath.Coordinator
+    core  Runtime                // not *infra.BackendRuntime
+    coord *writepath.Coordinator // concrete: none of the reasons below applies
     // ...
 }
-
-func New(core MultipartRuntime, coord MultipartCoordinator, ...) *Manager { ... }
 ```
 
 **Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, add a `//go:generate mockgen -source=consumer_interfaces.go -destination=mock/<file>.go -package=<pkg>mock` directive at the top of the consumer interface file and run `make generate`. Until a mock is needed, the interface declaration alone documents the dependency surface - generating unused mocks is busywork.
@@ -344,9 +342,9 @@ func New(core MultipartRuntime, coord MultipartCoordinator, ...) *Manager { ... 
 1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
 2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `admin.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps`/`Reconciler` whose fakes drive admin handler branches).
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` - without the interface, `readpath` would have to import `object` which already imports `readpath`).
-4. **The interface models a real domain boundary** between subsystems (`drain.DrainRuntime`, `MultipartRuntime`, `ObjectRuntime`, `WriteRuntime`).
+4. **The interface models a real domain boundary** between subsystems (`drain.Runtime`, `multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 
-If none apply - single impl, single consumer, no test fake, no cycle, no boundary - pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`.
+If none apply - single impl, single consumer, no test fake, no cycle, no boundary - pass the concrete `*Type` directly. Examples cut: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, `object.Coordinator`. Splitting one dependency into role interfaces that nothing uses on its own fails the same test.
 
 **There is no exported union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union exists in exactly three places, none of them reachable from a feature package:
 
@@ -392,7 +390,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
 
 For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` - `RecorderProvider` for `Acct() *Recorder`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 
-Multi-method interfaces are exempt: `worker.Ops`, `ObjectRuntime`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
+Multi-method interfaces are exempt: `worker.Ops`, `object.Runtime`, `drain.Runtime` describe a role, not a single action, so the `-er` form does not apply.
 
 ### Where new methods live
 
