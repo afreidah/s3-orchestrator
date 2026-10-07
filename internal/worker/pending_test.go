@@ -29,14 +29,14 @@ import (
 // HELPERS
 // -------------------------------------------------------------------------
 
-// setupReaper wires a PendingReaper with a CleanupOps mock and a fresh
+// setupReaper wires a PendingReaper with an Ops mock and a fresh
 // metadata store. concurrency=1 keeps test goroutine ordering predictable;
 // minAge=0 lets the constructor fall back to its default (5m) which is
 // irrelevant here since GetStalePending is mocked.
-func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
+func setupReaper(t *testing.T) (*PendingReaper, *MockOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := newMockCleanupOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
@@ -67,7 +67,7 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewPendingReaper(PendingReaperDeps{Ops: newMockCleanupOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
+	r := NewPendingReaper(PendingReaperDeps{Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
 	if r.concurrency != 4 {
 		t.Errorf("concurrency = %d, want 4", r.concurrency)
 	}
@@ -522,7 +522,7 @@ func (f *failingDeleteStore) DeletePending(_ context.Context, _ string) error {
 func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := newMockCleanupOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &failingDeleteStore{
 		mockMetadataStore: &mockMetadataStore{},

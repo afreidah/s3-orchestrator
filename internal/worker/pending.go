@@ -37,7 +37,7 @@ import (
 // backend. The min-age window protects in-flight PUTs whose commit has not
 // yet had a chance to clear the intent on the synchronous path.
 type PendingReaper struct {
-	deps        CleanupOps
+	deps        Ops
 	placement   Placement
 	store       core.PendingStore
 	log         *slog.Logger
@@ -51,7 +51,7 @@ type PendingReaper struct {
 // Concurrency, MinAge, and BatchSize fall back to safe defaults when zero
 // or negative.
 type PendingReaperDeps struct {
-	Ops         CleanupOps
+	Ops         Ops
 	Placement   Placement
 	Store       core.PendingStore
 	Concurrency int

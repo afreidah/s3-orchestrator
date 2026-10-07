@@ -45,20 +45,12 @@ var errNoCodec = errors.New("object is compressed but no codec is configured")
 // TYPES
 // -------------------------------------------------------------------------
 
-// StoredReader is the narrow surface hashing a stored copy needs: find the
-// backend, read the object, and charge the read to that backend's quota.
-// Satisfied by both Ops and ScrubberOps.
-type StoredReader interface {
-	DataMover
-	RecorderProvider
-}
-
 // storedHasher turns a stored copy back into the plaintext the client wrote and
 // hashes it. Encryptor and Codec are optional and are what the stored form has
 // to be undone through; a copy recorded as encrypted or compressed cannot be
 // hashed without the matching one.
 type storedHasher struct {
-	ops       StoredReader
+	ops       Ops
 	encryptor *encryption.Encryptor
 	codec     StreamDecompressor
 	source    string
@@ -66,7 +58,7 @@ type storedHasher struct {
 
 // newStoredHasher builds a hasher that attributes its metrics to source, which
 // names the caller in the encryption-flag-mismatch counter.
-func newStoredHasher(ops StoredReader, enc *encryption.Encryptor, codec StreamDecompressor, source string) *storedHasher {
+func newStoredHasher(ops Ops, enc *encryption.Encryptor, codec StreamDecompressor, source string) *storedHasher {
 	return &storedHasher{ops: ops, encryptor: enc, codec: codec, source: source}
 }
 

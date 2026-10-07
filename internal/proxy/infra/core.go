@@ -1,38 +1,22 @@
 // -------------------------------------------------------------------------------
-// Backend BackendRuntime - Composition Layer for Storage Infrastructure
+// Backend Runtime - Shared Storage Infrastructure
 //
 // Author: Alex Freidah
 //
-// *BackendRuntime is the public-facing composition root that other proxy
-// subpackages (object, multipart, writepath, readpath) consume through
-// their own consumer-declared interfaces. Internally it owns five
-// focused capability services and delegates to them:
-//
-//   - backendRegistry : backend map, iteration order, drain/health filters
-//   - usagePolicy     : per-backend usage limits + max object size
-//   - timeoutPolicy   : per-call backend timeout + helpers that pair it
-//                       with a single backend RPC (DeleteWithTimeout,
-//                       StreamCopy)
-//   - errorClassifier : store-error -> S3-error translation with span
-//                       and telemetry side effects
-//   - admissionGate   : bounded-concurrency admission semaphore
-//
-// *BackendRuntime exposes Backends(), GetBackend(), WithTimeout(), and
-// friends as thin forwards into the appropriate capability, which keeps
-// the consumer-declared interface pattern intact (callers see methods on
-// *BackendRuntime, not producer-side interfaces) and makes each
-// capability easy to test in isolation.
+// *BackendRuntime is the infrastructure every proxy subpackage and worker
+// shares: the backend map and its drain and health filters, usage limits,
+// admission, per-call backend timeouts, write-error classification, and the
+// metrics collector. Consumers reach it through their own consumer-declared
+// interfaces. Its methods are split across files by concern: registry.go,
+// usage.go, admission.go, timeout.go and classify.go.
 // -------------------------------------------------------------------------------
 
 package infra
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
-
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -40,8 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // DrainChecker reports whether a named backend is currently being drained.
@@ -66,38 +48,42 @@ type Config struct {
 	Log              *slog.Logger
 }
 
-// BackendRuntime composes the five capability services every proxy subpackage
-// needs. It deliberately holds no store: each collaborator takes the store
-// roles it needs directly, which is what lets every worker reuse the runtime
-// without dragging persistence along. For which methods belong here versus on
-// a collaborator, see docs/style-guide.md "Where new methods live".
+// BackendRuntime holds the shared backend infrastructure. It deliberately holds
+// no store: each collaborator takes the store roles it needs directly, which is
+// what lets every worker reuse the runtime without dragging persistence along.
+// For which methods belong here versus on a collaborator, see
+// docs/style-guide.md "Where new methods live".
+//
+// drainMgr is wired after construction by SetDrainChecker, since the drain
+// manager is built after the runtime. A nil admissionSem means unbounded
+// admission, and a zero backendTimeout disables the per-call timeout.
 type BackendRuntime struct {
-	registry         *backendRegistry
-	usage            *usagePolicy
+	backends         map[string]backend.ObjectBackend
+	order            []string
+	drainMgr         DrainChecker
+	usage            *counter.UsageTracker
+	maxObjectSizes   map[string]int64
 	quota            *counter.QuotaTracker
-	timeouts         *timeoutPolicy
-	classifier       *errorClassifier
-	admission        *admissionGate
+	backendTimeout   time.Duration
+	admissionSem     chan struct{}
 	routingStrategy  config.RoutingStrategy
 	metricsCollector *metrics.Collector
 	log              *slog.Logger
 	recorder         *accounting.Recorder
 }
 
-// New constructs a *BackendRuntime from cfg. The drain checker is wired
-// post-construction via SetDrainChecker to break the
-// BackendRuntime <-> drain.Manager cycle. The accounting Recorder is
-// built here so every consumer of *BackendRuntime shares one instance that
-// observes the same usage tracker and the (later-wired) metrics
-// collector via the closure over c.RecordOperation.
+// New constructs a *BackendRuntime from cfg. The accounting Recorder is built
+// here so every consumer shares one instance that observes the same usage
+// tracker and the later-wired metrics collector through RecordOperation.
 func New(cfg *Config) *BackendRuntime {
 	c := &BackendRuntime{
-		registry:         newBackendRegistry(cfg.Backends, cfg.Order),
-		usage:            newUsagePolicy(cfg.Usage, cfg.MaxObjectSizes),
+		backends:         cfg.Backends,
+		order:            cfg.Order,
+		usage:            cfg.Usage,
+		maxObjectSizes:   cfg.MaxObjectSizes,
 		quota:            cfg.Quota,
-		timeouts:         newTimeoutPolicy(cfg.BackendTimeout),
-		classifier:       newErrorClassifier(),
-		admission:        newAdmissionGate(cfg.AdmissionSem),
+		backendTimeout:   cfg.BackendTimeout,
+		admissionSem:     cfg.AdmissionSem,
 		routingStrategy:  cfg.RoutingStrategy,
 		metricsCollector: cfg.MetricsCollector,
 		log:              cfg.Log,
@@ -145,190 +131,12 @@ func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 	return c.routingStrategy
 }
 
-// -------------------------------------------------------------------------
-// DRAIN WIRING
-// -------------------------------------------------------------------------
-
-// SetDrainChecker points the eligibility filter at the drain manager so
-// IsDraining reflects live drain state. Called once the drain manager
-// exists, since it is built after the runtime.
-func (c *BackendRuntime) SetDrainChecker(d DrainChecker) {
-	c.registry.SetDrainChecker(d)
-}
-
-// -------------------------------------------------------------------------
-// BACKEND REGISTRY (forwards to backendRegistry)
-// -------------------------------------------------------------------------
-
-// GetBackend returns the named backend, or an error if it doesn't exist.
-func (c *BackendRuntime) GetBackend(name string) (backend.ObjectBackend, error) {
-	return c.registry.Get(name)
-}
-
-// Backends returns the backend map (worker.Ops contract).
-func (c *BackendRuntime) Backends() map[string]backend.ObjectBackend {
-	return c.registry.All()
-}
-
-// BackendOrder returns the configured backend ordering (worker.Ops contract).
-func (c *BackendRuntime) BackendOrder() []string {
-	return c.registry.Order()
-}
-
-// IsDraining returns true if the named backend is currently being drained.
-// Returns false when no drain manager is wired.
-func (c *BackendRuntime) IsDraining(name string) bool {
-	return c.registry.IsDraining(name)
-}
-
-// ExcludeDraining filters out backends that are currently draining.
-func (c *BackendRuntime) ExcludeDraining(eligible []string) []string {
-	return c.registry.ExcludeDraining(eligible)
-}
-
-// ExcludeUnhealthy filters out backends whose circuit breaker is open.
-func (c *BackendRuntime) ExcludeUnhealthy(eligible []string) []string {
-	return c.registry.ExcludeUnhealthy(eligible)
-}
-
-// -------------------------------------------------------------------------
-// USAGE POLICY (forwards to usagePolicy)
-// -------------------------------------------------------------------------
-
-// Usage returns the usage tracker (worker.Ops contract).
-func (c *BackendRuntime) Usage() *counter.UsageTracker {
-	return c.usage.Tracker()
-}
-
 // Quota returns the byte-reservation tracker every write path consults before
 // it writes and credits after it commits. A deployment always has one: it is
 // what answers whether a backend has room, which no other component knows.
 func (c *BackendRuntime) Quota() *counter.QuotaTracker {
 	return c.quota
 }
-
-// MaxObjectSize returns the per-backend max object size; 0 means
-// unlimited.
-func (c *BackendRuntime) MaxObjectSize(name string) int64 {
-	return c.usage.MaxObjectSize(name)
-}
-
-// EligibleForWrite returns backends that are not draining, not
-// circuit-broken, and within usage limits / max-object-size for the
-// given operation. Composed pipeline of registry filters + usage
-// filter so each capability owns its half of the decision.
-func (c *BackendRuntime) EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string {
-	eligible := c.registry.ExcludeDraining(c.registry.Order())
-	eligible = c.registry.ExcludeUnhealthy(eligible)
-	return c.usage.FilterEligible(eligible, ops, egress, ingress)
-}
-
-// -------------------------------------------------------------------------
-// ADMISSION (forwards to admissionGate)
-// -------------------------------------------------------------------------
-
-// AcquireAdmission blocks until a slot is available, or returns false
-// if ctx is cancelled. Returns true immediately when no semaphore is
-// wired.
-func (c *BackendRuntime) AcquireAdmission(ctx context.Context) bool {
-	return c.admission.Acquire(ctx)
-}
-
-// ReleaseAdmission returns a slot to the admission semaphore.
-func (c *BackendRuntime) ReleaseAdmission() {
-	c.admission.Release()
-}
-
-// AdmissionSem returns the underlying semaphore channel (nil if
-// unwired). Callers that need the raw channel (split admission
-// controllers) read this; the AcquireAdmission/ReleaseAdmission
-// methods are preferred.
-func (c *BackendRuntime) AdmissionSem() chan struct{} {
-	return c.admission.Sem()
-}
-
-// -------------------------------------------------------------------------
-// TIMEOUT (forwards to timeoutPolicy)
-// -------------------------------------------------------------------------
-
-// WithTimeout returns a context with the configured backend timeout
-// applied.
-func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	return c.timeouts.WithTimeout(ctx)
-}
-
-// DeleteWithTimeout deletes the object at storageKey on a backend using the
-// configured backend timeout. storageKey is the path the bytes occupy, which
-// for a per-write copy is not the object's key.
-func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, storageKey string) error {
-	return c.timeouts.DeleteWithTimeout(ctx, be, storageKey)
-}
-
-// StreamCopy reads an object from src and writes it to dst with timeouts
-// applied to each leg, admitting the transfer against both backends' usage
-// limits first. Returns the bytes moved, or a *backend.CopyError tagged with
-// the failing phase.
-//
-// Admission lives here rather than at the call sites because this is the one
-// place every backend-to-backend copy passes through. The replicator used to
-// check only its destination and read from whichever source was healthy,
-// which let a fleet-wide repair drain a source backend's monthly egress
-// budget; the rebalancer checked both sides. Enforcing here makes the two
-// agree by construction and leaves a caller nothing to forget.
-//
-// Accounting stays with the caller. Both callers charge the size their
-// metadata commit settled on rather than the size that crossed the wire, and
-// the two disagree only when an overwrite lands mid-copy, which each of them
-// reports in its own terms. sizeEstimate is what admission is judged on.
-//
-// srcKey and dstKey are the paths on each side, and they differ. The copy is a
-// new write on the destination with a path of its own, so a cleanup after it
-// deletes only those bytes and nothing else the object has on that backend.
-func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
-	// Refusals are tagged with the leg that had no headroom, so callers get
-	// the same structural retry answer they already act on for I/O failures:
-	// another source may have egress left, but a destination that is full
-	// ends the attempt.
-	if !c.Acct().Allow(src.Name, []s3op.Operation{s3op.GetObject}, sizeEstimate, 0) {
-		return 0, &backend.CopyError{
-			Phase: backend.CopyPhaseRead,
-			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
-		}
-	}
-	if !c.Acct().Allow(dst.Name, []s3op.Operation{s3op.PutObject}, 0, sizeEstimate) {
-		return 0, &backend.CopyError{
-			Phase: backend.CopyPhaseWrite,
-			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),
-		}
-	}
-	return c.timeouts.StreamCopy(ctx, src.Backend, dst.Backend, srcKey, dstKey)
-}
-
-// GetWithTimeout issues a GET against be using the configured backend
-// timeout, returning the result and a cancel func the caller owns.
-func (c *BackendRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
-	return c.timeouts.GetWithTimeout(ctx, be, key, rangeHeader)
-}
-
-// HeadWithTimeout issues a HEAD against be using the configured backend
-// timeout.
-func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
-	return c.timeouts.HeadWithTimeout(ctx, be, key)
-}
-
-// -------------------------------------------------------------------------
-// ERROR CLASSIFICATION (forwards to errorClassifier)
-// -------------------------------------------------------------------------
-
-// ClassifyWriteError translates store errors from write-path operations
-// into S3-compatible errors and updates the tracing span.
-func (c *BackendRuntime) ClassifyWriteError(span trace.Span, operation string, err error) error {
-	return c.classifier.ClassifyWriteError(span, operation, err)
-}
-
-// -------------------------------------------------------------------------
-// METRICS (delegates directly; collector lives on BackendRuntime)
-// -------------------------------------------------------------------------
 
 // RecordOperation delegates to the metrics collector.
 func (c *BackendRuntime) RecordOperation(operation, backend string, start time.Time, err error) {

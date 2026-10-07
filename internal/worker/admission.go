@@ -34,7 +34,7 @@ const (
 // releases the slot afterward. When admission is rejected, increments
 // the per-worker rejection counter and returns without invoking fn.
 // name must be one of the WorkerName* constants above.
-func WithAdmission(ctx context.Context, ac AdmissionControl, name string, fn func()) {
+func WithAdmission(ctx context.Context, ac Ops, name string, fn func()) {
 	if !ac.AcquireAdmission(ctx) {
 		telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues(name).Inc()
 		return

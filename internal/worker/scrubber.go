@@ -61,7 +61,7 @@ type ScrubberStore interface {
 // were written before integrity was enabled.
 type Scrubber struct {
 	log       *slog.Logger
-	deps      ScrubberOps
+	deps      Ops
 	placement Placement
 	store     ScrubberStore
 	hasher    *storedHasher
@@ -74,7 +74,7 @@ type Scrubber struct {
 // before hashing; a copy recorded as encrypted or compressed cannot be verified
 // without the matching one.
 type ScrubberDeps struct {
-	Ops       ScrubberOps
+	Ops       Ops
 	Placement Placement
 	Store     ScrubberStore
 	Encryptor *encryption.Encryptor

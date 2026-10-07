@@ -31,7 +31,7 @@ import (
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
 	log              *slog.Logger
-	deps             CleanupOps
+	deps             Ops
 	store            core.CleanupStore
 	concurrency      int
 	instanceID       string
@@ -44,7 +44,7 @@ type CleanupWorker struct {
 // ClaimGracePeriod is the threshold past which an outstanding claim becomes
 // reclaimable by another worker tick (typically 5m).
 type CleanupWorkerDeps struct {
-	Ops              CleanupOps
+	Ops              Ops
 	Store            core.CleanupStore
 	Concurrency      int
 	InstanceID       string
