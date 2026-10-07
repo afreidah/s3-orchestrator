@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow contracts the object Manager pulls from *infra.BackendRuntime and
-// *writepath.Coordinator. Pattern rationale: docs/style-guide.md
-// (Interface Design section).
+// Narrow contracts the object Manager pulls from *infra.BackendRuntime, the
+// compression codec, and the detached-upload tracker. Pattern rationale:
+// docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 
 package object
@@ -21,21 +21,30 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// WriteRuntime is the subset of *infra.BackendRuntime the write-path Manager
-// methods (put, copy, delete, mutation_finalize) reach for. IsDraining
-// is here for the post-PUT drain-race re-check in attemptPutOnBackend
-// (the upstream EligibleForWrite filter is racy; the re-check closes
-// the window).
-type WriteRuntime interface {
+// Runtime is the subset of *infra.BackendRuntime the Manager and its read
+// failover use. IsDraining backs the post-PUT drain-race re-check, since the
+// EligibleForWrite filter ahead of it is racy.
+type Runtime interface {
+	RangeFetchRuntime
+	Backends() map[string]backend.ObjectBackend
+	BackendOrder() []string
 	GetBackend(name string) (backend.ObjectBackend, error)
 	IsDraining(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
+	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Quota() *counter.QuotaTracker
+}
+
+// RangeFetchRuntime is what a single ranged GET needs: the timed call plus the
+// two meters it is charged against. Split out because a compressed read issues
+// one per frame it touches, and the fetcher doing so needs nothing else.
+type RangeFetchRuntime interface {
+	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	Usage() *counter.UsageTracker
 	Acct() *accounting.Recorder
 }
 
@@ -53,78 +62,6 @@ type Codec interface {
 	InspectStored(ctx context.Context, f compression.RangeFetcher, storedSize int64) (int64, bool)
 }
 
-// -------------------------------------------------------------------------
-// READ PATH
-// -------------------------------------------------------------------------
-
-// RangeFetchRuntime is what a single ranged GET needs: the timed call plus the
-// two meters it is charged against. Split out because a compressed read issues
-// one per frame it touches, and the fetcher doing so needs nothing else.
-type RangeFetchRuntime interface {
-	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
-	Usage() *counter.UsageTracker
-	Acct() *accounting.Recorder
-}
-
-// ReadRuntime is the subset of *infra.BackendRuntime the read-path Manager
-// methods (get, head, list, materialize) reach for. Usage() is still
-// needed for WithinLimits pre-flight checks; per-backend Record calls
-// flow through Acct.
-type ReadRuntime interface {
-	RangeFetchRuntime
-	Backends() map[string]backend.ObjectBackend
-	GetBackend(name string) (backend.ObjectBackend, error)
-	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
-}
-
-// Runtime composes the read and write role interfaces above into the
-// single dependency object.Manager holds. *infra.BackendRuntime satisfies both
-// implicitly, so production wiring stays one field; tests and future
-// consumers may depend on the narrower role that matches their actual
-// call surface. BackendOrder() is intentionally NOT included here — it
-// is only used by *readpath.Failover, which receives its own
-// readpath.ReadRuntime via Deps.BroadcastCore so the transitive requirement
-// does not bleed into Runtime.
-type Runtime interface {
-	WriteRuntime
-	ReadRuntime
-}
-
-// -------------------------------------------------------------------------
-// WRITE PATH COLLABORATORS
-// -------------------------------------------------------------------------
-
-// WriteRouter is the placement subset of *writepath.Coordinator: choose a
-// backend and claim the write's bytes on it. Tests that exercise only routing
-// decisions can mock this alone.
-type WriteRouter interface {
-	ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error)
-	ClaimWriteCopies(ctx context.Context, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error)
-	SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, p *core.PendingObject) (string, error)
-}
-
-// PendingWriter is the pending-intent subset of *writepath.Coordinator:
-// promote a claimed intent into a permanent object_locations row, or commit one
-// of the further copies a write placed once its upload finishes. Tests that
-// exercise only the pending-pattern handoff can mock this alone.
-type PendingWriter interface {
-	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
-	CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (recorded bool, err error)
-}
-
-// CleanupWriter is the post-write commit + recovery subset of
-// *writepath.Coordinator: commit the object row (with enqueue-on-failure
-// fallback), recover from a record failure by deleting the orphaned
-// bytes, or directly delete-or-enqueue a copy that should not survive.
-// RecoverFromRecordFailure also backs the drain-race abort path in
-// attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
-type CleanupWriter interface {
-	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error
-	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
-}
-
 // DetachedRegistry is what the write path needs from the tracker of copies
 // that outlive their response: a slot to run under, and the depth to log when
 // there is none. Waiting for those copies at shutdown is the runtime's business
@@ -133,15 +70,4 @@ type CleanupWriter interface {
 type DetachedRegistry interface {
 	Begin() (release func(), admitted bool)
 	Depth() int
-}
-
-// Coordinator composes the three role interfaces above into the
-// single dependency object.Manager holds. *writepath.Coordinator
-// satisfies all three implicitly, so production wiring stays a single
-// field, while tests and future consumers may depend on whichever
-// narrower role matches their actual call surface.
-type Coordinator interface {
-	WriteRouter
-	PendingWriter
-	CleanupWriter
 }

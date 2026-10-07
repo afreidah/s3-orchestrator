@@ -153,7 +153,6 @@ func newFleet(
 	detached := writepath.NewDetachedUploads(cmp.Or(opts.MaxDetached, 64))
 	om := New(&Deps{
 		Core:                         rt,
-		BroadcastCore:                rt,
 		Coord:                        coord,
 		Stores:                       store,
 		Encryptor:                    opts.Encryptor,

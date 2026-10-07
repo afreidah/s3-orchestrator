@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -60,9 +61,9 @@ type Stores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              Runtime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
-	coord             Coordinator // write-path helpers shared with the multipart manager
-	stores            Stores      // direct store access for read paths and quota inspection
+	core              Runtime                // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	coord             *writepath.Coordinator // write-path helpers shared with the multipart manager
+	stores            Stores                 // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	codec             Codec
 	compression       config.CompressionConfig
@@ -77,19 +78,18 @@ type Manager struct {
 }
 
 // Deps bundles the dependencies New needs so the call signature stays
-// under the parameter-count ceiling. Core and Coord are
-// consumer-declared interfaces; the concrete *infra.BackendRuntime and
-// *writepath.Coordinator that DI builds satisfy them implicitly.
+// under the parameter-count ceiling. Core is a consumer-declared interface
+// the *infra.BackendRuntime DI builds satisfies; Coord is taken concretely,
+// as the multipart manager takes it.
 //
 // A nil Codec disables compression in both directions. It is supplied even
 // when compression is off for new writes, because objects already stored
 // encoded still have to be decoded on read.
 type Deps struct {
-	Core          Runtime
-	BroadcastCore readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
-	Coord         Coordinator
-	Stores        Stores
-	Encryptor     *encryption.Encryptor
+	Core      Runtime
+	Coord     *writepath.Coordinator
+	Stores    Stores
+	Encryptor *encryption.Encryptor
 
 	Codec             Codec // supplied even when compression is off for writes: already-encoded objects still have to be read
 	Compression       config.CompressionConfig
@@ -115,7 +115,6 @@ type Deps struct {
 func New(d *Deps) *Manager {
 	must.NotNil("d", d)
 	must.NotNil("d.Core", d.Core)
-	must.NotNil("d.BroadcastCore", d.BroadcastCore)
 	must.NotNil("d.Coord", d.Coord)
 	must.NotNil("d.Stores", d.Stores)
 	must.NotNil("d.LocationCache", d.LocationCache)
@@ -139,7 +138,7 @@ func New(d *Deps) *Manager {
 		detached:          d.Detached,
 		integrityCfg:      d.IntegrityCfg,
 		failover: readpath.New(&readpath.FailoverDeps{
-			Core:                         d.BroadcastCore,
+			Core:                         d.Core,
 			Stores:                       d.Stores,
 			Cache:                        d.LocationCache,
 			ParallelBroadcast:            d.ParallelBroadcast,

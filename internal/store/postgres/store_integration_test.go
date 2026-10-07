@@ -1471,7 +1471,7 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
 
-var oldPos, freshPos = -1, -1
+	var oldPos, freshPos = -1, -1
 	for i := range got {
 		switch got[i].ObjectKey {
 		case oldKey:
