@@ -132,7 +132,46 @@ test: add coverage for edge case
 - **One issue per PR** — keep changes focused
 - **CI must pass** — linting, unit tests, integration tests, and package build
 - **Squash merge** — PRs are squash-merged to keep history clean
-- Create a branch named `GH_ISSUE_<number>-<short-description>`
+- Create a branch named `GH_ISSUE_<number>-<short-description>` when the work
+  tracks an existing issue. If you found and fixed a bug without an issue,
+  open the PR from a descriptive branch (`fix-<short-description>`) and link
+  or file an issue in the PR body so reviewers have the context.
+
+### Version bump (`.version`)
+
+CI's `version-check` job fails any pull request that changes a `.go` or `.sql`
+file (or `sqlc.yaml`) without also incrementing the root `.version` file in the
+same PR. Docs-only and workflow-only changes do not need a bump.
+
+Choose the increment with conventional semver sense:
+
+- **patch** (`vX.Y.Z` -> `vX.Y.(Z+1)`) for a bug fix or internal cleanup
+- **minor** (`vX.Y.Z` -> `vX.(Y+1).0`) for a new CLI command, endpoint, or
+  user-visible behaviour
+
+The Releasing section below still describes what `make release` does with the
+value once it is ready to tag.
+
+### Suppressing a lint finding
+
+Prefer fixing the finding. When a directive is genuinely needed:
+
+- Put `//nolint:<linter>` on the line the rule fires on, not on a nearby use.
+  gosec import rules such as G505 fire on the `import` line, not on the call
+  site that uses the package.
+- For a project-wide false positive, add an `exclusions` rule in
+  `.golangci.yml` with a short justification. The existing G101 exclusion for
+  Terraform acceptance-test fixtures is the pattern to copy.
+
+### SonarQube on fork PRs
+
+The `sonarqube` CI job needs `SONAR_TOKEN`. GitHub withholds repository secrets
+from pull requests opened from forks, so that job fails for outside
+contributors even when everything else is green. Ignore that failure on a fork
+PR; the scan runs again on main after merge.
+
+CI also does not start on a first-time contributor's PR until a maintainer
+approves the run, so a PR with no checks yet is waiting on that, not broken.
 
 ## Reporting Issues
 
