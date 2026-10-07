@@ -292,6 +292,10 @@ s3-orchestrator admin workers
 # Show the outcome of the last SIGHUP config reload
 s3-orchestrator admin reload-status
 
+# Show the running configuration as YAML, with secrets redacted, the log level
+# in effect, and any file changes that wait on a restart
+s3-orchestrator admin config
+
 # Download the flight-recorder trace ring buffer to a file for `go tool trace`
 # (requires debug.flight_recorder.enabled; -o sets the output path)
 s3-orchestrator admin trace-snapshot -o trace.bin
@@ -410,7 +414,7 @@ Every change takes effect on the next request rather than the next restart: the 
 
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a usage bar per backend with its health and drain state, the replication and verification backlogs, encryption and compression coverage, usage for the period, and the cleanup queues; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a usage bar per backend with its health and drain state, the replication and verification backlogs, encryption and compression coverage, usage for the period, and the cleanup queues; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Config** shows the running configuration; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -465,6 +469,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |
 | `c` | Jump to the Cache section |
+| `n` | Jump to the Config section |
 | `l` | Jump to the Logs section |
 | `o` | Jump to the Ops section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
@@ -519,6 +524,8 @@ The **Workers** section shows every registered background service's last-tick he
 The **Cleanup** section shows the cleanup queue and its dead-letter table, sourced from `GET /admin/api/cleanup-queue` and `GET /admin/api/cleanup-dlq`. Both listings share the pane, toggled with `t`, and the title bar carries both depths so a backlog in the listing you are not looking at stays visible. The depth is the true total; the listing itself is one page of it. On the dead-letter listing, `R` requeues every dead-lettered row for the selected row's backend (`POST /admin/api/cleanup-dlq/requeue`) - a whole-backend operation, which is what the confirmation names, and the pane reloads afterwards so the depths stay honest.
 
 The **Cache** section shows the object data cache, sourced from `GET /admin/api/cache` - entry count, bytes held against the configured maximum, and the lifetime hit rate. The hit rate is coloured for a cache doing its job rather than a full one: green at 60% and above, amber down to 25%, red below. A cache nothing has read yet says so instead of reporting 0%, which would read as a broken cache. When object caching is disabled the endpoint answers 503 and the pane reports that as configuration, not failure.
+
+The **Config** section shows the configuration the server is running, sourced from `GET /admin/api/config`: the YAML a config file would hold, with defaults filled in and secrets shown as `(redacted)`. The title carries the log level in effect, which `PUT /admin/api/log-level` can change until the next restart. Fields edited in the file and reloaded with `SIGHUP` that only apply on a restart are listed above the YAML. Press `r` to refresh.
 
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `/` and type to narrow the loaded entries to those whose component or message, attributes included, contains the text; the title shows how many match, `enter` keeps the filter, and `esc` clears it.
 

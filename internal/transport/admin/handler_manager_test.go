@@ -654,6 +654,43 @@ func TestHandleLogLevel_PutValid(t *testing.T) {
 	}
 }
 
+// TestHandleConfig covers the config route unwired, wired with the live log
+// level filled in, and failing to render.
+func TestHandleConfig(t *testing.T) {
+	t.Parallel()
+	get := func(h *Handler) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		h.Register(mux)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/config", ""))
+		return w
+	}
+
+	if w := get(newTestHandlerWithManager(t)); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("unwired status = %d, want 503", w.Code)
+	}
+
+	h := newTestHandlerWithManager(t)
+	h.logLevel.Set(slog.LevelDebug)
+	h.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
+		return &adminapi.ConfigResponse{Config: "server:\n", PendingRestart: []string{"database"}}, nil
+	})
+	w := get(h)
+	var resp adminapi.ConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Config != "server:\n" || resp.LogLevel != "debug" || len(resp.PendingRestart) != 1 {
+		t.Errorf("resp = %+v, want the provider's config, debug, and one pending field", resp)
+	}
+
+	h = newTestHandlerWithManager(t)
+	h.SetConfigProvider(func() (*adminapi.ConfigResponse, error) { return nil, errors.New("boom") })
+	if w := get(h); w.Code != http.StatusInternalServerError {
+		t.Errorf("failing provider status = %d, want 500", w.Code)
+	}
+}
+
 // TestHandleLogLevel_PutInvalidBody covers the JSON-decode error
 // branch in handleLogLevel.
 func TestHandleLogLevel_PutInvalidBody(t *testing.T) {

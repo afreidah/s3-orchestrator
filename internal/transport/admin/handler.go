@@ -40,9 +40,9 @@ import (
 
 // Handler serves the admin API endpoints.
 //
-// reloadStatus is a function set after construction rather than a dependency,
-// so this package does not import internal/reload - which would cycle back
-// here through the UI.
+// reloadStatus and liveConfig are functions set after construction rather
+// than dependencies, so this package does not import internal/reload - which
+// would cycle back here through the UI.
 type Handler struct {
 	log          *slog.Logger
 	backendOps   BackendOps
@@ -69,7 +69,8 @@ type Handler struct {
 	backendNames func() []string
 	logLevel     *slog.LevelVar
 	confirmKey   []byte
-	reloadStatus func() *adminapi.ReloadStatusResponse // nil before the first reload
+	reloadStatus func() *adminapi.ReloadStatusResponse    // nil before the first reload
+	liveConfig   func() (*adminapi.ConfigResponse, error) // nil until the runtime wires it
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
@@ -174,6 +175,12 @@ func mustConfirmKey() []byte {
 // reload package directly.
 func (h *Handler) SetReloadStatusProvider(fn func() *adminapi.ReloadStatusResponse) {
 	h.reloadStatus = fn
+}
+
+// SetConfigProvider wires the callback that returns the running configuration,
+// set after construction for the same reason as SetReloadStatusProvider.
+func (h *Handler) SetConfigProvider(fn func() (*adminapi.ConfigResponse, error)) {
+	h.liveConfig = fn
 }
 
 // Outcome values every operation response carries, so a client can branch on

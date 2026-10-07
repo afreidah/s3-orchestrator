@@ -164,6 +164,12 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
+			Method: http.MethodGet, Pattern: "/admin/api/config", Handler: h.handleConfig,
+			Summary:  "Running configuration, with secrets redacted",
+			Response: adminapi.ConfigResponse{},
+			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
+		},
+		{
 			Method: http.MethodGet, Pattern: "/admin/api/workers", Handler: h.handleWorkers,
 			Summary:  "Last-tick health of every background service",
 			Response: adminapi.WorkersResponse{},

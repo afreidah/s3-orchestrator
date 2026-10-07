@@ -120,6 +120,14 @@ type ReloadStatusResponse struct {
 	EndedAt         *time.Time          `json:"ended_at,omitempty"`
 }
 
+// ConfigResponse is the running configuration as YAML with secrets redacted, the
+// log level in effect, and file changes since startup that wait on a restart.
+type ConfigResponse struct {
+	Config         string   `json:"config"`
+	LogLevel       string   `json:"log_level"`
+	PendingRestart []string `json:"pending_restart,omitempty"`
+}
+
 // ReloadHookOutcome is one subsystem's contribution to a reload pass. Skipped
 // hooks are reported too, so an operator can see which subsystems the reload
 // did not touch.

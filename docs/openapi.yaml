@@ -299,6 +299,19 @@ paths:
                                 $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/config:
+        get:
+            summary: Running configuration, with secrets redacted
+            operationId: getConfig
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConfigResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/decompress-existing:
         post:
             summary: Rewrite every compressed object back to its stored bytes
@@ -1518,6 +1531,20 @@ components:
                 - failed
                 - total
                 - compressed
+            type: object
+        ConfigResponse:
+            properties:
+                config:
+                    type: string
+                log_level:
+                    type: string
+                pending_restart:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - config
+                - log_level
             type: object
         CopyScrubResult:
             properties:

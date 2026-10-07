@@ -80,7 +80,7 @@ type Result struct {
 	Generation      int64         `json:"generation"`
 	Status          Status        `json:"status"`
 	Outcomes        []HookOutcome `json:"outcomes"`
-	RequiresRestart []string      `json:"requires_restart,omitempty"` // non-reloadable fields that changed
+	RequiresRestart []string      `json:"requires_restart,omitempty"` // non-reloadable fields changed since startup
 	LoadError       string        `json:"load_error,omitempty"`       // set only when Status is LoadFailed
 	StartedAt       time.Time     `json:"started_at"`
 	EndedAt         time.Time     `json:"ended_at"`

@@ -42,6 +42,7 @@ var sectionKeys = []sectionKey{
 	{"w", sectionWorkers},
 	{"u", sectionCleanup},
 	{"c", sectionCache},
+	{"n", sectionConfig},
 	{"l", sectionLogs},
 	{"o", sectionOps},
 }
@@ -85,6 +86,8 @@ func (m *model) paneKeys() []keyHint {
 			hintSort, hintReverse, hintReload, hintNavBack}
 	case sectionBuckets:
 		return []keyHint{hintMove, hintSort, hintReverse, hintReload, hintNavBack}
+	case sectionConfig:
+		return []keyHint{hintScroll, hintReload, hintNavBack}
 	default:
 		return []keyHint{hintReload, hintNavBack}
 	}

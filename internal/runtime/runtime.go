@@ -137,12 +137,19 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 		CertReloader: httpSrv.CertReloader(),
 	})
 
-	// Wire the reload-status provider into the admin handler after
-	// the coordinator exists. Routing through a post-construction
-	// setter avoids the admin -> reload -> ui -> admin import cycle.
+	// Wire the reload-status and config providers into the admin handler after
+	// the coordinator exists. Routing through post-construction setters avoids
+	// the admin -> reload -> ui -> admin import cycle.
 	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil {
 		adminHandler.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
 			return toAdminReloadStatus(r.reload.LastResult())
+		})
+		adminHandler.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
+			doc, err := r.cfgPtr.Load().MarshalRedacted()
+			if err != nil {
+				return nil, err
+			}
+			return &adminapi.ConfigResponse{Config: string(doc), PendingRestart: r.reload.PendingRestart()}, nil
 		})
 	}
 

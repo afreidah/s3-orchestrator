@@ -53,6 +53,7 @@ type adminClient interface {
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 	GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error)
 	GetWorkers(ctx context.Context) (*adminapi.WorkersResponse, error)
+	GetConfig(ctx context.Context) (*adminapi.ConfigResponse, error)
 	GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error)
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
@@ -85,6 +86,7 @@ type model struct {
 	workers     workersView     // workers pane state, populated when section is sectionWorkers
 	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
 	cache       cacheView       // cache pane state, populated when section is sectionCache
+	config      configView      // config pane state, populated when section is sectionConfig
 	ops         opsView         // ops pane state, populated when section is sectionOps
 	run         run             // the one action streaming its output, shown by the pane that started it
 	poll        poller          // when each pane's endpoint was last requested, and which are in flight
@@ -250,6 +252,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs.loading = false
 		m.logs.err = msg.err
 		return m, nil
+	case configLoadedMsg:
+		m.applyConfig(msg.resp)
+		return m, nil
+	case configErrMsg:
+		m.config.loading = false
+		m.config.err = msg.err
+		return m, nil
 	case replicationLoadedMsg:
 		m.applyReplication(msg.resp)
 		return m, nil
@@ -398,6 +407,8 @@ func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCleanupKey(key)
 	case sectionCache:
 		return m.handleCacheKey(key)
+	case sectionConfig:
+		return m.handleConfigKey(key)
 	}
 	if m.mode == modeInspect {
 		return m.handleInspectKey(key)
@@ -576,6 +587,9 @@ func (m *model) contentView() string {
 	}
 	if m.section == sectionCache {
 		return m.cachePaneView()
+	}
+	if m.section == sectionConfig {
+		return m.configPaneView()
 	}
 	if m.mode == modeInspect {
 		return m.inspectView()

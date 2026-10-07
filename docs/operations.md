@@ -45,6 +45,8 @@ If any of these fields change, the reload still proceeds for the reloadable sett
 {"level":"WARN","msg":"Config field changed but requires restart to take effect","field":"server.listen_addr"}
 ```
 
+These are measured against the config the process started with, so a change from an earlier reload stays listed until a restart applies it. `s3-orchestrator admin config` (or the TUI's Config section) shows them alongside the running configuration.
+
 **If the config file is invalid**, the orchestrator keeps the current configuration entirely and logs the parse/validation error:
 
 ```

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestConfigValidation_MinimalValid verifies the config validation minimal valid contract.
@@ -3902,5 +3904,57 @@ func TestParallelCopies_RejectsAnInFlightCeilingBelowOne(t *testing.T) {
 
 	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesInFlightMin) {
 		t.Errorf("err = %v, want ErrParallelCopiesInFlightMin", err)
+	}
+}
+
+// TestMarshalRedacted_HidesEverySecret sets every secret the config holds and
+// checks none of them reaches the output, an unset secret stays empty, the
+// source config is left untouched, and the output parses back as a config.
+func TestMarshalRedacted_HidesEverySecret(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		Database: DatabaseConfig{Password: "secret-db"},
+		Auth:     AuthConfig{Root: RootCredential{AccessKeyID: "root-key", SecretAccessKey: "secret-root"}},
+		UI:       UIConfig{SessionSecret: "secret-session"},
+		Encryption: EncryptionConfig{
+			MasterKey:    "secret-master",
+			PreviousKeys: []string{"secret-previous"},
+			Vault:        &VaultTransitConfig{Token: "secret-vault"},
+		},
+		Redis:    &RedisConfig{Password: "secret-redis"},
+		Backends: []BackendConfig{{Name: "b1", AccessKeyID: "backend-key", SecretAccessKey: "secret-backend"}},
+		Buckets: []BucketConfig{{Name: "photos", Credentials: []CredentialConfig{
+			{AccessKeyID: "bucket-key", SecretAccessKey: "secret-bucket"},
+		}}},
+		Notifications: NotificationConfig{Endpoints: []NotificationEndpoint{{URL: "http://hook", Secret: "secret-webhook"}}},
+	}
+
+	out, err := cfg.MarshalRedacted()
+	if err != nil {
+		t.Fatalf("MarshalRedacted: %v", err)
+	}
+	doc := string(out)
+	if strings.Contains(doc, "secret-") {
+		t.Errorf("output leaks a secret:\n%s", doc)
+	}
+	if got := strings.Count(doc, redactedValue); got != 10 {
+		t.Errorf("%d redacted values, want 10:\n%s", got, doc)
+	}
+	for _, id := range []string{"root-key", "backend-key", "bucket-key"} {
+		if !strings.Contains(doc, id) {
+			t.Errorf("output dropped access key id %s", id)
+		}
+	}
+	if cfg.Backends[0].SecretAccessKey != "secret-backend" || cfg.Encryption.Vault.Token != "secret-vault" ||
+		cfg.Buckets[0].Credentials[0].SecretAccessKey != "secret-bucket" {
+		t.Error("MarshalRedacted changed the source config")
+	}
+
+	var back Config
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatalf("output does not parse as a config: %v", err)
+	}
+	if back.UI.SessionSecret != redactedValue || back.Database.User != "" {
+		t.Errorf("round trip: session secret %q, database user %q", back.UI.SessionSecret, back.Database.User)
 	}
 }

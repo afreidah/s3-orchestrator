@@ -87,6 +87,7 @@ Commands:
   decompress-existing Rewrite every compressed object back to the bytes the client wrote, or -max=N of them, -backend to scope
   workers             Show background worker last-tick health
   reload-status       Show the outcome of the last SIGHUP config reload
+  config              Show the running configuration, with secrets redacted
   trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)
   cache-flush         Drop every entry from the in-memory object data cache
   cache-stats         Show object data cache entries, size, and capacity
@@ -183,6 +184,7 @@ var handlers = map[string]handler{
 	"decompress-existing":     cmdDecompressExisting,
 	"workers":                 cmdWorkers,
 	"reload-status":           cmdReloadStatus,
+	"config":                  cmdConfig,
 	"trace-snapshot":          cmdTraceSnapshot,
 	"cache-flush":             cmdCacheFlush,
 	"cache-stats":             cmdCacheStats,

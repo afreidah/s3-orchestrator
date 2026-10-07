@@ -116,6 +116,11 @@ func (c *apiClient) GetWorkers(ctx context.Context) (*adminapi.WorkersResponse, 
 	return c.c.Get[adminapi.WorkersResponse](ctx, "/admin/api/workers", nil)
 }
 
+// GetConfig fetches the running configuration, with secrets redacted.
+func (c *apiClient) GetConfig(ctx context.Context) (*adminapi.ConfigResponse, error) {
+	return c.c.Get[adminapi.ConfigResponse](ctx, "/admin/api/config", nil)
+}
+
 // GetCleanupQueue fetches the pending-cleanup depth and a page of rows awaiting
 // a successful backend delete.
 func (c *apiClient) GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error) {
