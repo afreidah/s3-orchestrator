@@ -34,6 +34,12 @@ jobs:
             package: ./internal/transport/auth/
           - target: FuzzBuildPresignedCanonicalRequest
             package: ./internal/transport/auth/
+          - target: FuzzChunkReader
+            package: ./internal/transport/auth/
+          - target: FuzzPatternMatches
+            package: ./internal/transport/cors/
+          - target: FuzzParseHeaderList
+            package: ./internal/transport/cors/
           - target: FuzzParsePath
             package: ./internal/transport/s3api/
           - target: FuzzDeleteObjectsXML
@@ -74,9 +80,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # -fuzz is a regular expression, so the name is anchored: an unanchored
+      # FuzzDecompress also matches FuzzDecompressRanged and go test refuses to
+      # fuzz either.
       - name: Run fuzz target
         id: fuzz
-        run: go test -fuzz=${{ matrix.target }} -fuzztime=2m -timeout=3m ${{ matrix.package }}
+        run: |
+          set -o pipefail
+          go test -fuzz='^${{ matrix.target }}$' -fuzztime=2m -timeout=3m ${{ matrix.package }} 2>&1 | tee fuzz.log
 
       # A real crash writes a NEW input file under testdata/fuzz/<target>/.
       # Tracked files in that directory are previously-found regressions
@@ -84,7 +95,9 @@ jobs:
       # not trigger an issue. Only untracked files indicate a fresh crash.
       # The fuzz coordinator can also exit non-zero with "context deadline
       # exceeded" when an in-flight worker has not returned by the time
-      # -fuzztime expires; that is not a bug, just a deadline race on shutdown.
+      # -fuzztime expires; that is a shutdown race, not a bug. Any other
+      # failure with no crash file is reported as an error, since it means the
+      # target never fuzzed.
       - name: Check for crashing input
         if: failure()
         id: corpus
@@ -97,9 +110,12 @@ jobs:
               printf '%s\n' "$files" | head -5
               echo "CORPUS_EOF"
             } >> "$GITHUB_OUTPUT"
+          elif grep -q "context deadline exceeded" fuzz.log; then
+            echo "has_crash=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fuzz coordinator hit its deadline on shutdown with no new crashing input; not a bug."
           else
             echo "has_crash=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Fuzz target exited non-zero with no new crashing input — likely fuzz-coordinator deadline race on shutdown, not a real bug."
+            echo "::error::Fuzz target failed without a crashing input, so it did not fuzz. See the go test output above."
           fi
 
       - name: Upload crashing inputs
