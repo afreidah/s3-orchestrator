@@ -14,6 +14,8 @@ package counter
 
 //go:generate mockgen -destination=mock_counter_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter Backend
 
+import "github.com/afreidah/s3-orchestrator/internal/store/core"
+
 // -------------------------------------------------------------------------
 // FIELD CONSTANTS
 // -------------------------------------------------------------------------
@@ -35,7 +37,8 @@ const (
 //
 // The All and Pools variants exist so an implementation can pipeline what would
 // otherwise be several round trips. LoadPool stays a point read rather than a
-// map fetch because admission calls it once or twice per request.
+// map fetch because admission calls it once or twice per request. ChargePools
+// is the allocation-free form of AddPools for one amount across several pools.
 type Backend interface {
 	Backends() []string
 	Add(backend, field string, delta int64)
@@ -46,6 +49,7 @@ type Backend interface {
 	LoadAll(backend string) LoadAllResult
 
 	AddPools(backend string, deltas map[string]int64)
+	ChargePools(backend string, pools []core.RequestPool, n int64)
 	LoadPool(backend, pool string) int64
 	SwapPools(backend string) map[string]int64 // returns the values before the reset
 }

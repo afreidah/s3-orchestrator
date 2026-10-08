@@ -12,6 +12,7 @@ package counter
 import (
 	reflect "reflect"
 
+	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -87,6 +88,18 @@ func (m *MockBackend) Backends() []string {
 func (mr *MockBackendMockRecorder) Backends() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockBackend)(nil).Backends))
+}
+
+// ChargePools mocks base method.
+func (m *MockBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ChargePools", backend, pools, n)
+}
+
+// ChargePools indicates an expected call of ChargePools.
+func (mr *MockBackendMockRecorder) ChargePools(backend, pools, n any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChargePools", reflect.TypeOf((*MockBackend)(nil).ChargePools), backend, pools, n)
 }
 
 // Load mocks base method.

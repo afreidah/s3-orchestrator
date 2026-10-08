@@ -8,11 +8,11 @@
 # gh-pages branch and renders a per-benchmark trend chart. workflow_dispatch
 # lets a maintainer run the same flow on demand against any branch.
 #
-# Alert threshold is intentionally permissive (200%): GitHub-hosted runners
-# share CPU with neighbors and report ±10-20% variance on memory-bandwidth-
+# Timing alerts are intentionally permissive (200%): GitHub-hosted runners
+# share CPU with neighbors and report +/-10-20% variance on memory-bandwidth-
 # bound benchmarks, so tighter thresholds turn into a false-positive factory.
-# This workflow is informational, not PR-gating; absolute regression catching
-# would require a self-hosted runner with pinned CPU.
+# Allocation counts do not vary with the runner, so the run fails when one
+# rises in a request-path package, which is the regression signal it can trust.
 # -------------------------------------------------------------------------------
 
 name: Benchmarks
@@ -67,3 +67,25 @@ jobs:
           alert-threshold: '200%'
           fail-on-alert: false
           comment-on-alert: false
+
+      # Compares this run with the previous one in the stored history. Scoped
+      # to the request-path packages: elsewhere, temp-file and goroutine-heavy
+      # benchmarks vary their allocation count from run to run.
+      - name: Fail on new allocations in request-path packages
+        run: |
+          git fetch --depth=1 origin gh-pages
+          git show FETCH_HEAD:dev/bench/data.js | sed '1s/^window.BENCHMARK_DATA = //' > bench_data.json
+          jq -r '
+            .entries["Go benchmarks"]
+            | (.[-2].benches | map(select(.unit == "allocs/op") | {(.name): .value}) | add) as $prev
+            | .[-1].benches[]
+            | select(.unit == "allocs/op")
+            | select(.name | test("internal/(counter|breaker|transport/auth|transport/s3api)\\)"))
+            | select($prev[.name] != null and .value > $prev[.name])
+            | "\(.name): \($prev[.name]) -> \(.value) allocs/op"
+          ' bench_data.json > grew.txt
+          if [ -s grew.txt ]; then
+            echo "::error::allocations increased in a request-path package"
+            cat grew.txt
+            exit 1
+          fi

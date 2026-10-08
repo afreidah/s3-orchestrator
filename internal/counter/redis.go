@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -339,27 +340,57 @@ func (r *RedisCounterBackend) AddPools(backend string, deltas map[string]int64) 
 		r.local.AddPools(backend, deltas)
 		return
 	}
+	err := r.incrPools(backend, func(ctx context.Context, pipe redis.Pipeliner, key string) {
+		for pool, delta := range deltas {
+			if delta > 0 {
+				pipe.HIncrBy(ctx, key, pool, delta)
+			}
+		}
+	})
+	if err != nil {
+		r.local.AddPools(backend, deltas)
+	}
+}
 
+// ChargePools adds n to each of the given pool counters in one pipelined pass.
+func (r *RedisCounterBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
+	if len(pools) == 0 || n <= 0 {
+		return
+	}
+	if r.inFallback() {
+		r.local.ChargePools(backend, pools, n)
+		return
+	}
+	err := r.incrPools(backend, func(ctx context.Context, pipe redis.Pipeliner, key string) {
+		for i := range pools {
+			pipe.HIncrBy(ctx, key, pools[i].Name, n)
+		}
+	})
+	if err != nil {
+		r.local.ChargePools(backend, pools, n)
+	}
+}
+
+// incrPools runs the increments fill queues against the backend's pool hash in
+// one pipeline. A failure is recorded against the breaker and returned, so the
+// caller can keep the increments locally.
+func (r *RedisCounterBackend) incrPools(backend string, fill func(ctx context.Context, pipe redis.Pipeliner, key string)) error {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	key := r.poolKey(backend)
 	pipe := r.client.Pipeline()
-	for pool, delta := range deltas {
-		if delta > 0 {
-			pipe.HIncrBy(ctx, key, pool, delta)
-		}
-	}
+	fill(ctx, pipe, key)
 	pipe.Expire(ctx, key, keyTTL)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		telemetry.RedisOperationsTotal.WithLabelValues("pipeline_pool_add", "error").Inc()
 		r.recordFailure(err)
-		r.local.AddPools(backend, deltas)
-		return
+		return err
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_pool_add", "success").Inc()
 	r.notePostCheck("pipeline_pool_add", nil)
+	return nil
 }
 
 // LoadPool reads one pool counter, falling back to local on error.

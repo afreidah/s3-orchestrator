@@ -13,6 +13,8 @@ package counter
 
 import (
 	"sync/atomic"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -195,6 +197,17 @@ func (l *LocalCounterBackend) AddPools(backend string, deltas map[string]int64) 
 		if delta > 0 {
 			c.pools.Get(name).Add(delta)
 		}
+	}
+}
+
+// ChargePools adds n to each of the given pool counters for a backend.
+func (l *LocalCounterBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
+	c := l.get(backend)
+	if c == nil || n <= 0 {
+		return
+	}
+	for i := range pools {
+		c.pools.Get(pools[i].Name).Add(n)
 	}
 }
 
