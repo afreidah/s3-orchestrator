@@ -5,7 +5,7 @@
 //
 // NewInjector creates the DI container and delegates the per-domain
 // provider registrations to the grouped helpers below. Providers are
-// lazy — nothing is constructed until the matching do.Invoke call.
+// lazy - nothing is constructed until the matching do.Invoke call.
 // Optional components (encryption, cache, Redis, notifications, UI,
 // admin, flight recorder) register only when enabled in config;
 // do.Invoke returns an error for disabled services, which callers use
@@ -143,11 +143,8 @@ func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideLifecycleManager)
 }
 
-// provideIf registers provider only when enabled. A disabled feature never
-// reaches the injector, so do.Invoke returns a clear "not registered" error the
-// caller can distinguish from a runtime resolution failure. It keeps
-// registerOptionalFeatures a flat, scannable table instead of a stack of if
-// blocks.
+// provideIf registers provider only when enabled, so resolving a disabled
+// feature fails as "not registered" rather than at runtime.
 func provideIf[T any](inj do.Injector, enabled bool, provider func(do.Injector) (T, error)) {
 	if enabled {
 		do.Provide(inj, provider)

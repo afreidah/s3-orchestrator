@@ -48,15 +48,13 @@ type Config struct {
 	Log              *slog.Logger
 }
 
-// BackendRuntime holds the shared backend infrastructure. It deliberately holds
-// no store: each collaborator takes the store roles it needs directly, which is
-// what lets every worker reuse the runtime without dragging persistence along.
-// For which methods belong here versus on a collaborator, see
-// docs/style-guide.md "Where new methods live".
+// BackendRuntime holds the shared backend infrastructure. It holds no store:
+// each collaborator takes the store roles it needs directly. For which methods
+// belong here, see docs/style-guide.md "Where new methods live".
 //
-// drainMgr is wired after construction by SetDrainChecker, since the drain
-// manager is built after the runtime. A nil admissionSem means unbounded
-// admission, and a zero backendTimeout disables the per-call timeout.
+// drainMgr is wired after construction by SetDrainChecker. A nil admissionSem
+// means unbounded admission, and a zero backendTimeout disables the per-call
+// timeout.
 type BackendRuntime struct {
 	backends         map[string]backend.ObjectBackend
 	order            []string
@@ -96,18 +94,14 @@ func New(cfg *Config) *BackendRuntime {
 // ACCOUNTING + LOGGING + METRICS
 // -------------------------------------------------------------------------
 
-// Acct returns the shared accounting.Recorder. Consumers should call
-// Acct().APICall / Egress / Ingress / Operation instead of reaching
-// through Usage() and RecordOperation directly so the per-backend
-// accounting rules stay centralised.
+// Acct returns the shared accounting.Recorder, which every usage charge goes
+// through.
 func (c *BackendRuntime) Acct() *accounting.Recorder {
 	return c.recorder
 }
 
-// SetMetricsCollector installs the metrics collector after BackendRuntime
-// construction. The collector depends on the usage tracker which is
-// owned by *BackendRuntime, so the collector is built after *BackendRuntime and wired
-// back in.
+// SetMetricsCollector installs the metrics collector, which is built after the
+// runtime because it reads the runtime's usage tracker.
 func (c *BackendRuntime) SetMetricsCollector(m *metrics.Collector) {
 	c.metricsCollector = m
 }

@@ -29,20 +29,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// Entry is the unit consumed by the merge: a backend path exactly as it is
-// stored, its size on whichever side produced it, and whether it falls inside
-// a configured virtual bucket. Keys are never rewritten -- the merge compares
-// them in byte order, and prepending a prefix to only some of them would break
-// the ordering the whole design rests on.
-//
-// key is what both sides agree on: the path the bytes occupy. On the backend
-// side that is what the listing returned; on the ledger side it is the row's
-// storage_key.
+// Entry is the unit the merge consumes. key is the storage path both sides
+// agree on: the listed key on the backend side, the row's storage_key on the
+// ledger side. Keys are never rewritten, because the merge depends on their
+// byte order. unmanaged marks a key outside every configured virtual bucket.
 //
 // objectKey is set on ledger entries only, and addresses the row when the
-// merge deletes it. A backend entry has none: its import records the
-// discovered path as the object's key too, because a stray object can only be
-// named by where it was found.
+// merge deletes it. Importing a backend entry records its path as the object
+// key too.
 type Entry struct {
 	key          string
 	objectKey    string
@@ -51,13 +45,10 @@ type Entry struct {
 	lastModified time.Time
 }
 
-// keySource is a forward, lex-ordered, bounded-memory iterator over keys
-// (with size on the S3 side; DB-only keys do not carry size since the merge
-// only needs it on import).
-//
-// Next reports ok=false at end-of-stream and returns a non-nil error only on
-// transport / DB failure, which callers must abort on. Stop releases any
-// backing goroutine and is safe to call more than once.
+// keySource is a forward, ascending, bounded-memory iterator over keys. Next
+// reports ok=false at end of stream and a non-nil error only on a transport or
+// DB failure, which callers must abort on. Stop releases any backing goroutine
+// and is safe to call more than once.
 type keySource interface {
 	Next(ctx context.Context) (Entry, bool, error)
 	Stop()
@@ -70,10 +61,8 @@ type keySource interface {
 // Sorted walks two ascending key streams in lockstep, invoking
 // onImport for keys present only on s3 and onDelete for keys present only
 // in the DB. Keys present on both sides are no-ops. Memory is bounded by
-// each iterator's internal buffer.
-//
-// The first failing onImport / onDelete bubbles up; iterator errors do
-// the same.
+// each iterator's internal buffer. The first callback or iterator error is
+// returned.
 func Sorted(
 	ctx context.Context,
 	s3, dbIter keySource,
@@ -192,11 +181,9 @@ const (
 // predecessor.
 var ErrNotAscending = errors.New("reconcile stream is not in ascending key order")
 
-// checkAscending enforces the invariant the whole merge rests on. A stream that
-// goes backwards makes the merge delete every key between the two and re-import
-// them on the next pass, which converges on nothing and looks like ordinary
-// churn in the counts. Failing the pass turns that into one loud error naming
-// the pair of keys that broke it.
+// checkAscending enforces the order the merge depends on. A stream that goes
+// backwards would make every pass delete and re-import the keys in between,
+// which looks like ordinary churn, so the pass fails naming the offending pair.
 func checkAscending(side, prev, next string) error {
 	if next > prev {
 		return nil
@@ -222,8 +209,7 @@ type ObjectLister interface {
 // S3KeyStream inverts the page-callback shape of ObjectLister.ListObjects
 // into a forward iterator. A single goroutine drives the callback, emitting
 // every key the backend holds in the order it was listed and tagging each with
-// whether it belongs to a configured virtual bucket. apiPages, when non-nil,
-// is incremented per page so the caller can record API usage.
+// whether it belongs to a configured virtual bucket.
 type S3KeyStream struct {
 	ch        chan Entry
 	errCh     chan error
@@ -232,13 +218,11 @@ type S3KeyStream struct {
 	closeOnce bool
 }
 
-// NewS3KeyStream starts the goroutine that walks the backend and returns a
-// keySource. The caller must invoke stop when done so a partial walk does
-// not leak goroutines.
-// usage and backendName meter the walk: each listing page is charged as it is
-// consumed, and the stream ends when the backend can no longer afford another.
-// A nil usage leaves the walk unmetered, which is what a caller with no tracker
-// to charge against passes.
+// NewS3KeyStream starts the goroutine that walks the backend. The caller must
+// call Stop when done so a partial walk does not leak the goroutine. Each
+// listing page is charged to backendName on usage as it is consumed, and the
+// stream ends when the backend can afford no more; a nil usage leaves the walk
+// unmetered.
 func NewS3KeyStream(
 	ctx context.Context,
 	s3b ObjectLister,
@@ -321,13 +305,9 @@ func Unmanaged(rawKey string, bucketPrefixes []string) bool {
 	return true
 }
 
-// next pulls the next entry off the streaming channel that the
-// background goroutine fills with backend-listed keys. Returns
-// (entry, true, nil) on a successful read, (zero, false, nil) on
-// graceful end-of-stream, or (zero, false, err) on either a producer
-// error or a context cancellation. Once an error is observed it is
-// latched into s.pending so subsequent calls see the same error
-// instead of an empty channel.
+// Next returns the next listed key: (entry, true, nil), (zero, false, nil) at
+// end of stream, or (zero, false, err) on a producer error or cancellation. An
+// error is latched, so later calls return it again.
 func (s *S3KeyStream) Next(ctx context.Context) (Entry, bool, error) {
 	if s.pending != nil {
 		return Entry{}, false, s.pending
@@ -349,9 +329,8 @@ func (s *S3KeyStream) Next(ctx context.Context) (Entry, bool, error) {
 	}
 }
 
-// stop cancels the producer goroutine if it is still running. Idempotent
-// via closeOnce so multiple stop calls (Reconcile early-exits, deferred
-// cleanup, error paths) do not double-close the cancel func.
+// Stop cancels the producer goroutine if it is still running. Safe to call
+// more than once.
 func (s *S3KeyStream) Stop() {
 	if !s.closeOnce {
 		s.closeOnce = true
@@ -372,12 +351,10 @@ type DBKeyLister interface {
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 }
 
-// DBCursorStream walks store.ListObjectsByBackendKeyAsc one bounded page at a
-// time, yielding every row recorded for the backend in storage-key order, which
-// is the order the backend's own listing arrives in. Reconcile is scoped to a
-// backend rather than to one virtual bucket, so nothing is filtered out here:
-// a row the cursor skipped would look backend-only to the merge and be
-// re-imported on every pass.
+// DBCursorStream pages through every row recorded for a backend in storage-key
+// order, which matches the backend listing's order. Nothing is filtered: a row
+// the cursor skipped would look backend-only to the merge and be re-imported
+// on every pass.
 type DBCursorStream struct {
 	store       DBKeyLister
 	backendName string
@@ -434,13 +411,9 @@ func (d *DBCursorStream) Next(ctx context.Context) (Entry, bool, error) {
 	}
 }
 
-// stop is a no-op for the DB cursor  -  the iterator owns no goroutine and
-// holds no other resource that needs explicit teardown. Defined so the
-// type satisfies keySource alongside S3KeyStream, which does need cleanup.
+// Stop is a no-op; the DB cursor holds nothing to release.
 func (d *DBCursorStream) Stop() {
-	// Intentionally empty: nothing to release. Required to satisfy the
-	// keySource interface uniformly with S3KeyStream, whose stop tears
-	// down a producer goroutine.
+	// Nothing to release.
 }
 
 // -------------------------------------------------------------------------
@@ -476,12 +449,8 @@ func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, re
 }
 
 // DeleteHandler returns the onDelete callback used by the merge. Failures
-// are logged but do not abort the pass.
-//
-// The entry carries both names because the two halves of the removal need
-// different ones: the row is addressed by the object's key, and the queued
-// cleanups swept alongside it are addressed by the path whose bytes the
-// backend has just been shown not to hold.
+// are logged but do not abort the pass. The row is deleted by the entry's
+// object key, and the queued cleanups swept with it by its storage key.
 func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result) func(context.Context, Entry) error {
 	return func(ctx context.Context, e Entry) error {
 		if err := deleter(ctx, e.objectKey, e.key, backendName); err != nil {

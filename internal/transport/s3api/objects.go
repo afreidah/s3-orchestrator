@@ -185,11 +185,9 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
 	setValidatorHeaders(w, result.GetObjectResult)
 
-	// Preconditions are evaluated before the Range is considered: a failed
-	// precondition aborts the whole request, whether or not only part of the
-	// representation was asked for (RFC 9110 13.1). Evaluating these only for
-	// unranged GETs let a resumable download splice bytes from a replaced
-	// object into the file it had already partly fetched.
+	// Preconditions are evaluated before the Range is considered, so a failed
+	// precondition aborts ranged requests too (RFC 9110 13.1). Otherwise a
+	// resumable download could splice bytes from a replaced object.
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
 		w.WriteHeader(status)
 		return status, 0, nil
@@ -282,12 +280,9 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *htt
 }
 
 // resolveCopySource turns an x-amz-copy-source header into the internal key it
-// names. Shared by CopyObject and UploadPartCopy so both read the header the
-// same way and refuse a cross-bucket source alike: a credential authorizes one
-// bucket, so a source outside it is one the caller cannot read.
-//
-// ok=false means the response has already been written and the caller must
-// propagate the (status, error) unchanged.
+// names, for both CopyObject and UploadPartCopy. A source in another bucket is
+// refused. ok=false means the response has already been written and the caller
+// must propagate the (status, error) unchanged.
 func resolveCopySource(w http.ResponseWriter, bucket, copySource string) (string, int, error, bool) {
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
@@ -446,11 +441,8 @@ func setValidatorHeaders(w http.ResponseWriter, result *s3be.GetObjectResult) {
 	}
 }
 
-// setTaggingCountHeader reports how many tags the object carries. A count of
-// zero is left off entirely, matching S3: the header means "this object has
-// tags, fetch them with GetObjectTagging", so sending a zero would answer a
-// question nobody asked. An unreadable count arrives here as zero too, which
-// is why the header is advisory and GetObjectTagging remains the authority.
+// setTaggingCountHeader reports how many tags the object carries, omitting the
+// header for zero as S3 does.
 func setTaggingCountHeader(w http.ResponseWriter, tagCount int) {
 	if tagCount > 0 {
 		w.Header().Set(headerTaggingCount, strconv.Itoa(tagCount))
@@ -458,15 +450,10 @@ func setTaggingCountHeader(w http.ResponseWriter, tagCount int) {
 }
 
 // ifRangeMatches reports whether an If-Range validator still describes the
-// current representation, which is what decides between serving the requested
-// range and serving the whole object.
-//
-// An absent header means the client did not ask for the conditional form, so
-// the range stands. A value parseable as an HTTP date is compared as a
-// last-modified validator; anything else is compared as an entity tag. Per
-// RFC 9110 13.1.5 the entity-tag comparison is strong, so a weak tag never
-// matches: a weak validator cannot safely be used to splice a partial
-// response onto bytes already held.
+// current representation; if not, the whole object is served instead of the
+// range. An absent header matches. An HTTP date is compared against
+// lastModified, and anything else as an entity tag using strong comparison
+// (RFC 9110 13.1.5), so a weak tag never matches.
 func ifRangeMatches(r *http.Request, etag string, lastModified time.Time) bool {
 	ir := r.Header.Get("If-Range")
 	if ir == "" {

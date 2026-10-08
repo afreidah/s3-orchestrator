@@ -112,12 +112,9 @@ func TestUsage_EncryptedGetChargesCiphertext(t *testing.T) {
 		usageSnapshot{APICalls: 1, Egress: physical})
 }
 
-// TestUsage_EncryptedRangeGetChargesFetchedChunks is where the gap is widest.
-// A range is served by fetching the whole chunks covering it, because a chunk
-// is the unit AES-GCM can authenticate; the client's slice can be a handful of
-// bytes out of the 64 KiB that actually left the backend. Charging the slice
-// makes a range-heavy workload look nearly free while the provider bills it in
-// full chunks.
+// TestUsage_EncryptedRangeGetChargesFetchedChunks checks that an encrypted
+// ranged GET charges egress for the whole chunks fetched from the backend,
+// not the client's slice.
 func TestUsage_EncryptedRangeGetChargesFetchedChunks(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	chunk := env.encryptor.ChunkSize()
@@ -154,19 +151,10 @@ func TestUsage_EncryptedRangeGetChargesFetchedChunks(t *testing.T) {
 		usageSnapshot{APICalls: 1, Egress: fetched})
 }
 
-// TestUsage_EncryptedPlacementReservesCiphertextSize pins the storage side of
-// the same mistake. Placement asks whether the object fits, and asking in
-// plaintext units reserves less room than the commit will need.
-//
-// The quota itself is safe either way: IncrementQuota refuses a row that would
-// carry a backend past its limit, so the write fails rather than overshooting.
-// What the plaintext question costs is the trip - the envelope is uploaded to a
-// backend that was never going to keep it, the commit is refused, and the bytes
-// are deleted again. A write nothing can accept belongs refused before any
-// backend is contacted, which is what leaves both of them untouched here.
-//
-// The limit is set one byte under the envelope, so the plaintext fits and the
-// ciphertext does not.
+// TestUsage_EncryptedPlacementReservesCiphertextSize checks that placement
+// sizes an encrypted write by its ciphertext, so a write that cannot fit is
+// refused before any backend is contacted. The limit is one byte under the
+// envelope, so the plaintext fits and the ciphertext does not.
 func TestUsage_EncryptedPlacementReservesCiphertextSize(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	body := bytes.Repeat([]byte("Q"), 512)

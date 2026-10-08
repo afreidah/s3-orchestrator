@@ -394,13 +394,10 @@ func assertETagAndStorageClass(t *testing.T, contents []listContentForAssertion)
 	}
 }
 
-// TestListObjects_IncludesETagAndStorageClass pins the S3-spec contract
-// that every Contents entry carries ETag and StorageClass. aws-sdk-go-v2
-// models ETag as *string and dereferences without a nil-check, so a
-// missing element crashes clients like aptly mid-list with SIGSEGV.
-// Covers both list versions, the populated-ContentHash branch (yields a
-// quoted hash), and the empty-ContentHash branch (yields a quoted empty
-// string  -  still a valid string, no nil deref).
+// TestListObjects_IncludesETagAndStorageClass verifies that every Contents
+// entry carries ETag and StorageClass, in both list versions, including a
+// quoted empty ETag when no content hash is stored. Some SDK clients crash on
+// a missing ETag.
 func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
 	t.Parallel()
 	now := time.Now()

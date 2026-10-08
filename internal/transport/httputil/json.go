@@ -30,10 +30,8 @@ const (
 	ErrMethodNotAllowed   = "method not allowed"
 )
 
-// WriteJSON serialises body as JSON, sets the JSON content-type header,
-// writes the status code, and emits the encoded payload. Encoder write
-// errors are swallowed because the response is already committed by
-// WriteHeader; logging is the caller's responsibility when it matters.
+// WriteJSON writes body as a JSON response with the given status. Encode errors
+// are dropped because the header is already committed.
 func WriteJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(status)

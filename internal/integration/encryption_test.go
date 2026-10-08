@@ -816,16 +816,8 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 const encryptionChunkSize = 65536
 
 // TestEncryptedWritePath_RoundTrip writes through the encryption-enabled proxy
-// and reads back through it.
-//
-// The rest of this file converts plaintext objects with the admin
-// encrypt-existing endpoint, which exercises the rewrite path rather than the
-// write path. This covers what a real deployment actually does on every
-// request: client PUT, encrypt, store, client GET, decrypt.
-//
-// Sizes bracket the chunk boundary because that is where framing errors hide:
-// an off-by-one in chunk accounting can round trip a 1 KiB object correctly
-// and still corrupt one of exactly a chunk or a chunk plus a byte.
+// and reads back through it. Sizes bracket the chunk boundary, where framing
+// off-by-ones show up.
 func TestEncryptedWritePath_RoundTrip(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()

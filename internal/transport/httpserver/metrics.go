@@ -24,19 +24,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
-// mountPprof wires the standard net/http/pprof handlers on the supplied
-// mux. The pprof endpoints expose deep runtime state (de-anonymized
-// stack frames, command-line flags, on-demand CPU profiles that double
-// as DoS amplifiers) so they MUST NOT be mounted on any listener that
-// accepts user traffic. configureMetrics only calls this helper when a
-// dedicated metrics listener is configured (typically bound to an
-// internal-only interface); operators who run inline metrics on the
-// main S3 listener intentionally do not get pprof.
-//
-// Only the five handler-backed endpoints need explicit routes. Every named
-// runtime profile - heap, goroutine, goroutineleak, mutex and the rest - is
-// dispatched by pprof.Index off the "/debug/pprof/" prefix, so they come
-// along without being listed here.
+// mountPprof wires the net/http/pprof handlers on mux. It must only be used on
+// the dedicated metrics listener, never one that accepts user traffic.
 func mountPprof(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -46,14 +35,9 @@ func mountPprof(mux *http.ServeMux) {
 }
 
 // configureMetrics either registers /metrics on mux or returns a separate
-// metrics listener for the runtime to start. Returns nil when metrics are
-// disabled. The separate listener is the caller's responsibility to start
-// and shut down; this function only constructs it.
-//
-// Pprof is opt-in (cfg.Pprof) AND requires the dedicated listener form
-// (cfg.Listen set). Inline-metrics deployments never get pprof, and the
-// production default leaves cfg.Pprof false so the debug surface is
-// off unless an operator explicitly enables it.
+// metrics listener, which the caller starts and shuts down. Returns nil when
+// metrics are disabled or served inline. Pprof is mounted only when cfg.Pprof
+// is set and the dedicated listener is in use (cfg.Listen set).
 func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Server {
 	if !cfg.Enabled {
 		return nil

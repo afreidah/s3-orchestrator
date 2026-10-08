@@ -46,10 +46,8 @@ const (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// normalizeETag strips surrounding quotes and the weak-comparison prefix so a
-// client that quotes its ETags matches a stored value that does not (or the
-// reverse). S3 clients differ on this, and the comparison is meant to catch a
-// stale part, not a quoting style.
+// normalizeETag strips quotes and the weak prefix, since S3 clients differ on
+// whether they quote ETags.
 func normalizeETag(etag string) string {
 	e := strings.TrimSpace(etag)
 	e = strings.TrimPrefix(e, "W/")
@@ -142,9 +140,8 @@ func presentToClient(p *core.MultipartPart) {
 // and every part but the last must meet the minimum size. stored must be
 // sorted by part number, which collectRequestedParts guarantees.
 //
-// enforceMinSize is the operator's switch: the 5 MiB floor is correct S3
-// behaviour but rejects manifests this proxy previously accepted, so a
-// deployment with existing small-part writers can turn it off.
+// enforceMinSize lets an operator turn off the 5 MiB floor for deployments
+// whose existing writers upload smaller parts.
 func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.MultipartPart, enforceMinSize bool) error {
 	byNumber := make(map[int]*core.MultipartPart, len(stored))
 	for i := range stored {

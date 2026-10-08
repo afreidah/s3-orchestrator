@@ -82,14 +82,9 @@ func RequestID(ctx context.Context) string {
 // USER
 // -------------------------------------------------------------------------
 
-// WithUser stores the identity a request authenticated as, so every audit
-// entry the request produces names it without any of them being handed a user.
-//
-// One S3 request writes two correlated entries: the HTTP-layer one the
-// transport emits, and a storage-layer one emitted several packages deeper,
-// where no identity is in scope and passing one would mean a signature change
-// on the whole write path. The request id already crosses that distance on the
-// context, and the identity travels the same way for the same reason.
+// WithUser stores the authenticated identity on the context, so the
+// storage-layer audit entry deep in the write path can name it like the
+// request id.
 func WithUser(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, userKey, id)
 }

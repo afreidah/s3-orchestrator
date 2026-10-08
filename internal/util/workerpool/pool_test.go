@@ -171,12 +171,8 @@ func TestRun_SingleItemFastPath(t *testing.T) {
 	}
 }
 
-// TestRun_PreCancelledContext locks in that a context cancelled
-// before Run is called dispatches zero items. The pre-#861
-// implementation could leak one item into a worker before the
-// cancellation was observed; the fixed-worker dispatcher checks
-// ctx.Done in the same select that hands items off, so the
-// guarantee is now tight.
+// TestRun_PreCancelledContext verifies that a context cancelled before Run is
+// called dispatches zero items.
 func TestRun_PreCancelledContext(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

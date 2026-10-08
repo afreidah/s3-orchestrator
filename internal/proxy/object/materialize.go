@@ -57,15 +57,10 @@ type materializedSource struct {
 	cleanup       func()
 }
 
-// materializeCopySource reads the source object from the first reachable
-// replica into a seekable buffer (in-memory for small objects, a self-
-// unlinking tempfile for large ones) and returns it ready for handoff to
-// PutObject. Failover iterates locations in order; backend-side errors
-// (including backend-timeout cancellation) are captured and a different
-// replica is tried. On total failure the most recent underlying error
-// surfaces so the caller sees the real signal (e.g. DeadlineExceeded) rather
-// than a generic wrapper. Per-replica GETs run under the backend timeout
-// policy; a tighter caller deadline still wins.
+// materializeCopySource reads the source object from the first reachable copy,
+// in location order, into a seekable buffer ready for PutObject. When every
+// copy fails it returns the last underlying error, such as DeadlineExceeded,
+// rather than a generic one.
 func (o *Manager) materializeCopySource(
 	ctx context.Context,
 	sourceKey string,
@@ -89,12 +84,10 @@ func (o *Manager) materializeCopySource(
 	return nil, fmt.Errorf("failed to read source from any copy")
 }
 
-// tryMaterializeFromLocation attempts to download one copy, at the path that
-// copy occupies on its backend, into a fresh seekable buffer. (ms, nil) on
-// success. (nil, nil) means the replica was skipped without a hard error (usage limits hit, backend not
-// registered) — caller moves on. (nil, err) is a real failure (backend GET
-// errored or materialization failed). Errors are aggregated by the caller so
-// the last underlying failure surfaces when no replica succeeds.
+// tryMaterializeFromLocation downloads one copy at storageKey into a fresh
+// seekable buffer. It returns (nil, nil) when the copy was skipped without a
+// hard error (usage limit reached or backend not registered), and (nil, err)
+// when the GET or the buffering failed.
 func (o *Manager) tryMaterializeFromLocation(
 	ctx context.Context,
 	storageKey string,

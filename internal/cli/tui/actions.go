@@ -163,10 +163,8 @@ func (m *model) report(ok bool, text string) {
 	}
 }
 
-// begin applies an action's pane update on the main loop, before the command
-// that does the work is dispatched. Running it here rather than inside the
-// command is what makes the transition immediate: a command runs off the loop
-// and cannot report anything until it returns.
+// begin applies an action's pane update on the main loop before its command is
+// dispatched, so the transition shows immediately.
 func (m *model) begin(before func(*model)) {
 	if before != nil {
 		before(m)

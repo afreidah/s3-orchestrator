@@ -108,10 +108,8 @@ func TestSigV4_RoundTripEncodedKey(t *testing.T) {
 // TestSigV4_PathSubstitution_NotAccepted asserts that a request whose
 // signature was computed for one wire path cannot be silently accepted
 // after an upstream substitution to a different wire path that happens to
-// decode to the same r.URL.Path. Today the verifier collapses both shapes
-// to the same canonical request and accepts the substitution; after the
-// fix the canonical request reflects the actual wire form so the
-// substituted request fails verification.
+// decode to the same r.URL.Path: the canonical request uses the wire form, so
+// the substituted request fails verification.
 func TestSigV4_PathSubstitution_NotAccepted(t *testing.T) {
 	t.Parallel()
 

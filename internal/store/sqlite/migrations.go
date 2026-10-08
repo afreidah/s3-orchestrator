@@ -59,13 +59,10 @@ func loadMigrations() ([]migration, error) {
 	return loadMigrationsFrom(migrationFS)
 }
 
-// loadMigrationsFrom reads migrations from fsys in ascending version order. The
-// file name carries the version, so ordering is explicit in the tree rather
-// than implied by a registration list someone has to remember to update.
-//
-// The filesystem is a parameter so the naming rules this enforces can be
-// exercised against deliberately malformed trees. A runner that silently
-// mis-orders or skips a migration is worse than one that refuses to start.
+// loadMigrationsFrom reads migrations from fsys in ascending version order,
+// taking each version from its file name. A malformed name is an error, since
+// a runner that silently mis-orders or skips a migration is worse than one
+// that refuses to start.
 func loadMigrationsFrom(fsys fs.FS) ([]migration, error) {
 	entries, err := fs.ReadDir(fsys, migrationDir)
 	if err != nil {
@@ -106,15 +103,10 @@ func loadMigrationsFrom(fsys fs.FS) ([]migration, error) {
 
 // RunMigrations brings the database up to expectedSchemaVersion.
 //
-// A fresh database gets schema.sql, which establishes the baseline and records
-// its own version. An existing database has every numbered migration above its
-// recorded version applied in order. Both then land on the same version, so a
-// database created today and one upgraded through several releases are
-// identical.
-//
-// Each migration runs in its own transaction with its version row written in
-// the same commit: a migration either applied and is recorded, or did neither.
-// A version ahead of this binary is still an error, since a downgrade cannot
+// A fresh database gets schema.sql, which records its own version. An existing
+// database has every numbered migration above its recorded version applied in
+// order, each in its own transaction with its version row written in the same
+// commit. A version ahead of this binary is an error, since a downgrade cannot
 // know what a later release changed.
 func (s *Store) RunMigrations(ctx context.Context) error {
 	version, exists, err := s.currentSchemaVersion(ctx)

@@ -217,9 +217,6 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 // handleSetGrant declares exactly what one user reaches on one resource,
 // writing the grant when it is absent and replacing its permissions when it is
 // not.
-//
-// The kind comes from the query string, matching the delete route, so the two
-// address a grant the same way.
 func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.SetGrantRequest
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
@@ -260,14 +257,9 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// grantTarget reads the user and resource a grant route addresses.
-//
-// The kind comes from the query string rather than a fourth path segment: a
-// bucket grant is the overwhelmingly common case, and the path a caller already
-// writes keeps working. An absent kind is therefore the bucket.
-//
-// The orchestrator carries no name, so the placeholder segment a caller has to
-// put in the path is discarded once the kind says the orchestrator is meant.
+// grantTarget reads the user and resource a grant route addresses. The kind
+// comes from the query string and defaults to bucket. For the orchestrator,
+// which has no name, the placeholder path segment is discarded.
 func grantTarget(r *http.Request) (string, core.Resource) {
 	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
 	if kind := r.URL.Query().Get(paramKind); kind != "" {
@@ -360,11 +352,8 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 // following map iteration.
 func wireGrants(u *provisioning.User) []adminapi.Grant {
 	out := make([]adminapi.Grant, 0, len(u.Buckets)+len(u.Admin)+1)
-	// A wildcard is reported as itself rather than as the buckets it currently
-	// expands to, because those two say different things: the expansion is what
-	// this identity reaches today, and the wildcard is what it will reach after
-	// the next bucket is created. Only the buckets carrying something other than
-	// the wildcard are then worth naming - the rest are the wildcard repeated.
+	// A wildcard is reported as itself, since it also covers buckets created
+	// later; only buckets whose grant differs from it are then listed.
 	if u.AllBuckets != 0 {
 		out = append(out, adminapi.Grant{
 			Kind:        string(core.ResourceBucket),

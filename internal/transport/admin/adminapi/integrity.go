@@ -23,11 +23,7 @@ type IntegrityOutcome struct {
 }
 
 // ScrubKeyResponse reports an on-demand verification of one key, one entry per
-// copy.
-//
-// Per-copy rather than a summary because that is where the useful asymmetry
-// lives: a replicated object can have one copy intact and another corrupt, and
-// a single verdict for the key would hide which backend is at fault.
+// copy, so a corrupt copy is attributed to its backend.
 type ScrubKeyResponse struct {
 	Key    string            `json:"key"`
 	Copies []CopyScrubResult `json:"copies"`
@@ -53,13 +49,9 @@ const (
 
 // ScrubResponse reports a scrub pass: how many stored copies had their content
 // hash verified against backend data, how many did not match, and how many
-// could not be read at all.
-//
-// Unreadable is reported separately because it is not a hash result. A pass
-// that could not read a single copy has nothing to say about whether the
-// bytes are intact, and reporting only Checked and Failed makes that pass look
-// like a clean one. Deferred is distinct again: those copies were never
-// attempted, because the backend holding them is over its usage limit.
+// could not be read at all. Unreadable copies say nothing about integrity, so
+// they are not counted as checked. Deferred copies were not attempted because
+// their backend is over its usage limit.
 type ScrubResponse struct {
 	IntegrityOutcome
 	Checked    int `json:"checked"`

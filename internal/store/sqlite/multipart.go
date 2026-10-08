@@ -320,13 +320,8 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// scanMultipartUploadRow scans the standard multipart_uploads column set
-// (upload_id, object_key, backend_name, content_type, metadata, created_at)
-// from any sql Scan-capable source and returns a MultipartUpload. Returns
-// sql.ErrNoRows untouched so single-row callers can map it to a sentinel.
-// taggedRowScanner adapts a row carrying one extra trailing column onto the
-// shared multipart scanner, so the read that needs tagging does not fork the
-// scan logic the other reads share.
+// taggedRowScanner adapts a row carrying one extra trailing tagging column onto
+// scanMultipartUploadRow.
 type taggedRowScanner struct {
 	row     rowScanner
 	tagging *sql.NullString
@@ -337,6 +332,10 @@ func (t taggedRowScanner) Scan(dest ...any) error {
 	return t.row.Scan(append(dest, t.tagging)...)
 }
 
+// scanMultipartUploadRow scans the standard multipart_uploads column set
+// (upload_id, object_key, backend_name, content_type, metadata, created_at).
+// It returns sql.ErrNoRows untouched so single-row callers can map it to a
+// sentinel.
 func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 	var (
 		mu            core.MultipartUpload

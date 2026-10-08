@@ -679,13 +679,9 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 // REPORTING
 // -------------------------------------------------------------------------
 
-// TestScrub_UnreadableCopyIsCountedAndLabelled pins the distinction that a
-// silent fleet depends on: a copy the scrubber could not read is reported as
-// unreadable, not as a failure and not as a pass.
-//
-// Counting it as a failure would overstate corruption; leaving it out of the
-// summary entirely, which is what "checked N, failed 0" used to do, lets a
-// fleet whose copies are all unreadable report a clean pass.
+// TestScrub_UnreadableCopyIsCountedAndLabelled checks that a copy the
+// scrubber could not read is reported as unreadable, neither a failure nor a
+// pass, so an unreadable fleet cannot report a clean sweep.
 func TestScrub_UnreadableCopyIsCountedAndLabelled(t *testing.T) {
 	t.Parallel()
 	s, ops, _, be, ms := setupScrubber(t)
@@ -830,13 +826,9 @@ func limitedUsage(t *testing.T) *counter.UsageTracker {
 	return tracker
 }
 
-// TestScrub_DeclinesBackendsOverTheirUsageLimit is the core of the budget
-// behaviour: an over-limit backend is filtered out of the selection query, not
-// filtered out after selection.
-//
-// Filtering after selection would force a choice between two broken options -
-// stamp the copy as examined without reading it, or leave it at the head of the
-// queue to be re-selected every cycle. Excluding it from the query avoids both.
+// TestScrub_DeclinesBackendsOverTheirUsageLimit checks that an over-limit
+// backend is excluded from the selection query itself, so its copies are
+// neither falsely stamped nor re-selected every cycle.
 func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -883,12 +875,9 @@ func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
 	}
 }
 
-// TestScrub_DeferredCopiesReportSeparately is the assertion the whole policy
-// rests on. Deferred copies were never read, so a sweep must not report them as
-// verified; but they also can never be stamped, so counting them in the age
-// pegs that gauge to wall clock and no amount of scrubbing lowers it. They get
-// their own gauge, which keeps a fleet nobody can afford to verify from reading
-// as a clean one without breaking the figure that tracks the real backlog.
+// TestScrub_DeferredCopiesReportSeparately checks that deferred copies get
+// their own gauge: they are not reported as verified, and are kept out of the
+// age gauge, which they would otherwise peg to wall clock.
 func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
@@ -1094,15 +1083,8 @@ func TestScrubKey_LookupFailureIsAnError(t *testing.T) {
 	}
 }
 
-// TestScrub_DeclinesCopyWithoutEgressHeadroom pins the per-object usage check.
-// The batch-level split only asks whether a backend has any headroom at all,
-// before any object is known, so without this a batch admitted on a sliver of
-// remaining budget reads whole objects straight through it. A scrub sweep
-// reads every copy in the fleet, so that is not a small overshoot.
-//
-// The copy must also be left unstamped: it was never read, so recording it as
-// scrubbed would send it to the back of the queue claiming an integrity check
-// that never happened, and it would not be looked at again for a full cycle.
+// TestScrub_DeclinesCopyWithoutEgressHeadroom pins the per-object usage check
+// and that the declined copy is left unstamped, since it was never read.
 func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

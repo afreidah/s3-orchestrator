@@ -104,13 +104,9 @@ func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool)
 // -------------------------------------------------------------------------
 
 // assertAllCopiesIntact reads every copy the ledger claims for key directly
-// from its backend and requires each to hold exactly want.
-//
-// Reading each copy directly is the point. A GET through the proxy fails over
-// to a healthy replica, so a single corrupted copy is invisible from the
-// client side - which is exactly the state the integrity machinery exists to
-// find. stage names the operation under test so a failure says which step lost
-// the bytes.
+// from its backend and requires each to hold exactly want, since a proxied GET
+// would fail over past a corrupted copy. stage names the operation under test
+// for the failure message.
 func assertAllCopiesIntact(t *testing.T, ctx context.Context, key string, want []byte, stage string) {
 	t.Helper()
 
@@ -275,13 +271,9 @@ func corruptBackendCopy(t *testing.T, ctx context.Context, backendName, key stri
 // SCRUBBER
 // -------------------------------------------------------------------------
 
-// TestIntegrity_ScrubberDetectsCorruptedCopy is the end-to-end check the
-// integrity machinery exists for: bytes on a backend change underneath the
-// orchestrator, and the scrubber notices.
-//
-// The corruption is applied to one of two replicas, which is the case a client
-// cannot see for itself - a GET fails over to the healthy copy and returns the
-// right answer while the bad copy sits there indefinitely.
+// TestIntegrity_ScrubberDetectsCorruptedCopy corrupts one of two replicas on
+// its backend, which a client GET would never reveal, and checks the scrubber
+// notices.
 func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -395,17 +387,11 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 // VERIFY ON READ
 // -------------------------------------------------------------------------
 
-// TestIntegrity_VerifyOnReadDiscardsCorruptedCopy covers the second detector:
-// the scrubber finds corruption on its own schedule, while verify-on-read
-// finds it the moment a client happens to touch the bad copy.
-//
-// The object deliberately has a single copy. With a replica present the proxy
-// fails over to the healthy one and the corrupted bytes are never read, so
-// there would be nothing for this path to catch.
-//
-// Verification completes when the body is closed rather than mid-stream, so
-// the client still receives the bad bytes for this request. What must happen
-// is that the copy does not survive to serve a second one.
+// TestIntegrity_VerifyOnReadDiscardsCorruptedCopy checks that verify-on-read
+// discards a corrupted copy after a client reads it. The object has a single
+// copy so the corrupted bytes are actually read. Verification completes on
+// body close, so the first client still receives the bad bytes; the copy must
+// not survive to serve a second request.
 func TestIntegrity_VerifyOnReadDiscardsCorruptedCopy(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -505,17 +491,10 @@ func TestIntegrity_RemoveBackendKeepsSurvivingCopies(t *testing.T) {
 	ws.assertIntact(ctx, "after backend removal")
 }
 
-// TestIntegrity_RangedReadKeepsHealthyCopy is the end-to-end guard for a
-// data-loss bug: with verify-on-read enabled, a ranged GET of a healthy object
-// used to destroy the copy it read. The stored hash covers the whole object, so
-// the slice that was served could never match it, and the mismatch handler
-// deleted both the backend bytes and the ledger row while the client received
-// exactly the bytes it asked for.
-//
-// The unit test in internal/proxy/object proves the orchestration no longer
-// calls delete. This one proves the bytes and the row are still there
-// afterwards, against a real backend and a real database, which is where the
-// loss actually happened.
+// TestIntegrity_RangedReadKeepsHealthyCopy checks that with verify-on-read
+// enabled, a ranged GET leaves the copy's bytes and ledger row in place. The
+// stored hash covers the whole object, so a served slice never matches it and
+// must not be treated as a mismatch.
 func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()

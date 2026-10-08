@@ -213,12 +213,9 @@ func TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks(t *testing.T) {
 	set.assertVisitedAll(t, pagingRows)
 }
 
-// TestRunBulkRewrite_TerminatesWhenRowsStay covers the other half of the
-// contract, and rules out the naive repair. A pass that simply re-queried from
-// the start each time would walk a shrinking set correctly and never finish
-// this one: a declined row stays in the listing, so it would be served forever.
-// Compress-existing declines most of a fleet of media, so this is the ordinary
-// case rather than the exotic one.
+// TestRunBulkRewrite_TerminatesWhenRowsStay verifies a pass finishes when
+// declined rows stay in the listing, which a pass that re-queried from the
+// start each time would serve forever.
 func TestRunBulkRewrite_TerminatesWhenRowsStay(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
@@ -303,15 +300,9 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 	set.assertVisitedAll(t, pagingRows)
 }
 
-// TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom is the regression
-// test for the bypass this admission closes. These passes read and rewrite an
-// entire fleet, which makes them the largest consumer of egress in the system,
-// and they used to drive backends directly with no limit check at all: a run
-// could spend a backend's whole monthly budget and leave client reads to be
-// refused on the counter it had run up.
-//
-// A declined object is skipped rather than failed, since nothing is wrong with
-// it, and the backend must not be touched on its behalf.
+// TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom verifies an object
+// without usage headroom is counted as skipped, not failed, and the backend is
+// not touched on its behalf.
 func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(3)
@@ -387,11 +378,8 @@ func TestBulkRewritePageSize(t *testing.T) {
 }
 
 // TestRunBulkRewrite_CapSpanningPagesStopsExactly drives a cap wider than one
-// listing page. The existing cap tests all fit inside a single page, so they
-// never exercise the pass asking for a full page and then narrowing to what is
-// left: a driver that asked for the whole remaining budget every time would
-// still stop at the right count here, and one that forgot to narrow the final
-// page would overshoot it.
+// listing page, so the final page must narrow to the remaining budget or the
+// pass overshoots.
 func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
 	t.Parallel()
 	const capRewrites = bulkRewriteBatchSize + 50

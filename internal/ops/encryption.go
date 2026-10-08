@@ -83,10 +83,8 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // EncryptExisting reads every plaintext copy, encrypts it, re-uploads the
 // ciphertext, and records the new encryption metadata.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet. A
-// capped run needs nothing carried between invocations to continue: an encrypted
-// copy leaves the listing that selected it, so running it again converts the
-// next batch rather than re-examining the last.
+// maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
+// a capped run can be repeated to continue.
 func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
@@ -136,9 +134,8 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 // plaintext, and clears the encryption metadata. Encryption must still be
 // configured, since the key provider is what unwraps each DEK.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
-// This direction declines nothing, so every copy a capped run touches leaves the
-// listing and the next run continues straight on from there.
+// maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
+// a capped run can be repeated to continue.
 func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled

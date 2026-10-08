@@ -600,11 +600,8 @@ func TestProvisioningError_StatusMapping(t *testing.T) {
 }
 
 // TestWireGrants_ReportsTheWildcardNotItsExpansion verifies a listing names the
-// rule an identity holds rather than the buckets it happens to cover today.
-//
-// The expansion answers what is reachable now; the wildcard answers what will be
-// reachable after the next bucket is created. Reporting only the expansion hides
-// that an identity reaches buckets nobody has made yet.
+// rule an identity holds rather than the buckets it happens to cover today,
+// since the wildcard also covers buckets created later.
 func TestWireGrants_ReportsTheWildcardNotItsExpansion(t *testing.T) {
 	t.Parallel()
 

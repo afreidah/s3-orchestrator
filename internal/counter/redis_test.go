@@ -218,12 +218,9 @@ func TestSharedState_PutAndGet(t *testing.T) {
 	}
 }
 
-// TestRecordFailure_LogsFallbackAndPostCheckError drives both warning
-// branches that the previous fallback contract left untested: when the
-// circuit breaker opens, PostCheck returns the sentinel (covering the
-// "Redis circuit breaker PostCheck reported error" log), and recordFailure
-// transitions to fallback (covering the "entering fallback to local
-// counters" log).
+// TestRecordFailure_LogsFallbackAndPostCheckError verifies that a failure
+// opening the breaker logs the PostCheck error and moves the backend into
+// fallback.
 func TestRecordFailure_LogsFallbackAndPostCheckError(t *testing.T) {
 	sentinel := errors.New("redis unavailable")
 	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "redis", Threshold: 1, Timeout: time.Second, IsError: func(error) bool { return true }, Sentinel: sentinel})
@@ -401,13 +398,8 @@ func newTestCB() *breaker.CircuitBreaker {
 	return cb
 }
 
-// TestTryRecover_ClosesCircuitBreaker pins the contract that tryRecover
-// transitions the breaker out of Open back to a healthy Closed state.
-// The redis counter hot-path methods bypass PreCheck (they branch on
-// inFallback()), so the breaker never reaches HalfOpen on its own. If
-// tryRecover does not actively close the breaker, IsHealthy() stays
-// false forever and recordFailure flips the system back to fallback on
-// the very next transient error.
+// TestTryRecover_ClosesCircuitBreaker verifies tryRecover closes an open
+// breaker. The hot path bypasses PreCheck, so nothing else would close it.
 func TestTryRecover_ClosesCircuitBreaker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)

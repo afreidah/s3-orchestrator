@@ -21,16 +21,11 @@ import (
 	"errors"
 )
 
-// Copier is the optional capability for backends that support a
-// server-side CopyObject. Backends that implement this method enable the
-// orchestrator's same-backend fast path: instead of GET-then-PUT through
-// the proxy, a single CopyObject call asks the backend to copy bytes
-// internally, eliminating proxy CPU, memory, and network cost.
-//
-// Callers should check ok via a type assertion and fall back to
-// materialized copy when the backend does not implement this interface
-// or when it returns ErrCopyNotSupported (e.g., a decorator forwarding
-// to an underlying backend that lacks native copy).
+// Copier is the optional capability for backends that support a server-side
+// CopyObject, which lets a same-backend copy skip GET-then-PUT through the
+// proxy. Callers fall back to materialized copy when the backend does not
+// implement it or returns ErrCopyNotSupported, which a decorator does when its
+// wrapped backend lacks native copy.
 type Copier interface {
 	CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (etag string, err error)
 }

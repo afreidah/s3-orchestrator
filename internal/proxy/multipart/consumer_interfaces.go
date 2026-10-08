@@ -21,15 +21,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 )
 
-// Codec is the compression surface assembly uses. Both halves are
-// needed for one write: the assembled stream is encoded to learn what it costs,
-// and decoded back out of that same buffer when the encoding did not earn its
-// place, which is the only way to recover a plaintext the part pipe has already
-// delivered once.
-//
-// Declared rather than taking *compression.Codec because a mid-assembly encode
-// failure is a path worth testing and the concrete codec cannot be made to
-// produce one.
+// Codec is the compression surface assembly uses: the assembled stream is
+// encoded, then decoded back out of the same buffer when the encoding misses
+// min_ratio, because the part pipe delivers the plaintext only once.
 type Codec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	Decompress(rs io.ReadSeeker) (io.ReadCloser, error)

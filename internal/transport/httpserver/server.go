@@ -48,13 +48,8 @@ type Deps struct {
 // Server bundles the main HTTP listener with its optional separate metrics
 // listener and the TLS cert reloader. Run starts both listeners; Shutdown
 // closes them in the right order. The cert reloader is exposed so the
-// reload coordinator can refresh certificates without reaching into the
-// listener internals.
-//
-// The bound sockets are held between Listen and Run. Binding separately from
-// serving is what makes an address conflict a startup failure rather than a
-// goroutine that logs and exits after the process has already reported itself
-// ready.
+// reload coordinator can refresh certificates. The bound sockets are held
+// between Listen and Run.
 type Server struct {
 	main         *http.Server
 	metrics      *http.Server
@@ -140,14 +135,9 @@ func (s *Server) CertReloader() *httputil.CertReloader {
 }
 
 // Listen binds every socket the server will serve on, without accepting
-// anything yet. Call it before reporting the process ready: a bind that fails
-// here is a startup error the caller can act on, where the same failure
-// discovered inside Run is a goroutine exiting after readiness has already
-// been announced and the orchestrator is taking traffic.
-//
-// A metrics bind failure aborts unless telemetry.metrics.require_listener is
-// false, which is the dev and embedded case where the port may well be taken
-// and best-effort metrics are fine.
+// anything yet. Call it before reporting the process ready, so an address
+// conflict fails startup instead of surfacing after readiness. A metrics bind
+// failure aborts unless telemetry.metrics.require_listener is false.
 func (s *Server) Listen(ctx context.Context) error {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.main.Addr)
@@ -180,13 +170,9 @@ func (s *Server) Listen(ctx context.Context) error {
 }
 
 // Run serves on the sockets Listen bound and blocks until one of them stops.
-// Whichever stops first, the other is shut down with it: an orchestrator
-// serving S3 traffic with a dead metrics listener looks healthy while
-// Prometheus receives nothing, which is the failure this reports rather than
-// logs.
-//
-// A shutdown initiated through Shutdown closes both listeners and surfaces as
-// http.ErrServerClosed on each, which is not an error and is not returned.
+// Whichever stops first, the other is shut down with it and the error is
+// returned, so a dead metrics listener is not hidden behind healthy S3
+// traffic. http.ErrServerClosed from Shutdown is not returned.
 func (s *Server) Run(ctx context.Context) error {
 	if s.mainLn == nil {
 		if err := s.Listen(ctx); err != nil {

@@ -116,12 +116,8 @@ func runWithCleanup(t *testing.T, stub TxAdapter, fn func(Runner) error) {
 // MOVE CLEANUP TO DLQ
 // -------------------------------------------------------------------------
 
-// TestMoveCleanupToDLQ_HappyPath asserts the move-to-DLQ flow performs
-// exactly three transactional steps - read, insert into DLQ, delete the
-// queue row - and never touches orphan_bytes. The orphan-bytes
-// invariant is the load-bearing piece of #651: the bytes really are
-// still on the backend, so decrementing here would lie about reclaimed
-// capacity.
+// TestMoveCleanupToDLQ_HappyPath asserts the move reads the row, inserts it
+// into the DLQ, deletes the queue row, and never touches orphan_bytes.
 func TestMoveCleanupToDLQ_HappyPath(t *testing.T) {
 	t.Parallel()
 	stub := &cleanupTxStub{

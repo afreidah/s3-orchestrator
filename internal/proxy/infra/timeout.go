@@ -48,11 +48,9 @@ func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.Objec
 }
 
 // GetWithTimeout issues a GET against be with the configured backend timeout.
-// GET returns a streaming body whose lifetime the caller owns, so on success
-// the cancel func is handed back instead of being deferred: synchronous readers
-// defer it next to Body.Close, while streaming callers pass it to
-// ioutilx.WithCancel so the timeout context is released when the body is closed.
-// On error there is no body to own, so the context is released before returning.
+// On success it returns the cancel func instead of deferring it, because the
+// caller owns the body: defer it next to Body.Close, or pass it to
+// ioutilx.WithCancel when streaming. On error the context is already released.
 func (c *BackendRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
 	gctx, gcancel := c.WithTimeout(ctx)
 	result, err := be.GetObject(gctx, key, rangeHeader)
@@ -77,15 +75,12 @@ func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectB
 // limits first. Returns the bytes moved, or a *backend.CopyError tagged with
 // the failing phase.
 //
-// Admission lives here rather than at the call sites because this is the one
-// place every backend-to-backend copy passes through, so the replicator and
-// the rebalancer enforce the same limits by construction. Accounting stays
-// with the caller, which charges the size its metadata commit settled on;
-// sizeEstimate is what admission is judged on.
+// Admission happens here so every backend-to-backend copy enforces the same
+// limits, judged on sizeEstimate. Accounting stays with the caller, which
+// charges the size its metadata commit settled on.
 //
-// srcKey and dstKey are the paths on each side, and they differ. The copy is a
-// new write on the destination with a path of its own, so a cleanup after it
-// deletes only those bytes and nothing else the object has on that backend.
+// srcKey and dstKey differ: the copy is a new write with its own path on the
+// destination, so a cleanup after it deletes only those bytes.
 func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	// A refusal is tagged with the leg that had no headroom: another source
 	// may have egress left, but a destination that is full ends the attempt.

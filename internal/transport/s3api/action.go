@@ -77,13 +77,10 @@ const (
 // requiredPermissions maps each action onto the permissions a caller's grant
 // has to carry for it. An action absent from the map needs none.
 //
-// Three of these are judgement calls worth stating rather than leaving to be
-// found. AbortMultipartUpload is a write, not a delete: a client that may write
-// but not delete still has to be able to abandon its own failed upload, or it
-// leaks parts it cannot clean up. CopyObject and UploadPartCopy need read as
-// well as write, because they read the source they name; copies are same-bucket
-// today, so both land on the one grant. Reading a tag set needs Read, like
-// reading the object; replacing or removing one needs Tags.
+// AbortMultipartUpload is a write, not a delete, so a write-only client can
+// abandon its own failed upload instead of leaking parts. CopyObject and
+// UploadPartCopy need read as well as write, because they read their source.
+// Reading a tag set needs Read; replacing or removing one needs Tags.
 var requiredPermissions = map[Action]core.PermissionSet{
 	ActionHeadBucket:          core.PermListBuckets,
 	ActionGetBucketLocation:   core.PermListBuckets,
@@ -113,12 +110,8 @@ var requiredPermissions = map[Action]core.PermissionSet{
 	ActionDeleteObjectTagging: core.PermTags,
 }
 
-// RequiredPermissions reports what a grant must carry for an action.
-//
-// An unsupported subresource and an unknown action need nothing: both are
-// refused before they reach an object, and gating them would make the refusal
-// depend on rights the caller will never exercise - answering 403 where the
-// server means 501 or 405.
+// RequiredPermissions reports what a grant must carry for an action. Unknown and
+// unsupported actions need nothing, so they get 501 or 405 rather than 403.
 func RequiredPermissions(act Action) core.PermissionSet {
 	return requiredPermissions[act]
 }
@@ -128,12 +121,7 @@ func RequiredPermissions(act Action) core.PermissionSet {
 // -------------------------------------------------------------------------
 
 // Classify names the operation a request asks for. An empty key selects the
-// bucket vocabulary, matching how the router splits.
-//
-// The copy-source header participates because S3 distinguishes PutObject from
-// CopyObject by its presence alone, and the two are different operations to
-// authorize: one writes bytes the caller supplied, the other reads an object
-// the caller named.
+// bucket operations; the copy-source header separates CopyObject from PutObject.
 func Classify(r *http.Request, key string) Action {
 	query := r.URL.Query()
 	if key == "" {

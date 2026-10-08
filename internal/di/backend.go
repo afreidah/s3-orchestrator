@@ -64,12 +64,9 @@ type BackendsResult struct {
 }
 
 // UsageLimitsFor compiles one backend's configured budgets into the form
-// admission reads. Shared with the reload hook so a limit applied at startup
-// and the same limit applied on reload cannot be built two different ways.
-//
-// api_request_limit is the single-pool spelling of request_limits, so it
-// desugars into one wildcard pool. Config validation rejects setting both,
-// which leaves nothing here to reconcile.
+// admission reads, for both startup and the reload hook. api_request_limit
+// desugars into one wildcard pool; config validation rejects setting it
+// alongside request_limits.
 func UsageLimitsFor(b *config.BackendConfig) (core.UsageLimits, error) {
 	specs := make([]core.PoolSpec, 0, len(b.RequestLimits)+1)
 	for i := range b.RequestLimits {
@@ -146,9 +143,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 // ProvideBreakerRegistry assembles the watchdog's breaker registry from the
 // database circuit breaker and a recovery prober for each per-backend breaker
 // produced during backend initialization. The probers charge their health
-// checks through the usage tracker. Centralizing membership here keeps the
-// watchdog itself free of type-assertions and keeps DI as the single wiring
-// point.
+// checks through the usage tracker.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
@@ -586,16 +581,10 @@ func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 	return usage.New(&usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}), nil
 }
 
-// admissionSemFor returns the shared admission semaphore the runtime holds.
-// In split mode the returned channel is sized to
-// MaxConcurrentWrites and is shared by HTTP writes and all background
-// workers (cleanup, replication, rebalance, pending reaper,
-// over-replication); reads run on a separate read-only pool created in
-// routes.go. In merged mode a single channel sized to
-// MaxConcurrentRequests is shared by everything. Returns nil when
-// neither is set (no admission cap). The split-mode grouping is
-// deliberate: workers do write-like work, so operators sizing
-// MaxConcurrentWrites must account for worker traffic too.
+// admissionSemFor returns the shared admission semaphore, or nil when uncapped.
+// In split mode it is sized to MaxConcurrentWrites and shared by HTTP writes
+// and the background workers, since they do write-like work; otherwise it is
+// sized to MaxConcurrentRequests and shared by everything.
 func admissionSemFor(s *config.ServerConfig) chan struct{} {
 	switch {
 	case s.MaxConcurrentReads > 0 && s.MaxConcurrentWrites > 0:

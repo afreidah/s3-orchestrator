@@ -20,12 +20,9 @@ const unit = 1024
 const prefixes = "KMGTPE"
 
 // Bytes renders a byte count in IEC units (KiB, MiB, GiB, ...) with one
-// decimal place. Counts below 1024 render as plain bytes, e.g. "512 B".
-//
-// A negative count keeps its sign ("-4.9 KiB") rather than clamping: a
-// negative here means a delta or a drifted counter, and rounding that to zero
-// hides the very thing the operator needs to see. Callers whose domain
-// forbids negatives should clamp before calling.
+// decimal place. Counts below 1024 render as plain bytes, e.g. "512 B". A
+// negative count keeps its sign ("-4.9 KiB"); callers that forbid negatives
+// should clamp first.
 func Bytes(n int64) string {
 	if n > -unit && n < unit {
 		return fmt.Sprintf("%d B", n)

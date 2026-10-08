@@ -42,13 +42,9 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 }
 
 // ListObjectsByBackendKeyAsc returns rows for a backend in ascending
-// storage_key order, starting strictly after the supplied cursor. The empty
-// string returns the first page. Used by ReconcileBackend to drive a
-// bounded-memory sorted-merge join against an S3 ListObjects walk; both
-// sides are in lex order so the merge is O(n) memory bounded by limit.
-//
-// It orders by storage_key because the backend listing on the other side of
-// the merge returns paths, and a per-write copy's path is not its object key.
+// storage_key order, starting strictly after the supplied cursor (empty for
+// the first page). Reconcile merges it against a backend listing, which
+// returns storage paths, so the order is by storage_key rather than object key.
 func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
 		BackendName: backendName,
@@ -109,13 +105,10 @@ func listedIdentity(etag *string) *core.ObjectIdentity {
 	return &core.ObjectIdentity{ETag: *etag}
 }
 
-// ListObjectsDelimited groups a delimiter listing in Postgres through the
-// sqlc-generated recursive-CTE query (see sqlc/queries/objects.sql). Every
-// object_key comparison and ORDER BY runs under COLLATE "C", backed by the
-// idx_object_locations_key_collate_c index, so the loose index scan seeks
-// group-to-group in byte order that matches SQLite and S3. The generated rows
-// arrive flattened (placeholder values on the branch is_prefix does not select);
-// this maps them back into CommonPrefix and leaf entries. The delimiter must be
+// ListObjectsDelimited groups a delimiter listing in Postgres with a
+// recursive-CTE loose index scan (sqlc/queries/objects.sql). Comparisons run
+// under COLLATE "C", backed by idx_object_locations_key_collate_c, so groups
+// come back in the byte order SQLite and S3 use. The delimiter must be
 // non-empty; callers route empty-delimiter lists to ListObjects.
 func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
 	if maxKeys <= 0 {

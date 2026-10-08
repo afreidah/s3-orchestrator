@@ -20,14 +20,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Write-side volume. The two counters are a pair on purpose: the ratio a fleet
-// achieves is stored/logical over any window, and the bytes it saved is
-// logical - stored, so neither has to be tracked separately or kept in step.
-//
-// Only objects actually stored encoded are counted. Folding in the ones that
-// were skipped would report a ratio no encoder produced.
-// CompressionLogicalBytesTotal counts the bytes clients wrote for objects that
-// were then stored encoded; the stored counter beside it is what they occupy.
+// Write-side volume, counting only objects stored encoded. The fleet ratio is
+// stored/logical over any window, and the bytes saved are logical - stored.
+// CompressionLogicalBytesTotal counts the bytes clients wrote for those objects.
 var (
 	CompressionLogicalBytesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
@@ -56,12 +51,10 @@ var (
 	)
 )
 
-// Read-side volume, which together give read amplification: fetched/served. For
-// a ranged read of a compressed object that figure is the frames the range
-// touched over the bytes the client asked for, so it is bounded by the chunk
-// size and rises only if something starts fetching more than it needs. A
-// regression to whole-object decode shows here and nowhere else except the
-// backend bill.
+// Read-side volume, which together give read amplification: fetched/served.
+// It is bounded by the chunk size, so a rise means reads are fetching more
+// frames than a range needs. CompressionFetchedBytesTotal counts stored bytes
+// fetched from backends.
 var (
 	CompressionFetchedBytesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{

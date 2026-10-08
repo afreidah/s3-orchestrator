@@ -259,12 +259,9 @@ type quotaOp struct {
 	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
 }
 
-// AdjustQuotaStripe records the signed delta and honours the failure hooks. It
-// is the only instrumented quota mutator, so it feeds both views the tests read
-// from: ops carries the call order the flush's deadlock regression asserts on,
-// adjustments carries the deltas the stored-form rewrite tests assert on. The
-// stripe is deliberately not recorded - which row a charge lands on is the
-// engine's business, and pinning it here would fail the moment the hash changes.
+// AdjustQuotaStripe records the signed delta into ops and adjustments and
+// honours the failure hooks. The stripe is not recorded so tests do not depend
+// on the hash.
 func (t *quotaTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int16, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

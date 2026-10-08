@@ -211,10 +211,7 @@ func (r *userResource) Delete(
 	}
 }
 
-// ImportState adopts an existing identity by its id.
-//
-// Only the id is written: Terraform calls Read immediately afterwards, which
-// fills in everything else from the orchestrator.
+// ImportState adopts an existing identity by its id; Read fills in the rest.
 func (r *userResource) ImportState(
 	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
 ) {

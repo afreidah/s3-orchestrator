@@ -16,17 +16,10 @@ import (
 	"strconv"
 )
 
-// runBulkRewrite parses the shared flag set and posts one pass.
-//
-// -max converts part of a fleet and stops, which is what makes a fleet-sized
-// conversion something an operator can spread across maintenance windows. It
-// needs nothing carried between runs: a converted copy leaves the listing that
-// selected it, and one a compression pass declines on ratio is recorded so it
-// leaves too, so the next run picks up where this one stopped rather than
-// re-examining it.
-//
-// -backend narrows the same pass to one backend's copies, which bounds the
-// blast radius of a rewrite and paces it against a single provider's read cost.
+// runBulkRewrite parses the shared flag set and posts one pass. -max stops
+// after that many objects; repeated runs resume where the last one stopped,
+// because converted and ratio-declined copies leave the selection. -backend
+// limits the pass to one backend's copies.
 func runBulkRewrite(args []string, c *client, name, path string) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(c.stderr)

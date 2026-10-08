@@ -11,10 +11,8 @@
 
 package adminctl
 
-// cmdCompressExisting implements `s3-orchestrator admin compress-existing
-// [-max=N]`. Encodes every object currently stored verbatim, or the first N of
-// them. Objects too incompressible to benefit are reported as skipped rather
-// than failed.
+// cmdCompressExisting implements `admin compress-existing [-max=N]`, encoding
+// every object stored verbatim, or the first N.
 func cmdCompressExisting(args []string, c *client) int {
 	return runBulkRewrite(args, c, "compress-existing", "/admin/api/compress-existing")
 }

@@ -43,8 +43,7 @@ import (
 // CSRF token.
 //
 // The session is re-resolved against the live registry on every request, so a
-// user who loses admin-read is signed out here the same as one whose key was
-// revoked: the dashboard itself is what that grant covers.
+// revoked key or a lost admin-read grant signs the user out.
 func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := h.sessionUser(r)
@@ -100,12 +99,10 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID, 
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	value := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
-	// Secure must remain dynamic: forcing true unconditionally makes
-	// browsers silently drop the cookie when the request arrived over
-	// plain HTTP (untrusted reverse proxy, local dev), which would
-	// break login. forceSecure lets operators opt in when the
-	// deployment guarantees TLS; otherwise IsTLSRequest infers it
-	// from a trusted X-Forwarded-Proto.
+	// Secure is not forced on: browsers drop a Secure cookie set over plain
+	// HTTP, which would break login. forceSecure opts in; otherwise
+	// IsTLSRequest infers TLS, trusting X-Forwarded-Proto only from trusted
+	// proxies.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
 
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
@@ -287,14 +284,9 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
 
-// resolveLogin verifies a submitted keypair and reports the user it proves.
-//
-// The keypair is checked against the same registry the S3 path authenticates
-// with, so one credential reaches the dashboard and the data, and the root
-// credential is a credential like any other rather than a dashboard-only login.
-//
-// Both halves are always compared, so a wrong access key takes the same work as
-// a wrong secret and the response cannot be used to learn which was which.
+// resolveLogin verifies a submitted keypair against the S3 credential registry
+// and reports the user it proves. Both halves are always compared, so timing
+// does not reveal whether the access key or the secret was wrong.
 func (h *Handler) resolveLogin(key, secret string) (*auth.User, bool) {
 	if h.registry == nil {
 		return nil, false

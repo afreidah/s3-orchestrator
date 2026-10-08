@@ -78,10 +78,8 @@ type xmlVersioningConfiguration struct {
 // handleListBuckets enumerates every bucket the authenticated user reaches.
 // Satisfies GET / (ListBuckets).
 //
-// CreationDate is the instance's start time for every entry. A virtual bucket
-// has no creation moment of its own that a client could act on, and S3 requires
-// the field, so one stable timestamp is answered rather than a fabricated one
-// per bucket.
+// CreationDate is the instance's start time for every entry, since S3 requires
+// the field and a virtual bucket has no creation time of its own.
 func (s *Server) handleListBuckets(w http.ResponseWriter, buckets []string) (int, error) {
 	entries := make([]xmlBucket, 0, len(buckets))
 	for _, name := range buckets {

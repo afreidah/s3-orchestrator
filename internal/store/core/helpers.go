@@ -98,15 +98,10 @@ func StoredFormFromLocation(loc *ObjectLocation) *StoredForm {
 	}
 }
 
-// ObjectFromStoredForm builds an ObjectLocation suitable for
-// InsertObjectLocation from a key/backend/storage-key/size tuple plus the
-// optional description of how the bytes are stored and the optional
-// client-facing identity. A nil identity leaves the row's columns NULL, which
-// is what a write that never learned the object's ETag records.
-//
-// storageKey is where the bytes this row describes are. It is a parameter
-// rather than derived from key because it names the write that placed the
-// bytes, and the row is the only lasting record of it.
+// ObjectFromStoredForm builds an ObjectLocation for InsertObjectLocation. form
+// and id are optional; a nil id leaves the identity columns NULL, as for a
+// write that never learned the object's ETag. storageKey names the write that
+// placed the bytes and cannot be derived from key.
 func ObjectFromStoredForm(key, backend, storageKey string, size int64, form *StoredForm, id *ObjectIdentity) *ObjectLocation {
 	loc := &ObjectLocation{
 		ObjectKey:   key,
@@ -136,13 +131,10 @@ func ObjectFromStoredForm(key, backend, storageKey string, size int64, form *Sto
 	return loc
 }
 
-// StoragePath resolves the path a copy occupies on its backend: the one it was
-// given, or the object's key when it was given none.
-//
-// A caller with no path is describing bytes at the object's key, which is
-// where a backfilled row and an imported object keep them. Resolving it here
-// also keeps an empty string out of the column, which the (backend_name,
-// storage_key) unique index would reject on the second such copy.
+// StoragePath returns storageKey, or objectKey when storageKey is empty, which
+// is where backfilled and imported objects keep their bytes. It also keeps an
+// empty string out of the column, which the (backend_name, storage_key) unique
+// index would reject on the second such copy.
 func StoragePath(objectKey, storageKey string) string {
 	if storageKey == "" {
 		return objectKey
@@ -154,12 +146,9 @@ func StoragePath(objectKey, storageKey string) string {
 // COPY-DISPLACEMENT HELPER
 // -------------------------------------------------------------------------
 
-// displacedFromExisting turns an overwritten copy set into the cleanup list
-// their removal owes.
-//
-// Every copy is displaced, including the ones on backends the new write lands
-// on. The new write stores its bytes at a path of its own, so the old copy
-// stays at its old path on that backend, and skipping it would leak the bytes.
+// displacedFromExisting returns the cleanup list for an overwritten copy set.
+// Every copy is displaced, including those on backends the new write lands on,
+// because the new write uses its own path and the old bytes stay behind.
 func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
 	if len(existing) == 0 {
 		return nil
@@ -175,14 +164,10 @@ func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
 	return displaced
 }
 
-// copyOnBackend returns the copy held on backendName and true, or (zero, false)
-// when the locked re-read holds no copy there.
-//
-// Reading the size from the locked set rather than the caller's stale value
-// keeps object_locations.size_bytes and backend_quotas.bytes_used in
-// agreement across a concurrent overwrite. The storage key comes from the same
-// read because the caller's copy of it may name bytes a newer write has
-// already replaced, and deleting those would remove the wrong object.
+// copyOnBackend returns the copy held on backendName in the locked re-read, or
+// false when there is none. Callers must take size and storage key from this
+// copy, not their own stale values: a concurrent overwrite would otherwise
+// skew bytes_used or delete a newer write's bytes.
 func copyOnBackend(existing []ExistingCopy, backendName string) (ExistingCopy, bool) {
 	for _, ec := range existing {
 		if ec.BackendName == backendName {
@@ -193,14 +178,9 @@ func copyOnBackend(existing []ExistingCopy, backendName string) (ExistingCopy, b
 }
 
 // isLastDecryptableCopy reports whether the copy on backendName is the only
-// one still carrying the key needed to decrypt the object, while at least one
-// sibling claims to be plaintext or has lost its key.
-//
-// Every copy of a key holds the same ciphertext under the same DEK, so a copy
-// set that disagrees about encryption is already damaged. Dropping the row
-// that still has the key makes the object permanently unreadable; dropping one
-// of the others loses nothing. This reports the case worth refusing so the
-// caller can skip the key and surface it rather than completing the loss.
+// one still carrying the object's DEK while some sibling is plaintext or has
+// lost its key. Such a set is already damaged, and dropping this row would
+// make the object permanently unreadable, so callers refuse it.
 func isLastDecryptableCopy(existing []ExistingCopy, backendName string) bool {
 	var decryptable, target int
 	for i := range existing {
@@ -233,15 +213,9 @@ func ClientLocations(locs []ObjectLocation, err error) ([]ObjectLocation, error)
 }
 
 // ValidateEncryptionMetadata reports whether a location row is self-consistent
-// about encryption, so the read path can reject a copy it cannot serve
-// correctly instead of returning the wrong bytes or the wrong size.
-//
-// A nil location is fine: callers that have no metadata row are serving
-// unmanaged bytes and have nothing to contradict.
-//
-// The read path treats a failure here as a per-copy error, which fails over to
-// a sibling copy; only an object whose every copy is inconsistent surfaces the
-// error to the client.
+// about encryption, so the read path can reject a copy instead of serving the
+// wrong bytes or size. A nil location passes. The read path treats a failure
+// as a per-copy error and fails over to a sibling copy.
 func ValidateEncryptionMetadata(loc *ObjectLocation) error {
 	if loc == nil {
 		return nil
@@ -261,11 +235,8 @@ func ValidateEncryptionMetadata(loc *ObjectLocation) error {
 	if loc.PlaintextSize < 0 {
 		return fmt.Errorf("%w: row is encrypted but carries a negative plaintext size", ErrEncryptionFlagMismatch)
 	}
-	// Without a plaintext size there is no way to size the response or bound
-	// range math, and the ciphertext size would be reported to the client.
-	// Zero is a real size, though: an empty object encrypts to a bare header,
-	// so only a row claiming no plaintext over a ciphertext large enough to
-	// hold chunks has actually lost its size.
+	// An empty object encrypts to a bare header, so a zero plaintext size is
+	// only lost when the ciphertext is large enough to hold chunks.
 	if loc.PlaintextSize == 0 && loc.SizeBytes > int64(encryption.HeaderSize) {
 		return fmt.Errorf("%w: row is encrypted but carries no plaintext size", ErrEncryptionFlagMismatch)
 	}

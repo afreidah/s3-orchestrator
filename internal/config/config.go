@@ -182,13 +182,8 @@ func (c *Config) SetDefaultsAndValidate() error {
 	return errors.Join(errs...)
 }
 
-// CopiesPerWrite reports how many copies a single-object PUT places itself,
-// which is 1 unless an operator turned the fan-out on. A replication factor of
-// 1 answers 1 whatever the count says: there is no second copy to place, and
-// the over-replication cleaner would remove one that appeared.
-//
-// The write path takes this rather than the config section, so what "off" means
-// is settled in one place instead of at every consumer.
+// CopiesPerWrite reports how many copies a single-object PUT places itself:
+// 1 unless fan-out is on, and always 1 at replication factor 1.
 func (c *Config) CopiesPerWrite() int {
 	pc := c.WritePath.ParallelCopies
 	if !pc.Enabled || c.Replication.Factor <= 1 {
@@ -200,10 +195,8 @@ func (c *Config) CopiesPerWrite() int {
 // validateParallelCopies settles how many copies a write places itself. The
 // count defaults to the replication factor and may never exceed it, since the
 // over-replication cleaner deletes anything past the factor about as fast as
-// writes could create it.
-//
-// Runs after the replication section, which is where the factor's own default
-// is applied.
+// writes could create it. It must run after the replication section applies
+// the factor's default.
 func (c *Config) validateParallelCopies() []error {
 	pc := &c.WritePath.ParallelCopies
 	pc.Count = cmp.Or(pc.Count, c.Replication.Factor)
@@ -224,13 +217,9 @@ func (c *Config) validateParallelCopies() []error {
 	return errs
 }
 
-// writeAdmissionCapacity is how many writes this instance admits at once, which
-// is what the in-flight ceiling defaults to: a tail is the residue of a write,
-// so an instance carrying more of them than it would admit writes is one whose
-// backends have stopped keeping up.
-//
-// The write-specific limit if there is one, the shared request limit otherwise,
-// and a floor for a deployment that caps neither.
+// writeAdmissionCapacity is how many writes this instance admits at once: the
+// write limit, else the shared request limit, else a floor. The in-flight tail
+// ceiling defaults to it.
 func (c *Config) writeAdmissionCapacity() int {
 	return cmp.Or(c.Server.MaxConcurrentWrites, c.Server.MaxConcurrentRequests, DefaultDetachedUploadCeiling)
 }
@@ -251,11 +240,8 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Encryption.setDefaultsAndValidate()...)
 	errs = append(errs, c.Compression.setDefaultsAndValidate()...)
 	errs = append(errs, c.UI.setDefaultsAndValidate()...)
-	// The dashboard's token is the same authority as a root credential, so it
-	// The root credential is what administers a deployment, and it is now the
-	// only thing that can: without it the admin API authenticates nobody and the
-	// dashboard has no login, so a deployment enabling either would start with
-	// no way to provision its first user.
+	// The dashboard has no login without a root credential, so enabling it
+	// requires one.
 	errs = append(errs, c.Auth.setDefaultsAndValidate(c.UI.Enabled)...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)

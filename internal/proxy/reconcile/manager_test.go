@@ -96,11 +96,8 @@ func importOf(key, backendName string, size int64, unmanaged bool) gomock.Matche
 }
 
 // ledgerRows returns a ListObjectsByBackendKeyAsc stub yielding one page then
-// exhaustion, which is how the DB cursor signals the end of the walk.
-//
-// A row left without a storage key takes its object key, the value a row
-// stored at its key holds and the value an imported object gets. The cursor
-// walks storage keys, so the field cannot be left empty.
+// exhaustion. A row without a storage key gets its object key, since the
+// cursor walks storage keys and cannot see an empty one.
 func ledgerRows(rows ...core.ObjectLocation) func(context.Context, string, string, int) ([]core.ObjectLocation, error) {
 	page := make([]core.ObjectLocation, len(rows))
 	for i := range rows {

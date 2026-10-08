@@ -29,12 +29,8 @@ import (
 // -------------------------------------------------------------------------
 
 // DetachedDrainTimeout bounds how long shutdown waits for the tails still
-// running. Sized like the HTTP drain it follows, since the two are halves of
-// the same wait: requests first, then the work those requests left behind.
-//
-// Whatever has not finished by then is left as it would be if the process had
-// been killed - the intents stay, and the reaper resolves them on a later tick.
-// The drain shortens the common case; it is not what makes the write path safe.
+// running, after the HTTP drain. Anything unfinished is left as if the process
+// had been killed: the intents stay and the reaper resolves them.
 const DetachedDrainTimeout = 30 * time.Second
 
 // -------------------------------------------------------------------------
@@ -43,12 +39,8 @@ const DetachedDrainTimeout = 30 * time.Second
 
 // DetachedUploads is the registry of writes whose copies outlived their
 // response. The zero value is unusable; construct one with NewDetachedUploads.
-//
-// The limit is a ceiling for the case the gauge exists to catch - a backend
-// that is slow rather than broken, quietly accumulating tails - and not a
-// queue. A write that cannot get a slot places fewer copies rather than
-// waiting, because waiting would put the backlog on the client, which is what
-// answering on the first copy exists to avoid.
+// The limit is a ceiling, not a queue: a write that cannot get a slot places
+// fewer copies rather than waiting, so a slow backend never stalls clients.
 type DetachedUploads struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -75,10 +67,8 @@ func NewDetachedUploads(limit int) *DetachedUploads {
 
 // Begin takes a slot for one write's tail, reporting whether it got one. The
 // caller releases it with the returned func once every copy has settled, which
-// is what lets a drain know the tail is done.
-//
-// A refused slot is not an error: the write places one copy and the replicator
-// makes the rest, which is what every write did before the fan-out existed.
+// is what lets a drain know the tail is done. A refused slot is not an error:
+// the write places one copy and the replicator makes the rest.
 func (d *DetachedUploads) Begin() (release func(), admitted bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

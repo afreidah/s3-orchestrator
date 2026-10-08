@@ -82,16 +82,10 @@ func BenchmarkDecompress(b *testing.B) {
 	}
 }
 
-// BenchmarkCompressIncompressible and BenchmarkCompressLogLike are the evidence
-// behind min_ratio deciding on a finished encoding rather than on a sample of
-// one. Both report the ratio they achieved alongside throughput.
-//
-// The comparison to draw is between them: data zstd cannot shrink is the
-// cheapest input it has, because it detects unshrinkable blocks and stores them
-// raw instead of searching for matches. Encoding an object that turns out to be
-// incompressible therefore costs less than encoding one that compresses, which
-// is the cost the write path pays willingly - so paying it to reach an exact
-// answer is cheaper than sampling to reach an approximate one.
+// BenchmarkCompressIncompressible measures data zstd cannot shrink, reporting
+// ratio alongside throughput. Compared with BenchmarkCompressLogLike it shows
+// that encoding an incompressible object costs less than a compressible one,
+// which is why min_ratio decides on the finished encoding instead of a sample.
 func BenchmarkCompressIncompressible(b *testing.B) {
 	benchRatio(b, incompressible(b, DefaultChunkSize*4))
 }
@@ -129,11 +123,8 @@ func benchRatio(b *testing.B, src []byte) {
 
 // logLike returns n bytes of structured text with varying field values, which
 // compresses like the JSON logs and source files real deployments store rather
-// than like a single repeated line.
-//
-// The values come from an inline xorshift rather than math/rand so the fixture
-// is deterministic across runs without pulling in a generator the security
-// linter flags.
+// than like a single repeated line. An inline xorshift keeps it deterministic
+// without a generator the security linter flags.
 func logLike(n int) []byte {
 	levels := []string{"INFO", "WARN", "ERROR", "DEBUG"}
 	events := []string{"put.completed", "get.served", "replica.created", "scrub.verified"}

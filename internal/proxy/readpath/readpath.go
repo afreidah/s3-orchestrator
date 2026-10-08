@@ -56,29 +56,23 @@ const spanPrefix = "Manager "
 // core.ErrUsageLimitExceeded rather than as the last underlying error.
 var ErrUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
-// ProbeResult is the outcome of one successful backend probe. Value is the
-// operation's result (e.g. *backend.GetObjectResult) and flows back to the
-// caller when this probe wins. Cleanup releases the result's transient
-// resources when the probe loses the race (e.g. closing a discarded GET body);
-// it is never invoked on the winner, whose Value owns its own lifecycle.
-// Cleanup may be NoopCleanup when there is nothing to release.
+// ProbeResult is the outcome of one successful backend probe. Value flows back
+// to the caller when the probe wins. Cleanup releases a losing result's
+// resources, such as a discarded GET body, and is never invoked on the winner,
+// whose Value owns its own lifecycle.
 type ProbeResult[T any] struct {
 	Value   T
 	Size    int64
 	Cleanup func()
 }
 
-// Probe is the per-backend callback the caller provides. loc carries the
-// matching ObjectLocation row so callbacks that need encryption metadata can
-// read it directly without a side-channel lookup; loc is nil in degraded-mode
-// broadcasts where the DB is unreachable. beName is always populated
-// (loc.BackendName during failover, or the degraded-mode caller's chosen name)
-// so callbacks have a single source for span / usage attribution.
+// Probe is the per-backend callback the caller provides. loc is the matching
+// location row, or nil in degraded-mode broadcasts; beName is always set.
 //
-// The callback owns its own timeout context: it must release it on the error
-// path, and for a winning result it transfers ownership to Value (a GET
-// attaches the cancel to the body's Close; a HEAD has no body and releases the
-// timeout before returning). A losing result is released via ProbeResult.Cleanup.
+// The callback owns its timeout context: it releases it on error, and on
+// success hands it to Value (a GET ties the cancel to the body's Close; a HEAD
+// releases it before returning). A losing result is released via
+// ProbeResult.Cleanup.
 type Probe[T any] func(ctx context.Context, beName string, loc *core.ObjectLocation, b backend.ObjectBackend) (ProbeResult[T], error)
 
 // NoopCleanup is the ProbeResult.Cleanup a Probe returns when a losing result
@@ -143,14 +137,8 @@ func New(deps *FailoverDeps) *Failover {
 // READ FAILOVER
 // -------------------------------------------------------------------------
 
-// Read runs the full read-with-failover protocol: starts the span,
-// resolves all locations for the key, and tries each backend in turn. On
-// core.ErrDBUnavailable it enters degraded mode and delegates to the
-// broadcaster (unless degraded reads are disabled). Returns the winning
-// backend name and any error.
-// readOp bundles the per-read context shared by every failover and broadcast
-// helper: the operation label, key, start time, and span. Grouping them keeps
-// the helper signatures small and the call sites readable.
+// readOp bundles the per-read context shared by the failover and broadcast
+// helpers.
 type readOp struct {
 	operation s3op.Operation
 	key       string
@@ -158,6 +146,11 @@ type readOp struct {
 	span      trace.Span
 }
 
+// Read runs the full read-with-failover protocol: starts the span,
+// resolves all locations for the key, and tries each backend in turn. On
+// core.ErrDBUnavailable it enters degraded mode and delegates to the
+// broadcaster (unless degraded reads are disabled). Returns the winning
+// backend name and any error.
 func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, key string, probe Probe[T]) (T, string, error) {
 	var zero T
 	start := time.Now()

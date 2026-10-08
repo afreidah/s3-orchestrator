@@ -24,27 +24,18 @@ type recordReplicaResult struct {
 	inserted bool
 }
 
-// RemovedCopy is the same shape for the removal direction: the bytes the
-// transaction dropped, where they are, and whether it dropped anything at all.
-// Zero bytes and Removed=false are different from zero bytes and Removed=true,
-// which is why the flag is carried rather than inferred from the size.
-//
-// StorageKey comes from the locked re-read rather than the caller's scan, like
-// SizeBytes. The caller deletes that path from the backend, and a path from a
-// stale scan can name bytes a newer write has already replaced.
+// RemovedCopy is the copy a removal dropped, taken from the locked re-read so
+// the caller deletes the right path. Removed is carried separately because a
+// zero-byte copy can still have been removed.
 type RemovedCopy struct {
 	StorageKey string
 	SizeBytes  int64
 	Removed    bool
 }
 
-// ReplicaInsert is one replica the replicator is recording: the object, the
-// backend it read from, the backend it wrote to, and the path it wrote to
-// there.
-//
-// The path comes from the caller, which performed the upload. A replica is a
-// fresh set of bytes on a new backend, so it gets its own path rather than the
-// source's, and a cleanup of either copy can only reach that copy's bytes.
+// ReplicaInsert is one replica the replicator is recording. StorageKey is the
+// path the caller uploaded to, not the source's, so cleanup of either copy
+// reaches only that copy's bytes.
 type ReplicaInsert struct {
 	ObjectKey     string
 	TargetBackend string
@@ -52,19 +43,10 @@ type ReplicaInsert struct {
 	StorageKey    string
 }
 
-// RecordReplica inserts a replica copy of an object, but only if the
-// source copy still exists. This prevents stale replicas when an
-// object is overwritten or deleted during the (potentially slow)
-// replication copy. Returns the size that was actually written into
-// object_locations.size_bytes (read from the source row inside
-// InsertReplicaConditional) and inserted=true on success, or
-// (0, false, nil) when the source copy is gone or the target already
-// holds a copy.
-//
-// The size returned is the one the row was inserted with, read inside the
-// transaction, so the caller credits the backend by exactly what landed - even
-// if the copy size it observed before this call differs (concurrent overwrite
-// mid-replication).
+// RecordReplica inserts a replica row only if the source copy still exists, so
+// an overwrite or delete mid-copy leaves no stale replica. It returns the size
+// read from the source row inside the transaction, which the caller credits,
+// or (0, false, nil) when the source is gone or the target already has a copy.
 func RecordReplica(ctx context.Context, runner Runner, r *ReplicaInsert) (int64, bool, error) {
 	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (recordReplicaResult, error) {
 		size, inserted, err := tx.InsertReplicaConditional(ctx, r)
@@ -83,19 +65,11 @@ func RecordReplica(ctx context.Context, runner Runner, r *ReplicaInsert) (int64,
 // REMOVE EXCESS COPY
 // -------------------------------------------------------------------------
 
-// RemoveExcessCopy deletes one copy of an object from the given backend
-// inside a transaction. It acquires the key-scoped FOR-UPDATE lock,
-// re-reads the copy set, and only proceeds when the live count still
-// exceeds factor AND the target backend still holds a copy. Removed is
-// true when a copy was removed, false when a concurrent deleter or
-// earlier cleaner tick already absorbed the excess (benign no-op).
-//
-// Pulling the size and the storage key from the locked re-read instead of
-// trusting the caller's stale values keeps object_locations.size_bytes and the
-// byte counter in agreement even when the object was overwritten between the
-// cleaner's scan and the per-copy tx, and keeps the caller's backend delete
-// aimed at the bytes this transaction actually dropped. The size is returned
-// rather than debited here, because the counter it feeds lives in memory.
+// RemoveExcessCopy deletes the copy on backendName only if, under the key lock,
+// the copy set still exceeds factor and that backend still holds a copy.
+// Removed is false when a concurrent deleter already absorbed the excess. Size
+// and storage key come from the locked re-read; the caller debits the
+// in-memory counter.
 func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName string, factor int) (RemovedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (RemovedCopy, error) {
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
@@ -108,18 +82,8 @@ func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName strin
 		if len(existing) <= factor {
 			return RemovedCopy{}, nil
 		}
-		// Never drop the copy that carries the key when a sibling does not.
-		// Copies of a key share one ciphertext and one DEK, so a set that
-		// disagrees means some row lost its metadata; removing the row that
-		// still has the key destroys the only way to read the bytes, while
-		// removing the one without it is both safe and self-correcting.
-		//
-		// They share it from either direction: a replica is made by copying
-		// bytes verbatim and inheriting the source row's stored form, and a
-		// write placing its own copies encrypts once and hands every upload a
-		// reader over that one ciphertext. Neither path can produce a set whose
-		// members legitimately differ, which is what makes disagreement a lost
-		// row rather than a state to preserve.
+		// Never drop the copy that carries the DEK when a sibling does not;
+		// copies share one ciphertext, so the sibling is the damaged row.
 		if isLastDecryptableCopy(existing, backendName) {
 			return RemovedCopy{}, ErrCopyHoldsOnlyDEK
 		}

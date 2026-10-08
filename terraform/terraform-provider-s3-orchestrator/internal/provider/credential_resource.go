@@ -73,12 +73,9 @@ func (r *credentialResource) Metadata(
 	resp.TypeName = req.ProviderTypeName + "_credential"
 }
 
-// Schema declares what the resource carries.
-//
-// Both halves of the keypair are optional and computed: optional so a caller
-// holding one already can record it, computed so the orchestrator can mint one
-// for a caller that does not. That pairing is also what stops Terraform
-// planning to remove a minted keypair the configuration never mentioned.
+// Schema declares what the resource carries. Both halves of the keypair are
+// optional and computed, so a caller can supply one or let the orchestrator
+// mint it without Terraform planning to remove the minted value.
 func (r *credentialResource) Schema(
 	_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse,
 ) {
@@ -198,12 +195,9 @@ func (r *credentialResource) Create(
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read confirms the keypair still exists and still proves the user it did.
-//
-// The secret is not part of the answer: the orchestrator never reads one back
-// out, so state is the only record of it and this cannot detect a secret that
-// was changed underneath Terraform. What it does detect is revocation, and a
-// credential moved to another user.
+// Read confirms the keypair still exists and still proves the user it did. The
+// orchestrator never returns a secret, so a secret changed outside Terraform
+// goes undetected.
 func (r *credentialResource) Read(
 	ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse,
 ) {
@@ -265,12 +259,8 @@ func (r *credentialResource) Delete(
 	}
 }
 
-// ImportState adopts an existing keypair by its access key.
-//
-// The secret cannot come with it: nothing reads one back out of the
-// orchestrator. State therefore holds a null secret until the configuration
-// supplies the one it already has, which is another reason to supply rather
-// than mint.
+// ImportState adopts an existing keypair by its access key. State holds a null
+// secret until the configuration supplies it.
 func (r *credentialResource) ImportState(
 	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
 ) {

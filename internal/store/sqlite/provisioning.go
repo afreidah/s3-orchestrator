@@ -178,11 +178,8 @@ func (s *Store) RenameUser(ctx context.Context, id, name string) error {
 }
 
 // SetGrant records exactly what a user reaches on one resource, creating the
-// grant when it is absent. The upsert is what lets a caller declare access
-// without first asking whether it is already there.
-//
-// created_at is left alone on the update, so a re-declared grant keeps the age
-// it has rather than looking newly issued.
+// grant when it is absent. created_at is left alone on the update, so a
+// re-declared grant keeps its original age.
 func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO grants (user_id, resource_kind, resource_name, permissions, created_at)

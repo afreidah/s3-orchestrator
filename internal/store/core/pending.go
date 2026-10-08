@@ -92,20 +92,10 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced, deltas: deltas}, nil
 }
 
-// resolveCompanion settles an intent for one of the further copies a write was
-// placing, left behind by a process that died before it could clean up.
-//
-// It never promotes. The upload was still running when its process died, so
-// nothing here knows whether the bytes at that path are whole; there is a copy
-// we can vouch for - the client was told the write succeeded, which only
-// happens once a copy commits - so rebuilding from that copy is cheaper than
-// being wrong. The replication worker sees the shortfall and fills it on its
-// next pass.
-//
-// The one case that leaves the backend alone is a recorded copy at this
-// intent's own path, which means a commit got there first and the bytes belong
-// to it. A copy recorded on the same backend at a different path belongs to a
-// different write, and deleting this intent's bytes does not touch it.
+// resolveCompanion settles a companion-copy intent left by a process that died
+// mid-upload. It never promotes, because the bytes may be partial; the
+// replication worker rebuilds the copy from a committed one. The bytes are
+// kept only when a copy is already recorded at this intent's own path.
 func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
@@ -140,12 +130,8 @@ type companionOutcome struct {
 }
 
 // commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
-// key, claim the intent, and either add the copy or discard it.
-//
-// The intent is the whole test. A write clears every intent for its key except
-// the ones it is itself still uploading, so finding this one still there says
-// that nothing newer has taken the key and the bytes at that path are this
-// write's own.
+// key, claim the intent, and either add the copy or discard it. Any newer write
+// clears this intent, so a successful claim proves nothing newer took the key.
 func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
 	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
 		return companionOutcome{}, err
@@ -171,17 +157,9 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	return companionOutcome{result: CompanionCopyCommitted, deltas: deltas}, nil
 }
 
-// discardUntrustedCopy resolves an upload whose write has been overtaken: the
-// intent is gone, so a newer write took the key while these bytes were still
-// uploading, and they describe a stale version of the object.
-//
-// It removes those bytes and nothing else. They sit at this write's own path,
-// which no other write shares, so whatever the key holds on this backend now
-// is untouched by deleting them, and the row describing it stays.
-//
-// Nothing is charged against the counter here. These bytes were never recorded,
-// so the backend's total never included them, and the intent that was holding
-// them against its headroom is already gone.
+// discardUntrustedCopy resolves an upload overtaken by a newer write by
+// deleting its bytes, which sit at a path no other write shares. Nothing is
+// debited because the bytes were never recorded.
 func discardUntrustedCopy(p *PendingObject) companionOutcome {
 	return companionOutcome{
 		result: CompanionCopyUntrusted,
@@ -194,29 +172,14 @@ func discardUntrustedCopy(p *PendingObject) companionOutcome {
 	}
 }
 
-// clearSupersededIntents removes every intent for the key and reports the bytes
-// each one was placing, which now need deleting off their backend.
+// clearSupersededIntents removes every intent for the key except keep, and
+// returns the bytes of each cleared intent not in committing for deletion.
 //
-// Every intent for a key is resolved by a write to it: the ones this write is
-// committing are claims it has just honoured, and the rest describe an object it
-// has replaced. Clearing them here is what leaves the reaper with only the
-// intents of a process that died.
-//
-// committing names the intents this write is honouring here. They are cleared
-// like the rest - the copies they describe are recorded now, so the intents have
-// served their purpose - but their bytes are the object and must not be reported
-// as stale.
-//
-// Every other cleared intent's bytes are stale, whichever backend they are on,
-// including a backend this write also landed on: that intent's bytes sit at a
-// different path from this write's copy, and leaving them would leak them. The
-// upload may still be running, in which case the deletion finds nothing and
-// the copy's own commit discards it again.
-//
-// keep names the intents of this same write still uploading. They are the one
-// kind a commit leaves behind, because the write they belong to is the write
-// doing the clearing; the row is what their commit later reads as proof that
-// nothing newer has touched the key.
+// committing intents are cleared but their bytes are the object being
+// recorded. Every other cleared intent's bytes are stale, even on a backend
+// this write also landed on, since they sit at a different path. keep holds
+// this write's own uploads still in flight; their surviving rows are what
+// their later commit reads as proof that nothing newer touched the key.
 func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep, committing []string) ([]DeletedCopy, error) {
 	cleared, err := tx.ClearPendingForKey(ctx, key, keep)
 	if err != nil {

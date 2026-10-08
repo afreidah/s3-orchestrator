@@ -228,7 +228,7 @@ func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) erro
 	return nil
 }
 
-// collectMultipartUploads is the shared row→core.MultipartUpload
+// collectMultipartUploads is the shared row->core.MultipartUpload
 // pipeline used by every slice-returning multipart query. Each
 // caller passes a per-row converter; the loop wiring + error
 // handling lives here so the per-query bodies stay one-liners.

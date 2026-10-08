@@ -72,9 +72,7 @@ func (h *ErrAttrHandler) WithGroup(name string) slog.Handler {
 // TransformAttr returns a if its value is not an error, otherwise returns
 // a new slog.Attr with the same key and value `a.Value.Any().(error).Error()`.
 // Group values are recursed into so nested groups carrying errors also
-// render as strings. Exported so non-handler call sites (e.g. the
-// in-memory log buffer) can apply the same rule outside the slog.Handler
-// chain.
+// render as strings.
 func TransformAttr(a slog.Attr) slog.Attr {
 	switch a.Value.Kind() {
 	case slog.KindAny:

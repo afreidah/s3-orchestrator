@@ -281,9 +281,8 @@ func backendDrainPath(backend string) string {
 // RunOp starts an admin instance action and returns its event stream. A
 // long-running action opts into the server's NDJSON progress stream; a short
 // one sends its request and has the summary decoded into a single result
-// event, so the two render identically. req carries the path, query and body
-// the action resolved to, which is how the actions that take an operator-typed
-// value reach the endpoint.
+// event, so the two render identically. req carries the resolved path, query
+// and body.
 func (c *apiClient) RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error) {
 	if act.result == nil {
 		return c.c.Stream(ctx, act.method, req.path, req.query, bodyReader(req.body))

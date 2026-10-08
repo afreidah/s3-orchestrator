@@ -38,13 +38,10 @@ type CORSRule struct {
 	MaxAge         int      `json:"max_age,omitempty"`
 }
 
-// User is one identity as the API reports it, with what it reaches.
-//
-// Buckets stays a plain name list so a caller that only asks which buckets an
-// identity reaches does not have to walk an object. Grants is the whole
-// picture: the bucket reach with what each carries, plus the control-plane
-// resources the identity holds. A bucket wildcard appears as the buckets it
-// expands to, which is what the request path will actually answer.
+// User is one identity as the API reports it, with what it reaches. Buckets is
+// the plain list of bucket names it reaches. Grants carries the permissions on
+// each bucket and control-plane resource; a bucket wildcard is reported as "*",
+// followed only by the buckets whose grant differs from it.
 type User struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
@@ -97,13 +94,9 @@ type CreateBucketRequest struct {
 	CORS                []CORSRule `json:"cors,omitempty"`
 }
 
-// UpdateBucketRequest declares what a bucket carries. The name is in the path:
-// it identifies the bucket and the objects stored under it, so it is not
-// something this can change.
-//
-// The bucket is replaced rather than merged into. Omitting CORS removes the
-// rules the bucket had, and MaxMultipartUploads of 0 means unlimited, as it
-// does on create.
+// UpdateBucketRequest declares what a bucket carries; the name is in the path
+// and cannot change. The bucket is replaced, not merged: omitting CORS removes
+// its rules, and MaxMultipartUploads of 0 means unlimited.
 type UpdateBucketRequest struct {
 	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
 	CORS                []CORSRule `json:"cors,omitempty"`
@@ -115,14 +108,10 @@ type CreateUserRequest struct {
 	Name string `json:"name"`
 }
 
-// CreateCredentialRequest registers a keypair against an existing user. The
-// user is required: a keypair with no owner is a credential nobody can account
-// for. Label is free text an operator uses to say what holds it.
-//
-// AccessKeyID and SecretAccessKey are for a caller that already holds the
-// keypair, which is the shape anything driving this declaratively is in: the
-// secret is generated wherever that caller keeps its secrets and recorded here.
-// Both are required together, and omitting both mints one instead.
+// CreateCredentialRequest registers a keypair against an existing user, which
+// is required. Label is free text saying what holds it. AccessKeyID and
+// SecretAccessKey register a keypair the caller already holds; they must be
+// set together, and omitting both mints one instead.
 type CreateCredentialRequest struct {
 	UserID          string `json:"user_id"`
 	Label           string `json:"label,omitempty"`
@@ -130,13 +119,9 @@ type CreateCredentialRequest struct {
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
 }
 
-// CreateCredentialResponse carries the keypair the request produced.
-//
-// A minted secret crosses the wire here and nowhere else: it is not stored
-// anywhere it can be read back, so a caller that loses it issues a replacement
-// rather than recovering this one. A supplied secret is echoed rather than
-// withheld, so one response shape covers both and a caller can confirm what was
-// recorded against what it sent.
+// CreateCredentialResponse carries the keypair the request produced. This is
+// the only place a minted secret is returned; it cannot be read back later. A
+// supplied secret is echoed.
 type CreateCredentialResponse struct {
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
@@ -159,12 +144,9 @@ type SetGrantRequest struct {
 }
 
 // CreateGrantRequest lets one user reach one resource, with the permissions
-// that reach carries.
-//
-// Kind defaults to "bucket", so a caller onboarding a client onto a bucket
-// names only the bucket. Name may be "*" for every resource of the kind, and is
-// omitted on an orchestrator grant. An empty Permissions means every permission
-// valid on the kind.
+// that reach carries. Kind defaults to "bucket". Name may be "*" for every
+// resource of the kind, and is omitted on an orchestrator grant. An empty
+// Permissions means every permission valid on the kind.
 type CreateGrantRequest struct {
 	UserID      string   `json:"user_id"`
 	Kind        string   `json:"kind,omitempty"`

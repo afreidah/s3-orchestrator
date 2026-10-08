@@ -334,13 +334,8 @@ func TestRefuseDrained_RefusesABackendWithADrainRecord(t *testing.T) {
 	}
 }
 
-// TestRun_BackendInitFails_ReturnsExitCodeOne covers the runtime where the
-// backend can be configured but the configured S3 endpoint is unreachable.
-// We invoke Run with a dry-run so we don't actually need a live MinIO; the
-// failure happens at ListObjects time. The check here is only that the
-// process exit code is non-zero, not the precise error.
-// TestRun_FailsWithoutLiveBackend verifies run_fails without live backend.
-// TestRun_FailsWithoutLiveBackend verifies run_fails without live backend.
+// TestRun_FailsWithoutLiveBackend verifies that a dry run against an
+// unreachable S3 endpoint fails at ListObjects time with a non-zero exit code.
 func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 	path := writeYAML(t, validYAML)
 	args := []string{

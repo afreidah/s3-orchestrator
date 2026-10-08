@@ -30,18 +30,13 @@ import (
 // -------------------------------------------------------------------------
 
 // storedRangeFetcher fetches ranges of the compressed stream backing one copy
-// of one object on one backend.
+// of one object on one backend. The compressed stream is the encryptor's
+// plaintext domain, so encryption.CiphertextRange translates a compressed-domain
+// range into a backend range directly.
 //
-// That compressed stream is exactly the encryptor's plaintext domain -
-// compress-then-encrypt is what makes PlaintextSize the post-compression size -
-// so encryption.CiphertextRange translates a compressed-domain range into a
-// backend range with no new offset math.
-//
-// attrs records the object metadata off the first response. A compressed read
-// issues no whole-object GET, so this is the only place the content type, ETag
-// and user metadata arrive; capturing them from a fetch the read already makes
-// avoids paying for a HEAD to learn them. Guarded because the seekable reader
-// may fetch frames concurrently.
+// attrs holds the object metadata from the first response, since a compressed
+// read issues no whole-object GET. mu guards it because the seekable reader may
+// fetch frames concurrently.
 type storedRangeFetcher struct {
 	rt         RangeFetchRuntime
 	be         s3be.ObjectBackend

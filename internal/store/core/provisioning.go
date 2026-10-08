@@ -22,11 +22,8 @@ import (
 // -------------------------------------------------------------------------
 
 // Bucket is a virtual bucket held in the store rather than declared in config.
-//
-// MaxMultipartUploads caps how many uploads may be active against the bucket at
-// once and zero means unlimited, matching the config field it mirrors. CORS
-// carries the browser rules so a bucket behaves the same whichever source
-// declared it.
+// Its fields mirror the config ones; MaxMultipartUploads of zero means
+// unlimited.
 type Bucket struct {
 	Name                string
 	MaxMultipartUploads int
@@ -45,12 +42,9 @@ type User struct {
 	CreatedAt time.Time
 }
 
-// Credential is one keypair a user authenticates with. A user may hold several,
-// so one can be replaced or revoked while its siblings keep working.
-//
-// Secret is the value SigV4 derives a signing key from, which is why it is read
-// back rather than hashed. Disabled stops a credential authenticating while
-// keeping the record of what it did.
+// Credential is one keypair a user authenticates with; a user may hold several.
+// Secret is stored readable rather than hashed because SigV4 derives the
+// signing key from it. Disabled stops authentication but keeps the record.
 type Credential struct {
 	AccessKeyID string
 	UserID      string
@@ -61,13 +55,9 @@ type Credential struct {
 	LastUsedAt  *time.Time
 }
 
-// ResourceKind says what a grant names. The control plane has no bucket, so
-// draining a backend or provisioning a user needs a resource that is not one.
-//
-// The three kinds name the three things a request can act on: the objects in a
-// bucket, one storage provider's copies of them, or the orchestrator running in
-// front of both. ResourceOrchestrator carries no name, because a deployment has
-// only one orchestrator to name.
+// ResourceKind says what a grant names: a bucket, a backend, or the
+// orchestrator itself. ResourceOrchestrator carries no name because a
+// deployment has only one.
 type ResourceKind string
 
 // The three kinds a grant may name.
@@ -77,21 +67,12 @@ const (
 	ResourceOrchestrator ResourceKind = "orchestrator"
 )
 
-// resourceKindInstance is what ResourceOrchestrator was called before it was
-// named after the component it describes. Grants written under the old spelling
-// are still read, so an upgrade does not need the migration to have run first.
-//
-// "instance" was wrong in a deployment running several processes: it reads as
-// one of them, while the grant has always covered every process, because they
-// all authorize against the same rows.
+// resourceKindInstance is a stored spelling of ResourceOrchestrator that is
+// still accepted, so grants read correctly before the migration has run.
 const resourceKindInstance ResourceKind = "instance"
 
 // ParseResourceKind reads the stored or submitted spelling of a kind, accepting
-// the retired "instance" name for the orchestrator.
-//
-// An empty value is the bucket, which is what a caller naming only a resource
-// means and what every grant written before the control plane had its own
-// permissions is.
+// "instance" for the orchestrator. An empty value means a bucket.
 func ParseResourceKind(s string) ResourceKind {
 	switch ResourceKind(s) {
 	case "":
@@ -104,11 +85,8 @@ func ParseResourceKind(s string) ResourceKind {
 }
 
 // ResourceWildcard is the name matching every resource of a kind, including ones
-// created later. It is how an operator is granted a fleet rather than a list
-// that goes stale the next time someone adds a bucket.
-//
-// Reserved rather than escapable: S3 bucket names cannot contain it and backend
-// names come from config, so nothing legitimate is shadowed.
+// created later. It is reserved with no escape: S3 bucket names cannot contain
+// it and backend names come from config.
 const ResourceWildcard = "*"
 
 // Resource is what a grant is over: a kind and the name of one thing of that
@@ -141,12 +119,9 @@ func (r Resource) String() string {
 	return string(r.Kind) + ":" + r.Name
 }
 
-// Grant is a user's access to one resource, and the permissions that access
-// carries.
-//
-// One permission set covers both planes: a data-plane bit on a backend grant
-// and an admin bit on a bucket grant are refused when the grant is written, so
-// the type stays single and the resource decides what is meaningful.
+// Grant is a user's access to one resource and the permissions it carries.
+// Permissions invalid for the resource kind are refused when the grant is
+// written.
 type Grant struct {
 	UserID      string
 	Resource    Resource

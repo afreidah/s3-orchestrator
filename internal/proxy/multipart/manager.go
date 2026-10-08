@@ -56,25 +56,19 @@ import (
 // from the backend layer ("Backend UploadPart") in the same trace.
 const spanPrefix = "Manager "
 
-// Manager handles the multipart upload lifecycle.
-//
-// dekCache holds the unwrapped per-upload DEK keyed by uploadID so an
-// instance that handles many UploadPart calls for the same upload pays
-// for the KeyProvider unwrap round-trip once. The cache lifetime is
-// pegged to the multipart stale-upload sweep interval so an abandoned
-// upload's DEK does not linger in memory beyond its server-side
-// existence. Concurrent UploadPart calls on the same uploadID with a
-// cold cache will each issue their own Unwrap; the design accepts that
-// minor cold-start cost in exchange for not pulling in singleflight.
-// Stores is the narrow persistence surface multipart needs: multipart
-// row/part operations and the advisory lock used to serialize stale-upload
-// sweeps. Declared locally so multipart does not pull in the full
-// MetadataStore.
+// Stores is the persistence surface multipart needs: multipart row and part
+// operations, plus the advisory lock that serializes stale-upload sweeps.
 type Stores interface {
 	core.MultipartStore
 	core.AdvisoryLocker
 }
 
+// Manager handles the multipart upload lifecycle.
+//
+// dekCache holds each upload's unwrapped DEK so repeated UploadPart calls pay
+// for one KeyProvider unwrap. Its TTL matches the stale-upload sweep interval,
+// so an abandoned upload's DEK does not outlive the upload. Concurrent calls
+// for the same upload on a cold cache each issue their own unwrap.
 type Manager struct {
 	core               Runtime                // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord              *writepath.Coordinator // write-path helpers shared with the object manager
@@ -89,13 +83,9 @@ type Manager struct {
 	log                *slog.Logger
 }
 
-// New creates a Manager sharing the given core infrastructure and
-// write coordinator. All dependencies must be non-nil; nothing is
-// patched in post-construction. integrityCfg is nil-safe - when nil or
-// disabled, CompleteMultipartUpload skips the plaintext-hash tee that
-// populates content_hash on the recorded location. The
-// component-scoped logger is built in the constructor body per the
-// project's logging convention.
+// New creates a Manager. Core, Coord and Stores must be non-nil. When
+// IntegrityCfg is nil or disabled, CompleteMultipartUpload skips the plaintext
+// hash that populates content_hash on the recorded location.
 func New(deps *Deps) *Manager {
 	must.NotNil("deps", deps)
 	must.NotNil("Core", deps.Core)
@@ -153,7 +143,6 @@ func (mp *Manager) invalidateCache(key string) {
 // MULTIPART UPLOAD OPERATIONS
 // -------------------------------------------------------------------------
 
-// CreateMultipartUpload initiates a multipart upload by selecting a backend
 // CreateUploadRequest is one CreateMultipartUpload call's inputs.
 //
 // Tags are validated by the transport before the upload is opened, so an
@@ -166,12 +155,10 @@ type CreateUploadRequest struct {
 	Tags        []core.Tag
 }
 
-// with available quota and recording the upload in the database. When
-// proxy-side encryption is configured, a single DEK is wrapped once
-// here and persisted on the multipart_uploads row so every subsequent
-// UploadPart can reuse it without paying its own KeyProvider
-// round-trip (this is the shared-DEK invariant CompleteMultipartUpload
-// also depends on).
+// CreateMultipartUpload initiates a multipart upload by selecting a backend
+// with available quota and recording the upload in the database. With
+// encryption configured it wraps one DEK here and persists it on the upload
+// row; every UploadPart and the assembled object share that DEK.
 func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadRequest) (string, string, error) {
 	const operation = s3op.CreateMultipartUpload
 	key := req.Key
@@ -182,14 +169,9 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 	)
 	defer span.End()
 
-	// Generate the upload-level DEK now so every UploadPart and the
-	// assembled object's CompleteMultipartUpload share one wrapped DEK.
-	// The packed format mirrors object_locations.encryption_key:
-	// PackKeyData(baseNonce, wrappedDEK). For the upload row the base
-	// nonce is intentionally zero - the upload row never directly
-	// produces ciphertext; per-part baseNonces live on each
-	// multipart_parts row and the assembled object stores its own
-	// baseNonce in object_locations.encryption_key.
+	// The packed format mirrors object_locations.encryption_key, but the base
+	// nonce is zero: the upload row never produces ciphertext, and each part
+	// and the assembled object store their own base nonce.
 	var (
 		encryptionKey []byte
 		keyID         string
@@ -307,11 +289,8 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	return etag.Single(plaintextETag), nil
 }
 
-// physicalPartSize reports how many bytes a part of this size will occupy.
-// Encryption is applied per part under the upload's data key, and its envelope
-// is a fixed function of the size, so the figure is available before the part
-// is read. Parts are never compressed - assembly encodes the whole object -
-// so there is nothing else here that could only be known afterwards.
+// physicalPartSize reports how many bytes a part of this size will occupy once
+// encrypted. Parts are never compressed, so this is known before the read.
 func (mp *Manager) physicalPartSize(mu *core.MultipartUpload, size int64) int64 {
 	if mp.encryptor == nil || !mu.Encrypted {
 		return size
@@ -330,11 +309,10 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 }
 
 // GetParts returns all parts for a multipart upload, each reporting the ETag
-// UploadPart handed the client rather than the one the backend holds for the
-// stored part. A client that rebuilds its completion manifest from this list -
-// which is what a resumed upload does - has to get back the values completion
-// validates against, and those two differ as soon as the stored part is an
-// encryption envelope.
+// UploadPart handed the client rather than the one the backend holds. A resumed
+// upload rebuilds its completion manifest from this list, so it must get back
+// the values completion validates against; the two differ once the stored part
+// is an encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
 	const operation = s3op.GetParts
 	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
@@ -434,15 +412,9 @@ func (mp *Manager) forgetUploadDEK(uploadID string) {
 	mp.dekCache.Delete(uploadID)
 }
 
-// encryptWithUploadDEK wraps body in EncryptWithDEK using the
-// upload-level DEK from mu and returns the ciphertext reader, its
-// ciphertext size, and the StoredForm the caller should persist on
-// the resulting part or object row. The caller is responsible for
-// deciding whether to encrypt at all (the upload row may have been
-// created unencrypted, or the encryptor may be unconfigured) and for
-// wrapping the returned error with a call-site-specific context.
-// Counters are incremented here so every successful encrypt and every
-// failure path is observable from one place.
+// encryptWithUploadDEK encrypts body under the upload-level DEK from mu and
+// returns the ciphertext reader, its size, and the StoredForm to persist on the
+// resulting part or object row. The caller decides whether to encrypt at all.
 func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.StoredForm, error) {
 	dek, wrappedDEK, _, err := mp.UnwrapUploadDEK(ctx, mu)
 	if err != nil {
@@ -462,15 +434,8 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 	}, nil
 }
 
-// prepareUploadPartBody returns the body, size, and stored form
-// the backend PUT should use for one part. When the upload row is flagged
-// as encrypted and the manager has an encryptor configured, the per-part
-// body is wrapped with EncryptWithDEK using the upload-level DEK from the
-// dekCache (zero KeyProvider round-trips after the first unwrap). The
-// AES-GCM (key, nonce) uniqueness invariant holds across every part
-// because EncryptWithDEK generates a fresh per-part base nonce internally.
-// When encryption is disabled or the upload was created unencrypted, the
-// inputs are returned unchanged with a nil StoredForm.
+// prepareUploadPartBody returns the body, size and stored form for one part,
+// encrypted under the upload's cached data key when the upload is encrypted.
 func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.StoredForm, error) {
 	if mp.encryptor == nil || !mu.Encrypted {
 		return body, size, nil, nil
@@ -501,13 +466,10 @@ func multipartPartKey(uploadID string, partNumber int) string {
 	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
 }
 
-// fetchScopedUpload looks up the multipart upload and verifies it belongs
-// to the (bucket, key) the request URL implies. Returns the same 404
-// NoSuchUpload error for both missing and out-of-scope rows so callers
-// cannot distinguish the two and probe for upload IDs across buckets.
-// span must be the operation's pre-existing span (created at the entry
-// point). Errors are recorded against it so the operation span shows
-// the failure rather than a detached child span.
+// fetchScopedUpload looks up the multipart upload and verifies it belongs to
+// the (bucket, key) the request URL implies. Missing and out-of-scope rows
+// return the same NoSuchUpload error, so callers cannot probe for upload IDs
+// across buckets. Errors are recorded on span, the operation's own span.
 func (mp *Manager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID string, operation s3op.Operation) (*core.MultipartUpload, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
@@ -696,17 +658,10 @@ func (mp *Manager) AbortMultipartUploadsOnBackend(ctx context.Context, backendNa
 	}
 }
 
-// CompleteMultipartUpload reassembles parts into the final object.
-// Downloads each part, concatenates them into a single upload, cleans up
-// temp keys, and records the final object location with quota tracking.
-//
-// The body runs under a session-scoped advisory lock keyed by uploadID
-// so two concurrent Complete calls for the same upload cannot both
-// stream parts and PUT the assembled object on top of each other (which
-// would leave the backend bytes and the metadata row pointing at
-// different writers). When the lock is contended the second caller
-// fails fast with a 409 OperationAborted so the client can decide
-// whether to retry or abort.
+// CompleteMultipartUpload streams the parts into one assembled object, records
+// its location, and removes the parts. It runs under an advisory lock keyed by
+// uploadID so two concurrent completions cannot both assemble the object; the
+// second caller fails fast with 409 OperationAborted.
 func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error) {
 	const operation = s3op.CompleteMultipartUpload
 	start := time.Now()
@@ -742,14 +697,11 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	return etag, nil
 }
 
-// completeMultipartUploadLocked runs the actual assembly under the
-// advisory lock acquired by CompleteMultipartUpload.
-//
-// Ordering is the contract: validate, assemble, commit, and only then drop
-// the parts. Every failure before the commit leaves the parts and the
-// multipart_uploads row untouched so the client can retry completion. An
-// upload abandoned after a failure is reaped by the periodic stale-multipart
-// sweep, which is what keeps that safety from leaking quota.
+// completeMultipartUploadLocked runs the assembly under CompleteMultipartUpload's
+// advisory lock. The order is validate, assemble, commit, then drop the parts:
+// any failure before the commit leaves the parts and the upload row intact so
+// the client can retry, and the stale-multipart sweep reaps an upload that is
+// abandoned after a failure.
 func (mp *Manager) completeMultipartUploadLocked(
 	ctx context.Context,
 	span trace.Span,
@@ -836,24 +788,16 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 	form = stored.applyMeta(form, mp.compression.Level, totalPlaintextSize)
 
-	// Record the intent before the assembly PUT, the same way the single-object
-	// write path does. Without it, a crash between the PUT and the commit below
-	// leaves the assembled bytes on the backend with no ledger row, and
-	// reconcile later imports them as a real object even though the client saw
-	// a failure. The intent gives the pending reaper the breadcrumb it needs to
-	// either finish the commit or remove the orphan.
+	// Record the intent before the assembly PUT so a crash between the PUT and
+	// the commit leaves the pending reaper a record to finish or remove, rather
+	// than bytes that reconcile would import as a real object.
 	//
-	// form has no content hash yet: the plaintext digest is only known once the
-	// stream has drained, so an intent resolved by the reaper commits without
-	// one and the scrubber backfills it later. That matches every other
-	// reaper-promoted object.
-	// The identity was built before the assembly started, so an intent the
-	// reaper promotes carries the same answer the client was given.
+	// form has no content hash yet, since the digest is known only once the
+	// stream drains; a reaper-promoted intent commits without one and the
+	// scrubber backfills it.
 	//
-	// Claimed against the upload's own backend rather than a freshly ranked
-	// one: the parts are already there, so assembly has nowhere else to go and
-	// a backend without room for the assembled object has to fail rather than
-	// place it elsewhere.
+	// The claim is pinned to the upload's own backend because the parts are
+	// already there: a backend without room must fail, not place it elsewhere.
 	intent := writepath.NewPendingIntent(mu.ObjectKey, uploadSize, form, identity)
 	if _, err := mp.coord.ClaimWriteTarget(ctx, intent, []string{mu.BackendName}); err != nil {
 		observe.RecordSpanError(span, err)
@@ -861,20 +805,14 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 	intentID := intent.IntentID
 
-	// Final assembly PUT runs under the configured backend timeout.
-	// The pipe reader is fed by the part-download goroutines,
-	// so the timeout covers the full "stream parts -> assemble -> PUT"
-	// pipeline; a tighter caller deadline (from the inbound HTTP
-	// request) still wins.
+	// The pipe is fed by the part downloads, so this timeout covers the whole
+	// stream-parts, assemble and PUT pipeline.
 	wctx, wcancel := mp.core.WithTimeout(ctx)
 	defer wcancel()
-	// Assembled under the intent's own storage key, like any other write. A
-	// client that completes twice, or completes while another write takes the
-	// key, leaves two distinct objects on the backend instead of two writers
-	// racing at one path.
-	//
-	// The backend's ETag for the assembled object describes the bytes as
-	// stored and is discarded; the client is given the composite built above.
+	// Assembled under the intent's own storage key, so a double completion or a
+	// concurrent write to the key leaves two distinct objects instead of two
+	// writers racing at one path. The backend's ETag describes the stored bytes
+	// and is discarded in favor of the composite.
 	_, err = be.PutObject(wctx, intent.StorageKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		pipeCancel()
@@ -892,11 +830,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 		identity.ETag = etag.Single(etag.Hex(assemblyDigest))
 	}
 
-	// The tag set the create call carried lands with the assembled object, in
-	// the same transaction, so a completed upload is never briefly untagged.
-	// No reservation: the parts were written against the backend chosen at
-	// create time, and the assembled object's bytes are charged here from what
-	// the ledger recorded.
+	// The create call's tags land in the same transaction, so a completed upload
+	// is never briefly untagged. The bytes are charged here from what the ledger
+	// recorded, with no reservation.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
 		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID, StorageKey: intent.StorageKey}},
@@ -909,11 +845,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// row intact, leaving the completion retryable.
 	mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
-	// Assembly reads every part back off the backend and writes one object in
-	// their place, so it spends egress equal to the parts and ingress equal to
-	// the result. Each Egress carries its own API-call tick, which is the N part
-	// GETs; the N cleanup DELETEs of the part temp keys go through
-	// DeleteOrEnqueue, which records them itself.
+	// Assembly spends egress equal to the parts and ingress equal to the result.
+	// Each Egress records its own API call for a part GET; DeleteOrEnqueue
+	// records the part cleanup DELETEs itself.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
 	for i := range parts {
 		mp.core.Acct().Egress(s3op.GetObject, mu.BackendName, parts[i].SizeBytes)
@@ -937,13 +871,10 @@ func teeThrough(r io.Reader, hashers ...hash.Hash) io.Reader {
 	return out
 }
 
-// assembledIdentity builds what a client is told the completed object is: the
-// AWS composite ETag over the part digests, plus the content type and user
-// metadata the create call carried.
-//
-// An upload with any part predating per-part digests cannot produce a
-// composite, so the ETag comes back empty here and the caller fills it with
-// the MD5 of the assembled bytes once the stream has drained.
+// assembledIdentity builds the identity a client is told for the completed
+// object: the composite ETag over the part digests, plus the content type and
+// metadata the create call carried. The ETag is empty when any part lacks a
+// digest; the caller then fills it with the MD5 of the assembled bytes.
 func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*core.ObjectIdentity, error) {
 	digests := make([]string, len(parts))
 	for i := range parts {
@@ -964,13 +895,10 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 	}, nil
 }
 
-// cleanupCompletedUpload removes part objects and the multipart_uploads
-// metadata row for an upload that has been durably committed. Called only
-// on the success path: running it after a failure would destroy the parts
-// a retry needs. Also evicts the upload's unwrapped DEK from the per-instance cache so
-// abandoned-upload memory does not linger. Best effort: each step
-// logs and continues so a single transient error cannot strand the
-// rest of the cleanup.
+// cleanupCompletedUpload removes the part objects, the multipart_uploads row and
+// the cached DEK of a durably committed upload. Call it only after the commit:
+// on a failure path it would destroy the parts a retry needs. Each step is best
+// effort and does not stop the rest.
 func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
 	for i := range parts {
 		partKey := multipartPartKey(uploadID, parts[i].PartNumber)
@@ -1073,22 +1001,16 @@ func (a *assembledBody) applyMeta(form *core.StoredForm, level string, logicalSi
 }
 
 // compressOnComplete reports whether an assembled object of this size should be
-// encoded. Mirrors the single-object gate: no codec or a disabled feature means
-// no, and an object below the floor would spend more on a seek table and frame
-// headers than encoding could save it.
+// encoded, using the same gate as a single-object PUT.
 func (mp *Manager) compressOnComplete(size int64) bool {
 	return mp.codec != nil && mp.compression.Enabled && size >= mp.compression.MinSize
 }
 
 // compressAssembly encodes the assembled plaintext when compression applies and
-// reports what the PUT should send.
-//
-// The encoding is materialized because a backend PUT declares its size up front
-// and an encoder only knows that size once it has finished. The same buffer is
-// what makes the min_ratio decision affordable here: the part pipe delivers the
-// plaintext exactly once, so an encoding that fails to earn its place is decoded
-// back out of the buffer rather than re-read from the backends, which would cost
-// a second egress charge per part.
+// reports what the PUT should send. The encoding is buffered because a backend
+// PUT declares its size up front. An encoding that misses min_ratio is decoded
+// back out of that buffer, since the part pipe delivers the plaintext only once
+// and re-reading the parts would charge their egress a second time.
 func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
 	if !mp.compressOnComplete(totalPlaintextSize) {
 		if mp.codec != nil && mp.compression.Enabled {
@@ -1131,15 +1053,9 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 	return a, nil
 }
 
-// buildAssembledUpload prepares the request body sent to the backend
-// during assembly. When the orchestrator encryptor is configured, the
-// pipe is wrapped in EncryptWithDEK using the upload-level DEK so the
-// assembled object lands as a single ciphertext that shares its DEK
-// with every part. Inline decryption already runs in
-// streamPartsThroughPipe so the pipe always emits plaintext. mu is
-// required when the encryptor is configured because the assembled
-// object must reuse mu.EncryptionKey / mu.KeyID rather than wrapping a
-// fresh DEK for the final write.
+// buildAssembledUpload returns the body the assembly PUT sends. With encryption
+// configured it encrypts the plaintext pipe under the upload-level DEK from mu,
+// so the assembled object shares its DEK with every part.
 func (mp *Manager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,

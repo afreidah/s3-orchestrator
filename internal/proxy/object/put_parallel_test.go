@@ -89,12 +89,9 @@ func TestPutObject_ParallelCopies_PlacesEveryCopy(t *testing.T) {
 	}
 }
 
-// TestCopyIntents_OnePrimaryTheRestCompanions asserts the roles a write claims
-// its copies under. The role decides what a reaper does with an intent left by
-// a process that died: it promotes the primary, so the object survives, and
-// discards the companions, whose bytes it cannot tell apart from an older
-// object at the same path. Which intent commits the object at runtime is a
-// different question - that is whichever upload lands first.
+// TestCopyIntents_OnePrimaryTheRestCompanions asserts a write claims its first
+// copy as the primary, which a reaper promotes, and the rest as companions,
+// which it discards.
 func TestCopyIntents_OnePrimaryTheRestCompanions(t *testing.T) {
 	t.Parallel()
 	store, _ := eligibleStore(t)

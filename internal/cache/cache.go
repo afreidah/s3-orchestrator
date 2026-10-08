@@ -18,18 +18,13 @@ import "time"
 // ObjectCache caches object data to avoid repeated backend fetches.
 // Implementations must be safe for concurrent use by multiple goroutines.
 //
-// The interface separates admission decision from buffering so callers
-// can refuse to read oversized payloads into memory in the first place:
-// check Admit(size), and only buffer + PutBytes when admitted.
+// Callers check Admit(size) and only buffer and PutBytes when admitted, so
+// oversized payloads are never read into memory. PutBytes is best-effort: an
+// admitted entry may still be silently dropped if larger entries have taken
+// the capacity.
 //
-// PutBytes is best-effort. A caller that admitted an entry may still find the
-// cache unable to hold it once larger entries have taken the capacity, and that
-// case is a silent no-op rather than an error, because nothing about the read
-// it came from has gone wrong.
-//
-// An empty prefix passed to InvalidatePrefix matches every entry. Callers that
-// mean to empty the cache should call Clear instead, so the metric records what
-// the operator actually asked for.
+// An empty prefix passed to InvalidatePrefix matches every entry; callers that
+// mean to empty the cache should call Clear so the metric records that.
 type ObjectCache interface {
 	Get(key string) (*Entry, bool)
 	Admit(size int64) bool // O(1) size check, before any buffering

@@ -43,16 +43,11 @@ var (
 	pgFixtureErr  error
 )
 
-// adapterPgStore lazily starts a Postgres testcontainer once for the
-// suite, applies the embedded migrations, seeds quota rows for the
-// test backends, and returns a *Store whose pool every test can issue
-// transactions against. Container lifecycle relies on Ryuk for
-// teardown.
-//
-// Takes testing.TB so the benchmarks share the container with the tests. The
-// pool is sized for the parallel ones: a benchmark with more goroutines than
-// connections measures the queue in front of the pool rather than the
-// contention it is trying to observe.
+// adapterPgStore lazily starts one Postgres testcontainer for the suite,
+// applies the migrations, seeds quota rows for the test backends, and returns
+// the shared *Store; Ryuk tears the container down. The pool is sized for the
+// parallel benchmarks, so they measure row contention rather than waiting on
+// connections.
 func adapterPgStore(tb testing.TB) *Store {
 	tb.Helper()
 	pgFixtureOnce.Do(func() {
@@ -807,12 +802,9 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.
 }
 
 // TestPgAdapter_ImportObject_PreservesEncryptionMetadata verifies an import
-// carrying encryption metadata writes every column, not just the four the
-// adapter used to populate.
-//
-// This is the shape reconcile produces when it rediscovers an encrypted object
-// on a backend: dropping the flag records ciphertext as plaintext, and
-// replication then inherits that from the source row and spreads it.
+// carrying encryption metadata writes every encryption column. Reconcile
+// imports rediscovered encrypted objects this way, and a dropped flag would
+// record ciphertext as plaintext and replicate that mistake.
 func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()

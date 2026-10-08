@@ -67,8 +67,6 @@ type Data struct {
 	UnhealthyBackends      map[string]bool
 }
 
-// Aggregator queries the metadata store and usage tracker to build
-// snapshots for the web UI.
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
 
 // FleetView is the backend-fleet surface the aggregator reads to decorate
@@ -81,12 +79,9 @@ type FleetView interface {
 
 // UsageReader is the usage surface the aggregator reads: the configured
 // per-backend limits it renders alongside consumption, and which backends still
-// have read headroom. *counter.UsageTracker satisfies it.
-//
-// BackendsWithinLimits is here so the integrity figures are scoped to the same
-// backends the scrub queue draws from. Deriving that set anywhere else would
-// let the dashboard and the sweep disagree about which copies are reachable,
-// which is the disagreement that made the coverage age track wall clock.
+// have read headroom. *counter.UsageTracker satisfies it. BackendsWithinLimits
+// scopes the integrity figures to the backends the scrub queue draws from, so
+// the dashboard and the sweep agree on which copies are reachable.
 type UsageReader interface {
 	GetLimits() map[string]core.UsageLimits
 	BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string
@@ -98,6 +93,8 @@ type DrainProgressReader interface {
 	GetDrainProgress(ctx context.Context, name string) (*drain.Progress, error)
 }
 
+// Aggregator queries the metadata store and usage tracker to build
+// snapshots for the web UI.
 type Aggregator struct {
 	store core.DashboardStore
 	usage UsageReader
@@ -243,14 +240,8 @@ func (d *Data) CompressionTotals() core.CompressionStat {
 	return total
 }
 
-// HasCompressedData reports whether any copy is stored encoded, which is what
-// the views gate on rather than on the config flag.
-//
-// The two answer different questions. The flag says whether new writes will be
-// encoded; this says whether anything already is. They disagree in both
-// directions that matter: a fleet with the feature freshly enabled has nothing
-// to show yet, and one with it freshly disabled still holds everything it
-// compressed - including the objects an operator now wants to unwind.
+// HasCompressedData reports whether any copy is stored encoded. The views gate
+// on this, not the config flag, which only describes new writes.
 func (d *Data) HasCompressedData() bool {
 	return d.CompressionTotals().Objects > 0
 }

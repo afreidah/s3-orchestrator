@@ -302,9 +302,6 @@ func (c *Client) DeleteCredential(ctx context.Context, accessKeyID string) error
 
 // SetGrant declares exactly what a user reaches on one resource, writing the
 // grant when it is absent and replacing its permissions when it is not.
-//
-// Upsert rather than create, so an apply does not have to know whether the
-// grant is already there and re-applying converges.
 func (c *Client) SetGrant(ctx context.Context, userID, kind, name string, permissions []string) error {
 	return c.Do(ctx, http.MethodPut, grantPath(userID, kind, name),
 		SetGrantRequest{Permissions: permissions}, nil)

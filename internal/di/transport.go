@@ -81,15 +81,11 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 }
 
 // ProvideCORS creates the browser CORS policy with the rules every declared
-// bucket carries, already compiled.
+// bucket carries, already compiled. It is registered even with no rules, so a
+// reload can add the first rule without a restart.
 //
-// Registered whether or not any bucket carries rules: the middleware is a
-// pass-through for an empty rule set, and installing it unconditionally is
-// what lets a reload add the first rule without a restart.
-//
-// The registry is resolved first for its ordering: assembling it is what
-// publishes the declared set, and compiling from an unpublished one would drop
-// every stored bucket's rules until the next reload.
+// The registry is resolved first because assembling it publishes the declared
+// set; compiling before that would drop every stored bucket's rules.
 func ProvideCORS(i do.Injector) (*cors.Policy, error) {
 	if _, err := do.Invoke[*auth.BucketRegistry](i); err != nil {
 		return nil, err
@@ -295,7 +291,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
 		workerHealth = func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
 	}
-	// FlightRecorder is optional — Optional[*debug.FlightRecorderService]
+	// FlightRecorder is optional - Optional[*debug.FlightRecorderService]
 	// returns a nil Value when the feature is disabled, so the admin
 	// handler ends up holding a nil *trace.FlightRecorder and the
 	// snapshot endpoint responds 503.
@@ -344,15 +340,9 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	return admin.New(deps), nil
 }
 
-// adminBucketRegistry reads the registry the S3 server currently holds, so the
-// admin surface authorizes provisioned credentials against the same view the
-// data path does.
-//
-// Resolved on each call rather than captured, because a reload swaps a new
-// registry onto the server and a captured pointer would authorize against the
-// credentials the process booted with. Nil when no S3 server is registered,
-// which is a worker-only deployment: the admin token still authenticates, and a
-// provisioned credential has nothing to resolve against and is refused.
+// adminBucketRegistry reads the S3 server's current registry on each call, so
+// admin auth sees reloaded credentials. It returns nil in a worker-only
+// deployment, where provisioned credentials are refused.
 func adminBucketRegistry(i do.Injector) func() *auth.BucketRegistry {
 	return func() *auth.BucketRegistry {
 		res := Optional[*s3api.Server](i)

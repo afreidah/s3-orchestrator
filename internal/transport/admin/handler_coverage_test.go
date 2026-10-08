@@ -718,13 +718,9 @@ func TestHandleEncryptExisting_ListFailureIs500(t *testing.T) {
 	}
 }
 
-// TestHandleRotateEncryptionKey_DrivesListLoop wires an encryptor +
-// a stub admin that returns one malformed EncryptedLocation so the
-// rotation pipeline runs end-to-end: list -> rotateBatch ->
-// rotateOneLocation. The intentionally-malformed key trips the
-// UnpackKeyData branch so the success counter remains 0 and the
-// failed counter increments  -  the goal here is coverage of the
-// loop body, not a particular outcome.
+// TestHandleRotateEncryptionKey_DrivesListLoop runs the rotation pipeline end
+// to end over one malformed EncryptedLocation, which fails UnpackKeyData and
+// is counted as failed.
 func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	t.Parallel()
 	h := newRotateEncryptionKeyHandler(t)

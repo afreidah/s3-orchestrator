@@ -40,13 +40,10 @@ func NewDatabaseBreaker(cfg config.CircuitBreakerConfig) *breaker.CircuitBreaker
 	return cb
 }
 
-// isDBError returns true for genuine database failures. Application-
-// level signals (S3Error, ErrNoSpaceAvailable) and the "no rows"
-// sentinels (sql.ErrNoRows, pgx.ErrNoRows) do not trip the circuit.
-// The no-rows filter matters now that the breaker lives at the driver
-// chokepoint: queries like INSERT ... ON CONFLICT DO NOTHING RETURNING
-// surface ErrNoRows via Scan whenever the row already existed, and
-// those are normal idempotent successes - not DB faults.
+// isDBError returns true for genuine database failures. Application-level
+// signals (S3Error, ErrNoSpaceAvailable) and the no-rows sentinels do not trip
+// the circuit: INSERT ... ON CONFLICT DO NOTHING RETURNING reports ErrNoRows
+// whenever the row already existed, which is an idempotent success.
 func isDBError(err error) bool {
 	if err == nil {
 		return false

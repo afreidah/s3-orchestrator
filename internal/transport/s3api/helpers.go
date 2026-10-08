@@ -64,11 +64,9 @@ const headerCopySourceRange = "x-amz-copy-source-range"
 
 // enforceContentLength applies the standard guard for any S3 PUT-style
 // handler: reject missing Content-Length with 411, reject oversized payloads
-// with 413, and otherwise wrap the body in MaxBytesReader. The label is
-// folded into the user-facing error message so callers retain their distinct
-// vocabulary ("Object" vs "Part" etc.). Returns (statusCode, error, ok). When
-// ok is false the caller must propagate the (status, error) without further
-// processing  -  the response has already been written.
+// with 413, and otherwise wrap the body in MaxBytesReader. label ("Object",
+// "Part") prefixes the error message. When ok is false the response has
+// already been written and the caller must return (status, error) unchanged.
 func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64, label string) (int, error, bool) {
 	if r.ContentLength < 0 {
 		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", label+" Content-Length is required")
@@ -168,15 +166,8 @@ func formatCapacityHint(stats map[string]core.QuotaStat) string {
 // PATH AND QUERY PARSING
 // -------------------------------------------------------------------------
 
-// BucketFromPath reports the virtual bucket a request path addresses,
-// discarding the key.
-//
-// Exported for the middleware that runs ahead of authentication and so cannot
-// resolve the bucket from the credential the way a routed request does.
-// Keeping it a wrapper over parsePath means the path convention has one
-// definition: a second copy would be free to drift into disagreeing about
-// which bucket a request names, and the two would then authorize and
-// preflight different buckets for the same URL.
+// BucketFromPath reports the virtual bucket a request path addresses, for
+// middleware that runs before routing.
 func BucketFromPath(path string) (string, bool) {
 	bucket, _, ok := parsePath(path)
 	return bucket, ok
@@ -233,12 +224,9 @@ func parseListingCount(r *http.Request, param string, defaultVal, ceiling int) (
 
 // Query keys an object request may carry. S3 selects the operation from the
 // query string, not just the method, so a key absent from this set names an
-// operation this server does not implement.
-//
-// Allow-listed rather than deny-listed on purpose. Enumerating the
-// subresources we reject means a missed one keeps falling through to the data
-// path, and AWS keeps adding them; enumerating what we understand means a
-// missed one is a rejected request instead of a destroyed object.
+// operation this server does not implement. It is an allow-list so that an
+// unknown subresource is rejected instead of falling through to the data path,
+// where it could overwrite or delete an object.
 var supportedObjectQueryKeys = map[string]bool{
 	"uploads":            true, // CreateMultipartUpload / ListMultipartUploads
 	"uploadId":           true, // per-upload multipart operations
@@ -253,22 +241,16 @@ var supportedObjectQueryKeys = map[string]bool{
 	"x-id": true,
 }
 
-// Query key prefixes an object request may carry. Matched as prefixes so a
-// parameter within either family that is not named individually still passes.
-//
-// X-Amz- covers presigned URL credentials, which travel in the query string;
-// rejecting them would break every presigned URL. response- covers S3's
-// response-header overrides, of which response-content-disposition appears on
-// most presigned download links.
+// Query key prefixes an object request may carry. X-Amz- covers presigned URL
+// credentials, and response- covers S3's response-header overrides such as
+// response-content-disposition.
 var supportedObjectQueryPrefixes = []string{"X-Amz-", "response-"}
 
 // Query keys a bucket request may carry: the four subresources this server
 // serves, the parameters its two listings and its upload listing read, and
-// x-id. Allow-listed for the same reason the object set is - a bucket
-// subresource absent from here would otherwise be answered by ListObjects,
-// so a client asking for versions or a lifecycle configuration would parse a
-// ListBucketResult as an empty answer instead of learning the operation is
-// unavailable.
+// x-id. Without the allow-list an unsupported subresource such as versions
+// would be answered by ListObjects, which a client would read as an empty
+// result instead of an unsupported operation.
 var supportedBucketQueryKeys = map[string]bool{
 	"delete":             true, // DeleteObjects
 	"location":           true, // GetBucketLocation
@@ -339,11 +321,8 @@ func writeAccessDenied(w http.ResponseWriter) {
 	writeS3Error(w, http.StatusForbidden, s3CodeAccessDenied, "Access denied")
 }
 
-// WriteS3Error is the exported form of writeS3Error so other transport
-// packages (notably the panic-recovery middleware in httputil) can emit
-// a route-appropriate S3-XML 500 without re-implementing the envelope.
-// Matches the httputil.ErrorWriter signature exactly so it slots in as
-// a direct argument.
+// WriteS3Error writes an S3 XML error. It matches httputil.ErrorWriter so the
+// panic-recovery middleware can use it directly.
 func WriteS3Error(w http.ResponseWriter, code int, errCode, message string) {
 	writeS3Error(w, code, errCode, message)
 }
@@ -393,18 +372,12 @@ const (
 
 // decodeXMLBody reads exactly one XML document from the request body into v,
 // writes the matching S3 error response on failure, and returns the status it
-// used.
+// used. Trailing content after the document is refused, so the server never
+// acts on something other than what an upstream inspector saw.
 //
-// MaxBytesReader rather than io.LimitReader: a LimitReader silently truncates
-// at the ceiling, which reports an oversized body as malformed XML and, worse,
-// accepts it outright whenever the prefix happens to be a complete document.
-// MaxBytesReader fails instead, and lets the server close the connection
-// rather than leaving unread bytes in the pipe.
-//
-// The second decode is what rejects trailing content. Decode stops at the end
-// of the first document, so without this a second document or any junk after
-// the first is accepted and silently discarded - and what the orchestrator
-// then acts on is not what anything upstream inspected.
+// It uses MaxBytesReader rather than io.LimitReader, which would silently
+// truncate an oversized body and could accept a prefix that happens to be a
+// complete document.
 func decodeXMLBody(w http.ResponseWriter, r *http.Request, limit int64, v any) (int, error) {
 	dec := xml.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 

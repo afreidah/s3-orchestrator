@@ -157,12 +157,10 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	}
 }
 
-// TestPgListDirectoryChildren_UnderscorePrefix is the regression test for the
-// bug where a directory whose name contained an underscore listed empty. The
-// caller LIKE-escapes the prefix ('_' -> '\_'), which lengthens it; reusing
-// that escaped length as the child-name substring offset cut one character too
-// deep, so every child name was mangled, missed the file lookup, and was
-// dropped. Both a file child and a subdirectory child must surface.
+// TestPgListDirectoryChildren_UnderscorePrefix checks that a directory whose
+// name contains an underscore lists both file and subdirectory children. The
+// LIKE-escaped prefix is longer than the raw one, so using its length as the
+// child-name offset would mangle every name.
 func TestPgListDirectoryChildren_UnderscorePrefix(t *testing.T) {
 	resetState(t)
 	ctx := context.Background()

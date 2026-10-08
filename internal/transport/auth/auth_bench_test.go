@@ -231,11 +231,8 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 }
 
 // BenchmarkSecretAuth measures resolving a keypair presented whole, which is
-// the dashboard's login path.
-//
-// The bucket count is varied because the lookup is a map read and should not
-// depend on it: a result that grows with the fleet would mean the registry had
-// regressed to a scan.
+// the dashboard's login path. The bucket count varies; a result that grows
+// with it means the lookup has regressed from a map read to a scan.
 func BenchmarkSecretAuth(b *testing.B) {
 	for _, tc := range []struct {
 		name  string

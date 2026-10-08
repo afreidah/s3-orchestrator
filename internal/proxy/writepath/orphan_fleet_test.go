@@ -250,17 +250,10 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	}
 }
 
-// TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit pins the
-// visibility contract for #805. When the cleanup_queue row itself
-// fails to persist (DB outage after a successful backend write), the
-// system must:
-//
-//   - increment s3o_cleanup_enqueue_failures_total{stage="enqueue"}
-//     so operators can alert on untracked orphan risk
-//   - emit a storage.OrphanEnqueueFailed audit event so operators
-//     can pivot from the metric to the exact backend/key/size
-//
-// Without these signals, the orphan would be silent (logged-only).
+// TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit asserts that a
+// failed cleanup_queue insert increments
+// s3o_cleanup_enqueue_failures_total{stage="enqueue"} and emits a
+// storage.OrphanEnqueueFailed audit event naming the orphan.
 func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)
@@ -292,13 +285,9 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	}
 }
 
-// TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit covers
-// the secondary failure path: the cleanup_queue row persisted but the
-// orphan_bytes counter increment failed. Less severe than an enqueue
-// failure (the cleanup worker will still retry the delete) but quota
-// accounting drifts until reconciliation. The metric labels stage
-// "orphan_bytes" so dashboards can distinguish the two failure
-// shapes.
+// TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit asserts that
+// when the cleanup row persists but the orphan_bytes increment fails, the
+// failure is counted under stage "orphan_bytes".
 func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)

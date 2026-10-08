@@ -78,23 +78,16 @@ type copyFanout struct {
 // -------------------------------------------------------------------------
 
 // putCopiesInParallel claims a backend per copy, uploads to all of them at
-// once, and answers the client as soon as one copy is committed.
-//
-// It does not wait for the rest. Waiting would put the slowest backend on the
-// critical path of every write, which is the thing placing one copy and
-// repairing later exists to avoid, so the uploads still running carry on
-// against a context that outlives the request and commit themselves as they
-// finish. Whatever does not land is a shortfall the replicator fills on its
-// next pass, which is what it does for every copy today.
+// once, and answers the client as soon as one copy is committed. The remaining
+// uploads continue on a context that outlives the request and commit as they
+// finish, so the slowest backend stays off the write's critical path. A copy
+// that does not land is left for the replicator.
 func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req *PutObjectRequest, plan *putPlan, eligible []string, start time.Time) (string, error) {
 	const operation = s3op.PutObject
 
-	// The slot is taken before anything is claimed, so a write that cannot have
-	// one has not yet done anything it would need to undo. Refused means the
-	// fleet is already carrying as many unfinished tails as it will: this write
-	// places one copy and the replicator makes the rest, which costs the read
-	// back that the fan-out exists to avoid and is why the ceiling is set where
-	// a healthy fleet never reaches it.
+	// The slot is taken before anything is claimed, so a refused write has
+	// nothing to undo. It then places one copy and leaves the rest to the
+	// replicator.
 	release, admitted := o.detached.Begin()
 	if !admitted {
 		telemetry.ReplicationWriteFanoutSkippedTotal.Inc()
@@ -141,14 +134,11 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 }
 
 // copyIntents builds one intent per copy the write will place. The first is the
-// primary, which is what a reaper promotes if this process dies before anything
-// commits; the rest are companions, which it discards, because bytes on a
-// backend no copy was ever recorded on cannot be told apart from an older
-// object at the same path.
-//
-// The role says what an abandoned intent means, not which copy records the
-// object. That is whichever upload lands first, so a companion's intent
-// routinely commits the object and the primary's routinely adds itself to it.
+// primary, which a reaper promotes if this process dies before anything
+// commits; the rest are companions, which it discards, because bytes no copy
+// was recorded for cannot be told apart from an older object at the same path.
+// The role only says what an abandoned intent means: whichever upload lands
+// first records the object, which may be a companion.
 func (o *Manager) copyIntents(req *PutObjectRequest, plan *putPlan) []*core.PendingObject {
 	identity := putIdentity(plan.etagDigest, req)
 	intents := make([]*core.PendingObject, o.copiesPerWrite)
@@ -204,12 +194,8 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 
 // commitAsTheyLand resolves each copy in the order its upload finishes. The
 // first to land records the object and answers the client; the rest add
-// themselves to what it recorded.
-//
-// A commit that fails takes the write with it and abandons the copies still
-// running, rather than leaving them to record themselves against a key nothing
-// anchors. Their intents stay, and the reaper resolves them the way it resolves
-// any companion whose write did not finish.
+// themselves to it. If that commit fails, the copies still running are
+// abandoned and their intents left for the reaper.
 func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 	// Released once every copy has settled, which is the moment this write is
 	// no longer something a shutdown has to wait for.
@@ -257,13 +243,10 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 }
 
 // commitFirstCopy records the object from the copy that landed first and
-// answers the client with it.
-//
-// The copies still uploading ride along as Placing, which is what keeps their
-// intents where every other intent for the key is cleared. Their bytes need no
-// protection from the displacement this commit performs: each is at its own
-// intent's path, so deleting the previous copy from a backend this write is
-// still uploading to cannot touch what is landing there.
+// answers the client with it. The copies still uploading are passed as Placing
+// so their intents survive the clearing of the key's other intents. Their bytes
+// are safe from this commit's displacement because each sits at its own
+// intent's path.
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
 	err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key:      f.req.Key,

@@ -60,13 +60,10 @@ func drainAll(b *testing.B, r io.Reader, scratch []byte) {
 	}
 }
 
-// BenchmarkEncryptReader_StreamingAllocs exercises the streaming
-// encryption hot path through a sync.Pool of chunkBuffers, matching
-// production wiring on *Encryptor. PR #885 turned every chunk into
-// allocation-free Seal-into-dst, then pooled the per-stream buffers
-// so a pool-warm whole-object encrypt costs only the DEK + cipher
-// setup, not the chunkSize buffer. Stays in the low single digits
-// of allocs/op regardless of chunk count.
+// BenchmarkEncryptReader_StreamingAllocs exercises the streaming encryption
+// hot path through a sync.Pool of chunkBuffers, as *Encryptor wires it. A
+// pool-warm encrypt should stay in the low single digits of allocs/op
+// regardless of chunk count.
 func BenchmarkEncryptReader_StreamingAllocs(b *testing.B) {
 	const chunkSize = 64 * 1024
 	const objectSize = 1 << 20 // 1 MiB -> 16 chunks

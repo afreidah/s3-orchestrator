@@ -917,11 +917,7 @@ func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
 }
 
 // TestConfigValidation_CredentialNeedsAKeypair verifies a credential must carry
-// both halves of a keypair.
-//
-// A token-only credential used to be valid. Tokens are gone, so such an entry
-// now names no way to authenticate and is refused rather than silently
-// producing a credential nothing can present.
+// both halves of a keypair; an entry without one names no way to authenticate.
 func TestConfigValidation_CredentialNeedsAKeypair(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -2388,11 +2384,7 @@ backends:
 // -------------------------------------------------------------------------
 
 // TestUIConfig_EnabledRequiresARootCredential verifies the dashboard cannot be
-// enabled without an identity able to log into it.
-//
-// The dashboard has no login of its own: it authenticates the same credentials
-// every other surface does, so enabling it with no root credential declared
-// would serve a login page that nothing can get past.
+// enabled without a root credential, since it has no login of its own.
 func TestUIConfig_EnabledRequiresARootCredential(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()

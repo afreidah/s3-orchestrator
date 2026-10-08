@@ -50,17 +50,12 @@ type ProbeScheduler[T any] struct {
 
 // FirstSuccess launches the rolling window and returns the first successful
 // probe. found is false when every probe failed; errs holds each failure in
-// arrival order so the caller can classify the outcome. With no cap the first
-// call launches every backend at once (historical behaviour); with a positive
-// cap the first cap probes launch immediately and each failure replenishes the
-// next pending backend, so at most cap goroutines are ever in flight.
+// arrival order. With no cap every backend launches at once; with a positive
+// cap at most cap probes run at a time, and each failure launches the next.
 //
-// On success the losing probes' contexts are cancelled so their in-flight
-// backend round trips, decryption, and integrity work stop promptly, and any
-// already-launched results are drained and cleaned up in the background. The
-// winning result is returned untouched: its Value owns its own lifecycle (a GET
-// body keeps the cancel; a HEAD has already released its timeout), so the
-// winner's cleanup is never invoked.
+// On success the losing probes' contexts are cancelled, and results they
+// already produced are drained and cleaned up in the background. The winner's
+// cleanup is never invoked, because its Value owns its own lifecycle.
 func (s *ProbeScheduler[T]) FirstSuccess(ctx context.Context, probe Probe[T]) (res broadcastResult[T], errs []error, found bool) {
 	initial := broadcastSlotCount(s.parallelism, len(s.pending))
 	ch := make(chan broadcastResult[T], len(s.pending))

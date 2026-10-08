@@ -20,16 +20,8 @@ import (
 
 // Run processes items concurrently with bounded parallelism. The fn callback
 // is invoked once per item. If ctx is cancelled, remaining undispatched items
-// are skipped. In-flight items run to completion.
-//
-// Implementation note: spawns at most min(concurrency, len(items))
-// worker goroutines that consume from a shared jobs channel until the
-// dispatcher closes it. The earlier design spawned one goroutine per
-// item bounded by a counting semaphore, which produced N goroutines for
-// N items even though only `concurrency` ran at once - tens of thousands
-// of transient goroutines on the larger cleanup/replication batches.
-// The fixed-worker model keeps the same external semantics but caps
-// goroutine churn at the worker count.
+// are skipped. In-flight items run to completion. At most
+// min(concurrency, len(items)) worker goroutines are spawned.
 func Run[T any](ctx context.Context, concurrency int, items []T, fn func(context.Context, T)) {
 	if concurrency <= 0 {
 		slog.WarnContext(ctx, "concurrency <= 0, clamping to 1",

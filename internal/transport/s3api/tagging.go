@@ -93,15 +93,9 @@ var errMalformedTaggingHeader = errors.New("malformed x-amz-tagging header")
 
 // parseTaggingHeader decodes the x-amz-tagging header carried by PutObject and
 // CreateMultipartUpload. The header is query-string encoded (k1=v1&k2=v2), not
-// the XML document the tagging endpoints exchange.
-//
-// Validated here rather than left to the store so an unusable set is refused
-// before the request body is read and before anything reaches a backend. Doing
-// it later means the bytes have already been transferred and written, leaving
-// an orphan to collect and the ingress already spent.
-//
-// Sorted because url.ParseQuery yields a map, whose iteration order would
-// otherwise vary run to run.
+// the XML document the tagging endpoints exchange. The set is validated here
+// so an unusable one is refused before the body is read or anything reaches a
+// backend. Tags are returned sorted by key.
 func parseTaggingHeader(raw string) ([]core.Tag, error) {
 	if raw == "" {
 		return nil, nil
@@ -138,11 +132,8 @@ const (
 )
 
 // parseTaggingDirective reads x-amz-tagging-directive and, for REPLACE, the
-// x-amz-tagging header that supplies the replacement set.
-//
-// An unrecognised directive is refused rather than treated as COPY: silently
-// falling back would carry the source's tags onto a copy the client asked to
-// have different ones, which is the opposite of what it requested.
+// x-amz-tagging header that supplies the replacement set. An unrecognized
+// directive is refused rather than treated as COPY.
 func parseTaggingDirective(h http.Header) (replace bool, tags []core.Tag, err error) {
 	switch directive := h.Get("x-amz-tagging-directive"); directive {
 	case "", taggingDirectiveCopy:
@@ -168,11 +159,8 @@ var errInvalidTaggingDirective = errors.New("invalid tagging directive")
 // -------------------------------------------------------------------------
 
 // writeTaggingError renders a store-layer failure as the S3 error the spec
-// names for it, falling back to the shared storage-error mapping.
-//
-// The validation sentinels are mapped here rather than being S3Error values in
-// core because the message carries the offending measurement, which a shared
-// error value would have to drop.
+// names for it, falling back to the shared storage-error mapping. Validation
+// errors keep their own message, which names the offending value.
 func writeTaggingError(w http.ResponseWriter, err error) int {
 	switch {
 	case errors.Is(err, core.ErrObjectNotFound):

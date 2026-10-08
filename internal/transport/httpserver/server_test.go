@@ -459,15 +459,10 @@ func TestConfigureMetrics_SeparateListener_PprofEnabled(t *testing.T) {
 	}
 }
 
-// TestConfigureMetrics_Pprof_GoroutineLeak asserts that Go 1.27's
-// goroutineleak profile is served by the same mount, even though
-// mountPprof never names it: pprof.Index dispatches named runtime
-// profiles off the prefix route. Worth pinning because the leak
-// profile is the one operators reach for during a slow goroutine
-// climb, and a silent 404 there sends them looking in the wrong place.
-//
-// Not parallel: serving this profile runs a stop-the-world leak-detection
-// GC, which is not something to overlap with the rest of the package.
+// TestConfigureMetrics_Pprof_GoroutineLeak asserts that the goroutineleak
+// profile is served even though mountPprof never names it: pprof.Index
+// dispatches named runtime profiles off the prefix route. Not parallel because
+// serving this profile runs a stop-the-world GC.
 func TestConfigureMetrics_Pprof_GoroutineLeak(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := configureMetrics(mux, &config.MetricsConfig{
@@ -582,13 +577,9 @@ func TestServer_ShutdownLogsErrors(t *testing.T) {
 	s.Shutdown(ctx)
 }
 
-// TestServer_RunWithSeparateMetrics drives the metrics-listener
-// goroutine in Run by configuring an invalid metrics address: the
-// "metrics endpoint enabled on separate listener" log fires from the
-// goroutine startup, ListenAndServe immediately returns the bind
-// failure, and the "metrics listener failed" error log fires as well.
-// The main listener is also configured to fail-fast so Run returns and
-// the test does not block.
+// TestServer_RunWithSeparateMetrics verifies that Run, given a metrics address
+// that cannot bind, still serves and returns once the main listener is shut
+// down.
 func TestServer_RunWithSeparateMetrics(t *testing.T) {
 	t.Parallel()
 	s := &Server{

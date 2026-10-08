@@ -236,15 +236,10 @@ func credentialList(_ []string, c *client) int {
 	return c.get(pathProvisioning, renderCredentials)
 }
 
-// credentialIssue records a keypair against a user and prints it.
-//
-// A minted secret reaches stdout and nowhere else, so the output can be piped
-// into a secret store without the value passing through a log line. Nothing
-// reads it back afterwards: a caller that loses it issues a replacement.
-//
-// Supplying a keypair registers one the caller already holds instead, which is
-// what lets the same command run twice without minting a second credential to
-// distribute.
+// credentialIssue records a keypair against a user and prints it. A minted
+// secret goes to stdout only and cannot be read back later; a caller that
+// loses it issues a replacement. Supplying a keypair registers that one
+// instead, so the command can be rerun without minting a second credential.
 func credentialIssue(args []string, c *client) int {
 	fs := flag.NewFlagSet("credential issue", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
@@ -318,12 +313,9 @@ func grantFlags(verb string, c *client) (*flag.FlagSet, *grantFlagValues) {
 }
 
 // resolveGrant parses the arguments and reports the user and resource they
-// name, or false once it has said on stderr why not.
-//
-// -bucket is the older spelling of a bucket grant and stays as an alias, so an
-// operator's existing scripts keep working now that grants reach past buckets.
-// The kind is normalised here as well as on the server, so the retired
-// "instance" spelling is not asked for a name the orchestrator does not have.
+// name, or false after printing the reason on stderr. -bucket is an alias for
+// a bucket grant. The kind is normalized here as well as on the server, so the
+// "instance" alias for the orchestrator is not asked for a name.
 func resolveGrant(
 	fs *flag.FlagSet, args []string, c *client, v *grantFlagValues,
 ) (string, core.Resource, bool) {
@@ -345,10 +337,8 @@ func resolveGrant(
 	return *v.user, resource, true
 }
 
-// grantPath addresses one grant.
-//
-// The orchestrator has no name, so the path carries a placeholder segment the
-// server discards once the kind says which resource is meant.
+// grantPath addresses one grant. The orchestrator resource has no name, so its
+// path carries a placeholder segment the server ignores.
 func grantPath(user string, r core.Resource) string {
 	return pathProvGrants + "/" + url.PathEscape(user) + "/" +
 		url.PathEscape(cmp.Or(r.Name, string(core.ResourceOrchestrator))) +
@@ -390,13 +380,9 @@ func splitPermissions(s string) []string {
 	return out
 }
 
-// grantSet declares exactly what a user reaches on one resource.
-//
-// Upsert rather than update, so a caller declaring access does not have to know
-// whether the grant is already there. That is what separates it from `add`:
-// `add` is the imperative "give this user access", `set` is the declarative
-// "this user's access here is exactly these permissions", and re-running it
-// converges rather than failing the second time.
+// grantSet declares exactly what a user reaches on one resource. Unlike
+// `add`, it upserts, so rerunning it converges instead of failing when the
+// grant already exists.
 func grantSet(args []string, c *client) int {
 	fs, v := grantFlags("grant set", c)
 	perms := fs.String("permissions", "all", usageGrantPermissions)
@@ -489,11 +475,8 @@ func renderNewCredential(w io.Writer, body []byte) error {
 }
 
 // renderGrants renders what a user reaches and what each reach carries, as
-// "bucket:photos(read,write)". A user holding nothing renders empty, which is
-// what an identity created but not yet granted anything is.
-//
-// Falls back to the bucket list when the server sent no grants, so a listing
-// read from an older instance still says which buckets are reached.
+// "bucket:photos(read,write)". A user holding nothing renders empty. It falls
+// back to the bucket list when the server sent no grants (an older instance).
 func renderGrants(u *adminapi.User) string {
 	if len(u.Grants) == 0 {
 		return strings.Join(u.Buckets, " ")
@@ -507,11 +490,8 @@ func renderGrants(u *adminapi.User) string {
 }
 
 // shorthand renders a permission list the way the stored form does, collapsing
-// a complete set to the one word that names it.
-//
-// A full control-plane set is ten names, which is wider than the terminal a
-// listing is read in. The API keeps every name, because a caller parsing it
-// should not have to know what the shorthand expands to.
+// a complete set to the one word that names it. Only the CLI listing
+// abbreviates; the API returns every name.
 func shorthand(perms []string) string {
 	for _, full := range []core.PermissionSet{core.PermAll, core.PermAdminAll} {
 		if slices.Equal(perms, full.Names()) {

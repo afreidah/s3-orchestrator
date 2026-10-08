@@ -24,13 +24,10 @@ type StatusResponse struct {
 // IntegrityStatus reports how far behind content verification is. Distinct
 // from a copy lacking a hash: a fleet can be fully hashed and unverified.
 //
-// OldestUnverifiedSeconds and NeverVerifiedCopies describe only the copies the
-// sweep can reach. DeferredCopies is the rest, held on backends over their
-// usage limit: the sweep will not close that gap on its own, so the two figures
-// above are a partial picture whenever it is non-zero.
-//
-// PlaintextCopies is a separate question again: encryption covers new writes
-// only, so it stays at whatever predates it until encrypt-existing is run.
+// OldestUnverifiedSeconds and NeverVerifiedCopies cover only copies the sweep
+// can reach. DeferredCopies are on backends over their usage limit and stay
+// unverified until that clears. PlaintextCopies stays non-zero until
+// encrypt-existing is run, since encryption covers new writes only.
 type IntegrityStatus struct {
 	OldestUnverifiedSeconds int64 `json:"oldest_unverified_seconds"`
 	NeverVerifiedCopies     int64 `json:"never_verified_copies"`
@@ -45,9 +42,8 @@ type IntegrityStatus struct {
 // record's state (draining, drained, or failed) and empty when the backend has
 // none; a backend with any state is refused new writes.
 //
-// CompressionSavedBytes is what the compressed objects on this backend are,
-// less what they occupy. It is zero when nothing there is stored encoded,
-// which is also what an operator sees before compression is turned on.
+// CompressionSavedBytes is the logical size of this backend's compressed
+// objects less what they occupy; zero when nothing there is stored encoded.
 type BackendStatus struct {
 	Name         string `json:"name"`
 	Healthy      bool   `json:"healthy"`
@@ -104,12 +100,7 @@ type LogLevelResponse struct {
 // ReloadStatusResponse reports the most recent config reload. Status is
 // "no_reload_yet" until SIGHUP fires for the first time, and every other field
 // is absent in that state; afterwards it carries the coordinator's outcome for
-// the pass. Converted at the wiring layer so no internal reload type reaches
-// the wire.
-//
-// Generation is a pointer so a genuine generation-0 result still reports the
-// field, while the not-yet placeholder omits it; a plain int64 with omitempty
-// would silently drop the zero.
+// the pass. Generation is a pointer so a real generation 0 is still reported.
 type ReloadStatusResponse struct {
 	Status          string              `json:"status"`
 	Generation      *int64              `json:"generation,omitempty"`

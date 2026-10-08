@@ -267,15 +267,10 @@ func (f *flippingDrainChecker) IsDraining(name string) bool {
 	return f.calls > 1
 }
 
-// TestPutObject_DrainRace_AbortsAndFailsOver actually triggers the
-// drain-race close. The flipping checker reports b1 as healthy on the
-// first IsDraining call (the upstream EligibleForWrite filter) and as
-// draining on every subsequent call (the post-PutObject re-check in
-// attemptPutOnBackend). That exercises the exact race window the fix
-// closes: b1 passes eligibility, the backend PUT completes, and the
-// re-check then catches the drain that started mid-write so the
-// commit aborts and the bytes are cleaned up. The orchestrator fails
-// the attempt over to b2.
+// TestPutObject_DrainRace_AbortsAndFailsOver triggers a drain that starts
+// mid-write. The flipping checker reports b1 healthy on the first IsDraining
+// call (eligibility) and draining on later ones (the post-PUT re-check), so the
+// commit on b1 aborts, its bytes are cleaned up, and the write fails over to b2.
 func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	// Not parallel: asserts an exact +1 delta on the global
 	// telemetry.DrainRaceAbortedTotal counter, which is also bumped by
@@ -1544,13 +1539,9 @@ func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	}
 }
 
-// TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend exercises the
-// "be not in map" skip in headSourceForCopy: the first listed
-// location points at a phantom be the proxy does not have, so
-// the helper continues to the second (real) location. Without the
-// skip the lookup would return ok=false and CopyObject would surface
-// "failed to head source from any copy" even though a healthy replica
-// exists.
+// TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend asserts that a source
+// location on an unregistered backend is skipped and the copy is read from the
+// next location.
 func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1571,15 +1562,9 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 	}
 }
 
-// TestCopyObject_DestBackendNotInMap surfaces the GetBackend error
-// branch in CopyObject: SelectWriteTarget returns a backend name the
-// orchestrator does not know about (config drift or test misuse), so
-// GetBackend errors and the copy fails fast instead of nil-derefing
-// TestCopyObject_RecordFailureSurfaces exercises the
-// RecordObjectOrCleanup error branch: the destination PUT succeeds but
-// the metadata commit fails. RecordObjectOrCleanup recovers the
-// orphaned bytes; CopyObject must surface the error rather than
-// reporting success.
+// TestCopyObject_RecordFailureSurfaces asserts that when the destination PUT
+// succeeds but the metadata commit fails, CopyObject returns the error rather
+// than reporting success.
 func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1697,13 +1682,9 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	}
 }
 
-// TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess
-// pins the #884 contract: when native CopyObject returns a non-
-// capability error but a HEAD probe shows the destination already
-// exists with the expected size, the orchestrator treats the copy as
-// successful without falling back to materialized copy. This guards
-// the "be copied server-side, response was lost" race against
-// duplicate work.
+// TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess asserts
+// that when native CopyObject errors but a HEAD shows the destination exists
+// with the expected size, the copy succeeds without falling back.
 func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1764,12 +1745,9 @@ func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 	}
 }
 
-// TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack pins the
-// safety guard: when the HEAD probe shows the destination exists but
-// at a different size than the source, the orchestrator falls back to
-// materialized copy (which overwrites with the correct content).
-// Without the size check, an unrelated object on the destination key
-// could be misclassified as a successful copy.
+// TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack asserts that
+// when the HEAD probe finds the destination at a different size than the
+// source, the copy falls back to the materialized path.
 func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -2508,13 +2486,10 @@ func (c *concurrencyTrackingBackend) GetObject(ctx context.Context, key string, 
 	}
 }
 
-// TestGetObject_DegradedBroadcastCap_RespectsLimit pins issue #858: when
-// a positive DegradedBroadcastParallelism cap is set, the parallel
-// degraded broadcast probes at most that many backends concurrently
-// even if more eligible backends are configured. The slow-probe backend
-// pool guarantees that without the cap every backend would be probed at
-// once, so a max-in-flight watermark of 2 is only possible if the
-// rolling-window launcher is honouring the limit.
+// TestGetObject_DegradedBroadcastCap_RespectsLimit asserts a positive
+// DegradedBroadcastParallelism caps how many backends the degraded broadcast
+// probes at once. The probes are slow, so without the cap every backend would
+// be in flight together and the watermark would exceed 2.
 func TestGetObject_DegradedBroadcastCap_RespectsLimit(t *testing.T) {
 	t.Parallel()
 

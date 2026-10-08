@@ -22,19 +22,14 @@ type TelemetryConfig struct {
 
 // MetricsConfig holds Prometheus metrics settings.
 //
-// Pprof is opt-in and off by default. The net/http/pprof handlers
-// expose deep runtime state (de-anonymized stack frames, command-line
-// flags, on-demand CPU profiles that double as DoS amplifiers), so
-// production deployments should leave Pprof false. When enabled, it
-// is only mounted on the dedicated metrics listener (Listen must be
-// set) - never on the main S3 listener.
+// Pprof is off by default because the pprof handlers expose runtime state and
+// on-demand CPU profiles that double as DoS amplifiers. When enabled it is
+// mounted only on the dedicated metrics listener (Listen must be set), never
+// on the main S3 listener.
 //
-// RequireListener defaults to true. A deployment that reports healthy while
-// Prometheus silently receives nothing is the worse of the two failures,
-// because nothing about it looks wrong until someone goes looking for a graph.
-// Dev and embedded use set it false, where the port may well be taken and
-// best-effort metrics are fine; it is a pointer so an explicit false is
-// distinguishable from an omitted field.
+// RequireListener defaults to true, so a metrics listener that fails to bind
+// fails startup instead of silently dropping metrics. It is a pointer so an
+// explicit false is distinguishable from an omitted field.
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`

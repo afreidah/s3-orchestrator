@@ -72,14 +72,8 @@ func newRecordingRejector() *recordingRejector {
 // -------------------------------------------------------------------------
 
 // TestPutObject_EncryptsOnceAcrossFailover asserts every attempt of one write
-// sends byte-identical ciphertext under a single wrapped DEK. Encrypting per
-// attempt would put a fresh base nonce on each upload, which is invisible while
-// one copy lands but leaves the copies of a key differing once a write places
-// several: replication moves bytes verbatim and describes the target row from
-// the source, so nothing downstream would ever compare them.
-//
-// Three backends rather than two, since nothing here should hold for a reason
-// peculiar to a pair.
+// sends byte-identical ciphertext under a single wrapped DEK, across three
+// backends.
 func TestPutObject_EncryptsOnceAcrossFailover(t *testing.T) {
 	t.Parallel()
 	b1, b2 := newRecordingRejector(), newRecordingRejector()

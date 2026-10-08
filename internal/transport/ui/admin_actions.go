@@ -75,10 +75,7 @@ type adminActionOp[R any] struct {
 
 // startAdminAction is the common dispatcher: it requires POST, ensures the op
 // isn't already running, then fires the work in a goroutine and returns
-// 202 Accepted.
-//
-// The type parameter is the response type, which is what makes each action's
-// payload typed rather than a map.
+// 202 Accepted. R is the action's response type.
 func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request, op adminActionOp[R]) {
 	setSecurityHeaders(w)
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
@@ -315,11 +312,8 @@ func (h *Handler) encryptOp(maxObjects int) adminActionOp[encryptExistingStatus]
 	}
 }
 
-// handleAPIEncryptExisting walks every unencrypted object, encrypts it,
-// re-uploads the ciphertext, and updates the DB record. Long-running.
-//
-// The optional max query parameter caps how many objects this run rewrites, 0
-// or absent meaning the whole fleet.
+// handleAPIEncryptExisting encrypts every unencrypted object, or the first max
+// of them when the query parameter is set.
 func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Request) {
 	h.startAdminAction(w, r, h.encryptOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
 }
@@ -360,11 +354,8 @@ func (h *Handler) compressOp(maxObjects int) adminActionOp[compressExistingStatu
 	}
 }
 
-// handleAPICompressExisting walks every object stored verbatim, encodes it,
-// re-uploads the encoding, and updates the DB record. Long-running.
-//
-// The optional max query parameter caps how many objects this run rewrites, 0
-// or absent meaning the whole fleet.
+// handleAPICompressExisting compresses every object stored verbatim, or the
+// first max of them when the query parameter is set.
 func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Request) {
 	h.startAdminAction(w, r, h.compressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
 }

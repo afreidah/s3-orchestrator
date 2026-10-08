@@ -28,19 +28,9 @@ import (
 	"reflect"
 )
 
-// NotNil panics when v is nil. Handles both the untyped-nil case
-// (v == nil) and the typed-nil interface case (e.g.
-// var x Store = (*concreteStore)(nil)) which the bare comparison
-// misses. name should identify the dependency for the panic message;
-// constructors typically pass the parameter name.
-//
-// Use it only for already-resolved internal dependencies whose absence is
-// a programmer wiring bug. Do NOT use it for anything that can legitimately
-// be absent or fail at runtime: values derived from config or user input,
-// network clients / file paths / external services, or optional and
-// feature-gated dependencies (use Optional[T] or a nil-check). Those return
-// an error the caller can handle. See docs/style-guide.md "Constructor
-// Patterns".
+// NotNil panics when v is nil, including a typed nil in an interface. Use it
+// only for internal dependencies whose absence is a wiring bug; anything
+// optional or derived from config should return an error instead.
 func NotNil(name string, v any) {
 	if v == nil {
 		panic(fmt.Sprintf("required dependency %q is nil", name))

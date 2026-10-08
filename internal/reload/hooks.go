@@ -37,10 +37,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// resolutionError renders an Optional[T] Failed outcome into the error
-// shape reload hooks surface to the coordinator. The label is the human
-// name of the subsystem so the resulting message reads naturally in
-// admin status output.
+// resolutionError wraps a failed Optional[T] resolution with the subsystem's
+// label for reload status output.
 func resolutionError(label string, err error) error {
 	return fmt.Errorf("%s resolution failed: %w", label, err)
 }
@@ -140,11 +138,9 @@ func (*corsHook) Name() string { return "bucket_cors" }
 
 // Check compiles the incoming file's rules and discards them, so a rule the
 // matcher cannot read aborts the reload before any hook has applied anything
-// and the running server keeps the rules it already had.
-//
-// Only the file's rules are checked. The store's were compiled once when the
-// provisioning API accepted them, and the merged set this hook applies from is
-// not assembled until bucketAuthHook runs, which is after every Check.
+// and the running server keeps the rules it already had. Only the file's rules
+// are checked; the store's were compiled when the provisioning API accepted
+// them.
 func (*corsHook) Check(_, newCfg *config.Config) error {
 	if newCfg == nil {
 		return nil

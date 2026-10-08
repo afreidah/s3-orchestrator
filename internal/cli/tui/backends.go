@@ -110,12 +110,8 @@ func (m *model) loadStatus() tea.Cmd {
 	}
 }
 
-// backendCmd builds the command every per-backend admin action is: call the
-// endpoint off the main loop and hand the result to toMsg.
-//
-// Callers pass a bound method value, so the client is read while Update still
-// holds the model. The returned function runs afterwards and must not touch
-// the model at all.
+// backendCmd calls a per-backend endpoint off the main loop and hands the
+// result to toMsg. The returned function must not touch the model.
 func backendCmd[T any](backend string, call func(context.Context, string) (T, error), toMsg func(T, error) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := call(context.Background(), backend)
@@ -203,12 +199,8 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // openBackendActions shows the highlighted backend's action menu, which is the
-// ops pane scoped to that one backend.
-//
-// The menu is where the passes that read and rewrite a backend's copies live,
-// rather than more single letters on this pane: each names what it will do in
-// full and confirms against the backend, which a keystroke on the wrong row
-// cannot do.
+// ops pane scoped to that one backend. Each entry confirms against the named
+// backend before it runs.
 func (m *model) openBackendActions() (tea.Model, tea.Cmd) {
 	name := m.selectedBackend()
 	if name == "" {
@@ -567,10 +559,8 @@ func (m *model) encryptionCoverage() string {
 	return "   plaintext: " + statusErrStyle.Render(humanize.Comma(plaintext))
 }
 
-// integrityCoverage renders how far behind verification is. Never-verified
-// copies read as a warning because they are the ones a scrub has never seen,
-// and deferred copies are appended because no sweep can reach them, so the
-// figure ahead of them describes only part of the fleet.
+// integrityCoverage renders how far behind verification is, with deferred
+// copies appended since no sweep can reach them.
 func (m *model) integrityCoverage() string {
 	iv := m.backends.integrity
 	return "verified: " + integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)

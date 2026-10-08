@@ -115,12 +115,9 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// RunMigrations applies versioned database migrations using goose. Migrations
-// are embedded in the binary and applied in order. Already-applied migrations
-// are skipped automatically via the goose_db_version tracking table.
-//
-// Instances starting together take turns under an advisory lock: the first
-// applies the migrations, and the rest wait, then find nothing left to apply.
+// RunMigrations applies the embedded goose migrations. Instances starting
+// together take turns under an advisory lock: the first applies the
+// migrations, and the rest wait, then find nothing left to apply.
 func (s *Store) RunMigrations(ctx context.Context) error {
 	stdDB, err := sql.Open("pgx", s.connStr)
 	if err != nil {
@@ -330,22 +327,9 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 	return out
 }
 
-// toVerifiableObjectLocations converts rows from the queries that also select
-// last_scrubbed_at.
-//
-// Separate from toFatObjectLocations because only some queries select that
-// column: it is meaningless on a replication row, and on a row with no hash
-// there is nothing to have verified against. Requiring the accessor here rather
-// than testing for it at runtime means a query that selects the column but
-// omits the accessor fails to compile, instead of silently reporting every copy
-// as never verified.
-// toIdentifiedObjectLocations converts rows from the read path's own query,
-// which selects the identity columns on top of everything the verifiable
-// conversion covers.
-//
-// A decode failure on the metadata column leaves that copy's identity nil,
-// which costs a backend round trip rather than failing the read: the object is
-// still perfectly readable, and the row can be re-learned.
+// toIdentifiedObjectLocations converts rows from the read path's query, which
+// adds the identity columns. A metadata decode failure leaves that copy's
+// identity nil, costing a backend round trip rather than failing the read.
 func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectLocation {
 	out := toVerifiableObjectLocations(rows)
 	for i := range rows {
@@ -359,6 +343,9 @@ func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectL
 	return out
 }
 
+// toVerifiableObjectLocations converts rows from the queries that also select
+// last_scrubbed_at. The type constraint makes a query that selects the column
+// without its accessor fail to compile, rather than report every copy unverified.
 func toVerifiableObjectLocations[T verifiableObjectRow](rows []T) []core.ObjectLocation {
 	out := toFatObjectLocations(rows)
 	for i := range rows {

@@ -22,16 +22,10 @@ import (
 // CHARGE
 // -------------------------------------------------------------------------
 
-// chargeStripes records a mutation's byte movements inside the transaction
-// that produced them, on the stripe the object key selects.
-//
-// Being in the same transaction as the object_locations rows is the whole
-// point: the counter commits and rolls back with the ledger it summarizes, so
-// it cannot drift from it. Reconciliation stays as an audit for the rows that
-// predate this, not as the repair the counter depends on.
-//
-// Backends are written in sorted order so two transactions touching the same
-// pair acquire the rows in the same sequence and queue rather than deadlock.
+// chargeStripes records a mutation's byte movements on the key's stripe inside
+// the same transaction as the object_locations change, so the counter cannot
+// drift from the ledger. Backends are written in sorted order so concurrent
+// transactions queue rather than deadlock.
 func chargeStripes(ctx context.Context, tx TxAdapter, key string, deltas QuotaDeltas) error {
 	if len(deltas) == 0 {
 		return nil

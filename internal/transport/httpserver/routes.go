@@ -31,12 +31,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 )
 
-// registerAdminHandler mounts the admin API at /admin/.
-//
-// Always mounted: the surface authenticates credentials rather than a
-// configured token, so there is no setting that turns it off. What a caller
-// reaches on it is decided by the grants its credential holds, and a deployment
-// that has issued none simply has nobody able to call it.
+// registerAdminHandler mounts the admin API at /admin/. It is always mounted;
+// access is decided by the grants each caller's credential holds.
 func registerAdminHandler(mux *http.ServeMux, inj do.Injector, _ *config.Config) error {
 	adminHandler, err := do.Invoke[*admin.Handler](inj)
 	if err != nil {
@@ -55,10 +51,8 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, _ *config.Config)
 	if rl := rlRes.Value; rl != nil {
 		adminHTTP = rl.Middleware(adminHTTP)
 	}
-	// Panic-recovery middleware wraps the rate-limited handler so a
-	// panic anywhere in the admin chain (handler or rate limiter)
-	// produces a JSON 500 with a request id instead of a TCP RST
-	//.
+	// Wraps the rate limiter too, so a panic anywhere in the admin chain
+	// returns a JSON 500 with a request id instead of a reset connection.
 	adminHTTP = httputil.PanicRecover("admin", adminPanicWriter)(adminHTTP)
 	mux.Handle("/admin/", adminHTTP)
 	slog.InfoContext(context.Background(), "admin API enabled",
@@ -68,16 +62,9 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, _ *config.Config)
 	return nil
 }
 
-// registerUIHandler mounts the optional web UI dashboard.
-//
-// Panic recovery is intentionally NOT applied to the UI surface.
-// UI routes register themselves on the same mux as the S3 catch-all,
-// so wrapping requires re-architecting the UI handler to expose its
-// sub-routes for individual wrapping. UI is
-// also the lowest panic-risk surface (mostly static reads from cached
-// data, no streaming bodies); the bulk of the recovery value comes
-// from S3 (large blast radius, complex paths) and admin (state-
-// changing, attack surface).
+// registerUIHandler mounts the optional web UI dashboard. Panic recovery is
+// not applied here: UI routes register directly on the shared mux, so they
+// cannot be wrapped as one handler.
 func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
 	if !cfg.UI.Enabled {
 		return nil
@@ -110,10 +97,8 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 //
 // Either form respects LoadShedThreshold and AdmissionWait when set.
 //
-// CORS wraps the S3 handler directly, inside both the rate limiter and
-// admission control. A preflight carries no credentials, so answering it
-// outside those two would leave the one request on this surface that anybody
-// can send bounded by nothing.
+// CORS sits inside both the rate limiter and admission control, so
+// unauthenticated preflights are bounded by them too.
 func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
 	rt, err := do.Invoke[*infra.BackendRuntime](inj)
 	if err != nil {
@@ -162,11 +147,8 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		s3Handler = ac.Middleware(s3Handler)
 	}
 
-	// Panic-recovery middleware wraps the entire S3 stack (admission
-	// + rate-limit + handler) so a panic anywhere in the chain
-	// produces an S3-XML 500 with a request id rather than a TCP RST.
-	// Outermost wrap so it catches panics that escape the
-	// inner middlewares too.
+	// Outermost, so a panic anywhere in the chain becomes an S3-XML 500
+	// with a request id rather than a TCP RST.
 	s3Handler = httputil.PanicRecover("s3", s3api.WriteS3Error)(s3Handler)
 
 	mux.Handle("/", s3Handler)
@@ -177,10 +159,7 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 // PANIC-RECOVERY WRITERS
 // -------------------------------------------------------------------------
 
-// adminPanicWriter emits the admin surface's 500 response. Admin
-// clients are HTTP/JSON, so the panic-recovery message goes back as
-// a JSON {"error": "..."} body matching the rest of the admin error
-// shape.
+// adminPanicWriter writes the admin surface's panic response as a JSON error.
 func adminPanicWriter(w http.ResponseWriter, status int, _ string, message string) {
 	httputil.WriteJSONError(w, status, message)
 }

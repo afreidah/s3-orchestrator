@@ -32,10 +32,8 @@ import (
 
 // KeyProvider wraps and unwraps per-object DEKs using a master key. Each
 // implementation corresponds to a different key source (config, file, Vault).
-//
-// WrapDEK returns the wrapped bytes along with the identifier of the key that
-// wrapped them, which is what lets UnwrapDEK find the right one later - a
-// rotated deployment holds several at once.
+// WrapDEK returns the wrapping key's ID so UnwrapDEK can find it after
+// rotation, when several keys are held at once.
 type KeyProvider interface {
 	WrapDEK(ctx context.Context, dek []byte) (wrappedDEK []byte, keyID string, err error)
 	UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) (dek []byte, err error)

@@ -46,13 +46,11 @@ type CredentialConfig struct {
 }
 
 // CORSRule declares which browser origins may reach a bucket cross-origin,
-// mirroring the S3 CORSRule shape so an operator can transcribe a rule set
-// they already run on S3.
+// mirroring the S3 CORSRule shape.
 //
-// MaxAge is the seconds a browser may cache a preflight result. Zero leaves
-// the header off, so the browser preflights every request. ExposeHeaders
-// names the response headers a script may read: without ETag in that list, a
-// browser upload cannot see the identifier of the object it just wrote.
+// MaxAge is the seconds a browser may cache a preflight result; zero leaves
+// the header off. Without ETag in ExposeHeaders, a browser upload cannot read
+// the ETag of the object it just wrote.
 type CORSRule struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	AllowedMethods []string `yaml:"allowed_methods"`
@@ -73,15 +71,8 @@ type BucketConfig struct {
 	CORS                []CORSRule         `yaml:"cors"`
 }
 
-// validateBuckets enforces that every bucket has a unique name and carries at
-// least one credential pair so SigV4 resolution has something to match. Errors
-// aggregate so operators see all problems in one pass.
-//
-// Declaring none is allowed. The store declares buckets too, and a deployment
-// that keeps them all there has nothing to put here; requiring one would force
-// it to leave a bucket behind purely to satisfy this. It also leaves somewhere
-// to start from: a new deployment boots with none and provisions them through
-// the admin API.
+// validateBuckets enforces unique names and at least one credential per
+// bucket. Declaring none is allowed, since buckets can live in the store.
 func validateBuckets(buckets []BucketConfig) []error {
 	var errs []error
 
@@ -93,12 +84,9 @@ func validateBuckets(buckets []BucketConfig) []error {
 }
 
 // seenCredentials tracks the identifiers that have to be unique across every
-// bucket, so a duplicate is caught wherever in the list it appears.
-//
-// Uniqueness is a security property here, not tidiness: each of these
-// identifiers resolves an inbound request to the bucket whose namespace it may
-// read and write, so two buckets claiming one identifier means whichever the
-// registry stored last silently owns it.
+// bucket. Uniqueness is a security property: each identifier resolves a
+// request to the bucket it may read and write, so a duplicate would let
+// whichever bucket the registry stored last silently own it.
 type seenCredentials struct {
 	names      map[string]bool
 	accessKeys map[string]bool

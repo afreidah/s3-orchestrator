@@ -597,12 +597,9 @@ func (h *harness) decodeStored(backendName, key string) []byte {
 }
 
 // assertEveryCopyDecodesTo requires every copy the ledger claims for key to
-// decode to want, and its stored length to match what the ledger recorded.
-//
-// Reading each copy directly is the point: a GET through the proxy fails over
-// to a healthy replica, so one truncated or mis-encoded copy is invisible from
-// the client side, which is exactly the state a move can leave behind. stage
-// names the operation under test so a failure says which step lost the bytes.
+// decode to want, and its stored length to match what the ledger recorded. It
+// reads each copy directly, since a proxied GET would fail over past a bad
+// one. stage names the operation under test for the failure message.
 func (h *harness) assertEveryCopyDecodesTo(key string, want []byte, stage string) {
 	h.t.Helper()
 	backends := h.objectBackends(key)

@@ -12,11 +12,8 @@
 package adminapi
 
 // RotateEncryptionKeyResponse reports a key-rotation pass: how many DEKs were
-// re-wrapped under the current primary key.
-//
-// Rotation does not embed BulkRewriteOutcome. It re-wraps a DEK without reading
-// or writing the object's bytes, so it is not a rewrite pass and has nothing a
-// skipped count would describe.
+// re-wrapped under the current primary key. It does not embed
+// BulkRewriteOutcome because rotation never touches the object's bytes.
 type RotateEncryptionKeyResponse struct {
 	Status  string `json:"status"`
 	Failed  int    `json:"failed"`

@@ -235,10 +235,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// dbBreaker resolves the database circuit breaker from the injector for
-// the /health handler. Returns nil when the breaker has not been
-// registered (which should be impossible after resolveRequiredServices,
-// but the nil check keeps the contract explicit).
+// dbBreaker resolves the database circuit breaker for /health, or nil when it
+// is not registered.
 func (r *Runtime) dbBreaker() *breaker.CircuitBreaker {
 	v, _ := do.Invoke[*breaker.CircuitBreaker](r.inj)
 	return v
@@ -325,14 +323,9 @@ func (r *Runtime) shutdown() {
 }
 
 // drainDetachedUploads waits for the copies a fan-out write left running after
-// answering its client. They belong to no request, so the HTTP drain above
-// returns without them; this is the other half of that wait.
-//
-// Placed after the HTTP drain and before the background services stop, because
-// each of those copies still has a row to commit and bytes to account for, and
-// the final usage flush further down is what carries them. Whatever is still
-// running when the deadline expires is left exactly as a kill would leave it:
-// the intents stay, and the reaper resolves them on a later tick.
+// answering its client, which the HTTP drain does not cover. It must run
+// before the final usage flush, which carries their accounting. Copies still
+// running at the deadline leave their intents for the reaper.
 func (r *Runtime) drainDetachedUploads(ctx context.Context) {
 	detached, err := do.Invoke[*writepath.DetachedUploads](r.inj)
 	if err != nil || detached == nil {

@@ -709,11 +709,8 @@ func TestListMultipartUploads_NoAuth(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // newTestServerWithMultipartLimit builds an httptest.Server whose
-// "mybucket" credential is configured with a per-bucket multipart upload
-// cap. Used by the per-bucket limit tests so the limit branch in
-// handleCreateMultipartUpload is exercised end-to-end (the default
-// newTestServer leaves the cap at 0 == unlimited and never enters that
-// branch).
+// "mybucket" has a per-bucket multipart upload cap; newTestServer leaves it
+// unlimited.
 func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(*storetest.MockMetadataStore)) (*httptest.Server, *storetest.MockMetadataStore) {
 	t.Helper()
 

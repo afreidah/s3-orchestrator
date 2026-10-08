@@ -135,14 +135,10 @@ func compressible(n int) []byte {
 }
 
 // partlyCompressible returns n bytes that shrink by roughly half rather than
-// by orders of magnitude.
-//
-// Repetitive input encodes to so little that a single frame plus the seek table
-// accounts for nearly the whole stored object, which leaves a ranged read
-// indistinguishable from a whole-object fetch. Any pattern the encoder can
-// model does the same, so half of every block is drawn from a seeded PRNG that
-// it cannot, and half is constant so the object still clears the ratio floor
-// and is stored encoded at all. Seeded, so the sizes are the same every run.
+// by orders of magnitude, so a ranged read is distinguishable from a
+// whole-object fetch. Half of each block is seeded PRNG output and half is
+// constant, so the object still clears the ratio floor and sizes are stable
+// across runs.
 func partlyCompressible(n int) []byte {
 	rng := rand.New(rand.NewSource(1))
 	out := make([]byte, n)

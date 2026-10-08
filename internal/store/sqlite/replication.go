@@ -27,22 +27,14 @@ import (
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
 //
-// A key's copies are the rows it holds plus the intents still uploading one,
-// because a write that places its own copies commits them a moment apart and
-// the intent is the statement that the copy is on its way. Counting only the
-// rows makes every such write look under-replicated for that moment, and a
-// scan landing inside it reads the object back to make a copy the write is
-// already placing.
+// A key's copies are the rows it holds plus the intents still uploading one. A
+// write that places several copies commits them a moment apart, and counting
+// rows alone would have the worker copy the object to a backend the write is
+// already landing on.
 //
-// Every live intent counts, whatever its role. The role tells the reaper what
-// to do with an abandoned intent; it does not say which copy records the
-// object. That is the first to land, and when it is a companion the write's
-// primary intent is the one still in flight: a count of companions alone read
-// such a key as one copy short, and the worker copied it to the very backend
-// the primary was landing on. An intent a later write to the same key adds
-// counts too, harmlessly, since that write replaces the object; one left by a
-// write that never finished holds replication off only until the reaper
-// clears it.
+// Every live intent counts, whatever its role: the first copy to land may be a
+// companion while the primary is still in flight. An intent left by a write
+// that never finished holds replication off only until the reaper clears it.
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
@@ -75,13 +67,10 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 }
 
 // GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
-// target factor, ignoring copies on the excluded backends. Returns all rows
-// for those objects so callers know the full picture.
-//
-// Counts a key's in-flight copies the same way GetUnderReplicatedObjects does.
-// An intent on an excluded backend still counts, because excluding a backend
-// says the worker will not place a copy there, not that a copy already going
-// there is absent.
+// target factor, ignoring copies on the excluded backends, and returns all
+// rows for those objects. In-flight intents count as in
+// GetUnderReplicatedObjects, including those on an excluded backend: excluding
+// a backend stops new copies going there, not one already on its way.
 func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
 	if len(excludedBackends) == 0 {
 		return s.GetUnderReplicatedObjects(ctx, factor, limit)

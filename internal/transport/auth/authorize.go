@@ -27,13 +27,9 @@ const (
 // AuthorizeKey reports whether u may exercise want on the bucket key names, and
 // returns that bucket for the caller's refusal record.
 //
-// A key carries bucket and object as one string, and a bucket name holds no
-// slash, so the first segment is the bucket. A value with no slash names no
-// single bucket: the empty prefix is the whole namespace and a partial name
-// spans every bucket it prefixes. Only the bucket wildcard can authorize that,
-// since no per-bucket grant answers for buckets it does not name.
-//
-// Fails closed: a nil user reaches nothing.
+// The first slash-separated segment of key is the bucket. A key with no slash
+// (the empty prefix, or a partial bucket name) spans every bucket it prefixes,
+// so only the bucket wildcard can authorize it. A nil user reaches nothing.
 func AuthorizeKey(u *User, key string, want core.PermissionSet) (bucket, reason string, ok bool) {
 	bucket, _, found := strings.Cut(key, "/")
 	if !found || bucket == "" {

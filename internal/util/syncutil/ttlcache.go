@@ -53,12 +53,8 @@ func NewTTLCache[K comparable, V any](ttl time.Duration) *TTLCache[K, V] {
 // -------------------------------------------------------------------------
 
 // Get returns the cached value for the key, or the zero value and false if
-// the key is missing or expired.
-//
-// An entry is live only while its expiry is strictly in the future, so a TTL of
-// zero is never served. Asking instead whether the expiry has passed leaves the
-// zero-TTL case resting on the clock advancing between the Set and the Get,
-// which is a race rather than a policy.
+// the key is missing or expired. An entry is live only while its expiry is
+// strictly in the future, so a zero TTL is never served.
 func (c *TTLCache[K, V]) Get(key K) (V, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

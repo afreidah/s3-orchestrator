@@ -35,22 +35,17 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ErrorWriter writes a route-appropriate 500 response. The middleware
-// stays format-agnostic - each route group passes a writer that matches
-// what its clients expect (S3-XML for the s3api surface, JSON for the
-// admin API, plaintext for the UI). The writer MUST set the status code
-// and write any headers before returning; the middleware only invokes
-// it once per recovered panic.
+// ErrorWriter writes an error response in the format a route group's clients
+// expect (S3-XML for s3api, JSON for the admin API). It must set the status
+// code and write any headers before returning.
 type ErrorWriter func(w http.ResponseWriter, status int, errCode, message string)
 
 // PanicRecover returns middleware that recovers panics from h, translates
-// them into a 500 response via writeErr, and emits the three observability
-// signals (slog.ErrorContext + audit + Prometheus counter) plus OTel span
-// error recording when a span is active on the request context.
+// them into a 500 response via writeErr, and records the panic in the log,
+// the audit trail, a Prometheus counter, and the active span if any.
 //
-// route is the metric label and the audit event scope (e.g. "s3", "admin",
-// "ui"). It must come from a small fixed set per the cardinality rules in
-// docs/style-guide.md - never derive it from the request URL.
+// route is the metric label and the audit event scope (e.g. "s3", "admin").
+// It must come from a small fixed set, never from the request URL.
 func PanicRecover(route string, writeErr ErrorWriter) func(http.Handler) http.Handler {
 	log := slog.Default().With(logfmt.Component("httputil"))
 	return func(next http.Handler) http.Handler {
@@ -105,11 +100,8 @@ func handleRecoveredPanic(r *http.Request, w http.ResponseWriter, log *slog.Logg
 	writeErr(w, http.StatusInternalServerError, "InternalError", buildClientMessage(requestID))
 }
 
-// panicError wraps the recovered value as an error so logfmt.Err and
-// span.RecordError see the same payload. A bare error keeps its type;
-// any other value (string, runtime.Error subtype, custom struct) is
-// wrapped via panicValueError so the JSON handler still serialises a
-// human-readable message instead of "{}".
+// panicError returns the recovered value as an error, wrapping a non-error so
+// it logs as a readable message.
 func panicError(rec any) error {
 	if err, ok := rec.(error); ok {
 		return err
@@ -156,11 +148,8 @@ func formatPanicValue(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// buildClientMessage constructs the response message returned to the
-// client. The request id is echoed so customer support can correlate a
-// failure report with the recovery log line. The panic value itself is
-// deliberately not exposed - it can leak stack frames and internal
-// names that have no business reaching an S3 client.
+// buildClientMessage builds the client-facing panic message. It echoes the
+// request id for correlation but never the panic value.
 func buildClientMessage(requestID string) string {
 	if requestID == "" {
 		return "An internal error occurred while processing the request."

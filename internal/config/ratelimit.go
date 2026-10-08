@@ -37,10 +37,9 @@ type RateLimitConfig struct {
 // the database becomes unreachable, the proxy enters degraded mode: reads
 // broadcast to all backends, writes return 503.
 //
-// DegradedBroadcastParallelism only means anything when ParallelBroadcast is
-// on. Zero probes every configured backend at once; a positive value makes the
-// probes a rolling window, launching the first N and replenishing from the
-// pending list as each one fails, so at most N are ever in flight.
+// DegradedBroadcastParallelism applies only when ParallelBroadcast is on. Zero
+// probes every backend at once; a positive N keeps at most N probes in flight
+// as a rolling window.
 type CircuitBreakerConfig struct {
 	FailureThreshold  int           `yaml:"failure_threshold"`  // consecutive failures before opening (default 3)
 	OpenTimeout       time.Duration `yaml:"open_timeout"`       // delay before probing recovery (default 15s)
@@ -102,11 +101,8 @@ func (cb *CircuitBreakerConfig) setDefaults() {
 	cb.FailureThreshold = defaulted(cb.FailureThreshold, 3)
 	cb.OpenTimeout = defaulted(cb.OpenTimeout, 15*time.Second)
 	cb.CacheTTL = defaulted(cb.CacheTTL, 60*time.Second)
-	// DegradedBroadcastParallelism intentionally has no positive default:
-	// zero means fan out to every backend, and operators opt into the
-	// rolling-window cap by setting a positive value. A negative value is
-	// normalised to zero so a typo cannot accidentally disable the
-	// broadcast entirely.
+	// Zero means fan out to every backend; a negative value is normalised to
+	// zero so a typo cannot disable the broadcast.
 	if cb.DegradedBroadcastParallelism < 0 {
 		cb.DegradedBroadcastParallelism = 0
 	}

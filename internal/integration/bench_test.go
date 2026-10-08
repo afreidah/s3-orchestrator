@@ -83,15 +83,9 @@ func BenchmarkPutObject(b *testing.B) {
 	}
 }
 
-// BenchmarkPutObject_Parallel measures PUT throughput under concurrent writers,
-// which is the shape the striped quota counter and the pending-intent claim were
-// built for: several writes charging one backend at the same time. The serial
-// benchmark above exercises the same path but can never queue on it.
-//
-// The fleet is provisioned at 64 MiB per backend, which a benchmark fills. Since
-// admission reads live rows, a full backend refuses every later claim and the
-// run dies on 507 rather than reporting a number, so the ceiling is raised for
-// the duration and restored afterwards.
+// BenchmarkPutObject_Parallel measures PUT throughput with several writers
+// charging one backend at once. The quota ceiling is raised for the run, since
+// a benchmark fills the default 64 MiB and then fails on 507.
 func BenchmarkPutObject_Parallel(b *testing.B) {
 	setQuotaLimits(b, 1<<40)
 

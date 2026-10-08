@@ -19,14 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// User is the identity behind a credential.
-//
-// ID survives a rename and is what an audit record names, so neither rotating a
-// credential nor renaming a user breaks the trail. FromConfig marks a user the
-// config file declares, which the provisioning API refuses to modify.
-//
-// No secret lives here: a user may hold several keypairs, and the secret belongs
-// to the one that proved the request.
+// User is the identity behind a credential. ID survives a rename and is what
+// audit records name. FromConfig marks a user the config file declares, which
+// the provisioning API refuses to modify. No secret lives here, since a user
+// may hold several keypairs.
 type User struct {
 	ID         string
 	Name       string
@@ -44,12 +40,8 @@ func (u *User) WithAllBuckets(perms core.PermissionSet) *User {
 	return u
 }
 
-// AllBuckets reports what this user may do on any bucket, named or not. Zero
-// means it holds no wildcard and reaches only the buckets it is granted.
-//
-// This is what authorizes an operation spanning the namespace rather than
-// naming one bucket: the empty prefix is every bucket, and no per-bucket grant
-// can answer for it.
+// AllBuckets reports what this user's bucket wildcard allows, which authorizes
+// operations spanning the whole namespace. Zero means no wildcard.
 func (u *User) AllBuckets() core.PermissionSet {
 	if u == nil {
 		return 0
@@ -59,10 +51,8 @@ func (u *User) AllBuckets() core.PermissionSet {
 
 // NewUser builds a user holding the given bucket grants. A nil or absent entry
 // means the user does not reach that bucket at all, which is a different answer
-// from reaching it with no permissions.
-//
-// Control-plane grants are added with WithAdmin, so the S3 path constructs a
-// user the same way it always has.
+// from reaching it with no permissions. Control-plane grants are added with
+// WithAdmin.
 func NewUser(id, name string, grants map[string]core.PermissionSet) *User {
 	u := &User{
 		ID:     id,
@@ -83,12 +73,8 @@ func (u *User) WithAdmin(admin map[core.Resource]core.PermissionSet) *User {
 }
 
 // CanReach reports whether this user holds a grant on the named bucket, of any
-// kind. A nil user reaches nothing, so a caller that failed to authenticate is
-// refused rather than panicking on the check.
-//
-// Kept separate from Can because the two refusals mean different things: no
-// grant is a bucket the caller cannot see, and a grant missing a permission is
-// one it can see and may not act on this way.
+// kind. A nil user reaches nothing. It is separate from Can because the two
+// refusals differ: no grant at all versus a grant missing a permission.
 func (u *User) CanReach(bucket string) bool {
 	if u == nil {
 		return false
@@ -100,12 +86,9 @@ func (u *User) CanReach(bucket string) bool {
 }
 
 // Can reports whether this user's grant on the named bucket carries every
-// permission in want. An empty want is satisfied by any grant, which is what an
-// operation needing no permission asks for.
-// A named grant answers alone, without the wildcard unioned in, which is what
-// lets broad access be carved down on one bucket: the publish-time expansion
-// already replaced the wildcard for every bucket a grant names, and this keeps
-// that same rule for the ones it does not.
+// permission in want. An empty want is satisfied by any grant. A named grant
+// answers alone, without the wildcard unioned in, so a bucket-specific grant
+// can narrow wildcard access on that bucket.
 func (u *User) Can(bucket string, want core.PermissionSet) bool {
 	if u == nil {
 		return false
@@ -129,11 +112,8 @@ func (u *User) Permissions(bucket string) (core.PermissionSet, bool) {
 }
 
 // Buckets lists what this user reaches, sorted, which is what a ListBuckets
-// response enumerates.
-//
-// A bucket the caller may not list the contents of is still named, because
-// ListBuckets answers which buckets exist for this caller rather than what it
-// may do inside them; PermListBuckets is what gates the entry itself.
+// response enumerates. A bucket is included when its grant carries
+// PermListBuckets, even if the caller may not list its contents.
 func (u *User) Buckets() []string {
 	if u == nil {
 		return nil
@@ -148,17 +128,8 @@ func (u *User) Buckets() []string {
 	return out
 }
 
-// CanAdmin reports whether this user may act on the named control-plane
-// resource. A nil user reaches nothing.
-//
-// The named grant is asked first and the kind's wildcard second, so a grant on
-// one backend answers for that backend and a wildcard answers for every backend
-// the deployment gains later. They union rather than the named one displacing
-// the wildcard: a control-plane grant is written to widen, and there is no
-// carve-out case the way a read-only bucket under a broad grant is.
-//
-// Nothing is granted implicitly. A user with no control-plane grant at all is
-// refused here, which is what keeps an S3 credential out of the admin surface.
+// CanAdmin reports whether this user may act on the control-plane resource, as
+// the union of its named grant and the kind's wildcard. Nothing is implicit.
 func (u *User) CanAdmin(resource core.Resource, want core.PermissionSet) bool {
 	if u == nil {
 		return false

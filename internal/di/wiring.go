@@ -26,12 +26,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// WireManager resolves every required worker (as a smoke check that
-// construction succeeded) and points the runtime's eligibility filter at
-// the drain manager. Returns the first error from
-// resolving a required dependency; the optional PendingReaper Failed
-// resolution is logged so a broken provider stays distinguishable from
-// an intentionally absent one.
+// WireManager resolves every required worker as a smoke check and points the
+// runtime's eligibility filter at the drain manager. It returns the first
+// required resolution error; a Failed PendingReaper is only logged.
 func WireManager(inj do.Injector) error {
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
 		return fmt.Errorf("resolve Rebalancer: %w", err)

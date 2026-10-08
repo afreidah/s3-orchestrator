@@ -22,11 +22,8 @@ import (
 // -------------------------------------------------------------------------
 
 // localCounters holds atomic counters for a single backend's usage deltas.
-//
-// The three fixed dimensions are named fields because every backend has
-// exactly those; request pools live in a registry because their names come
-// from config and change with it, so an entry is created the first time a
-// pool is charged rather than declared up front.
+// Pool names come from config, so a pool's entry is created the first time
+// it is charged.
 type localCounters struct {
 	apiRequests  atomic.Int64
 	egressBytes  atomic.Int64

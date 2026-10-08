@@ -133,12 +133,9 @@ func newActionsHandler(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.W
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestHandleAPIReplicate_HappyPathReturnsCount asserts that when the
-// admin handler is configured to actually run (factor > 1) the wrapper
-// closure surfaces the CopiesCreated count via the status endpoint
-// rather than the skipped reason. Drives the "non-skipped return" line
-// of every wrapper closure since the structural shape is identical
-// across the four operations; covering one is enough.
+// TestHandleAPIReplicate_HappyPathReturnsCount asserts that with replication
+// enabled (factor > 1) the status endpoint reports the CopiesCreated count
+// rather than a skipped reason.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
 	h := newActionsHandler(t, func(_ *proxytest.Stack, workers *proxytest.Workers) {
@@ -409,9 +406,6 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 // TestAdminActionWrappers_RouteIntoAdmin asserts that each trigger
 // wrapper actually invokes its admin counterpart through the real
 // goroutine path and surfaces the skipped reason on the status endpoint.
-// This covers the closure body of every handleAPI* wrapper, which the
-// nil-handler smoke tests cannot reach because they short-circuit on the
-// 503 guard.
 func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 	t.Parallel()
 

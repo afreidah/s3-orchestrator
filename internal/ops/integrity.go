@@ -109,12 +109,9 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // on every backend the read budget allows. observer, when non-nil, receives a
 // start and end step per copy verified.
 //
-// Held under the same advisory lock as the scheduled sweep, so an operator run
-// and a tick cannot read the fleet twice over. The lock lives here rather than
-// in each transport because the dashboard, the admin CLI and the TUI all reach
-// the scrubber through this method, and a guard in one of them leaves the other
-// two unprotected. A pass that cannot take the lock reports ErrScrubInProgress
-// rather than waiting, so the caller gets an answer instead of an open request.
+// It holds the same advisory lock as the scheduled sweep, so a manual run and
+// a tick cannot overlap. If the lock is held it returns ErrScrubInProgress
+// instead of waiting.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (ScrubResult, error) {
 	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {

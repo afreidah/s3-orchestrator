@@ -67,12 +67,9 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // ENCRYPT EXISTING
 // -------------------------------------------------------------------------
 
-// ListUnencryptedLocations returns a page of unencrypted object locations.
-// Used by the encrypt-existing admin endpoint to find objects that need
-// encryption.
 // CountUnencryptedLocations reports how many copies are still stored as
-// plaintext. Enabling encryption only affects new writes, so this is what says
-// whether a fleet is actually covered or merely configured to be.
+// plaintext. Enabling encryption only affects new writes, so existing copies
+// stay in this count until encrypt-existing rewrites them.
 func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 	var n int64
 	if err := s.db.QueryRowContext(ctx,
@@ -82,12 +79,10 @@ func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// Cursor-paged: encrypting a copy takes it out of this predicate, so the set
-// shrinks as encrypt-existing walks it and an offset would step over the rows
-// that moved up.
-// An empty backend selects every one, which is what a pass over the whole fleet
-// asks for. Filtering in the query rather than after the page is read is what
-// keeps the limit spent on candidates the pass will act on.
+// ListUnencryptedLocations returns a page of plaintext copies for
+// encrypt-existing, on one backend or on all when backend is empty. It pages
+// by cursor because encrypting a copy removes it from the set, so an offset
+// would skip the rows that moved up.
 func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes, etag

@@ -47,14 +47,11 @@ type ItemResult struct {
 	Status  string
 }
 
-// WorkSummary is the uniform result of one worker cycle. It replaces the ad-hoc
-// count tuples (checked/failed, processed/failed, moved) each worker used to
-// return, so partial-failure reporting and metric labels are consistent.
+// WorkSummary is the uniform result of one worker cycle.
 //
-// Deferred is not an item outcome. It counts work the cycle never selected,
-// because the backend holding it is over its usage limit, and those items were
-// never in the batch at all. Reporting it alongside the per-item counts is what
-// stops a budget-limited cycle reading as a complete one.
+// Deferred is not an item outcome: it counts work never selected because its
+// backend is over its usage limit, so a budget-limited cycle does not read as
+// complete.
 type WorkSummary struct {
 	Planned   int           // items the cycle set out to process
 	Attempted int           // items the per-item function ran (succeeded + failed)

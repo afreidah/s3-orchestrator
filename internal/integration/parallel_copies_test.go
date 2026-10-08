@@ -39,11 +39,9 @@ func fanoutSpec() harnessSpec {
 }
 
 // assertEveryCopyReadable checks each backend the ledger names for key really
-// holds want, read off the backend rather than through the orchestrator.
-//
-// The copies after the first commit once their uploads finish, which is after
-// the client has been answered, so the row count is waited on rather than read
-// once. A copy that never commits fails the wait rather than passing quietly.
+// holds want, read off the backend rather than through the orchestrator. It
+// waits for the rows, since copies after the first commit after the client is
+// answered.
 func assertEveryCopyReadable(t *testing.T, h *harness, key string, want []byte) {
 	t.Helper()
 	var backends []string
@@ -84,12 +82,10 @@ func TestInt_ParallelCopies_EveryRecordedCopyExists(t *testing.T) {
 	assertEveryCopyReadable(t, h, key, body)
 }
 
-// TestInt_ParallelCopies_OverwriteKeepsBothCopies is the regression this suite
-// exists for. An overwrite displaces the previous version's copies, and the
-// backend it displaces from is one this write is still uploading its own copy
-// to. Deleting the displaced bytes there takes the new copy with them and
-// leaves a row describing an object that is gone - which no read through the
-// orchestrator reveals, because it fails over to the copy that survived.
+// TestInt_ParallelCopies_OverwriteKeepsBothCopies checks that deleting an
+// overwritten version's copies does not remove the new version's copy still
+// uploading to the same backend. Copies are read directly, since a proxied
+// read would fail over to the survivor.
 func TestInt_ParallelCopies_OverwriteKeepsBothCopies(t *testing.T) {
 	h := newHarness(t, fanoutSpec())
 	key := uniqueKey(t, "fanout-overwrite")

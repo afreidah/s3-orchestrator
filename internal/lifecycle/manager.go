@@ -81,10 +81,7 @@ func NewManager() *Manager {
 	}
 }
 
-// SetBackoff overrides the supervisor's restart backoff parameters. Intended
-// for tests that exercise the restart path without paying real wall-clock
-// time. Must be called before Run; values take effect on the next supervise
-// iteration.
+// SetBackoff overrides the supervisor's restart backoff. Call it before Run.
 func (m *Manager) SetBackoff(initial, maximum, reset time.Duration) {
 	m.initialBackoff = initial
 	m.maxBackoff = maximum

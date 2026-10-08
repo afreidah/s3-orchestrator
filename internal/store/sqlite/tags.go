@@ -17,12 +17,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// GetObjectTags returns an object's tag set ordered by key. An object with no
-// tags yields an empty slice, not an error: an untagged object has an empty
-// TagSet rather than a missing one, and the caller answers 200 either way.
-//
-// Ordered in SQL rather than in Go so both engines hand back the same sequence
-// without the caller having to re-sort what it was given.
+// GetObjectTags returns an object's tag set ordered by key. An untagged object
+// yields an empty slice, not an error, because S3 answers 200 with an empty
+// TagSet.
 func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT tag_key, tag_value

@@ -77,11 +77,9 @@ func (cb *CircuitBreakerBackend) CheckHealth(ctx context.Context) error {
 // isBackendError returns true for errors that indicate backend health issues:
 // a failure with no HTTP status (connection refused, DNS, TLS, reset), a 5xx,
 // a 429, or a 401/403 (expired or revoked credentials fail every request).
-// Any other status is an answer from a working backend about one request - a
-// missing key, a bad range, a failed precondition - and counting it would let
-// a single bad object trip a healthy backend. Context cancellation and
-// deadline are excluded too: they signal a caller-side timeout or shutdown,
-// not the wrapped backend's health.
+// Any other status is about one request, and counting it would let a single
+// bad object trip a healthy backend. Context cancellation and deadline are
+// caller-side and never count.
 func isBackendError(err error) bool {
 	if err == nil {
 		return false
@@ -135,12 +133,9 @@ func (cb *CircuitBreakerBackend) DeleteObject(ctx context.Context, key string) e
 	})
 }
 
-// CopyObject forwards a server-side copy through the circuit breaker
-// when the wrapped backend implements Copier. When it does not,
-// returns ErrCopyNotSupported so the caller falls back to materialized
-// copy. CopyObject failures count toward the same breaker as other
-// operations so a misbehaving backend's native copy path trips the
-// breaker just like its PutObject/GetObject path.
+// CopyObject forwards a server-side copy through the circuit breaker, or
+// returns ErrCopyNotSupported when the wrapped backend does not implement
+// Copier. Copy failures count toward the same breaker as other operations.
 func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
 	copier, ok := cb.inner.(Copier)
 	if !ok {

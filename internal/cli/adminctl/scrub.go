@@ -18,11 +18,8 @@ import (
 )
 
 // cmdScrub implements `s3-orchestrator admin scrub [-batch-size=N] [-key=KEY]`.
-//
-// With -key the sweep is bypassed entirely: the named object's copies are
-// verified now and reported one per line. Waiting for the queue to reach a
-// specific key can take days on a large fleet, which is no use when an operator
-// is asking about one object because something already looks wrong.
+// With -key the sweep is bypassed: the named object's copies are verified
+// immediately and reported one per line.
 func cmdScrub(args []string, c *client) int {
 	fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)

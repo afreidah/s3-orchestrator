@@ -52,25 +52,8 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-// rewindToSchemaVersion returns a test database to the shape it had at an
-// earlier schema version, so the migration runner can be exercised against a
-// database that genuinely predates a migration.
-//
-// Stamping the version alone is not enough. newTestStore builds the database
-// from schema.sql, which carries every column the current version defines, so
-// a rewound-but-unaltered database is a state no deployment ever reaches: an
-// old version number over a current schema. Re-running an additive migration
-// against it fails on a column that is already there.
-//
-// Each additive migration therefore needs its columns undone here to be
-// rewound past.
 // unstripeQuotaCounter puts the byte counter back in backend_quotas and drops
-// the stripe table.
-//
-// schema.sql builds the post-migration shape directly, so a structural
-// migration has to be undone before it can be replayed; otherwise it runs
-// against a schema that already has the structure, which is a state no real
-// installation is ever in.
+// the stripe table, undoing the striping migration so it can be replayed.
 func unstripeQuotaCounter(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -83,6 +66,11 @@ func unstripeQuotaCounter(t *testing.T, s *Store) {
 	}
 }
 
+// rewindToSchemaVersion returns a test database to the shape it had at an
+// earlier schema version. Stamping the version alone is not enough: schema.sql
+// already has every current column, so re-running an additive migration would
+// fail on a column that exists. Each migration rewound past needs its changes
+// undone here.
 func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 	t.Helper()
 	ctx := context.Background()
@@ -1446,12 +1434,10 @@ func TestRemoveExcessCopy(t *testing.T) {
 	}
 }
 
-// TestRemoveExcessCopy_NoOpWhenAtFactor pins the race where another
-// path (parallel client delete, factor raised mid-tick, an earlier
-// cleaner tick on the same batch) has already brought the copy count
-// down to factor before this tx acquires the lock. The re-read inside
-// the tx sees count == factor and bails without deleting -- otherwise
-// we under-replicate.
+// TestRemoveExcessCopy_NoOpWhenAtFactor covers the race where another path
+// has already brought the copy count down to factor before this tx takes the
+// lock. The in-tx re-read sees count == factor and deletes nothing, so the
+// object is not left under-replicated.
 func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1801,13 +1787,10 @@ func TestListDirectoryChildren(t *testing.T) {
 	}
 }
 
-// TestListDirectoryChildren_UnderscorePrefix guards the SQLite directory query
-// against the LIKE-escaping offset bug that affected the Postgres side: the
-// caller escapes '_' to '\_', and reusing that escaped length for the
-// child-name substring offset would mangle and drop every child. A prefix
-// containing an underscore must still list its file and subdirectory children.
-// SQLite already passes the unescaped prefix length here; this keeps the two
-// implementations in parity.
+// TestListDirectoryChildren_UnderscorePrefix verifies a prefix containing an
+// underscore still lists its children. The LIKE pattern escapes '_' to '\_',
+// and using that escaped length as the child-name substring offset would
+// mangle every child.
 func TestListDirectoryChildren_UnderscorePrefix(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -3021,12 +3004,9 @@ func TestListAllEncryptedLocations(t *testing.T) {
 // CLEANUP DLQ - END TO END
 // -------------------------------------------------------------------------
 
-// TestStore_MoveCleanupToDLQ_GraduatesQueueRow asserts the
-// engine-level wrapper (Store.MoveCleanupToDLQ delegating to
-// core.MoveCleanupToDLQ over a real Runner) atomically moves the
-// queue row into cleanup_dlq, leaves orphan_bytes untouched, and
-// preserves enough context (key, size, backend, last_error) for
-// operator triage.
+// TestStore_MoveCleanupToDLQ_GraduatesQueueRow asserts MoveCleanupToDLQ moves
+// the queue row into cleanup_dlq with its key, size, backend, and last_error,
+// and leaves orphan_bytes untouched.
 func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -3838,7 +3818,7 @@ func TestMigration0006_NormalizesLegacyTimestamps(t *testing.T) {
 	}
 
 	// Chronologically: none < short < long. Before the migration the text
-	// comparison put "…00.5Z" after "…00.50000001Z".
+	// comparison put "...00.5Z" after "...00.50000001Z".
 	want := []string{"bucket/none", "bucket/short", "bucket/long"}
 	for i := range want {
 		if i >= len(order) || order[i] != want[i] {

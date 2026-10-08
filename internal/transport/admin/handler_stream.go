@@ -46,12 +46,10 @@ type stepResult struct {
 // event, a step_start/step_end pair per item via the progress observer, and a
 // terminal result. verb prefixes each item line ("hashing", "reconciling", ...).
 //
-// sequential controls rendering. A sequential op processes one item at a time,
-// so each item gets a step_start (the client prints the "<verb> <item> ....."
-// prefix immediately) and a bare step_end (the client completes the line with
-// the status). A concurrent op runs many items at once, where a live prefix
-// would interleave, so each finished item emits a single labeled step_end the
-// client renders as one complete line. emit is mutex-guarded either way, so a
+// sequential controls rendering. A sequential op emits a step_start (the client
+// prints the "<verb> <item> ....." prefix) and a bare step_end that completes
+// the line. A concurrent op would interleave live prefixes, so each finished
+// item emits one labeled step_end instead. emit is mutex-guarded, so a
 // concurrent observer is safe.
 func (h *Handler) streamSteps(w http.ResponseWriter, op, verb string, sequential bool, run func(progress.Observer) (stepResult, error)) {
 	emit := newEventStream(w)
@@ -91,23 +89,9 @@ func (h *Handler) streamSteps(w http.ResponseWriter, op, verb string, sequential
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// newEventStream sets the stream content type on w and returns an emit function
-// that encodes one Event per line and flushes after each so progress reaches
-// the client immediately. The flush is best-effort: a ResponseWriter that does
-// not implement http.Flusher still receives every line, just buffered.
-//
-// The write deadline is cleared first. server.write_timeout bounds an ordinary
-// response, and a stream is not one: it stays open for the whole pass, which on
-// a real fleet outlasts any timeout worth applying to a request that is meant
-// to finish. The deadline is absolute rather than idle-based, so flushing
-// progress does not hold it off - it fires mid-pass, the server resets the
-// stream, and the client reports INTERNAL_ERROR having seen the work running
-// fine moments earlier.
-//
-// Cleared per response rather than by widening the server timeout, so every
-// request that is not a stream keeps the protection. Cancellation is unaffected:
-// it arrives through the request context when the client disconnects, which is
-// what the passes already stop on.
+// newEventStream returns an emit function that writes one Event per line and
+// flushes after each. It clears the write deadline first, since the absolute
+// server.write_timeout would otherwise reset a long pass mid-stream.
 func newEventStream(w http.ResponseWriter) func(adminstream.Event) {
 	clearWriteDeadline(w)
 	w.Header().Set("Content-Type", adminstream.ContentType)
@@ -124,13 +108,8 @@ func newEventStream(w http.ResponseWriter) func(adminstream.Event) {
 	}
 }
 
-// clearWriteDeadline lifts the server's write timeout for one response.
-//
-// Best-effort by design: a ResponseWriter that does not support deadlines
-// (httptest's recorder, a middleware that wraps without forwarding
-// Unwrap) returns http.ErrNotSupported, and there is nothing to lift there
-// anyway. Failing the stream over it would break the handler for exactly the
-// writers that were never subject to the deadline.
+// clearWriteDeadline lifts the server's write timeout for one response. A writer
+// without deadline support has no timeout to lift, so its error is ignored.
 func clearWriteDeadline(w http.ResponseWriter) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }

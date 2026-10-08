@@ -50,16 +50,12 @@ func NewLifecycle(d LifecycleDeps) *Lifecycle {
 	}
 }
 
-// Run applies every configured rule once and reports what it removed.
+// Run applies every configured rule once and reports what it removed. It
+// declines when no rules are configured, so an empty config is not mistaken
+// for a sweep that found nothing.
 //
-// Declines when no rules are configured rather than reporting a sweep of zero:
-// those answer different questions, and an operator checking a rule they just
-// wrote needs to know the config never reached the process.
-//
-// The advisory lock the scheduled tick holds is deliberately not taken, which
-// matches every other manual trigger. A manual sweep can therefore overlap a
-// scheduled one; applyRule is idempotent and a doubled delete of the same key
-// is harmless.
+// It does not take the scheduled tick's advisory lock, so a manual sweep can
+// overlap a scheduled one; applyRule is idempotent, so that is harmless.
 func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (LifecycleResult, error) {
 	if l.expiry == nil {
 		return LifecycleResult{}, ErrLifecycleUnavailable

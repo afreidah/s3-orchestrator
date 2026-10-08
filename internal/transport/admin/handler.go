@@ -153,13 +153,8 @@ func New(d *Deps) *Handler {
 	}
 }
 
-// mustConfirmKey mints the key a purge confirmation token is signed with.
-//
-// Random per process rather than derived from configuration: the token only has
-// to survive between the preview call and the execute call that follows it, and
-// a key that never leaves memory cannot be used to forge one from a leaked
-// config. A restart invalidates any confirmation in flight, which costs the
-// operator one repeated preview.
+// mustConfirmKey mints a random per-process key for purge confirmation tokens,
+// so a leaked config cannot forge one. A restart invalidates tokens in flight.
 func mustConfirmKey() []byte {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -168,11 +163,8 @@ func mustConfirmKey() []byte {
 	return key
 }
 
-// SetReloadStatusProvider wires the callback that returns the most recent
-// reload result. Called by the runtime after the reload coordinator is
-// built. Routing through a setter rather than constructor injection
-// avoids the import cycle that would result from admin importing the
-// reload package directly.
+// SetReloadStatusProvider wires the callback that returns the latest reload
+// result. A setter because admin cannot import the reload package.
 func (h *Handler) SetReloadStatusProvider(fn func() *adminapi.ReloadStatusResponse) {
 	h.reloadStatus = fn
 }
@@ -206,11 +198,8 @@ func skipReason(err error) (string, bool) {
 	return "", false
 }
 
-// internalError logs the underlying error against the operator-facing
-// message and writes a 500 JSON response. Use for unexpected server-side
-// failures where the original err is recorded but never returned to the
-// caller. Extra attrs are appended to the log call so the caller can
-// attach correlating fields (object key, backend name, etc.).
+// internalError logs err with any extra attrs and writes msg as a 500 JSON
+// response, so the underlying error never reaches the caller.
 func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg string, err error, attrs ...any) {
 	args := append([]any{"error", err}, attrs...)
 	h.log.ErrorContext(ctx, msg, args...)

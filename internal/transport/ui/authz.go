@@ -55,10 +55,8 @@ func canUseDashboard(u *auth.User) bool {
 // authorizeRoute refuses a control-plane route the user's grants do not carry.
 // Reports whether the request may proceed; the refusal is already written when
 // it may not. Bucket routes pass here and are authorized by their handler.
-//
-// The dashboard's backend operations run over every backend, so they are
-// authorized against the backend wildcard: a user granted one provider's
-// maintenance cannot start a pass that spends egress on every other one.
+// Backend operations run over every backend, so they require the backend
+// wildcard grant.
 func (h *Handler) authorizeRoute(w http.ResponseWriter, r *http.Request, rt *uiAPIRoute) bool {
 	if rt.perm == 0 {
 		h.refuse(w, r, rt.suffix, "route declares no permission", "")

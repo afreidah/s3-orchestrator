@@ -62,10 +62,7 @@ type Deps struct {
 // Coordinator owns the SIGHUP goroutine, the hook sequence, and the
 // last-result snapshot. Construct it with New, then call Watch to start
 // the signal listener. Shutdown stops the goroutine. LastResult is
-// concurrent-safe.
-//
-// startup is the config the process started with, which non-reloadable fields
-// keep until a restart, so reloads are compared against it.
+// concurrent-safe. Reloads compare non-reloadable fields against startup.
 type Coordinator struct {
 	deps    Deps
 	hooks   []Hook
@@ -140,13 +137,8 @@ func (c *Coordinator) LastResult() *Result {
 	return c.lastResult.Load()
 }
 
-// Generation returns the monotonic generation counter. Starts at 0;
-// advances on every successful Apply pass (full or partial).
-//
-// The admin API reports the same number through LastResult, which carries the
-// rest of the pass with it. This accessor answers the narrower question without
-// a result to unpack, and is nil-safe before the first reload, where
-// LastResult is not.
+// Generation returns the reload generation, starting at 0 and advancing on
+// every successful Apply, full or partial.
 func (c *Coordinator) Generation() int64 {
 	return c.generation.Load()
 }

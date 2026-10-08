@@ -109,13 +109,8 @@ func (c *MemoryCache) Get(key string) (*Entry, bool) {
 	return me.entry, true
 }
 
-// Admit reports whether an entry whose data is approximately size bytes
-// would be accepted by the cache. Compares against max_object_size only;
-// total-cache capacity is handled by LRU eviction at PutBytes time. The
-// "approximately" caveat exists because an Entry's stored size also
-// includes ContentType + ETag + Metadata key/value bytes, which the
-// caller does not know until PutBytes runs - in practice these are tens
-// of bytes versus the body size and never matter for admission.
+// Admit reports whether an entry of about size bytes is under max_object_size.
+// Total capacity is enforced by LRU eviction in PutBytes.
 func (c *MemoryCache) Admit(size int64) bool {
 	return size > 0 && size <= c.maxObjectSize
 }

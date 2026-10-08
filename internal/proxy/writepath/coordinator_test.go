@@ -263,12 +263,9 @@ func TestNewPendingIntent_CopiesStoredForm(t *testing.T) {
 	}
 }
 
-// TestNewPendingIntent_CopiesCompression pins the rest of the description an
-// intent has to carry.
-//
-// SizeBytes is asserted alongside because it is both what quota is judged
-// against while the write runs and what it is reconciled against on recovery:
-// the bytes that occupy the backend, not the larger object they decode to.
+// TestNewPendingIntent_CopiesCompression asserts an intent carries the stored
+// form's compression fields, and that SizeBytes is the stored size quota is
+// judged against, not the larger logical size.
 func TestNewPendingIntent_CopiesCompression(t *testing.T) {
 	t.Parallel()
 	form := &core.StoredForm{

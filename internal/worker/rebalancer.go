@@ -81,11 +81,9 @@ func (r *Rebalancer) Config() *config.RebalanceConfig {
 
 // RebalanceMove describes a single object move from one backend to another.
 //
-// SrcStorageKey is where the copy being moved sits on FromBackend, taken from
-// the row the planner selected. The destination's path is minted when the move
-// runs rather than when it is planned, because other writes can take the key
-// while a plan waits, and a path chosen earlier could name bytes the move never
-// wrote.
+// SrcStorageKey is where the copy sits on FromBackend. The destination path is
+// minted when the move runs, not when it is planned, since other writes can
+// take the key while a plan waits.
 type RebalanceMove struct {
 	ObjectKey     string
 	FromBackend   string
@@ -630,13 +628,8 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 // -------------------------------------------------------------------------
 
 // planState is the running state of one rebalance cycle: the simulated stored
-// bytes, the committed transfer, and how many moves the batch has left.
-//
-// Grouped because every accepted move mutates all three together. Threading
-// them individually put the pack helpers past the parameter count a reader can
-// hold, and left the mutations inline at each call site where dropping one -
-// the source side of simUsed, say - would quietly skew every later decision in
-// the same plan.
+// bytes, the committed transfer, and how many moves the batch has left. Every
+// accepted move must update all three together.
 type planState struct {
 	simUsed   map[string]int64
 	budget    *usageBudget
@@ -662,13 +655,9 @@ func (p *planState) accept(src, dest string, size int64) {
 
 // usageBudget tracks the transfer a plan has already committed so a batch of
 // moves cannot collectively breach a limit that each move individually fits
-// inside. It is the usage-side counterpart to simUsed, which does the same job
-// for stored bytes.
-//
-// A move spends two different allowances on two different backends: reading the
-// object is egress on the source, writing it is ingress on the destination. The
-// two are checked separately because a backend can have headroom in one and
-// none in the other.
+// inside. A move spends egress on the source and ingress on the destination,
+// tracked separately since a backend can have headroom in one and not the
+// other.
 type usageBudget struct {
 	usage   *counter.UsageTracker
 	egress  map[string]int64
@@ -684,12 +673,9 @@ func newUsageBudget(usage *counter.UsageTracker) *usageBudget {
 }
 
 // allows reports whether moving size bytes from src to dest stays inside both
-// backends' limits, counting what this plan has already committed.
-//
-// Draining is deliberately not consulted: a drain exists to move data off a
-// draining backend, so excluding it as a source would stall the operation it
-// is meant to perform. This is why the check is WithinLimits rather than
-// EligibleForWrite, which excludes draining backends.
+// backends' limits, counting what this plan has already committed. It uses
+// WithinLimits rather than EligibleForWrite, which would exclude a draining
+// source and stall the drain.
 func (b *usageBudget) allows(src, dest string, size int64) bool {
 	if b == nil || b.usage == nil {
 		return true

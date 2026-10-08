@@ -47,13 +47,9 @@ func (a AuthConfig) HasRoot() bool {
 }
 
 // setDefaultsAndValidate refuses a half-declared root credential, and a missing
-// one where something needs it.
-//
-// needsRoot is whether the dashboard is enabled. The admin API is always served,
-// so a deployment without a root credential can still run as a pure S3 endpoint
-// administered by credentials already in its store - but one that has neither
-// has locked itself out, and saying so at boot is kinder than serving 401 to
-// every administrative request.
+// one when needsRoot is set (the dashboard is enabled and has no other login).
+// Without the dashboard, a deployment may run with no root credential and be
+// administered by credentials already in its store.
 func (a *AuthConfig) setDefaultsAndValidate(needsRoot bool) []error {
 	if a.Root.Declared() && !a.Root.Complete() {
 		return []error{ErrRootCredentialIncomplete}

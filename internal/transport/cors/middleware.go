@@ -58,12 +58,8 @@ const (
 type BucketResolver func(path string) (bucket string, ok bool)
 
 // Policy answers preflights and decorates cross-origin responses from the
-// rule set most recently stored on it.
-//
-// The rules live behind an atomic pointer so a config reload replaces them
-// wholesale between requests, matching how the bucket credential registry is
-// published. A nil rule set refuses every preflight, which is what an
-// instance whose reload failed should do.
+// rule set most recently stored on it. A config reload replaces the rules
+// atomically between requests. A nil rule set refuses every preflight.
 type Policy struct {
 	rules    syncutil.AtomicConfig[Registry]
 	resolve  BucketResolver
@@ -161,12 +157,10 @@ func (p *Policy) matchPreflight(r *http.Request, origin string) *rule {
 	return reg.matchPreflight(bucket, origin, method, parseHeaderList(r.Header.Get(headerRequestHeaders)))
 }
 
-// rejectPreflight refuses the preflight with no access-control headers.
-//
-// The response is identical whether the bucket exists, has no rules, or has
-// rules that do not admit the request, so a preflight cannot be used to
-// enumerate buckets from a browser - the one caller that can reach this
-// endpoint without a credential.
+// rejectPreflight refuses the preflight with no access-control headers. The
+// response is identical whether the bucket exists, has no rules, or has rules
+// that do not admit the request, so an unauthenticated preflight cannot
+// enumerate buckets.
 func (p *Policy) rejectPreflight(w http.ResponseWriter, r *http.Request, origin string) {
 	telemetry.CORSPreflightTotal.WithLabelValues(resultRejected).Inc()
 	p.log.DebugContext(r.Context(), "cors preflight refused",
@@ -178,13 +172,10 @@ func (p *Policy) rejectPreflight(w http.ResponseWriter, r *http.Request, origin 
 }
 
 // decorate adds the access-control headers to a cross-origin request that is
-// not a preflight, before the handler writes its response.
-//
-// A request no rule admits is passed through undecorated rather than
-// refused. The Origin header is not proof of a browser, and a signed request
-// from a non-browser client that happens to carry one is not subject to CORS
-// at all; a browser, meanwhile, is already blocked from reading a response
-// that carries no allow header.
+// not a preflight, before the handler writes its response. A request no rule
+// admits passes through undecorated rather than refused: a non-browser client
+// may send Origin and is not subject to CORS, and a browser cannot read a
+// response without an allow header anyway.
 func (p *Policy) decorate(w http.ResponseWriter, r *http.Request, origin string) {
 	w.Header().Add(headerVary, headerOrigin)
 

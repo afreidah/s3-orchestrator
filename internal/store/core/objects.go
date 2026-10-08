@@ -25,15 +25,9 @@ import (
 // -------------------------------------------------------------------------
 
 // ObjectCopy names one backend a write landed on, the pending intent it
-// resolves there, and the path its bytes occupy. Everything describing the
-// bytes lives on the request instead, because every copy of a key holds the
-// same ones: replication moves them verbatim, so a copy that differed could not
-// be made by any other path.
-//
-// The path is per copy rather than per request. A write placing several copies
-// holds an intent per copy and stores each copy's bytes under that intent's
-// id, so a copy that is later discarded, displaced or rebuilt can be addressed
-// on its own.
+// resolves there, and the path its bytes occupy. The path is per copy because
+// each copy is stored under its own intent's id; the description of the bytes
+// lives on the request, since every copy holds the same bytes.
 type ObjectCopy struct {
 	Backend    string
 	IntentID   string
@@ -43,23 +37,14 @@ type ObjectCopy struct {
 // RecordObjectRequest is one committed write: where the object landed, how its
 // bytes are stored, the tag set it carries, and the pending intents it resolves.
 //
-// Copies is a set because a write may place the object on several backends at
-// once. They commit together or not at all, which is what keeps a partly
-// recorded write from looking like an overwrite that displaced its own copies.
+// Copies commit together or not at all, so a partly recorded write never looks
+// like an overwrite that displaced its own copies. Tags are kept out of Form
+// because Form rides through replication and moves, while an object has one
+// tag set however many copies exist.
 //
-// Tags are separate from Form because Form describes the bytes and rides
-// through replication and moves; a tag set carried there would be re-inserted
-// on every copy that lands. Tags describe the object, and there is one set of
-// them however many copies exist.
-//
-// Placing names the copies of this same write whose uploads are still running.
-// They are the only intents a commit leaves alone - every other intent for the
-// key describes an object this write has replaced, and leaving a stranger's
-// would let it commit a copy of what was just replaced.
-//
-// Only their intents are held back. A copy this write is still uploading goes
-// to its own intent's path, so deleting a prior copy on the same backend
-// cannot touch what this write is placing.
+// Placing names this write's copies whose uploads are still running. Their
+// intents are the only ones a commit leaves alone; every other intent for the
+// key describes an object this write replaced.
 type RecordObjectRequest struct {
 	Key      string
 	Size     int64
@@ -107,21 +92,13 @@ type batchDeleteResult struct {
 	deltas QuotaDeltas
 }
 
-// RecordObject records an object's location and reports the backend byte
-// deltas it made. On overwrite, all existing copies (including replicas) are
-// removed before inserting the new primary copy. Returns the displaced copies
-// for cleanup alongside the deltas.
-//
-// The deltas are the caller's to apply: the byte counter lives in memory and
-// reaches backend_quotas at the next flush, so nothing here touches that row.
-//
-// A non-empty IntentID additionally deletes the matching pending_objects row
-// inside the same transaction, so a successful PUT's intent never outlives the
-// location it was covering.
+// RecordObject records an object's copies, replacing every existing copy of the
+// key, and returns the displaced copies for cleanup plus the backend byte
+// deltas. The caller applies the deltas to the in-memory counter; nothing here
+// touches backend_quotas. The key's pending intents, except those in Placing,
+// are cleared in the same transaction.
 func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
-	// A request with no copies would clear the key's existing rows and put
-	// nothing back, which reads as a delete rather than the write the caller
-	// meant. Refused here rather than in the transaction so no lock is taken.
+	// A request with no copies would clear the key and put nothing back.
 	if len(req.Copies) == 0 {
 		return nil, nil, ErrNoCopiesToRecord
 	}
@@ -151,15 +128,9 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err != nil {
 		return mutationResult{}, err
 	}
-	// A PUT is a full replacement, so the object landing here starts from an
-	// empty set and takes only the tags this write carried. Unconditional
-	// rather than gated on len(existing): a key with no copies but leftover
-	// tag rows still starts clean, which also sweeps anything a bug elsewhere
-	// orphaned.
-	//
-	// Written here rather than by the caller afterwards so the object and its
-	// tags commit together; two calls would leave the object tagless whenever
-	// the second one failed.
+	// A PUT replaces the tag set too, even when the key had no copies, so
+	// leftover tag rows are swept. Tags commit in the same transaction as the
+	// object.
 	if err := replaceObjectTagsTx(ctx, tx, req.Key, req.Tags); err != nil {
 		return mutationResult{}, err
 	}
@@ -196,11 +167,9 @@ func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy
 // deleteObjectTx is the transactional body of DeleteObject: clear the key's
 // copies, its tags and its intents, then debit what those copies held.
 func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResult, error) {
-	// Ahead of the row read, matching recordObjectTx. A tagging call
-	// touches object_tags without touching object_locations, so the row
-	// locks below do not exclude it; only the key lock does. Taking it in
-	// the same order everywhere is what keeps the two paths from
-	// deadlocking against each other.
+	// The key lock comes before the row read on every path, because tagging
+	// calls touch only object_tags and are excluded by the key lock alone.
+	// Taking it in the same order everywhere prevents deadlock.
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
 		return mutationResult{}, err
 	}
@@ -217,10 +186,8 @@ func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResu
 	if err := clearTagsForKey(ctx, tx, key); err != nil {
 		return mutationResult{}, err
 	}
-	// The object is gone, so every intent for it describes bytes nobody
-	// wants and no backend is being written to here. A delete keeps none of
-	// them: an upload still running is placing a copy of an object that no
-	// longer exists.
+	// A delete keeps no intents: an upload still running is placing a copy of
+	// an object that no longer exists.
 	superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
 	if err != nil {
 		return mutationResult{}, err
@@ -248,13 +215,9 @@ func debitExistingCopies(existing []ExistingCopy) ([]DeletedCopy, QuotaDeltas) {
 // DELETE OBJECTS BATCH
 // -------------------------------------------------------------------------
 
-// DeleteObjectsBatch removes every supplied key (and all its replicas)
-// in a single transaction, decrementing each affected backend's quota
-// once by the sum of removed bytes. Returns a map from key to its
-// displaced copies so the caller can fan out to the backend cleanup
-// path. Keys with no copies on disk are absent from the returned map
-// (treated as success-with-nothing-to-clean-up). Empty input yields an
-// empty map without opening a transaction.
+// DeleteObjectsBatch removes every copy of the supplied keys in one transaction
+// and returns each key's removed copies for cleanup plus the per-backend byte
+// deltas. Keys with no copies are absent from the map.
 func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[string][]DeletedCopy, QuotaDeltas, error) {
 	if len(keys) == 0 {
 		return map[string][]DeletedCopy{}, nil, nil
@@ -308,12 +271,9 @@ func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]De
 	return copies, deltas, perKey
 }
 
-// lockKeysInOrder takes the per-key lock for every supplied key, sorted and
-// deduplicated first.
-//
-// Sorted for the same reason applyQuotaDeltas sorts backends: two concurrent
-// batches sharing keys would otherwise take the same locks in caller-supplied
-// order and deadlock. Sorted on a copy so the caller's slice is left alone.
+// lockKeysInOrder takes the per-key lock for every distinct key in sorted
+// order, so concurrent batches sharing keys cannot deadlock. The caller's slice
+// is not modified.
 func lockKeysInOrder(ctx context.Context, tx TxAdapter, keys []string) error {
 	ordered := slices.Clone(keys)
 	slices.Sort(ordered)
@@ -329,18 +289,10 @@ func lockKeysInOrder(ctx context.Context, tx TxAdapter, keys []string) error {
 // DELETE OBJECT LOCATION
 // -------------------------------------------------------------------------
 
-// DeleteObjectLocation removes a single (key, backend) copy from the
-// object ledger and returns the bytes it removed, so the caller can debit the
-// backend and keep the counter in agreement with
-// SUM(object_locations.size_bytes). Its callers are the paths that drop a
-// row because the backend no longer holds the object: reconcile's
-// stale-entry deleter, the replicator's stale-source prune, and drain's
-// replica-source removal and purge. A row that is already gone is a
-// benign no-op that removes nothing.
-//
-// The size comes from the same FOR-UPDATE re-read that guards the delete,
-// so a concurrent overwrite cannot make the debit disagree with the row
-// that was actually removed.
+// DeleteObjectLocation removes the (key, backend) copy and returns the bytes it
+// removed, for the caller to debit; a missing row removes nothing. The size
+// comes from the locked re-read, so a concurrent overwrite cannot make the
+// debit disagree with the removed row.
 func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName string) (int64, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
@@ -357,11 +309,7 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
 			return 0, err
 		}
-		// Only the copy that was the object's last one takes its tags with
-		// it. Removing one replica of a multi-copy object leaves the object
-		// alive, and dropping its tags there would be silent data loss. The
-		// copy list is already in hand for the quota debit, so this costs
-		// no extra query.
+		// Only removing the last copy drops the object's tags.
 		if len(existing) == 1 {
 			if err := clearTagsForKey(ctx, tx, key); err != nil {
 				return 0, err
@@ -378,13 +326,9 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 // MOVE OBJECT LOCATION
 // -------------------------------------------------------------------------
 
-// MoveLocation is one src -> dest repointing of a copy: which object, the two
-// backends, and the path the bytes were written to on the destination.
-//
-// StorageKey comes from the caller, which wrote those bytes. A move is a write
-// like any other, so it uses its own path rather than the source's, and the
-// orphan cleanup for a move that loses its race deletes exactly what that move
-// uploaded.
+// MoveLocation is one src -> dest repointing of a copy. StorageKey is the
+// destination path the caller wrote, not the source's, so orphan cleanup for a
+// move that loses its race deletes exactly what that move uploaded.
 type MoveLocation struct {
 	ObjectKey   string
 	FromBackend string
@@ -392,14 +336,10 @@ type MoveLocation struct {
 	StorageKey  string
 }
 
-// MoveObjectLocation atomically moves a copy of an object from one
-// backend to another. Uses row-level locks to prevent races. Returns
-// (0, nil) if the source copy is gone or the target already has a
-// copy.
-//
-// The bytes moved are returned rather than debited and credited here, because
-// the caller already knows both ends of the move and applies the pair to the
-// in-memory counter.
+// MoveObjectLocation atomically moves a copy of an object from one backend to
+// another and returns the bytes moved, for the caller to apply to the in-memory
+// counter. It returns (0, nil) if the source copy is gone or the target
+// already has a copy.
 func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (int64, error) {
 	key, fromBackend, toBackend := m.ObjectKey, m.FromBackend, m.ToBackend
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
@@ -417,11 +357,8 @@ func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (in
 		if err := tx.DeleteObjectFromBackend(ctx, key, fromBackend); err != nil {
 			return 0, err
 		}
-		// The description of the bytes is carried through the same conversion
-		// every other path that moves them verbatim uses, rather than a
-		// hand-listed subset of the source row's fields. A field omitted here is
-		// a column describing bytes the moved copy then contradicts, which is
-		// how this path came to drop the compression columns.
+		// Carry the full stored form; hand-listing source fields drops columns
+		// and leaves a row that contradicts its bytes.
 		dest := ObjectFromStoredForm(key, toBackend, m.StorageKey, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
@@ -440,13 +377,8 @@ func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (in
 }
 
 // carryCompressionProbe copies a source copy's compression measurement onto the
-// destination row of a move.
-//
-// A measurement of what the encoder produced for these bytes is not a
-// description of them, so it rides here rather than through StoredForm. It
-// still has to ride: the move is verbatim, so what was measured on the source
-// holds on the destination, and dropping it has the next compression pass
-// download the copy to learn it again.
+// destination row of a move. The probe is not part of StoredForm, and dropping
+// it would make the next compression pass download the copy to measure again.
 func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocation, key, toBackend string) error {
 	if src.CompressionProbeSize <= 0 {
 		return nil
@@ -463,13 +395,8 @@ func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocatio
 // IMPORT OBJECT
 // -------------------------------------------------------------------------
 
-// ImportObjectRequest is one object discovered on a backend: where it was
-// found, how big it is, how its bytes are stored, and the write time to record
-// for it.
-//
-// WrittenAt is the modification time the backend reported. Zero means it
-// reported none, and the import stamps the moment of discovery instead, which
-// is the only other answer available.
+// ImportObjectRequest is one object discovered on a backend. WrittenAt is the
+// modification time the backend reported; zero stamps the time of discovery.
 type ImportObjectRequest struct {
 	Key       string
 	Backend   string
@@ -479,12 +406,9 @@ type ImportObjectRequest struct {
 	WrittenAt time.Time
 }
 
-// ImportObject records a pre-existing object in the database without
-// overwriting. Returns true if the object was newly imported, false if
-// ImportOutcome reports what an import did with a discovered key. A caller
-// that only wants a count still has to tell a suppressed import from a row
-// that was already there: the first says a delete is outstanding and the
-// bytes are an orphan, the second says nothing at all.
+// ImportOutcome reports what an import did with a discovered key.
+// ImportSkippedPendingCleanup means a delete is outstanding and the bytes are
+// an orphan, which callers must count apart from ImportSkippedExisting.
 type ImportOutcome int
 
 const (
@@ -505,16 +429,10 @@ func (o ImportOutcome) String() string {
 	}
 }
 
-// it already existed for this backend. Used by reconcile and the sync
-// subcommand to bring existing bucket objects under proxy management.
-//
-// A key whose delete is still outstanding is left alone. The bytes are on the
-// backend because a delete could not reach it, not because the object is meant
-// to be there, and importing them undoes the delete: the object comes back
-// live, the replicator spreads it to reach the replication factor, and its
-// created_at restarts so any lifecycle rule that expired it waits another full
-// window. The cleanup queue already tracks the orphan and its bytes are already
-// counted against the backend, so leaving the row absent is the accurate state.
+// ImportObject records a pre-existing backend object without overwriting an
+// existing row. A key with a pending cleanup on that backend is skipped:
+// importing it would undo the delete, and the cleanup queue already tracks the
+// orphan and its bytes.
 func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) (ImportOutcome, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
 		pending, err := tx.HasPendingCleanup(ctx, req.Key, req.Backend)
@@ -525,9 +443,8 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 			return ImportSkippedPendingCleanup, nil
 		}
 
-		// Bytes already recorded at this path belong to a copy the ledger knows
-		// about, under the real object's key. Without this check, a bulk sync
-		// would adopt every per-write path on the backend a second time, as an
+		// Bytes at a recorded path belong to a known copy under its real key;
+		// without this check a sync would import every per-write path as an
 		// object named after its path.
 		recorded, err := tx.CopyExistsAtPath(ctx, req.Backend, req.Key)
 		if err != nil {
@@ -537,20 +454,10 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 			return ImportSkippedExisting, nil
 		}
 
-		// The storage key is the key: a discovered object sits at the path the
-		// listing found it at, so that is the path the row addresses. An object
-		// the orchestrator wrote and lost the row for comes back under its own
-		// per-write path, which is where its bytes are.
-		//
-		// No identity: an imported object's ETag is whatever the backend
-		// reports, which is not known here and is not the same answer on every
-		// copy. The first read that has to ask the backend records what it got
-		// for every copy, so the value settles on first use instead of being
-		// guessed at import.
-		// An envelope no key opens is recorded but not managed, so it holds
-		// its quota without being replicated, listed or served. Otherwise a
-		// key the client deleted would come back as an object every read
-		// refuses.
+		// The row addresses the path the listing found. No identity is
+		// recorded because the backend's ETag is unknown here; the first read
+		// records it. An envelope no key opens is recorded as unmanaged, so it
+		// holds quota without being replicated, listed or served.
 		loc := ObjectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
 		loc.Unmanaged = req.Unmanaged || req.Form.Unreadable()
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
@@ -561,9 +468,7 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 		if !inserted {
 			return ImportSkippedExisting, nil
 		}
-		// Unconditional: an import adopts bytes the backend already holds, so
-		// refusing the charge at the ceiling would leave the counter
-		// understating what is stored rather than freeing anything.
+		// Charged without a ceiling check because the bytes are already stored.
 		if err := tx.AdjustQuotaStripe(ctx, req.Backend, StripeFor(req.Key), req.Size); err != nil {
 			return ImportSkippedExisting, err
 		}

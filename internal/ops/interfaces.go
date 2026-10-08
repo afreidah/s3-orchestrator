@@ -72,11 +72,8 @@ type ProvisioningStore interface {
 
 // BucketMatcher reports whether an object key names a bucket the deployment
 // declares, counting both the config file and the store.
-// *provisioning.Declared satisfies it.
-//
-// Read rather than captured, so a bucket created through the provisioning API
-// becomes addressable through the object operations at the same moment it
-// becomes reachable over S3.
+// *provisioning.Declared satisfies it, so newly provisioned buckets are seen
+// immediately.
 type BucketMatcher interface {
 	HasPrefix(key string) bool
 }
@@ -91,39 +88,19 @@ type NamespaceCounter interface {
 // RegistryPublisher rebuilds the credential registry the request path
 // authenticates against and installs it, so a provisioning change takes effect
 // on the next request rather than the next restart.
-//
-// The composition root satisfies it with a closure: this layer must not know
-// that a registry is assembled from a store and a config file, nor that a
-// transport holds the pointer being swapped.
 type RegistryPublisher interface {
 	Republish(ctx context.Context) error
 }
 
-// CompressionCodec is the encode and decode surface the bulk passes use. Both
-// halves are needed: one pass encodes, the other decodes, and neither is a
-// single-action role.
-//
-// Declared rather than taking *compression.Codec because a mid-pass encode
-// failure is a path worth testing - it decides whether one bad object ends the
-// run or is counted against itself - and the concrete codec cannot be made to
-// produce one.
+// CompressionCodec is the encode and decode surface the bulk passes use.
 type CompressionCodec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	DecompressStream(r io.Reader) (io.ReadCloser, error)
 }
 
-// UsageGate admits and accounts backend work against the monthly limits.
-// *counter.UsageTracker satisfies it directly, which is the point: an
-// operations pass asks the counters before it spends and tells them after,
-// and nothing sitting between the two adds anything.
-//
-// The admission half sits alongside the accounting half because the two were
-// once split across layers: everything here recorded what it spent and nothing
-// asked first, so a fleet-wide pass could burn a backend's monthly egress
-// budget and leave client reads refused on the counter it had run up.
-//
-// The byte parameters are ordered egress then ingress, matching the tracker
-// they reach.
+// UsageGate admits and accounts backend work against the monthly limits; a
+// pass calls WithinLimits before it spends and RecordAll after.
+// *counter.UsageTracker satisfies it. Byte parameters are egress then ingress.
 type UsageGate interface {
 	WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool
 	RecordAll(backendName string, ops []s3op.Operation, egress, ingress int64)

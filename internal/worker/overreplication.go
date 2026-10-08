@@ -239,9 +239,8 @@ type scoredCopy struct {
 //   - circuit-broken backend: 1 (remove next)
 //   - healthy backend: 2 + (1 - utilization_ratio), range [2..3]
 //
-// Among healthy backends, the most utilized backend gets the lowest score,
-// making its copy the first candidate for removal -- freeing space where it
-// is scarcest.
+// Among healthy backends the most utilized scores lowest, so its copy is
+// removed first.
 func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
 	if c.ops.IsDraining(loc.BackendName) {
 		return 0
@@ -264,13 +263,10 @@ func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[s
 	return 2.5 // no quota data: assume mid-range utilization
 }
 
-// cleanObject removes excess copies of a single object. Scores all copies,
-// sorts ascending, and removes the lowest-scoring copies until the count
-// reaches the target factor. factor is forwarded to RemoveExcessCopy so
-// the per-victim tx can re-read the copy set under lock and skip a
-// removal that races with a concurrent client delete. Returns how many
-// copies were removed and how many removals failed, so the caller can tell
-// an object it could not clean from one that had nothing left to clean.
+// cleanObject removes the lowest-scoring copies of one object until it is
+// down to factor. RemoveExcessCopy re-reads the copy set under lock with
+// factor, so a removal racing a client delete is skipped. It returns copies
+// removed and removals failed.
 func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []core.ObjectLocation, excess, factor int, stats map[string]core.QuotaStat) (removed, failures int) {
 	// Score each copy
 	scored := make([]scoredCopy, len(copies))
@@ -289,19 +285,15 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		}
 		victim := scored[i].loc
 
-		// Remove from metadata first so the replicator never sees a ghost
-		// copy. If the DB remove succeeds but the backend delete fails, the
-		// cleanup queue handles the orphan. removed=false is the benign
-		// race outcome: a parallel client delete or earlier tick already
-		// absorbed the excess, so this victim no longer needs touching.
+		// Remove metadata first so the replicator never sees a ghost copy; a
+		// failed backend delete goes to the cleanup queue. dropped=false means
+		// a concurrent delete or earlier tick already absorbed the excess.
 		dropped, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
 		switch {
 		case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
-			// The copy set disagrees about encryption and this victim is the
-			// only one that can still decrypt the object. Skipping leaves the
-			// key over-replicated, which costs quota; removing it would cost
-			// the object. Logged at warn because a mixed set always means a
-			// row lost its metadata somewhere and wants repair.
+			// This victim is the only copy that can still decrypt the object,
+			// so keep it over-replicated. A mixed copy set means a row lost its
+			// metadata and needs repair, hence the warning.
 			c.log.WarnContext(ctx, "skipping over-replication removal: victim holds the only usable encryption key",
 				"key", key, "backend", victim.BackendName)
 			telemetry.OverReplicationKeyPreservedTotal.Inc()

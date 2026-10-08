@@ -61,13 +61,10 @@ func SingleRequestPool(limit int64) []PoolSpec {
 	return []PoolSpec{{Name: PoolAll, Operations: []string{s3op.Wildcard}, Limit: limit}}
 }
 
-// UsageLimits holds the monthly usage limits for a single backend. Byte
-// limits stay scalar because providers do not class bytes; requests are
-// classed, so they are held as pools with a per-operation lookup.
-//
-// The compiled fields are unexported and immutable after construction:
-// callers build one with NewUsageLimits and read it through the accessors,
-// so a copy of the struct can be shared across goroutines safely.
+// UsageLimits holds the monthly usage limits for a single backend. Byte limits
+// are scalar; request limits are pools with a per-operation lookup. Build one
+// with NewUsageLimits; it is immutable afterwards and safe to share across
+// goroutines.
 type UsageLimits struct {
 	EgressByteLimit  int64
 	IngressByteLimit int64
@@ -76,17 +73,10 @@ type UsageLimits struct {
 	byOperation map[s3op.Operation][]RequestPool
 }
 
-// NewUsageLimits compiles the configured pools for one backend.
-//
-// unmetered names the operations the provider does not bill at all. They are
-// removed from every pool, including the wildcard, so a free operation cannot
-// consume a budget it was never going to cost anything against. They are still
-// recorded against the backend's request total; not billing an operation is
-// not a reason to stop reporting that it happened.
-//
-// Returns an error when a pool names an operation that is also unmetered,
-// which is a contradiction in the config rather than something to resolve
-// silently in one direction.
+// NewUsageLimits compiles the configured pools for one backend. Operations in
+// unmetered are removed from every pool, including the wildcard, but still
+// count toward the backend's request total. A pool that explicitly names an
+// unmetered operation is a config error.
 func NewUsageLimits(egressLimit, ingressLimit int64, specs []PoolSpec, unmetered []s3op.Operation) (UsageLimits, error) {
 	lim := UsageLimits{EgressByteLimit: egressLimit, IngressByteLimit: ingressLimit}
 	if len(specs) == 0 {

@@ -104,11 +104,8 @@ func (b *LogBuffer) Add(entry LogEntry) {
 }
 
 // Entries returns buffered log entries matching the query options.
-// Results are returned in chronological order (oldest first).
-//
-// The lock is held only long enough to snapshot the ring buffer state.
-// Filtering and result construction happen outside the lock so concurrent
-// Add calls are not blocked by slow dashboard queries.
+// Results are returned in chronological order (oldest first). Filtering runs
+// outside the lock so slow queries do not block Add.
 func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 	snapshot := b.snapshotEntries()
 	if len(snapshot) == 0 {
@@ -236,11 +233,7 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint
 	attrs := make(map[string]any)
 	prefix := groupPrefix(h.groups)
 
-	// Apply logfmt.TransformAttr so error-typed values land as strings
-	// in the buffer; otherwise json.Marshal would render them as "{}"
-	// for error structs without JSON tags, which the UI shows as
-	// "[object Object]". Mirrors the rule applied by ErrAttrHandler on
-	// the stdout/JSON branch.
+	// Errors are stored as strings; json.Marshal would render many as "{}".
 	for _, a := range h.attrs {
 		t := logfmt.TransformAttr(a)
 		attrs[prefix+t.Key] = t.Value.Any()

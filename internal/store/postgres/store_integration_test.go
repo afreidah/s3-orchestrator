@@ -87,12 +87,9 @@ func TestStoreInt_WithAdvisoryLock_PropagatesFnError(t *testing.T) {
 	}
 }
 
-// TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity pins the most
-// load-bearing invariant in the worker fleet: two acquirers of the
-// same lockID never run their fn concurrently. Without this the
-// leader-election story collapses and every background worker
-// (replicator, rebalancer, cleanup, drain, etc.) could run twice in
-// parallel across instances.
+// TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity verifies two acquirers
+// of the same lockID never run their fn concurrently, which is what keeps each
+// background worker to one instance at a time.
 func TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1053,14 +1050,10 @@ func TestStoreInt_ListExpiredObjects(t *testing.T) {
 	}
 }
 
-// TestStoreInt_ImportSuppressedByPendingCleanup proves the suppression against
-// real Postgres, where the check is a UNION over cleanup_queue and cleanup_dlq
-// rather than the SQLite variant the unit tests cover.
-//
-// Without it a delete that could not reach a backend is undone the next time
-// reconcile walks it: the object returns live, the replicator spreads it, and
-// its created_at restarts so a lifecycle rule that expired it waits another
-// full window.
+// TestStoreInt_ImportSuppressedByPendingCleanup verifies an import is
+// suppressed while cleanup_queue or cleanup_dlq holds a delete for the key.
+// Without it, reconcile would bring back an object whose delete could not
+// reach the backend, with a fresh created_at.
 func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1355,12 +1348,9 @@ func TestStoreInt_VerifySchemaVersion(t *testing.T) {
 	}
 }
 
-// TestStoreInt_VerifySchemaVersion_OlderThanExpected verifies the
-// "older than expected" diagnostic surfaces when the goose_db_version
-// row records a version below ExpectedSchemaVersion. Operators rely on
-// this branch to detect partial-migration failures at startup; if the
-// path were silent, a half-applied migration could let a binary boot
-// against an inconsistent schema.
+// TestStoreInt_VerifySchemaVersion_OlderThanExpected verifies the "older than
+// expected" error surfaces when goose_db_version records a version below
+// ExpectedSchemaVersion, so a half-applied migration fails startup.
 func TestStoreInt_VerifySchemaVersion_OlderThanExpected(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1404,12 +1394,10 @@ func TestStoreInt_VerifySchemaVersion_OlderThanExpected(t *testing.T) {
 	}
 }
 
-// TestStoreInt_VerifySchemaVersion_NewerThanExpected verifies the
-// "newer than expected" diagnostic surfaces when the database has a
-// migration the binary has never seen. This is what operators see
-// after rolling a binary back below the schema's frontier; surfacing
-// the mismatch prevents the older binary from running write paths
-// that may not be aware of new columns.
+// TestStoreInt_VerifySchemaVersion_NewerThanExpected verifies the "newer than
+// expected" error surfaces when the database has a migration the binary has
+// never seen, as after a rollback, so an older binary does not write to a
+// schema it does not know.
 func TestStoreInt_VerifySchemaVersion_NewerThanExpected(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1737,14 +1725,10 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	}
 }
 
-// TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies pins the figure the
-// dashboard reads to the backlog rather than to the copies the sweep already
-// reached. A copy with no scrub stamp is measured from when it was written, the
-// same fallback the scrub queue orders on; taking MIN over the stamp alone skips
-// it, and a fleet the sweep has never touched then reports an age of zero.
-//
-// The suite shares one database, so the assertion is a lower bound: other rows
-// can only be younger than the backdated copy, so they cannot mask it.
+// TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies verifies a copy with
+// no scrub stamp is aged from when it was written, so an unscrubbed fleet does
+// not report an age of zero. The suite shares one database, so the assertion
+// is a lower bound; other rows are younger than the backdated copy.
 func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()

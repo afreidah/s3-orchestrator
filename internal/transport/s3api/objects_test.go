@@ -91,13 +91,9 @@ func newTestServerWithQuota(
 	return ts, mockStore, backend
 }
 
-// doReq sends a request to ts with auth using ts.Client(), not
-// http.DefaultClient. Each httptest.Server has its own transport, so
-// a sibling test's ts.Close() (which calls
-// http.DefaultTransport.CloseIdleConnections internally) cannot reap
-// connections the current test is mid-flight on. Regression pin for
-// the parallel-test flake "transport connection broken:
-// CloseIdleConnections called".
+// doReq sends an authenticated request using ts.Client(), not
+// http.DefaultClient, so a parallel test's ts.Close() cannot close
+// connections this test is using.
 func doReq(t *testing.T, ts *httptest.Server, method, url string, body io.Reader) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
@@ -329,13 +325,8 @@ func TestPut_QuotaExhausted(t *testing.T) {
 
 // TestPut_NoBackendCapacity_BodyIncludesCapacityHint verifies the 507
 // InsufficientStorage response body includes the per-backend
-// used/limit summary when CanAcceptWrite returns false and
-// GetQuotaStats returns data. Operators see which backends are at
-// capacity without checking other surfaces.
-//
-// Forces the "no eligible backend" path by configuring per-backend
-// MaxObjectSizes=1 so any non-trivial upload exceeds the cap and
-// eligibleForWrite returns no backends.
+// used/limit summary. A per-backend MaxObjectSizes of 1 leaves no eligible
+// backend for the upload.
 func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 	t.Parallel()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))

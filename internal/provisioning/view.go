@@ -60,22 +60,15 @@ type Bucket struct {
 	Source              Source
 }
 
-// User is one identity in the merged view, with the buckets it reaches.
+// User is one identity in the merged view, with the buckets it reaches. A
+// config-declared credential has no user row, so the merge synthesises one
+// reaching the bucket that declared it, with an id from ConfigUserID.
 //
-// A config-declared credential has no user row, so the merge synthesises one
-// reaching the single bucket that declared it. Its id is derived from the access
-// key, which makes it stable across restarts - an audit record naming it means
-// the same thing tomorrow.
-// Admin holds the control-plane grants, keyed on the resource they name rather
-// than flattened the way Grants is: a backend wildcard cannot be expanded at
-// publish time, because the backends a request may name come from config rather
-// than from this view.
-//
-// AllBuckets is what a bucket wildcard carries, kept beside the expansion in
-// Grants rather than replaced by it. The expansion answers which buckets exist
-// for this identity; the wildcard answers whether it may act on one the
-// expansion does not name - a bucket created since, or an operation spanning
-// the whole namespace.
+// Admin holds the control-plane grants keyed on the resource they name, since
+// a backend wildcard can only be resolved against config at request time.
+// AllBuckets is what a bucket wildcard carries beside its expansion in Grants,
+// so a bucket created since, or an operation spanning the whole namespace,
+// can still be authorized.
 type User struct {
 	ID         string
 	Name       string
@@ -87,10 +80,8 @@ type User struct {
 }
 
 // Credential is one keypair proving a user. A user may hold several, so one can
-// be replaced or revoked while its siblings keep working.
-//
-// Secret is carried because the request path needs the literal value to repeat
-// the client's SigV4 key derivation. Nothing that renders a credential to an
+// be replaced or revoked while its siblings keep working. Secret is the literal
+// value SigV4 verification needs; nothing that renders a credential to an
 // operator may include it.
 type Credential struct {
 	AccessKeyID string
@@ -103,13 +94,9 @@ type Credential struct {
 // View is the whole of what a deployment has declared, from both sources.
 //
 // Shadowed holds stored buckets that config declares too. Config wins, so these
-// are left out of Buckets, and nothing authorizes or routes against them. They
-// are still reported, so that whatever manages store rows can see the row it
-// wrote.
-//
-// That is what lets a bucket move out of the config file without a gap: write
-// the store row first and it sits here doing nothing, then remove the config
-// entry and the row takes over.
+// are left out of Buckets and nothing authorizes or routes against them. A
+// bucket moves out of the config file without a gap by writing the store row
+// first, then removing the config entry.
 type View struct {
 	Buckets     []Bucket
 	Shadowed    []Bucket
@@ -136,16 +123,9 @@ func Merge(cfgBuckets []config.BucketConfig, auth config.AuthConfig, s *Snapshot
 }
 
 // mergeRootUser turns the configured root credential into the user that
-// administers the deployment.
-//
-// It is an ordinary user holding every permission on every resource, which is
-// what lets the request path authorize it the way it authorizes anyone else. A
-// deployment that declares none simply has no such user, and administers itself
-// through credentials the store holds.
-//
-// The bucket half is expanded across what either source declares, matching how
-// a stored bucket wildcard is published; the wildcard it also carries is what
-// reaches a bucket created since.
+// administers the deployment: an ordinary user holding every permission on
+// every resource. Its bucket grants are expanded across every declared bucket,
+// and its wildcard reaches buckets created since.
 func mergeRootUser(v *View, auth config.AuthConfig, declared map[string]struct{}) {
 	if !auth.HasRoot() {
 		return
@@ -248,11 +228,8 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 }
 
 // mergeStoredUsers appends the store's users with the buckets they reach, and
-// the enabled credentials that prove them.
-//
-// A disabled credential is left out entirely, which is what makes disabling one
-// take effect: nothing downstream learns the access key, so it authenticates
-// nothing while its row survives for the record of what it did.
+// the enabled credentials that prove them. A disabled credential is left out,
+// so it authenticates nothing while its row survives.
 func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 	reach, wildcard, notices := grantsByUser(s.Grants, declared)
 	v.Notices = append(v.Notices, notices...)
@@ -292,29 +269,10 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 	}
 }
 
-// grantsByUser indexes each user's granted buckets and the permissions each
-// grant carries, reporting any grant naming a bucket neither source declares.
-//
-// A grant can outlive the bucket it names - a bucket leaves the config file
-// while the grant stays behind - so a dangling one is reported and skipped
-// rather than treated as a failure to start.
-//
-// Two grants naming one bucket union rather than the later replacing the
-// earlier. The schema keys on (user, resource) so this cannot arise today, but
-// resolving a duplicate by dropping permissions an operator wrote is the wrong
-// direction to fail if it ever can.
-//
-// A bucket wildcard is expanded here against every declared bucket rather than
-// matched at request time, so the hot path stays one map read. Creating a bucket
-// republishes, which is what keeps the expansion from going stale.
-//
-// A named grant replaces the wildcard for that bucket rather than adding to it,
-// so an operator can hold broad access and still carve one bucket down to
-// read-only. Two grants naming the same bucket union, since neither is more
-// specific than the other.
-//
-// Only bucket grants are indexed here. Backend and instance grants authorize the
-// control plane, which this lookup has no question to answer about.
+// grantsByUser indexes each user's bucket grants. Wildcards are expanded across
+// the declared buckets so the hot path is one map read, and a named grant
+// replaces the wildcard for its bucket so one bucket can be narrowed. A grant
+// naming an undeclared bucket is reported as a notice and skipped.
 func grantsByUser(grants []core.Grant, declared map[string]struct{}) (
 	map[string]map[string]core.PermissionSet, map[string]core.PermissionSet, []Notice,
 ) {
@@ -325,11 +283,8 @@ func grantsByUser(grants []core.Grant, declared map[string]struct{}) (
 }
 
 // expandWildcardGrants writes each bucket wildcard across every declared
-// bucket, which is the pass the named grants then narrow.
-// Returns what each user's wildcard carries, which the expansion cannot express
-// on its own: a listing needs the buckets named, and authorizing an operation
-// that spans them - the empty prefix is the whole namespace - needs to know the
-// caller may reach a bucket nobody has declared yet.
+// bucket, which the named grants then narrow. It returns each user's wildcard
+// permissions, which authorize buckets not yet declared.
 func expandWildcardGrants(
 	grants []core.Grant, declared map[string]struct{}, reach map[string]map[string]core.PermissionSet,
 ) map[string]core.PermissionSet {
@@ -386,16 +341,9 @@ func applyNamedGrants(grants []core.Grant, declared map[string]struct{}, reach m
 }
 
 // adminGrantsByUser indexes each user's control-plane grants by the resource
-// they name.
-//
-// Kept whole rather than expanded the way bucket wildcards are: the backends a
-// request may name come from config, which this view does not hold, so the
-// wildcard is resolved when the request is authorized instead.
-//
-// Nothing is reported for a grant naming a backend no deployment serves. The
-// grant is refused when it is written, and a backend leaving config later is the
-// same case as a bucket leaving it - the grant outlives it and authorizes
-// nothing.
+// they name. Wildcards are not expanded because the backends come from config,
+// which this view does not hold. A grant naming a backend that has left config
+// is kept and authorizes nothing.
 func adminGrantsByUser(grants []core.Grant) map[string]map[core.Resource]core.PermissionSet {
 	admin := make(map[string]map[core.Resource]core.PermissionSet)
 	for i := range grants {
@@ -422,11 +370,8 @@ func sortedKeys(grants map[string]core.PermissionSet) []string {
 	return out
 }
 
-// ConfigUserID names the user a config-declared credential resolves to.
-//
-// The access key is what identifies it, which makes the id stable across
-// restarts and across reordering the bucket's credential list - an audit record
-// naming it means the same thing tomorrow.
+// ConfigUserID names the user a config-declared credential resolves to. It is
+// derived from the access key so it is stable across restarts and reordering.
 func ConfigUserID(accessKeyID string) string {
 	return "config:" + accessKeyID
 }

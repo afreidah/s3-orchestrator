@@ -173,16 +173,9 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	}
 }
 
-// TestCreateMultipartUpload_NoSpace surfaces the no-space branch. Selection is
-// judged against the in-memory baseline, so a backend already at its limit is
-// how a full fleet is expressed rather than a store error.
 // TestCompleteMultipartUpload_NoSpaceForAssembledObject asserts an upload whose
-// backend has no room for the assembled object fails at completion.
-//
-// Creating the upload cannot be where that is decided: the final size is
-// unknown then, and each part is counted against the backend by its own row as
-// it arrives. Completion is the first moment the size is known, and it claims
-// against the upload's own backend because the parts are already there.
+// backend has no room for the assembled object fails at completion, the first
+// point the final size is known.
 func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -330,12 +323,9 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	}
 }
 
-// TestCompleteMultipartUpload_PopulatesContentHash pins issue #916:
-// when integrity verification is enabled, CompleteMultipartUpload must
-// record the assembled object with a content_hash matching SHA-256 of
-// the assembled plaintext. Before the tee fix the recorded
-// StoredForm had no ContentHash, so multipart-completed objects
-// were invisible to the scrubber.
+// TestCompleteMultipartUpload_PopulatesContentHash asserts that with integrity
+// verification enabled, the assembled object is recorded with a content_hash
+// matching the SHA-256 of the assembled plaintext, so the scrubber can verify it.
 func TestCompleteMultipartUpload_PopulatesContentHash(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()

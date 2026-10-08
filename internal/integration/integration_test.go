@@ -747,14 +747,10 @@ func walkCommonPrefixes(t *testing.T, ctx context.Context, client *s3.Client, pr
 	return nil
 }
 
-// TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix is the
-// end-to-end regression for issue #660. It seeds a deep CommonPrefix
-// group large enough to span the object manager's store-page boundary, then
-// walks ListObjectsV2 with a delimiter via NextContinuationToken and
-// asserts no CommonPrefix appears in more than one paginated response.
-//
-// Drives a real Postgres + MinIO stack so the cursor rewrite is
-// exercised against the production store query, not the in-memory mock.
+// TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix seeds a
+// CommonPrefix group spanning the object manager's store-page boundary, pages
+// ListObjectsV2 with a delimiter, and asserts no CommonPrefix repeats across
+// pages.
 func TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix(t *testing.T) {
 	resetState(t)
 
@@ -787,13 +783,9 @@ func TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix(t *testing.T) 
 	}
 }
 
-// TestReconcile_StaleRowSweepsCleanupQueue is the regression test for
-// issue #664. Seed an object_locations row plus a cleanup_queue row that
-// reference a key the backend does not actually hold; run reconcile;
-// assert both rows are gone and orphan_bytes is back at zero.
-//
-// Drives the real Postgres + MinIO stack so the SQL transactions in
-// SweepStaleCleanupQueueRows are exercised end-to-end.
+// TestReconcile_StaleRowSweepsCleanupQueue seeds an object_locations row and a
+// cleanup_queue row for a key the backend does not hold, runs reconcile, and
+// asserts both rows are gone and orphan_bytes is back at zero.
 func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 	resetState(t)
 

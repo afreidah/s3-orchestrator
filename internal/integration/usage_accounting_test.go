@@ -327,11 +327,6 @@ func TestUsage_MultipartCompleteChargesPartReadEgress(t *testing.T) {
 // ENFORCEMENT
 // -------------------------------------------------------------------------
 
-// exhaustBackends puts every named backend past the given limits for the rest
-// of the test, and restores an unmetered fleet afterwards.
-//
-// The limits and baselines live on the shared manager, so leaving either in
-// place would silently refuse work in whatever test ran next.
 // exhaustedLimits is a backend budgeted so tightly that any further work is
 // refused: one request, one byte each way.
 func exhaustedLimits(t *testing.T) core.UsageLimits {
@@ -343,6 +338,9 @@ func exhaustedLimits(t *testing.T) core.UsageLimits {
 	return lim
 }
 
+// exhaustBackends puts every named backend past the given limits for the rest
+// of the test, and restores an unmetered fleet afterwards, since the limits
+// live on the shared manager.
 func exhaustBackends(t *testing.T, names []string, limits core.UsageLimits, spent core.UsageStat) {
 	t.Helper()
 	byName := make(map[string]core.UsageLimits, len(names))

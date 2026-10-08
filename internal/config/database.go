@@ -81,10 +81,7 @@ func (d *DatabaseConfig) setDefaultsAndValidate() []error {
 	}
 }
 
-// validateSQLite fills the SQLite engine's default file path when
-// unset and returns no errors otherwise. Single-instance SQLite
-// deployments only need a writable path; everything else has sane
-// defaults.
+// validateSQLite fills the default SQLite file path when unset.
 func (d *DatabaseConfig) validateSQLite() []error {
 	d.Path = cmp.Or(d.Path, "s3-orchestrator.db")
 	return nil

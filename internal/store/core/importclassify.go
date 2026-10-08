@@ -20,12 +20,10 @@ import (
 type ImportDecision int
 
 // ImportPlaintext and the other classifications of discovered bytes.
-//
 // AdoptKey means the envelope came from the same encryption run as an existing
-// row for the key, so that row's key reads it. Unreadable means no known key
-// opens it: the object is still recorded, because the space it occupies is real
-// whether or not anything can serve it. Compressed is recognised by the seek
-// table, which a plain zstd encoder never writes.
+// row for the key. Unreadable objects are still recorded because their space is
+// real. Compressed is recognised by the seek table, which a plain zstd encoder
+// never writes.
 const (
 	ImportPlaintext  ImportDecision = iota // no envelope; the bytes are the object
 	ImportAdoptKey                         // envelope an existing row's key opens
@@ -53,14 +51,10 @@ func (d ImportDecision) String() string {
 // DISCOVERED BYTES
 // -------------------------------------------------------------------------
 
-// DiscoveredBytes is everything the reconciler could learn about a rediscovered
-// object without decoding it: the head, where an encryption envelope announces
-// itself, and what the codec made of the stored form.
-//
-// Compressed and LogicalSize are only consulted for bytes that are not an
-// envelope. Compression runs before encryption, so an encrypted object's
-// encoding is inside the ciphertext and invisible from here; that case is
-// covered by adopting a sibling's description instead.
+// DiscoveredBytes is what the reconciler learned about a rediscovered object
+// without decoding it: its header and what the codec made of the stored form.
+// Compressed and LogicalSize are only consulted for non-envelope bytes, since
+// compression runs before encryption and is hidden inside the ciphertext.
 type DiscoveredBytes struct {
 	Header      []byte
 	Compressed  bool
@@ -72,19 +66,13 @@ type DiscoveredBytes struct {
 // -------------------------------------------------------------------------
 
 // ClassifyImport decides how to record bytes discovered on a backend, given
-// what could be learned from the bytes and the rows the ledger already holds
-// for that key on other backends.
+// their header and the key's rows on other backends. A nil form means record
+// no representation metadata.
 //
-// Adoption is deliberately not granted on a key-name match alone. Every PUT
-// mints a fresh DEK, so a stray copy of a key is usually an earlier write
-// whose key died with its row; handing it a sibling's key would produce a row
-// that claims to be readable and is not. The header's base nonce is what
-// distinguishes the two, since it is unique per encryption run and copies
-// reproduce it byte for byte. A sibling that matches describes the same stored
-// bytes in every respect, so its whole description is adopted rather than its
-// key alone.
-//
-// A nil return means record no representation metadata at all.
+// A key-name match alone does not grant adoption: every PUT mints a fresh DEK,
+// so a stray copy is usually an earlier write whose key died with its row. A
+// sibling is adopted only when its base nonce, unique per encryption run,
+// matches the header, and then its whole description is adopted.
 func ClassifyImport(b DiscoveredBytes, siblings []ObjectLocation) (ImportDecision, *StoredForm) {
 	if !encryption.HasEnvelopeMagic(b.Header) {
 		if b.Compressed {

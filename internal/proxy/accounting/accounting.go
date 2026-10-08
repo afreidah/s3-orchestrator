@@ -53,13 +53,8 @@ func New(usage *counter.UsageTracker, recordOp OperationRecordFunc) *Recorder {
 // ADMISSION
 // -------------------------------------------------------------------------
 
-// Allow reports whether the backend can absorb the proposed operation
-// within its configured monthly API-call, egress and ingress limits.
-//
-// Recording and admission live on the same type deliberately. They were
-// separate surfaces, and every path recorded what it spent while only some
-// asked first, so the counters stayed truthful while the budget was spent
-// unchecked. A caller holding a Recorder can now always ask.
+// Allow reports whether the backend can absorb the proposed operation within
+// its monthly API-call, egress and ingress limits.
 func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress int64) bool {
 	return r.usage.WithinLimits(backend, ops, egress, ingress)
 }
@@ -68,12 +63,8 @@ func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress i
 // API-CALL CHARGES
 // -------------------------------------------------------------------------
 
-// APICall credits one call of op against the backend's usage counter.
-// Call after every attempt that contacted the backend, regardless of
-// outcome: the HTTP call was made either way.
-//
-// The operation is required because providers price them differently, so
-// the charge cannot be settled without knowing which one it was.
+// APICall charges one call of op against the backend's usage counter. Call it
+// after every attempt that reached the backend, whatever the outcome.
 func (r *Recorder) APICall(op s3op.Operation, backend string) {
 	r.usage.Record(backend, op, 0, 0)
 }
@@ -107,11 +98,8 @@ func (r *Recorder) Ingress(op s3op.Operation, backend string, sizeBytes int64) {
 // OPERATION METRIC
 // -------------------------------------------------------------------------
 
-// Operation emits the per-operation Prometheus histogram observation.
-// Pair with APICall / Egress / Ingress for the usage-counter side; the
-// two surfaces are deliberately separate so callers can record the
-// API-call charge on failure paths without also emitting a fake
-// success observation.
+// Operation records the per-operation latency histogram. It is separate from
+// APICall so a failure path can charge the call without a success observation.
 func (r *Recorder) Operation(op s3op.Operation, backend string, start time.Time, err error) {
 	r.recordOp(op.String(), backend, start, err)
 }

@@ -700,7 +700,7 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes_FullLifecycle drives enqueue → cleanup-success →
+// TestOrphanBytes_FullLifecycle drives enqueue -> cleanup-success ->
 // decrement end-to-end.
 func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	t.Parallel()
@@ -791,16 +791,9 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // stubCleanupQueue wires the same DoAndReturn closures stubProcessQueue
-// uses, but populates an orphanCalls instead. Lets orphan-bytes tests
-// reuse the queue infrastructure without duplicating boilerplate.
-//
-// CompleteCleanupItem mirrors the production atomic-delete-plus-decrement
-// CTE: when a row is completed the helper appends a synthetic decrement
-// entry derived from the matching item's SizeBytes. Tests that assert on
-// c.decrement therefore observe the same accounting the production
-// engines apply, without the test having to know whether the engine is
-// invoking DecrementOrphanBytes externally or atomically inside the
-// transaction.
+// uses, but populates an orphanCalls instead. CompleteCleanupItem mirrors the
+// production delete-plus-decrement by appending a decrement of the item's
+// SizeBytes to c.decrement.
 func stubCleanupQueue(t *testing.T, store *storetest.MockMetadataStore, c *orphanCalls, items []core.CleanupItem, dlqErr error) {
 	t.Helper()
 	delivered := false

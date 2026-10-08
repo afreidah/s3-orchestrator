@@ -37,13 +37,9 @@ const provisioningChannel = "provisioning"
 
 // AssembleBucketRegistry builds the bucket registry from both sources a
 // deployment declares credentials in: the buckets in cfg, and the users the
-// store holds. Exported because the reload hook has to assemble the same way a
-// boot does - rebuilding from the config file alone would drop every
-// API-created bucket on each SIGHUP.
-//
-// A store that cannot be read fails rather than falling back to config alone:
-// serving with half the credentials answers 403 to callers that are entitled,
-// which is worse than not starting.
+// store holds. The reload hook uses it too, since rebuilding from config alone
+// would drop every API-created bucket. An unreadable store is an error rather
+// than a fallback to config, which would answer 403 to entitled callers.
 func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Config) (*auth.BucketRegistry, error) {
 	store, err := do.Invoke[core.ProvisioningStore](i)
 	if err != nil {
@@ -76,13 +72,10 @@ func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Conf
 
 // RegistryPublisher rebuilds everything assembled from the provisioning view
 // after a change through the provisioning API, on this instance and, through
-// Redis, on every other. The operations layer holds this so a credential
-// issued on one instance authenticates on the next request to any of them
-// rather than after the next restart.
-//
-// Everything is resolved inside Republish rather than captured at construction:
-// the server it swaps into is built from the registry this replaces, and
-// resolving it eagerly would order the two providers against each other.
+// Redis, on every other, so a newly issued credential authenticates on any
+// instance without a restart. Dependencies are resolved inside Republish
+// because the server it swaps into is built from the registry this replaces,
+// and resolving it at construction would create a provider cycle.
 type RegistryPublisher struct {
 	inj do.Injector
 }

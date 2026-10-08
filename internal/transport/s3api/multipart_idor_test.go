@@ -115,10 +115,8 @@ func doMultipartReq(
 
 // TestMultipartIDOR_UploadPart_RejectsCrossBucket asserts that a caller
 // holding valid creds for bucket-a cannot upload a part to a multipart
-// upload whose ObjectKey belongs to bucket-b. Today the request succeeds
-// (200 OK) because the handler ignores the URL bucket; the assertion
-// pins the post-fix behaviour (404 NoSuchUpload) so the regression is
-// detected as soon as it is reintroduced.
+// upload whose ObjectKey belongs to bucket-b; the request gets 404
+// NoSuchUpload.
 func TestMultipartIDOR_UploadPart_RejectsCrossBucket(t *testing.T) {
 	t.Parallel()
 

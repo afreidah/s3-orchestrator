@@ -35,15 +35,9 @@ const errInvalidTimestamp = "invalid created_at timestamp %q: %w"
 // READ QUERIES
 // -------------------------------------------------------------------------
 
-// GetObjectBackendsForKeys returns a map from each supplied object_key to
-// the backends that hold a copy. Empty input yields an empty map; keys
-// with no copies are absent from the result. Used by the rebalancer
-// planner to fold the per-key existence check into a single query per
-// batch instead of N+1.
-//
-// The query uses SQLite's json_each so the SQL stays static and the
-// keys array is passed as a single JSON-encoded parameter rather than
-// interpolated into the SQL string.
+// GetObjectBackendsForKeys returns a map from each supplied object_key to the
+// backends that hold a copy, in one query passing the keys as a JSON parameter
+// via json_each. Keys with no copies are absent from the result.
 func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error) {
 	if len(keys) == 0 {
 		return map[string][]string{}, nil
@@ -170,13 +164,10 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 }
 
 // ListObjectsDelimited groups a delimiter listing inside SQLite with a recursive
-// CTE whose recursive term carries a scalar-subquery seek: each step jumps to
-// the next key past the current group instead of scanning through it. Collation
-// is SQLite's native BINARY (object_key byte order), and instr/substr/char
-// compute each group plus its skip bound (the CommonPrefix with its last byte
-// incremented, or the leaf key). Keys with a delimiter after the prefix fold
-// into CommonPrefixes; the rest come back as leaf objects. The delimiter must be
-// non-empty. Unmanaged rows are left out, as in ListObjects.
+// CTE that seeks past each group instead of scanning through it: the skip bound
+// is the CommonPrefix with its last byte incremented, or the leaf key. Ordering
+// is BINARY collation (byte order). The delimiter must be non-empty. Unmanaged
+// rows are left out, as in ListObjects.
 func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
@@ -365,13 +356,9 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 }
 
 // ListObjectsByBackendKeyAsc returns rows for a backend in ascending
-// storage_key order, starting strictly after afterStorageKey. The empty string
-// returns the first page. Used by ReconcileBackend's bounded-memory
-// sorted-merge join against an S3 ListObjects walk; both sides are in lex
-// order so the merge is O(limit) memory bounded.
-//
-// It orders by storage_key because the backend listing on the other side of
-// the merge returns paths, and a per-write copy's path is not its object key.
+// storage_key order, starting strictly after afterStorageKey (empty for the
+// first page). Reconcile merges it against a backend listing, which returns
+// storage paths, so the order is by storage_key rather than object key.
 func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes, created_at
@@ -550,15 +537,11 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 // queue draws from.
 //
 // The age and the never-verified count cover reachable copies only, because a
-// copy the sweep may not read can never be stamped: counting it pins the
-// minimum to a fixed timestamp and the age then tracks wall clock rather than
-// the backlog. Deferred counts the rest, so a fleet holding most of its copies
-// on a backend over its usage limit cannot report as healthy.
-//
-// The age falls back to created_at exactly as the queue ordering does, so a
-// never-verified copy is measured from when it was written. Taking MIN over
-// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
-// has never been scrubbed as an age of zero.
+// copy the sweep may not read can never be stamped and would pin the age to
+// wall clock. Deferred counts the rest, so a fleet holding most of its copies
+// on a backend over its usage limit cannot report as healthy. A never-verified
+// copy is aged from created_at, as in the queue ordering, so an unscrubbed
+// fleet does not report an age of zero.
 func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
 	backendsJSON, err := json.Marshal(reachable)
 	if err != nil {
@@ -644,11 +627,9 @@ func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
 }
 
 // UpdateContentHash records the hash the backfill pass computed and stamps the
-// copy as verified in the same statement. The pass read the whole body to
-// produce the digest, so the copy is verified by construction at that moment.
-// Leaving last_scrubbed_at NULL would report it as never verified and sort it
-// to the head of the scrub queue on its original created_at, so the next sweep
-// would re-read the same bytes.
+// copy as verified in the same statement, since the pass read the whole body to
+// produce the digest. Leaving last_scrubbed_at NULL would put the copy at the
+// head of the scrub queue and the next sweep would re-read the same bytes.
 func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE object_locations
@@ -663,11 +644,8 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 // -------------------------------------------------------------------------
 
 // scanIdentifiedObjectLocation scans a row that also selects the three
-// identity columns and the managed flag, which only the read path's own query
-// does: a scrub or replication row is about the bytes, not about what a client
-// is told they are or whether a client may see them. These columns come last
-// so the shared scanner ahead of it stays the one description of the rest of
-// the row.
+// identity columns and the managed flag, which only the read path's query
+// selects. These columns come last, after the ones the shared scanner reads.
 func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	var (
 		loc          core.ObjectLocation

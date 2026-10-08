@@ -150,12 +150,8 @@ func (r *encryptReader) returnBufs() {
 // io.ReadFull distinguishes it hit: a clean end of stream (0, io.EOF), a
 // partial final chunk (n>0, io.ErrUnexpectedEOF), or a real error from the
 // source. done covers the first two; the error is returned as io.EOF only for
-// the first.
-//
-// The bug class this defends against is squashing the third case to io.EOF,
-// which would let a transient backend failure land in storage as a
-// truncated-but-valid object. Both directions of the stream read through here
-// so neither can drift into doing that.
+// the first. A source error must never become io.EOF, or a transient backend
+// failure would be stored as a truncated but valid object.
 func readChunk(src io.Reader, buf []byte, what string) (n int, done bool, err error) {
 	n, err = io.ReadFull(src, buf)
 	switch {
@@ -210,11 +206,8 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 	deriveNonce(r.bufs.nonce, r.baseNonce, r.chunkIdx)
 	r.chunkIdx++
 
-	// Seal into the reusable framed buffer: prepend the nonce, then
-	// let gcm.Seal append ciphertext+tag. The buffer's capacity is
-	// pre-sized so neither the append nor Seal reallocates. Passing
-	// nil dst would force gcm.sliceForAppend to allocate per chunk,
-	// which used to dominate this service's allocator profile.
+	// Seal into the pre-sized framed buffer after the nonce; a nil dst
+	// would allocate per chunk.
 	r.bufs.framed = append(r.bufs.framed[:0], r.bufs.nonce...)
 	r.bufs.framed = r.gcm.Seal(r.bufs.framed, r.bufs.nonce, plain, nil)
 	r.buf = r.bufs.framed
@@ -409,18 +402,10 @@ func ParseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
 
 // SameEncryptionOperation reports whether an envelope header read off a
 // backend was produced by the same encryption operation as the stored key
-// blob packed by PackKeyData.
-//
-// The base nonce is drawn fresh from crypto/rand for every encryption run
-// (see newEncryptReader), and copies of an object reproduce its ciphertext
-// byte for byte, so a matching nonce means the blob's DEK is the one that
-// encrypted these bytes. A separate write of the same key gets a different
-// nonce, which is what makes this safe to use for deciding whether a stray
-// backend object may adopt a sibling row's key.
-//
-// This establishes identity, not authenticity: it assumes the backend holds
-// what the orchestrator wrote. Bytes that lie about their header still fail
-// the AEAD tag on the first real read.
+// blob packed by PackKeyData. Every encryption run draws a fresh base nonce,
+// so a matching nonce means the blob's DEK encrypted these bytes. This
+// establishes identity, not authenticity: forged header bytes still fail the
+// AEAD tag on the first real read.
 func SameEncryptionOperation(header, packedKey []byte) bool {
 	_, headerNonce, err := ParseHeaderBytes(header)
 	if err != nil {
@@ -445,15 +430,9 @@ func HasEnvelopeMagic(b []byte) bool {
 
 // PeekEnvelope reports whether r's stream begins with the envelope signature,
 // returning a reader that replays the bytes it consumed so the caller can go
-// on reading from the start.
-//
-// This is how a caller checks that a row's encrypted flag agrees with the
-// bytes actually stored. The two disagreeing means either ciphertext would be
-// served as plaintext or plaintext decrypted as ciphertext, both of which are
-// worth failing on rather than guessing.
-//
-// A short stream is reported as not-an-envelope with the bytes replayed; a
-// read error is returned with a reader that still replays whatever arrived.
+// on reading from the start. Callers use it to check that a row's encrypted
+// flag agrees with the stored bytes. A short stream is reported as not an
+// envelope; a read error is returned with a reader that replays what arrived.
 func PeekEnvelope(r io.Reader) (bool, io.Reader, error) {
 	buf := make([]byte, len(headerMagic))
 	n, err := io.ReadFull(r, buf)

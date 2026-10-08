@@ -35,18 +35,8 @@ import (
 
 // metadataStore is the union of every store role, and exists only so the
 // composition root can carry one opened engine from openStore to the
-// do.MustAs role aliases in injector.go.
-//
-// Unexported on purpose. The union is not a domain fact: nothing in the
-// persistence domain requires one object to implement all seventeen roles,
-// and a design that split persistence across several objects would satisfy
-// every role interface without violating anything. What it actually encodes
-// is that this package holds one opened value before splitting it, which is
-// wiring. Keeping it unnameable outside di is what stops it being taken as a
-// dependency, since consumers cannot depend on a type they cannot write down.
-//
-// Each engine also carries per-role compile-time assertions, so a driver that
-// drops a method names the role rather than the union.
+// do.MustAs role aliases in injector.go. It stays unexported so consumers
+// depend on individual roles, never on the union.
 type metadataStore interface {
 	core.ObjectStore
 	core.QuotaStore

@@ -75,11 +75,9 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 }
 
 // ClaimPendingCleanups atomically claims a batch of pending rows for the
-// calling instance. SQLite serialises writes intrinsically (one writer at a
-// time per connection), so a single UPDATE...WHERE id IN (SELECT...) is
-// race-free against itself; the same eligibility predicates as the postgres
-// path apply (next_retry due, attempts < 10, claim NULL or older than
-// graceCutoff). The reclaimed flag is computed at SELECT time.
+// calling instance, using the same eligibility rules as Postgres (next_retry
+// due, attempts < 10, claim NULL or older than graceCutoff). SQLite serializes
+// writers, so the claim needs no row locking.
 func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
 	now := now()
 	cutoff := formatTime(graceCutoff)

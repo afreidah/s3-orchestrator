@@ -97,26 +97,18 @@ const mediaOctetStream = "application/octet-stream"
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
 // for the routes that do not need them, which is most of them.
 //
-// Method and Pattern stay apart rather than joined into the mux pattern so the
-// table remains greppable by path. Stream is the event emitted per line when a
-// caller sends Accept: application/x-ndjson. Alt is a second success shape
-// under the same status code, which only two-phase backend removal needs: the
-// confirmation preview and the executed acknowledgement share one route. The
-// two media-type overrides are empty for JSON, and set where a route carries
-// raw bytes instead - an object upload in, a trace snapshot out.
+// Stream is the event emitted per line when a caller sends Accept:
+// application/x-ndjson. Alt is a second success shape under the same status
+// code (the backend-removal preview and its executed acknowledgement). The two
+// media-type overrides are empty for JSON and set where a route carries raw
+// bytes.
 //
-// Kind, Perm and Resource are what authorize a route: the kind of thing the
-// permissions are over, the permissions the caller's grant has to carry, and
-// the parameter naming that thing. Kind is empty on a data-plane route, where
-// Resource names the object key the bucket is read from; on a backend route
-// Resource names the parameter carrying the backend, and an absent value means
-// the whole fleet, which only a wildcard grant reaches. An instance route needs
-// no Resource, because there is one instance.
-//
-// Declaring them here rather than checking inside each handler is what makes a
-// route that forgets them a visible gap in this table instead of an absent call
-// buried in a handler body. A route declaring no Perm authorizes nobody, and
-// the table is tested for one.
+// Kind, Perm and Resource authorize a route: the kind of resource, the
+// permissions the caller's grant must carry, and the parameter naming the
+// resource. Kind is empty on a data-plane route, where Resource names the
+// object key; on a backend route an absent Resource value means the whole
+// fleet, which only a wildcard grant reaches. A route declaring no Perm
+// authorizes nobody.
 type route struct {
 	Method       string
 	Pattern      string

@@ -54,12 +54,9 @@ type OptionalResult[T any] struct {
 // construct (or one of its transitive dependencies failed).
 func (r OptionalResult[T]) Failed() bool { return r.Resolution == ResolutionFailed }
 
-// Optional resolves T as an optional dependency. Inspects the injector's
-// registered service list first so a missing provider is distinguished
-// from a constructor failure: a Disabled result means the feature was
-// never wired in this run mode, while a Failed result means a provider
-// was wired but its constructor (or a transitive dependency it tried
-// to resolve) returned an error.
+// Optional resolves T as an optional dependency. Disabled means no provider
+// is registered in this run mode; Failed means a provider is registered but
+// its constructor, or a transitive dependency, returned an error.
 func Optional[T any](inj do.Injector) OptionalResult[T] {
 	if inj == nil {
 		return OptionalResult[T]{Resolution: ResolutionDisabled}

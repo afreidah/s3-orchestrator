@@ -102,11 +102,9 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	return mapSlice(rows, claimedItemFromRow), nil
 }
 
-// CompleteCleanupItem atomically deletes a successfully-processed row and
-// decrements the backing backend's orphan_bytes by the row's size. The
-// underlying SQL is a single CTE so a worker crash between the delete and
-// the decrement cannot leave the counter inconsistent; idempotent against
-// re-claim retries because the CTE is empty when the row is already gone.
+// CompleteCleanupItem deletes a processed row and decrements its backend's
+// orphan_bytes by the row's size in one statement. It is idempotent: a row
+// already gone decrements nothing.
 func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
 	if err := s.queries.CompleteCleanupItem(ctx, id); err != nil {
 		return fmt.Errorf("failed to complete cleanup item: %w", err)

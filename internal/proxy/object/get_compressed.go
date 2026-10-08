@@ -44,10 +44,9 @@ func isCompressed(loc *core.ObjectLocation) bool {
 // there is one, or, during a database outage, a row built from the newest copy
 // on the backend and what that copy's bytes say about how they are stored.
 //
-// It reads that copy's head and tail the same way import does for an object it
-// finds on a backend. A compressed copy reads through the normal compressed
-// path and serves the client's bytes. An encrypted copy returns 503, because
-// decrypting it needs the key only the database holds.
+// It classifies that copy's head and tail the way import does. An encrypted
+// copy returns 503, because decrypting it needs the key only the database
+// holds.
 func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beName, key string, loc *core.ObjectLocation) (*core.ObjectLocation, error) {
 	if loc != nil {
 		return loc, nil
@@ -101,15 +100,10 @@ func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName,
 // a random 16-byte id written as 32 lowercase hex characters.
 const writeIDLength = 32
 
-// isPerWritePath reports whether a key the listing returned is a stored copy
-// of the object, rather than a different object that happens to start with
-// the same characters.
-//
-// To find the copies of "photo.jpg", the listing asks the backend for every
-// key that starts with "photo.jpg!". That returns the object's copies, such as
-// "photo.jpg!3f9a0c...", but it would also return a separate object that a
-// client named "photo.jpg!backup". A copy always ends in exactly 32 hex
-// characters after the "!", so any key that doesn't is skipped.
+// isPerWritePath reports whether a listed key is a stored copy of key rather
+// than a different object sharing its prefix, such as a client's
+// "photo.jpg!backup". A copy's path is the key, "!", then exactly 32 lowercase
+// hex characters.
 func isPerWritePath(key, listed string) bool {
 	id, ok := strings.CutPrefix(listed, key+internalkey.WriteSeparator)
 	if !ok || len(id) != writeIDLength {
@@ -123,21 +117,10 @@ func isPerWritePath(key, listed string) bool {
 	return true
 }
 
-// resolveLastModified reports the Last-Modified a read should answer with,
-// given what the backend said and the row for the copy that served it.
-//
-// The stored time wins whenever there is a row. It is the object's write time,
-// identical on every copy, where a backend reports when it received the copy
-// that answered - so preferring the backend makes an unmodified object change
-// its Last-Modified on failover, and If-Modified-Since and If-Range compare
-// against a value that moves. Only the degraded path, serving with the database
-// down and no row to consult, falls back to the backend's.
-//
-// A backend that reports nothing is the case this started as: the transport
-// drops an empty Last-Modified and clients like Tempo's blocklist poller reject
-// the response outright. A stored time that is somehow zero therefore still
-// yields to the backend's, so the guarantee that every response carries a
-// timestamp holds no matter which side is missing one.
+// resolveLastModified prefers the stored write time, which is the same on every
+// copy, so failover does not move Last-Modified under If-Modified-Since and
+// If-Range. It falls back to the backend's value when there is no row or the
+// stored time is zero, so every response still carries a timestamp.
 func resolveLastModified(backendValue time.Time, loc *core.ObjectLocation) time.Time {
 	if loc != nil && !loc.CreatedAt.IsZero() {
 		return loc.CreatedAt
@@ -166,16 +149,14 @@ func logicalSize(loc *core.ObjectLocation) int64 {
 // -------------------------------------------------------------------------
 
 // compressedGetAttempt is the per-backend GET callback for a compressed copy.
+// It issues no whole-object GET: the codec pulls frames through
+// storedRangeFetcher as the client reads, so a ranged read fetches only the
+// frames covering the range.
 //
-// It issues no whole-object GET. The codec drives the read instead, pulling
-// frames through storedRangeFetcher as the client consumes the body, so a
-// ranged read fetches the frames covering that range and nothing else.
-//
-// The stored envelope is not inspected the way an uncompressed read inspects
-// it: the first bytes fetched are the seek table at the end of the object, not
-// byte 0 where the signature lives. A row that disagrees with its bytes still
-// fails, just later and by a different route - a copy the row calls encrypted
-// fails to decrypt, and one it calls plaintext fails to decode.
+// The envelope signature at byte 0 is not checked, because the first bytes
+// fetched are the seek table at the end. A row that disagrees with its bytes
+// still fails: a copy it calls encrypted fails to decrypt, and one it calls
+// plaintext fails to decode.
 func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
@@ -217,11 +198,8 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 }
 
 // compressedResult assembles the client-facing response over a decoded reader,
-// applying the client's range in logical coordinates.
-//
-// The metadata comes off the fetcher rather than a GET of our own: building the
-// reader already read the seek table, so a response has arrived and its headers
-// are the ones the object carries.
+// applying the client's range in logical coordinates. The headers come from the
+// fetcher, which already received a response while reading the seek table.
 func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRangeFetcher, loc *core.ObjectLocation, rangeHeader string) (*s3be.GetObjectResult, error) {
 	size := logicalSize(loc)
 	r := &s3be.GetObjectResult{Body: reader, Size: size}

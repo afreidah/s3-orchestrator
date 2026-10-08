@@ -168,12 +168,9 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_Exhausted_MovesToDLQ asserts that an item
-// that has used its full retry budget (Attempts already at
-// maxCleanupAttempts-1, so newAttempts crosses the ceiling) graduates
-// into cleanup_dlq instead of staying pinned in cleanup_queue. This is
-// the visibility fix for #651: post-exhaustion the row must surface
-// somewhere an operator can find it.
+// TestProcessCleanupQueue_Exhausted_MovesToDLQ asserts that an item whose
+// next attempt crosses maxCleanupAttempts moves to cleanup_dlq instead of
+// staying in cleanup_queue.
 func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

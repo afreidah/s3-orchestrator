@@ -66,13 +66,10 @@ func (r *Replicator) admitVerifiedReplica(ctx context.Context, key, target, targ
 // verifyReplica reads a newly written copy back from its target and compares
 // its plaintext digest against the source row's content_hash.
 //
-// Only a digest that disagrees rejects the copy. Every other outcome - no
-// stored hash to compare against, no egress headroom to spend, an unreadable
-// copy - reports replicaUnverified and keeps it. A copy that cannot be checked
-// is not a copy known to be bad, and discarding it would leave the object
-// under-replicated to punish a backend for being slow or a hash for being
-// absent. Backends that are not read-after-write consistent make that failure
-// mode routine rather than theoretical.
+// Only a disagreeing digest rejects the copy. No stored hash, no egress
+// headroom, or an unreadable copy reports replicaUnverified and keeps it, since
+// a copy that cannot be checked is not known to be bad; backends without
+// read-after-write consistency make unreadable copies routine.
 func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey string, source *core.ObjectLocation) replicaVerdict {
 	icfg := r.integrity.Load()
 	if icfg == nil || !icfg.ShouldVerifyOnReplicate() {
@@ -87,11 +84,9 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 		return replicaUnverified
 	}
 
-	// StreamCopy moves the stored bytes verbatim, so the source row describes
-	// the new copy exactly once the backend name and the path are swapped. The
-	// copy was written under its own path on the target; reading back the
-	// source's path would 404, or hash a different object on a backend that
-	// happens to hold the key.
+	// StreamCopy moves bytes verbatim, so the source row describes the new
+	// copy once the backend and path are swapped. Reading the source's path
+	// on the target would miss the replica or hash a different object.
 	replica := *source
 	replica.BackendName = target
 	replica.StorageKey = targetStorageKey

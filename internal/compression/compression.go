@@ -35,24 +35,20 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// Chunk size bounds and the default. The default comes from measuring the ratio
-// cost of splitting an object into independently decodable frames: at 1 MiB it
-// is 2.5% on Go source and negative on JSON logs, with throughput unchanged,
-// while 64 KiB costs 17%. The lower bound keeps the seek table from dwarfing
-// small objects; the upper bound keeps a single-chunk read from pulling an
-// unreasonable amount of a backend object for a small range.
+// Chunk size bounds and the default. Splitting into independently decodable
+// frames costs 2.5% ratio at 1 MiB against 17% at 64 KiB. The lower bound keeps
+// the seek table from dwarfing small objects; the upper bound limits how much a
+// small ranged read pulls from the backend.
 const (
 	DefaultChunkSize = 1 << 20 // 1 MiB
 	MinChunkSize     = 1 << 14 // 16 KiB
 	MaxChunkSize     = 1 << 26 // 64 MiB
 )
 
-// Algorithm and FormatVersion are what a stored object records about how it was
-// encoded. Algorithm is the value a metadata row carries in
-// compression_algorithm, and an empty one there means the bytes are verbatim.
-// FormatVersion moves only if the on-disk layout changes in a way a reader has
-// to branch on; the chunk size does not, since each object carries its own in
-// its seek table.
+// Algorithm and FormatVersion record how a stored object was encoded.
+// Algorithm is the compression_algorithm metadata value; an empty one means the
+// bytes are verbatim. FormatVersion changes only when readers must branch on
+// the on-disk layout; chunk size is per object, in its seek table.
 const (
 	Algorithm     = "zstd"
 	FormatVersion = 1
@@ -83,12 +79,8 @@ var (
 var ErrCorruptObject = errors.New("corrupt compressed object")
 
 // Codec compresses and decompresses objects in the chunked seekable format.
-// Safe for concurrent use: the encoder and decoder it holds are, and it carries
-// no per-stream state.
-//
-// bufPool exists because without it every upload allocates chunkSize bytes it
-// uses once and drops, which at the 1 MiB default is the largest single
-// allocation on the write path. It mirrors Encryptor.bufPool.
+// Safe for concurrent use. bufPool reuses the chunk-sized staging buffer, the
+// largest single allocation on the write path.
 type Codec struct {
 	enc       *zstd.Encoder
 	dec       *zstd.Decoder
@@ -102,20 +94,9 @@ type Codec struct {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewCodec builds a codec at the given zstd level and chunk size.
-//
-// Note that the level is coarser than it looks: zstd collapses the numeric
-// range into four buckets (below 3, 3 to 5, 6 to 9, 10 and above), so levels 10
-// and 19 produce byte-identical output.
-//
-// The chunk size is fixed for the lifetime of the data it writes. Changing it
-// affects new objects only; existing ones carry their own layout in their seek
-// table and stay readable.
-//
-// The orchestrator itself builds codecs through NewCodecForLevel, since config
-// names levels rather than numbering them. This numeric form is kept for
-// callers that already hold a zstd level, and is deliberately exported rather
-// than left as an accident of refactoring.
+// NewCodec builds a codec at the given zstd level and chunk size. zstd
+// collapses levels into four buckets (below 3, 3 to 5, 6 to 9, 10 and above).
+// A chunk size change affects new objects only.
 func NewCodec(level, chunkSize int) (*Codec, error) {
 	return newCodec(zstd.EncoderLevelFromZstd(level), chunkSize)
 }
@@ -180,29 +161,16 @@ var frameMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// HasFrameMagic reports whether bytes begin a Zstandard frame.
-//
-// This is a filter, not an answer: the magic is Zstandard's, not this project's,
-// so it is equally true of a .zst file a client uploaded. What it rules out is
-// everything else, cheaply, from a head that has already been read - which is
-// what keeps InspectStored's tail fetch off the plaintext objects that make up
-// most of a backend.
+// HasFrameMagic reports whether bytes begin a Zstandard frame. A client's .zst
+// file matches too, so this only filters out plaintext before InspectStored
+// fetches the tail.
 func HasFrameMagic(b []byte) bool {
 	return len(b) >= len(frameMagic) && bytes.Equal(b[:len(frameMagic)], frameMagic)
 }
 
 // WorthStoring reports whether an encoded object shrank enough to be stored in
-// place of the original. Both write paths ask this, so the rule lives with the
-// codec rather than with either of them.
-//
-// The decision is made on the finished encoding rather than a sample of it:
-// entropy is not uniform across an object, and a sample is wrong in the
-// direction that costs bytes for the life of the object, while encoding an
-// object that turns out to be incompressible costs only the encode itself -
-// the cheapest case the encoder has, since it detects unshrinkable blocks and
-// stores them raw.
-//
-// A logical size of zero cannot shrink, and the ratio is meaningless there.
+// place of the original. It judges the finished encoding, not a sample, because
+// entropy varies across an object and a wrong sample costs bytes for its life.
 func WorthStoring(logicalSize, encodedSize int64, minRatio float64) bool {
 	if logicalSize <= 0 {
 		return false
@@ -220,13 +188,9 @@ func (c *Codec) Close() {
 	c.dec.Close()
 }
 
-// Compress encodes src into dst and reports the physical bytes written.
-//
-// The chunk boundary is enforced here: the seekable writer emits one frame per
-// Write, so a full chunk is accumulated before each call. A short read from src
-// is not treated as end of input - only io.EOF is - because an io.Reader may
-// legally return fewer bytes than asked for at any point, and taking that as
-// the end would silently truncate the object into undersized frames.
+// Compress encodes src into dst and reports the physical bytes written. The
+// seekable writer emits one frame per Write, so a full chunk is accumulated
+// before each call; only io.EOF ends the input, never a short read.
 func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 	counter := &countingWriter{w: dst}
 	w, err := seekable.NewWriter(counter, c.enc, seekable.WithWriterLogger(c.log))
@@ -263,12 +227,8 @@ func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 	return counter.n, nil
 }
 
-// Decompress returns a reader over the logical bytes of a stored object.
-//
-// The source is an io.ReadSeeker because the seek table sits at the end of the
-// stream, so the reader seeks to find it before serving anything. Reading a
-// whole object still walks the frames in order; ranged access over a backend is
-// a matter of what ReadSeeker gets passed in.
+// Decompress returns a reader over the logical bytes of a stored object. It
+// takes a ReadSeeker because the seek table sits at the end of the stream.
 func (c *Codec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
 	r, err := seekable.NewReader(rs, c.dec, seekable.WithReaderLogger(c.log))
 	if err != nil {
@@ -277,20 +237,9 @@ func (c *Codec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
 	return &decodeGuard{inner: r}, nil
 }
 
-// DecompressStream returns a reader over the logical bytes of a stored object
-// read front to back, for a caller that has a stream rather than something it
-// can seek.
-//
-// The seek table is not consulted: a stored object is a plain sequence of zstd
-// frames followed by a skippable one, so decoding it in order needs no index.
-// That makes this the right shape for whole-object work like scrubbing, which
-// would otherwise have to buffer an entire object locally just to hand
-// Decompress something seekable.
-//
-// Unlike the rest of the Codec this allocates, since a streaming decoder holds
-// per-stream state and the shared one cannot be rebound while other callers are
-// using it. Whole-object reads are rare and already dominated by the network, so
-// the allocation is not worth pooling around.
+// DecompressStream decodes a stored object front to back without the seek
+// table, for whole-object work like scrubbing that only has a stream. Unlike
+// the rest of the Codec it allocates a decoder per call.
 func (c *Codec) DecompressStream(r io.Reader) (io.ReadCloser, error) {
 	dec, err := zstd.NewReader(r,
 		zstd.WithDecoderMaxMemory(decoderMaxMemory),

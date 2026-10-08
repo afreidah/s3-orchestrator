@@ -56,11 +56,8 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	// cleanup queue owns.
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
 
-	// Drop the location cache entry up front so concurrent readers
-	// during the backend fanout (which can take seconds) do not get
-	// pointed at a backend that is in the middle of being deleted from.
-	// The final invalidateObjectCaches below is a redundant no-op for
-	// this key but keeps every mutation path ending with one helper.
+	// Drop the location cache entry first so concurrent readers are not sent
+	// to a backend mid-delete during the fan-out.
 	o.cache.Delete(key)
 
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {

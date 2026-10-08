@@ -198,15 +198,10 @@ func TestReaderResetsBetweenCalls(t *testing.T) {
 	}
 }
 
-// TestSpillDir_LargeBodiesUseTheConfiguredDirectory pins the knob that bounds a
-// deployment's memory footprint. The default lands in the OS temp directory,
-// which is tmpfs under the systemd default and in most container images, so a
-// spill that exists to keep large objects off the heap puts them straight back
-// in RAM unless this points somewhere real.
-//
-// Asserted by pointing it at a directory that does not exist: the spill then
-// has to fail, which it can only do if the setting reached os.CreateTemp. The
-// file itself is unlinked on creation, so there is nothing on disk to look for.
+// TestSpillDir_LargeBodiesUseTheConfiguredDirectory verifies large bodies spill
+// into the configured directory. It points the setting at a missing directory,
+// since the spill file is unlinked on creation and cannot be observed; a
+// failure proves the setting reached os.CreateTemp.
 //
 // Not parallel: the spill directory is process-wide.
 func TestSpillDir_LargeBodiesUseTheConfiguredDirectory(t *testing.T) {

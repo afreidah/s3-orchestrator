@@ -387,15 +387,10 @@ func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[str
 	})
 }
 
-// TestCore_StreamCopy_RefusesSourceOutOfEgress is the regression test for the
-// gap this admission closes. The replicator picked its source by health alone
-// and only ever checked the destination, so a fleet-wide repair could read a
-// source backend straight through its monthly egress budget and leave client
-// reads to be refused on the counter it had run up.
-//
-// The refusal is tagged read-phase because another source may still have
-// egress left, which is the same answer the copier already acts on when a
-// source read fails.
+// TestCore_StreamCopy_RefusesSourceOutOfEgress asserts a copy is refused when
+// the source has no egress headroom, so a repair cannot spend a source's budget
+// that client reads need. The refusal is tagged read-phase because another
+// source may still have egress left.
 func TestCore_StreamCopy_RefusesSourceOutOfEgress(t *testing.T) {
 	t.Parallel()
 	src := &readableBackend{payload: []byte("hello")}

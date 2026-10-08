@@ -21,12 +21,8 @@ import "sync"
 // -------------------------------------------------------------------------
 
 // Registry is a set of per-key accumulators of type T, safe for concurrent use.
-//
-// T is expected to be a zero-value-usable accumulator - an atomic.Int64, or a
-// struct of them - because a fresh entry is created by allocating T and nothing
-// initializes it further. Entries are never removed: a key that stopped being
-// charged holds a zeroed accumulator, which costs a pointer and keeps the swap
-// free of bookkeeping about which keys are still live.
+// T must be usable at its zero value, such as an atomic.Int64 or a struct of
+// them. Entries are never removed.
 type Registry[T any] struct {
 	mu      sync.RWMutex
 	entries map[string]*T
@@ -106,11 +102,9 @@ func (r *Registry[T]) All() map[string]*T {
 }
 
 // SwapAll replaces every accumulator with a fresh one and returns the old set.
-// The key set is preserved, so a backend that goes quiet keeps its entry.
-//
-// One swap rather than a reset per key: charges racing the flush land in
-// whichever map they resolved to, and both maps are accounted for - the old one
-// by the caller reading it, the new one by the next flush.
+// The key set is preserved. A charge racing the swap lands in whichever map it
+// resolved to, and both are accounted for: the old one by the caller, the new
+// one by the next flush.
 func (r *Registry[T]) SwapAll() map[string]*T {
 	r.mu.Lock()
 	old := r.entries

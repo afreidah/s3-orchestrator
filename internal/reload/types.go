@@ -67,15 +67,10 @@ const (
 	ReloadLoadFailed       Status = "load_failed"
 )
 
-// Result is the aggregate report from a single reload pass. The
-// coordinator stores the most recent result atomically; the admin API
-// exposes it for operator inspection. Generation is monotonic and only
-// advances on a successful Apply pass (FullSuccess or PartialApplied).
-//
-// Outcomes lists every hook the coordinator considered, in apply order, skipped
-// ones included, so an operator can see which subsystems took no part.
-// RequiresRestart is present whatever the status, because a field that needs a
-// restart needs it whether or not this pass succeeded.
+// Result is the aggregate report from a single reload pass, exposed by the
+// admin API. Generation advances only on FullSuccess or PartialApplied.
+// Outcomes lists every hook considered, in apply order, skipped ones included.
+// RequiresRestart is reported whatever the status.
 type Result struct {
 	Generation      int64         `json:"generation"`
 	Status          Status        `json:"status"`
@@ -90,16 +85,11 @@ type Result struct {
 // HOOK CONTRACT
 // -------------------------------------------------------------------------
 
-// Hook is the contract every reloadable subsystem implements. The
-// coordinator runs Check on every hook first; any error aborts the
-// pass before mutation. Apply then runs every hook, collecting per-hook
-// outcomes. Apply errors mark the hook failed but do not abort the
-// remaining hooks.
-//
-// Name is a short stable identifier used in logs and outcomes. Check validates
-// the new config against the old without mutating subsystem state. Apply
-// mutates the live subsystem and returns Applied or Skipped; a non-nil error
-// marks the hook Failed whatever status it returned alongside it.
+// Hook is the contract every reloadable subsystem implements. The coordinator
+// runs Check on every hook first, and any error aborts the pass before
+// mutation; Check must not mutate state. Apply then runs every hook; a non-nil
+// error marks that hook Failed whatever status it returned, without aborting
+// the rest.
 type Hook interface {
 	Name() string
 	Check(oldCfg, newCfg *config.Config) error

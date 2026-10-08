@@ -67,9 +67,7 @@ type QuotaMetricsRefresher interface {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ComponentLogger returns the canonical scoped logger every Service
-// uses, derived from the snake_case slug so the component attr is the
-// single source of truth for log filtering. Callers typically pass the
+// ComponentLogger returns the logger scoped to a component slug, normally the
 // same slug as Service.Name.
 func ComponentLogger(slug string) *slog.Logger {
 	return slog.Default().With(logfmt.Component(slug))
@@ -90,15 +88,10 @@ func QueueWork(log *slog.Logger, msg string, pass func(ctx context.Context) (suc
 	}
 }
 
-// HandlePassResult is the shared post-call handling for the three
-// nearly-identical "pass" workers (rebalance, over-replication,
-// replication). Each one returns (count, err) from a worker call and
-// then either: surfaces non-DB errors as tick failures (so health
-// reporting sees them), or - when work was done - logs a completion
-// message with a work-specific count key and refreshes quota metrics
-// so the dashboard reflects the move. Centralised so the three
-// closures cannot drift, and so coverage of the error and count>0
-// branches lands in one place.
+// HandlePassResult is the shared post-call handling for the pass workers
+// (rebalance, over-replication, replication). It returns non-DB errors as tick
+// failures, and when work was done logs the count under countKey and
+// refreshes quota metrics.
 func HandlePassResult(ctx context.Context, log *slog.Logger, manager QuotaMetricsRefresher, count int, err error, countKey string) error {
 	if err != nil {
 		if errors.Is(err, core.ErrDBUnavailable) {
@@ -115,17 +108,12 @@ func HandlePassResult(ctx context.Context, log *slog.Logger, manager QuotaMetric
 	return nil
 }
 
-// Config bundles the inputs needed to construct a Service. Held as a
-// struct so callers can pin a few fields and leave the rest at their
-// zero values rather than threading a long argument list. ShouldRun,
-// Startup, and OnError are optional; Work and Name are required.
+// Config bundles the inputs needed to construct a Service. Work and Name are
+// required; ShouldRun, Startup, and OnError are optional.
 //
-// Name is the canonical snake_case component slug, used for both the metrics
-// label and the logger's component attribute, so the two cannot disagree.
-// ShouldRun skips a tick without recording a failure, which is how a service
-// its config disabled at runtime stays quiet rather than reporting errors.
-// OnError replaces the default failure log for services that also bump their
-// own metric.
+// Name is the snake_case component slug used for both the metrics label and
+// the logger's component attribute. ShouldRun skips a tick without recording
+// a failure. OnError replaces the default failure log.
 type Config struct {
 	Locker   AdvisoryLocker
 	Interval time.Duration // between ticks, post-jitter
@@ -164,14 +152,8 @@ func New(cfg Config) *Service {
 
 // Service runs a function on a fixed interval under an advisory lock.
 // Handles audit context creation, lock acquisition, skip/error logging,
-// and context cancellation. The component identity lives on the scoped
-// logger (component attr) rather than in message text, so logs from
-// every service share the same shape and operators filter by attribute.
-//
-// Per-service health state (lastSuccess, lastFailure, lastError,
-// consecutiveFailures) is recorded after each tick so operators can
-// query worker liveness through the admin endpoint and alert on
-// staleness through Prometheus.
+// and context cancellation. Health state is recorded after each tick for the
+// admin endpoint and Prometheus staleness alerts.
 type Service struct {
 	locker   AdvisoryLocker
 	interval time.Duration
@@ -192,11 +174,8 @@ type Service struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Tick drives a single iteration of the work function under the same
-// lock + audit + health-recording path Run uses. Exposed for tests
-// that want to verify per-tick behaviour without spinning the full
-// ticker loop, and for any future admin endpoint that wants to force
-// a tick.
+// Tick runs one iteration under the same lock, audit and health recording Run
+// uses.
 func (s *Service) Tick(ctx context.Context) {
 	s.runOnce(ctx, s.work)
 }
@@ -301,10 +280,7 @@ func (s *Service) recordHealth(success bool, err error) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Name returns the snake_case component slug the service was
-// constructed with. Exposed for tests that validate cross-service
-// invariants (unique lock IDs, sane intervals) and for any future
-// admin tooling that wants per-service identification.
+// Name returns the service's snake_case component slug.
 func (s *Service) Name() string { return s.name }
 
 // LockID returns the advisory-lock identifier this service holds per
