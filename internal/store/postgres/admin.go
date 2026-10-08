@@ -69,12 +69,14 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // -------------------------------------------------------------------------
 
 // ListEncryptedLocations returns a page of encrypted object locations filtered
-// by key ID. Used during key rotation to find objects wrapped with the old key.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
+// by key ID, after the cursor. Used during key rotation to find objects wrapped
+// with the old key.
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
 	rows, err := s.queries.ListEncryptedLocations(ctx, db.ListEncryptedLocationsParams{
-		KeyID:  &keyID,
-		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
-		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
+		KeyID:        keyID,
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)

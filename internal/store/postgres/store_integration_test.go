@@ -181,7 +181,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	rows, err := s.GetObjectsWithoutHash(ctx, 1000, 0, "")
+	rows, err := s.GetObjectsWithoutHash(ctx, 1000, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	if err := s.UpdateContentHash(ctx, key, "backend-a", "deadbeef"); err != nil {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
-	rows, err = s.GetObjectsWithoutHash(ctx, 1000, 0, "")
+	rows, err = s.GetObjectsWithoutHash(ctx, 1000, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash(after): %v", err)
 	}
@@ -531,6 +531,40 @@ func TestStoreInt_PoolUsageFlushAndRead(t *testing.T) {
 	}
 	if _, charged := pools["class_c"]; charged {
 		t.Errorf("class_c has a row: %+v; a zero delta must write nothing", pools)
+	}
+}
+
+// TestStoreInt_PoolFlushFailureWritesNothing verifies a failure on one pool
+// rolls back the rest, so the caller restoring every delta cannot double-count.
+func TestStoreInt_PoolFlushFailureWritesNothing(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx, `
+		CREATE FUNCTION reject_bad_pool() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.pool = 'bad' THEN RAISE EXCEPTION 'bad pool'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER reject_bad_pool BEFORE INSERT ON backend_request_usage
+			FOR EACH ROW EXECUTE FUNCTION reject_bad_pool();`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(), `
+			DROP TRIGGER IF EXISTS reject_bad_pool ON backend_request_usage;
+			DROP FUNCTION IF EXISTS reject_bad_pool();`)
+	})
+
+	const backend = "backend-flush-rollback"
+	if err := s.FlushPoolDeltas(ctx, backend, "2026-08", core.PoolUsage{"good": 3, "bad": 1}); err == nil {
+		t.Fatal("FlushPoolDeltas should fail when a pool is rejected")
+	}
+	got, err := s.GetPoolUsageForPeriod(ctx, "2026-08")
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if pools := got[backend]; len(pools) != 0 {
+		t.Errorf("pools = %v, want nothing written by a failed flush", pools)
 	}
 }
 
@@ -945,7 +979,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Now appears in ListEncryptedLocations(keyID).
-	encRows, err := s.ListEncryptedLocations(ctx, "kid-1", 1000, 0)
+	encRows, err := s.ListEncryptedLocations(ctx, "kid-1", 1000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListEncryptedLocations: %v", err)
 	}

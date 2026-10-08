@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -99,7 +98,7 @@ func (f *fakeBackend) ListObjects(context.Context, string, func([]s3be.ListedObj
 type emptyEncAdmin struct{}
 
 // ListEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]core.EncryptedLocation, error) {
+func (emptyEncAdmin) ListEncryptedLocations(context.Context, string, int, core.Cursor) ([]core.EncryptedLocation, error) {
 	return nil, nil
 }
 
@@ -204,6 +203,7 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Unhashed:     mock,
 		Locker:       mock,
 		Declared:     declaredBuckets(testBucket),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
@@ -428,7 +428,7 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, nil)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if !errors.Is(err, ErrScrubInProgress) {
@@ -457,7 +457,7 @@ func TestScrub_LockErrorSurfaces(t *testing.T) {
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, wantErr)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
 
 	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
 		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
@@ -492,7 +492,7 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 			return true, err
 		})
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if err != nil {
@@ -710,7 +710,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 
 	var updated bool
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, 0).
+	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, core.Cursor{}).
 		Return([]core.EncryptedLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
 		}, nil).Times(1)
@@ -860,10 +860,17 @@ func TestObjectsGet_NotFound(t *testing.T) {
 // verification enabled.
 func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	t.Helper()
+	return integrityWithBacklog(t, scrubber, newBacklog(0))
+}
+
+// integrityWithBacklog builds an Integrity over scrubber whose backfill lists
+// from store.
+func integrityWithBacklog(t *testing.T, scrubber ScrubberOps, store UnhashedLister) *Integrity {
+	t.Helper()
 	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
 	icfg.EXPECT().Load().
 		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: grantingLocker(t)})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: store, IntegrityCfg: icfg, Locker: grantingLocker(t)})
 }
 
 // grantingLocker is an advisory locker that always takes the lock and runs the
@@ -915,21 +922,15 @@ func TestVerifyKey_NoCopiesIsNotFound(t *testing.T) {
 // it fits a client timeout, and reports that the backlog is not drained.
 func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
 	t.Parallel()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
-			for i := range batchSize {
-				progress.Track(observer, fmt.Sprintf("key-%d-%d", offset, i), func() string { return progress.StatusOK })
-			}
-			return worker.WorkSummary{Attempted: batchSize, Succeeded: batchSize}, offset + batchSize
-		}).AnyTimes()
+	b := newBacklog(40)
 
-	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 25, 0, "", nil)
+	res, err := integrityWithBacklog(t, backlogHasher(t, b, nil), b).BackfillChecksums(context.Background(), 10, 25, 0, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
-	if res.Processed < 25 {
-		t.Errorf("Processed = %d, want at least the 25 requested", res.Processed)
+	// The cap is checked between pages, so the page that crossed it completes.
+	if res.Processed != 30 || len(b.keys) != 10 {
+		t.Errorf("Processed = %d with %d left, want 30 processed and 10 left", res.Processed, len(b.keys))
 	}
 	if res.Done {
 		t.Error("Done = true, want false when the cap stopped the run short of the backlog")
@@ -940,20 +941,17 @@ func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
 // as undecodable are summed across passes into the run's result.
 func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
 	t.Parallel()
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	gomock.InOrder(
-		scrubber.EXPECT().Backfill(gomock.Any(), 10, 0, "", gomock.Any()).
-			Return(worker.WorkSummary{Attempted: 8, Succeeded: 8, Skipped: 2}, 10),
-		scrubber.EXPECT().Backfill(gomock.Any(), 10, 10, "", gomock.Any()).
-			Return(worker.WorkSummary{Skipped: 3}, 0),
-	)
+	// Unreadable copies stay unhashed, so the cursor has to step past them
+	// rather than list them again.
+	b := newBacklog(13)
+	unreadable := func(key string) bool { return key < "k-005" }
 
-	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 0, 0, "", nil)
+	res, err := integrityWithBacklog(t, backlogHasher(t, b, unreadable), b).BackfillChecksums(context.Background(), 10, 0, 0, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
-	if res.Unreadable != 5 || !res.Done {
-		t.Errorf("res = %+v, want 5 unreadable and the backlog drained", res)
+	if res.Unreadable != 5 || res.Processed != 8 || !res.Done {
+		t.Errorf("res = %+v, want 5 unreadable, 8 processed and the backlog drained", res)
 	}
 }
 
@@ -1289,7 +1287,7 @@ func TestDecryptExisting_EmptyStore(t *testing.T) {
 func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	t.Parallel()
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", rotateBatchSize, 0).
+	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", rotateBatchSize, core.Cursor{}).
 		Return([]core.EncryptedLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
 		}, nil).Times(1)
@@ -1485,14 +1483,14 @@ func TestBackfillChecksums_StopsOnCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
+	scrubber.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
 			progress.Track(observer, "key", func() string { return progress.StatusOK })
 			cancel()
-			return worker.WorkSummary{Attempted: 1, Succeeded: 1}, offset + batchSize
+			return worker.WorkSummary{Attempted: len(locs), Succeeded: len(locs)}
 		}).Times(1)
 
-	res, err := integrityOver(t, scrubber).BackfillChecksums(ctx, 10, 0, time.Millisecond, "", nil)
+	res, err := integrityWithBacklog(t, scrubber, newBacklog(20)).BackfillChecksums(ctx, 10, 0, time.Millisecond, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
@@ -1505,20 +1503,10 @@ func TestBackfillChecksums_StopsOnCancelledContext(t *testing.T) {
 // between passes, which is what rate-limits backend reads on a large backlog.
 func TestBackfillChecksums_PausesBetweenPasses(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int64
-
-	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
-			progress.Track(observer, "key", func() string { return progress.StatusOK })
-			if calls.Add(1) == 1 {
-				return worker.WorkSummary{Attempted: 1, Succeeded: 1}, offset + batchSize
-			}
-			return worker.WorkSummary{Attempted: 1, Succeeded: 1}, 0
-		}).Times(2)
+	b := newBacklog(15)
 
 	start := time.Now()
-	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 0, 20*time.Millisecond, "", nil)
+	res, err := integrityWithBacklog(t, backlogHasher(t, b, nil), b).BackfillChecksums(context.Background(), 10, 0, 20*time.Millisecond, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}

@@ -52,6 +52,11 @@ type ObjectStore interface {
 	core.ObjectStore
 }
 
+// UnhashedLister lists the copies a checksum backfill still has to hash.
+type UnhashedLister interface {
+	GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error)
+}
+
 // EncryptionStore is the admin surface the bulk rewrite passes read and write
 // as they move objects between plaintext and ciphertext.
 type EncryptionStore interface {
@@ -166,7 +171,7 @@ type OverReplicationOps interface {
 type ScrubberOps interface {
 	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) worker.WorkSummary
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
-	Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (worker.WorkSummary, int)
+	HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary
 	ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error)
 	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary
 }

@@ -43,8 +43,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -119,6 +119,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Unhashed:     testStore,
 		Provisioning: testStore,
 		Registry:     publisher,
 		Declared:     declared,

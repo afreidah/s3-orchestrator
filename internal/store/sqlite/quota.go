@@ -177,26 +177,28 @@ func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string
 }
 
 // FlushPoolDeltas adds one backend's accumulated per-pool request counts to
-// their persistent rows, one statement per pool so a single bad pool name does
-// not fail the whole flush.
+// their persistent rows in one transaction. A failure writes none of them, so
+// the caller can restore every delta to the counter without double-counting.
 func (s *Store) FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error {
 	now := now()
-	for pool, requests := range deltas {
-		if requests == 0 {
-			continue
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		for pool, requests := range deltas {
+			if requests == 0 {
+				continue
+			}
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT (backend_name, period, pool) DO UPDATE SET
+					requests   = backend_request_usage.requests + excluded.requests,
+					updated_at = excluded.updated_at`,
+				backendName, period, pool, requests, now)
+			if err != nil {
+				return fmt.Errorf("failed to flush pool deltas: %w", err)
+			}
 		}
-		_, err := s.db.ExecContext(ctx, `
-			INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (backend_name, period, pool) DO UPDATE SET
-				requests   = backend_request_usage.requests + excluded.requests,
-				updated_at = excluded.updated_at`,
-			backendName, period, pool, requests, now)
-		if err != nil {
-			return fmt.Errorf("failed to flush pool deltas: %w", err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // GetPoolUsageForPeriod returns every backend's per-pool request counts for

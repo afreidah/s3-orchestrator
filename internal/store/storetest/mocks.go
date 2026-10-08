@@ -745,18 +745,18 @@ func (mr *MockMetadataStoreMockRecorder) GetObjectTags(ctx, key any) *gomock.Cal
 }
 
 // GetObjectsWithoutHash mocks base method.
-func (m *MockMetadataStore) GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]core.ObjectLocation, error) {
+func (m *MockMetadataStore) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, offset, backend)
+	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, after, backend)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetObjectsWithoutHash indicates an expected call of GetObjectsWithoutHash.
-func (mr *MockMetadataStoreMockRecorder) GetObjectsWithoutHash(ctx, limit, offset, backend any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) GetObjectsWithoutHash(ctx, limit, after, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectsWithoutHash), ctx, limit, offset, backend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectsWithoutHash), ctx, limit, after, backend)
 }
 
 // GetOverReplicatedObjects mocks base method.
@@ -1133,18 +1133,18 @@ func (mr *MockMetadataStoreMockRecorder) ListDrains(ctx any) *gomock.Call {
 }
 
 // ListEncryptedLocations mocks base method.
-func (m *MockMetadataStore) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
+func (m *MockMetadataStore) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListEncryptedLocations", ctx, keyID, limit, offset)
+	ret := m.ctrl.Call(m, "ListEncryptedLocations", ctx, keyID, limit, after)
 	ret0, _ := ret[0].([]core.EncryptedLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListEncryptedLocations indicates an expected call of ListEncryptedLocations.
-func (mr *MockMetadataStoreMockRecorder) ListEncryptedLocations(ctx, keyID, limit, offset any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListEncryptedLocations(ctx, keyID, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListEncryptedLocations), ctx, keyID, limit, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListEncryptedLocations), ctx, keyID, limit, after)
 }
 
 // ListExpiredObjects mocks base method.

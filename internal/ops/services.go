@@ -40,6 +40,7 @@ type Deps struct {
 	Rebalancer   RebalancerOps
 	Expiry       LifecycleOps
 	Scrubber     ScrubberOps
+	Unhashed     UnhashedLister
 	Locker       AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
@@ -77,6 +78,7 @@ func New(d *Deps) *Services {
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
 			Scrubber:     d.Scrubber,
+			Store:        d.Unhashed,
 			IntegrityCfg: d.IntegrityCfg,
 			Locker:       d.Locker,
 		}),

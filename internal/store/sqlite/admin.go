@@ -26,15 +26,17 @@ import (
 // -------------------------------------------------------------------------
 
 // ListEncryptedLocations returns a page of encrypted object locations filtered
-// by key ID. Used during key rotation to find objects wrapped with the old key.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
+// by key ID, after the cursor. Used during key rotation to find objects wrapped
+// with the old key. Paged by cursor because rotating a copy changes its key_id.
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, encryption_key, key_id
 		FROM object_locations
 		WHERE encrypted = 1 AND key_id = ?
+		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ? OFFSET ?`,
-		keyID, limit, offset,
+		LIMIT ?`,
+		keyID, after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)

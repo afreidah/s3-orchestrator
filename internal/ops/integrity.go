@@ -74,6 +74,7 @@ type PurgeResult struct {
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
 	Scrubber     ScrubberOps
+	Store        UnhashedLister
 	IntegrityCfg IntegrityConfigLoader
 	Locker       AdvisoryLocker
 }
@@ -83,6 +84,7 @@ type IntegrityDeps struct {
 type Integrity struct {
 	log          *slog.Logger
 	scrubber     ScrubberOps
+	store        UnhashedLister
 	integrityCfg IntegrityConfigLoader
 	locker       AdvisoryLocker
 }
@@ -90,11 +92,13 @@ type Integrity struct {
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
+	must.NotNil("d.Store", d.Store)
 	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
 	must.NotNil("d.Locker", d.Locker)
 	return &Integrity{
 		log:          slog.Default().With(logfmt.Component("ops")),
 		scrubber:     d.Scrubber,
+		store:        d.Store,
 		integrityCfg: d.IntegrityCfg,
 		locker:       d.Locker,
 	}
@@ -190,27 +194,37 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// drainBackfill runs backfill passes until the backlog drains, the max-objects
-// cap is hit, or the context is cancelled. Reports whether the backlog was
-// fully drained and how many copies were skipped as unreadable.
+// drainBackfill hashes the backlog a page at a time until it drains, the
+// max-objects cap is hit, or the context is cancelled. Reports whether the
+// backlog was fully drained and how many copies were skipped as unreadable.
+// A listing failure ends the run as not drained.
 func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer, total *int) (done bool, unreadable int) {
-	for offset := 0; ; {
-		sum, nextOffset := i.scrubber.Backfill(ctx, batchSize, offset, backend, observer)
-		unreadable += sum.Skipped
-		if nextOffset == 0 {
-			return true, unreadable
-		}
-		offset = nextOffset
+	list := func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+		return i.store.GetObjectsWithoutHash(ctx, limit, after, backend)
+	}
+	cursorOf := func(loc core.ObjectLocation) core.Cursor {
+		return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
+	}
+	// The cap and the pause sit between pages, so stopping on them leaves the
+	// page that was just hashed complete.
+	stopped, err := walkPages(ctx, fixedPage(batchSize), list, cursorOf, func(ctx context.Context, locs []core.ObjectLocation) (bool, error) {
+		unreadable += i.scrubber.HashCopies(ctx, locs, observer).Skipped
 		if maxObjects > 0 && *total >= maxObjects {
-			return false, unreadable
+			return true, nil
 		}
 		if ctx.Err() != nil {
-			return false, unreadable
+			return true, nil
 		}
-		if pause > 0 && !sleepOrCancel(ctx, pause) {
-			return false, unreadable
+		if len(locs) < batchSize {
+			return false, nil // the last page, so there is nothing to pause before
 		}
+		return pause > 0 && !sleepOrCancel(ctx, pause), nil
+	})
+	if err != nil {
+		i.log.ErrorContext(ctx, "backfill list failed", "error", err)
+		return false, unreadable
 	}
+	return !stopped, unreadable
 }
 
 // ListUnreadable returns up to limit copies that are encrypted with no key, and

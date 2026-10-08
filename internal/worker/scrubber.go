@@ -469,29 +469,15 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 // BACKFILL  -  compute hashes for objects that don't have one
 // -------------------------------------------------------------------------
 
-// Backfill reads objects that have no stored content hash, computes the
-// SHA-256 digest, and stores it in the database. Processes up to batchSize
-// objects starting at the given offset. observer, when non-nil, receives a
-// start step before each object is hashed and an end step after, carrying the
-// per-object outcome and duration. Returns the cycle summary and the next
-// offset for pagination (0 when done).
-func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (WorkSummary, int) {
+// HashCopies computes and stores the SHA-256 digest of each copy, for a
+// backfill of copies that have none. observer, when non-nil, receives a start
+// step before each copy is hashed and an end step after, carrying its outcome.
+func (s *Scrubber) HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) WorkSummary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
 	defer span.End()
 
-	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset, backend)
-	if err != nil {
-		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
-		return WorkSummary{}, 0
-	}
-
-	if len(locs) == 0 {
-		return WorkSummary{}, 0
-	}
-
-	s.log.InfoContext(ctx, "backfill batch starting",
-		"objects", len(locs), "offset", offset)
+	s.log.InfoContext(ctx, "backfill batch starting", "objects", len(locs))
 
 	// Sequential (Concurrency 1) like Scrub: each item reads and hashes a full
 	// object body.
@@ -502,16 +488,9 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, backend 
 		Observer:    observer,
 		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
 	}
-	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
+	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
 		return s.hashOne(ctx, &loc)
 	})
-
-	// A full batch means there may be more rows to page through.
-	nextOffset := 0
-	if len(locs) == batchSize {
-		nextOffset = offset + batchSize
-	}
-	return sum, nextOffset
 }
 
 // hashOne computes and stores the hash for one object, returning the outcome

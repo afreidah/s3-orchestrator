@@ -27,6 +27,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // replicationFactorTwo is the replication config these tests use to put a
@@ -37,6 +40,17 @@ func replicationFactorTwo() config.ReplicationConfig {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
+}
+
+// backfillPage hashes the first page of copies a backfill run would take from
+// store, which covers every copy these tests write.
+func backfillPage(ctx context.Context, t *testing.T, scrubber *worker.Scrubber, store *postgres.Store) worker.WorkSummary {
+	t.Helper()
+	locs, err := store.GetObjectsWithoutHash(ctx, 100, core.Cursor{}, "")
+	if err != nil {
+		t.Fatalf("GetObjectsWithoutHash: %v", err)
+	}
+	return scrubber.HashCopies(ctx, locs, nil)
 }
 
 // queryHashedCopies counts the copies of key that carry a stored content hash,
@@ -304,7 +318,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// Backfill records the hashes the scrub will later compare against. The
 	// write path only stores them when integrity is configured, so this also
 	// exercises the backfill path itself.
-	sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil)
+	sum := backfillPage(ctx, t, testWorkers.Scrubber, testStore)
 	if sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
@@ -365,7 +379,7 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil); sum.Succeeded == 0 {
+	if sum := backfillPage(ctx, t, testWorkers.Scrubber, testStore); sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
 
@@ -607,7 +621,7 @@ func seedHashedObject(t *testing.T, ctx context.Context, client *s3.Client, pref
 	}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if _, _ = testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil); queryHashedCopies(t, key) != 1 {
+	if backfillPage(ctx, t, testWorkers.Scrubber, testStore); queryHashedCopies(t, key) != 1 {
 		t.Fatalf("expected the written copy of %q to carry a hash after backfill", key)
 	}
 	return key

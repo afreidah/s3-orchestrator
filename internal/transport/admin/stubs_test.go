@@ -94,6 +94,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	t.Helper()
 	h.integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber:     newScrubber(t, sc),
+		Store:        backfillStore{cfg: sc},
 		IntegrityCfg: newOpsIntegrityCfg(t, be),
 		Locker:       newGrantingLocker(t),
 	})
@@ -254,19 +255,30 @@ func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 	return m
 }
 
-// scrubberStub configures the ScrubberOps mock. backfillMore keeps reporting a
-// further batch, so the handler's paging loop can be driven past one pass.
+// scrubberStub configures the ScrubberOps mock. backfillBacklog is how many
+// copies the backfill listing holds; each hashed page drains it.
 type scrubberStub struct {
-	scrubChecked      int
-	scrubFailed       int
-	scrubSkipped      int
-	scrubDeferred     int
-	scrubKeyCopies    []worker.CopyVerification
-	scrubKeyErr       error
-	backfillProcessed int
-	backfillMore      bool
-	backfillCalls     int
-	unreadable        []core.ObjectLocation
+	scrubChecked    int
+	scrubFailed     int
+	scrubSkipped    int
+	scrubDeferred   int
+	scrubKeyCopies  []worker.CopyVerification
+	scrubKeyErr     error
+	backfillBacklog int
+	backfillCalls   int
+	unreadable      []core.ObjectLocation
+}
+
+// backfillStore lists the scrubber stub's unhashed backlog, a page at a time.
+type backfillStore struct{ cfg *scrubberStub }
+
+// GetObjectsWithoutHash returns up to limit of the copies still unhashed.
+func (s backfillStore) GetObjectsWithoutHash(_ context.Context, limit int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
+	locs := make([]core.ObjectLocation, min(limit, s.cfg.backfillBacklog))
+	for i := range locs {
+		locs[i] = core.ObjectLocation{ObjectKey: fmt.Sprintf("k-%d", i), BackendName: "b1"}
+	}
+	return locs, nil
 }
 
 // newGrantingLocker builds an advisory locker that always takes the lock and
@@ -301,16 +313,12 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 		DoAndReturn(func(_ context.Context, _ string) ([]worker.CopyVerification, error) {
 			return cfg.scrubKeyCopies, cfg.scrubKeyErr
 		}).AnyTimes()
-	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
+	m.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
 			cfg.backfillCalls++
-			trackN(observer, cfg.backfillProcessed, fixedKey(""))
-			sum := worker.WorkSummary{Attempted: cfg.backfillProcessed, Succeeded: cfg.backfillProcessed}
-			if cfg.backfillMore {
-				return sum, offset + batchSize
-			}
-			// One batch processed, then signal done with nextOffset=0.
-			return sum, 0
+			cfg.backfillBacklog -= len(locs)
+			trackN(observer, len(locs), fixedKey(""))
+			return worker.WorkSummary{Attempted: len(locs), Succeeded: len(locs)}
 		}).AnyTimes()
 	m.EXPECT().ListUnreadable(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, int) ([]core.ObjectLocation, int64, error) {

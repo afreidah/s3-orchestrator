@@ -188,9 +188,9 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	body := "backfill me"
 	expectedHash := hashString(body)
 
-	ms.objectsWithoutHash = []core.ObjectLocation{
+	locs := withPaths([]core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(body))},
-	}
+	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
@@ -198,45 +198,13 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 		Size: int64(len(body)),
 	}, func() {}, nil)
 
-	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, "", nil)
+	backfillSum := s.HashCopies(context.Background(), locs, nil)
 	processed := backfillSum.Succeeded
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
 	}
-	if nextOffset != 0 {
-		t.Errorf("expected nextOffset 0, got %d", nextOffset)
-	}
 	if ms.lastUpdatedHash != expectedHash {
 		t.Errorf("expected hash %s, got %s", expectedHash, ms.lastUpdatedHash)
-	}
-}
-
-// TestBackfill_Pagination verifies the backfill pagination contract.
-// Asserts that expected 5 processed, got.
-func TestBackfill_Pagination(t *testing.T) {
-	t.Parallel()
-	s, ops, _, be, ms := setupScrubber(t)
-
-	// Return a full batch to trigger pagination
-	locs := make([]core.ObjectLocation, 5)
-	for i := range locs {
-		locs[i] = core.ObjectLocation{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 3}
-	}
-	ms.objectsWithoutHash = locs
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(5)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), "").Return(&backend.GetObjectResult{
-		Body: io.NopCloser(strings.NewReader("abc")),
-		Size: 3,
-	}, func() {}, nil).Times(5)
-
-	backfillSum, nextOffset := s.Backfill(context.Background(), 5, 0, "", nil)
-	processed := backfillSum.Succeeded
-	if processed != 5 {
-		t.Errorf("expected 5 processed, got %d", processed)
-	}
-	if nextOffset != 5 {
-		t.Errorf("expected nextOffset 5 for full batch, got %d", nextOffset)
 	}
 }
 
@@ -248,9 +216,9 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	body := "plaintext object"
 	expectedHash := hashString(body)
 
-	ms.objectsWithoutHash = []core.ObjectLocation{
+	locs := withPaths([]core.ObjectLocation{
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
-	}
+	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
@@ -258,7 +226,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 		Size: int64(len(body)),
 	}, func() {}, nil)
 
-	backfillSum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
+	backfillSum := s.HashCopies(context.Background(), locs, nil)
 	processed := backfillSum.Succeeded
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
@@ -272,16 +240,16 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 // Asserts that expected 0 processed, got.
 func TestBackfill_BackendError(t *testing.T) {
 	t.Parallel()
-	s, ops, _, be, ms := setupScrubber(t)
+	s, ops, _, be, _ := setupScrubber(t)
 
-	ms.objectsWithoutHash = []core.ObjectLocation{
+	locs := withPaths([]core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
-	}
+	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("timeout"))
 
-	backfillSum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
+	backfillSum := s.HashCopies(context.Background(), locs, nil)
 	processed := backfillSum.Succeeded
 	if processed != 0 {
 		t.Errorf("expected 0 processed, got %d", processed)
@@ -292,17 +260,13 @@ func TestBackfill_BackendError(t *testing.T) {
 	}
 }
 
-// TestBackfill_EmptyBatch verifies the backfill empty batch contract.
-// Asserts that expected 0/0, got /.
+// TestBackfill_EmptyBatch verifies an empty page hashes nothing.
 func TestBackfill_EmptyBatch(t *testing.T) {
 	t.Parallel()
-	s, _, _, _, ms := setupScrubber(t)
-	ms.objectsWithoutHash = nil
+	s, _, _, _, _ := setupScrubber(t)
 
-	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, "", nil)
-	processed := backfillSum.Succeeded
-	if processed != 0 || nextOffset != 0 {
-		t.Errorf("expected 0/0, got %d/%d", processed, nextOffset)
+	if sum := s.HashCopies(context.Background(), nil, nil); sum.Succeeded != 0 {
+		t.Errorf("succeeded = %d, want 0", sum.Succeeded)
 	}
 }
 
@@ -470,9 +434,9 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 	s, ops, _, be, ms := setupScrubber(t)
 	ciphertext := "SENC\x01" + strings.Repeat("x", 64)
 
-	ms.objectsWithoutHash = []core.ObjectLocation{
+	locs := withPaths([]core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(ciphertext))},
-	}
+	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
@@ -480,7 +444,7 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 		Size: int64(len(ciphertext)),
 	}, func() {}, nil)
 
-	sum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
+	sum := s.HashCopies(context.Background(), locs, nil)
 	if sum.Skipped != 1 || sum.Failed != 0 {
 		t.Errorf("skipped = %d, failed = %d, want 1 skipped and none failed", sum.Skipped, sum.Failed)
 	}
@@ -536,11 +500,11 @@ func TestPurgeUnreadable_RowDeleteFailureFails(t *testing.T) {
 // as unreadable without a backend read, rather than failing every cycle.
 func TestBackfill_SkipsKeylessRow(t *testing.T) {
 	t.Parallel()
-	s, ops, _, _, ms := setupScrubber(t)
+	s, ops, _, _, _ := setupScrubber(t)
 
-	ms.objectsWithoutHash = []core.ObjectLocation{
+	locs := withPaths([]core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 100, Encrypted: true},
-	}
+	})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	var statuses []string
@@ -549,7 +513,7 @@ func TestBackfill_SkipsKeylessRow(t *testing.T) {
 			statuses = append(statuses, step.Status)
 		}
 	}
-	sum, _ := s.Backfill(context.Background(), 10, 0, "", observer)
+	sum := s.HashCopies(context.Background(), locs, observer)
 	if sum.Skipped != 1 || sum.Failed != 0 || sum.Outcome() != OutcomeEmpty {
 		t.Errorf("summary = %+v (outcome %s), want one skip and an empty outcome", sum, sum.Outcome())
 	}

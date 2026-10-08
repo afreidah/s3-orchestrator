@@ -63,7 +63,7 @@ func TestBackendFilter_ObjectsWithoutHash(t *testing.T) {
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/b", "backend-b", 200)
 
-	all, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	all, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestBackendFilter_ObjectsWithoutHash(t *testing.T) {
 		t.Fatalf("fleet-wide = %d rows, want 2", len(all))
 	}
 
-	scoped, err := s.GetObjectsWithoutHash(ctx, 10, 0, "backend-b")
+	scoped, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "backend-b")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash(backend-b): %v", err)
 	}

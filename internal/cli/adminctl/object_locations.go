@@ -12,6 +12,7 @@ package adminctl
 import (
 	"flag"
 	"fmt"
+	"net/url"
 )
 
 // cmdObjectLocations implements `s3-orchestrator admin object-locations
@@ -27,5 +28,5 @@ func cmdObjectLocations(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -key is required")
 		return 1
 	}
-	return c.get("/admin/api/object-locations?key="+*key, nil)
+	return c.get("/admin/api/object-locations?key="+url.QueryEscape(*key), nil)
 }

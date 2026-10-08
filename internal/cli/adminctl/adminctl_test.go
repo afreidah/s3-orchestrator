@@ -783,6 +783,48 @@ func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
 	}
 }
 
+// TestCommand_CacheInvalidate_EscapesKey verifies a key with reserved
+// characters reaches the server intact as one path segment.
+func TestCommand_CacheInvalidate_EscapesKey(t *testing.T) {
+	t.Parallel()
+	const key = "photos/a b?c#d%e.jpg"
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "invalidated"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	if code := Command("cache-invalidate", []string{"-key=" + key}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotPath != "/admin/api/cache/keys/"+key || gotQuery != "" {
+		t.Errorf("path = %q, query = %q, want the whole key in the path", gotPath, gotQuery)
+	}
+}
+
+// TestCommand_ObjectLocations_EscapesKey verifies a key with reserved
+// characters reaches the server intact as the key query parameter.
+func TestCommand_ObjectLocations_EscapesKey(t *testing.T) {
+	t.Parallel()
+	const key = "photos/a&b=c d#e%f.jpg"
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.URL.Query().Get("key")
+		_ = json.NewEncoder(w).Encode(map[string]any{"key": key, "locations": []any{}})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	if code := Command("object-locations", []string{"-key=" + key}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotKey != key {
+		t.Errorf("key = %q, want %q", gotKey, key)
+	}
+}
+
 // TestCommand_CacheInvalidate_MissingKey verifies that omitting -key
 // exits non-zero and reports the missing flag to stderr.
 func TestCommand_CacheInvalidate_MissingKey(t *testing.T) {

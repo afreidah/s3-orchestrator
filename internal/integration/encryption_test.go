@@ -123,6 +123,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Unhashed:     testStore,
 		Provisioning: testStore,
 		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}},
