@@ -33,17 +33,9 @@ import (
 const MemThreshold = 32 * 1024 * 1024
 
 // spillDir is where a payload too large for memory is written, or empty for
-// the OS temp directory.
-//
-// Where the spill lands is very much an operator concern, unlike the threshold
-// above: the default is /tmp, which is tmpfs under the systemd default and in
-// most container images, so the spill that exists to keep large objects off the
-// heap puts them straight back in RAM. Pointing this at real disk is the only
-// way to bound the footprint of a fleet-wide pass.
-//
-// Atomic because it is read from every goroutine serving a PUT. Written once
-// during startup, before any of them exist, but a value only safe because of
-// when it happens to be written is what this pattern exists to avoid.
+// the OS temp directory. The default /tmp is often tmpfs, which puts spilled
+// objects back in RAM, so operators should point this at real disk. It is
+// atomic because every goroutine serving a PUT reads it.
 var spillDir atomic.Pointer[string]
 
 // SetSpillDir points large-payload spills at dir. An empty string restores the
@@ -80,13 +72,8 @@ type Body struct {
 // -------------------------------------------------------------------------
 
 // New copies src into a memory buffer or a tempfile based on size, tee'ing
-// the bytes into each supplied hasher so every digest the caller needs comes
-// out of the same single pass instead of re-scanning the materialized body.
-// A PUT wants two - the ETag's MD5 always, the integrity SHA-256 when it is
-// enabled - and nil entries are skipped so a caller can pass an optional
-// hasher without branching. The caller must defer (*Body).Cleanup on the
-// returned body so the tempfile fd is released when the body is no longer
-// needed (safe even on the in-memory branch).
+// the bytes into each supplied hasher in the same pass. Nil hashers are
+// skipped. The caller must defer (*Body).Cleanup on the returned body.
 func New(src io.Reader, size int64, hashers ...hash.Hash) (*Body, error) {
 	b, err := NewEmpty(size)
 	if err != nil {
@@ -128,23 +115,16 @@ func NewEmpty(size int64) (*Body, error) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Cleanup releases the underlying tempfile when the sink spilled to disk; the
-// in-memory branch has no fd to release and the buffer is reclaimed by the GC
-// when the Body goes out of scope. Always safe to defer regardless of which
-// branch backs the body.
+// Cleanup removes the tempfile when the body spilled to disk. Always safe to
+// defer.
 func (b *Body) Cleanup() {
 	if b.file != nil {
 		_ = b.file.Close()
 	}
 }
 
-// Writer returns the io.Writer the caller streams source bytes into. Only
-// meaningful when NewEmpty was used to construct the sink; New owns its own
-// write loop.
-//
-// The tempfile sink counts what it is handed, so a caller that drives its own
-// write loop leaves the body knowing how long it is. Reader needs that length
-// and cannot ask the file for it once several readers are live.
+// Writer returns the io.Writer a NewEmpty body is filled through. It counts the
+// bytes written, since Reader needs the length.
 func (b *Body) Writer() io.Writer {
 	if b.file != nil {
 		return &countingWriter{dst: b.file, written: &b.size}
@@ -175,15 +155,9 @@ func (b *Body) Size() int64 {
 	return int64(b.buf.Len())
 }
 
-// Reader returns a fresh io.ReadSeeker positioned at offset 0. Safe to call
-// repeatedly, and the readers it returns are independent of each other: a write
-// placing several copies at once has one of them per upload, all reading the
-// one payload concurrently.
-//
-// Independence is why the tempfile variant hands back a section reader rather
-// than the file. A shared *os.File carries a single offset, so two uploads
-// reading it would consume each other's bytes; a section reader addresses the
-// file positionally instead and never touches that offset.
+// Reader returns a new io.ReadSeeker at offset 0, independent of any other, so
+// concurrent uploads can read one payload. The tempfile form returns a section
+// reader because a shared *os.File has a single offset.
 func (b *Body) Reader() (io.ReadSeeker, error) {
 	if b.file != nil {
 		return io.NewSectionReader(b.file, 0, b.size), nil

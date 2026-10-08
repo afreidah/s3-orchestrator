@@ -475,14 +475,9 @@ func TestDecodeXMLBody_OversizedIsTooLarge(t *testing.T) {
 	}
 }
 
-// TestDecodeXMLBody_OversizedAfterCompleteDocument is the silent-truncation
-// case. The document closes inside the limit and padding follows, so a
-// LimitReader handed back a complete, valid document and threw the rest away:
-// nothing failed, and the orchestrator acted on a prefix of what was sent.
-//
-// The padding is both trailing content and over the ceiling. It is reported as
-// trailing content, which is the more actionable of the two - a body that is
-// one oversized document still reports too-large, covered separately.
+// TestDecodeXMLBody_OversizedAfterCompleteDocument covers a complete document
+// within the limit followed by padding past it, which a truncating reader
+// would accept. The padding is reported as trailing content.
 func TestDecodeXMLBody_OversizedAfterCompleteDocument(t *testing.T) {
 	t.Parallel()
 	body := `<Delete><Object><Key>a.txt</Key></Object></Delete>` + strings.Repeat("x", 4096)

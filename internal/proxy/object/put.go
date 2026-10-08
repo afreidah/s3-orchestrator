@@ -37,16 +37,8 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// PutObject uploads an object to the first backend with available quota.
-// If the upload fails, it retries on remaining eligible backends before
-// returning an error to the caller (write failover).
-// PutObjectRequest is one PutObject call's inputs. Bundled rather than passed
-// positionally because the list had already reached the point where two
-// adjacent strings could be transposed without the compiler noticing.
-//
-// Tags are the set the write carries, which replaces whatever the key held: a
-// PUT is a full replacement, so an empty Tags leaves the object untagged even
-// if its predecessor had tags.
+// PutObjectRequest is one PutObject call's inputs. Tags replace whatever the
+// key held, so an empty Tags leaves the object untagged.
 type PutObjectRequest struct {
 	Key         string
 	Body        io.Reader
@@ -60,6 +52,9 @@ type PutObjectRequest struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
+// PutObject uploads an object to the first backend with available quota.
+// If the upload fails, it retries on remaining eligible backends before
+// returning an error to the caller (write failover).
 func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string, error) {
 	const operation = s3op.PutObject
 	key, size := req.Key, req.Size
@@ -72,10 +67,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	defer span.End()
 
 	// An uncompressed write is checked against quota before its body is
-	// buffered, so a cluster with no room rejects without spending a tempfile
-	// on it. A compressed write cannot be: the bytes that will land are not
-	// known until the body is encoded, and rejecting on the logical size would
-	// turn away a write that fits.
+	// buffered. A compressed write is checked after encoding, because judging
+	// it on the logical size would reject a write that fits.
 	compress := o.compressOnWrite(size)
 	eligible := []string{}
 	if !compress {
@@ -96,9 +89,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 		}
 	}
 
-	// A fan-out that cannot be tracked is not attempted: the write falls through
-	// to the loop below and places the one copy every write placed before the
-	// feature existed, leaving the rest to the replicator.
+	// A fan-out that cannot be tracked falls through to the loop below, which
+	// places one copy and leaves the rest to the replicator.
 	if o.copiesPerWrite > 1 {
 		etag, err := o.putCopiesInParallel(ctx, span, req, plan, eligible, start)
 		if !errors.Is(err, errFanoutUnavailable) {
@@ -138,24 +130,18 @@ func rejectPutForUsage(span trace.Span, operation s3op.Operation) error {
 	return core.ErrInsufficientStorage
 }
 
-// putPlan is one PUT's payload, the sizes that describe it, and the stored form
-// a row records it under. body holds the bytes an upload sends, already encoded
-// and encrypted, so every upload of this object replays one payload rather than
-// building its own.
+// putPlan is one PUT's payload, its sizes, and the stored form a row records it
+// under. body holds the bytes an upload sends, already encoded and encrypted, so
+// every upload of this object replays one payload.
 //
-// logicalSize is what the client wrote and what the object is known by;
-// storedSize is the plaintext those bytes encode, which is what the encryption
-// envelope is measured against; uploadSize is what lands on a backend, and
-// drives placement, quota and accounting. They differ only when the body was
-// compressed or encrypted.
+// logicalSize is what the client wrote; storedSize is the plaintext those bytes
+// encode, which the encryption envelope is measured against; uploadSize is what
+// lands on a backend and drives placement, quota and accounting.
 //
-// form describes the stored bytes to the database. It is nil for an object
-// stored verbatim by a deployment with integrity hashing off, where there is
-// nothing about them a row needs to carry.
-//
-// readers counts who still needs the payload. A write placing several copies
-// answers the client on the first one and returns while the rest are still
-// uploading, so the request is not what the body's lifetime can be tied to.
+// form is nil for an object stored verbatim with integrity hashing off. readers
+// counts who still needs the payload: a multi-copy write answers the client on
+// the first copy while the rest keep uploading, so the body cannot be tied to
+// the request's lifetime.
 type putPlan struct {
 	body        *materialize.Body
 	logicalSize int64
@@ -168,12 +154,8 @@ type putPlan struct {
 	readers     atomic.Int32
 }
 
-// swapBody installs the body a stage produced and releases the one it consumed.
-// Nothing reads an earlier stage's bytes once the next stage has materialized
-// its own, and holding them would double what a large write occupies.
-//
-// Preparation is single-threaded and finishes before any upload starts, so the
-// bodies swapped through here are never ones a reader is holding.
+// swapBody installs the body a stage produced and releases the one it consumed,
+// so a large write never holds two stages at once.
 func (p *putPlan) swapBody(next *materialize.Body) {
 	p.body.Cleanup()
 	p.body = next
@@ -206,16 +188,10 @@ func (o *Manager) compressOnWrite(size int64) bool {
 	return o.codec != nil && o.compression.Enabled && size >= o.compression.MinSize
 }
 
-// physicalSize reports how many bytes a body of this size will occupy on a
-// backend once the stored form has been applied. It is what a write is admitted
-// against before its body is buffered.
-//
-// Encryption is the only layer answerable that early, and it always is: the
-// envelope is a header plus a tag per chunk, so its size is a function of the
-// plaintext size and is known before a byte is written. Compression is not,
-// because an encoder only reports its output size once it has run - which is
-// why a compressed write is admitted after its body is prepared, against the
-// upload size the plan ended up with.
+// physicalSize reports how many bytes a body of this size will occupy once
+// encrypted, which is what a write is admitted against before buffering.
+// Compressed size is only known after encoding runs, so a compressed write is
+// admitted again after preparation, against the plan's upload size.
 func (o *Manager) physicalSize(size int64) int64 {
 	if o.encryptor == nil {
 		return size
@@ -283,14 +259,8 @@ func (o *Manager) compressPutPlan(plan *putPlan) error {
 }
 
 // encryptPutPlan encrypts the plan's payload once, ahead of the failover loop,
-// so every upload the write makes sends one identical ciphertext. Encrypting
-// per upload would draw a fresh base nonce each time and leave the copies of a
-// key differing byte for byte, which nothing downstream can see: the rows stay
-// self-describing and each copy reads and scrubs on its own.
-//
-// Compression, when it ran, is already baked into the body. That ordering is
-// the convention encryption established - compress, then encrypt - and it makes
-// the encoded stream the encryptor's plaintext domain.
+// so every upload the write makes sends the same ciphertext. Compression has
+// already run, so the encoded stream is what gets encrypted.
 func (o *Manager) encryptPutPlan(ctx context.Context, plan *putPlan) error {
 	if o.encryptor == nil {
 		return nil
@@ -345,13 +315,10 @@ func (o *Manager) compressPutBody(src *materialize.Body, size int64) (*materiali
 	return dst, n, nil
 }
 
-// putAttemptResult conveys the outcome of one backend PUT attempt back to
-// the failover loop. A non-nil fatalErr terminates the call. A non-nil
-// putErr signals a backend-side failure that should drop the chosen
-// backend and retry on the remainder.
-// uploadSize is what the attempt sent, which is what the backend is charged. It
-// is carried back rather than read off the plan again so accounting reports the
-// figure the upload used.
+// putAttemptResult is the outcome of one backend PUT attempt. A non-nil
+// fatalErr ends the call; a non-nil putErr drops the backend and retries on the
+// rest. uploadSize is what the attempt sent, which is what the backend is
+// charged.
 type putAttemptResult struct {
 	backend    string
 	etag       string
@@ -360,19 +327,11 @@ type putAttemptResult struct {
 	putErr     error
 }
 
-// bufferPutBody materializes the request body into a seekable form
-// (memory for small payloads, tempfile above materialize.MemThreshold)
-// so the stages that follow can read it without holding the full body
-// on the heap. Both digests are computed during that single buffering
-// pass via io.MultiWriter so the body is not re-scanned afterwards -
-// which is also why the later stages can release the plaintext.
-//
-// The ETag's MD5 is unconditional: it is what the client is told the object
-// is, so it cannot be gated on an operator's integrity setting the way the
-// verification SHA-256 is.
-//
-// Returns the materialized body, the ETag digest, and the content hash (empty
-// when integrity verification is disabled).
+// bufferPutBody materializes the request body (memory below
+// materialize.MemThreshold, a tempfile above) and computes both digests in the
+// same pass, so later stages can release the plaintext. The ETag MD5 is always
+// computed because the client is told it; the SHA-256 is empty when integrity
+// verification is disabled.
 func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
 	var hasher hash.Hash
 	icfg := o.integrityCfg.Load()
@@ -403,11 +362,9 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 	uploadSize, form := plan.uploadSize, plan.form
 
-	// Claiming and choosing are one step. The intent row is both the recovery
-	// breadcrumb a failed commit is resolved from and the bytes admission
-	// counts against the backend, so the insert that writes it is the statement
-	// that decides whether the backend has room. Ranking only proposes an order
-	// to try.
+	// The intent is both the record a failed commit is resolved from and the
+	// bytes admission counts against the backend, so the insert that writes it
+	// decides whether the backend has room. Ranking only proposes an order.
 	identity := putIdentity(plan.etagDigest, req)
 	intent := writepath.NewPendingIntent(key, uploadSize, form, identity)
 	backendName, err := o.coord.ClaimWriteTarget(ctx, intent, eligible)
@@ -424,13 +381,9 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	// Written at the intent's own path, never at the object's key, so an
-	// overwrite never modifies bytes in place. A reader mid-write still sees the
-	// whole previous object, and the cleanup after either write can only reach
-	// its own bytes.
-	//
-	// The backend's ETag is discarded: it describes the bytes as stored, which
-	// are ciphertext or compressed frames whenever either feature is on.
+	// Written at the intent's own path, never the object's key, so an overwrite
+	// never modifies bytes in place and each write's cleanup reaches only its
+	// own bytes. The backend's ETag describes the stored bytes and is discarded.
 	_, err = be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
@@ -442,14 +395,11 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	// A drain that started after this write claimed its target would have
-	// to move the object straight back off again. Re-check before the
-	// commit so the write lands on a different backend instead; the
-	// pending intent stays for the reaper, which HEADs the backend, sees
-	// no object (we just deleted the bytes), and drops the intent. The
-	// check reads this instance's cached drain records, so a drain started
-	// elsewhere is caught only once this instance has seen it; the drain
-	// still cannot finish while this write's intent exists.
+	// A drain that started after the claim would have to move the object
+	// straight back off, so abort the commit and let the write try another
+	// backend. The intent stays for the reaper, which finds no bytes and drops
+	// it. The check reads cached drain state, so a drain started on another
+	// instance is caught late, but it cannot finish while this intent exists.
 	if o.core.IsDraining(backendName) {
 		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
 			"key", key, "backend", backendName)

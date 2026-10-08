@@ -45,13 +45,9 @@ type AdmissionController struct {
 // AdmissionLimits shapes how a full pool is handled. ShedThreshold is the
 // fraction of pool capacity (0.0-1.0) past which requests are probabilistically
 // rejected before the hard limit; Wait is how long to hold a request at a full
-// semaphore before rejecting it. Both zero - the useful default - means no
-// early shedding and instant rejection.
-//
-// Passed to the constructor rather than set afterwards. The middleware reads
-// these on every request from whichever goroutine served it, so a setter is
-// only safe while nothing is being served yet; that was true here by wiring
-// order alone, and nothing said so.
+// semaphore before rejecting it. Both zero (the default) means no early
+// shedding and instant rejection. The limits are fixed at construction because
+// every request goroutine reads them without synchronization.
 type AdmissionLimits struct {
 	ShedThreshold float64
 	Wait          time.Duration

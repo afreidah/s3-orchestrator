@@ -29,10 +29,8 @@ func NewTxOps(r Runner) TxOps { return TxOps{runner: r} }
 // SHARED TRANSACTIONAL OPERATIONS
 // -------------------------------------------------------------------------
 
-// RecordObject records an object's location and its tag set in one
-// transaction, removing and returning any copies the write displaces along
-// with the byte deltas the caller applies. A non-empty IntentID also clears
-// the matching pending intent.
+// RecordObject records an object's copies and tag set in one transaction,
+// returning the displaced copies and the byte deltas the caller applies.
 func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
 	return RecordObject(ctx, o.runner, req)
 }

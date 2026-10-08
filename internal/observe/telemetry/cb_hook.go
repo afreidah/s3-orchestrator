@@ -20,10 +20,8 @@ import (
 // NewCircuitBreakerHook returns the callback to install on a breaker so its
 // state changes drive the CircuitBreakerState gauge, the
 // CircuitBreakerTransitionsTotal counter, and the BackendCircuitOpened /
-// BackendCircuitClosed events.
-//
-// Initializes the gauge to "closed" up front so Prometheus reports a value
-// before the first transition.
+// BackendCircuitClosed events. It sets the gauge to closed up front so a value
+// is reported before the first transition.
 func NewCircuitBreakerHook(name string) func(breaker.StateChangeInfo) {
 	CircuitBreakerState.WithLabelValues(name).Set(float64(breaker.StateClosed))
 

@@ -30,7 +30,7 @@ const (
 
 // ParseMode validates a raw mode string and returns the typed constant.
 // Empty input is rejected so a caller does not silently fall back to a
-// default — the CLI provides its own default before reaching this point.
+// default - the CLI provides its own default before reaching this point.
 func ParseMode(s string) (Mode, error) {
 	switch Mode(s) {
 	case ModeAPI, ModeWorker, ModeAll:

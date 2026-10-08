@@ -55,17 +55,9 @@ const bulkRewriteBatchSize = 100
 
 // BulkRewriteResult reports one bulk rewrite pass. Total counts every copy
 // considered, so Total - Succeeded - Failed - Skipped is zero for a run that
-// completed.
-//
-// Skipped is separate from Failed because a copy can be left alone on purpose:
-// a compression pass declines objects too small or too incompressible to be
-// worth encoding, and reporting those as failures would make a healthy run look
-// broken.
-//
-// Changed is separate again: those copies were rewritten on the backend but the
-// row moved under the pass, so the work was spent and discarded. That is a
-// different thing for an operator to see than a copy the pass declined to touch,
-// because it means a conversion overlapped live traffic.
+// completed. Skipped counts copies the pass declined on purpose, such as
+// incompressible objects. Changed counts copies rewritten on the backend whose
+// row moved under the pass, meaning a conversion overlapped live traffic.
 type BulkRewriteResult struct {
 	Succeeded int
 	Failed    int
@@ -112,9 +104,8 @@ type bulkRewriteOp[L bulkRewriteRow] struct {
 // for them, the metadata update to run once they are durable, and the release
 // for anything the transform had to buffer.
 //
-// release is nil for a transform that streams. It runs whatever the upload
-// does, because a pass that leaks a buffer per failed object is a pass that
-// fills a disk partway through a fleet.
+// release is nil for a transform that streams. It must run whether or not the
+// upload succeeds, or a pass leaks a buffer per failed object.
 type rewritten struct {
 	body    io.Reader
 	size    int64
@@ -167,17 +158,11 @@ func (o rewriteOutcome) status() string {
 // failure stops the run and returns the counts gathered so far alongside the
 // error, so a caller can report partial progress.
 //
-// obs reports each object as it is processed and may be nil, which is what a
-// caller wanting only the summary passes. These passes read and rewrite every
-// object in a fleet, so a caller watching one needs to see it move rather than
-// wait on a spinner.
+// obs reports each object as it is processed and may be nil.
 //
-// Paging is by cursor, and it has to be: a rewritten object stops matching the
-// listing that selected it, so the set shrinks as the pass walks it. An offset
-// advanced against that steps clean over the rows that moved up to fill the
-// gap - a full fleet decompress skips every other page and stops early, having
-// reported success. The cursor names the last row seen, so rows leaving the set
-// behind it move nothing.
+// Paging must be by cursor: a rewritten object leaves the listing that
+// selected it, so an offset would skip the rows that move up to fill the gap
+// and end the pass early while reporting success.
 func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
 	var after core.Cursor
@@ -270,11 +255,8 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // work against the backend's usage limits, download, transform, re-upload,
 // account for what it spent, then update metadata. Failures are logged and
 // counted rather than returned, so one bad object does not end the pass.
-//
-// A pass reads and rewrites an entire fleet, so it is the largest consumer of
-// egress in the system and the one most able to exhaust a metered backend. It
-// is admitted per object rather than once per run because the budget is spent
-// as it goes: a run that fits when it starts can stop fitting halfway through.
+// Admission is per object because a run that fits the budget when it starts
+// can exhaust it halfway through.
 func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteEnv, loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
 	// Read and written at the copy's own path, so rewriting in place is safe: a
@@ -290,11 +272,9 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 
 	// The read is charged at the row's size and the write at the same figure
 	// as an estimate, since the transform's output is not known yet. Both are
-	// re-charged with the real numbers once they are.
-	//
-	// Admitted as the two operations it actually performs rather than as a
-	// count of two: providers meter a read and a write from separate
-	// allowances, so a rewrite can be affordable on one and not the other.
+	// re-charged with the real numbers once they are. The read and the write
+	// are admitted as separate operations because providers meter them from
+	// separate allowances.
 	if !env.usage.WithinLimits(backendName, rewriteOps, sizeBytes, sizeBytes) {
 		op.counter.WithLabelValues("skipped").Inc()
 		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
@@ -356,12 +336,9 @@ func (op bulkRewriteOp[L]) failed(ctx context.Context, env bulkRewriteEnv, msg, 
 
 // changed records a copy a client wrote while the pass was converting it. The
 // commit is predicated on the etag the pass read, so it matched no row and
-// nothing was recorded.
-//
-// Audited rather than only logged, and counted with its own metric, because it
-// is the one signal that a conversion overlapped live traffic: the transformed
-// bytes did reach the backend before the commit refused, so this names a copy
-// whose stored bytes are now the pass's output over a newer write.
+// nothing was recorded. It is audited and counted separately because the
+// transformed bytes already reached the backend, so the stored copy is now the
+// pass's output over a newer write.
 func (op bulkRewriteOp[L]) changed(ctx context.Context, env bulkRewriteEnv, key, backendName, expectedEtag string) rewriteOutcome {
 	env.log.WarnContext(ctx, op.opName+": copy changed while it was being converted",
 		"key", key, "backend", backendName, "expected_etag", expectedEtag)

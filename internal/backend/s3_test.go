@@ -109,16 +109,10 @@ func TestPreparePutBody_UnsignedStreamsDirectly(t *testing.T) {
 	}
 }
 
-// TestPutObject_PipeBodyStillSendsContentLength is the regression guard for the
-// multipart assembly failure: the assembly body is an *io.PipeReader, and
-// smithy-go's request builder overwrites ContentLength with -1 for that one
-// concrete type. The upload then goes out chunked with no Content-Length while
-// SigV4 has already signed the header, which no S3 implementation accepts.
-//
-// The assertion is deliberately on the wire rather than on preparePutBody's
-// return value. What preparePutBody returns is not the property that matters;
-// what reaches the backend is, and that is what a future SDK bump can silently
-// change.
+// TestPutObject_PipeBodyStillSendsContentLength verifies an *io.PipeReader body
+// still reaches the backend with Content-Length. It asserts on the wire, not on
+// preparePutBody's return value, because an SDK bump can change the wire
+// behaviour without changing that value.
 func TestPutObject_PipeBodyStillSendsContentLength(t *testing.T) {
 	t.Parallel()
 

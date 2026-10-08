@@ -21,17 +21,12 @@ import "github.com/afreidah/s3-orchestrator/internal/store/core"
 // rather than generating mocks nothing calls.
 //go:generate mockgen -destination=role_mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/core ObjectStore,QuotaStore,CleanupStore,ExpiredObjectsLister,BackendLifecycleStore,DashboardStore,LifecycleAdmin,ProvisioningStore
 
-// MetadataStore is the union of every narrow store role interface. It exists
-// only as a mockgen target, so a single generated MockMetadataStore can stand
-// in wherever a test needs a fully-populated store. Production code never
-// depends on it: consumers take the narrow roles from internal/store/core,
-// and the one place that holds an opened engine whole is the unexported
-// composite in internal/di.
-//
-// QuotaStore.GetQuotaStats and DashboardStore.GetQuotaStats share a
-// signature; embedded interfaces flatten to a single method on the
-// outer interface, which is why this composite must be declared rather
-// than synthesised by struct embedding of per-role mocks.
+// MetadataStore is the union of every narrow store role interface, used only
+// as a mockgen target so one MockMetadataStore can stand in for a whole store.
+// Production code depends on the narrow roles in internal/store/core instead.
+// It is declared as an interface rather than built by embedding per-role mocks
+// because roles share methods (GetQuotaStats), which only interface embedding
+// flattens into one.
 type MetadataStore interface {
 	core.ObjectStore
 	core.QuotaStore

@@ -50,13 +50,9 @@ func (m endpointOf) String() string { return fmt.Sprintf("copy endpoint for %v",
 // planUnderReplicated (planner)
 // -------------------------------------------------------------------------
 
-// TestPlanUnderReplicated_TablePinsPlacementDecisions exercises the
-// placement-policy half of replication without any backend I/O. The
-// planner takes a flat object_locations slice + the configured
-// replication factor and decides which keys still need work and how
-// many extra copies they need. Tasks for keys that already meet or
-// exceed the factor must be filtered out; the per-task `needed` count
-// must equal `factor - len(existing copies)`.
+// TestPlanUnderReplicated_TablePinsPlacementDecisions checks that keys at or
+// above the factor are dropped and each task's needed count equals factor
+// minus its existing copies.
 func TestPlanUnderReplicated_TablePinsPlacementDecisions(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -432,13 +428,9 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	}
 }
 
-// TestCopyToReplica_WriteErrorShortCircuits pins the typed-write-error
-// classification: a *backend.CopyError with CopyPhaseWrite returned by
-// the first source must terminate the per-source loop immediately and
-// surface the write failure, without StreamCopy being invoked against
-// the remaining sources. Untyped errors (or read-phase errors) would
-// fall through to the next source - that contrast is the whole point
-// of the typed-error refactor.
+// TestCopyToReplica_WriteErrorShortCircuits checks that a *backend.CopyError
+// with CopyPhaseWrite from the first source ends the per-source loop and
+// surfaces the write failure without trying the remaining sources.
 func TestCopyToReplica_WriteErrorShortCircuits(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

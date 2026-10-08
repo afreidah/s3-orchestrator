@@ -61,11 +61,8 @@ func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *Usage
 	return u
 }
 
-// Record increments the usage counters for a backend.
-//
-// Every operation is recorded here, including ones no pool charges: not
-// billing an operation is not a reason to stop reporting that it happened,
-// and api_requests stays the honest count of calls made.
+// Record increments the usage counters for a backend. Operations no pool
+// charges are still counted in api_requests.
 func (u *UsageTracker) Record(backendName string, op s3op.Operation, egress, ingress int64) {
 	u.record(backendName, []s3op.Operation{op}, 1, egress, ingress)
 }
@@ -119,20 +116,9 @@ func poolCharge(lim core.UsageLimits, ops []s3op.Operation, pool string) int64 {
 // LIMIT ENFORCEMENT
 // -------------------------------------------------------------------------
 
-// WithinLimits checks whether the proposed operation would keep the given
-// backend within its configured monthly usage limits. It computes:
-//
-//	effective = baseline (from DB) + unflushed counter + proposed
-//
-// Returns true if no non-zero limit is exceeded.
-//
-// Enforcement is approximate: the snapshot pair (limits, baseline) is
-// read separately from the live counter, so concurrent requests may all
-// pass the check and collectively exceed the limit by a small margin.
-// This is intentional - exact enforcement would require a mutex on every
-// request. The overshoot is bounded by one flush interval worth of
-// concurrent traffic, and s3o_usage_limit_rejections_total tracks when
-// limits are actively enforced.
+// WithinLimits reports whether baseline + unflushed + proposed stays under every
+// non-zero monthly limit for the backend. It takes no lock, so concurrent
+// requests can overshoot by up to one flush interval of traffic.
 func (u *UsageTracker) WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool {
 	return withinLimitsSnapshot(u.backend, u.snapshot(), backendName, ops, egress, ingress)
 }
@@ -202,10 +188,8 @@ func poolsWithinLimits(backend Backend, lim core.UsageLimits, base core.PoolUsag
 
 // BackendsWithinLimits returns the subset of the given order whose
 // backends are within their monthly usage limits for the proposed
-// operation dimensions. Loads the limits and baseline snapshots ONCE
-// so every per-backend check sees a consistent view; with the old
-// RWMutex pair each WithinLimits call could see a different snapshot
-// if a writer landed between iterations.
+// operation dimensions. It loads the limits and baseline snapshots once so
+// every per-backend check sees a consistent view.
 func (u *UsageTracker) BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string {
 	snap := u.snapshot()
 	eligible := make([]string, 0, len(order))

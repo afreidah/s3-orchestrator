@@ -319,12 +319,8 @@ func main() {
 // -------------------------------------------------------------------------
 
 // enforceErrorBudget reports the first result whose error rate exceeded the
-// budget, so a scenario that ran to completion while failing a large share of
-// its requests is a failure rather than a successful measurement of one.
-//
-// Ramp runs are exempt: they drive the system into saturation deliberately,
-// and crossing an error threshold is their terminal condition rather than a
-// fault.
+// budget, so a run that completed while failing many requests is reported as a
+// failure. Ramp runs are exempt because they drive the system into saturation.
 func enforceErrorBudget(results *sweepResults, maxRate float64, ramp bool) error {
 	if ramp || maxRate <= 0 {
 		return nil
@@ -395,12 +391,8 @@ func runRamp(cfg *scenarioConfig, size, rampTo, step int, errThreshold float64, 
 }
 
 // flushAdminCache POSTs to the orchestrator's cache-flush endpoint so
-// each ramp/sweep step starts from a known cold cache state. 503 is
-// treated as success since it just means the orchestrator has caching
-// disabled, not that the call failed.
-//
-// The admin API authenticates the same signed credential the data plane does,
-// so this signs with the keypair the run is already using.
+// each ramp/sweep step starts from a cold cache. 503 means caching is
+// disabled and is treated as success.
 func flushAdminCache(endpoint string, creds adminCredentials) error {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		endpoint+"/admin/api/cache/flush", nil)
@@ -499,16 +491,9 @@ func newHardwareInfo() hardwareInfo {
 }
 
 // newBody builds one scenario's payload at the requested compressibility.
-//
-// Random bytes are the honest default for measuring the write path, but they
-// are also the one input an encoder can never shrink, so a run made entirely of
-// them measures compression as the cost of declining and never as the work of
-// encoding. compressible is the fraction of the body filled with a repeating
-// dictionary instead: at 0.8 an encoder has four repetitive bytes for every
-// random one and stores roughly a fifth of what it was given.
-//
-// The repetitive part is a fixed phrase rather than a run of one byte, so the
-// encoder does real matching rather than collapsing a single run.
+// compressible is the fraction of the body filled with a repeating phrase
+// instead of random bytes, so a run can exercise compression encoding rather
+// than only the incompressible path.
 func newBody(size int, compressible float64) ([]byte, error) {
 	body := make([]byte, size)
 	if _, err := rand.Read(body); err != nil {
@@ -708,11 +693,8 @@ func newTargeter(cfg *scenarioConfig, body []byte, keys []string) vegeta.Targete
 			tgt.URL = fmt.Sprintf("%s/%s/loadtest/%s/obj-%06d", cfg.endpoint, cfg.bucket, cfg.runID, n)
 			tgt.Body = body
 		case "overwrite":
-			// Rewrites a bounded key set, so every request after the first pass
-			// replaces an object that already exists. A run of unique keys never
-			// touches overwrite displacement, the intent supersession that goes
-			// with it, or the copies a write is still placing when the next
-			// write for that key arrives.
+			// A bounded key set, so requests after the first pass overwrite
+			// existing objects and exercise overwrite displacement.
 			tgt.Method = http.MethodPut
 			tgt.URL = fmt.Sprintf("%s/%s/loadtest/%s/obj-%06d",
 				cfg.endpoint, cfg.bucket, cfg.runID, n%cfg.overwriteKeys)

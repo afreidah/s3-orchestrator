@@ -37,10 +37,8 @@ func prefixedDetail(prefix string, sentinel error, detail string) error {
 	return fmt.Errorf("%s: %w: %s", prefix, sentinel, detail)
 }
 
-// wrappedPath composes a loader sentinel with the offending file path
-// and the underlying cause. Used by LoadConfig so every loader error
-// surfaces the same shape: "<sentinel> "<path>": <cause>". Both the
-// sentinel and the cause stay reachable via errors.Is.
+// wrappedPath formats a loader error as `<sentinel> "<path>": <cause>`, keeping
+// both the sentinel and the cause reachable via errors.Is.
 func wrappedPath(sentinel error, path string, cause error) error {
 	return fmt.Errorf("%w %q: %w", sentinel, path, cause)
 }
@@ -72,12 +70,9 @@ var (
 	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
 )
 
-// Bucket CORS validation errors.
-//
-// An origin pattern accepts at most one '*' because the matcher splits the
-// pattern on it: a second wildcard has no unambiguous reading, and guessing
-// one would widen the set of origins a rule admits beyond what the operator
-// wrote.
+// Bucket CORS validation errors. An origin pattern accepts at most one '*'
+// because the matcher splits on it, and a second wildcard has no unambiguous
+// reading.
 var (
 	ErrCORSNoOrigins      = errors.New("cors rule requires at least one allowed_origins entry")
 	ErrCORSNoMethods      = errors.New("cors rule requires at least one allowed_methods entry")

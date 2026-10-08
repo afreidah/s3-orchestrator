@@ -101,20 +101,15 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	return s.countObjectsByBackend(ctx, "", "object counts")
 }
 
-// GetUnverifiedObjectCounts returns the number of objects per backend
-// whose content_hash column is NULL (objects predating integrity
-// verification or otherwise not yet checksummed). Drives the dashboard's
-// "needs backfill" column.
+// GetUnverifiedObjectCounts returns the number of objects per backend with no
+// content_hash, which the dashboard shows as needing backfill.
 func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
 	return s.countObjectsByBackend(ctx, "WHERE content_hash IS NULL", "unverified counts")
 }
 
-// countObjectsByBackend runs a per-backend COUNT(*) aggregation on
-// object_locations and returns the map. The whereClause is appended
-// verbatim (callers control the predicate); errLabel feeds the wrapped
-// error string so failures stay attributable to the calling helper.
-// Static SQL only - no caller-supplied strings interpolated beyond the
-// fixed clauses defined in this file.
+// countObjectsByBackend counts object_locations rows per backend. whereClause
+// is appended verbatim, so it must be one of the fixed clauses in this file and
+// never caller input; errLabel names the query in the wrapped error.
 func (s *Store) countObjectsByBackend(ctx context.Context, whereClause, errLabel string) (map[string]int64, error) {
 	query := "SELECT backend_name, COUNT(*) FROM object_locations " + whereClause + " GROUP BY backend_name"
 	rows, err := s.db.QueryContext(ctx, query)

@@ -34,15 +34,11 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// headSourceForCopy walks the source's known locations until one HEAD
-// succeeds (skipping over-limit and unknown backends), and returns its
-// metadata plus the stored form of its bytes. ok=false signals that no
-// copy could be reached.
-//
-// The stored form comes off the location row that answered rather than being
-// re-derived, because both copy paths move the stored bytes verbatim: the
-// destination holds an envelope or an encoded stream exactly when the source
-// did, and a row that failed to say so would describe bytes nothing can read.
+// headSourceForCopy walks the source's locations until one HEAD succeeds,
+// skipping over-limit and unknown backends, and returns its metadata plus the
+// stored form from that location's row. ok=false means no copy was reachable.
+// Both copy paths move the stored bytes verbatim, so the destination row must
+// carry the source row's stored form unchanged.
 func (o *Manager) headSourceForCopy(
 	ctx context.Context,
 	sourceKey string,
@@ -70,15 +66,12 @@ func (o *Manager) headSourceForCopy(
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// CopyObject copies an object from sourceKey to destKey. Materializes
-// the source body into a seekable buffer  -  in-memory for small
-// objects, a self-unlinking tempfile above materialize.MemThreshold
-// -  before handing it to the destination PutObject. A non-seekable
-// body would force the AWS SDK onto its streaming-unsigned-payload
-// signing path, which uses chunked transfer encoding and drops
-// Content-Length; S3 implementations that require Content-Length
-// (notably OCI) then reject the upload with HTTP 411. Supports
-// cross-backend copies and read failover from replicas.
+// CopyObject copies an object from sourceKey to destKey, across backends if
+// needed and with read failover across the source's copies. It uses a
+// server-side copy when the source has a copy on the destination backend, and
+// otherwise materializes the source into a seekable buffer before the PUT: a
+// non-seekable body makes the SDK drop Content-Length, which some S3
+// implementations (notably OCI) reject with HTTP 411.
 func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (string, error) {
 	const operation = s3op.CopyObject
 	sourceKey, destKey := req.SourceKey, req.DestKey
@@ -118,11 +111,9 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// different validators.
 	srcIdentity := copyIdentity(locations, contentType, metadata)
 
-	// The copy claims its destination the way a PUT does: the intent both holds
-	// the bytes against the backend while they are being written and gives a
-	// failed commit something the reaper can resolve. A native attempt falling
-	// back to the materialized one claims nothing new, because the destination
-	// was already chosen.
+	// The copy claims its destination the way a PUT does, so the intent holds
+	// the bytes against the backend and gives a failed commit something the
+	// reaper can resolve. A native attempt that falls back claims nothing new.
 	intent := writepath.NewPendingIntent(destKey, size, srcForm, srcIdentity)
 	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, intent)
 	if err != nil {
@@ -135,13 +126,10 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		return "", err
 	}
 
-	// Same-backend fast path: when a source replica lives on the chosen
-	// destination backend and that backend supports server-side copy,
-	// skip the materialize+PUT round trip. Falls back to the slow path
-	// on ErrCopyNotSupported or any native-call backend error. A
-	// post-copy failure (e.g., metadata record failure) surfaces to the
-	// caller because the bytes are already on the destination; falling
-	// back would copy them a second time.
+	// Same-backend fast path: when the source has a copy on the destination
+	// backend, try a server-side copy. Once the bytes have landed its result
+	// is final, even a metadata failure, because falling back would copy them
+	// a second time.
 	if sameBackendCopyEligible(locations, destBackendName) {
 		req := &nativeCopyContext{
 			span:            span,
@@ -172,11 +160,6 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	}
 	defer src.cleanup()
 
-	// Seekable body keeps the SDK on UNSIGNED-PAYLOAD signing so
-	// Content-Length survives to the backend. The dest PUT goes
-	// through the centralized backend-timeout policy so a stalled
-	// destination cannot tie up the request past the configured
-	// backend_timeout.
 	wctx, wcancel := o.core.WithTimeout(ctx)
 	defer wcancel()
 	etag, err := destBackend.PutObject(wctx, intent.StorageKey, src.body, size, contentType, metadata)
@@ -225,12 +208,10 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 	}
 }
 
-// sameBackendStoragePath names the path the source copy on destBackendName
-// occupies, which is what a server-side copy reads: the backend can only reach
-// an object in its own bucket, so the fast path is the one case where the
-// source's path is addressable from the destination. Falls back to the source
-// key when no such copy is recorded, which sameBackendCopyEligible has already
-// ruled out at every call site.
+// sameBackendStoragePath returns the storage path of the source's copy on
+// destBackendName, which is what a server-side copy reads. It falls back to the
+// bare source key when there is no such copy, which callers rule out first
+// with sameBackendCopyEligible.
 func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, sourceKey string) string {
 	for i := range locations {
 		if locations[i].BackendName == destBackendName {
@@ -254,10 +235,6 @@ func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName st
 	return false
 }
 
-// nativeCopyContext is the per-operation state the three native-copy
-// helpers share: tryNativeCopy attempts the server-side copy,
-// probeDestAfterAmbiguousCopy disambiguates lost-response failures,
-// and finalizeNativeCopy commits the destination metadata.
 // CopyObjectRequest is one CopyObject call's inputs.
 //
 // ReplaceTags carries the x-amz-tagging-directive: false is COPY, which gives
@@ -292,8 +269,6 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 // -------------------------------------------------------------------------
 
 // materializedCopyContext is what the stream-through copy's finalizer needs.
-// Bundled for the same reason as nativeCopyContext: the positional form had
-// reached eleven arguments with four adjacent strings among them.
 type materializedCopyContext struct {
 	destStorageKey string
 
@@ -311,6 +286,8 @@ type materializedCopyContext struct {
 	start           time.Time
 }
 
+// nativeCopyContext is the per-operation state shared by tryNativeCopy,
+// probeDestAfterAmbiguousCopy and finalizeNativeCopy.
 type nativeCopyContext struct {
 	srcStorageKey  string
 	destStorageKey string
@@ -335,18 +312,13 @@ type nativeCopyContext struct {
 // -------------------------------------------------------------------------
 
 // tryNativeCopy attempts a server-side CopyObject on req.destBackend and, on
-// success, records the destination location, updates accounting and emits the
-// completion observability. The second return value is whether the bytes
-// reached the destination, so a caller that sees true must not fall back - that
-// would copy them a second time.
+// success, records the destination and its accounting. The second return is
+// whether the bytes reached the destination; when it is true the caller must
+// not fall back, which would copy them a second time.
 //
-// A non-capability error HEAD-probes the destination before deciding between
-// surfacing the error and falling back, because a backend can complete the copy
-// server-side and still lose the response to a timeout or dropped connection.
-//
-// Accounting differs from the materialized path: one API call against the
-// destination with no egress and no ingress, since the bytes never traverse the
-// orchestrator's network.
+// A non-capability error HEAD-probes the destination first, because a backend
+// can complete the copy and still lose the response. A native copy is charged
+// as one API call with no egress or ingress.
 func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
 	copier, ok := req.destBackend.(s3be.Copier)
 	if !ok {
@@ -373,14 +345,10 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 	return "", false, nil
 }
 
-// probeDestAfterAmbiguousCopy HEADs the destination after a non-
-// capability native-copy error to disambiguate "copy succeeded server-
-// side but the response was lost" from "copy actually failed." Returns
-// (etag, true) when the destination exists and the size matches the
-// expected source size; ("", false) otherwise so the caller falls
-// back to materialized copy. A 404 on the HEAD is a clean fallback
-// signal; any other HEAD error is also a fallback but is logged as a
-// warn so operators see the probe failure mode.
+// probeDestAfterAmbiguousCopy HEADs the destination after a native-copy error
+// to tell a lost response from a failed copy. It returns (etag, true) when the
+// destination exists with the expected size, and ("", false) otherwise so the
+// caller falls back. HEAD errors other than 404 are logged as warnings.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
 	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destStorageKey)
 	base := []any{

@@ -639,12 +639,9 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 }
 
 // TestNewInjector_RootsResolveInEveryMode builds the injector in each run
-// mode and resolves the always-registered roots. usage.Service and
-// lifecycle.Manager are registered unconditionally and transitively pull
-// in the bulk of the graph, so a registered-but-unresolvable provider
-// surfaces here in CI rather than as a production startup panic after a
-// mode change. Complements the "all" (every provider) and "worker"
-// (every worker) resolution tests above by covering api mode explicitly.
+// mode and resolves usage.Service and lifecycle.Manager, which pull in most of
+// the graph, so a registered-but-unresolvable provider fails here instead of
+// at startup.
 func TestNewInjector_RootsResolveInEveryMode(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []config.Mode{"api", "worker", "all"} {

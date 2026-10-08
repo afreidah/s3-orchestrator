@@ -33,13 +33,9 @@ type ID string
 // parameters and log/audit fields.
 func (i ID) String() string { return string(i) }
 
-// New builds a fresh instance identifier. The hostname is taken from
-// os.Hostname() and falls back to "unknown" when the OS call fails (rare,
-// but the identifier is observability-only so a soft fallback is safer than
-// a startup failure). The 8-hex suffix comes from crypto/rand so two
-// processes on the same host get distinct identifiers; if rand.Read ever
-// fails the function returns the error - the caller decides whether to
-// fail-fast or carry on with a non-unique identifier.
+// New builds a fresh instance identifier from the hostname ("unknown" if it
+// cannot be read) and an 8-hex crypto/rand suffix, so two processes on the
+// same host get distinct identifiers. A rand.Read failure is returned.
 func New() (ID, error) {
 	host, err := os.Hostname()
 	if err != nil || host == "" {

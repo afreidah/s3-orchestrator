@@ -28,12 +28,8 @@ import (
 )
 
 // MarkObjectCompressed records the new stored form of a rewritten copy and
-// moves the backend's quota by the difference between what the copy occupied
-// before and what it occupies now.
-//
-// The envelope columns are rewritten too: re-encrypting an object mints a new
-// base nonce and wrapped key, so leaving the old ones would describe bytes
-// nothing can decrypt.
+// adjusts the backend's quota by the size change. The envelope columns are
+// rewritten too, because re-encryption mints a new base nonce and wrapped key.
 func MarkObjectCompressed(ctx context.Context, runner Runner, u *CompressedUpdate, previousSize int64) error {
 	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
 		if err := tx.UpdateCompressedForm(ctx, u); err != nil {
@@ -56,12 +52,9 @@ func MarkObjectEncrypted(ctx context.Context, runner Runner, u *EncryptedUpdate)
 }
 
 // MarkObjectDecrypted records that a copy is plaintext again, clearing the
-// envelope columns and crediting the backend the bytes the envelope cost.
-//
-// The size the copy occupied is read inside the transaction before it is
-// overwritten, because that read is the only place the delta can come from:
-// the caller knows the plaintext size it wrote and not the ciphertext size it
-// replaced.
+// envelope columns and crediting the backend the bytes the envelope cost. The
+// ciphertext size is read inside the transaction, since the caller only knows
+// the plaintext size.
 func MarkObjectDecrypted(ctx context.Context, runner Runner, u *DecryptedUpdate) error {
 	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
 		currentSize, err := tx.GetCopySizeBytes(ctx, u.ObjectKey, u.BackendName)
@@ -76,13 +69,8 @@ func MarkObjectDecrypted(ctx context.Context, runner Runner, u *DecryptedUpdate)
 }
 
 // resizeBackendUsage moves a backend's byte counter by what a rewrite changed
-// about one copy. A rewrite that changed no bytes leaves the counter alone
-// rather than writing the same value back.
-//
-// The adjustment carries no bytes_limit guard, and the engines clamp it at
-// zero: the bytes on disk are reality and the counter follows them whether or
-// not the limit would otherwise be exceeded, while a stale size must never
-// drive the counter negative and over-admit every later write.
+// about one copy. There is no bytes_limit guard because the bytes are already
+// on disk, and the engines clamp the counter at zero.
 func resizeBackendUsage(ctx context.Context, tx TxAdapter, backendName, key string, delta int64, pass string) error {
 	if delta == 0 {
 		return nil

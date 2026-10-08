@@ -28,13 +28,8 @@ import (
 // -------------------------------------------------------------------------
 
 // Encryptor provides encrypt and decrypt operations using envelope encryption
-// with a pluggable KeyProvider for DEK wrapping.
-//
-// Per-stream byte buffers (plaintext staging, framed ciphertext, nonce,
-// header) come from bufPool. Reusing the same buffer set across streams
-// keeps the encrypt + decrypt hot path allocation-free once the pool is
-// warm; under load the orchestrator was previously dominated by these
-// per-stream allocations.
+// with a pluggable KeyProvider for DEK wrapping. Per-stream buffers come from
+// bufPool, which keeps the hot path allocation-free once the pool is warm.
 type Encryptor struct {
 	provider  KeyProvider
 	chunkSize int
@@ -42,12 +37,9 @@ type Encryptor struct {
 }
 
 // EncryptResult holds the output of an encryption operation, including the
-// ciphertext stream and metadata to store in the database.
-// BaseNonce is carried out of the header so a later range read can decrypt
-// without fetching the header from the backend first. The plaintext DEK is not
-// among the fields: a caller that needs one across several calls asks for it
-// through GenerateAndWrapDEK and holds it itself, which keeps the key off a
-// struct that flows through the write path.
+// ciphertext stream and metadata to store in the database. BaseNonce lets a
+// later range read decrypt without fetching the header. The plaintext DEK is
+// kept off this struct because it flows through the write path.
 type EncryptResult struct {
 	Body           io.Reader // ciphertext stream: header plus encrypted chunks
 	CiphertextSize int64
@@ -63,10 +55,6 @@ type EncryptResult struct {
 // NewEncryptor creates an Encryptor with the given key provider and chunk
 // size. The chunk size must be positive. Config validation enforces stricter
 // bounds (4KB-1MB, power of 2); this guard catches programming errors.
-//
-// The buffer pool is seeded with chunkBuffers sized to chunkSize so every
-// borrowing reader gets a buffer set that fits a worst-case full chunk
-// without growth.
 func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("encryption chunk size must be positive, got %d", chunkSize)
@@ -106,24 +94,16 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
 }
 
-// EncryptWithDEK encrypts using a previously wrapped DEK, skipping the
-// KeyProvider.WrapDEK call. A fresh base nonce is generated per call, so
-// the ciphertext is unique even though the same DEK is reused. This is
-// safe because AES-GCM nonce uniqueness is per (key, nonce) pair  -  see
-// the SAFETY INVARIANT comment in chunk.go.
-//
-// Intended for write failover retries where the Vault round-trip for key
-// wrapping has already been paid on the first attempt.
+// EncryptWithDEK encrypts under an already-wrapped DEK, skipping WrapDEK. Each
+// call draws a fresh base nonce, so reusing the DEK keeps (key, nonce) unique.
 func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
 	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
 }
 
 // GenerateAndWrapDEK produces a fresh 256-bit DEK and wraps it via the
 // KeyProvider, returning the unwrapped DEK along with the wrapped form
-// and key ID. Used by callers that need a wrapped DEK ahead of any
-// actual encryption work - notably CreateMultipartUpload, which
-// persists the wrapped DEK on the upload row so every subsequent
-// UploadPart can reuse it without making its own WrapDEK round-trip.
+// and key ID, for callers that need a DEK before encrypting, such as a
+// multipart upload that reuses one DEK across its parts.
 func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []byte, keyID string, err error) {
 	dek = make([]byte, 32)
 	if _, err = rand.Read(dek); err != nil {
@@ -227,13 +207,9 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 // (baseNonce||wrappedDEK, the form held in object_locations.encryption_key).
 // When rng is nil it returns a reader for the full plaintext and fullSize as the
 // length; otherwise it returns the requested plaintext range and that range's
-// length. It centralizes the "stored key blob -> decrypt call" mapping (only the
-// range path needs the base nonce) so callers do not repeat the unpack-and-branch.
-// A malformed key blob is reported as ErrInvalidKeyData.
-//
-// It is the single decrypt entry point: on successful reader construction it
-// increments EncryptionOpsTotal, and on a construction failure it increments
-// EncryptionErrorsTotal, so callers do not maintain their own decrypt telemetry.
+// length. A malformed key blob is reported as ErrInvalidKeyData. It records
+// EncryptionOpsTotal or EncryptionErrorsTotal, so callers need no decrypt
+// telemetry of their own.
 func (e *Encryptor) DecryptStored(ctx context.Context, body io.Reader, packedKey []byte, keyID string, fullSize int64, rng *RangeResult) (io.Reader, int64, error) {
 	op := "decrypt"
 	if rng != nil {

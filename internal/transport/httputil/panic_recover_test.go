@@ -222,12 +222,8 @@ func TestPanicRecover_ActiveSpanGetsErrorRecorded(t *testing.T) {
 }
 
 // TestPanicRecover_AuditCallbackFires asserts that the middleware
-// emits an "http.PanicRecovered" audit event. Uses audit.SetOnEvent
-// to capture event names without parsing the slog output stream.
-//
-// Intentionally serial: audit.SetOnEvent is package-level global state
-// and other parallel tests that trigger audit logs would race on the
-// callback's closure-captured slice.
+// emits an "http.PanicRecovered" audit event. Not parallel because
+// audit.SetOnEvent sets package-level state.
 func TestPanicRecover_AuditCallbackFires(t *testing.T) {
 	var saw atomic.Bool
 	audit.SetOnEvent(func(event string) {

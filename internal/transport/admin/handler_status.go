@@ -252,12 +252,8 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: strings.ToLower(parsed.String())})
 }
 
-// handleWorkers returns a snapshot of every registered background
-// service's last-tick health. The supervisor records a tick outcome
-// after every fire, so operators can identify stalled or repeatedly
-// failing workers without scraping logs. Returns 503 when the
-// lifecycle manager was not wired (proxy-only deployments that disable
-// the worker pool).
+// handleWorkers returns each background service's last-tick health, or 503
+// when no lifecycle manager is wired.
 func (h *Handler) handleWorkers(w http.ResponseWriter, _ *http.Request) {
 	if h.workerHealth == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "worker health not available")

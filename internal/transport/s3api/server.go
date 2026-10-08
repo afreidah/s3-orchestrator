@@ -345,12 +345,8 @@ type authRequest struct {
 
 // authorize refuses a caller that does not reach the bucket, and one whose
 // grant does not carry what the operation needs. Reports whether the request
-// may proceed; the refusal is already written when it may not.
-//
-// Both checks live here so the request path has one authorization step rather
-// than two spread either side of the span. They stay separate refusals: a
-// bucket the caller was never granted and an operation its grant does not allow
-// are different states an operator fixes differently.
+// may proceed; the refusal is already written when it may not. The two cases
+// are refused and audited separately.
 func (s *Server) authorize(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest) bool {
 	if !a.user.CanReach(a.bucket) {
 		s.rejectBucketDenied(ctx, w, r, a.method, a.start, a.user, a.bucket)
@@ -364,14 +360,9 @@ func (s *Server) authorize(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 // rejectActionDenied writes a 403 for a caller that reaches the bucket but
-// whose grant does not carry what the operation needs.
-//
-// Recorded as its own audit event rather than folded into the bucket refusal,
-// because the two describe different states an operator acts on differently:
-// one is a client pointed at a bucket it was never granted, the other a client
-// granted the bucket and asking for more than its grant allows. The entry names
-// what was needed and what was held so the fix is readable without a second
-// lookup.
+// whose grant does not carry what the operation needs. Its audit event is
+// separate from the bucket refusal and records the required and held
+// permissions.
 func (s *Server) rejectActionDenied(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest, want core.PermissionSet) {
 	held, _ := a.user.Permissions(a.bucket)
 	s.recordRequest(a.method, http.StatusForbidden, a.start, 0, 0)
@@ -401,11 +392,6 @@ func (s *Server) rejectActionDenied(ctx context.Context, w http.ResponseWriter, 
 // operation name metrics and the audit log are keyed on, the status written,
 // the bytes in and out, and whether the method and query combination is one
 // this server implements.
-//
-// A struct rather than six positional results. The dispatchers return the same
-// shape at twenty-odd sites, and half of those results are zero at any given
-// one; naming them is what makes a return statement readable without counting
-// commas back to the signature.
 type routed struct {
 	operation    string
 	status       int
@@ -419,11 +405,8 @@ type routed struct {
 // query combinations matched; the caller emits a 405.
 func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, bucket string) (routed, error) {
 	switch act {
-	// Refused before dispatch, for the reason the object path does: S3 selects
-	// the operation from the query string, so an unrecognised key names a
-	// bucket subresource this server does not implement. Falling through
-	// answers a ListBucketResult, which a client that asked for versions, a
-	// policy or a lifecycle configuration parses as "there are none".
+	// Falling through would answer ListObjects, which a client asking for an
+	// unsupported subresource would read as an empty result.
 	case ActionUnsupportedSubresource:
 		sub, _ := unsupportedQuery(r.URL.Query(), supportedBucketQueryKeys, supportedBucketQueryPrefixes)
 		msg := fmt.Sprintf("bucket subresource %q is not supported", sub)
@@ -475,11 +458,8 @@ type objectRouteKey struct {
 // handlers, splitting on multipart-upload state. supported=false means
 // the method/query combination is not supported and the caller emits 405.
 func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, bucket, key, internalKey string) (routed, error) {
-	// Refused before dispatch. S3 selects the operation from the query string,
-	// so an unrecognised key names an operation this server does not
-	// implement; falling through would run PutObject or DeleteObject against
-	// the key instead, overwriting or removing the object the caller was
-	// asking about.
+	// Refused before dispatch: falling through would run PutObject or
+	// DeleteObject against the key, overwriting or removing the object.
 	if act == ActionUnsupportedSubresource {
 		sub, _ := unsupportedQuery(r.URL.Query(), supportedObjectQueryKeys, supportedObjectQueryPrefixes)
 		msg := fmt.Sprintf("object subresource %q is not supported", sub)
@@ -508,12 +488,10 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 	return s.routePlainObjectRequest(ctx, w, r, act, bucket, internalKey)
 }
 
-// routeMultipartRequest dispatches per-uploadID multipart operations. PUT
-// splits between UploadPart and UploadPartCopy on the X-Amz-Copy-Source
-// header, the same split routePlainObjectRequest makes: an UploadPartCopy
-// carries no body, so handing it to UploadPart stores an empty part.
-// ok reports false when the action belongs to another dispatcher, so the
-// caller tries the next one.
+// routeMultipartRequest dispatches per-uploadID multipart operations. A PUT
+// carrying X-Amz-Copy-Source is UploadPartCopy; it has no body, so treating it
+// as UploadPart would store an empty part. ok reports false when the action
+// belongs to another dispatcher.
 func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, rk *objectRouteKey) (res routed, ok bool, err error) {
 	switch act {
 	case ActionUploadPartCopy:

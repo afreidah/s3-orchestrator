@@ -83,10 +83,6 @@ func ValidateTags(tags []Tag) error {
 
 // IsTagValidationError reports whether err is one of the tag-shape refusals,
 // as opposed to a storage failure or a missing object.
-//
-// For callers that answer every refusal with one status. The S3 transport does
-// not use it: the spec gives ErrTooManyTags a different code from the rest, so
-// it has to tell them apart.
 func IsTagValidationError(err error) bool {
 	return errors.Is(err, ErrTooManyTags) ||
 		errors.Is(err, ErrEmptyTagKey) ||
@@ -115,15 +111,8 @@ func utf16Length(s string) int {
 // STORAGE ENCODING
 // -------------------------------------------------------------------------
 
-// EncodeTags renders a tag set as a query string, the same shape the
-// x-amz-tagging header uses.
-//
-// Used where a set has to ride in a single column rather than its own rows:
-// the multipart upload row holds the tags supplied at create until the upload
-// completes. Rows would need an index and a cascade to serve a set that is
-// only ever read whole for one upload.
-//
-// Encode sorts by key, so the stored form is stable for a given set.
+// EncodeTags renders a tag set as an x-amz-tagging query string, sorted by key
+// so the stored form is stable. A multipart upload row holds its tags this way.
 func EncodeTags(tags []Tag) string {
 	if len(tags) == 0 {
 		return ""
@@ -160,13 +149,9 @@ func DecodeTags(encoded string) ([]Tag, error) {
 // REPLACE TAGS
 // -------------------------------------------------------------------------
 
-// ReplaceObjectTags swaps an object's whole tag set for the supplied one.
-//
-// Replace rather than read-modify-write: the delete and the inserts share a
-// transaction, so concurrent taggers are cleanly last-writer-wins instead of
-// interleaving into a set neither of them asked for. An empty set leaves the
-// object with no tags, which is what PutObjectTagging with an empty TagSet
-// means.
+// ReplaceObjectTags swaps an object's whole tag set for the supplied one in one
+// transaction, so concurrent taggers are last-writer-wins. An empty set leaves
+// the object untagged, as PutObjectTagging with an empty TagSet does.
 func ReplaceObjectTags(ctx context.Context, runner Runner, key string, tags []Tag) error {
 	if err := ValidateTags(tags); err != nil {
 		return err
@@ -182,14 +167,9 @@ func ReplaceObjectTags(ctx context.Context, runner Runner, key string, tags []Ta
 	})
 }
 
-// requireObjectExists reports ErrObjectNotFound when no copy of the key is
-// stored, so a tagging call against a key that holds nothing is refused.
-//
-// Checked inside the transaction rather than by the caller beforehand: tag rows
-// are only ever collected when a location row is removed, so a set written for
-// a key with no locations is an orphan nothing sweeps. The key lock is already
-// held here, and the copy read locks the rows, so a delete cannot land between
-// the check and the write.
+// requireObjectExists returns ErrObjectNotFound when no copy of the key is
+// stored, since tags written for such a key would never be swept. It runs under
+// the key lock and locks the rows, so a delete cannot land before the write.
 func requireObjectExists(ctx context.Context, tx TxAdapter, key string) error {
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 	if err != nil {
@@ -239,14 +219,10 @@ func DeleteObjectTags(ctx context.Context, runner Runner, key string) error {
 // CASCADE
 // -------------------------------------------------------------------------
 
-// clearTagsForKey drops a key's tags from inside a transaction that is already
-// removing or replacing the object at that key.
-//
-// Without object versioning there is no per-object table for a foreign key to
-// point at, so object_tags is keyed on object_key alone and nothing cascades on
-// its own. The object-scoped semantics AWS specifies only hold because every
-// path that puts a new object at a key, or removes the last copy of one, calls
-// this. Callers hold the key lock already.
+// clearTagsForKey drops a key's tags inside a transaction that is removing or
+// replacing the object; callers hold the key lock. object_tags has no foreign
+// key to cascade from, so every path that puts a new object at a key or removes
+// its last copy must call this.
 func clearTagsForKey(ctx context.Context, tx TxAdapter, key string) error {
 	if err := tx.DeleteObjectTags(ctx, key); err != nil {
 		return fmt.Errorf("clear object tags: %w", err)

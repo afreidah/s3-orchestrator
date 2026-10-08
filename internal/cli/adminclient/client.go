@@ -102,13 +102,8 @@ func (c *Client) authorize(ctx context.Context, req *http.Request, payload strin
 		ctx, creds, req, payload, "s3", signingRegion, time.Now().UTC())
 }
 
-// disableURIPathEscaping signs the path exactly as it goes on the wire.
-//
-// The SDK's default escapes an already-encoded path a second time, so a grant
-// over `*` is signed as %252A and sent as %2A. The server canonicalises in the
-// S3 do-not-double-encode mode, reads %2A, and refuses the signature. Every
-// path of only unreserved bytes signs identically either way, which is why
-// this surfaces on a wildcard and nothing else.
+// disableURIPathEscaping signs the path exactly as it goes on the wire. The SDK
+// default double-encodes it, so a `*` grant path would fail the server's check.
 func disableURIPathEscaping(o *v4.SignerOptions) {
 	o.DisableURIPathEscaping = true
 }

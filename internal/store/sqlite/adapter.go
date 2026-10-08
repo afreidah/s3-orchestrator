@@ -148,12 +148,10 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 	})
 }
 
-// GetCopiesForKeysForUpdate returns every (key, backend, size) row
-// matching any key in the supplied list. The query uses SQLite's
-// json_each so the SQL stays static and the keys array is passed as
-// a single JSON-encoded parameter rather than interpolated into the
-// SQL string. FOR UPDATE is a silent no-op since SQLite serializes
-// writers; the in-tx read provides the same exclusivity guarantee.
+// GetCopiesForKeysForUpdate returns every (key, backend, size) row matching
+// any key in the supplied list, passing the keys as one JSON parameter via
+// json_each. There is no FOR UPDATE: SQLite serializes writers, so the in-tx
+// read already gives the same exclusivity.
 func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -201,11 +199,9 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 // InsertObjectLocation writes a new object_locations row carrying the
 // encryption and integrity metadata on loc.
 func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.ObjectLocation) error {
-	// An explicit time is the object's write time, carried from the source copy
-	// on a replicate or reported by the backend on an import, and the row has to
-	// keep it: stamping every copy separately is what makes an unmodified object
-	// report a different Last-Modified depending on which one answered. A fresh
-	// write leaves it zero and gets stamped here.
+	// A replicate or import carries the object's original write time, which the
+	// row keeps so every copy reports the same Last-Modified. A fresh write
+	// leaves it zero and is stamped now.
 	created := now()
 	if !loc.CreatedAt.IsZero() {
 		created = formatTime(loc.CreatedAt)
@@ -427,13 +423,9 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 
 // InsertReplicaConditional inserts a replica row only if the source copy still
 // exists, the target does not already have a copy, and the target has room.
-// Returns the inserted size_bytes (read from the locked source row, so it
-// agrees with whatever object_locations.size_bytes the SQLite row got) on
-// success, or (0, false, nil) when any of the three does not hold.
-//
-// The headroom test lives here rather than in the caller so a replica is
-// admitted the same way a PUT is: against live rows, inside the transaction
-// that claims the space.
+// It returns the size read from the locked source row on success, or
+// (0, false, nil) when any of the three does not hold. The headroom test runs
+// inside the transaction that claims the space, the same way a PUT is admitted.
 func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
 	srcLoc, ok, err := a.LockObjectOnBackend(ctx, r.ObjectKey, r.SourceBackend)
 	if err != nil {
@@ -453,14 +445,9 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.
 	if err != nil || !fits {
 		return 0, false, err
 	}
-	// The whole source row is carried over rather than a hand-listed subset of
-	// its fields: the replica holds the same stored bytes, so anything omitted
-	// here is a column describing bytes that the copy then contradicts. That is
-	// how the conditional insert came to drop every encryption field.
-	//
-	// The storage key is the exception, because it says where the bytes are,
-	// not what they are. The caller uploaded them to a path of its own on the
-	// target, so the row names that path rather than the source's.
+	// Copy the whole source row rather than listing fields: the replica holds
+	// the same stored bytes, so any omitted column would contradict them. Only
+	// the storage key differs, since the caller uploaded to its own path.
 	dest := *srcLoc
 	dest.ObjectKey = r.ObjectKey
 	dest.BackendName = r.TargetBackend

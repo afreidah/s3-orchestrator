@@ -22,12 +22,9 @@ import (
 
 // FetchEnvelopeHeader reads the leading encryption-header bytes of key from
 // be. Returns fewer bytes than a full header for objects too small to hold
-// one, which the caller reads as "not an envelope".
-//
-// The request is ranged, but a backend that ignores Range simply streams the
-// object and only the prefix is read before the body is closed, so the result
-// is correct either way. A zero-byte object cannot satisfy any range, so the
-// backend answers 416; that is read as an empty header.
+// one, which the caller reads as "not an envelope". A backend that ignores
+// Range still works because only the prefix is read, and the 416 a zero-byte
+// object answers with is read as an empty header.
 func FetchEnvelopeHeader(ctx context.Context, be ObjectBackend, key string) ([]byte, error) {
 	r, err := be.GetObject(ctx, key, fmt.Sprintf("bytes=0-%d", encryption.HeaderSize-1))
 	if isRangeNotSatisfiable(err) {

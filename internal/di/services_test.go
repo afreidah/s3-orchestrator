@@ -241,13 +241,9 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 }
 
 // TestServiceWorkClosures_RunOnceCovers drives each background service's
-// work closure exactly once via runOnce + acquiringLocker. The fixture
-// workers operate against an empty mock store so the inner "n > 0" log
-// branches stay uncovered intentionally  -  the goal here is to exercise
-// the closure body, config-nil guards, and worker dispatch, not to
-// assert specific results. Adding a worker pre-condition that returns
-// non-zero counts would require a richer mock store than this suite
-// needs.
+// work closure once via runOnce + acquiringLocker against an empty mock store,
+// exercising the closure body, nil-config guards, and worker dispatch without
+// asserting results.
 func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
@@ -281,12 +277,9 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
 // order. An instance that loses the lock must still refresh its usage
-// baselines, or its limit checks run against a stale baseline indefinitely,
-// and must load the holder's fleet snapshot rather than serve its own.
-// Without Redis the losing locker proves no lock is taken, since the flush
-// would otherwise be skipped. Every instance reloads its drain states last,
-// whatever happened to the lock. Store errors are logged and never cut the
-// tick short.
+// baselines and load the holder's fleet snapshot. Without Redis the losing
+// locker proves no lock is taken. Drain states reload last regardless of the
+// lock, and store errors never cut the tick short.
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
@@ -521,14 +514,9 @@ func asTicker(t *testing.T, svc any) *tickrunner.Service {
 	return lt
 }
 
-// TestServiceClosures_ExerciseWorkAndShouldRun drives a single tick
-// through every New*Service factory's tickrunner. Each Tick runs the
-// configured Work closure under the same lock + health machinery the
-// production loop uses, exercising the closure body for new-code
-// coverage. The shouldRun and onError closures are exercised by the
-// dedicated tickrunner tests (TestLockedTickerService_*); this test
-// just pins that every factory wires a non-nil Work that runs without
-// panicking.
+// TestServiceClosures_ExerciseWorkAndShouldRun drives a single tick through
+// every New*Service factory's tickrunner, pinning that each wires a non-nil
+// Work closure that runs without panicking.
 func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)

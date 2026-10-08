@@ -49,13 +49,7 @@ type RangeFetchRuntime interface {
 }
 
 // Codec is the compression surface the Manager uses: encode on write,
-// decode on read. A role rather than a single action, so it takes a role name;
-// while it held Compress alone the -er form applied and it was Compressor.
-//
-// Declared rather than taking *compression.Codec because both halves fail on
-// inputs the concrete codec cannot be made to produce - a mid-upload encode
-// failure, a stored object that will not decode. A fake here is what lets
-// those paths be tested at all.
+// decode on read.
 type Codec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
@@ -64,9 +58,8 @@ type Codec interface {
 
 // DetachedRegistry is what the write path needs from the tracker of copies
 // that outlive their response: a slot to run under, and the depth to log when
-// there is none. Waiting for those copies at shutdown is the runtime's business
-// and deliberately absent here, so the manager cannot be handed the ability to
-// block on its own writes.
+// there is none. Waiting for those copies at shutdown belongs to the runtime,
+// so the manager cannot block on its own writes.
 type DetachedRegistry interface {
 	Begin() (release func(), admitted bool)
 	Depth() int

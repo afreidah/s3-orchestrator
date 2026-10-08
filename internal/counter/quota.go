@@ -35,15 +35,10 @@ import (
 // against, reloaded on the usage service's tick, plus what this instance has
 // placed since that reload.
 //
-// The placed counter is what keeps spread spreading. Without it the snapshot
-// does not move between reloads, every write in the interval ranks the
-// candidates identically, and spread degenerates into pack until the next one.
-// It is deliberately advisory: it informs an ordering, never a decision about
-// whether a write fits, so it costs nothing to be approximate and is dropped
-// wholesale when the snapshot it corrects is replaced.
-//
-// A backend absent from the snapshot ranks as having no room, so one that has
-// not been read yet is passed over rather than preferred.
+// The placed counter keeps spread routing from ranking every write in an
+// interval identically. It only informs ordering, never whether a write fits,
+// and is dropped when the snapshot is replaced. A backend absent from the
+// snapshot ranks as having no room.
 type QuotaTracker struct {
 	baseline atomic.Pointer[map[string]core.BackendQuotaUsage]
 	placed   *Registry[atomic.Int64]
@@ -116,11 +111,8 @@ func (q *QuotaTracker) Baseline(backend string) (core.BackendQuotaUsage, bool) {
 // -------------------------------------------------------------------------
 
 // Available reports the bytes a backend looked able to accept as of the last
-// refresh. An unlimited backend reports MaxInt64 so it sorts as the roomiest
-// candidate without special-casing at every call site.
-//
-// Zero for a backend with no baseline, which is how an unprovisioned backend
-// drops out of routing rather than being ranked ahead of one that exists.
+// refresh. An unlimited backend reports MaxInt64, and a backend with no
+// baseline reports zero so it drops out of routing.
 func (q *QuotaTracker) Available(backend string) int64 {
 	base, ok := q.Baseline(backend)
 	if !ok {

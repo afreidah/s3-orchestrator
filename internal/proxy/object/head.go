@@ -27,13 +27,10 @@ import (
 // -------------------------------------------------------------------------
 
 // HeadObject retrieves object metadata. An object whose row carries its
-// identity is answered from the ledger alone - no backend round trip and no
-// metered API call, which is the whole point of storing it. Everything else
-// tries the primary copy first, then falls back to replicas, and records what
-// the backend reported so the next HEAD does not have to ask.
-//
-// When the object is encrypted, the reported size reflects the original
-// plaintext size.
+// identity is answered from the ledger alone, with no backend call. Otherwise it
+// tries the primary copy, then the replicas, and records what the backend
+// reported so the next HEAD can skip the backend. The reported size is the size
+// the client wrote, even when the stored bytes are encrypted or compressed.
 func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, error) {
 	locs := o.locationsForHead(ctx, key)
 	if res, ok := o.headFromMetadata(ctx, key, locs); ok {
@@ -88,11 +85,10 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	}
 	o.core.Acct().APICall(s3op.HeadObject, backendName)
 
-	// What the backend just reported is what the next HEAD would spend another
-	// call to learn, so it is recorded on every copy of the key. The ETag is
-	// only adopted when the stored bytes are the client's bytes: for a
-	// compressed or encrypted copy the backend's value is a digest of the
-	// stored form, and the scrubber fills that one in from a plaintext read.
+	// Record what the backend reported on every copy of the key. The ETag is
+	// adopted only when the stored bytes are the client's bytes; for a
+	// compressed or encrypted copy the scrubber fills it in from a plaintext
+	// read.
 	o.recordHeadIdentity(ctx, key, result, locs)
 
 	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
@@ -103,13 +99,8 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// locationsForHead reads the rows a HEAD needs, once: the identity that may
-// answer it outright, and the copies that decide what a backend answer is
-// worth recording. Reading them three times is what this call replaces.
-//
-// A store error yields no rows rather than an error: the backend path is about
-// to run the same lookup and will report it, and a HEAD that can be served
-// either way should not fail on the cheaper attempt.
+// locationsForHead reads the rows a HEAD needs in one lookup. A store error
+// returns no rows, since the backend path repeats the lookup and reports it.
 func (o *Manager) locationsForHead(ctx context.Context, key string) []core.ObjectLocation {
 	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
 	if err != nil {
@@ -171,14 +162,10 @@ func (o *Manager) recordHeadIdentity(ctx context.Context, key string, r *s3be.He
 	}
 }
 
-// fillsMissingColumn reports whether recording id would put a value where a
-// copy has none, which is the only thing the write does: it fills NULLs and
-// never overwrites. Without the check, a key whose ETag a backend cannot
-// supply - a compressed or encrypted one, whose ETag the scrubber owns - would
-// rewrite every copy on every HEAD for the rest of its life.
-//
-// No rows means nothing to fill: the caller could not read the ledger, and the
-// next HEAD records what this one skipped.
+// fillsMissingColumn reports whether recording id would fill a column some copy
+// lacks; the write only fills NULLs and never overwrites. Without the check, a
+// key whose ETag the backend cannot supply (compressed or encrypted) would
+// rewrite every copy on every HEAD. No rows means nothing to fill.
 func fillsMissingColumn(id *core.ObjectIdentity, locs []core.ObjectLocation) bool {
 	for i := range locs {
 		stored := locs[i].Identity

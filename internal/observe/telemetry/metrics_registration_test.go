@@ -21,10 +21,7 @@ import (
 
 // TestMetricsRegistration_KeyFamiliesPresent touches one representative
 // metric from each domain file and confirms it appears in the default
-// gatherer. promauto only emits a CounterVec/GaugeVec family in Gather()
-// once a label set has been observed; this both proves the var-block
-// initialised cleanly and that the underlying CollectAndCount surface is
-// wired into the default registry.
+// gatherer. A vec family appears in Gather only once a label set is observed.
 func TestMetricsRegistration_KeyFamiliesPresent(t *testing.T) {
 	// Touch one metric per domain file so a series materialises and the
 	// family appears in Gather(). Picking a representative metric from each

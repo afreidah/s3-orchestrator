@@ -109,8 +109,8 @@ type CircuitBreaker struct {
 // construction to install metric / event hooks.
 //
 // ExternalRecovery makes the owner responsible for recovery: while open, every
-// call is refused, and only Recover closes the circuit. Owners that can check
-// the dependency directly use it, so no ordinary call is ever spent as a probe.
+// call is refused and only Recover closes the circuit, so no ordinary call is
+// spent as a probe.
 type Config struct {
 	Name             string           // identifier for logging and labels (e.g. "database", "oci-backend")
 	Threshold        int              // consecutive failures before opening
@@ -267,15 +267,9 @@ func (cb *CircuitBreaker) PostCheck(err error) error {
 	return err
 }
 
-// Recover transitions the breaker back to Closed cleanly, regardless of
-// the current state. The intended caller is an out-of-band liveness
-// probe that has independently confirmed the dependency is reachable
-// (e.g., the Redis counter recovery probe in internal/counter/redis.go).
-// PostCheck(nil) is the wrong tool for this case: it models a single
-// in-flight call's success and only handles HalfOpen->Closed, leaving
-// an Open breaker stuck. Recover clears probe state and zeroes the
-// failure counter so the breaker tolerates the configured threshold of
-// new failures before re-opening.
+// Recover closes the breaker from any state and zeroes the failure count, for
+// an out-of-band probe that has confirmed the dependency is reachable.
+// PostCheck(nil) cannot do this: it only moves HalfOpen to Closed.
 func (cb *CircuitBreaker) Recover() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

@@ -74,12 +74,9 @@ func (s *Service) FlushUsage(ctx context.Context) error {
 }
 
 // ReconcileUsage recomputes each backend's stored byte count from the object
-// ledger. The counter is otherwise maintained incrementally and drifts
-// permanently once any mutation path misses an adjustment, so this is the
-// self-heal rather than a diagnostic.
-//
-// Baselines are refreshed from the corrected rows, or admission would keep
-// judging writes against the totals the reconcile just replaced.
+// ledger, correcting drift from any mutation path that missed an adjustment.
+// It then refreshes the quota baselines, or admission would keep judging writes
+// against the replaced totals.
 func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	adjustments, err := s.stores.ReconcileUsage(ctx)
 	if err != nil {
@@ -95,14 +92,8 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 // QUOTA VIEW
 // -------------------------------------------------------------------------
 
-// FlushQuota reloads the occupancy snapshot placement ranks against.
-//
-// Nothing is written and nothing is accumulated. The byte counter moves inside
-// the transaction that writes the object rows, and whether a write fits is
-// decided by the statement that claims the space, so the only thing left in
-// memory is a view used to order candidates. Reloading it is the whole job.
-//
-// The name is kept for the service tick that drives it; there is no flush.
+// FlushQuota reloads the occupancy snapshot placement ranks against. Despite
+// the name nothing is written: byte counters move in the write transactions.
 func (s *Service) FlushQuota(ctx context.Context) error {
 	return s.RefreshQuotaBaselines(ctx)
 }
@@ -125,9 +116,8 @@ func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
 }
 
 // RedisCounterConfigured reports whether the counters live in Redis, whatever
-// their health. The flush holds an advisory lock when they do, and has to keep
-// holding it while Redis is being fallen back on: a recovery part-way through
-// an unlocked flush double-counts.
+// their health. The flush then holds an advisory lock even during a Redis
+// fallback, because a recovery part-way through an unlocked flush double-counts.
 func (s *Service) RedisCounterConfigured() bool {
 	_, ok := s.usage.Backend().(*counter.RedisCounterBackend)
 	return ok

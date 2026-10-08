@@ -32,13 +32,9 @@ type Registry struct {
 	byBucket map[string][]rule
 }
 
-// rule is one compiled CORSRule.
-//
-// allowMethods, exposeHeaders and maxAge hold the response header values
-// rather than the parsed lists they came from, because every match writes
-// them verbatim and nothing on the request path needs to read them back.
-// maxAge is empty when the operator left it at zero, which leaves the header
-// off and lets the browser apply its own default.
+// rule is one compiled CORSRule. allowMethods, exposeHeaders and maxAge hold
+// the rendered response header values. maxAge is empty when the operator left
+// it at zero, which omits the header so the browser applies its default.
 type rule struct {
 	origins       []pattern
 	methods       map[string]bool
@@ -61,20 +57,11 @@ type pattern struct {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewRegistry compiles the CORS rules declared on every bucket. Buckets
-// without rules are left out of the map entirely, so the common case of a
-// fleet that serves no browsers costs one failed lookup per cross-origin
-// request and nothing at all otherwise.
-//
-// Returns an error for a pattern the matcher cannot read. Config validation
-// rejects the same shapes with an operator-facing message, and so does the
-// provisioning API before it stores a bucket; this is the backstop that keeps a
-// gap in either from compiling into a rule that silently matches more origins
-// than the operator wrote.
-//
-// Takes the merged bucket set rather than the config file's, so a bucket
-// created through the provisioning API carries its rules into the browser
-// policy instead of having them silently dropped.
+// NewRegistry compiles the CORS rules declared on every bucket in the merged
+// config and provisioning set. Buckets without rules are left out of the map.
+// It returns an error for a pattern the matcher cannot read; config and
+// provisioning validation reject these first, and this backstop keeps a gap
+// there from compiling into a rule that matches more origins than written.
 func NewRegistry(buckets []provisioning.Bucket) (*Registry, error) {
 	reg := &Registry{byBucket: make(map[string][]rule)}
 	for i := range buckets {
@@ -102,11 +89,8 @@ func NewRegistry(buckets []provisioning.Bucket) (*Registry, error) {
 // matchPreflight returns the first rule admitting the origin, the method the
 // browser announced it intends to use, and every header it announced it
 // intends to send. A rule that admits the origin and method but not one of
-// the headers does not match, so a later rule still gets its turn.
-//
-// Header names are folded here rather than by the caller: case-insensitivity
-// is a property of a header name, so the matcher owning it means no caller
-// can forget and silently narrow the rule to whichever casing it passed.
+// the headers does not match, so a later rule still gets its turn. Header
+// names are lowercased here, so callers may pass any casing.
 func (reg *Registry) matchPreflight(bucket, origin, method string, headers []string) *rule {
 	return reg.find(bucket, origin, method, func(r *rule) bool {
 		for _, h := range headers {
@@ -118,10 +102,8 @@ func (reg *Registry) matchPreflight(bucket, origin, method string, headers []str
 	})
 }
 
-// matchActual returns the first rule admitting the origin and method of a
-// request that is not a preflight. Request headers are not consulted: the
-// browser already cleared them against the preflight, and a non-browser
-// caller that happens to send an Origin is not restricted by CORS at all.
+// matchActual returns the first rule admitting a non-preflight request's origin
+// and method. Headers were already cleared by the preflight.
 func (reg *Registry) matchActual(bucket, origin, method string) *rule {
 	return reg.find(bucket, origin, method, nil)
 }

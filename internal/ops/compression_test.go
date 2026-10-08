@@ -99,11 +99,8 @@ type oneRowStore struct {
 // -------------------------------------------------------------------------
 
 // ListUncompressedLocations serves the row once, then reports the end of the
-// listing so the pass terminates.
-//
-// The size floor is applied here because that is where the real store applies
-// it: a copy under it is not a candidate rather than a candidate the pass
-// declines, so it never reaches the pass at all.
+// listing so the pass terminates. It applies the size floor, as the real store
+// does, so a copy under it never reaches the pass.
 func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds, _ string) ([]core.RewritableLocation, error) {
 	rows := s.serveOnce()
 	if len(rows) == 1 && rows[0].LogicalSize == 0 && rows[0].SizeBytes < t.MinSize {
@@ -835,12 +832,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 }
 
 // TestCompressExisting_ReportsProgress checks the pass reports each object as
-// it goes. These read and rewrite an entire fleet, so a caller watching one
-// needs to see it move; a summary that only arrives at the end is
-// indistinguishable from a hung request.
-//
-// The status matters as much as the label: a skipped object reports skipped
-// rather than failed, so a run over media does not read as one long failure.
+// it goes, with a skipped object reported as skipped rather than failed.
 func TestCompressExisting_ReportsProgress(t *testing.T) {
 	t.Parallel()
 	payload := make([]byte, compChunk)

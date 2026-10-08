@@ -278,12 +278,8 @@ func (o *Objects) deletePage(ctx context.Context, keys []string, observer progre
 }
 
 // validateKey rejects a key that is empty or outside every declared virtual
-// bucket, before any backend is contacted.
-//
-// Declared covers both sources, so a bucket created through the provisioning
-// API is addressable here as soon as it is reachable over S3. Reading only the
-// config file would let an operator write an object through the data path and
-// then be told by every admin endpoint that its key names no bucket.
+// bucket, before any backend is contacted. Buckets from both config and the
+// store count, matching what the S3 path accepts.
 func (o *Objects) validateKey(key string) error {
 	if key == "" {
 		return ErrKeyRequired

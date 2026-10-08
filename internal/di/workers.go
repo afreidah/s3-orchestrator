@@ -119,11 +119,9 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 }
 
 // resolveStoredForm resolves the two optional decoders a worker needs to turn
-// stored bytes back into the plaintext a content hash covers.
-//
-// The codec is resolved whether or not compression is enabled for writes:
-// objects already stored compressed still have to be readable after an operator
-// turns the feature off.
+// stored bytes back into the plaintext a content hash covers. The codec is
+// resolved even with compression disabled, so already-compressed objects stay
+// readable.
 func resolveStoredForm(i do.Injector, cfg *config.Config) (*encryption.Encryptor, *compression.Codec, error) {
 	var enc *encryption.Encryptor
 	if cfg.Encryption.Enabled {

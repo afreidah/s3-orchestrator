@@ -58,9 +58,8 @@ func Single(digestHex string) string {
 // digests must be in ascending part order, which is the order the client's
 // completion manifest lists them in and the order S3 assembles them in.
 //
-// Returns an empty string when any part has no digest. That happens for an
-// upload whose parts predate per-part digests, and the caller falls back to
-// the whole-object MD5 rather than publishing a composite over a subset.
+// Returns an empty string when any part has no digest, in which case the
+// caller falls back to the whole-object MD5.
 func Multipart(partDigestsHex []string) (string, error) {
 	if len(partDigestsHex) == 0 {
 		return "", nil

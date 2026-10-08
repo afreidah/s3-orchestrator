@@ -281,14 +281,9 @@ func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
 	}
 }
 
-// TestListUncompressedLocations_ExcludesRecordedDeclines is the point of
-// recording a measurement at all: a copy already known not to shrink enough is
-// not offered again, so a second pass does not pay to re-measure it.
-//
-// The exclusion is judged against the current settings rather than stored as a
-// verdict, so loosening min_ratio returns the copy with no read, and a level
-// change does too: a measurement taken at another level describes an encoding
-// this pass would not produce.
+// TestListUncompressedLocations_ExcludesRecordedDeclines verifies a copy
+// already measured as not shrinking enough is not offered again, and that
+// loosening min_ratio or changing the level returns it.
 func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

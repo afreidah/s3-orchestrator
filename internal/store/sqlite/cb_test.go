@@ -297,13 +297,9 @@ func TestCBWithTx_BeginTxFailureFeedsBreaker(t *testing.T) {
 	}
 }
 
-// TestCBWithTx_CommitFailureFeedsBreaker drives a real Commit-time
-// failure via a deferred foreign-key constraint and asserts the breaker
-// trips. Before the fix, Commit failures returned directly and the
-// breaker never saw them, leaving the service blind to commit-time DB
-// outages (lock contention, disk full, I/O errors). Deferred FKs are
-// the simplest way in SQLite to force an error that surfaces at COMMIT
-// rather than at the offending INSERT.
+// TestCBWithTx_CommitFailureFeedsBreaker forces a Commit-time failure with a
+// deferred foreign-key constraint, which SQLite reports at COMMIT rather than
+// at the INSERT, and asserts the breaker trips.
 func TestCBWithTx_CommitFailureFeedsBreaker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

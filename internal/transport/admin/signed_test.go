@@ -42,11 +42,8 @@ const (
 // -------------------------------------------------------------------------
 
 // signedServer mounts the real admin mux over HTTP with one keypair registered
-// against a user holding the given permissions, and returns its address.
-//
-// Only the routes that need no collaborators are exercised, so the handler is
-// assembled bare: what is under test is the decision the guard reaches, not the
-// work behind it.
+// against a user holding the given permissions, and returns its address. The
+// handler has no collaborators, so only routes that need none can be used.
 func signedServer(t *testing.T, admin map[core.Resource]core.PermissionSet) string {
 	t.Helper()
 	view := provisioning.View{
@@ -122,14 +119,9 @@ func TestSigned_RoundTripAuthenticates(t *testing.T) {
 	}
 }
 
-// TestSigned_QueryIsCanonicalised pins that a request carrying query parameters
-// still verifies. The canonical query is sorted and escaped before it is
-// signed, so a client and server that build it differently agree on the empty
-// case and disagree here.
-//
-// The parameters are deliberately out of order and carry a character that has
-// to be escaped, which is what the two sides have to agree about. The route
-// reads none of them; what is under test is the signature, not the handler.
+// TestSigned_QueryIsCanonicalised verifies that a request with unsorted query
+// parameters, one needing escaping, still verifies, so client and server build
+// the canonical query the same way. The route ignores the parameters.
 func TestSigned_QueryIsCanonicalised(t *testing.T) {
 	t.Parallel()
 

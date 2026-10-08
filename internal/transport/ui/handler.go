@@ -177,10 +177,8 @@ func New(d *Deps) *Handler {
 	return h
 }
 
-// deriveSessionKey produces a deterministic 32-byte HMAC key from the config
-// so that sessions survive restarts and are portable across instances sharing
-// the same config. session_secret is required when the UI is enabled;
-// config validation rejects startup without it.
+// deriveSessionKey derives the session HMAC key from session_secret, so sessions
+// survive restarts and work across instances.
 func deriveSessionKey(ui *config.UIConfig) []byte {
 	mac := hmac.New(sha256.New, []byte(ui.SessionSecret))
 	mac.Write([]byte("s3orch-session-key"))

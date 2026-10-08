@@ -206,12 +206,9 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	}
 }
 
-// TestPurgeBackendObjects_BailsOnZeroDBProgress pins the no-progress
-// guard: when DeleteObjectLocation persistently fails on every key in
-// a page, the loop bails after one iteration instead of re-listing the
-// same rows forever. Without this guard a persistent DB constraint /
-// partition / conflict against any row in the page would pin the
-// process on the same rows until restart.
+// TestPurgeBackendObjects_BailsOnZeroDBProgress asserts that when
+// DeleteObjectLocation fails on every key in a page, the purge stops after one
+// page instead of re-listing the same rows forever.
 func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()

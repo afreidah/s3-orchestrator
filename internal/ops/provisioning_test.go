@@ -1002,12 +1002,8 @@ func TestProvisioning_ViewCarriesGrantPermissions(t *testing.T) {
 }
 
 // TestProvisioning_WildcardReachDoesNotPinABucket verifies a bucket stays
-// deletable when the only identity reaching it does so through a wildcard.
-//
-// What makes a bucket undeletable is a grant row that would be left naming
-// nothing. A wildcard does not dangle, and the root credential holds one over
-// every bucket, so judging this by the merged reach would make every bucket in
-// a deployment declaring a root credential permanently undeletable.
+// deletable when the only identity reaching it does so through a wildcard,
+// such as the root credential.
 func TestProvisioning_WildcardReachDoesNotPinABucket(t *testing.T) {
 	t.Parallel()
 
@@ -1112,11 +1108,8 @@ func TestProvisioning_CreateCredentialRejectsHalfAKeypair(t *testing.T) {
 }
 
 // TestProvisioning_CreateCredentialRejectsAClaimedAccessKey verifies an access
-// key another credential already holds is refused before the insert.
-//
-// Assembly refuses a key claimed twice, so without this check the row would
-// land and the republish behind it would fail, leaving a credential nothing can
-// authenticate.
+// key another credential already holds, including one declared only in config,
+// is refused before the insert.
 func TestProvisioning_CreateCredentialRejectsAClaimedAccessKey(t *testing.T) {
 	t.Parallel()
 

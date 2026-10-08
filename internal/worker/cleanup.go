@@ -193,12 +193,9 @@ func (w *CleanupWorker) processCleanupItem(ctx context.Context, item *core.Clean
 	return ItemResult{Outcome: ItemFailed, Status: "retry"}
 }
 
-// completeCleanupAlreadyAbsent retires a cleanup row whose backend
-// DELETE returned 404. Mirrors completeCleanupSuccess but emits the
-// status="success_absent" metric label and an audit subject that lets
-// operators distinguish "we deleted it" from "it was already gone" on
-// dashboards. The accounting effect is identical (orphan_bytes is
-// decremented by CompleteCleanupItem).
+// completeCleanupAlreadyAbsent retires a cleanup row whose backend DELETE
+// returned 404. It matches completeCleanupSuccess but reports
+// status="success_absent" in its metric and audit event.
 func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *core.CleanupItem) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)

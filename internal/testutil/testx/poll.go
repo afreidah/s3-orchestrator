@@ -21,10 +21,8 @@ import (
 // that a hot-looping condition doesn't burn CPU on slow machines.
 const DefaultPollInterval = 5 * time.Millisecond
 
-// Eventually repeatedly calls cond until it returns true or timeout elapses.
-// Fails the test with the given message (formatted with additional args) if
-// the condition never becomes true. Replaces `time.Sleep(X); assert(...)`
-// patterns with a fail-fast, flake-resistant alternative.
+// Eventually polls cond until it returns true, failing the test with the given
+// message if timeout elapses first.
 func Eventually(t *testing.T, timeout time.Duration, cond func() bool, msgAndArgs ...any) {
 	t.Helper()
 	EventuallyInterval(t, timeout, DefaultPollInterval, cond, msgAndArgs...)

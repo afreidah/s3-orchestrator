@@ -66,14 +66,10 @@ type RuntimeOptions struct {
 	ReplicationFactor func() int   // under-replication gauge; read only when Metrics is set
 }
 
-// NewQuotaTracker builds the byte-reservation tracker with baselines already
-// primed, which production does from backend_quotas at startup. Backends the
-// caller said nothing about are unlimited, so a test that does not care about
-// quota never has one refuse a write.
-//
-// Exported for the per-package fleet fixtures that build their own runtime:
-// without a primed baseline every write is refused, which is a confusing way
-// for an unrelated test to fail.
+// NewQuotaTracker builds a quota tracker with baselines primed, as production
+// does at startup; without them every write is refused. Backends with no
+// supplied baseline are unlimited, so a test that does not care about quota
+// never has a write refused.
 func NewQuotaTracker(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
 	primed := make(map[string]core.BackendQuotaUsage, len(names))
 	for _, name := range names {
@@ -182,12 +178,8 @@ func New(t testing.TB, store storetest.MetadataStore, opts *StackOptions) *Stack
 	return s
 }
 
-// CloseStack stops the background goroutines the stack owns. New calls it for
-// you; a caller that used Build is responsible for it.
-//
-// A free function rather than a method: Stack is a bag of collaborators with
-// no behaviour of its own, and the one thing that could look like behaviour is
-// the fixture's own lifecycle rather than the system's.
+// CloseStack stops the background goroutines the stack owns. New registers it
+// as cleanup; a caller of Build must call it.
 func CloseStack(s *Stack) {
 	s.Objects.LocationCache().Close()
 	s.Multipart.Close()
@@ -274,27 +266,18 @@ type Workers struct {
 	Drainer                *worker.Drainer
 }
 
-// WorkerFeatures carries the stored-form layers a worker has to undo to read an
-// object back. The scrubber and the replicator both need them: each hashes the
-// bytes the client wrote, so each has to decrypt and decode a copy first.
-//
-// A fixture that leaves these zero builds workers that cannot read an encrypted
-// or compressed copy at all. It does not fail loudly - the read errors, the
-// scrubber counts the copy as skipped and reports a clean pass having verified
-// nothing, and the replicator records every new copy unverified.
+// WorkerFeatures carries the stored-form layers the scrubber and replicator
+// must undo to hash the client's bytes. Leaving them zero does not fail loudly:
+// the scrubber skips encrypted or compressed copies and still reports a clean
+// pass, and the replicator records every new copy unverified.
 type WorkerFeatures struct {
 	Encryptor *encryption.Encryptor
 	Codec     worker.StreamDecompressor
 }
 
-// BuildWorkers constructs every worker over the stack's runtime and
-// coordinator. Production resolves workers through DI; this exists so
-// mock-based cross-package tests can construct an equivalent set without
-// re-implementing each worker's narrow ops surface.
-//
-// The workers are built with no stored-form features, which suits a fixture
-// whose objects are stored verbatim. A fixture that writes encrypted or
-// compressed objects wants BuildWorkersWithFeatures instead.
+// BuildWorkers constructs every worker over the stack with no stored-form
+// features. Fixtures with encrypted or compressed objects use
+// BuildWorkersWithFeatures.
 func BuildWorkers(s *Stack, m storetest.MetadataStore) *Workers {
 	return BuildWorkersWithFeatures(s, m, WorkerFeatures{})
 }

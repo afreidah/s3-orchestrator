@@ -278,12 +278,8 @@ func (r *bucketResource) Update(
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete removes the bucket.
-//
-// The orchestrator refuses while the bucket holds an object or is named by a
-// grant. Terraform destroys dependents first, so a set it manages whole comes
-// apart in order; objects written by a client surface here as a refusal naming
-// how many are in the way.
+// Delete removes the bucket. The orchestrator refuses while the bucket holds
+// an object or is named by a grant.
 func (r *bucketResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
 ) {
@@ -298,10 +294,7 @@ func (r *bucketResource) Delete(
 	}
 }
 
-// ImportState adopts an existing bucket by its name.
-//
-// Only the name is written: Terraform calls Read immediately afterwards, which
-// fills in everything else from the orchestrator.
+// ImportState adopts an existing bucket by its name; Read fills in the rest.
 func (r *bucketResource) ImportState(
 	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
 ) {
@@ -313,11 +306,8 @@ func (r *bucketResource) ImportState(
 // -------------------------------------------------------------------------
 
 // resolveCORSState writes the rules that were sent back over the model, so
-// every computed field holds a known value.
-//
-// max_age is computed, which means a configuration that omits it plans as
-// unknown. An unknown left in state fails the apply, and what resolves it is
-// what the orchestrator was told, which is what it now holds.
+// every computed field holds a known value. An omitted max_age plans as
+// unknown, and an unknown left in state fails the apply.
 func resolveCORSState(ctx context.Context, sent []client.CORSRule, model *bucketModel) diag.Diagnostics {
 	resolved, diags := corsRulesFromAPI(ctx, sent)
 	if diags.HasError() {

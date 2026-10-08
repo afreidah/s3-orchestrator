@@ -74,15 +74,11 @@ func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte,
 	return io.ReadAll(r.Body)
 }
 
-// ClassifyImport determines the stored form a discovered object should be
-// imported with, by reading its envelope header off the backend and testing
-// that header against the rows the ledger already holds for the key.
-//
-// Import is the only write path that starts from bytes instead of from a
-// client request, so skipping this is what records an encrypted object as
-// plaintext and leaves the read path serving raw ciphertext to clients.
-//
-// A nil return means the bytes are stored verbatim.
+// ClassifyImport determines the stored form a discovered object is imported
+// with, by reading its stored bytes and matching any envelope against the rows
+// the ledger already holds for the key. Without it, an encrypted object would
+// be recorded as plaintext and served to clients as raw ciphertext. A nil
+// return means the bytes are stored verbatim.
 func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key string, size int64) (*core.StoredForm, error) {
 	discovered, err := DiscoverBytes(ctx, deps.Backend, deps.Codec, key, size)
 	if err != nil {
@@ -115,16 +111,10 @@ func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key str
 // a caller that has no database row describing them: import, which found the
 // object on a backend, and a read while the database is down.
 //
-// It reads the head of the object at path, where an encryption envelope
-// announces itself. When the head is not an envelope but starts like a zstd
-// frame, it also reads the tail to check for this codec's seek table, which
-// marks the bytes as compressed and gives their logical size. A plain .zst
-// file a client uploaded has no seek table, so it is reported as uncompressed.
-//
-// The frame magic is checked first, so only objects that could be compressed
-// cost the second ranged read. A tail that cannot be read is not an error: the
-// bytes are then reported as stored verbatim. codec may be nil, in which case
-// nothing is reported as compressed.
+// It reads the head for an encryption envelope and, only when the head starts
+// like a zstd frame, the tail for this codec's seek table. A client's plain .zst
+// file has no seek table and is reported uncompressed, as is any object whose
+// tail cannot be read or when codec is nil.
 func DiscoverBytes(ctx context.Context, be backend.ObjectBackend, codec StoredInspector, path string, size int64) (core.DiscoveredBytes, error) {
 	header, err := backend.FetchEnvelopeHeader(ctx, be, path)
 	if err != nil {

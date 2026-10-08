@@ -19,19 +19,12 @@ type ObjectLocationsResponse struct {
 	Locations []ObjectLocation `json:"locations"`
 }
 
-// ObjectLocation is one backend copy of an object. The raw envelope encryption
-// key is deliberately omitted from the wire; only the encrypted flag and the
-// key id are exposed so a secret never leaves the process.
+// ObjectLocation is one backend copy of an object. The envelope encryption key
+// is never exposed; only the encrypted flag and the key id are.
 //
-// LastScrubbedAt is absent for a copy that has never been verified rather than
-// zero-valued, because "never checked" and "checked at the epoch" are different
-// answers to the question this field exists for. Having a ContentHash only says
-// a hash was recorded; this says whether the bytes were ever compared to it.
-//
-// An empty CompressionAlgorithm means the copy is stored verbatim, which is
-// what tells the two size fields apart: LogicalSize is only meaningful next to
-// an algorithm, since SizeBytes is the object's own size when nothing was
-// encoded.
+// LastScrubbedAt is absent for a copy that has never been verified.
+// An empty CompressionAlgorithm means the copy is stored verbatim, and
+// LogicalSize is only meaningful when an algorithm is set.
 type ObjectLocation struct {
 	Backend        string     `json:"backend"`
 	SizeBytes      int64      `json:"size_bytes"`

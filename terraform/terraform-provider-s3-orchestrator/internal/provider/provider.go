@@ -192,12 +192,8 @@ func (p *s3oProvider) Resources(_ context.Context) []func() resource.Resource {
 	}
 }
 
-// DataSources lists what the provider reads.
-//
-// Backend state is absent deliberately: what the API reports about a backend is
-// health, drain state and usage counters, which change between every plan. That
-// is monitoring data, and holding a snapshot of it in Terraform state would
-// describe a moment that has already passed.
+// DataSources lists what the provider reads. There is no backend data source
+// because backend health, drain state, and usage change between every plan.
 func (p *s3oProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewBucketDataSource,

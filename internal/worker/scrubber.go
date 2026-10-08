@@ -43,11 +43,7 @@ import (
 // ScrubberStore is the narrow persistence surface the scrubber needs:
 // integrity row reads/writes, removal of a location whose bytes failed
 // verification, and the copies of one key for an on-demand verification.
-// Declared locally so the worker does not pull in the full MetadataStore.
-//
-// The pass records an ETag computed from the plaintext for an object that has
-// none, which is the only source for a copy whose stored bytes are compressed
-// or encrypted.
+// It also records a plaintext ETag for an object that has none.
 type ScrubberStore interface {
 	core.IntegrityStore
 	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
@@ -115,13 +111,8 @@ func (s *Scrubber) Config() *config.IntegrityConfig {
 // SCRUB  -  verify existing hashes
 // -------------------------------------------------------------------------
 
-// Scrub verifies a batch of objects with stored content hashes. Returns the
-// CopyVerification is the outcome of verifying one copy of one key.
-//
-// Outcome distinguishes the three answers that matter: the bytes matched the
-// stored hash, they did not, or the copy could not be read at all. A copy with
-// no stored hash reports NotHashed rather than success, since there was nothing
-// to compare against and reporting it as verified would be a lie.
+// CopyVerification is the outcome of verifying one copy of one key. A copy
+// with no stored hash reports NotHashed, not verified.
 type CopyVerification struct {
 	Backend string
 	Outcome CopyOutcome
@@ -158,21 +149,11 @@ func (o CopyOutcome) String() string {
 }
 
 // ScrubKey verifies every copy of one key immediately and reports each
-// separately.
+// separately. Unlike the sweep, it ignores usage limits, since an operator
+// checking one object should get an answer even near an egress cap.
 //
-// This is the question an operator has when something looks wrong - a restore
-// failed, a backend threw errors - and the sweep cannot answer it: ordered by
-// least-recently-verified, reaching a specific key can take days.
-//
-// It deliberately does not consult the usage-limit filter the sweep applies. An
-// operator asking about one object is not the same as a background sweep
-// spending an unattended budget, and refusing to answer because a backend is
-// near its egress cap would make the command useless exactly when it is most
-// needed.
-//
-// A mismatch is handled identically to one the sweep finds: the bytes are
-// discarded and the ledger row dropped, so the replicator rebuilds from a
-// healthy copy.
+// A mismatch is handled as the sweep handles one: the bytes are discarded and
+// the ledger row dropped, so the replicator rebuilds from a healthy copy.
 func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
 	return runOpsCycle(ctx, "ScrubKey", "scrub_key", func(ctx context.Context) ([]CopyVerification, error) {
 		locations, err := s.store.GetAllObjectLocations(ctx, key)
@@ -211,6 +192,7 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 	}
 }
 
+// Scrub verifies a batch of objects with stored content hashes. Returns the
 // number of objects checked and the number of hash mismatches found.
 func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) WorkSummary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
@@ -280,11 +262,9 @@ func (s *Scrubber) scrubbedBefore() time.Time {
 }
 
 // affordableBackends splits the fleet into the backends the scrubber can still
-// read from and the ones whose usage limits it would breach.
-//
-// The check asks only for headroom, not for a specific object's size, because
-// the split decides which backends a batch may be drawn from before any object
-// is known. verifyOne re-checks against the real size.
+// read from and the ones whose usage limits it would breach. It checks only
+// for headroom, since no object is known yet; verifyOne re-checks against the
+// real size.
 func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 	order := s.deps.BackendOrder()
 	affordable = s.deps.Usage().BackendsWithinLimits(order, getObjectOp, 0, 0)
@@ -305,11 +285,8 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
-// or returns it whole when none was.
-//
-// A named backend the budget already declined stays out: the request asks to
-// scrub it, not to overspend on it, and the deferred count is what reports the
-// copies that went unread.
+// or returns it whole when none was. A named backend the budget declined stays
+// out, and its copies are reported as deferred.
 func restrictToBackend(affordable []string, backend string) []string {
 	if backend == "" {
 		return affordable
@@ -360,14 +337,9 @@ func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
 // skipped (not counted as checked). The returned Status feeds the progress
 // stream the BatchRunner brackets each item with.
 func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) ItemResult {
-	// The batch-level split only asked whether the backend had any headroom
-	// at all, before any object was known. A sweep reads every copy in the
-	// fleet, so the object's own size is admitted too, or a batch admitted on
-	// a sliver of remaining budget reads straight through it.
-	//
-	// Declined ahead of the scrub stamp below: a copy that was never read has
-	// not been verified, and recording it as scrubbed would send it to the
-	// back of the queue claiming an integrity check that never happened.
+	// Admit the object's own size, since the batch-level split only checked
+	// for any headroom. This must run before the scrub stamp below, so an
+	// unread copy is not recorded as verified.
 	if !s.deps.Usage().WithinLimits(loc.BackendName, getObjectOp, loc.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		s.log.WarnContext(ctx, "scrub declined by usage limits",
@@ -573,12 +545,9 @@ func undecodable(err error) bool {
 }
 
 // recordETag gives an object with no recorded ETag the one this pass just
-// computed. It is the only way a compressed or encrypted object gets one
-// without a client write: the backend's own value describes the stored bytes,
-// so a read cannot adopt it, and this pass already has the plaintext in hand.
-//
-// The store fills only what is NULL, so an object that already has an ETag -
-// every object written since it started being recorded - keeps it.
+// computed from the plaintext. For a compressed or encrypted object this is
+// the only source, since the backend's ETag describes the stored bytes. The
+// store fills only a NULL ETag, so an existing one is kept.
 func (s *Scrubber) recordETag(ctx context.Context, loc *core.ObjectLocation, digest string) {
 	if digest == "" {
 		return

@@ -24,16 +24,9 @@ import (
 // PARENT ADAPTER
 // -------------------------------------------------------------------------
 
-// TxAdapter is the per-engine transactional seam. A core operation receives one
-// of these from Runner.WithTx, runs business logic against it, and never
-// touches a driver-specific transaction directly. The parent embeds the
-// per-feature adapters so callers depend only on the narrowest interface that
-// fits their needs.
-//
-// AcquireKeyLock is where the two engines differ most: Postgres derives
-// pg_advisory_xact_lock from a hash of the key, while SQLite no-ops because the
-// engine serializes writers and the in-transaction existence probe gives the
-// same guarantee.
+// TxAdapter is the per-engine transactional seam a core operation receives from
+// Runner.WithTx. AcquireKeyLock takes a Postgres advisory lock on a hash of the
+// key; SQLite no-ops it because the engine already serializes writers.
 type TxAdapter interface {
 	PendingTxAdapter
 	ObjectsTxAdapter
@@ -49,21 +42,10 @@ type TxAdapter interface {
 // -------------------------------------------------------------------------
 
 // PendingTxAdapter exposes the transactional operations on the pending_objects
-// table.
-//
-// ClaimPending reports false when another worker has already resolved the
-// intent, which is how two reapers racing on one row settle it once. Postgres
-// claims with SELECT FOR UPDATE and SQLite with an existence probe inside the
-// writer-serialized transaction, which are the same guarantee.
-// ClearPendingForKey deletes the key's intents apart from the ones the caller
-// is committing, and reports what it removed so their bytes can be cleaned off
-// the backends afterwards. A write invalidates every earlier intent for its
-// key, and clearing them here is what keeps the reaper from having to work out
-// later whether an intent it found is still meaningful.
-//
-// The deletion is unconditional even for a backend the caller is writing to:
-// leaving the row would let an upload that is still running commit a copy of
-// the object this write just replaced.
+// table. ClaimPending reports false when another worker already resolved the
+// intent. ClearPendingForKey deletes every intent for the key except keep and
+// returns what it removed so the bytes can be cleaned up, including intents on
+// a backend the caller is writing to.
 type PendingTxAdapter interface {
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 	DeletePending(ctx context.Context, intentID string) error
@@ -84,25 +66,12 @@ type KeyedExistingCopy struct {
 }
 
 // ObjectsTxAdapter exposes the transactional operations on the object_locations
-// table.
-//
-// The ForUpdate reads lock the rows they return so the same transaction can
-// delete them and move the quota that follows them; splitting those halves
-// across transactions is what makes the counter drift from the ledger. For the
-// same reason the stored-form writes - UpdateCompressedForm, MarkCopyEncrypted,
-// MarkCopyDecrypted - only touch the row, leaving the matching quota adjustment
-// to the caller that already holds the transaction.
-//
-// InsertReplicaConditional reads the source row's size inside the insert and
-// returns it, so the caller credits the destination quota with the size the
-// ledger actually recorded rather than one measured separately. The storage key
-// it writes is the caller's, not the source row's: the replica is a fresh set
-// of bytes at a path of its own, named after the copy that placed it.
-//
-// RecordCompressionProbe stores what the encoder measured for a copy it
-// declined to store compressed, so a verbatim move can carry the measurement
-// onto the destination row rather than re-deriving it from bytes it did not
-// change.
+// table. The ForUpdate reads lock their rows so the same transaction can delete
+// them and move the quota. The stored-form writes touch only the row; the
+// caller makes the matching quota adjustment in the same transaction.
+// InsertReplicaConditional returns the source row's size as read inside the
+// insert, for the caller to credit. RecordCompressionProbe stores what the
+// encoder measured for a copy it declined to store compressed.
 type ObjectsTxAdapter interface {
 	GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]ExistingCopy, error)
 	InsertObjectLocation(ctx context.Context, loc *ObjectLocation) error
@@ -131,19 +100,10 @@ type ObjectsTxAdapter interface {
 // -------------------------------------------------------------------------
 
 // CleanupTxAdapter exposes the transactional operations on the cleanup_queue
-// table needed by core orchestration. Background-worker helpers that already
-// live entirely on a single transaction (Enqueue, Retry, Complete) stay on the
-// read/write path through CleanupStore.
-//
-// The queue-to-DLQ move is three of these in one transaction - read the row,
-// insert it, delete it - so a cleanup cannot be lost between the two tables.
-// The DLQ insert keeps the queue row's id and created_at, which is how an
-// operator later tells how long the cleanup was outstanding.
-//
-// HasPendingCleanup is read inside the import transaction so a cleanup
-// finishing concurrently cannot slip between the check and the insert. It asks
-// about a path rather than an object: a queued deletion names particular bytes,
-// and the import that consults it is adopting the bytes it found at that path.
+// table that core orchestration needs; single-statement operations live on
+// CleanupStore. InsertCleanupDLQ keeps the queue row's id and created_at so an
+// operator can tell how long the cleanup was outstanding. HasPendingCleanup
+// matches on the path, since a queued deletion names particular bytes.
 type CleanupTxAdapter interface {
 	SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (deleted int64, totalBytes int64, err error)
 	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
@@ -156,15 +116,10 @@ type CleanupTxAdapter interface {
 // TAGS
 // -------------------------------------------------------------------------
 
-// TagsTxAdapter exposes the transactional operations on the object_tags table.
-// Reads are absent by design: a tag set is read outside a transaction through
-// TagStore, and the write paths here replace or clear a whole set rather than
-// deriving it from what is already stored.
-//
-// Callers delete the existing set before inserting, so a primary-key conflict
-// from InsertObjectTag means a duplicate key survived validation and is
-// surfaced rather than absorbed. Clearing a set that is already empty is a
-// no-op.
+// TagsTxAdapter exposes the transactional writes on the object_tags table;
+// reads go through TagStore. Callers clear the set before inserting, so a
+// primary-key conflict from InsertObjectTag is a duplicate that survived
+// validation and is returned as an error.
 type TagsTxAdapter interface {
 	InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error
 	DeleteObjectTags(ctx context.Context, objectKey string) error
@@ -176,16 +131,9 @@ type TagsTxAdapter interface {
 // -------------------------------------------------------------------------
 
 // QuotaTxAdapter exposes the transactional operations on the quota tables.
-//
-// Byte movements carry no limit guard. Every one of them describes bytes that
-// already moved on a backend - an object recorded, an import adopted, a
-// stored-form rewrite resized - so the counter has to follow in either
-// direction. The ceiling is enforced before a write is admitted, never by
-// refusing to write down what happened.
-//
-// AdjustQuotaStripe names the stripe rather than the backend because the total
-// is split across rows; callers derive it from the object key with StripeFor so
-// a charge and the credit reversing it meet on one row.
+// Byte movements carry no limit guard because they record bytes already moved;
+// the ceiling is enforced when a write is admitted. Callers pick the stripe
+// for AdjustQuotaStripe with StripeFor.
 type QuotaTxAdapter interface {
 	AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error // clamped at zero

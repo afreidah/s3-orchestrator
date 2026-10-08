@@ -62,11 +62,8 @@ type UsageReconciler interface {
 }
 
 // BucketNamer lists the virtual buckets a deployment declares, from the config
-// file and the store together. *provisioning.Declared satisfies it.
-//
-// Read per pass rather than captured at construction, so a bucket created
-// through the provisioning API is scanned on the next reconcile rather than
-// having its objects classified as unmanaged until a restart.
+// file and the store together. *provisioning.Declared satisfies it. It is
+// read per pass so newly provisioned buckets are scanned without a restart.
 type BucketNamer interface {
 	Names() []string
 }
@@ -187,9 +184,8 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 }
 
 // scannable returns the backends a reconcile may scan: every backend without a
-// drain record. Objects found on a draining backend would be imported back
-// onto it, re-adding rows the drain has to chase, and on a drained one they
-// would resurrect what the drain moved off.
+// drain record, since importing from one would re-add rows the drain is
+// moving off.
 func (r *Reconciler) scannable() []string {
 	return r.fleet.ExcludeDraining(r.fleet.BackendOrder())
 }

@@ -34,11 +34,9 @@ const (
 // Backend abstracts the storage of per-backend usage deltas: three fixed
 // counters per backend - API requests, egress bytes, ingress bytes - plus a
 // keyed set of request pools. Implementations must be safe for concurrent use.
-//
-// The All and Pools variants exist so an implementation can pipeline what would
-// otherwise be several round trips. LoadPool stays a point read rather than a
-// map fetch because admission calls it once or twice per request. ChargePools
-// is the allocation-free form of AddPools for one amount across several pools.
+// The All and Pools variants let an implementation pipeline several round
+// trips. ChargePools is the allocation-free form of AddPools for one amount
+// across several pools.
 type Backend interface {
 	Backends() []string
 	Add(backend, field string, delta int64)

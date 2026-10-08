@@ -183,11 +183,8 @@ func parsePartNumber(w http.ResponseWriter, r *http.Request) (int, int, error, b
 
 // parseCopySourceRange resolves an x-amz-copy-source-range against a source of
 // sourceSize bytes, returning the Range header the source is read with and the
-// number of bytes that selects. An absent range copies the whole object.
-//
-// Only the closed "bytes=first-last" form is accepted, which is the only form
-// UploadPartCopy is specified to take: the part's length has to be known before
-// the read begins, so an open-ended or suffix range has nothing to mean here.
+// number of bytes that selects. An absent range copies the whole object. Only
+// the closed "bytes=first-last" form is accepted, as UploadPartCopy specifies.
 func parseCopySourceRange(spec string, sourceSize int64) (string, int64, error) {
 	if spec == "" {
 		return "", sourceSize, nil
@@ -226,12 +223,9 @@ func writeCopySourceRangeError(w http.ResponseWriter, err error) (int, error) {
 
 // handleUploadPartCopy handles PUT /{bucket}/{key}?partNumber=N&uploadId=X
 // carrying X-Amz-Copy-Source: the part's bytes come from a range of an object
-// that already exists rather than from the request body. This is how a client
-// copies server-side above the multipart threshold.
-//
-// The bytes stream through the orchestrator rather than taking a backend-native
-// copy, because the part is stored under the upload's own part key, which no
-// backend-side CopySource can name.
+// that already exists rather than from the request body. The bytes stream
+// through the orchestrator because the part is stored under the upload's own
+// part key, which no backend-side CopySource can name.
 func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey, copySource string) (int, error) {
 	partNumber, status, err, ok := parsePartNumber(w, r)
 	if !ok {
@@ -471,12 +465,10 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 }
 
 // handleListParts handles GET /{bucket}/{key}?uploadId=X, returning one page
-// of parts: up to max-parts numbered above part-number-marker.
-// key is the user-facing key (for XML response), internalKey is the prefixed
-// key (unused here since ListParts uses uploadID, but accepted for consistency).
-//
-// NextPartNumberMarker is the last part returned, or 0 when the page is empty,
-// and is reported whether or not the page is truncated, as S3 does.
+// of parts: up to max-parts numbered above part-number-marker. key is the
+// user-facing key for the XML response. NextPartNumberMarker is the last part
+// returned, or 0 when the page is empty, and is reported even when the page is
+// not truncated, as S3 does.
 func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, _ string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 

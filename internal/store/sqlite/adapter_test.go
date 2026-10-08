@@ -642,12 +642,8 @@ type queueRowExpect struct {
 	LastError   string
 }
 
-// assertQueueRowEquals checks every comparable field of got against
-// want and reports a single failure on mismatch, plus a separate
-// non-zero check on CreatedAt. Keeps the calling test flat - one
-// branch instead of six - so the cognitive-complexity ceiling is not
-// breached by per-field assertions. Takes a pointer because
-// CleanupQueueRow is heavy (>100 bytes).
+// assertQueueRowEquals checks every comparable field of got against want in
+// one assertion, plus a non-zero check on CreatedAt.
 func assertQueueRowEquals(t *testing.T, got *core.CleanupQueueRow, want queueRowExpect) {
 	t.Helper()
 	gotProj := queueRowExpect{
@@ -844,11 +840,8 @@ func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16)
 }
 
 // TestAdapter_BackendHasRoom_CountsOrphanBytes asserts bytes awaiting physical
-// cleanup still occupy the backend.
-//
-// They are on disk until their cleanup lands, so a headroom test that ignored
-// them would admit a write the backend cannot actually hold, and the ceiling
-// would be crossed for real rather than on paper.
+// cleanup still occupy the backend, since they stay on disk until the cleanup
+// lands.
 func TestAdapter_BackendHasRoom_CountsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

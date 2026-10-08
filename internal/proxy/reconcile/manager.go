@@ -53,13 +53,9 @@ type BackendResolver interface {
 }
 
 // UsageRecorder admits and accounts backend API calls against the usage
-// quota, so a listing pass shows up in the same counters a client request
-// would and is held to the same limits.
-//
-// Allow is asked per page rather than once before the walk: a reconcile of a
-// large bucket is thousands of list requests, and a pass that runs the
-// provider past its monthly request quota leaves client traffic to be refused
-// on the budget it consumed.
+// quota, so a listing pass is held to the same limits as client traffic. Allow
+// is asked per page, so a walk of a large bucket stops at the limit instead of
+// spending the budget client requests need.
 type UsageRecorder interface {
 	Allow(backendName string, ops []s3op.Operation, egress, ingress int64) bool
 	APICalls(op s3op.Operation, backendName string, n int64)
@@ -81,13 +77,8 @@ var errBudgetExhausted = errors.New("backend API budget exhausted mid-walk")
 // -------------------------------------------------------------------------
 
 // pageBudget charges a backend's API quota one listing page at a time and
-// reports whether the walk may continue.
-//
-// Charged as each page is consumed rather than accumulated for a single charge
-// at the end. A walk that only records what it spent once it has finished
-// cannot be stopped at the limit, and a bucket large enough to matter is
-// thousands of requests - so the overage arrives as one step, after the fact,
-// against a budget the rest of the fleet still has to share.
+// reports whether the walk may continue. Charging per page rather than once at
+// the end is what lets a walk stop at the limit.
 type pageBudget struct {
 	usage       UsageRecorder
 	backendName string
@@ -97,9 +88,7 @@ type pageBudget struct {
 // afford another. The page is charged either way: the request already happened,
 // and refusing to count it is how the ledger drifts from the provider's.
 func (b pageBudget) charge() bool {
-	// The zero value is unmetered, which is what a caller with no usage tracker
-	// to charge against passes - the collation harness and the stream's own
-	// tests, neither of which is talking to a real provider.
+	// A nil usage leaves the walk unmetered.
 	if b.usage == nil {
 		return true
 	}
@@ -286,19 +275,12 @@ func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRe
 	return m.stores.ImportObject(ctx, req)
 }
 
-// ReconcileBackend reconciles a backend against the ledger using the
-// bounded-memory sorted-merge: both sides are walked in byte key order and
-// diffed in lockstep, so memory is independent of object count.
-//
-// The pass is scoped to the backend, not to one virtual bucket: the backend
-// client is already pinned to its configured real bucket, and every virtual
-// bucket stored there is covered in a single walk. Keys are compared exactly
-// as the backend holds them, which is what keeps both streams in the byte
-// order the merge requires.
-//
-// Imports keys present on the backend but absent from the ledger, and deletes
-// ledger rows whose keys are no longer on the backend. A key outside every
-// configured bucket prefix is imported as unmanaged.
+// ReconcileBackend diffs a backend against the ledger with the bounded-memory
+// sorted merge. It imports keys found only on the backend, marking those
+// outside every configured bucket prefix unmanaged, and deletes ledger rows
+// whose bytes are gone. One walk covers every virtual bucket in the backend's
+// real bucket, and keys are compared exactly as stored so both streams stay in
+// byte order.
 func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*Result, error) {
 	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {

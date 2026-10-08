@@ -120,11 +120,7 @@ func TestHeadObject_UntaggedObjectOmitsTheCount(t *testing.T) {
 }
 
 // doTagging issues an authenticated ?tagging request against the test server
-// and returns the status and body.
-//
-// Returns the two values the tests actually assert on rather than the
-// *http.Response, so the body is closed here at the one place that opens it
-// instead of at eleven call sites.
+// and returns the status and body, closing the response body itself.
 func doTagging(t *testing.T, url, method, body string) (int, string) {
 	t.Helper()
 	var reader io.Reader

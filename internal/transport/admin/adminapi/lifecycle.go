@@ -12,12 +12,9 @@ package adminapi
 
 // LifecycleResponse is the outcome of one expiration sweep. Status is "ok" when
 // the sweep ran and "skipped" when there was nothing to run - no rules
-// configured, or no manager wired - with Reason carrying which, so both
-// outcomes share one shape.
-//
-// Deleted and Failed are reported separately because a sweep that removed
-// nothing because every delete failed is a different answer from one that found
-// nothing expired, and the whole point of the endpoint is telling those apart.
+// configured, or no manager wired - with Reason carrying which. Failed
+// separates a sweep whose deletes all failed from one that found nothing
+// expired.
 type LifecycleResponse struct {
 	Status  string `json:"status"`
 	Deleted int    `json:"deleted"`

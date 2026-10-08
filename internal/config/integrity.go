@@ -34,17 +34,9 @@ type IntegrityConfig struct {
 }
 
 // ScrubbedBefore returns the cutoff a scrub batch selects against: a copy last
-// touched at or after it is too recently verified to be worth another read.
-//
-// The floor is what decouples scrub cost from the interval. Without it a
-// backend holding fewer copies than the batch size is read in full on every
-// pass, so egress scales with how often the scrubber runs rather than with how
-// stale the data is.
-//
-// An unset floor resolves to the default rather than to none. Validation
-// supplies the default for a parsed config, but a config built in code reaches
-// the scrubber without passing through it, and no floor at all is the one
-// setting an operator cannot ask for.
+// touched at or after it is too recently verified to be worth another read, so
+// a backend smaller than the batch is not reread in full every pass. An unset
+// floor uses the default, since a config built in code skips validation.
 func (ic *IntegrityConfig) ScrubbedBefore(now time.Time) time.Time {
 	minAge := ic.ScrubberMinAge
 	if minAge <= 0 {
@@ -54,11 +46,8 @@ func (ic *IntegrityConfig) ScrubbedBefore(now time.Time) time.Time {
 }
 
 // ShouldVerifyOnReplicate reports whether a new replica must be read back and
-// hash-checked before its ledger row is written.
-//
-// Off by default, like every other integrity check that costs a backend read:
-// verifying a replica doubles the egress replication spends on it, and that is
-// an operator's decision to make rather than a side effect of enabling hashing.
+// hash-checked before its ledger row is written. It is off unless explicitly
+// set, since verifying doubles the egress replication spends on each replica.
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
 	return ic.Enabled && ic.VerifyOnReplicate
 }

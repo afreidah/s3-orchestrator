@@ -32,14 +32,11 @@ import (
 // costs one extra fetch. It is a fixed cost on every read, hence this small.
 const tailPrefetchSize = 8 << 10
 
-// Failure modes a ranged read distinguishes, so a caller can tell stored bytes
-// that are wrong from a backend that failed to deliver them: the first calls for
-// another copy and a scrub, the second for a retry.
-//
-// ErrRangeBounds reports metadata the object cannot match, which is the caller's
-// input rather than the object's content. ErrShortRange reports a RangeFetcher
-// answering with other than the bytes it was asked for, and ErrFetchFailed a
-// fetch that did not answer at all.
+// Failure modes a ranged read distinguishes, so a caller can tell wrong stored
+// bytes (try another copy and scrub) from a failed delivery (retry).
+// ErrRangeBounds reports caller metadata the object cannot match,
+// ErrShortRange a fetch that returned the wrong bytes, and ErrFetchFailed a
+// fetch that did not answer.
 var (
 	ErrRangeBounds = errors.New("range outside object")
 	ErrShortRange  = errors.New("range fetch returned wrong length")
@@ -52,11 +49,8 @@ var (
 
 // RangeFetcher supplies arbitrary byte ranges of one stored compressed object.
 // FetchRange returns exactly the bytes at [start, end] inclusive, and may be
-// called concurrently.
-//
-// It is declared over compressed bytes only so this package stays the inner
-// layer: compress-before-encrypt means it cannot import the backend or
-// encryption packages a real implementation is built from.
+// called concurrently. It is declared here because compress-before-encrypt
+// means this package cannot import the backend or encryption packages.
 type RangeFetcher interface {
 	FetchRange(ctx context.Context, start, end int64) ([]byte, error)
 }
@@ -75,14 +69,9 @@ type RangedReader interface {
 // DecompressRanged returns a reader over the logical bytes of a stored object,
 // pulling only the frames a read touches through f.
 //
-// compressedSize is the size of the compressed stream: what the backend holds
-// for an unencrypted object, the pre-encryption size for an encrypted one. It
-// comes from the caller's metadata because the seek table lives at the end of
-// the stream and there is nothing here to seek to the end of.
-//
-// The reader caches one decoded frame, which is what a read crossing a frame
-// boundary needs and no more. Caching across requests belongs to whoever owns
-// the object identity, not to a per-read adapter.
+// compressedSize is the size of the compressed stream (the pre-encryption size
+// for an encrypted object), needed to locate the trailing seek table. The
+// reader caches one decoded frame.
 func (c *Codec) DecompressRanged(ctx context.Context, f RangeFetcher, compressedSize int64) (RangedReader, error) {
 	if compressedSize <= 0 {
 		return nil, fmt.Errorf("%w: compressed size %d", ErrRangeBounds, compressedSize)
@@ -101,16 +90,9 @@ func (c *Codec) DecompressRanged(ctx context.Context, f RangeFetcher, compressed
 }
 
 // InspectStored reports whether stored bytes are in the seekable format this
-// codec writes and, if so, the logical size their seek table declares.
-//
-// This is how an object rediscovered on a backend is recognised. It is a weaker
-// claim than the encryption envelope's: a stored object is a standard Zstandard
-// stream by design, so the frame magic alone cannot separate an object this
-// codec wrote from a .zst file a client uploaded. The trailing seek table can,
-// since a plain zstd encoder never writes one.
-//
-// The size comes from the seek table rather than from decoding, so the cost is
-// the one ranged fetch of the tail that opening the reader already makes.
+// codec writes and, if so, the logical size their seek table declares. The
+// zstd frame magic alone cannot tell this codec's output from a client's .zst
+// upload; the trailing seek table can, since plain zstd never writes one.
 func (c *Codec) InspectStored(ctx context.Context, f RangeFetcher, storedSize int64) (int64, bool) {
 	r, err := c.DecompressRanged(ctx, f, storedSize)
 	if err != nil {
@@ -125,17 +107,12 @@ func (c *Codec) InspectStored(ctx context.Context, f RangeFetcher, storedSize in
 	return logicalSize, true
 }
 
-// rangeEnv adapts a RangeFetcher to seekable.ReaderEnvironment.
+// rangeEnv adapts a RangeFetcher to seekable.ReaderEnvironment. fetch has the
+// request context bound, since ReaderEnvironment's methods take none.
 //
-// fetch is the caller's RangeFetcher with the request context already bound.
-// ReaderEnvironment's methods take no context and the reader outlives the call
-// that built it, so the binding happens once in DecompressRanged rather than
-// living on this struct.
-//
-// tail holds the last bytes of the stream and is filled by ReadFooter. The
-// library reads the seek table only while building a Reader, before any frame
-// read and so before any concurrency, which is why the frame path reads it
-// without a lock.
+// tail holds the last bytes of the stream, filled by ReadFooter. The library
+// reads the seek table only while building a Reader, before any concurrent
+// frame read, so the frame path reads tail without a lock.
 type rangeEnv struct {
 	fetch func(start, end int64) ([]byte, error)
 	size  int64
@@ -186,13 +163,10 @@ func (e *rangeEnv) GetFrameByIndex(index seekable.FrameOffsetEntry) ([]byte, err
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// fetchAt pulls exactly n bytes at off. A backend answering with the wrong
-// number of bytes is rejected here rather than downstream, where it would
-// surface as frame corruption instead of a transport fault.
-//
-// Bounds are checked against the object rather than trusted, because the only
-// thing that asks for a range outside it is a seek table that disagrees with
-// the size the caller supplied.
+// fetchAt pulls exactly n bytes at off. A wrong-length answer is rejected here
+// so it surfaces as a transport fault, not frame corruption. An out-of-bounds
+// request means the seek table disagrees with the caller's size and is
+// reported as corruption.
 func (e *rangeEnv) fetchAt(off, n int64) ([]byte, error) {
 	if off < 0 || n <= 0 || off > e.size-n {
 		return nil, fmt.Errorf("%w: seek table asks for %d bytes at %d in a %d byte object",

@@ -108,17 +108,11 @@ type S3Backend struct {
 	unsignedPayload bool
 }
 
-// newBackendTransport creates a tuned HTTP transport for a single S3 backend.
-// Each backend gets its own transport so connection pools are isolated and
-// sized for the proxy's concurrent workload (rebalancer, replicator, parallel
-// PUTs/GETs). IdleConnTimeout bounds DNS staleness: idle connections are
-// recycled within 60 s, forcing a fresh DNS resolution on the next dial.
-//
-// The pool sizes, the response-header timeout and whether HTTP/2 is attempted
-// come from the backend's own config, defaulted by the config layer, so one
-// backend can be tuned or dropped to HTTP/1.1 without touching the others. The
-// dial and TLS-handshake timeouts stay fixed: they bound how long a broken
-// endpoint can hold a request, which is not a per-deployment judgement.
+// newBackendTransport creates an HTTP transport for a single S3 backend, so
+// connection pools are isolated per backend. IdleConnTimeout bounds DNS
+// staleness by recycling idle connections within 60 s. Pool sizes, the
+// response-header timeout, and HTTP/2 come from the backend's config; the dial
+// and TLS-handshake timeouts are fixed.
 func newBackendTransport(httpCfg config.BackendHTTPConfig) *http.Transport {
 	return &http.Transport{
 		DialContext: (&net.Dialer{
@@ -161,12 +155,9 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 	}
 	client := s3.New(opts)
 
-	// Default to unsigned payload (streaming) to avoid buffering entire
-	// objects in memory for SigV4 payload hashing. When the user has not
-	// set the option explicitly, auto-disable over plain HTTP since AWS S3
-	// rejects the UNSIGNED-PAYLOAD sentinel without TLS. An explicit
-	// unsigned_payload: true in config is always respected (MinIO and most
-	// S3-compatible backends accept it over HTTP).
+	// Unsigned payload avoids buffering objects for SigV4 hashing. Unless set
+	// explicitly, it is disabled over plain HTTP because AWS S3 rejects the
+	// UNSIGNED-PAYLOAD sentinel without TLS. An explicit true is always kept.
 	unsignedPayload := true
 	if cfg.UnsignedPayload != nil {
 		unsignedPayload = *cfg.UnsignedPayload
@@ -190,27 +181,20 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 // measuredStream hides a stream's concrete type from the AWS SDK so the
 // Content-Length this package supplies survives request building.
 //
-// smithy-go's Request.Build type-switches on *io.PipeReader and overwrites
-// ContentLength with -1 for it (transport/http/request.go). The upload then
-// goes out chunked with no Content-Length header, while SigV4 has already
-// signed content-length into SignedHeaders, so the request cannot validate:
-// backends answer 411 if they require the header and 403 SignatureDoesNotMatch
-// if they merely check the signature. Every PutObject call site here knows the
-// exact size and passes it, so that conservatism is wrong for this code.
+// smithy-go's Request.Build overwrites ContentLength with -1 for an
+// *io.PipeReader, so the upload goes out chunked while SigV4 has already signed
+// content-length, and backends answer 411 or 403 SignatureDoesNotMatch.
 type measuredStream struct{ r io.Reader }
 
-// Read proxies to the wrapped stream. Deliberately the only method: gaining an
+// Read proxies to the wrapped stream. It must stay the only method: an
 // io.Seeker or io.Closer here would change how the SDK treats the body.
 func (s measuredStream) Read(p []byte) (int, error) { return s.r.Read(p) }
 
 // withKnownLength wraps a stream whose length the caller knows but the SDK
-// would otherwise discard.
-//
-// Seekable bodies pass through untouched. Hiding an io.Seeker would cost the
-// SDK its ability to rewind and retry, which the single-object write path
-// relies on for failover. Everything else is wrapped rather than only
-// *io.PipeReader, so the behaviour does not depend on which concrete types the
-// SDK happens to special-case in a given release.
+// would otherwise discard. Seekable bodies pass through untouched so the SDK
+// can still rewind and retry, which the single-object write path relies on for
+// failover. Every other type is wrapped, not only *io.PipeReader, so the
+// behaviour does not depend on which types a given SDK release special-cases.
 func withKnownLength(body io.Reader) io.Reader {
 	if _, ok := body.(io.ReadSeeker); ok {
 		return body
@@ -219,13 +203,10 @@ func withKnownLength(body io.Reader) io.Reader {
 }
 
 // preparePutBody resolves the body and request options for a single PutObject
-// call, plus a cleanup the caller must defer (always safe to call). In
-// unsigned-payload mode (default) it tags the request so the SDK skips the
-// SigV4 payload hash and streams a non-seekable body directly; integrity is
-// protected by TLS. In signed-payload mode the SDK needs a seekable body to
+// call, plus a cleanup the caller must defer. In unsigned-payload mode the body
+// streams directly. In signed-payload mode the SDK needs a seekable body to
 // hash, so a non-seekable stream is materialized (memory below
-// materialize.MemThreshold, self-unlinking tempfile above) rather than buffered
-// whole on the heap, which would OOM the proxy on a large upload.
+// materialize.MemThreshold, tempfile above) instead of buffered on the heap.
 func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []func(*s3.Options), func(), error) {
 	// noop is the cleanup for the paths that materialize nothing (unsigned
 	// mode and already-seekable bodies), returned so every caller can defer
@@ -429,16 +410,10 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 		})
 }
 
-// CopyObject performs a server-side copy from srcKey to dstKey within
-// the same backend bucket. Used by the proxy's same-backend copy fast
-// path to avoid materializing the object through the orchestrator.
-//
-// When contentType or metadata is provided the SDK sends
-// MetadataDirective=REPLACE so the destination uses the supplied
-// values; otherwise the directive defaults to COPY and S3 preserves
-// the source's content type and user metadata. The CopySource string
-// is URL-encoded because S3 requires escaping for keys containing
-// slashes or other reserved characters.
+// CopyObject performs a server-side copy from srcKey to dstKey within the
+// same backend bucket. When contentType or metadata is provided it sends
+// MetadataDirective=REPLACE; otherwise S3 preserves the source's content type
+// and user metadata.
 func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
 	const operation = "CopyObject"
 	return observe.Run(ctx,
@@ -590,9 +565,8 @@ func stripSDKHeadersMiddleware(stack *smithymiddleware.Stack) error {
 }
 
 // withUnsignedPayload is an S3 per-request option that replaces the payload
-// SHA-256 computation with the UNSIGNED-PAYLOAD sentinel. This allows the SDK
-// to accept a non-seekable io.Reader body without buffering the entire object
-// into memory. Body integrity is still protected by TLS at the transport layer.
+// SHA-256 with the UNSIGNED-PAYLOAD sentinel, so the SDK accepts a
+// non-seekable body without buffering it. Integrity then relies on TLS.
 func withUnsignedPayload(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 }
@@ -600,9 +574,7 @@ func withUnsignedPayload(o *s3.Options) {
 // resolveCredentials selects the credentials provider for cfg based on
 // CredentialSource. "static" uses the configured access/secret keys;
 // "default_chain" delegates to the AWS SDK default chain (env, EC2 IMDS,
-// SSO, ~/.aws, STS). The config validator has already rejected an
-// unknown source by the time this runs, so the default arm is reached
-// only via direct test wiring.
+// SSO, ~/.aws, STS). Config validation rejects unknown sources first.
 func resolveCredentials(ctx context.Context, cfg *config.BackendConfig) (aws.CredentialsProvider, error) {
 	switch cfg.CredentialSource {
 	case "", config.CredentialSourceStatic:

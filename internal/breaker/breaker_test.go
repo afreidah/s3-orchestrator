@@ -682,13 +682,9 @@ func TestResetStaleProbe_StaleProbe(t *testing.T) {
 // Recover (out-of-band recovery probe)
 // -------------------------------------------------------------------------
 
-// TestCB_RecoverFromOpen pins the post-fix contract that an out-of-band
-// recovery probe (Redis ping, manual operator action) can transition the
-// breaker straight from Open back to Closed without going through
-// PreCheck. Without Recover() the only path Open->Closed is via
-// PreCheck()->HalfOpen->PostCheck(nil)->Closed, which the Redis counter
-// recovery path bypasses, so PostCheck(nil) on an Open breaker leaves
-// the state at Open and IsHealthy() returns false forever.
+// TestCB_RecoverFromOpen verifies Recover moves an open breaker straight to
+// closed without going through PreCheck, which out-of-band probes such as the
+// Redis ping rely on.
 func TestCB_RecoverFromOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Hour)

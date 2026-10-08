@@ -166,12 +166,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// sign covers the request with a SigV4 signature.
-//
-// The server reads the payload hash from the content header and falls back to
-// the unsigned sentinel when it is absent, so a body hashed into the signature
-// has to be declared there or the two sides canonicalise differently and every
-// request is refused. Set before signing, so it is covered.
+// sign covers the request with a SigV4 signature. The payload hash is set in
+// the content header before signing, because the server reads it from there
+// and otherwise canonicalises with the unsigned sentinel.
 func (c *Client) sign(ctx context.Context, req *http.Request, payload []byte) error {
 	sum := sha256.Sum256(payload)
 	hash := hex.EncodeToString(sum[:])
@@ -184,13 +181,8 @@ func (c *Client) sign(ctx context.Context, req *http.Request, payload []byte) er
 	return nil
 }
 
-// disableURIPathEscaping signs the path exactly as it goes on the wire.
-//
-// The SDK's default escapes an already-encoded path a second time, so a grant
-// over `*` is signed as %252A and sent as %2A. The orchestrator canonicalises
-// in the S3 do-not-double-encode mode, reads %2A, and refuses the signature.
-// Every path of only unreserved bytes signs identically either way, which is
-// why this surfaces on a wildcard and nothing else.
+// disableURIPathEscaping signs the path exactly as it goes on the wire. The SDK
+// default double-encodes it, so a `*` grant path would fail the server's check.
 func disableURIPathEscaping(o *v4.SignerOptions) {
 	o.DisableURIPathEscaping = true
 }

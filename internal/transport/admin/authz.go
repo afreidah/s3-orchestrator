@@ -112,10 +112,8 @@ func (h *Handler) guard(rt *route) http.HandlerFunc {
 // authorize refuses a request whose grants do not carry what its route needs.
 // Reports whether it may proceed; the refusal is already written when it may not.
 //
-// Fails closed. A route declaring no permission is refused outright, and a
-// bucket route whose resource does not resolve to one bucket is refused rather
-// than allowed through unchecked, because a key this layer cannot read is one it
-// cannot authorize.
+// Fails closed: a route declaring no permission is refused, and so is a bucket
+// route whose resource does not resolve to one bucket.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
 	// Nothing reaches a route that declared no permission. The table is tested
 	// for one, so this is unreachable by a served route and stays as the
@@ -137,12 +135,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 }
 
 // authorizeAdmin refuses a control-plane request the caller's grants do not
-// carry.
-//
-// A backend route naming no backend runs against the whole fleet, so it is
-// authorized as the wildcard: an operator granted one provider cannot start a
-// pass that spends egress on every other one. Naming a backend asks about that
-// backend, which a grant on it or the wildcard both answer.
+// carry. A backend route naming no backend runs fleet-wide, so it requires the
+// wildcard grant; a grant on one backend cannot start a pass over the others.
 func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
 	resource := core.Resource{Kind: rt.kind()}
 	if resource.Kind == core.ResourceBackend {
@@ -168,10 +162,8 @@ func (h *Handler) resourceValue(r *http.Request, rt *route) string {
 
 // backendParam reads the optional backend a pass is restricted to, and reports
 // whether the request may proceed. An empty value runs against every backend.
-//
-// An unknown name is refused rather than run: a filter matching nothing is
-// indistinguishable from a fleet with no work left, so a typo would report a
-// clean pass over a backend that was never read.
+// An unknown name is refused, since a typo would otherwise report a clean pass
+// over nothing.
 func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	name := r.URL.Query().Get(paramBackend)
 	if name == "" {

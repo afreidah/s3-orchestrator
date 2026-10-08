@@ -98,10 +98,7 @@ type subscription interface {
 
 // RedisCounterBackend stores per-backend usage deltas in Redis for
 // cross-instance visibility. Falls back to local counters when Redis is
-// unavailable.
-//
-// Tests construct this type directly and may leave log nil, so every caller
-// routes through logger() rather than reading the field.
+// unavailable. log may be nil, so read it through logger().
 type RedisCounterBackend struct {
 	client    RedisClient
 	subscribe func(ctx context.Context, channel string) subscription
@@ -130,14 +127,9 @@ func (r *RedisCounterBackend) logger() *slog.Logger {
 }
 
 // NewRedisCounterBackend creates a shared counter backend backed by Redis and
-// starts the background health probe.
-//
-// An unreachable Redis at boot is the same condition as Redis failing while
-// running: the backend starts in fallback on local counters, logs it at error
-// level, and the health probe moves it onto Redis once Redis answers. Refusing
-// to start would take the whole service down over a dependency it can run
-// without, and starting without the backend at all would leave the instance on
-// local counters with nothing to bring it back.
+// starts the background health probe. An unreachable Redis at boot does not
+// fail startup: the backend starts in fallback on local counters, logs at
+// error level, and the probe moves it onto Redis once Redis answers.
 func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) *RedisCounterBackend {
 	sentinel := errors.New("redis unavailable")
 	cb := breaker.NewCircuitBreaker(breaker.Config{
@@ -483,9 +475,6 @@ func (r *RedisCounterBackend) healthProbe() {
 	}
 }
 
-// tryRecover PINGs Redis and, on success, atomically deletes stale keys
-// and syncs local deltas in a single pipeline, then closes the circuit
-// breaker.
 // queueReplay adds one backend's locally-buffered deltas to the recovery
 // pipeline: the three fixed counters as INCRBYs, and the pool counters as
 // HINCRBYs on the period's pool hash.
@@ -514,6 +503,9 @@ func (r *RedisCounterBackend) queueReplay(ctx context.Context, pipe redis.Pipeli
 	pipe.Expire(ctx, k, keyTTL)
 }
 
+// tryRecover PINGs Redis and, on success, atomically deletes stale keys
+// and syncs local deltas in a single pipeline, then closes the circuit
+// breaker.
 func (r *RedisCounterBackend) tryRecover() {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
@@ -547,13 +539,8 @@ func (r *RedisCounterBackend) tryRecover() {
 		return
 	}
 
-	// Clear fallback state and close circuit breaker. cb.Recover()
-	// is used here instead of PostCheck(nil) because the redis hot
-	// path bypasses PreCheck (it branches on inFallback() directly),
-	// so the breaker never reaches HalfOpen on its own; PostCheck(nil)
-	// would leave an Open breaker stuck and IsHealthy() permanently
-	// false. Recover() also zeroes the failure counter so a single
-	// transient error post-recovery does not immediately re-trip.
+	// Recover, not PostCheck(nil): the hot path bypasses PreCheck, so the
+	// breaker never reaches HalfOpen and PostCheck(nil) would leave it open.
 	r.setFallback(false)
 	r.cb.Recover()
 
@@ -625,9 +612,8 @@ func (r *RedisCounterBackend) keyForPeriod(backend, field, period string) string
 }
 
 // poolKey returns the Redis hash holding every pool counter for a backend in
-// the current period. One hash rather than a key per pool, so a flush can
-// enumerate the pools that were actually charged without scanning the
-// keyspace or being told which pools config currently declares.
+// the current period. A single hash lets a flush enumerate the pools actually
+// charged without scanning the keyspace.
 func (r *RedisCounterBackend) poolKey(backend string) string {
 	return r.poolKeyForPeriod(backend, CurrentPeriod())
 }

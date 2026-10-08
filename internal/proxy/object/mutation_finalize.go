@@ -9,8 +9,7 @@
 // record per-backend accounting, emit operation-completion
 // observability, and invalidate every cache tied to the key.
 // Centralising the checklist here keeps the per-mutation rules in one
-// place — a missing accounting call here previously surfaced as drift
-// between PUT and CopyObject usage counters.
+// place, so PUT and CopyObject usage counters cannot drift apart.
 // -------------------------------------------------------------------------------
 
 package object
@@ -75,12 +74,10 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 	return etag, nil
 }
 
-// finalizeNativeCopy runs the post-native-copy success steps shared by
-// the happy path and the HEAD-probe recovery path: record the
-// destination location, refresh accounting, mark the span as a native
-// copy, emit completion observability, and invalidate caches. Returns
-// (_, true, err) on RecordObjectOrCleanup failure - the bytes are
-// already on the destination so the caller MUST NOT fall back.
+// finalizeNativeCopy records the destination of a successful native copy, from
+// either the direct path or the HEAD-probe recovery. It returns handled=true
+// even when the record fails, because the bytes are already on the destination
+// and the caller must not fall back.
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{

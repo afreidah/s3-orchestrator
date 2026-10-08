@@ -67,14 +67,9 @@ func TestDeleteObject_IntentClearFailureAborts(t *testing.T) {
 	}
 }
 
-// TestRecordObject_ClearsSupersededIntents verifies a write removes the key's
-// other intents and hands back the bytes of every one of them, each at its own
-// path, so they are cleaned off their backends instead of waiting for the
-// reaper.
-//
-// That includes an intent on a backend this write also landed on: its bytes
-// sit at a different path from this write's copy, and skipping them would leak
-// them.
+// TestRecordObject_ClearsSupersededIntents verifies a write clears the key's
+// other intents and returns each one's bytes for cleanup, including an intent
+// on a backend this write also landed on.
 func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	t.Parallel()
 	stub := &intentClearingTxStub{

@@ -317,12 +317,9 @@ func TestMaterializeEncrypted_PopulatesFormAndSize(t *testing.T) {
 	}
 }
 
-// TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes is the invariant the
-// encrypt-once pass exists for: however many copies a write places, each reads
-// the one ciphertext and sends the same bytes under the same base nonce. A
-// per-copy encrypt would differ on every byte and nothing downstream would
-// notice, since replication copies bytes verbatim and describes the target from
-// the source row.
+// TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes asserts every reader
+// of the materialized ciphertext yields the same bytes under the same base
+// nonce, so every copy a write places is identical.
 func TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes(t *testing.T) {
 	t.Parallel()
 	enc, cp := newCountingEncryptor(t)

@@ -52,13 +52,10 @@ type ReplicationConfig struct {
 // CleanupQueueConfig holds settings for the background orphan cleanup worker
 // and multipart upload housekeeping.
 //
-// ClaimGracePeriod controls how long a per-row claim stamp held by an
-// instance remains exclusive before another instance is allowed to reclaim
-// the row. A short value lets a crashed worker's rows recover quickly at
-// the cost of a higher chance of duplicate processing if a real worker is
-// merely slow; a long value is the inverse trade-off. The 5-minute default
-// covers the realistic worst case for a single backend DELETE plus its
-// retry budget within one tick. Hot-reloadable.
+// ClaimGracePeriod is how long an instance's per-row claim stays exclusive
+// before another instance may reclaim the row. Shorter recovers a crashed
+// worker's rows sooner but risks duplicate processing behind a slow one. The
+// 5-minute default covers one backend DELETE plus its retries. Hot-reloadable.
 type CleanupQueueConfig struct {
 	Concurrency           int           `yaml:"concurrency"`             // Parallel cleanup deletions (default: 10)
 	MultipartStaleTimeout time.Duration `yaml:"multipart_stale_timeout"` // Abandon multipart uploads older than this (default: 24h)
@@ -76,26 +73,14 @@ type WritePathConfig struct {
 }
 
 // ParallelCopiesConfig places an object's copies during the write instead of
-// leaving every one after the first to the replicator, which reads the object
-// back off a backend and pays that backend's egress to make each of them. The
-// bytes are already in hand at PUT time, so an extra copy costs one more upload
-// and no read.
+// leaving them to the replicator, avoiding the replicator's read-back egress.
+// Off by default: it moves the copy work to write time, which can cost PUT
+// throughput on a constrained uplink.
 //
-// Off by default, and the tradeoff is shape rather than total: it lowers the
-// work a copy costs but spends it at write time instead of spreading it over
-// replicator cycles, which can cost PUT throughput on a constrained uplink.
-//
-// Count is how many copies a write places, defaulting to replication.factor and
-// never allowed to exceed it - copies past the factor are deleted by the
-// over-replication cleaner about as fast as writes create them. A factor of 1
-// leaves this inert whatever it is set to.
-//
-// MaxInFlight caps the writes whose copies are still uploading after their
-// client was answered. It is a ceiling for a backend that has gone slow rather
-// than a queue: a write that finds it full places one copy and leaves the rest
-// to the replicator, which costs the read-back this feature exists to avoid, so
-// it defaults to server.max_concurrent_writes - the admission capacity the
-// operator already sized - and a healthy fleet never approaches it.
+// Count defaults to replication.factor and may not exceed it. MaxInFlight caps
+// the writes whose extra copies are still uploading after the client was
+// answered; a write that finds it full places one copy and leaves the rest to
+// the replicator. It defaults to server.max_concurrent_writes.
 type ParallelCopiesConfig struct {
 	Enabled     bool `yaml:"enabled"`
 	Count       int  `yaml:"count"`
@@ -127,12 +112,8 @@ func (m *MultipartConfig) IsMinPartSizeEnforced() bool {
 }
 
 // PendingPatternConfig tunes the reaper that resolves abandoned PUT intents.
-//
-// The pattern itself cannot be turned off. Every write claims its bytes by
-// inserting an intent, and that row is what admission subtracts from a
-// backend's headroom while the upload runs, so a deployment without intents
-// would have nothing to judge writes against. Only the reaper's cadence is an
-// operator concern.
+// Intents themselves cannot be turned off, since admission subtracts them from
+// a backend's headroom while uploads run.
 type PendingPatternConfig struct {
 	ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
 	MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this  -  guards in-flight PUTs (default: 5m)
@@ -279,13 +260,9 @@ func (r *ReplicationConfig) validateReplicationLimits(backendCount int) []error 
 	return errs
 }
 
-// validateLifecycleRules enforces that every configured rule has a
-// filter and a positive expiration_days. Returns the set of problems so a
-// misconfigured rule cannot silently disable lifecycle expiration.
-//
-// Duplicates are judged on the whole filter rather than the prefix alone,
-// because two rules sharing a prefix but differing by tag select different
-// objects and are a legitimate pair.
+// validateLifecycleRules enforces that every configured rule has a filter and
+// a positive expiration_days. Duplicates are judged on the whole filter, since
+// two rules sharing a prefix but differing by tag select different objects.
 func validateLifecycleRules(rules []LifecycleRule) []error {
 	var errs []error
 

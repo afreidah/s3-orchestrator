@@ -419,10 +419,8 @@ func TestAuthz_GrantedOperationReachesTheStore(t *testing.T) {
 
 // rootRegistry builds the registry a deployment declaring a root credential
 // has: one root user holding every permission, reached by the keypair the
-// config names.
-//
-// The buckets the object tests name are declared, because root's bucket reach
-// is expanded across what a deployment declares rather than being open-ended.
+// config names. The buckets the tests use are declared, because root's bucket
+// reach covers only declared buckets.
 func rootRegistry(tb testing.TB) *auth.BucketRegistry {
 	tb.Helper()
 	v := provisioning.Merge(

@@ -36,12 +36,9 @@ import (
 type bulkRewritePass func(context.Context, progress.Observer, int, string) (ops.BulkRewriteResult, error)
 
 // bulkRewriteEndpoint is one rewrite direction as the transport sees it: the
-// pass to run, how to word it, and how to render what it reported.
-//
-// body exists because the four responses name their success count differently
-// on the wire, which is the only way they differ. Those names are already
-// published, so each endpoint keeps its own published type and the shared
-// outcome carries everything else.
+// pass to run, how to word it, and how to render what it reported. body
+// renders the endpoint's own response type, since each names its success
+// count differently on the wire.
 type bulkRewriteEndpoint struct {
 	op         string
 	verb       string
@@ -51,21 +48,8 @@ type bulkRewriteEndpoint struct {
 }
 
 // streamBulkRewrite runs one pass as an NDJSON step stream, reporting each
-// object as it is rewritten.
-//
-// These passes read and rewrite every object in a fleet, so they are the
-// longest-running thing the admin API offers. A caller watching one needs to
-// see it move: a single JSON summary at the end is indistinguishable from a
-// hung request until it arrives.
-//
-// The summary names skipped objects separately, because a pass over media
-// declines almost everything and a count that folded those into failures would
-// read as a broken run.
-//
-// The pass runs under the request context, so a caller that disconnects stops
-// the work rather than leaving a fleet-wide rewrite running unwatched. That
-// matches every other streaming pass; the web UI wraps these in its own
-// background job when it wants them to outlive the request.
+// object as it is rewritten. Skipped objects are counted apart from failures.
+// The pass runs under the request context, so a disconnecting caller stops it.
 func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint, maxObjects int, backend string) {
 	h.streamSteps(w, ep.op, ep.verb, true, func(obs progress.Observer) (stepResult, error) {
 		res, err := ep.run(r.Context(), obs, maxObjects, backend)
@@ -92,17 +76,10 @@ func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep b
 
 // handleBulkRewrite serves one rewrite endpoint. Streams per-object NDJSON
 // progress when the client accepts the stream content type; otherwise returns a
-// single JSON result.
-//
-// The optional max query parameter caps how many copies this request rewrites,
-// 0 or absent meaning the whole fleet. A capped request needs nothing carried
-// back for the next one: the copies it converts leave the listing that selected
-// them, and the ones a compression pass declines on ratio are recorded so they
-// leave it too.
-//
-// The optional backend parameter restricts the pass to one backend's copies,
-// which is how an operator limits the blast radius of a fleet-wide rewrite or
-// paces one against a single provider's read cost.
+// single JSON result. The optional max parameter caps how many copies are
+// rewritten (0 or absent means all); a repeated capped request resumes where
+// the last stopped, because converted and ratio-declined copies leave the
+// selection. The optional backend parameter limits the pass to one backend.
 func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint) {
 	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
 	backend, ok := h.backendParam(w, r)

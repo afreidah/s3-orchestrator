@@ -67,15 +67,11 @@ func withStreamMetric(r io.Reader, op string) io.Reader {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// materializeEncrypted encrypts plaintext into a materialized body of its own
-// and reports its size and the envelope that describes those bytes. The caller
-// layers integrity fields (e.g. ContentHash) onto the returned StoredForm.
-//
-// The ciphertext is materialized rather than streamed so one encrypt pass
-// serves however many uploads a write makes of it: a second pass would draw a
-// fresh base nonce, and copies of a key that differ byte for byte break the
-// assumption replication reads them under, that the bytes on one backend are
-// the bytes the source row describes.
+// materializeEncrypted encrypts plaintext into its own materialized body and
+// returns its size and the StoredForm describing those bytes; the caller adds
+// integrity fields such as ContentHash. Materializing lets every upload a write
+// makes send the same ciphertext: a second encrypt pass would draw a fresh base
+// nonce, and replication assumes each copy holds the bytes its row describes.
 //
 // plaintext must be a reader positioned at offset 0.
 func materializeEncrypted(

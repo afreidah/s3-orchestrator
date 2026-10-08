@@ -66,12 +66,9 @@ func signRoot(tb testing.TB, req *http.Request) {
 }
 
 // signAs signs an already-built request with an arbitrary keypair. Call it once
-// the URL and query string are final, because both are covered.
-//
-// Content-Length is written into the header set because the signer covers it
-// from the field while the verifier reads it from the header. Over the wire the
-// two always agree - Go's server puts the header back - but these requests never
-// travel, so the header has to be put there by hand.
+// the URL and query string are final, because both are covered. It sets the
+// Content-Length header by hand: the verifier reads the header, which Go's
+// server would add for a real request but an in-process one lacks.
 func signAs(tb testing.TB, req *http.Request, accessKey, secret string) {
 	tb.Helper()
 	if req.ContentLength > 0 {

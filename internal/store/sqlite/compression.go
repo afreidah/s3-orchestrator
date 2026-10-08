@@ -34,22 +34,15 @@ const rewritableColumns = `object_key, backend_name, storage_key, size_bytes, en
 
 // uncompressedPredicate selects the copies compress-existing rewrites: stored
 // verbatim, big enough to be worth encoding, and not already measured as unable
-// to reach the configured ratio.
+// to reach the configured ratio. Filtering here keeps every pass from spending
+// a page slot, and for measured copies a download and an encode, on a copy it
+// would decline again.
 //
-// Both exclusions are durable answers, which is why they belong here rather
-// than in the pass. A copy under the size floor is never a candidate, and one
-// already measured stays declined until a setting changes - so listing either
-// only to decline it again spends a page slot, and in the measured case a
-// download and an encode, on every pass forever.
-//
-// The recorded measurement is judged against the current settings rather than
-// treated as a verdict: loosening the ratio returns those copies to the pass
-// with no read at all. A measurement taken at a different level is ignored,
-// since it describes an encoding the pass would no longer produce and the
-// levels are names from an ordered set rather than numbers.
-//
-// The divisor is NULLIF'd because a zero-length copy cannot shrink: the
-// comparison goes NULL and the row is excluded, matching WorthStoring.
+// The recorded measurement is judged against the current settings, so
+// loosening the ratio returns those copies with no read. A measurement taken at
+// a different level is ignored, since it describes an encoding the pass would
+// no longer produce. The divisor is NULLIF'd so a zero-length copy compares
+// NULL and is excluded, matching WorthStoring.
 const uncompressedPredicate = `compression_algorithm IS NULL
 	AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= ?
 	AND (compression_probe_size IS NULL
@@ -79,17 +72,12 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 	return s.listRewritable(ctx, compressedPredicate, limit, after, backend)
 }
 
-// listRewritable runs one page of either listing. The predicate is the only
-// difference between them, and it is one of two package constants rather than
-// anything a caller supplies; args binds whatever placeholders it carries.
+// listRewritable runs one page of either listing. predicate is one of two
+// package constants, never caller input, and args binds its placeholders. An
+// empty backend selects every backend.
 //
-// Paging is by cursor because the passes that walk these listings rewrite the
-// rows they read: each one processed leaves the predicate that selected it, so
-// an offset would advance into a set that shrank and skip the rows that moved
-// up to fill the gap.
-// An empty backend selects every one, which is what a pass over the whole fleet
-// asks for. It binds ahead of the predicate's own placeholders because the
-// filter sits first in the WHERE clause.
+// Paging is by cursor because each processed row leaves the predicate that
+// selected it, so an offset would skip the rows that moved up.
 func (s *Store) listRewritable(ctx context.Context, predicate string, limit int, after core.Cursor, backend string, args ...any) ([]core.RewritableLocation, error) {
 	args = append([]any{backend, backend}, args...)
 	args = append(args, after.ObjectKey, after.BackendName, limit)

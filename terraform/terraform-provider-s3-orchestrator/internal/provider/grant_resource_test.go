@@ -149,19 +149,10 @@ resource "s3orchestrator_grant" "test" {
 `, testBucket, permissions)
 }
 
-// TestAccGrantWildcardName covers the administrator's grant, which is the one
-// that exercises both of the ways this resource can disagree with the server.
-//
-// `*` is the only name in ordinary use that needs percent-encoding, and signing
-// it is where the two sides can part company: the SDK's default escapes an
-// already-encoded path a second time, so the request signs as %252A and goes
-// out as %2A, and the orchestrator refuses a signature it cannot reproduce. A
-// name of only unreserved bytes signs identically either way and proves
-// nothing. `all` is the other half: the orchestrator stores its expansion, so a
-// state overwritten with that would differ from the configuration forever.
-//
-// No import step: an import has no shorthand to preserve and reads back the
-// expansion, which is correct and is covered by TestAccGrantBucket.
+// TestAccGrantWildcardName covers a `*` name with `all` permissions. `*` needs
+// percent-encoding, so it catches a signer that double-escapes the path, and
+// `all` checks that state keeps the shorthand while the orchestrator stores
+// its expansion.
 func TestAccGrantWildcardName(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

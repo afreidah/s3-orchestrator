@@ -48,16 +48,11 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return cached, nil
 	}
 
-	// A compressed read meters itself, one charge per frame fetched, on the
-	// bytes that actually left the backend. Every copy of a key agrees on
-	// whether it is compressed, so whichever attempt wins reports the same
-	// thing here.
-	//
-	// Every other read is charged here, on the bytes the winning attempt pulled
-	// off the backend. That is not result.Size: decryption happens on this side
-	// of the backend link, so an encrypted object is served as a smaller
-	// plaintext than the ciphertext that crossed it, and a ranged read of one
-	// crosses whole chunks to serve a slice.
+	// A compressed read meters itself per frame fetched, and every copy of a
+	// key agrees on whether it is compressed. Every other read is charged here
+	// on the bytes the winning attempt pulled off the backend, not result.Size:
+	// a decrypted object is smaller than its ciphertext, and a ranged read of
+	// one fetches whole chunks.
 	var selfMetered atomic.Bool
 	var wireBytes atomic.Int64
 	result, backendName, err := o.failover.Read(ctx, "GetObject", key,
@@ -128,10 +123,9 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 // translates encrypted ranges, and decrypts and verifies the body. loc is nil
 // in degraded-mode broadcasts.
 //
-// The second return is how many bytes the backend served, which the caller
-// charges as egress. It is read before the body is turned into plaintext,
-// because that step rewrites the result's size to what the client will be
-// given. Zero for a compressed copy, which meters itself per frame.
+// The second return is the bytes the backend served, for the caller to charge
+// as egress, taken before decryption rewrites the result's size. It is zero for
+// a compressed copy, which meters itself per frame.
 func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], int64, error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
@@ -217,9 +211,8 @@ type backendRange struct {
 // through verbatim, since its stored bytes are already in the coordinates the
 // client used.
 //
-// A range that cannot be translated is never sent to the backend as-is.
-// Plaintext offsets addressed against ciphertext select the wrong bytes
-// entirely, so a failure here has to surface rather than fall back.
+// A translation failure is returned rather than sending the original header,
+// because plaintext offsets against ciphertext select the wrong bytes.
 func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (backendRange, error) {
 	if loc == nil || !loc.Encrypted || rangeHeader == "" {
 		return backendRange{header: rangeHeader}, nil
@@ -266,11 +259,9 @@ func (o *Manager) buildPlaintextReader(
 // available. A hash mismatch logs, increments telemetry, and enqueues the
 // bad copy for cleanup.
 //
-// A partial response is never verified. The stored hash covers the whole
-// object, so a slice of it cannot match, and the mismatch handler destroys the
-// copy: without this guard a healthy object loses one copy per ranged read.
-// Verifying a range would need per-chunk digests, which the schema does not
-// carry, so range coverage belongs to the scrubber, which reads whole objects.
+// A partial response is never verified: the stored hash covers the whole
+// object, so a slice cannot match and the mismatch handler would destroy a
+// healthy copy. The scrubber covers ranges by reading whole objects.
 func (o *Manager) maybeWrapIntegrityReader(
 	ctx context.Context,
 	r *s3be.GetObjectResult,
@@ -322,12 +313,11 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string)
 	o.cache.Delete(key)
 }
 
-// applyStoredIdentity replaces the serving copy's answer with the object's
-// own, which is the point of storing it: the backend reports a digest of the
-// bytes it holds, so an unranged GET that failed over to a replica would
-// otherwise hand the client a different validator for an unchanged object.
-//
-// loc is nil on a degraded-mode broadcast, where there is no row to prefer.
+// applyStoredIdentity replaces the serving copy's ETag and content type with
+// the object's stored identity. The backend reports a digest of the bytes it
+// holds, so a GET that failed over to a replica would otherwise hand the client
+// a different validator for an unchanged object. loc is nil on a degraded-mode
+// broadcast.
 func applyStoredIdentity(res *s3be.GetObjectResult, loc *core.ObjectLocation) {
 	if res == nil || loc == nil || !loc.Identity.Complete() {
 		return
@@ -366,16 +356,10 @@ func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetO
 	return nil
 }
 
-// verifyStoredEnvelope checks the bytes a backend actually returned against
-// what the metadata row claims about them, and replaces r.Body with an
-// equivalent stream so the caller reads from the start either way.
-//
-// The check only applies when the response begins at byte 0 of the stored
-// object, which is where the envelope signature lives: a full read, or a
-// range read of an object the row calls plaintext that starts at 0. A ranged
-// read of an encrypted object starts past the header by construction, and a
-// range that starts mid-object carries no signature to compare, so both are
-// left to the scrubber to catch.
+// verifyStoredEnvelope checks the returned bytes against the row's encrypted
+// flag and replaces r.Body with an equivalent stream that still reads from the
+// start. Only a response that begins at byte 0 of the stored object carries the
+// envelope signature, so any other range is left to the scrubber.
 func verifyStoredEnvelope(r *s3be.GetObjectResult, loc *core.ObjectLocation, actualRange string) error {
 	if loc == nil || (actualRange != "" && !strings.HasPrefix(actualRange, "bytes=0-")) {
 		return nil

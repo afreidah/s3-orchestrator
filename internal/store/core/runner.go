@@ -19,11 +19,8 @@ import "context"
 
 // Runner opens a transaction and invokes fn with a TxAdapter scoped to
 // it. The transaction commits if fn returns a nil error and rolls back
-// otherwise.
-//
-// WithTx is declared in method form because a method cannot carry its own type
-// parameter. Engines implement this unwrapped signature; core operations call
-// the WithTxVal helper below, which wraps it to return a value.
+// otherwise. Use WithTxVal to return a value, since methods cannot take type
+// parameters.
 type Runner interface {
 	WithTx(ctx context.Context, fn func(ctx context.Context, tx TxAdapter) error) error
 }

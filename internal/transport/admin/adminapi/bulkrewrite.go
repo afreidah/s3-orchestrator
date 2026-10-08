@@ -16,20 +16,10 @@ package adminapi
 // the terminal status and the counts that partition what the pass saw.
 // The per-operation responses embed it and add their own success count.
 //
-// Skipped is carried separately from Failed because a copy can be left alone on
-// purpose - too incompressible to be worth encoding, or on a backend already at
-// its usage limit - and folding those into failures would make a healthy run
-// read as broken.
-//
-// Changed is separate again: those copies were rewritten on the backend and then
-// could not be recorded, because a client wrote the key while the pass held it.
-// The work was spent and discarded, and a non-zero count means the conversion
-// overlapped live traffic rather than that anything is misconfigured.
-//
-// The four operations name their success count differently on the wire
-// (compressed, decompressed, encrypted, decrypted) even though each reports the
-// same quantity. Those names are already published; sharing the rest of the
-// shape is what stops the four from drifting apart further.
+// Skipped counts copies left alone on purpose (too incompressible, or on a
+// backend at its usage limit), not failures. Changed counts copies rewritten
+// on the backend but not recorded because a client wrote the key meanwhile;
+// a non-zero value means the pass overlapped live traffic, not a fault.
 type BulkRewriteOutcome struct {
 	Status  string `json:"status"`
 	Skipped int    `json:"skipped"`

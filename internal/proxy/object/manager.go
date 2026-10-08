@@ -77,14 +77,8 @@ type Manager struct {
 	log               *slog.Logger
 }
 
-// Deps bundles the dependencies New needs so the call signature stays
-// under the parameter-count ceiling. Core is a consumer-declared interface
-// the *infra.BackendRuntime DI builds satisfies; Coord is taken concretely,
-// as the multipart manager takes it.
-//
-// A nil Codec disables compression in both directions. It is supplied even
-// when compression is off for new writes, because objects already stored
-// encoded still have to be decoded on read.
+// Deps bundles New's dependencies. A nil Codec disables compression in both
+// directions.
 type Deps struct {
 	Core      Runtime
 	Coord     *writepath.Coordinator
@@ -105,13 +99,9 @@ type Deps struct {
 	BackendTimeout               time.Duration // bounds the degraded-mode loser-drain goroutine
 }
 
-// New creates a Manager sharing the given core infrastructure and
-// write coordinator. All dependencies must be non-nil; nothing is
-// patched in post-construction. The component-scoped logger is built
-// in the constructor body per the project's logging convention. The
-// read-failover orchestrator is built once and reused for every GET /
-// HEAD; it captures the same Core, Stores, LocationCache, and the
-// parallelBroadcast flag, so per-call read paths stay short.
+// New creates a Manager. Core, Coord, Stores, LocationCache and IntegrityCfg
+// must be non-nil, and Detached too when CopiesPerWrite is above 1. The read
+// failover is built once here and reused for every GET and HEAD.
 func New(d *Deps) *Manager {
 	must.NotNil("d", d)
 	must.NotNil("d.Core", d.Core)
@@ -192,12 +182,9 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 	return stats
 }
 
-// ObjectExists reports whether at least one location row exists for key.
-// Used by the conditional-write path (If-None-Match: *) to fail-fast
-// before the body upload. Best-effort: a concurrent racing PUT can land
-// between this read and the eventual RecordObject commit, matching AWS
-// S3's documented best-effort precondition semantic. ErrObjectNotFound
-// is the canonical "no row" signal and is normalised to (false, nil).
+// ObjectExists reports whether at least one location row exists for key, so a
+// conditional write (If-None-Match: *) can fail before the body upload. It is
+// best effort, as in AWS: a concurrent PUT can still land before the commit.
 func (o *Manager) ObjectExists(ctx context.Context, key string) (bool, error) {
 	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
 	if errors.Is(err, core.ErrObjectNotFound) {

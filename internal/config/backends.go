@@ -66,19 +66,12 @@ const (
 )
 
 // BackendHTTPConfig tunes the HTTP transport of one backend. Every field is
-// optional; a zero value takes the default above, so an existing config that
-// never mentions the block behaves exactly as it did.
-//
-// The pool sizes are per backend, and deployments range from a Raspberry Pi to
-// a high-concurrency gateway: one fixed setting either over-allocates file
-// descriptors on a small box or starves throughput on a large one.
+// optional; a zero value takes the default above. Pool sizes are per backend.
 //
 // ForceHTTP2 is a pointer so an explicit false is distinguishable from an
-// omitted field. Setting it false makes this backend negotiate HTTP/1.1, which
-// is the targeted form of the GODEBUG=http2client=0 workaround: HTTP/2 against
-// some proxy and gateway combinations collapses throughput by most of an order
-// of magnitude, and an operator who hits that needs a way out that does not
-// change how every other backend is dialled.
+// omitted field. False makes this backend negotiate HTTP/1.1, a per-backend
+// form of GODEBUG=http2client=0 for proxies and gateways where HTTP/2
+// collapses throughput.
 type BackendHTTPConfig struct {
 	MaxIdleConns          int           `yaml:"max_idle_conns"`
 	MaxIdleConnsPerHost   int           `yaml:"max_idle_conns_per_host"`
@@ -215,11 +208,7 @@ func credentialSourceErrs(prefix string, b *BackendConfig) []error {
 }
 
 // RequestPoolConfig is one monthly request budget shared by a set of
-// operations, which is how providers actually meter: GCS bills uploads and
-// listings from one allowance and reads from a much larger separate one, and
-// B2 splits them differently again. Naming the grouping in config rather than
-// in code keeps the orchestrator out of the business of tracking each
-// provider's price list.
+// operations, matching how providers group operations into billing allowances.
 //
 // Pools are additive. An operation charges every pool that contains it and is
 // admitted only when all of them have headroom, so a per-operation sub-cap can

@@ -38,12 +38,10 @@ const (
 )
 
 // uiAPIRoute pairs a UI route suffix with the handler it dispatches to, a
-// tracking classification, and what authorizes it. The slice is the single
-// source of truth for Register and for the route-audit tests.
-//
-// kind and perm mirror the admin API route for the same operation. A bucket
-// route's handler authorizes the key it reads; every other kind is authorized
-// from the table before the handler runs.
+// tracking classification, and what authorizes it. kind and perm mirror the
+// admin API route for the same operation. A bucket route's handler authorizes
+// the key it reads; every other kind is authorized from the table before the
+// handler runs.
 type uiAPIRoute struct {
 	suffix   string
 	handler  func(*Handler) http.HandlerFunc

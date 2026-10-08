@@ -19,19 +19,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// Permissive registers a permissive .AnyTimes() expectation that returns
-// zero values for every method on MockMetadataStore. Call it at the end
-// of test setup, after registering specific stricter expectations: gomock
-// matches expectations in declaration order, so specific stubs fire first
-// (until their Times() bound is reached) and unstubbed methods fall
-// through to the catch-all here. Lets tests opt into mocking only the
-// methods they care about without the system under test panicking on
-// incidental calls (orphan-bytes adjustments, sweep rows, advisory locks,
-// etc.).
+// Permissive registers a zero-value .AnyTimes() expectation for every method
+// on MockMetadataStore. Call it after registering the specific expectations:
+// gomock matches in declaration order, so those fire first (until their
+// Times() bound is reached) and unstubbed calls fall through to these.
 //
-// helpers would be more boilerplate without meaningful structure.
-//
-//nolint:funlen // one stanza per interface method; expanding to per-method
+//nolint:funlen // one stanza per interface method
 func Permissive(m *MockMetadataStore) {
 	r := m.EXPECT()
 	a := gomock.Any()

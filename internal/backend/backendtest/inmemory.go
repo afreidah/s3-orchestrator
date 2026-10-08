@@ -60,17 +60,13 @@ type Object struct {
 // InMemory is an in-memory backend.ObjectBackend. The zero value is not
 // usable; construct with NewInMemory. Safe for concurrent use.
 //
-// The fields fall into four groups: the backing store, the failures a test can
-// inject, the observations recorded on the way through, and native-copy
-// support. Objects is guarded by the same mutex as the rest, so a test whose
-// subject is still running should read it through Has or Snapshot rather than
-// directly.
+// Objects is guarded by the mutex, so a test whose subject is still running
+// should read it through Has or Snapshot rather than directly.
 //
-// CopyObject always exists, so InMemory satisfies backend.Copier, but it
-// reports ErrCopyNotSupported until a test sets CopyEnabled - which leaves
-// callers on the materialized-copy path by default. CopyLandsBeforeErr makes a
-// failing CopyObject write the destination anyway, modelling a server-side copy
-// whose response was lost.
+// CopyObject reports ErrCopyNotSupported until a test sets CopyEnabled, which
+// leaves callers on the materialized-copy path by default. CopyLandsBeforeErr
+// makes a failing CopyObject write the destination anyway, modelling a
+// server-side copy whose response was lost.
 type InMemory struct {
 	mu sync.Mutex
 
@@ -367,10 +363,7 @@ func (m *InMemory) Has(key string) bool {
 
 // HasCopyOf reports whether the backend holds bytes belonging to objectKey,
 // wherever they are: at the key itself, or under one of the per-write paths a
-// write stores its bytes at.
-//
-// A write's path carries a fresh id that no test can predict, so a test that
-// only cares whether the object arrived asks this instead of naming the path.
+// write stores its bytes at, whose id a test cannot predict.
 func (m *InMemory) HasCopyOf(objectKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -384,12 +377,9 @@ func (m *InMemory) HasCopyOf(objectKey string) bool {
 }
 
 // CopyOf returns the object the backend holds for objectKey, wherever it is:
-// at the key itself, or under the per-write path a write stored it at. It is
-// for assertions about the bytes rather than about the object's presence.
-//
-// When the backend holds more than one copy of the key, such as an overwrite
-// whose predecessor is not cleaned up yet, it returns an arbitrary one. A test
-// that cares which copy should assert on the path it expects instead.
+// at the key itself, or under the per-write path a write stored it at. When
+// more than one copy exists, such as an overwrite whose predecessor is not
+// cleaned up yet, it returns an arbitrary one.
 func (m *InMemory) CopyOf(objectKey string) (Object, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

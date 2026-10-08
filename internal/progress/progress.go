@@ -22,16 +22,10 @@ const (
 	PhaseEnd                // the unit finished
 )
 
-// Outcome values reported on a PhaseEnd step.
-//
-// StatusFailed means the work ran and the item did not pass. StatusUnreadable
-// means it never ran, because the item could not be retrieved: a distinct word
-// so an item the worker could not even look at is not reported as one it
-// judged and rejected. StatusSkipped means the pass looked at the item and
-// decided against acting on it, which is a success for passes that are
-// supposed to be selective - a compression run over media declines almost
-// everything, and reporting that as failure would make a healthy run look
-// broken.
+// Outcome values reported on a PhaseEnd step. StatusFailed means the work ran
+// and the item did not pass. StatusUnreadable means the item could not be
+// retrieved, so the work never ran. StatusSkipped means the pass looked at the
+// item and chose not to act, which counts as success for selective passes.
 const (
 	StatusOK         = "ok"
 	StatusFailed     = "failed"

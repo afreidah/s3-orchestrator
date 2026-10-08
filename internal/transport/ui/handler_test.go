@@ -1738,12 +1738,9 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 	}
 }
 
-// BenchmarkLogin_TimingParity verifies that login attempts with an invalid
-// access key take approximately the same time as attempts with a valid key
-// but wrong secret. Both should be dominated by the registry's constant-time
-// secret comparison. A large disparity would indicate a timing side-channel.
-// BenchmarkLogin_InvalidKey benchmarks login_invalid key.
-// BenchmarkLogin_InvalidKey benchmarks login_invalid key.
+// BenchmarkLogin_InvalidKey measures a login with an unknown access key.
+// Compare it with BenchmarkLogin_ValidKeyWrongSecret; a large difference
+// would indicate a timing side channel.
 func BenchmarkLogin_InvalidKey(b *testing.B) {
 	h, mux := benchLoginHandler(b)
 	_ = h

@@ -78,10 +78,8 @@ var permExpansions = map[string][]string{
 
 // standsFor reports whether stored is exactly what the single shorthand in
 // held expands to, so a grant declared as one reads back as the same grant.
-//
-// The shorthand cannot be planned as its expansion instead: permissions is a
-// required attribute, and Terraform refuses a plan whose value for one differs
-// from the configuration.
+// Planning the expansion instead fails, because Terraform refuses a required
+// attribute whose plan differs from the configuration.
 func standsFor(held, stored []string) bool {
 	if len(held) != 1 {
 		return false
@@ -172,11 +170,8 @@ func (r *grantResource) Schema(
 				MarkdownDescription: "What the grant is over: `bucket` (the default), " +
 					"`backend`, or `orchestrator`.",
 				PlanModifiers: []planmodifier.String{
-					// Computed as well as optional, so a configuration that names
-					// no kind leaves it unknown on every later plan - and unknown
-					// against the stored value would read as a change and replace
-					// a grant nobody touched. Holding the stored value is what
-					// keeps the default from churning.
+					// Without this, an omitted kind plans as unknown and replaces
+					// the grant on every apply.
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -191,11 +186,9 @@ func (r *grantResource) Schema(
 			"permissions": schema.SetAttribute{
 				Required:    true,
 				ElementType: types.StringType,
-				// No plan modifier: changing what a grant carries is an update
-				// rather than a replacement, because the orchestrator replaces
-				// the set in place. Forcing replacement here would revoke and
-				// re-grant, leaving a window where the client reaches nothing,
-				// which is the thing the upsert exists to avoid.
+				// No RequiresReplace: the set is updated in place, and a
+				// replacement would leave a window where the client reaches
+				// nothing.
 				MarkdownDescription: "What the grant carries. A bucket takes `list-buckets`, " +
 					"`list`, `read`, `write`, `delete` and `tags`, or `all`. `read` covers an " +
 					"object's tags as well as its bytes, and `tags` is the right to change " +

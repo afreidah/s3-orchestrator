@@ -368,20 +368,10 @@ func BenchmarkDecryptReader(b *testing.B) {
 	}
 }
 
-// TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath pins the per-chunk
-// allocation count for the streaming encrypt + decrypt readers. The
-// constructor allocates a small constant number of buffers (cipher,
-// gcm, baseNonce, header, plainBuf, nonceBuf, chunkOutBuf for encrypt
-// and the equivalent set for decrypt). Once those are paid, gcm.Seal
-// and gcm.Open run into pre-allocated dst buffers and the chunk loop
-// itself must allocate nothing. A regression that re-introduces
-// Seal(nil, ...) / Open(nil, ...) or per-chunk make() would show up
-// as a multi-allocation-per-chunk number on a multi-chunk object.
-//
-// This test is the contract behind #885. The upper bounds below are
-// generous (~2x current real numbers) so the test is not flaky
-// against future constructor changes; the shape asserted is that
-// allocs per whole-object encrypt do not grow with chunk count.
+// TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath verifies the encrypt and
+// decrypt chunk loops allocate nothing beyond the constructor's fixed set, so
+// allocs per object do not grow with chunk count. The bound is about 2x the
+// current number to absorb constructor changes.
 func TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath(t *testing.T) {
 	// AllocsPerRun panics under t.Parallel(); intentionally serial.
 	const chunkSize = 64 * 1024
@@ -563,13 +553,9 @@ func TestDecryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestEncryptor_PoolReuse_NoCrossStreamLeak verifies that running two
-// distinct encrypt+decrypt round-trips back-to-back through the same
-// Encryptor (which shares one sync.Pool) does not leak plaintext from
-// the first stream into the second via a stale framed/plain buffer.
-// A bug here would only surface when the second plaintext is shorter
-// than the first - the tail of the reused buffer would still hold
-// the first stream's data.
+// TestEncryptor_PoolReuse_NoCrossStreamLeak verifies that a short stream
+// following a long one through the same Encryptor's buffer pool does not
+// pick up the first stream's data from a stale buffer tail.
 func TestEncryptor_PoolReuse_NoCrossStreamLeak(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64

@@ -25,9 +25,8 @@ type RemoveBackendPreview struct {
 // BackendOperationResponse acknowledges a backend-management mutation: which
 // backend was acted on, and what happened to it. Status is a human-readable
 // outcome ("drain started", "drain cancelled", "backend removed", "backend
-// purged"), matching the vocabulary RemoveBackendPreview already publishes for
-// this endpoint family rather than the ok/skipped tokens the worker-trigger
-// endpoints use.
+// purged"), matching RemoveBackendPreview rather than the ok/skipped tokens of
+// the worker-trigger endpoints.
 type BackendOperationResponse struct {
 	Status  string `json:"status"`
 	Backend string `json:"backend"`

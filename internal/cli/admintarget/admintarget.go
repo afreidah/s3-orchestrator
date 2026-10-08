@@ -24,9 +24,8 @@ import (
 // EnvAddr lets a local binary target a remote instance without a server config;
 // the flag takes precedence over it.
 //
-// EnvAccessKey and EnvSecretKey carry the keypair a client signs with. They
-// resolve without a config file at all, which is what lets a binary reach a
-// remote instance with two variables and nothing on disk.
+// EnvAccessKey and EnvSecretKey carry the keypair a client signs with; they
+// need no config file.
 const (
 	EnvAddr = "S3O_ADMIN_ADDR"
 
@@ -36,12 +35,8 @@ const (
 
 // Resolve determines the admin API base address using the precedence
 // flag -> environment -> config. The config file is loaded (via loadCfg) only
-// when the address is still missing.
-//
-// Credentials are not resolved here. A keypair comes from its flags or its
-// environment variables and never from the server's config, because the config
-// declares the identity a deployment administers itself with rather than the one
-// an operator happens to be holding.
+// when the address is still missing. Credentials never come from the server
+// config, which holds the deployment's own identity rather than the operator's.
 func Resolve(addrFlag string, loadCfg func() (*config.Config, error)) (string, error) {
 	if addr := firstNonEmpty(addrFlag, os.Getenv(EnvAddr)); addr != "" {
 		return addr, nil

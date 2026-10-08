@@ -305,9 +305,6 @@ func TestDeliver_HMACSignature(t *testing.T) {
 
 // TestNewNotifier_RegistersAndDeregisters asserts a constructed notifier
 // receives what any package publishes, and stops receiving once it is closed.
-// Asserted through the outbox rather than by reading the hook: registration is
-// only worth anything if an event actually lands somewhere.
-//
 // Not parallel: registration is process-global.
 func TestNewNotifier_RegistersAndDeregisters(t *testing.T) {
 	event.SetEmitter(nil)

@@ -48,11 +48,8 @@ type sortTable[T any] struct {
 	sort     tableSort
 }
 
-// newSortTable builds a table with the given columns. sorts holds a
-// comparator for each sortable column, keyed by its title; a column without
-// one is skipped when stepping the sort. rows builds table rows from items in
-// display order, and key identifies an item so the selection survives a
-// refresh or a re-sort.
+// newSortTable builds a table whose sortable columns have a comparator in sorts,
+// keyed by title. key identifies an item so the selection survives a re-sort.
 func newSortTable[T any](columns []columnSpec, sorts map[string]func(a, b *T) int,
 	rows func([]T) []table.Row, key func(*T) string) sortTable[T] {
 	return sortTable[T]{table: newTable(columns), columns: columns, sorts: sorts, rows: rows, key: key}

@@ -181,11 +181,8 @@ func multipartCap(n int) string {
 }
 
 // usersReaching names the identities holding a grant on a bucket and what each
-// grant carries, so an operator sees at a glance which buckets nothing can
-// reach yet and which are reached read-only.
-//
-// Falls back to the name alone when the server sent no grants, so the pane
-// still renders against an older instance.
+// grant carries. It falls back to the name alone when the server sent no
+// grants (an older instance).
 func usersReaching(users []adminapi.User, bucket string) []string {
 	var out []string
 	for i := range users {

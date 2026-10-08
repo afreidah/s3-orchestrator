@@ -30,12 +30,8 @@ const QuotaStripeCount = 16
 // SELECTION
 // -------------------------------------------------------------------------
 
-// StripeFor maps an object key to the stripe that holds its bytes.
-//
-// Hashing the key rather than choosing at random is what keeps a delete on the
-// same row as the write it reverses. Random selection would still sum
-// correctly, but every object would leave one stripe high and another low, and
-// a stripe's value would carry no relationship to anything stored.
+// StripeFor maps an object key to the stripe that holds its bytes. It hashes
+// the key so a delete lands on the same stripe as the write it reverses.
 func StripeFor(key string) int16 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key)) // hash.Hash never reports an error

@@ -40,13 +40,9 @@ func dlqAllPg(t *testing.T, s *Store, lastError string) {
 }
 
 // resetCleanupTablesPg empties cleanup_queue and cleanup_dlq so a test that
-// asserts an exact row count measures only what it enqueued itself.
-//
-// dlqAllPg sweeps every pending row in the database, not just this test's, and
-// EnqueueCleanup dates next_retry forward: a row an earlier test left behind
-// becomes pending once its backoff elapses, so whether it lands in the DLQ
-// depends on how long the suite took to reach here. Clearing first makes the
-// count depend on the test rather than on what ran before it.
+// asserts an exact row count measures only what it enqueued itself. dlqAllPg
+// sweeps every pending row, and rows left by earlier tests become pending once
+// their backoff elapses, so without this the count depends on suite timing.
 func resetCleanupTablesPg(t *testing.T, s *Store) {
 	t.Helper()
 	for _, table := range []string{"cleanup_queue", "cleanup_dlq"} {
@@ -119,12 +115,8 @@ func TestStoreInt_ListCleanupDLQ_ScopeAndFields(t *testing.T) {
 // TestStoreInt_RequeueCleanupDLQ_MovesRowsBack asserts the writable-CTE requeue
 // moves a backend's dead-lettered rows back into cleanup_queue atomically:
 // the DLQ depth drops by the returned count and the rows reappear pending with
-// fresh attempts.
-// The rows this test looks for are named and then found by name. Counting a
-// backend's rows in a windowed read cannot work here: the queue is shared with
-// every other test in the package, GetPendingCleanups takes a limit, and rows
-// left by earlier tests sort ahead of these ones, so a run late enough in the
-// package would look past them and read zero.
+// fresh attempts. The rows are found by key rather than counted through
+// GetPendingCleanups, whose limit can be used up by rows earlier tests left.
 func TestStoreInt_RequeueCleanupDLQ_MovesRowsBack(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()

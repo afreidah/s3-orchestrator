@@ -32,10 +32,8 @@ import (
 
 // grantRegistry builds a registry holding one stored user, reached by the
 // shared test credential, whose grant on the test bucket carries exactly perms.
-//
-// Built from a store snapshot rather than config because a config-declared
-// credential always carries every permission; narrowing one is only expressible
-// as a stored grant.
+// It uses a stored grant because a config-declared credential always carries
+// every permission.
 func grantRegistry(tb testing.TB, perms core.PermissionSet) *auth.BucketRegistry {
 	tb.Helper()
 	v := provisioning.Merge(nil, config.AuthConfig{}, &provisioning.Snapshot{

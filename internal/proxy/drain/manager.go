@@ -264,12 +264,10 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 	return nil
 }
 
-// PurgeBackendObjects deletes all objects from a backend's S3 storage
-// and their metadata rows. Best-effort: per-key failures are logged
-// and the loop continues. Bails on a page whose every DeleteObjectLocation
-// fails so a persistent DB error (constraint, partition, conflict)
-// cannot pin the loop on the same rows forever; the same rows
-// would otherwise list-and-fail until the process was restarted.
+// PurgeBackendObjects deletes all objects from a backend's S3 storage and their
+// metadata rows. Per-key failures are logged and skipped, but a page whose
+// every DeleteObjectLocation fails stops the purge, so a persistent DB error
+// cannot keep the loop listing and failing on the same rows forever.
 func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string, observer progress.Observer) {
 	for {
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, purgePageSize)

@@ -22,13 +22,10 @@ import (
 // colour with focus.
 var activeTheme theme
 
-// titleStyle and the other styles the panes draw themselves with.
-//
-// The muted title is what makes focus obvious: the pane holding focus keeps the
-// bright bar, the other drops to the surface colour. The tag label matches the
-// column headers so it reads as a field name, and its left pad aligns the line
-// with the padded table cells beneath it. helpStyle, navDisabledStyle and
-// logLevelDebug are faint rather than coloured, so they recede on any theme.
+// titleStyle and the other styles the panes draw themselves with. The focused
+// pane uses titleStyle and the others titleMutedStyle. helpStyle,
+// navDisabledStyle and logLevelDebug are faint rather than colored, so they
+// recede on any theme.
 var (
 	titleStyle       lipgloss.Style
 	titleMutedStyle  lipgloss.Style

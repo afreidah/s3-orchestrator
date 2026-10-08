@@ -84,11 +84,8 @@ func (m *Manager) logger() *slog.Logger {
 }
 
 // ProcessRules evaluates every rule and deletes the objects each one expires,
-// returning the total deleted and failed counts across all rules.
-//
-// obs receives one bracketed step per object, which is what lets the admin API
-// stream a sweep instead of answering with a single count after it finishes. It
-// is nil on the scheduled tick, where nothing is watching.
+// returning the total deleted and failed counts across all rules. obs receives
+// one bracketed step per object and is nil on the scheduled tick.
 func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) (deleted, failed int) {
 	batchSize := batchSizeFor(m.Config())
 

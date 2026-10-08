@@ -53,8 +53,7 @@ type CompressionDeps struct {
 // nil when the orchestrator was started without them, which every operation
 // reports as ErrCompressionUnavailable.
 //
-// Encryptor may be nil: a fleet with no encryption has no encrypted copies to
-// rewrite, and one that does is refused rather than rewritten blind.
+// Encryptor may be nil, in which case encrypted copies are refused.
 type Compression struct {
 	log       *slog.Logger
 	codec     CompressionCodec
@@ -90,15 +89,12 @@ func (c *Compression) rewriteEnv() bulkRewriteEnv {
 // -------------------------------------------------------------------------
 
 // CompressExisting encodes every copy stored verbatim and records the new
-// stored form. Objects the encoder cannot shrink past the configured ratio are
-// left exactly as they are and counted as skipped: the pass applies the same
-// thresholds a PUT does, so it cannot write an encoding a fresh write would
-// have rejected.
+// stored form, applying the same thresholds a PUT does. Objects that do not
+// shrink past the configured ratio are left as they are and counted as skipped.
 //
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet. A
-// capped run needs nothing carried between invocations to continue: a rewritten
-// copy leaves the listing, and one declined on ratio is recorded so it leaves too,
-// so running it again converts the next batch rather than re-examining the last.
+// maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
+// Rewritten and declined copies both leave the listing, so running a capped
+// pass again continues with the next batch.
 func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
@@ -124,11 +120,8 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 }
 
 // DecompressExisting decodes every encoded copy and records it as stored
-// verbatim, which is what an operator runs to take the feature back out.
-//
-// maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
-// This direction declines nothing, so every copy a capped run touches leaves the
-// listing and the next run continues straight on from there.
+// verbatim. maxRewrites caps how many copies are rewritten, or zero for the
+// whole fleet; a capped run can be repeated to continue.
 func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
@@ -172,11 +165,8 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 	if !compression.WorthStoring(logical, encodedSize, c.cfg.MinRatio) {
 		encoded.Cleanup()
 		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
-		// What the encode cost bought is the knowledge that this copy does not
-		// shrink enough, so it is written down. A pass that discarded it would
-		// spend the same download and encode to learn it again on every run.
-		// The failure is logged and swallowed: the copy is correctly declined
-		// either way, and losing the record costs efficiency, not correctness.
+		// Record the decline so later runs skip this copy instead of
+		// re-encoding it. A failure here costs efficiency, not correctness.
 		if err := c.store.RecordCompressionProbe(ctx, &core.CompressionProbe{
 			ObjectKey:   loc.ObjectKey,
 			BackendName: loc.BackendName,
@@ -279,11 +269,8 @@ func (c *Compression) plaintextOf(ctx context.Context, body io.Reader, loc *rewr
 
 // sealedBody is a rewritten body ready for upload: what to send, how many bytes
 // that is, and - when the copy was encrypted - the description of the envelope
-// it was wrapped in.
-//
-// key and keyID are what make the rewrite survivable. Re-encrypting produces a
-// new base nonce and a new wrapped data key, so a row left holding the old ones
-// describes bytes nothing can decrypt.
+// it was wrapped in. The row must be updated with key and keyID, since the old
+// nonce and wrapped key cannot decrypt the re-encrypted bytes.
 type sealedBody struct {
 	body  io.Reader
 	size  int64
@@ -292,13 +279,10 @@ type sealedBody struct {
 	keyID string
 }
 
-// seal re-applies encryption to a rewritten body when the copy was encrypted. A
-// fresh data key is minted rather than the old one reused: re-encryption
-// changes the base nonce whatever key is used, so the row has to be updated
-// either way, and the new key is wrapped under whichever is primary now.
-// A missing encryptor needs no check here: plaintextOf runs first in both
-// transforms and refuses an encrypted copy it cannot unwrap, so this is only
-// ever reached with one configured.
+// seal re-applies encryption to a rewritten body when the copy was encrypted,
+// minting a fresh data key wrapped under the current primary. It assumes an
+// encryptor is configured, since plaintextOf already refused an encrypted copy
+// without one.
 func (c *Compression) seal(ctx context.Context, body io.Reader, size int64, loc *rewriteRow) (sealedBody, error) {
 	if !loc.Encrypted {
 		return sealedBody{body: body, size: size}, nil

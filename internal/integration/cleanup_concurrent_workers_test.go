@@ -42,12 +42,9 @@ func newAuxCleanupWorker(instanceID string) *worker.CleanupWorker {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce enqueues N
-// items, spawns K worker instances with distinct instanceIDs, and
-// drives them in parallel. The full row count must be processed
-// exactly once across the workers: any double-processing would show
-// up as resolved-sum > N, and any lost row would leave the queue
-// non-empty.
+// TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce runs several
+// cleanup workers with distinct instance IDs in parallel and asserts every
+// queued row is processed exactly once.
 func TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce(t *testing.T) {
 	resetState(t)
 

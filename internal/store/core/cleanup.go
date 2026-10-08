@@ -24,17 +24,13 @@ import (
 // SWEEP STALE CLEANUP QUEUE ROWS
 // -------------------------------------------------------------------------
 
-// SweepStaleCleanupQueueRows removes every cleanup_queue row matching
-// the (storageKey, backend) pair and decrements the backend's
-// orphan_bytes counter by the sum of their size_bytes. Used by the
-// reconciler when it deletes a stale object_locations row so the
-// queue does not retain orphan entries pointing at bytes the backend
-// no longer holds. Returns the number of rows deleted.
+// SweepStaleCleanupQueueRows removes every cleanup_queue row for the
+// (storageKey, backend) pair, decrements the backend's orphan_bytes by their
+// total size, and returns the number of rows deleted.
 //
-// Rows are matched on the path rather than the object, because reconcile only
-// established that the bytes at that path are gone. Sweeping by object would
-// also drop queued deletions for the key's other writes, whose bytes are still
-// on the backend.
+// Rows are matched on the path, not the object: the reconciler only knows the
+// bytes at that path are gone, and the key's other writes may still have bytes
+// on the backend with deletions queued.
 func SweepStaleCleanupQueueRows(ctx context.Context, runner Runner, storageKey, backend string) (int64, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
 		rowCount, totalBytes, err := tx.SumAndDeleteCleanupQueueRows(ctx, storageKey, backend)
@@ -57,21 +53,12 @@ func SweepStaleCleanupQueueRows(ctx context.Context, runner Runner, storageKey, 
 // MOVE CLEANUP TO DLQ
 // -------------------------------------------------------------------------
 
-// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue row
-// (one whose retry budget is spent without ever succeeding at the
-// physical backend delete) to the cleanup_dlq table. The single
-// transaction reads the queue row, inserts a corresponding DLQ row, and
-// deletes the queue row.
+// MoveCleanupToDLQ atomically moves a cleanup_queue row whose retry budget is
+// spent into cleanup_dlq. It returns false when no row exists for id, which
+// means a concurrent finaliser already removed it.
 //
-// orphan_bytes is intentionally left untouched: the backend object is
-// still on disk, so the bytes really are still occupying the backend's
-// quota - decrementing here would lie about reclaimed capacity. The DLQ
-// table exists so an operator can see the unrecoverable orphan, decide
-// whether to retry it manually or write it off, and reconcile
-// orphan_bytes deliberately as part of that workflow.
-//
-// Returns true if a row was moved, false if no row existed for id (a
-// benign concurrent-finaliser race).
+// orphan_bytes is left untouched because the bytes are still on the backend;
+// an operator reconciles them when retrying or writing off the DLQ entry.
 func MoveCleanupToDLQ(ctx context.Context, runner Runner, id int64, lastError string) (bool, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
 		row, err := tx.GetCleanupQueueRow(ctx, id)

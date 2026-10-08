@@ -23,13 +23,8 @@ import (
 // -------------------------------------------------------------------------
 
 // emitter holds the notifier's delivery hook, or nil when the deployment has
-// no notifications configured.
-//
-// Atomic, and unexported so the only ways to touch it are SetEmitter and
-// Publish. The hook is written once during wiring and read from every request
-// and worker goroutine in the process; a plain func var is a data race the
-// moment anything writes it after startup, which registering the notifier from
-// a reload hook would do. audit.onEvent is the same shape for the same reason.
+// no notifications configured. It is atomic because a reload can register the
+// notifier while every request goroutine reads the hook.
 var emitter atomic.Pointer[func(Event)]
 
 // SetEmitter registers the hook Publish delivers through. Pass nil to clear a
@@ -43,11 +38,9 @@ func SetEmitter(fn func(Event)) {
 }
 
 // Publish sends one event to the configured notifier, or does nothing when the
-// deployment has none. The envelope fields a CloudEvent needs are filled in by
-// the notifier, so a caller supplies only what is specific to the occurrence.
-//
-// subject is the resource the event is about - a backend name, an object key -
-// and is empty for fleet-wide events that name no single one.
+// deployment has none. The notifier fills in the CloudEvent envelope. subject
+// is the resource the event is about, such as a backend name or object key,
+// and is empty for fleet-wide events.
 func Publish(eventType, subject string, data map[string]any) {
 	fn := emitter.Load()
 	if fn == nil {

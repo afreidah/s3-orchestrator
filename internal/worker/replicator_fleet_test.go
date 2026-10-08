@@ -210,12 +210,8 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 }
 
 // TestReplicate_FullTargetRecordsNoCopy asserts a target without room produces
-// no copy.
-//
-// The refusal is the conditional insert declining the row, not the ranking
-// passing the backend over: ranking only proposes an order, and a backend that
-// looked roomy when it was ranked can be full by the time the copy lands. The
-// bytes written to it become an orphan, which the cleanup queue owns.
+// no copy: the conditional insert declines the row even though ranking
+// proposed the backend, and the written bytes go to the cleanup queue.
 func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -271,14 +267,9 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 	}
 }
 
-// TestCopyToReplica_DoesNotMutateInputSlice pins issue #904: the caller's
-// copies slice must keep the order it was passed in. The previous
-// implementation sorted in place, so an outer loop that reused the same
-// slice across iterations saw the post-sort order on every call after
-// the first. Builds an input where IsBackendHealthy disagrees with the
-// input order (the first entry references a backend missing from the
-// fleet so it scores as unhealthy) and asserts the slice is unchanged
-// after the call.
+// TestCopyToReplica_DoesNotMutateInputSlice asserts the caller's copies slice
+// keeps its order when health sorting would reorder it (the first entry names
+// a backend missing from the fleet, so it scores as unhealthy).
 func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 	t.Parallel()
 	b2 := backendtest.NewInMemory()

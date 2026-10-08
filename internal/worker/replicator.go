@@ -164,15 +164,8 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 
 	tasks := planUnderReplicated(locations, cfg.Factor)
 
-	// Target selection runs through SelectReplicaTarget on every object;
-	// the backend manager filters on in-memory usage limits and queries the
-	// store for least-utilized / first-with-space backend per call. Over-
-	// quota races are caught by the backend layer (RecordReplica returns an
-	// error) so the worst case is a wasted copy that gets cleaned up.
-	//
-	// The pending gauge is the fleet snapshot's ledger count, not this
-	// batch: a pass sees at most one batch, and every instance serves the
-	// snapshot's figure.
+	// The pending gauge comes from the fleet snapshot's ledger count, not this
+	// batch, so every instance serves the same figure.
 	var created atomic.Int64
 	runner := BatchRunner[replicaTask]{
 		Name:        "replication",
@@ -223,13 +216,9 @@ type replicaTask struct {
 	needed int
 }
 
-// planUnderReplicated turns a flat slice of object_locations rows (one
-// row per backend per key) into per-key replication tasks targeting
-// `factor` total copies. Keys that already meet or exceed the factor
-// are filtered out; the returned slice ordering is map-iteration order
-// and not guaranteed to be stable across runs. Pure function so the
-// placement/policy decisions are testable independently of backend
-// copy execution.
+// planUnderReplicated turns object_locations rows (one per backend per key)
+// into per-key replication tasks targeting factor total copies. Keys already
+// at or above the factor are dropped; the result order is not stable.
 func planUnderReplicated(locations []core.ObjectLocation, factor int) []replicaTask {
 	grouped := core.GroupByKey(locations)
 	tasks := make([]replicaTask, 0, len(grouped))
@@ -246,12 +235,9 @@ func planUnderReplicated(locations []core.ObjectLocation, factor int) []replicaT
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// ReplicationOutcome captures the per-object result of one
-// ReplicateObject invocation. Counts are populated regardless of
-// success so the reporter and unit tests can reason about retry
-// behaviour without parsing log lines. NoTarget reflects whether the
-// loop exited because target selection ran out, not whether any
-// individual attempt failed.
+// ReplicationOutcome captures the per-object result of one ReplicateObject
+// call. NoTarget means the loop exited because target selection ran out, not
+// that an individual attempt failed.
 type ReplicationOutcome struct {
 	Key             string // object key
 	Created         int    // copies successfully recorded
@@ -287,12 +273,8 @@ func replicaOutcomeResult(o *ReplicationOutcome) ItemResult {
 }
 
 // ReplicateObject creates up to `needed` additional copies of a single
-// object. Returns a ReplicationOutcome the caller can use to drive
-// metrics, audit, and log reporting without re-parsing logs.
-//
-// Per-attempt diagnostic logs are preserved so incident responders can
-// still trace each failed retry; the outcome is a *structured summary*
-// on top of those, not a replacement.
+// object. It logs each failed attempt and returns a ReplicationOutcome
+// summarizing them for metrics, audit, and reporting.
 func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) ReplicationOutcome {
 	out := ReplicationOutcome{Key: key}
 
@@ -302,11 +284,9 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		exclusion[existingCopies[i].BackendName] = true
 	}
 
-	// Estimate size for target selection. Selection runs before we pick a
-	// source, so we use the largest known copy size to avoid placing on a
-	// backend that lacks space for the (likely identical) copy that will
-	// be transferred. Authoritative size for quota and metadata is the
-	// source's size at insert time, returned by RecordReplica below.
+	// Target selection runs before a source is picked, so it uses the largest
+	// known copy size. The authoritative size is the one RecordReplica reads
+	// from the source row at insert time.
 	sizeEstimate := maxCopySize(existingCopies)
 
 	// Retry with different targets on failure without consuming a needed
@@ -330,20 +310,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			break
 		}
 
-		// CopyToReplica returns the source row it read from. Its SizeBytes is
-		// the bytes the streaming copy moved; recordedSize is what
-		// RecordReplica actually wrote into both object_locations.size_bytes
-		// and backend_quotas.bytes_used (read from the source row inside the
-		// conditional INSERT). They equal each other unless an overwrite
-		// landed mid-replication.
-		// No claim is held across the copy: the row RecordReplica inserts is
-		// what occupies the target, and it is only written if the target still
-		// has room at that moment. An attempt that leaves no row behind
-		// therefore has nothing to give back.
-		//
-		// The target path is minted before the transfer so the verify read, the
-		// record and every cleanup below address the same bytes. A replica is a
-		// write like any other and gets a path no other write shares.
+		// No capacity claim is held across the copy: RecordReplica inserts the
+		// row only if the target still has room, so a failed attempt has
+		// nothing to give back. The target path is minted first so the verify
+		// read, the record, and every cleanup address the same bytes.
 		targetStorageKey := writepath.NewStorageKey(key)
 		sourceLoc, err := r.CopyToReplica(ctx, key, targetStorageKey, existingCopies, target)
 		if err != nil {
@@ -425,13 +395,8 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	return out
 }
 
-// reportObjectOutcome drives the summary log line emitted by the
-// run-loop closure once ReplicateObject returns. Per-attempt
-// diagnostic logs are emitted inside ReplicateObject; this helper adds
-// the aggregate "this object did not reach factor" signal so dashboards
-// and operators see one structured entry per partial outcome rather
-// than having to count per-attempt warnings. No-failure outcomes emit
-// nothing  -  the bulk-summary log lives in replicate() above.
+// reportObjectOutcome logs one warning for an object that did not reach the
+// replication factor. Outcomes with no failures log nothing.
 func (r *Replicator) reportObjectOutcome(ctx context.Context, o *ReplicationOutcome) {
 	if o.Failed() == 0 && !o.NoTarget {
 		return
@@ -462,11 +427,8 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 
 // FindReplicaTarget names the next backend to try for a replication copy,
 // using the same routing strategy as normal writes. Returns an empty string
-// when no candidate is left.
-//
-// Only the order is decided here. Whether the target has room is settled by the
-// conditional insert that records the copy, so a target named here can still
-// decline, and the caller moves on to the next one.
+// when no candidate is left. Capacity is settled later by the conditional
+// insert that records the copy, so a target named here can still decline.
 func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
 	ranked := r.placement.RankReplicaTargets(size, exclusion)
 	if len(ranked) == 0 {
@@ -476,36 +438,26 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 }
 
 // CopyToReplica reads the object from an existing copy and writes it to the
-// target backend at targetStorageKey, a path minted for this copy so the
-// bytes it places can be addressed on their own. Tries each existing copy in
-// order for failover. Returns the source row it read from: its BackendName is the source that answered, its
-// SizeBytes the bytes actually transferred, and its stored-form columns
-// describe the target too, because StreamCopy moves the bytes verbatim. The
-// input slice is cloned before sorting so callers retain their original
-// ordering — without the clone, sort.Slice reorders the caller's slice in
-// place and the caller's later reads see a different element at each index.
+// target backend at targetStorageKey, trying each existing copy in turn. It
+// returns the source row that answered; its SizeBytes is the bytes
+// transferred, and its stored-form columns describe the target too, since
+// StreamCopy moves bytes verbatim. The caller's slice is not reordered.
 func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
 		return nil, err
 	}
 
-	// Prefer healthy sources to avoid circuit breaker latency/failures.
-	// Sort a clone so the caller's slice keeps the order they passed
-	// in - this method does not advertise in-place mutation and the
-	// outer ReplicateObject loop reuses the same existingCopies slice
-	// across iterations.
+	// Prefer healthy sources. Sort a clone, since ReplicateObject reuses the
+	// caller's slice across attempts.
 	ordered := slices.Clone(copies)
 	slices.SortStableFunc(ordered, func(a, b core.ObjectLocation) int {
 		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
 	})
 
-	// Drop sources whose breaker is open so a streamed copy never starts
-	// against a backend we already know is down - a slow or dead source
-	// otherwise stalls the copy and (before the phase-attribution fix) trips
-	// the healthy target's breaker. Fall back to the full set only when no
-	// source is currently healthy, so an object whose only copies sit on
-	// degraded backends still gets an attempt rather than being stranded.
+	// Drop sources whose breaker is open so a copy never starts against a
+	// known-down backend. Fall back to the full set when no source is
+	// healthy, so the object still gets an attempt.
 	candidates := make([]core.ObjectLocation, 0, len(ordered))
 	for i := range ordered {
 		if r.IsBackendHealthy(ordered[i].BackendName) {
@@ -542,14 +494,10 @@ func cmpHealthFirst(aOK, bOK bool) int {
 	}
 }
 
-// tryCopyFrom attempts a stream-copy from one source location to the
-// target. Returns terminal=true with (loc, nil) on success or with
-// (nil, err) when the failure mode means no other source could help
-// (a write-side error). Returns terminal=false to signal the caller
-// should move on to the next source. Failure classification is
-// structural: a *backend.CopyError with CopyPhaseWrite is terminal,
-// anything else (CopyPhaseRead or an untyped error) retries the next
-// source.
+// tryCopyFrom attempts a stream-copy from one source location to the target.
+// It returns terminal=true on success, or on a *backend.CopyError with
+// CopyPhaseWrite, where no other source could help. Any other error returns
+// terminal=false so the caller tries the next source.
 func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (*core.ObjectLocation, bool, error) {
 	srcBackend, ok := r.ops.Backends()[loc.BackendName]
 	if !ok {
@@ -557,13 +505,9 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 	}
 	src := backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend}
 	dst := backend.CopyEndpoint{Name: target, Backend: targetBackend}
-	// StreamCopy admits the transfer against both backends' limits and tags a
-	// refusal with the leg that had no headroom, so a source out of egress
-	// falls through to the next candidate and a full destination is terminal,
-	// exactly as an I/O failure on either leg would be.
-	//
-	// Read at the source copy's own path and write at the one minted for this
-	// replica. A source row carrying no path keeps its bytes at the key.
+	// StreamCopy tags a usage-limit refusal with the leg that had no headroom,
+	// so a source out of egress falls through to the next candidate and a
+	// full destination is terminal, as with an I/O failure.
 	_, err := r.ops.StreamCopy(ctx, src, dst,
 		core.StoragePath(key, loc.StorageKey), targetStorageKey, loc.SizeBytes)
 	if err == nil {
@@ -597,10 +541,8 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 
 // CleanupOrphan deletes the bytes this replication attempt wrote when the DB
 // record was not created (e.g. source was deleted during replication). It
-// deletes them at the path the attempt wrote them to, so a target that already
-// held a copy of the key keeps it. Looks up the backend by name and dispatches
-// to DeleteOrEnqueue, which handles its own API accounting and orphan-byte
-// tracking.
+// deletes only the path the attempt wrote, so an existing copy on the target
+// is kept.
 func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storageKey string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {

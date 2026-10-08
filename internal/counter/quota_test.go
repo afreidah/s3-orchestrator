@@ -174,10 +174,6 @@ func TestQuotaTracker_RankByUtilization_OrdersEmptiestFirst(t *testing.T) {
 // TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced asserts the
 // ranking moves as writes land rather than staying fixed until the next
 // reload.
-//
-// Without this the snapshot is the only input, every write in the interval
-// ranks the candidates identically, and spread routing degenerates into pack
-// until the reload catches up.
 func TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced(t *testing.T) {
 	t.Parallel()
 	q := trackerWith(map[string]core.BackendQuotaUsage{

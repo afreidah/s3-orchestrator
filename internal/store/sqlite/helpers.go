@@ -139,14 +139,9 @@ func boolToInt(b bool) int {
 // several queries that read them share.
 const rowsObjectLocations = "object locations"
 
-// collectRows drains rows into a slice, calling scan once per row. It owns the
-// parts of a scan loop that are the same everywhere and are only ever wrong by
-// omission: closing the rows, and checking the iteration error that Next
-// reports by returning false rather than by returning an error.
-//
-// The per-row error is passed through untouched, because the scan closure is
-// what knows which row it failed to read. what names the rows for the
-// iteration error alone.
+// collectRows drains rows into a slice, calling scan once per row, then closes
+// the rows and checks rows.Err. Scan errors are returned untouched; what names
+// the rows only in the iteration error.
 func collectRows[T any](rows *sql.Rows, what string, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	defer func() { _ = rows.Close() }()
 	var out []T

@@ -22,16 +22,10 @@ import (
 	"slices"
 )
 
-// Compression defaults and chunk size bounds. The chunk default is the point
-// where the ratio cost of splitting an object into independently decodable
-// frames is negligible while a range read still fetches a small part of the
-// object; the bounds keep the seek table from dwarfing a small object at one
-// end and a single-chunk read from pulling an unreasonable amount at the
-// other. The minimum size default keeps the per-object frame and seek-table
-// overhead from exceeding what compressing a tiny object could save. The
-// minimum ratio default asks for a 5% saving before an object is stored
-// encoded, since anything less does not pay for the decode every later read of
-// it performs.
+// Compression defaults and chunk size bounds. The chunk default keeps the
+// ratio cost of independent frames negligible while a range read still fetches
+// a small part of the object. The minimum ratio asks for a 5% saving, since
+// less does not pay for the decode on every later read.
 const (
 	DefaultCompressionLevel     = "default"
 	DefaultCompressionChunkSize = 1 << 20 // 1 MiB
@@ -58,16 +52,10 @@ type CompressionConfig struct {
 
 // setDefaultsAndValidate applies defaults and checks the level, chunk size,
 // minimum size and minimum ratio.
-//
-// The defaults apply whether or not compression is enabled, because things
-// other than the write path read them: the codec is built either way so stored
-// objects stay readable, and compress-existing is a legitimate thing to run on
-// a fleet that has not turned the feature on for writes yet. Leaving the zero
-// values in place there made that pass decline every object, since no encoding
-// can beat a minimum ratio of zero.
-//
-// Validation is what stays gated: a half-filled block on a disabled feature
-// must not fail startup.
+// Defaults apply even when compression is disabled, because the read-path codec
+// and compress-existing still use them; a zero minimum ratio would make
+// compress-existing decline every object. Validation runs only when enabled, so
+// a half-filled block on a disabled feature does not fail startup.
 func (c *CompressionConfig) setDefaultsAndValidate() []error {
 	c.Level = cmp.Or(c.Level, DefaultCompressionLevel)
 	c.ChunkSize = cmp.Or(c.ChunkSize, DefaultCompressionChunkSize)

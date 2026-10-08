@@ -74,16 +74,13 @@ type BucketRegistry struct {
 }
 
 // NewBucketRegistry builds a credential-to-identity lookup from the merged view
-// of what a deployment declares. Both sources arrive in one shape, so the
-// request path has no second case to handle.
+// of config and stored provisioning.
 //
-// Config wins a collision. A stored credential whose access key a config bucket
-// also declares is shadowed rather than rejected, because a deployment reaches
-// that state by editing a file rather than by doing anything wrong, and refusing
-// to start would take the fleet down over it. Two config credentials claiming
-// one access key is still an error: nothing decides between them, and config
-// validation rejects it first, so this is the backstop that keeps a gap there
-// from becoming a cross-bucket grant.
+// Config wins a collision: a stored credential whose access key config also
+// declares is shadowed rather than rejected, so editing the config file cannot
+// stop the instance from starting. Two config credentials claiming one access
+// key is an error, which keeps a validation gap from becoming a cross-bucket
+// grant.
 func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 	br := &BucketRegistry{
 		byAccessKey:    make(map[string]entry),
@@ -170,23 +167,15 @@ func (br *BucketRegistry) addKeypair(c *provisioning.Credential, u *User) error 
 	return nil
 }
 
-// UserByID returns the identity with the given id, for a caller that proved
-// itself by something other than a credential this registry holds.
-//
-// It authenticates nothing on its own. Whatever proved the caller has already
-// done so; this only resolves the name to the grants behind it.
+// UserByID returns the identity with the given id. It authenticates nothing;
+// the caller must already have proved who it is.
 func (br *BucketRegistry) UserByID(id string) (*User, bool) {
 	u, ok := br.byUserID[id]
 	return u, ok
 }
 
-// UserByAccessKey returns the identity an access key currently belongs to, for
-// a caller that proved the key earlier and holds a signed record of it - a
-// dashboard session. The secret is not checked; the session's signature already
-// stands for the login that did.
-//
-// Asking on every request is what makes revocation immediate: a key deleted or
-// moved to another user no longer resolves to the one the session names.
+// UserByAccessKey returns the identity an access key belongs to now, without
+// checking the secret. Dashboard sessions call it per request so revocation applies.
 func (br *BucketRegistry) UserByAccessKey(accessKey string) (*User, bool) {
 	e, ok := br.byAccessKey[accessKey]
 	if !ok {
@@ -195,16 +184,8 @@ func (br *BucketRegistry) UserByAccessKey(accessKey string) (*User, bool) {
 	return e.user, true
 }
 
-// AuthenticateSecret verifies a keypair presented whole rather than used to
-// sign, which is what a form login submits.
-//
-// The secret is compared in constant time, and an unknown access key is
-// compared against a dummy of the same shape so both outcomes take the same
-// work. Without that, response timing would enumerate valid access keys.
-//
-// This is not a substitute for SigV4 on an API: presenting the secret exposes
-// it to anything on the path, which is acceptable for a browser posting over
-// TLS to the dashboard and is not acceptable for a client library.
+// AuthenticateSecret verifies a keypair submitted by a form login. An unknown
+// key is compared against a dummy so timing cannot enumerate valid keys.
 func (br *BucketRegistry) AuthenticateSecret(accessKey, secret string) (*User, error) {
 	e, ok := br.byAccessKey[accessKey]
 	known := e.secret
@@ -227,10 +208,8 @@ func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
 // credential that proved it, plus, when the SigV4 seed signature declares a
 // streaming payload, the StreamingMaterial the transport layer needs to verify
 // and decode the chunk chain. The streaming return is nil for non-streaming
-// requests and presigned URLs.
-//
-// Which buckets the caller may reach is the user's to answer, so the transport
-// asks it rather than comparing a name it was handed.
+// requests and presigned URLs. Bucket authorization is left to the returned
+// User.
 func (br *BucketRegistry) Authenticate(r *http.Request) (*User, *StreamingMaterial, error) {
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, sigV4Prefix) {
@@ -306,12 +285,8 @@ type keyMaterial struct {
 
 // VerifySigV4 checks an AWS Signature Version 4 Authorization header against
 // the provided credentials. The caller is responsible for resolving the correct
-// credentials via BucketRegistry. Returns nil if the signature is valid.
-//
-// The request path reaches the same check through verifySigV4Parsed, which
-// takes the header already split. This form is kept for callers holding only a
-// request - tests, and anything embedding the package - and is deliberately
-// exported rather than left as an accident of refactoring.
+// credentials via BucketRegistry. Returns nil if the signature is valid. The
+// request path calls verifySigV4Parsed directly with the header already split.
 func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -656,13 +631,8 @@ func sigV4Encode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-// canonicalPath returns the wire-form path for SigV4 canonicalisation. Uses
-// r.URL.RawPath when non-empty (the path as it appeared on the wire,
-// preserving encodings like %2F that Go's URL parser would otherwise decode
-// to / in r.URL.Path), and falls back to r.URL.Path when the raw form is
-// absent (legitimately omitted by url.Parse when the encoded form would
-// round-trip identically to the decoded form). This is the standard Go
-// pattern for "the path the client sent us." See net/url docs.
+// canonicalPath returns the path as the client sent it, keeping encodings like
+// %2F, for SigV4 canonicalisation.
 func canonicalPath(r *http.Request) string {
 	if r.URL.RawPath != "" {
 		return r.URL.RawPath

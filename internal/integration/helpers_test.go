@@ -591,13 +591,8 @@ func queryMultipartBackend(t *testing.T, uploadID string) string {
 }
 
 // setQuotaLimits gives every backend the same capacity for the duration of one
-// test and puts the configured values back afterwards.
-//
-// The fleet is provisioned at one and two kilobytes, which is what the spread
-// and rebalance tests do their arithmetic against. A test needing room for a
-// multi-chunk object, or needing a limit pitched at one exact size, has to move
-// them, and leaving them moved would quietly change the placement decisions
-// every later test asserts on.
+// test and puts the configured values back afterwards, since later tests'
+// placement assertions depend on the provisioned limits.
 func setQuotaLimits(tb testing.TB, limit int64) {
 	tb.Helper()
 	original := map[string]int64{}
@@ -636,10 +631,8 @@ func setQuotaLimits(tb testing.TB, limit int64) {
 
 // resetState truncates all object/multipart tables and drain records, and
 // re-establishes the backend_quotas row for every configured backend with
-// usage/orphans zeroed. The re-sync is necessary because a test that removes a
-// backend (TestRemoveBackend) leaves its quota row deleted via
-// DeleteBackendData; subsequent tests that build a manager referencing all
-// three backends would then hit FK violations on insert.
+// usage/orphans zeroed, since a test that removes a backend deletes its quota
+// row and later tests would hit FK violations.
 func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
@@ -1000,13 +993,10 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 	return f.inner.GetAllObjectLocations(ctx, key)
 }
 
-// RecordObject is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-// A commit carrying a pending intent also honours the one-shot fail-commit
-// flag: sustained outages surface as errSimulatedDBOutage (wraps
-// ErrDBUnavailable, triggers degraded-mode fallbacks), while the one-shot blip
-// surfaces as errSimulatedCommitFailure (plain) so the caller fails the PUT
-// instead of reading the error as a degraded-mode signal.
+// RecordObject fails with errSimulatedDBOutage during a simulated outage, which
+// triggers degraded mode. A commit carrying a pending intent also honours the
+// one-shot fail-commit flag with the plain errSimulatedCommitFailure, so the
+// caller fails the PUT instead of entering degraded mode.
 func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	if f.isFailing() {
 		return nil, nil, errSimulatedDBOutage

@@ -26,14 +26,10 @@ import (
 )
 
 // Store implements every core role interface plus LifecycleAdmin,
-// EncryptionAdmin, and NotificationOutbox using SQLite. The db field is
-// typed as the local dbAPI interface so the production wiring can hand
-// the store either a raw *sql.DB or a CB-wrapped one transparently.
-// rawDB is the same handle without the wrapper; transactional code
-// paths begin tx through cbBeginTx so the rollback defer can live at
-// the same call site as the begin.
-// The embedded core.TxOps supplies the methods whose whole body is a core
-// transaction over this store as Runner; the methods declared here are the
+// EncryptionAdmin, and NotificationOutbox using SQLite. db may be
+// breaker-wrapped; rawDB is the same handle unwrapped, which transactions open
+// through cbWithTx. The embedded core.TxOps supplies the methods that are a
+// single core transaction over this store; the methods declared here are the
 // SQLite-specific queries.
 type Store struct {
 	core.TxOps
@@ -106,10 +102,8 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return cbWithTx(ctx, s.rawDB, s.cb, fn)
 }
 
-// WithTx satisfies core.Runner by opening a transaction, wrapping it in
-// a sqliteTxAdapter, and invoking fn. Commits on a nil return; rolls
-// back otherwise. Lets engine-agnostic core helpers orchestrate
-// multi-statement operations against the SQLite engine.
+// WithTx runs fn in a transaction, committing on a nil return and rolling back
+// otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
 	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
 		return fn(ctx, &sqliteTxAdapter{tx: tx})

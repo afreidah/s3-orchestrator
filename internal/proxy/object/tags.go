@@ -22,14 +22,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// GetObjectTags returns an object's tag set, ordered by key. An object with no
-// tags yields an empty set rather than an error, since an untagged object has
-// an empty TagSet rather than a missing one.
-//
-// The existence check is separate from the read because there is nothing to
-// serialise against: a set read while the object is being deleted is a stale
-// answer either way, and the caller only needs to know the key held something
-// when it asked.
+// GetObjectTags returns an object's tag set, ordered by key. An untagged object
+// yields an empty set, and a missing one ErrObjectNotFound. The existence check
+// and the read are not atomic; a read racing a delete is stale either way.
 func (o *Manager) GetObjectTags(ctx context.Context, key string) ([]core.Tag, error) {
 	exists, err := o.ObjectExists(ctx, key)
 	if err != nil {
@@ -63,11 +58,8 @@ func (o *Manager) DeleteObjectTags(ctx context.Context, key string) error {
 }
 
 // countObjectTags reports how many tags a key carries, for the tagging-count
-// header the read path emits. A failure is not fatal to the read: the bytes
-// are already correct, so an unreadable count is reported as none and the
-// header is left off rather than turning a healthy GET into an error. A
-// degraded read lands here too, having served the object by broadcast while
-// the store was unreachable.
+// header the read path emits. A store failure, including during a degraded
+// read, reports zero so the header is left off rather than failing the read.
 func (o *Manager) countObjectTags(ctx context.Context, key string) int {
 	n, err := o.stores.CountObjectTags(ctx, key)
 	if err != nil {

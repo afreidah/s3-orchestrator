@@ -80,14 +80,9 @@ func opsActions() []opsAction {
 	return append(actions, compressionActions()...)
 }
 
-// backendActions lists what one backend can be asked to do on its own. The
-// menu is the same machinery the ops pane renders, so each entry streams its
-// progress; only the request differs, and only by the backend it names.
-//
-// Drain and its cancellation are deliberately absent. Both own a polling watch
-// that renders above the backends table, which is a different lifecycle from
-// an action that opens a stream and reads it to the end, so they stay the
-// hotkeys they already are.
+// backendActions lists what one backend can be asked to do on its own; each
+// entry streams its progress like the fleet-wide ops menu. Drain is not here:
+// it owns a polling watch above the backends table and stays a hotkey.
 func backendActions() []opsAction {
 	return []opsAction{
 		post("Scrub (verify integrity)", pathScrub,
@@ -194,14 +189,8 @@ func cacheActions() []opsAction {
 }
 
 // encryptionActions move stored objects between plaintext and ciphertext, or
-// re-wrap the keys that seal them. Each confirmation says what the pass will
-// read and rewrite, since these are metered fleet-wide operations rather than
-// a setting being toggled.
-// Both rewrites stream rather than answering with one summary, for the reason
-// the compression pair does: they read and rewrite every object in the fleet,
-// and a spinner held for the length of that is indistinguishable from a hang.
-// The bounded runs are separate entries rather than a prompt on the whole-fleet
-// ones, because an attached prompt refuses an empty answer.
+// re-wrap the keys that seal them. The rewrites stream their progress, and the
+// bounded runs are separate entries because a prompt refuses an empty answer.
 func encryptionActions() []opsAction {
 	return []opsAction{
 		post("Encrypt existing objects", pathEncryptExisting,
@@ -223,17 +212,10 @@ func encryptionActions() []opsAction {
 	}
 }
 
-// compressionActions move stored objects between verbatim and encoded. Both are
-// offered whatever the write path is configured to do: converting a fleet before
-// switching writes over is a legitimate order to do it in, and unwinding one is
-// something an operator reaches for after turning the feature off.
-//
-// Both stream their progress rather than answering with one summary: they read
-// and rewrite every object in the fleet, so a caller watching one needs to see
-// it move rather than wait on a spinner that is indistinguishable from a hang.
-// The bounded runs are separate entries rather than a prompt on the whole-fleet
-// ones, because an attached prompt refuses an empty answer: it would make
-// converting a whole fleet impossible to ask for, which is the common case.
+// compressionActions move stored objects between verbatim and encoded. Both
+// directions are offered whatever the write path is configured to do. The
+// rewrites stream their progress, and the bounded runs are separate entries
+// because a prompt refuses an empty answer, which would block a whole-fleet run.
 func compressionActions() []opsAction {
 	return []opsAction{
 		post("Compress existing objects", pathCompressExisting,
@@ -250,25 +232,16 @@ func compressionActions() []opsAction {
 }
 
 // boundedRewrite turns the typed count into a capped request against path.
-//
-// Nothing is carried between runs: a rewritten copy leaves the listing that
-// selected it, and one declined on ratio is recorded so it leaves too, so
-// running the entry again converts the next batch rather than the last one.
+// Running it again converts the next batch, since rewritten copies drop out.
 func boundedRewrite(path string) func(string) opsRequest {
 	return func(value string) opsRequest {
 		return opsRequest{path: path, query: url.Values{"max": {value}}}
 	}
 }
 
-// opsView holds the state of the ops pane's menu.
-// actions is the menu this pane is showing, and backend the one every request
-// in it names. The ops section fills them with the fleet-wide list and no
-// backend; the backends pane fills them with one backend's list and its name,
-// so the same menu, confirm and run path serves both.
-//
-// A named backend is also what says where esc goes: only the backends pane
-// opens a scoped menu, so the pane it came from is derivable rather than
-// carried, and a zero value cannot point somewhere wrong.
+// opsView holds the state of the ops pane's menu. actions is the menu shown and
+// backend the one every request names; it is empty for the fleet-wide menu.
+// A non-empty backend also means esc returns to the backends pane.
 type opsView struct {
 	cursor  int // highlighted menu row
 	actions []opsAction

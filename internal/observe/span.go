@@ -109,10 +109,7 @@ func RunValue[R any](ctx context.Context, op Op, fn func(context.Context) R) R {
 	return result
 }
 
-// RecordSpanError marks the span as failed with err and records the error
-// as a span event. Use this at every error return path in hand-rolled
-// span scopes so the trace consistently carries both the status and the
-// error event.
+// RecordSpanError sets the span's error status and records err as an event.
 func RecordSpanError(span trace.Span, err error) {
 	span.SetStatus(codes.Error, err.Error())
 	span.RecordError(err)

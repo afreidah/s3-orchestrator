@@ -114,12 +114,10 @@ func (s *cacheSink) Write(p []byte) (int, error) {
 // finalizer at clean EOF.
 func (s *cacheSink) bytes() []byte { return s.buf }
 
-// cacheTeeBody wraps an io.ReadCloser and copies bytes into a fixed-
-// capacity sink as they flow to the consumer. Calls onComplete with the
-// accumulated bytes exactly once - and only if - the read reached EOF
-// after exactly expected bytes were observed. Any other termination
-// (Close before EOF, mid-stream error, short read, sink overflow) drops
-// the buffer silently and onComplete is never invoked.
+// cacheTeeBody copies bytes into a fixed-capacity sink as they flow to the
+// consumer, and calls onComplete once, only when the read reaches EOF after
+// exactly expected bytes. Any other ending (Close before EOF, a mid-stream
+// error, a short read, sink overflow) drops the buffer.
 type cacheTeeBody struct {
 	io.ReadCloser
 	sink       *cacheSink

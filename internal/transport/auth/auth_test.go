@@ -107,8 +107,8 @@ func TestHmacSHA256(t *testing.T) {
 	}
 }
 
-// TestHashSHA256 verifies the hash sha256 contract.
-// Asserts that hashSHA256(”) = , want.
+// TestHashSHA256 verifies hashSHA256 against the known digest of an empty
+// string.
 func TestHashSHA256(t *testing.T) {
 	t.Parallel()
 	// SHA256 of empty string
@@ -119,17 +119,11 @@ func TestHashSHA256(t *testing.T) {
 	}
 }
 
-// BenchmarkSigV4KnownVsUnknown measures the request-latency side channel that
-// removing signingKeyCache closed: both paths now run deriveSigningKey, so
-// authenticating a registered access key should cost the same as an unregistered
-// one. Compare the two sub-benchmarks; a reintroduced cache shows up as roughly
-// 4x, not as a few percent.
-//
-// This is a benchmark and not a test because the property is a ratio between two
-// wall-clock measurements, and CPU jitter on a contended host moves that ratio
-// further than a real cache asymmetry would. As a test it asserted on the median
-// delta and failed on loaded machines while catching nothing. The safety
-// argument lives in the code change; this quantifies it on demand.
+// BenchmarkSigV4KnownVsUnknown checks for a latency side channel between
+// registered and unregistered access keys: both paths run deriveSigningKey, so
+// the two sub-benchmarks should cost the same. A signing-key cache would show
+// up as roughly 4x. It is a benchmark rather than a test because CPU jitter
+// on a loaded host swamps the ratio.
 func BenchmarkSigV4KnownVsUnknown(b *testing.B) {
 	knownAccess := "AKIDKNOWN"
 	knownSecret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential

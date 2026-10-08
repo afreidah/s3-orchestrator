@@ -138,11 +138,9 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
 // pending row: admission gating, backend lookup, HEAD probe, and
 // promotion or drop depending on what the backend and store report.
 //
-// When the destination backend's circuit breaker is open the intent is
-// short-circuited: it is counted as failed
-// (so it stays queued for the next tick) and tallied in skipped so the
-// caller can emit one INFO log per backend instead of a probe-failed WARN
-// per intent.
+// When the destination's circuit breaker is open the intent counts as failed,
+// so it stays queued, and is tallied in skipped so the caller logs once per
+// backend instead of once per intent.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) ItemResult {
 	var res ItemResult // zero value (ItemSkipped) when admission blocks the work
 	WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() {
@@ -189,12 +187,9 @@ const (
 	probeError                        // anything else: inconclusive
 )
 
-// probeBackend HEADs the destination backend and classifies the result.
-// Records one API call against the backend's usage tracker regardless of
-// outcome so usage accounting remains accurate during reaper sweeps.
-//
-// It asks about the intent's own path, so a 200 means this write's bytes are
-// there, not that another write of the key landed on the same backend.
+// probeBackend HEADs the intent's own storage path on the destination and
+// classifies the result, so a 200 means this write's bytes are there. It
+// records one API call whatever the outcome.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
 	_, err := r.deps.HeadWithTimeout(ctx, be, core.StoragePath(p.ObjectKey, p.StorageKey))
 	r.deps.Acct().APICall(s3op.HeadObject, p.BackendName)

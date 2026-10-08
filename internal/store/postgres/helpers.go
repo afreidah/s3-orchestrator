@@ -72,12 +72,8 @@ func derefInt16(p *int16) int16 { return derefOr(p, 0) }
 // ROW MAPPING
 // -------------------------------------------------------------------------
 
-// mapSlice applies fn to every element of in and returns the resulting
-// slice. fn receives a pointer to each element so large sqlc row structs
-// are not copied per call. The output slice is always pre-sized to
-// len(in) so the loop body never reallocates. Replaces the
-// `out := make([]T, len(rows)); for i,r := range rows { out[i] = toT(r) }`
-// pattern at every sqlc-row-to-core conversion site.
+// mapSlice applies fn to each element of in, by pointer so large sqlc rows are
+// not copied.
 func mapSlice[I, O any](in []I, fn func(*I) O) []O {
 	out := make([]O, len(in))
 	for i := range in {

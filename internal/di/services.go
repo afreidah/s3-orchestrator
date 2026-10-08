@@ -133,13 +133,11 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 	return target
 }
 
-// flushTick runs a single flush+metrics cycle. With Redis counters the usage
-// counters are shared, so only the instance holding the advisory lock performs
-// the destructive GETSET and computes the fleet snapshot; the others load the
-// snapshot it published, so every instance serves the same fleet gauges and
-// replication status. Every instance then reloads its own usage baselines,
-// which is what its limit checks compare against; an instance that skipped
-// that on a lost lock would keep admitting work against budget already spent.
+// flushTick runs a single flush+metrics cycle. With Redis counters only the
+// advisory lock holder performs the destructive GETSET and computes the fleet
+// snapshot; the others load the snapshot it published. Every instance then
+// reloads its own usage baselines, or its limit checks would keep admitting
+// work against budget already spent.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	// Outside the advisory lock: the byte deltas are this instance's own, so
 	// every instance flushes its own set. Skipping them on a lost lock would

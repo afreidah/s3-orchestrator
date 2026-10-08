@@ -49,15 +49,10 @@ func compressionOn() *config.CompressionConfig {
 // SIZE BOUNDARIES
 // -------------------------------------------------------------------------
 
-// TestCompression_RoundTripAcrossSizeBoundaries walks the sizes the chunked
-// format branches on. A whole number of frames, one byte either side of a frame
-// boundary, and the degenerate sizes at the bottom are where an off-by-one in
-// the seek table or the tail frame would show up, and nowhere else.
-//
-// Every case asserts the same thing - the client reads back what it wrote - and
-// additionally pins whether the object was stored encoded, because an object
-// the ratio floor declined is stored verbatim and would satisfy every
-// round-trip assertion without the encoded path running at all.
+// TestCompression_RoundTripAcrossSizeBoundaries round-trips objects at and
+// around frame boundaries, where seek-table and tail-frame off-by-ones show up.
+// Each case also pins whether the object was stored encoded, since a verbatim
+// copy would pass the round trip without exercising the encoded path.
 func TestCompression_RoundTripAcrossSizeBoundaries(t *testing.T) {
 	h := newHarness(t, harnessSpec{Compression: compressionOn()})
 
@@ -175,15 +170,10 @@ func assertRanges(t *testing.T, h *harness, key string, body []byte) {
 // COMPRESSED AND ENCRYPTED
 // -------------------------------------------------------------------------
 
-// TestCompression_EncryptedRangeReadsServeCorrectBytes is the combination with
-// the most ways to be wrong. The layers compose in one order and only one -
-// compress, then encrypt, because ciphertext does not compress - which makes
-// the encoded stream the encryptor's plaintext domain and means a ranged read
-// translates twice: a logical range into a frame range, and that into a
-// ciphertext range.
-//
-// Getting either translation wrong returns the wrong window rather than an
-// error, so the only assertion worth making is on the bytes themselves.
+// TestCompression_EncryptedRangeReadsServeCorrectBytes checks ranged reads of
+// compressed-then-encrypted objects, which translate a logical range to a frame
+// range and then to a ciphertext range. A wrong translation returns the wrong
+// bytes rather than an error, so the test asserts on the bytes.
 func TestCompression_EncryptedRangeReadsServeCorrectBytes(t *testing.T) {
 	h := newHarness(t, harnessSpec{Compression: compressionOn(), Encrypt: true})
 
@@ -215,16 +205,9 @@ func TestCompression_EncryptedRangeReadsServeCorrectBytes(t *testing.T) {
 // SCRUBBER
 // -------------------------------------------------------------------------
 
-// TestCompression_ScrubberDetectsCorruptedCompressedCopy is the detector the
-// feature needs most. A compressed copy is opaque: the orchestrator cannot tell
-// good stored bytes from bad by looking at them, and a client cannot either,
-// because a GET fails over to the healthy replica and returns the right answer
-// while the bad copy sits there.
-//
-// The hash the scrub compares against covers the bytes the client wrote, so
-// verifying a compressed copy means decoding it first. A scrubber that hashed
-// the stored form instead would record a digest of the encoding and never
-// notice the difference.
+// TestCompression_ScrubberDetectsCorruptedCompressedCopy checks the scrubber
+// decodes a compressed copy before hashing it, since the stored hash covers
+// the bytes the client wrote, and so detects corruption in one replica.
 func TestCompression_ScrubberDetectsCorruptedCompressedCopy(t *testing.T) {
 	h := newHarness(t, harnessSpec{
 		Compression: compressionOn(),
@@ -284,13 +267,8 @@ func TestCompression_ScrubberDetectsCorruptedCompressedCopy(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestCompression_RebalanceMovesCompressedObjectsIntact moves encoded objects
-// between backends and reads them back off the destination.
-//
-// A rebalance streams the stored bytes rather than the object, so an encoded
-// copy has to arrive as the same encoding: the destination row keeps pointing
-// at a logical size the bytes there must still decode to. Move counts and
-// utilisation percentages, which is what the existing rebalance coverage
-// asserts on, would be identical if the bytes had been truncated.
+// between backends and reads them back off the destination, since move counts
+// and utilisation alone would not reveal truncated bytes.
 func TestCompression_RebalanceMovesCompressedObjectsIntact(t *testing.T) {
 	const (
 		dense  = "h-dense"
@@ -360,12 +338,8 @@ func TestCompression_RebalanceMovesCompressedObjectsIntact(t *testing.T) {
 }
 
 // TestCompression_DrainMovesCompressedObjectsIntact evacuates a backend holding
-// encoded objects and reads every one of them back off the destination.
-//
-// Drain relocates every copy on a backend and then deletes the source data, so
-// unlike a rebalance there is no original left to fall back on. If the encoding
-// does not survive the move the object is simply gone, and the ledger will say
-// it is fine.
+// encoded objects and reads every one of them back off the destination. Drain
+// deletes the source afterwards, so a corrupted move would lose the object.
 func TestCompression_DrainMovesCompressedObjectsIntact(t *testing.T) {
 	const (
 		source = "h-drain-src"

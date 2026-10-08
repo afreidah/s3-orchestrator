@@ -67,12 +67,8 @@ func withCleanupPaths(rows []core.CleanupItem) []core.CleanupItem {
 // MATCHERS
 // -------------------------------------------------------------------------
 
-// cleanupOf matches an enqueued cleanup by everything a worker test asserts on:
-// which backend holds the bytes, which object they belonged to, why they are
-// going and how many of them there are.
-//
-// The path is not among them because most of these workers mint it for a
-// replica or a move, so pinning it would pin a random id.
+// cleanupOf matches an enqueued cleanup by backend, object key, reason, and
+// size. The storage path is not matched, since workers mint it randomly.
 func cleanupOf(backendName, objectKey, reason string, size int64) gomock.Matcher {
 	return gomock.Cond(func(c *core.CleanupRequest) bool {
 		return c.BackendName == backendName && c.ObjectKey == objectKey &&
@@ -93,12 +89,8 @@ func cleanupOn(backendName, objectKey string) gomock.Matcher {
 // -------------------------------------------------------------------------
 
 // newMockOps builds an Ops mock that already answers Quota() with a real
-// tracker, which a test reaches through ops.Quota() to assert the bytes a
-// mutation credited.
-//
-// Stamped here rather than per fixture because a MockOps with no answer aborts
-// the calling goroutine, and inside a worker pool that abort deadlocks the
-// dispatcher instead of failing the test.
+// tracker. Every fixture needs it, because an unanswered call inside a worker
+// pool deadlocks the dispatcher instead of failing the test.
 func newMockOps(ctrl *gomock.Controller) *MockOps {
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().Quota().Return(counter.NewQuotaTracker(nil)).AnyTimes()
