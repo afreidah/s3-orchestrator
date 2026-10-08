@@ -105,22 +105,6 @@ func newMockOps(ctrl *gomock.Controller) *MockOps {
 	return ops
 }
 
-// newMockScrubberOps is newMockOps for the scrubber's narrower Ops surface,
-// which reaches the same tracker when a scrub drops a corrupt copy.
-func newMockScrubberOps(ctrl *gomock.Controller) *MockScrubberOps {
-	ops := NewMockScrubberOps(ctrl)
-	ops.EXPECT().Quota().Return(counter.NewQuotaTracker(nil)).AnyTimes()
-	return ops
-}
-
-// newMockCleanupOps is newMockOps for the cleanup and pending workers, which
-// credit the tracker when a promotion displaces an older copy.
-func newMockCleanupOps(ctrl *gomock.Controller) *MockCleanupOps {
-	ops := NewMockCleanupOps(ctrl)
-	ops.EXPECT().Quota().Return(counter.NewQuotaTracker(nil)).AnyTimes()
-	return ops
-}
-
 // newTestReplicator builds a Replicator with no stored-form decoders and no
 // integrity config, which is the shape most replication tests want: copies move
 // verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate

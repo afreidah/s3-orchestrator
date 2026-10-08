@@ -294,7 +294,7 @@ type Manager struct {
 
 This codebase follows the Go-idiomatic "accept interfaces, return structs" pattern: **producer packages export concrete `*Type` values with no producer-side interface**, and **each consumer declares its own narrow interface** listing only the methods it actually calls. The concrete type satisfies every consumer's local interface because Go interfaces are structurally typed.
 
-Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
+Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 
 **Rationale:**
 - A consumer's dependency footprint is documented in its own source file.
@@ -311,7 +311,7 @@ Applied across `internal/store` (the per-role store interfaces consumed at use s
 | Location | Holds |
 |---|---|
 | `internal/proxy/<consumer>/consumer_interfaces.go` | All narrow interfaces this consumer declares against other proxy subpackages and external clients |
-| `internal/worker/ops_runtime.go` | Worker-side `Ops` / `CleanupOps` / `ScrubberOps` interfaces against the proxy infrastructure |
+| `internal/worker/ops_runtime.go` | The worker-side `Ops` interface against the proxy infrastructure |
 | `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
 
 **Naming convention:** name the interface for the producer concept and let the package name the consumer - `multipart.Runtime` and `object.Runtime` are each package's view of `*infra.BackendRuntime`.
@@ -388,7 +388,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
 | `UpdateUsageLimits(...)` | `usageLimitsApplier` | `usageLimitsHook` |
 | `UpdateQuotaMetrics(...)` | `quotaMetricsRefresher` | `metricsHook` |
 
-For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` - `RecorderProvider` for `Acct() *Recorder`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
+For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` - `KeyProvider`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 
 Multi-method interfaces are exempt: `worker.Ops`, `object.Runtime`, `drain.Runtime` describe a role, not a single action, so the `-er` form does not apply.
 
@@ -944,14 +944,14 @@ once in its constructor with the canonical `component` attribute:
 
 ```go
 type PendingReaper struct {
-    deps      CleanupOps
+    deps      Ops
     placement Placement
     store     PendingReaperStore
     log       *slog.Logger
     // ...
 }
 
-func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
+func NewPendingReaper(deps Ops, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
     return &PendingReaper{
         deps:      deps,
         placement: placement,

@@ -1,57 +1,41 @@
 // -------------------------------------------------------------------------------
-// Admission Gate - Bounded-Concurrency Semaphore for Request Admission
+// Backend Runtime - Admission
 //
 // Author: Alex Freidah
 //
-// Wraps the admission semaphore behind Acquire/Release methods so
-// callers do not have to know whether a semaphore is wired (zero-value
-// = unbounded admission). The raw channel is still exposed via Sem()
-// for split-admission controllers (separate read/write semaphores) and
-// httpserver wiring; new code should prefer Acquire/Release.
+// The bounded-concurrency admission semaphore. A nil semaphore means
+// admission is unbounded. The raw channel is exposed for the split
+// read/write admission controllers the HTTP server builds.
 // -------------------------------------------------------------------------------
 
 package infra
 
 import "context"
 
-// admissionGate owns the admission semaphore. A nil sem means
-// admission is unbounded; the methods short-circuit accordingly.
-type admissionGate struct {
-	sem chan struct{}
-}
-
-// newAdmissionGate constructs the gate with the supplied semaphore
-// channel (may be nil for unbounded admission).
-func newAdmissionGate(sem chan struct{}) *admissionGate {
-	return &admissionGate{sem: sem}
-}
-
-// Acquire blocks until a slot is available, or returns false if ctx
+// AcquireAdmission blocks until a slot is available, or returns false if ctx
 // is cancelled. Returns true immediately when no semaphore is wired.
-func (g *admissionGate) Acquire(ctx context.Context) bool {
-	if g.sem == nil {
+func (c *BackendRuntime) AcquireAdmission(ctx context.Context) bool {
+	if c.admissionSem == nil {
 		return true
 	}
 	select {
-	case g.sem <- struct{}{}:
+	case c.admissionSem <- struct{}{}:
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
-// Release returns a slot to the semaphore.
-func (g *admissionGate) Release() {
-	if g.sem == nil {
+// ReleaseAdmission returns a slot to the admission semaphore.
+func (c *BackendRuntime) ReleaseAdmission() {
+	if c.admissionSem == nil {
 		return
 	}
-	<-g.sem
+	<-c.admissionSem
 }
 
-// Sem returns the underlying semaphore channel (nil if unwired).
-// Used by callers that need the raw channel (split admission
-// controllers); the Acquire/Release methods are preferred for new
-// code.
-func (g *admissionGate) Sem() chan struct{} {
-	return g.sem
+// AdmissionSem returns the underlying semaphore channel (nil if unwired), for
+// the split admission controllers.
+func (c *BackendRuntime) AdmissionSem() chan struct{} {
+	return c.admissionSem
 }

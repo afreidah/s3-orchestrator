@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // One Provide<Worker> per background worker. Each provider invokes the
-// backend runtime (which satisfies worker.Ops / CleanupOps / ScrubberOps),
+// backend runtime (which satisfies worker.Ops),
 // the write coordinator, and the opened store, which already satisfies every
 // per-worker store contract via implicit interface satisfaction. The
 // resolveWorkerCore / resolveWorkerCoreWithCfg helpers centralize that
