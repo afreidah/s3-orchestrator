@@ -126,7 +126,7 @@ func TestScrub_CompressedObjectHashBackfill(t *testing.T) {
 
 	plain, stored := encodeForScrub(t, codec)
 	row := compressedRow("", len(stored))
-	ms.objectsWithoutHash = []core.ObjectLocation{row}
+	locs := withPaths([]core.ObjectLocation{row})
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
@@ -135,7 +135,7 @@ func TestScrub_CompressedObjectHashBackfill(t *testing.T) {
 		Size: int64(len(stored)),
 	}, func() {}, nil)
 
-	sum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
+	sum := s.HashCopies(context.Background(), locs, nil)
 	if sum.Succeeded != 1 {
 		t.Fatalf("succeeded = %d, want 1", sum.Succeeded)
 	}

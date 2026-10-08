@@ -43,7 +43,7 @@ func cmdCacheInvalidate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -key is required")
 		return 1
 	}
-	return c.delete("/admin/api/cache/keys/"+*key, nil)
+	return c.delete("/admin/api/cache/keys/"+url.PathEscape(*key), nil)
 }
 
 // cmdCacheInvalidatePrefix implements `s3-orchestrator admin

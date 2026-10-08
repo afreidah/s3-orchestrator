@@ -63,10 +63,10 @@ func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	h := newCoverageHandler(t)
 	integrityWith(t, h,
 		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
-		&scrubberStub{backfillProcessed: 10, backfillMore: true})
+		&scrubberStub{backfillBacklog: 100})
 
 	w := httptest.NewRecorder()
-	h.handleBackfillChecksums(w, streamReq("/admin/api/backfill-checksums?max=25"))
+	h.handleBackfillChecksums(w, streamReq("/admin/api/backfill-checksums?max=25&batch_size=10"))
 
 	if ct := w.Header().Get("Content-Type"); ct != adminstream.ContentType {
 		t.Errorf("Content-Type = %q, want %q", ct, adminstream.ContentType)

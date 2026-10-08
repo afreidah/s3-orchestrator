@@ -122,6 +122,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Unhashed:     store,
 		Declared:     declaredBuckets(),
 		Cfg:          &config.Config{},
 	})

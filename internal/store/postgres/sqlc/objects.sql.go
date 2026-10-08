@@ -588,13 +588,15 @@ SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_
 FROM object_locations
 WHERE content_hash IS NULL AND managed
   AND ($1::text = '' OR backend_name = $1::text)
-ORDER BY created_at ASC
-LIMIT $3 OFFSET $2
+  AND (object_key, backend_name) > ($2::text, $3::text)
+ORDER BY object_key, backend_name
+LIMIT $4
 `
 
 type GetObjectsWithoutHashParams struct {
 	BackendFilter string
-	RowOffset     int32
+	AfterKey      string
+	AfterBackend  string
 	RowLimit      int32
 }
 
@@ -617,9 +619,15 @@ type GetObjectsWithoutHashRow struct {
 
 // Return object locations that have no content hash, for backfill. Hashing
 // reads the whole body, so unmanaged rows are left alone rather than spending
-// egress on data the orchestrator does not manage.
+// egress on data the orchestrator does not manage. Paged by cursor, since
+// hashing a copy takes it out of this predicate.
 func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWithoutHashParams) ([]GetObjectsWithoutHashRow, error) {
-	rows, err := q.db.Query(ctx, getObjectsWithoutHash, arg.BackendFilter, arg.RowOffset, arg.RowLimit)
+	rows, err := q.db.Query(ctx, getObjectsWithoutHash,
+		arg.BackendFilter,
+		arg.AfterKey,
+		arg.AfterBackend,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -995,15 +1003,17 @@ func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildren
 const listEncryptedLocations = `-- name: ListEncryptedLocations :many
 SELECT object_key, backend_name, encryption_key, key_id
 FROM object_locations
-WHERE encrypted = TRUE AND key_id = $1
+WHERE encrypted = TRUE AND key_id = $1::text
+  AND (object_key, backend_name) > ($2::text, $3::text)
 ORDER BY object_key, backend_name
-LIMIT $2 OFFSET $3
+LIMIT $4
 `
 
 type ListEncryptedLocationsParams struct {
-	KeyID  *string
-	Limit  int32
-	Offset int32
+	KeyID        string
+	AfterKey     string
+	AfterBackend string
+	RowLimit     int32
 }
 
 type ListEncryptedLocationsRow struct {
@@ -1013,8 +1023,15 @@ type ListEncryptedLocationsRow struct {
 	KeyID         *string
 }
 
+// Paged by cursor: rotating a copy changes its key_id and takes it out of this
+// predicate, so an offset would skip the rows that moved up.
 func (q *Queries) ListEncryptedLocations(ctx context.Context, arg ListEncryptedLocationsParams) ([]ListEncryptedLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listEncryptedLocations, arg.KeyID, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listEncryptedLocations,
+		arg.KeyID,
+		arg.AfterKey,
+		arg.AfterBackend,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -209,11 +209,14 @@ WHERE backend_name = $1;
 DELETE FROM object_locations WHERE backend_name = $1;
 
 -- name: ListEncryptedLocations :many
+-- Paged by cursor: rotating a copy changes its key_id and takes it out of this
+-- predicate, so an offset would skip the rows that moved up.
 SELECT object_key, backend_name, encryption_key, key_id
 FROM object_locations
-WHERE encrypted = TRUE AND key_id = $1
+WHERE encrypted = TRUE AND key_id = sqlc.arg(key_id)::text
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
-LIMIT $2 OFFSET $3;
+LIMIT sqlc.arg(row_limit);
 
 -- name: UpdateEncryptionKey :exec
 UPDATE object_locations
@@ -471,13 +474,15 @@ WHERE content_hash IS NOT NULL AND managed;
 -- name: GetObjectsWithoutHash :many
 -- Return object locations that have no content hash, for backfill. Hashing
 -- reads the whole body, so unmanaged rows are left alone rather than spending
--- egress on data the orchestrator does not manage.
+-- egress on data the orchestrator does not manage. Paged by cursor, since
+-- hashing a copy takes it out of this predicate.
 SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-ORDER BY created_at ASC
-LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
+ORDER BY object_key, backend_name
+LIMIT sqlc.arg(row_limit);
 
 -- name: ListUnreadableLocations :many
 -- Copies imported as encrypted with no key, which nothing can decrypt. Purging

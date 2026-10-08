@@ -51,28 +51,26 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 }
 
 // FlushPoolDeltas adds one backend's accumulated per-pool request counts to
-// their persistent rows.
-//
-// One statement per pool rather than one multi-row insert: a backend has a
-// handful of pools, and writing them individually keeps a single unparseable
-// pool name from failing the whole flush and sending every other pool's delta
-// back into the counter.
+// their persistent rows in one transaction. A failure writes none of them, so
+// the caller can restore every delta to the counter without double-counting.
 func (s *Store) FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error {
-	for pool, requests := range deltas {
-		if requests == 0 {
-			continue
+	return s.withTx(ctx, func(q *db.Queries) error {
+		for pool, requests := range deltas {
+			if requests == 0 {
+				continue
+			}
+			err := q.FlushPoolDelta(ctx, db.FlushPoolDeltaParams{
+				BackendName: backendName,
+				Period:      period,
+				Pool:        pool,
+				Requests:    requests,
+			})
+			if err != nil {
+				return err
+			}
 		}
-		err := s.queries.FlushPoolDelta(ctx, db.FlushPoolDeltaParams{
-			BackendName: backendName,
-			Period:      period,
-			Pool:        pool,
-			Requests:    requests,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // GetPoolUsageForPeriod returns every backend's per-pool request counts for

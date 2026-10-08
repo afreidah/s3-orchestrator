@@ -166,7 +166,7 @@ type PendingStore interface {
 type IntegrityStore interface {
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error)
-	GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]ObjectLocation, error)
+	GetObjectsWithoutHash(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	ListUnreadableLocations(ctx context.Context, limit int) ([]ObjectLocation, error)
 	CountUnreadableLocations(ctx context.Context) (int64, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
@@ -260,7 +260,7 @@ type LifecycleAdmin interface {
 // encrypt/decrypt batch operations used by the admin HTTP handler. These
 // are not on the request hot path, so they bypass the circuit breaker.
 type EncryptionAdmin interface {
-	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
+	ListEncryptedLocations(ctx context.Context, keyID string, limit int, after Cursor) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
 	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]UnencryptedLocation, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)

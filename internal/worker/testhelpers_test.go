@@ -141,7 +141,6 @@ type mockMetadataStore struct {
 	dlqDepthVal         int64
 	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
-	objectsWithoutHash  []core.ObjectLocation
 	unreadable          []core.ObjectLocation
 	allLocations        []core.ObjectLocation
 	allLocationsErr     error
@@ -314,13 +313,10 @@ func (m *mockMetadataStore) CountUnreadableLocations(context.Context) (int64, er
 	return int64(len(m.unreadable)), nil
 }
 
-// GetObjectsWithoutHash is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int, _ string) ([]core.ObjectLocation, error) {
-	if limit > len(m.objectsWithoutHash) {
-		return withPaths(m.objectsWithoutHash), nil
-	}
-	return withPaths(m.objectsWithoutHash[:limit]), nil
+// GetObjectsWithoutHash satisfies the store role; backfill paging is driven
+// by ops, so the scrubber never calls it.
+func (m *mockMetadataStore) GetObjectsWithoutHash(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
+	return nil, nil
 }
 
 // UpdateContentHash is a stub on mockMetadataStore; returns either the test-set

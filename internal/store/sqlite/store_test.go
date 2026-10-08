@@ -1106,6 +1106,30 @@ func TestPoolUsageQueries_SurfaceDatabaseErrors(t *testing.T) {
 	}
 }
 
+// TestFlushPoolDeltas_FailureWritesNothing verifies a failure on one pool
+// rolls back the rest, so the caller restoring every delta cannot double-count.
+func TestFlushPoolDeltas_FailureWritesNothing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE TRIGGER reject_bad_pool BEFORE INSERT ON backend_request_usage
+		WHEN NEW.pool = 'bad' BEGIN SELECT RAISE(ABORT, 'bad pool'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", "2026-03", core.PoolUsage{"good": 3, "bad": 1}); err == nil {
+		t.Fatal("FlushPoolDeltas should fail when a pool is rejected")
+	}
+	usage, err := s.GetPoolUsageForPeriod(ctx, "2026-03")
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if pools := usage["backend-a"]; len(pools) != 0 {
+		t.Errorf("pools = %v, want nothing written by a failed flush", pools)
+	}
+}
+
 // TestGetPoolUsageForPeriod_ScopedToPeriod pins the monthly rollover: a new
 // period starts empty rather than inheriting the previous month's counts.
 func TestGetPoolUsageForPeriod_ScopedToPeriod(t *testing.T) {
@@ -1702,6 +1726,59 @@ func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
 // INTEGRITY
 // -------------------------------------------------------------------------
 
+// TestGetObjectsWithoutHash_PagesByCursor verifies each page starts after the
+// cursor, so a caller hashing as it goes still reaches every copy.
+func TestGetObjectsWithoutHash_PagesByCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, key := range []string{"bucket/a", "bucket/b", "bucket/c"} {
+		mustRecordObject(t, s, key, "backend-a", 10)
+	}
+
+	first, err := s.GetObjectsWithoutHash(ctx, 2, core.Cursor{}, "")
+	if err != nil || len(first) != 2 || first[0].ObjectKey != "bucket/a" || first[1].ObjectKey != "bucket/b" {
+		t.Fatalf("first page = %v, %v; want bucket/a and bucket/b", first, err)
+	}
+	// Hashing the first page takes it out of the set; the cursor still has to
+	// land on the one copy left rather than skip it.
+	for _, loc := range first {
+		if err := s.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, "h"); err != nil {
+			t.Fatalf("UpdateContentHash: %v", err)
+		}
+	}
+	after := core.Cursor{ObjectKey: first[1].ObjectKey, BackendName: first[1].BackendName}
+	rest, err := s.GetObjectsWithoutHash(ctx, 2, after, "")
+	if err != nil || len(rest) != 1 || rest[0].ObjectKey != "bucket/c" {
+		t.Errorf("second page = %v, %v; want only bucket/c", rest, err)
+	}
+}
+
+// TestListEncryptedLocations_PagesByCursor verifies each page of a key's
+// copies starts after the cursor.
+func TestListEncryptedLocations_PagesByCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, key := range []string{"bucket/a", "bucket/b", "bucket/c"} {
+		mustRecordObject(t, s, key, "backend-a", 10)
+		if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+			ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("dek"),
+			KeyID: "key-1", PlaintextSize: 10, CiphertextSize: 20,
+		}); err != nil {
+			t.Fatalf("MarkObjectEncrypted(%s): %v", key, err)
+		}
+	}
+
+	page, err := s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{ObjectKey: "bucket/a", BackendName: "backend-a"})
+	if err != nil {
+		t.Fatalf("ListEncryptedLocations: %v", err)
+	}
+	if len(page) != 2 || page[0].ObjectKey != "bucket/b" || page[1].ObjectKey != "bucket/c" {
+		t.Errorf("page = %v, want bucket/b and bucket/c", page)
+	}
+}
+
 // TestIntegrity_HashOperations verifies the integrity hash operations contract.
 // Asserts that GetObjectsWithoutHash:.
 func TestIntegrity_HashOperations(t *testing.T) {
@@ -1713,7 +1790,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 
 	// Both should be without hash
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -1727,7 +1804,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	}
 
 	// Now only 1 without hash
-	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
 	if len(unhashed) != 1 {
 		t.Errorf("expected 1 unhashed, got %d", len(unhashed))
 	}
@@ -2055,7 +2132,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// List encrypted
-	enc, err := s.ListEncryptedLocations(ctx, "key-1", 10, 0)
+	enc, err := s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListEncryptedLocations: %v", err)
 	}
@@ -2069,7 +2146,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// Old key should have 0 entries
-	enc, _ = s.ListEncryptedLocations(ctx, "key-1", 10, 0)
+	enc, _ = s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{})
 	if len(enc) != 0 {
 		t.Errorf("expected 0 for old key, got %d", len(enc))
 	}
@@ -3189,7 +3266,7 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	}
 	assertNoStray(t, "replication", under)
 
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -3246,7 +3323,7 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 		t.Fatalf("GetUnderReplicatedObjects: %v", err)
 	}
 	assertNotQueued(t, "replication", under, "bucket/gone")
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}

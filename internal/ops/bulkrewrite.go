@@ -10,9 +10,10 @@
 //
 // A pass reads and rewrites an entire fleet, so it is the largest consumer of
 // egress in the system. Everything here that looks defensive - per-object usage
-// admission, cursor paging, the cap counting rewrites rather than rows - is
-// there because a pass that gets one of them wrong either exhausts a metered
-// backend or silently skips half the fleet while reporting success.
+// admission, the cap counting rewrites rather than rows - is there because a
+// pass that gets one of them wrong either exhausts a metered backend or
+// silently skips part of the fleet while reporting success. Paging is shared
+// with the other fleet-wide passes through walkPages.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -159,40 +160,31 @@ func (o rewriteOutcome) status() string {
 // error, so a caller can report partial progress.
 //
 // obs reports each object as it is processed and may be nil.
-//
-// Paging must be by cursor: a rewritten object leaves the listing that
-// selected it, so an offset would skip the rows that move up to fill the gap
-// and end the pass early while reporting success.
 func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
-	var after core.Cursor
-	for {
-		pageSize := bulkRewritePageSize(op.maxRewrites, res.Succeeded)
-		rows, err := op.listFn(ctx, pageSize, after)
+	list := func(ctx context.Context, limit int, after core.Cursor) ([]L, error) {
+		rows, err := op.listFn(ctx, limit, after)
 		if err != nil {
 			env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
-			return res, err
 		}
-		if len(rows) == 0 {
-			break
-		}
-
-		stop, err := op.runPage(ctx, env, obs, rows, &res, &after)
-		if err != nil {
-			return res, err
-		}
-		if stop {
-			env.log.InfoContext(ctx, op.opName+" reached its limit",
-				op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed)
-			return res, nil
-		}
-
-		// Compared against what was asked for, not the constant: a capped run's
-		// last page is short by design, and reading that as an exhausted listing
-		// would end a pass that still had room.
-		if len(rows) < pageSize {
-			break
-		}
+		return rows, err
+	}
+	// A capped run's last page is asked for short, so walkPages compares each
+	// page against what was asked for rather than the batch constant.
+	pageSize := func() int { return bulkRewritePageSize(op.maxRewrites, res.Succeeded) }
+	cursorOf := func(row L) core.Cursor {
+		return core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
+	}
+	stopped, err := walkPages(ctx, pageSize, list, cursorOf, func(ctx context.Context, rows []L) (bool, error) {
+		return op.runPage(ctx, env, obs, rows, &res)
+	})
+	if err != nil {
+		return res, err
+	}
+	if stopped {
+		env.log.InfoContext(ctx, op.opName+" reached its limit",
+			op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed)
+		return res, nil
 	}
 
 	env.log.InfoContext(ctx, op.opName+" complete",
@@ -200,9 +192,9 @@ func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs prog
 	return res, nil
 }
 
-// runPage processes one listing page, advancing res and the cursor.
-// Reports whether the pass should stop because it reached its cap.
-func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []L, res *BulkRewriteResult, after *core.Cursor) (bool, error) {
+// runPage processes one listing page, advancing res. Reports whether the pass
+// should stop because it reached its cap.
+func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []L, res *BulkRewriteResult) (bool, error) {
 	for _, row := range rows {
 		// Checked per row rather than per page: without it a cancelled pass
 		// runs out the rest of the page, failing every remaining copy's
@@ -217,7 +209,6 @@ func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs 
 			return outcome.status()
 		})
 		res.tally(outcome)
-		*after = core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
 		if op.maxRewrites > 0 && res.Succeeded >= op.maxRewrites {
 			return true, nil
 		}

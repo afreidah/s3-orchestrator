@@ -334,15 +334,14 @@ func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 	}
 }
 
-// TestHandleBackfillChecksums_IntegrityEnabled drives the non-skip
-// backfill path. The fake scrubber returns nextOffset=0 to terminate the
-// paginated loop on the first batch.
+// TestHandleBackfillChecksums_IntegrityEnabled drives the non-skip backfill
+// path over a backlog that fits in one page.
 func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	integrityWith(t, h,
 		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
-		&scrubberStub{backfillProcessed: 8})
+		&scrubberStub{backfillBacklog: 8})
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/backfill-checksums", nil))
@@ -420,14 +419,14 @@ func TestHandlePurgeUnreadable_ReportsPurged(t *testing.T) {
 func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	scrubs := &scrubberStub{backfillProcessed: 10, backfillMore: true}
+	scrubs := &scrubberStub{backfillBacklog: 100}
 	integrityWith(t, h,
 		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
 		scrubs)
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(
-		context.Background(), http.MethodPost, "/admin/api/backfill-checksums?max=25&delay_ms=1", nil))
+		context.Background(), http.MethodPost, "/admin/api/backfill-checksums?max=25&delay_ms=1&batch_size=10", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())

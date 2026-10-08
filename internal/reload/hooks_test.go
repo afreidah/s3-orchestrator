@@ -671,6 +671,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Unhashed:     mock,
 		Declared:     provisioning.NewDeclared(),
 		Cfg:          &config.Config{},
 	})

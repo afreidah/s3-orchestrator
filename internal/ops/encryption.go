@@ -189,15 +189,18 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 	}
 
 	var res RotateKeyResult
-	for offset := 0; ; offset += rotateBatchSize {
-		locs, err := e.store.ListEncryptedLocations(ctx, oldKeyID, rotateBatchSize, offset)
-		if err != nil {
-			return res, err
-		}
+	list := func(ctx context.Context, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
+		return e.store.ListEncryptedLocations(ctx, oldKeyID, limit, after)
+	}
+	cursorOf := func(loc core.EncryptedLocation) core.Cursor {
+		return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
+	}
+	_, err := walkPages(ctx, fixedPage(rotateBatchSize), list, cursorOf, func(ctx context.Context, locs []core.EncryptedLocation) (bool, error) {
 		e.rotateBatch(ctx, locs, &res)
-		if len(locs) < rotateBatchSize {
-			break
-		}
+		return false, nil
+	})
+	if err != nil {
+		return res, err
 	}
 
 	e.log.InfoContext(ctx, "key rotation complete", "rotated", res.Rotated, "failed", res.Failed, "total", res.Total)
