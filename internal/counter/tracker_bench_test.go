@@ -24,7 +24,7 @@ import (
 
 // benchLimits builds the two-backend fixture the benchmarks share: a metered
 // backend with a class split, and one with a single aggregate budget.
-func benchLimits(b *testing.B) map[string]core.UsageLimits {
+func benchLimits(b testing.TB) map[string]core.UsageLimits {
 	b.Helper()
 	oci, err := core.NewUsageLimits(10<<30, 0, []core.PoolSpec{
 		{Name: "writes", Operations: []string{string(s3op.PutObject), string(s3op.UploadPart)}, Limit: 50000},
@@ -66,6 +66,20 @@ func BenchmarkUsageTracker_WithinLimits_Parallel(b *testing.B) {
 			tracker.WithinLimits("oci", ops, 0, 1024)
 		}
 	})
+}
+
+// TestUsageTracker_RequestPathDoesNotAllocate pins the per-request charge and
+// limit check at zero allocations, which the benchmarks only report.
+func TestUsageTracker_RequestPathDoesNotAllocate(t *testing.T) {
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"oci"}), benchLimits(t))
+	ops := []s3op.Operation{s3op.PutObject}
+	allocs := testing.AllocsPerRun(100, func() {
+		tracker.Record("oci", s3op.PutObject, 1024, 0)
+		tracker.WithinLimits("oci", ops, 0, 1024)
+	})
+	if allocs != 0 {
+		t.Errorf("Record + WithinLimits allocate %v times per call, want 0", allocs)
+	}
 }
 
 // BenchmarkUsageTracker_Record measures the per-request usage counter

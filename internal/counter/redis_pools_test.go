@@ -19,6 +19,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -92,6 +94,42 @@ func TestAddPools_FallsBackToLocalOnError(t *testing.T) {
 
 	if got := r.local.LoadPool("b1", "class_a"); got != 5 {
 		t.Errorf("local pool counter = %d, want 5 after the Redis write failed", got)
+	}
+}
+
+// TestChargePools_PipelinesEachPoolOnTheHash verifies ChargePools adds n to
+// every pool in one pipeline on the backend's hash, and opens none for no pools.
+func TestChargePools_PipelinesEachPoolOnTheHash(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	pipe := &fakePipeliner{}
+	mock.EXPECT().Pipeline().Return(pipe)
+
+	r := newPoolBackend(t, mock)
+	r.ChargePools("b1", nil, 1)
+	r.ChargePools("b1", []core.RequestPool{{Name: "class_a"}, {Name: "all"}}, 2)
+
+	want := r.poolKey("b1")
+	if len(pipe.hIncrByKeys) != 2 || pipe.hIncrByKeys[0] != want || pipe.hIncrByKeys[1] != want {
+		t.Errorf("HIncrBy keys = %v, want two on %q", pipe.hIncrByKeys, want)
+	}
+}
+
+// TestChargePools_FallsBackToLocal verifies a failed pipeline, and the outage
+// path that never attempts one, both leave the charge in the local counters.
+func TestChargePools_FallsBackToLocal(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	mock.EXPECT().Pipeline().Return(&fakePipeliner{execErr: errors.New("connection reset")})
+	pools := []core.RequestPool{{Name: "class_a"}}
+
+	r := newPoolBackend(t, mock)
+	r.ChargePools("b1", pools, 5)
+	r.setFallback(true)
+	r.ChargePools("b1", pools, 2)
+
+	if got := r.local.LoadPool("b1", "class_a"); got != 7 {
+		t.Errorf("local pool counter = %d, want 7", got)
 	}
 }
 

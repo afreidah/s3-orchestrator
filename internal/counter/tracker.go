@@ -93,26 +93,26 @@ func (u *UsageTracker) record(backendName string, ops []s3op.Operation, each, eg
 	}
 	u.backend.AddAll(backendName, int64(len(ops))*each, egress, ingress)
 
-	limits := *u.limits.Load()
-	if deltas := poolDeltas(limits[backendName], ops, each); len(deltas) > 0 {
-		u.backend.AddPools(backendName, deltas)
+	lim := (*u.limits.Load())[backendName]
+	for _, op := range ops {
+		if pools := lim.PoolsFor(op); len(pools) > 0 {
+			u.backend.ChargePools(backendName, pools, each)
+		}
 	}
 }
 
-// poolDeltas folds operations into the per-pool charges they incur. An
-// operation charges every pool that contains it, so a pool named by two of
-// the operations is charged twice.
-func poolDeltas(lim core.UsageLimits, ops []s3op.Operation, each int64) map[string]int64 {
-	var deltas map[string]int64
+// poolCharge counts how many times the operations charge the named pool. A
+// pool named by two of the operations is charged twice.
+func poolCharge(lim core.UsageLimits, ops []s3op.Operation, pool string) int64 {
+	var n int64
 	for _, op := range ops {
-		for _, pool := range lim.PoolsFor(op) {
-			if deltas == nil {
-				deltas = make(map[string]int64, len(ops))
+		for _, p := range lim.PoolsFor(op) {
+			if p.Name == pool {
+				n++
 			}
-			deltas[pool.Name] += each
 		}
 	}
-	return deltas
+	return n
 }
 
 // -------------------------------------------------------------------------
@@ -185,11 +185,13 @@ func withinLimitsSnapshot(backend Backend, snap usageSnapshot, name string, ops 
 // for them. A pool charged by two of the operations must fit both, which is
 // why the proposed charges are folded before they are compared.
 func poolsWithinLimits(backend Backend, lim core.UsageLimits, base core.PoolUsage, name string, ops []s3op.Operation) bool {
-	proposed := poolDeltas(lim, ops, 1)
 	for _, pool := range lim.Pools() {
-		charge := proposed[pool.Name]
-		if charge == 0 || pool.Limit <= 0 {
-			continue // untouched by these operations, or counted and never refused
+		if pool.Limit <= 0 {
+			continue // counted and never refused
+		}
+		charge := poolCharge(lim, ops, pool.Name)
+		if charge == 0 {
+			continue // untouched by these operations
 		}
 		if base[pool.Name]+backend.LoadPool(name, pool.Name)+charge > pool.Limit {
 			return false
