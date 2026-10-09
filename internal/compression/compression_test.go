@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/rand"
 	"os/exec"
+	"runtime"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -358,6 +359,76 @@ func TestDecompress_RejectsGarbage(t *testing.T) {
 
 	if _, err := c.Decompress(bytes.NewReader([]byte("this is not a zstd stream"))); err == nil {
 		t.Error("Decompress accepted garbage")
+	}
+}
+
+// TestDecompress_RejectsFrameLargerThanStream asserts a seek table claiming a
+// frame larger than the whole stream is refused before a buffer of that size is
+// allocated. This input declares a frame of about 1 GiB in 104 bytes.
+func TestDecompress_RejectsFrameLargerThanStream(t *testing.T) {
+	c := newTestCodec(t)
+	stored := []byte("(\xb5/\xfdd\x00\x0f\r\x02\x00t\x030000000000000000000000000000000000000000000000000000000\x01T\x18\x05/g|\x1d^*M\x18\x15\x00\x00\x00X\x00\x00C\x00\x10\x00\x00\x83\xea\xc6\xf7\x01\x00\x00\x00\x80\xb1꒏")
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	r, err := c.Decompress(bytes.NewReader(stored))
+	if err == nil {
+		_, err = io.Copy(io.Discard, r)
+		_ = r.Close()
+	}
+	runtime.ReadMemStats(&after)
+
+	if !errors.Is(err, ErrRangeBounds) {
+		t.Errorf("err = %v, want ErrRangeBounds", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 16<<20 {
+		t.Errorf("allocated %d MiB decoding a 104-byte stream", allocated>>20)
+	}
+}
+
+// failingSeeker is a ReadSeeker over valid bytes whose Seek fails for the
+// whence values named in fail, and whose Read fails when failRead is set.
+type failingSeeker struct {
+	*bytes.Reader
+	fail     map[int]bool
+	failRead bool
+}
+
+// Read fails when configured to and reads normally otherwise.
+func (s *failingSeeker) Read(p []byte) (int, error) {
+	if s.failRead {
+		return 0, errors.New("read failed")
+	}
+	return s.Reader.Read(p)
+}
+
+// Seek fails for the configured whence values and seeks normally otherwise.
+func (s *failingSeeker) Seek(offset int64, whence int) (int64, error) {
+	if s.fail[whence] {
+		return 0, errors.New("seek failed")
+	}
+	return s.Reader.Seek(offset, whence)
+}
+
+// TestDecompress_SeekFailureIsAFetchFailure asserts a source that cannot be
+// sized or positioned reports ErrFetchFailed rather than corruption, so a
+// caller retries instead of condemning the stored bytes.
+func TestDecompress_SeekFailureIsAFetchFailure(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	var stored bytes.Buffer
+	if _, err := c.Compress(&stored, bytes.NewReader(compressible(4096))); err != nil {
+		t.Fatalf("Compress: %v", err)
+	}
+
+	for name, src := range map[string]*failingSeeker{
+		"sizing":      {Reader: bytes.NewReader(stored.Bytes()), fail: map[int]bool{io.SeekEnd: true}},
+		"positioning": {Reader: bytes.NewReader(stored.Bytes()), fail: map[int]bool{io.SeekStart: true}},
+		"reading":     {Reader: bytes.NewReader(stored.Bytes()), failRead: true},
+	} {
+		if _, err := c.Decompress(src); !errors.Is(err, ErrFetchFailed) {
+			t.Errorf("%s: err = %v, want ErrFetchFailed", name, err)
+		}
 	}
 }
 
