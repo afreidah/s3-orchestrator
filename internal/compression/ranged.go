@@ -3,11 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Decompress takes an io.ReadSeeker, which is the right seam for a local file
-// and the wrong one for a backend: seeking is emulated state, and every frame
-// read still ends up as "give me these bytes". The seekable library exports
-// ReaderEnvironment, which states each read as explicit byte bounds already, so
-// this file adapts that to a RangeFetcher and skips the emulation entirely.
+// Every decode reads frames through here. The seekable library exports
+// ReaderEnvironment, which states each read as explicit byte bounds, so this
+// file adapts it to a RangeFetcher: a backend serves ranges directly, and a
+// local ReadSeeker is wrapped as one. Either way each frame the seek table names
+// is checked against the stream's real length before it is read, which the
+// library's own ReadSeeker environment does not do - it allocates whatever size
+// the table claims.
 // -------------------------------------------------------------------------------
 
 package compression
@@ -17,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
 )
@@ -105,6 +108,28 @@ func (c *Codec) InspectStored(ctx context.Context, f RangeFetcher, storedSize in
 		return 0, false
 	}
 	return logicalSize, true
+}
+
+// seekerFetcher serves byte ranges out of a local ReadSeeker, so Decompress
+// shares the bounded frame reads of the ranged path. The lock keeps a seek and
+// its read together when ranges are fetched concurrently.
+type seekerFetcher struct {
+	mu sync.Mutex
+	rs io.ReadSeeker
+}
+
+// FetchRange reads the bytes at [start, end] inclusive.
+func (f *seekerFetcher) FetchRange(_ context.Context, start, end int64) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.rs.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, end-start+1)
+	if _, err := io.ReadFull(f.rs, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 // rangeEnv adapts a RangeFetcher to seekable.ReaderEnvironment. fetch has the
