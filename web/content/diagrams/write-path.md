@@ -330,7 +330,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     CLEANUP: {
       title: 'Delete Old Copies or Enqueue Cleanup',
       badge: 'cleanup', badgeText: 'cleanup',
-      body: '<p>For each displaced copy:</p><p>1. Attempt an immediate <code>DeleteObject</code> at the copy\'s storage key<br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3o_cleanup_queue_enqueued_total{reason="overwrite_displaced"}</p>'
+      body: '<p>The displaced copies are deleted together through <code>DeleteAllOrEnqueue</code>, one batched delete per backend. For each copy:</p><p>1. Delete it at the copy\'s storage key<br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3o_cleanup_queue_enqueued_total{reason="overwrite_displaced"}</p>'
     },
     CACHE: {
       title: 'Invalidate Caches',

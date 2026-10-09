@@ -251,12 +251,12 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     READ: {
       title: 'GetObject / HeadObject',
       badge: 'read', badgeText: 'read operation',
-      body: '<p>Retrieves the object from the backend that holds it (looked up in the metadata store).</p><p>Supports <code>Range</code> requests (206 Partial Content with <code>Content-Range</code>), conditional requests (<code>If-None-Match</code> &rarr; 304, <code>If-Match</code> &rarr; 412).</p><p>Streams body directly to client via a shared buffer pool &mdash; no full-object buffering in memory. On read failure, automatically fails over to other backends that hold a replica.</p>'
+      body: '<p>Retrieves the object from the backend that holds it (looked up in the metadata store).</p><p>Supports <code>Range</code> requests (206 Partial Content with <code>Content-Range</code>), conditional requests (<code>If-None-Match</code> &rarr; 304, <code>If-Match</code> &rarr; 412). A failed precondition is answered from the object\'s HEAD metadata without opening a backend read.</p><p>Streams body directly to client via a shared buffer pool &mdash; no full-object buffering in memory. On read failure, automatically fails over to other backends that hold a replica.</p>'
     },
     DEL: {
       title: 'DeleteObject',
       badge: 'write', badgeText: 'write operation',
-      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>Deletes the metadata rows first, then fans out the backend deletes for <b>every</b> copy through <code>DeleteOrEnqueue</code>.</p><p>A copy whose backend delete fails, or whose backend circuit is open, is enqueued to the <code>cleanup_queue</code> for retry with exponential backoff (1m to 24h, max 10 attempts). The client still gets 204.</p>'
+      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>Deletes the metadata rows first, then removes <b>every</b> copy through <code>DeleteAllOrEnqueue</code>: one batched delete per backend, the backends in parallel.</p><p>A copy whose backend delete fails, or whose backend circuit is open, is enqueued to the <code>cleanup_queue</code> for retry with exponential backoff (1m to 24h, max 10 attempts). The client still gets 204.</p>'
     },
     CBW: {
       title: 'Circuit Breaker (Write)',

@@ -152,7 +152,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     GET: {
       title: 'GetObject Request',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header and calls <code>GetObject</code> first. Conditional headers are evaluated afterwards against the returned ETag and Last-Modified: <code>If-Match</code>, <code>If-Unmodified-Since</code>, <code>If-None-Match</code>, <code>If-Modified-Since</code>, and <code>If-Range</code> for ranged requests.</p>'
+      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header. When the request carries <code>If-Match</code>, <code>If-Unmodified-Since</code>, <code>If-None-Match</code> or <code>If-Modified-Since</code>, it first checks them against the object\'s HEAD metadata, so a 304 or 412 is answered without opening a backend read. Otherwise it calls <code>GetObject</code>, and the same headers, plus <code>If-Range</code> for ranged requests, are evaluated again against the returned ETag and Last-Modified.</p>'
     },
     DCACHE: {
       title: 'Object Data Cache Lookup',
@@ -307,7 +307,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     STREAM: {
       title: 'Handler: Conditionals, Stream to Client',
       badge: 'success', badgeText: 'streaming',
-      body: '<p>The HTTP handler sets the validator headers and evaluates the conditional headers against the returned ETag and Last-Modified. A failed precondition answers 304 or 412 without a body. If <code>If-Range</code> does not match, the partial body is discarded and the object is fetched again in full.</p><p>Otherwise the (possibly decrypted) body streams to the client. The body is an <code>io.ReadCloser</code>; the handler closes it when done.</p><p>With parallel broadcast, the first successful result read from the scheduler\'s channel wins. Losing probes are cancelled and their bodies closed in the background.</p>'
+      body: '<p>The HTTP handler sets the validator headers and evaluates the conditional headers against the returned ETag and Last-Modified. This check is the authority: it catches an object replaced after the HEAD check passed. A failed precondition answers 304 or 412 without a body. If <code>If-Range</code> does not match, the partial body is discarded and the object is fetched again in full.</p><p>Otherwise the (possibly decrypted) body streams to the client. The body is an <code>io.ReadCloser</code>; the handler closes it when done.</p><p>With parallel broadcast, the first successful result read from the scheduler\'s channel wins. Losing probes are cancelled and their bodies closed in the background.</p>'
     },
     TAGCOUNT: {
       title: 'Count Tags',

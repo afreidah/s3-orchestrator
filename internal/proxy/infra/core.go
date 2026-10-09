@@ -16,6 +16,7 @@ package infra
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -68,6 +69,7 @@ type BackendRuntime struct {
 	metricsCollector *metrics.Collector
 	log              *slog.Logger
 	recorder         *accounting.Recorder
+	batchDeclined    sync.Map
 }
 
 // New constructs a *BackendRuntime from cfg. The accounting Recorder is built

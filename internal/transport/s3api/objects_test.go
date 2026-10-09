@@ -634,6 +634,33 @@ func TestConditionalRequests(t *testing.T) {
 	}
 }
 
+// TestGet_FailedPreconditionNeverOpensTheBody verifies a conditional GET that
+// ends in 304 or 412 is answered from the object's metadata: the backend GET is
+// set to fail, so any attempt to open the body would surface as an error.
+func TestGet_FailedPreconditionNeverOpensTheBody(t *testing.T) {
+	t.Parallel()
+	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+			Return([]core.ObjectLocation{{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 11}}, nil).AnyTimes()
+	})
+	backend.Put("mybucket/testkey", &backendtest.Object{
+		Data: []byte("hello world"), ContentType: "text/plain", ETag: `"abc"`,
+		LastModified: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+	})
+	backend.GetErr = errors.New("the body must not be opened")
+
+	for header, value := range map[string]string{"If-None-Match": `"abc"`, "If-Match": `"wrong"`} {
+		resp := condReq(t, ts, http.MethodGet, map[string]string{header: value})
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotModified && resp.StatusCode != http.StatusPreconditionFailed {
+			t.Errorf("%s: status = %d, want 304 or 412 without a backend GET", header, resp.StatusCode)
+		}
+		if resp.Header.Get("ETag") != `"abc"` {
+			t.Errorf("%s: ETag = %q, want the validator on the short answer", header, resp.Header.Get("ETag"))
+		}
+	}
+}
+
 // TestGet_LastModifiedHeaderSet verifies the get last modified header set contract.
 // Asserts that status = , want 200.
 func TestGet_LastModifiedHeaderSet(t *testing.T) {

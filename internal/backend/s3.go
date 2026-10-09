@@ -28,6 +28,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithymiddleware "github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
@@ -405,6 +406,57 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 			})
 			if err != nil {
 				return fmt.Errorf("delete object failed: %w", err)
+			}
+			return nil
+		})
+}
+
+// DeleteObjects removes keys in requests of up to maxBatchDeleteKeys, in quiet
+// mode so the response lists only the keys that failed. A provider without
+// multi-object delete is reported as ErrBatchDeleteNotSupported. When a chunk
+// fails as a whole, every key in it is reported failed, because none of it can
+// be assumed deleted.
+func (b *S3Backend) DeleteObjects(ctx context.Context, keys []string) (map[string]error, error) {
+	failed := make(map[string]error)
+	for start := 0; start < len(keys); start += maxBatchDeleteKeys {
+		chunk := keys[start:min(start+maxBatchDeleteKeys, len(keys))]
+		if err := b.deleteChunk(ctx, chunk, failed); err != nil {
+			if start == 0 && errors.Is(err, ErrBatchDeleteNotSupported) {
+				return nil, err
+			}
+			for _, k := range chunk {
+				failed[k] = err
+			}
+		}
+	}
+	return failed, nil
+}
+
+// deleteChunk sends one DeleteObjects request and records its per-key
+// failures in failed.
+func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[string]error) error {
+	const operation = "DeleteObjects"
+	return observe.RunErr(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, keys[0]),
+			b.recordOperation),
+		func(ctx context.Context) error {
+			ids := make([]types.ObjectIdentifier, len(keys))
+			for i := range keys {
+				ids[i] = types.ObjectIdentifier{Key: aws.String(keys[i])}
+			}
+			out, err := b.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+				Bucket: aws.String(b.bucket),
+				Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
+			})
+			if err != nil {
+				if isNotImplemented(err) {
+					return ErrBatchDeleteNotSupported
+				}
+				return fmt.Errorf("delete objects failed: %w", err)
+			}
+			for _, e := range out.Errors {
+				failed[aws.ToString(e.Key)] = &batchKeyError{code: aws.ToString(e.Code), message: aws.ToString(e.Message)}
 			}
 			return nil
 		})

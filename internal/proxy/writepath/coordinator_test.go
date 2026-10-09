@@ -412,6 +412,43 @@ func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
 	})
 }
 
+// TestDeleteAllOrEnqueue_GroupsAndSettlesPerKey verifies requests are deleted
+// one batch per backend and each settled on its own: a failure is queued, a 404
+// is not, and a request on an unknown backend is skipped.
+func TestDeleteAllOrEnqueue_GroupsAndSettlesPerKey(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
+	b1.BatchDeleteEnabled = true
+	b1.BatchDeleteKeyErrs = map[string]error{
+		"b": errors.New("denied"),
+		"c": &httpError{code: 404, msg: "NoSuchKey"},
+	}
+	for _, k := range []string{"a", "b", "c"} {
+		b1.Objects[k] = backendtest.Object{}
+	}
+	b2.Objects["x"] = backendtest.Object{}
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), cleanupOf("b1", "b", "overwrite_displaced", 2)).Return(nil)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(2)).Return(nil)
+
+	coord := newCoordinatorWith2Backends("b1", b1, "b2", b2, store)
+	req := func(be, key string, size int64) *core.CleanupRequest {
+		return &core.CleanupRequest{BackendName: be, ObjectKey: key, StorageKey: key, Reason: "overwrite_displaced", SizeBytes: size}
+	}
+	coord.DeleteAllOrEnqueue(context.Background(), []*core.CleanupRequest{
+		req("b1", "a", 1), req("b1", "b", 2), req("b1", "c", 3), req("b2", "x", 4), req("gone", "y", 5),
+	})
+
+	if b1.BatchDeleteCalls != 1 {
+		t.Errorf("b1 batch calls = %d, want one batch for its three copies", b1.BatchDeleteCalls)
+	}
+	if b1.Has("a") || b2.Has("x") {
+		t.Error("a deleted copy is still on its backend")
+	}
+}
+
 // TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue covers
 // #880: the post-record-failure cleanup path must treat a backend 404
 // the same way DeleteOrEnqueue does and skip the enqueue. Otherwise

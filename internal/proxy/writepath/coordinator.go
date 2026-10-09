@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"go.opentelemetry.io/otel/trace"
@@ -32,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
+	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // -------------------------------------------------------------------------
@@ -243,24 +245,8 @@ const reasonOverwriteDisplaced = "overwrite_displaced"
 // enqueued for retry; a 404 counts as done. It deletes only c's storage key,
 // which no other write shares. Callers own the failure log and span status.
 func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
-	w.core.Acct().APICall(s3op.PutObject, c.BackendName) // PUT that succeeded
-	delErr := w.core.DeleteWithTimeout(ctx, be, core.StoragePath(c.ObjectKey, c.StorageKey))
-	w.core.Acct().APICall(s3op.DeleteObject, c.BackendName) // cleanup DELETE
-	if delErr == nil {
-		return
-	}
-	// A 404 means the backend already agrees the object is gone, which
-	// is the desired end state. Skip enqueueing so we don't seed the
-	// cleanup queue with rows the cleanup worker would also have to
-	// recognise as no-ops.
-	if backend.IsNotFound(delErr) {
-		w.log.InfoContext(ctx, "orphan cleanup target already absent on backend",
-			"key", c.ObjectKey, "storage_key", c.StorageKey, "backend", c.BackendName, "reason", c.Reason)
-		return
-	}
-	w.log.ErrorContext(ctx, "failed to clean up orphaned object",
-		"key", c.ObjectKey, "storage_key", c.StorageKey, "backend", c.BackendName, "error", delErr)
-	w.EnqueueCleanup(ctx, c)
+	w.core.Acct().APICall(s3op.PutObject, c.BackendName) // the PUT that succeeded
+	w.DeleteOrEnqueue(ctx, be, c)
 }
 
 // NewPendingIntent builds the intent a write is admitted on. ClaimWriteTarget
@@ -357,7 +343,7 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
 	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
-	w.deleteDisplaced(ctx, p.ObjectKey, displaced)
+	w.DeleteDisplaced(ctx, p.ObjectKey, displaced)
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
 	return false, nil
 }
@@ -373,7 +359,7 @@ const (
 // cleanupDisplacedCopies removes the copies an overwrite displaced and audits
 // the overwrite.
 func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBackend string, displaced []core.DeletedCopy) {
-	w.deleteDisplaced(ctx, key, displaced)
+	w.DeleteDisplaced(ctx, key, displaced)
 
 	if len(displaced) > 0 {
 		audit.Log(ctx, "storage.overwrite_displaced",
@@ -384,51 +370,65 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 	}
 }
 
-// deleteDisplaced removes each copy's bytes at the path its own row or intent
+// DeleteDisplaced removes each copy's bytes at the path its own row or intent
 // named. It deletes per copy rather than per key, because two writes of one key
 // on one backend hold two paths and each cleanup must reach only its own bytes.
-func (w *Coordinator) deleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
-	for _, dc := range displaced {
-		dcBackend, ok := w.core.Backends()[dc.BackendName]
-		if !ok {
-			w.log.WarnContext(ctx, "displaced copy backend not found",
-				"backend", dc.BackendName, "key", key)
-			continue
-		}
+func (w *Coordinator) DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
+	reqs := make([]*core.CleanupRequest, len(displaced))
+	for i, dc := range displaced {
 		// The store labels bytes it cleared for a reason of its own - an intent
 		// this write superseded, rather than a copy it replaced - so an operator
 		// reading the cleanup queue can tell which is which.
-		reason := dc.Reason
-		if reason == "" {
-			reason = reasonOverwriteDisplaced
-		}
-		w.DeleteOrEnqueue(ctx, dcBackend, &core.CleanupRequest{
-			BackendName: dc.BackendName,
-			ObjectKey:   key,
-			StorageKey:  dc.StorageKey,
-			Reason:      reason,
-			SizeBytes:   dc.SizeBytes,
-		})
+		reqs[i] = dc.Cleanup(key, reasonOverwriteDisplaced)
 	}
+	w.DeleteAllOrEnqueue(ctx, reqs)
 }
 
 // DeleteOrEnqueue deletes the bytes at c's storage key, and on failure enqueues
-// the path for background retry and tracks SizeBytes as orphan bytes. The
-// DELETE is charged as one API call whether or not it succeeds. Callers take the
-// storage key from the row or intent that recorded the copy, so the delete
-// cannot reach another write's bytes under the same key.
+// the path for background retry and tracks SizeBytes as orphan bytes. Callers
+// take the storage key from the row or intent that recorded the copy, so the
+// delete cannot reach another write's bytes under the same key. Deletes are not
+// gated on usage limits: refusing one over budget would leave an operator
+// unable to get back under it.
 func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
-	// Not gated on usage limits: refusing a delete over budget would leave an
-	// operator unable to get back under it.
-	err := w.core.DeleteWithTimeout(ctx, be, core.StoragePath(c.ObjectKey, c.StorageKey))
-	w.core.Acct().APICall(s3op.DeleteObject, c.BackendName)
+	w.settleDelete(ctx, c, w.core.Delete(ctx, c.BackendName, be, core.StoragePath(c.ObjectKey, c.StorageKey)))
+}
+
+// DeleteAllOrEnqueue deletes every request's bytes, each backend's in one
+// batched delete where the backend supports it and the backends in parallel,
+// then settles each request as DeleteOrEnqueue does. A request naming an
+// unknown backend is logged and skipped.
+func (w *Coordinator) DeleteAllOrEnqueue(ctx context.Context, reqs []*core.CleanupRequest) {
+	byBackend := make(map[string][]*core.CleanupRequest)
+	for _, c := range reqs {
+		byBackend[c.BackendName] = append(byBackend[c.BackendName], c)
+	}
+	groups := slices.Collect(maps.Values(byBackend))
+	workerpool.Run(ctx, len(groups), groups, func(ctx context.Context, group []*core.CleanupRequest) {
+		name := group[0].BackendName
+		be, ok := w.core.Backends()[name]
+		if !ok {
+			w.log.WarnContext(ctx, "delete target backend not found", "backend", name, "copies", len(group))
+			return
+		}
+		paths := make([]string, len(group))
+		for i, c := range group {
+			paths[i] = core.StoragePath(c.ObjectKey, c.StorageKey)
+		}
+		failed := w.core.DeleteMany(ctx, name, be, paths)
+		for i, c := range group {
+			w.settleDelete(ctx, c, failed[paths[i]])
+		}
+	})
+}
+
+// settleDelete finishes one delete: nothing to do when it succeeded or the
+// bytes were already absent, otherwise the path is queued for retry. A 404 is
+// not queued, since the cleanup worker would only rediscover it as a no-op.
+func (w *Coordinator) settleDelete(ctx context.Context, c *core.CleanupRequest, err error) {
 	if err == nil {
 		return
 	}
-	// A 404 means the backend already agrees the object is gone, which
-	// is the desired end state. Skip enqueueing so we don't seed the
-	// cleanup queue with rows the cleanup worker would also have to
-	// recognise as no-ops.
 	if backend.IsNotFound(err) {
 		w.log.InfoContext(ctx, "delete target already absent on backend, skipping cleanup enqueue",
 			"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey, "reason", c.Reason)

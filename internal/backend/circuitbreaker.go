@@ -79,12 +79,14 @@ func (cb *CircuitBreakerBackend) CheckHealth(ctx context.Context) error {
 // a 429, or a 401/403 (expired or revoked credentials fail every request).
 // Any other status is about one request, and counting it would let a single
 // bad object trip a healthy backend. Context cancellation and deadline are
-// caller-side and never count.
+// caller-side and never count, and neither does a provider declining batch
+// delete, which is a missing capability rather than a fault.
 func isBackendError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, ErrBatchDeleteNotSupported) {
 		return false
 	}
 	respErr, ok := errors.AsType[httpStatusError](err)
@@ -143,6 +145,20 @@ func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey,
 	}
 	return cb.Call(func() (string, error) {
 		return copier.CopyObject(ctx, srcKey, dstKey, contentType, metadata)
+	})
+}
+
+// DeleteObjects forwards a batch delete through the circuit breaker, or returns
+// ErrBatchDeleteNotSupported when the wrapped backend does not implement
+// BatchDeleter. Only a failed request counts toward the breaker; keys the
+// backend declined individually do not.
+func (cb *CircuitBreakerBackend) DeleteObjects(ctx context.Context, keys []string) (map[string]error, error) {
+	deleter, ok := cb.inner.(BatchDeleter)
+	if !ok {
+		return nil, ErrBatchDeleteNotSupported
+	}
+	return cb.Call(func() (map[string]error, error) {
+		return deleter.DeleteObjects(ctx, keys)
 	})
 }
 

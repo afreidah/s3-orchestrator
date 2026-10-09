@@ -38,15 +38,6 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 	return context.WithTimeout(ctx, c.backendTimeout)
 }
 
-// DeleteWithTimeout deletes the object at storageKey on a backend using the
-// configured backend timeout. storageKey is the path the bytes occupy, which
-// for a per-write copy is not the object's key.
-func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, storageKey string) error {
-	dctx, dcancel := c.WithTimeout(ctx)
-	defer dcancel()
-	return be.DeleteObject(dctx, storageKey)
-}
-
 // GetWithTimeout issues a GET against be with the configured backend timeout.
 // On success it returns the cancel func instead of deferring it, because the
 // caller owns the body: defer it next to Body.Close, or pass it to
@@ -63,7 +54,7 @@ func (c *BackendRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBa
 
 // HeadWithTimeout issues a HEAD against be with the configured backend timeout.
 // HEAD carries no body, so the timeout context is fully released before
-// returning, mirroring DeleteWithTimeout.
+// returning.
 func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
 	hctx, hcancel := c.WithTimeout(ctx)
 	defer hcancel()

@@ -45,7 +45,7 @@ type Ops interface {
 	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error)
-	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 	Usage() *counter.UsageTracker
 	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
@@ -58,6 +58,7 @@ type Placement interface {
 	RankReplicaTargets(size int64, exclusion map[string]bool) []string
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
+	DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy)
 }
 
 // StreamDecompressor decodes a stored object front to back, which is all the
