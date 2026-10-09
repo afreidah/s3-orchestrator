@@ -19,6 +19,7 @@ package compression
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -228,13 +229,15 @@ func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 }
 
 // Decompress returns a reader over the logical bytes of a stored object. It
-// takes a ReadSeeker because the seek table sits at the end of the stream.
+// takes a ReadSeeker because the seek table sits at the end of the stream, and
+// reads through DecompressRanged so every frame the table names is checked
+// against the stream's real length before anything is allocated for it.
 func (c *Codec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
-	r, err := seekable.NewReader(rs, c.dec, seekable.WithReaderLogger(c.log))
+	size, err := rs.Seek(0, io.SeekEnd)
 	if err != nil {
-		return nil, classifyDecode(fmt.Errorf("open seekable reader: %w", err))
+		return nil, fmt.Errorf("%w: size compressed stream: %w", ErrFetchFailed, err)
 	}
-	return &decodeGuard{inner: r}, nil
+	return c.DecompressRanged(context.Background(), &seekerFetcher{rs: rs}, size)
 }
 
 // DecompressStream decodes a stored object front to back without the seek
