@@ -23,7 +23,6 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
@@ -167,6 +166,10 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 // buffering large objects in memory. Supports Range requests  -  when the client
 // sends a Range header, the response is 206 Partial Content with Content-Range.
 func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
+	if status, done := s.answerConditionalFromHead(ctx, w, r, key); done {
+		return status, 0, nil
+	}
+
 	rangeHeader := r.Header.Get("Range")
 
 	result, err := s.Objects.GetObject(ctx, key, rangeHeader)
@@ -183,7 +186,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	// Validators go out before the conditional check so a 304 carries the
 	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
-	setValidatorHeaders(w, result.GetObjectResult)
+	setValidatorHeaders(w, result.ETag, result.LastModified)
 
 	// Preconditions are evaluated before the Range is considered, so a failed
 	// precondition aborts ranged requests too (RFC 9110 13.1). Otherwise a
@@ -204,7 +207,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 			return writeStorageError(w, ferr, "Failed to retrieve object"), 0, ferr
 		}
 		result = full
-		setValidatorHeaders(w, result.GetObjectResult)
+		setValidatorHeaders(w, result.ETag, result.LastModified)
 	}
 
 	w.Header().Set(headerContentType, result.ContentType)
@@ -232,6 +235,28 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	return status, written, nil
 }
 
+// answerConditionalFromHead answers a conditional GET whose precondition fails
+// from the object's metadata, so a 304 or 412 never opens a backend read.
+// Anything it cannot settle - no precondition, one that passes, or a HEAD that
+// errs - falls through to the GET, whose own check stays the authority in case
+// the object changed in between.
+func (s *Server) answerConditionalFromHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, bool) {
+	if !hasConditionals(r) {
+		return 0, false
+	}
+	head, err := s.Objects.HeadObject(ctx, key)
+	if err != nil {
+		return 0, false
+	}
+	status, done := checkConditionals(r, head.ETag, head.LastModified)
+	if !done {
+		return 0, false
+	}
+	setValidatorHeaders(w, head.ETag, head.LastModified)
+	w.WriteHeader(status)
+	return status, true
+}
+
 // handleHead processes HEAD requests.
 func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
 	result, err := s.Objects.HeadObject(ctx, key)
@@ -247,12 +272,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 
 	w.Header().Set(headerContentType, result.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
-	if result.ETag != "" {
-		w.Header().Set("ETag", result.ETag)
-	}
-	if !result.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
-	}
+	setValidatorHeaders(w, result.ETag, result.LastModified)
 	w.Header().Set("Accept-Ranges", "bytes")
 	for k, v := range result.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
@@ -414,7 +434,7 @@ func deleteObjectErrorFor(err error) (code, message string) {
 // proceed normally. AWS S3 only honors the `*` form for write
 // preconditions; specific-etag values are not interpreted on write.
 func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error, bool) {
-	if r.Header.Get("If-None-Match") != "*" {
+	if r.Header.Get(headerIfNoneMatch) != "*" {
 		return 0, nil, false
 	}
 	exists, err := s.Objects.ObjectExists(ctx, key)
@@ -432,13 +452,20 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter
 // setValidatorHeaders writes the ETag and Last-Modified that identify the
 // representation. Split out because they must also appear on a 304, which
 // carries no body and skips the rest of the header block.
-func setValidatorHeaders(w http.ResponseWriter, result *s3be.GetObjectResult) {
-	if result.ETag != "" {
-		w.Header().Set("ETag", result.ETag)
+func setValidatorHeaders(w http.ResponseWriter, etag string, lastModified time.Time) {
+	if etag != "" {
+		w.Header().Set("ETag", etag)
 	}
-	if !result.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
+	if !lastModified.IsZero() {
+		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	}
+}
+
+// hasConditionals reports whether the request carries a precondition that
+// could be answered from the object's validators alone.
+func hasConditionals(r *http.Request) bool {
+	return r.Header.Get(headerIfMatch) != "" || r.Header.Get(headerIfNoneMatch) != "" ||
+		r.Header.Get(headerIfModifiedSince) != "" || r.Header.Get(headerIfUnmodifiedSince) != ""
 }
 
 // setTaggingCountHeader reports how many tags the object carries, omitting the
@@ -455,7 +482,7 @@ func setTaggingCountHeader(w http.ResponseWriter, tagCount int) {
 // lastModified, and anything else as an entity tag using strong comparison
 // (RFC 9110 13.1.5), so a weak tag never matches.
 func ifRangeMatches(r *http.Request, etag string, lastModified time.Time) bool {
-	ir := r.Header.Get("If-Range")
+	ir := r.Header.Get(headerIfRange)
 	if ir == "" {
 		return true
 	}
@@ -473,17 +500,17 @@ func ifRangeMatches(r *http.Request, etag string, lastModified time.Time) bool {
 // short-circuit. Evaluation order follows the spec: If-Match,
 // If-Unmodified-Since, If-None-Match, If-Modified-Since.
 func checkConditionals(r *http.Request, etag string, lastModified time.Time) (int, bool) {
-	if status, done := checkIfMatch(r.Header.Get("If-Match"), etag); done {
+	if status, done := checkIfMatch(r.Header.Get(headerIfMatch), etag); done {
 		return status, true
 	}
 	if status, done := checkIfUnmodifiedSince(r, lastModified); done {
 		return status, true
 	}
-	inm := r.Header.Get("If-None-Match")
+	inm := r.Header.Get(headerIfNoneMatch)
 	if status, done := checkIfNoneMatch(inm, etag); done {
 		return status, true
 	}
-	if status, done := checkIfModifiedSince(r.Header.Get("If-Modified-Since"), inm, lastModified); done {
+	if status, done := checkIfModifiedSince(r.Header.Get(headerIfModifiedSince), inm, lastModified); done {
 		return status, true
 	}
 	return 0, false
@@ -508,8 +535,8 @@ func checkIfMatch(im, etag string) (int, bool) {
 // If-Match takes precedence) and the resource was modified after the
 // header's timestamp.
 func checkIfUnmodifiedSince(r *http.Request, lastModified time.Time) (int, bool) {
-	ius := r.Header.Get("If-Unmodified-Since")
-	if ius == "" || r.Header.Get("If-Match") != "" {
+	ius := r.Header.Get(headerIfUnmodifiedSince)
+	if ius == "" || r.Header.Get(headerIfMatch) != "" {
 		return 0, false
 	}
 	t, err := http.ParseTime(ius)

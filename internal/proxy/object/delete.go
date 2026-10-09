@@ -3,11 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// DeleteObject single-key fanout (metadata delete in one tx, then a
-// concurrent backend DELETE per copy) and DeleteObjects batch flattening
-// + bounded-concurrency worker pool. Per-backend DELETE API-call
-// accounting is owned by writepath.Coordinator.DeleteOrEnqueue;
-// success-finalization helpers live in mutation_finalize.go.
+// DeleteObject and DeleteObjects: the metadata delete runs in one transaction,
+// then writepath.Coordinator.DeleteAllOrEnqueue removes the copies' bytes, one
+// batched delete per backend. Success-finalization helpers live in
+// mutation_finalize.go.
 // -------------------------------------------------------------------------------
 
 package object
@@ -17,11 +16,9 @@ import (
 	"errors"
 	"time"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -60,31 +57,21 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	// to a backend mid-delete during the fan-out.
 	o.cache.Delete(key)
 
-	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
-		backend, ok := o.core.Backends()[cp.BackendName]
-		if !ok {
-			o.log.WarnContext(ctx, "backend not found for delete",
-				"backend", cp.BackendName, "key", key)
-			return
-		}
-		o.coord.DeleteOrEnqueue(ctx, backend, &core.CleanupRequest{
-			BackendName: cp.BackendName,
-			ObjectKey:   key,
-			StorageKey:  cp.StorageKey,
-			Reason:      "delete_failed",
-			SizeBytes:   cp.SizeBytes,
-		})
-	})
+	reqs := make([]*core.CleanupRequest, len(copies))
+	for i, cp := range copies {
+		reqs[i] = cp.Cleanup(key, reasonDeleteFailed)
+	}
+	o.coord.DeleteAllOrEnqueue(ctx, reqs)
 
 	o.finalizeDelete(ctx, span, key, copies, start)
 	return nil
 }
 
-// defaultBatchDeleteConcurrency caps how many per-key backend DELETE
-// fanouts run at once inside DeleteObjects. Picked to absorb a typical
-// S3 batch of 1000 keys without saturating any single backend's
-// connection pool or burning API quota in a burst.
-const defaultBatchDeleteConcurrency = 10
+// Cleanup-queue reasons for a copy whose bytes a delete could not remove.
+const (
+	reasonDeleteFailed      = "delete_failed"
+	reasonBatchDeleteFailed = "batch_delete_failed"
+)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -96,24 +83,13 @@ type DeleteObjectResult struct {
 	Err error  `json:"err,omitempty"`
 }
 
-// batchDeleteItem is one (key, backend) pair fanned out to the worker
-// pool during DeleteObjects.
-type batchDeleteItem struct {
-	key        string
-	storageKey string
-	backend    s3be.ObjectBackend
-	beName     string
-	sizeBytes  int64
-}
-
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// DeleteObjects deletes multiple objects in a single request. Metadata
-// removal happens in a single transaction via DeleteObjectsBatch; backend
-// S3 deletes run concurrently with bounded parallelism to avoid
-// overwhelming backends.
+// DeleteObjects deletes multiple objects in a single request. Metadata removal
+// happens in a single transaction via DeleteObjectsBatch; the copies' bytes are
+// then removed one batched delete per backend.
 func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = s3op.DeleteObjects
 	start := time.Now()
@@ -144,16 +120,13 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		o.invalidateObjectCaches(key)
 	}
 
-	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
-	workerpool.Run(ctx, defaultBatchDeleteConcurrency, deleteItems, func(ctx context.Context, item batchDeleteItem) {
-		o.coord.DeleteOrEnqueue(ctx, item.backend, &core.CleanupRequest{
-			BackendName: item.beName,
-			ObjectKey:   item.key,
-			StorageKey:  item.storageKey,
-			Reason:      "batch_delete_failed",
-			SizeBytes:   item.sizeBytes,
-		})
-	})
+	var reqs []*core.CleanupRequest
+	for key, copies := range copiesByKey {
+		for _, cp := range copies {
+			reqs = append(reqs, cp.Cleanup(key, reasonBatchDeleteFailed))
+		}
+	}
+	o.coord.DeleteAllOrEnqueue(ctx, reqs)
 
 	o.finalizeBatchDelete(ctx, span, len(keys), results, start)
 	return results
@@ -162,30 +135,6 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// flattenBatchDeletes produces the worker-pool input slice from the
-// DeleteObjectsBatch result. Skips copies whose backend is unknown
-// (logged). Per-backend DELETE API-call accounting happens inside
-// DeleteOrEnqueue when the item is consumed, so no tick is recorded
-// here.
-func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[string][]core.DeletedCopy) []batchDeleteItem {
-	var items []batchDeleteItem
-	for key, copies := range copiesByKey {
-		for _, cp := range copies {
-			backend, ok := o.core.Backends()[cp.BackendName]
-			if !ok {
-				o.log.WarnContext(ctx, "backend not found for batch delete",
-					"backend", cp.BackendName, "key", key)
-				continue
-			}
-			items = append(items, batchDeleteItem{
-				key: key, storageKey: cp.StorageKey, backend: backend,
-				beName: cp.BackendName, sizeBytes: cp.SizeBytes,
-			})
-		}
-	}
-	return items
-}
 
 // tallyDeleteResults counts how many entries in results carry an error
 // versus succeeded. Returned for metrics and audit logging.

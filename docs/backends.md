@@ -71,6 +71,8 @@ Pools are additive: an operation charges every pool that contains it and is admi
 
 Unmetered operations are still recorded against the backend's request total -- not billing an operation is not a reason to stop reporting it -- they are simply charged to no budget. Deletes are never refused on any budget regardless, since refusing one would leave an operator unable to get back under a limit.
 
+When the orchestrator removes several of its own copies from one backend - multipart part cleanup, a client batch delete, the cleanup queue, a backend purge - it sends one `DeleteObjects` request per 1,000 keys and charges each as one `DeleteObjects` call. A provider that does not implement multi-object delete answers `NotImplemented`; the orchestrator then deletes that backend's keys one `DeleteObject` at a time until it restarts.
+
 `api_request_limit` remains valid and desugars to a single pool named `all` over `["*"]`, so existing configs are unchanged. Setting both it and `request_limits` on one backend is rejected.
 
 Valid operation names: `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `GetParts`, `HeadBucket`. `HeadBucket` is the circuit breaker's health check, issued only while a backend's breaker is open.

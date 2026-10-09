@@ -23,8 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -38,8 +36,7 @@ const purgePageSize = 100
 // importing infra.
 type Runtime interface {
 	Backends() map[string]backend.ObjectBackend
-	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
-	Acct() *accounting.Recorder
+	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 }
 
 // Progress holds the current state of a drain operation. Active is true while
@@ -265,9 +262,10 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 }
 
 // PurgeBackendObjects deletes all objects from a backend's S3 storage and their
-// metadata rows. Per-key failures are logged and skipped, but a page whose
-// every DeleteObjectLocation fails stops the purge, so a persistent DB error
-// cannot keep the loop listing and failing on the same rows forever.
+// metadata rows, a page at a time with one batched backend delete per page.
+// Per-key failures are logged and skipped, but a page whose every
+// DeleteObjectLocation fails stops the purge, so a persistent DB error cannot
+// keep the loop listing and failing on the same rows forever.
 func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string, observer progress.Observer) {
 	for {
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, purgePageSize)
@@ -280,10 +278,16 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 			return
 		}
 
+		paths := make([]string, len(objects))
+		for i := range objects {
+			paths[i] = core.StoragePath(objects[i].ObjectKey, objects[i].StorageKey)
+		}
+		failed := d.infra.DeleteMany(ctx, name, be, paths)
+
 		dbDeleted := 0
 		for i := range objects {
 			progress.Track(observer, objects[i].ObjectKey, func() string {
-				return d.purgeOneObject(ctx, be, name, &objects[i], &dbDeleted)
+				return d.purgeOneObject(ctx, name, &objects[i], failed[paths[i]], &dbDeleted)
 			})
 		}
 
@@ -295,17 +299,16 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 	}
 }
 
-// purgeOneObject deletes a single object from the backend's S3 storage and its
-// metadata row, incrementing dbDeleted on a successful DB removal. Returns the
-// progress status: failed when the DB record could not be dropped (the signal
-// the page made no progress), ok otherwise.
-func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, name string, obj *core.ObjectLocation, dbDeleted *int) string {
+// purgeOneObject drops one purged object's metadata row, logging deleteErr when
+// its bytes could not be deleted from the backend. Increments dbDeleted on a
+// successful DB removal. Returns the progress status: failed when the DB record
+// could not be dropped (the signal the page made no progress), ok otherwise.
+func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.ObjectLocation, deleteErr error, dbDeleted *int) string {
 	key := obj.ObjectKey
-	if err := d.infra.DeleteWithTimeout(ctx, be, core.StoragePath(key, obj.StorageKey)); err != nil {
+	if deleteErr != nil {
 		d.log.WarnContext(ctx, "failed to delete object from backend during purge",
-			slog.String("backend", name), slog.String("key", key), "error", err)
+			slog.String("backend", name), slog.String("key", key), "error", deleteErr)
 	}
-	d.infra.Acct().APICall(s3op.DeleteObject, name)
 
 	_, err := d.objects.DeleteObjectLocation(ctx, key, name)
 	if err != nil {

@@ -28,7 +28,8 @@ type WriteRuntime interface {
 	Quota() *counter.QuotaTracker
 	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
-	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	Delete(ctx context.Context, name string, be backend.ObjectBackend, storageKey string) error
+	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error)
 	Acct() *accounting.Recorder
 }

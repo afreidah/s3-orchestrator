@@ -128,6 +128,22 @@ type DeletedCopy struct {
 	Reason      string
 }
 
+// Cleanup is the request that deletes this copy of objectKey, labelled with the
+// copy's own reason or defaultReason when it has none.
+func (d DeletedCopy) Cleanup(objectKey, defaultReason string) *CleanupRequest {
+	reason := d.Reason
+	if reason == "" {
+		reason = defaultReason
+	}
+	return &CleanupRequest{
+		BackendName: d.BackendName,
+		ObjectKey:   objectKey,
+		StorageKey:  d.StorageKey,
+		Reason:      reason,
+		SizeBytes:   d.SizeBytes,
+	}
+}
+
 // CleanupReasonSupersededIntent labels bytes of an intent a newer write
 // cleared. CleanupReasonCompanionDiscarded labels an extra-copy intent the
 // reaper could not vouch for. CleanupReasonCompanionUntrusted labels an extra

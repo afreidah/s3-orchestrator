@@ -67,6 +67,10 @@ type Object struct {
 // leaves callers on the materialized-copy path by default. CopyLandsBeforeErr
 // makes a failing CopyObject write the destination anyway, modelling a
 // server-side copy whose response was lost.
+//
+// DeleteObjects likewise reports ErrBatchDeleteNotSupported until a test sets
+// BatchDeleteEnabled. DeleteErr fails the whole batch, and BatchDeleteKeyErrs
+// fails the keys it names while the rest are deleted.
 type InMemory struct {
 	mu sync.Mutex
 
@@ -91,6 +95,10 @@ type InMemory struct {
 	CopyEnabled bool
 	CopyCalls   int
 	CopyErr     error
+
+	BatchDeleteEnabled bool
+	BatchDeleteCalls   int
+	BatchDeleteKeyErrs map[string]error
 }
 
 // NewInMemory returns an empty in-memory backend.
@@ -98,7 +106,10 @@ func NewInMemory() *InMemory {
 	return &InMemory{Objects: make(map[string]Object)}
 }
 
-var _ backend.CheckedBackend = (*InMemory)(nil)
+var (
+	_ backend.CheckedBackend = (*InMemory)(nil)
+	_ backend.BatchDeleter   = (*InMemory)(nil)
+)
 
 // notFoundError is a status-code-bearing error, so backend.IsNotFound
 // classifies an absent key the same way it classifies a real 404.
@@ -281,6 +292,28 @@ func (m *InMemory) DeleteObject(ctx context.Context, key string) error {
 	}
 	delete(m.Objects, key)
 	return nil
+}
+
+// DeleteObjects satisfies backend.BatchDeleter once BatchDeleteEnabled is set.
+func (m *InMemory) DeleteObjects(_ context.Context, keys []string) (map[string]error, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.BatchDeleteEnabled {
+		return nil, backend.ErrBatchDeleteNotSupported
+	}
+	m.BatchDeleteCalls++
+	if m.DeleteErr != nil {
+		return nil, m.DeleteErr
+	}
+	failed := make(map[string]error)
+	for _, k := range keys {
+		if err := m.BatchDeleteKeyErrs[k]; err != nil {
+			failed[k] = err
+			continue
+		}
+		delete(m.Objects, k)
+	}
+	return failed, nil
 }
 
 // listPageSize is how many keys one ListObjects page holds, matching the S3

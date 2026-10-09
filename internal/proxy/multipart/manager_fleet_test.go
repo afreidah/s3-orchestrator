@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -427,6 +428,63 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
+	}
+}
+
+// putParts stores n three-byte parts of upload-1 on be and returns their rows.
+func putParts(t *testing.T, be *backendtest.InMemory, n int) []core.MultipartPart {
+	t.Helper()
+	parts := make([]core.MultipartPart, n)
+	for i := range parts {
+		_, _ = be.PutObject(context.Background(), multipartPartKey("upload-1", i+1), bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+		parts[i] = core.MultipartPart{PartNumber: i + 1, ETag: fmt.Sprintf("e%d", i+1), SizeBytes: 3, CreatedAt: time.Now()}
+	}
+	return parts
+}
+
+// TestAbortMultipartUpload_DeletesPartsInOneBatch verifies an abort removes
+// every part in one batch request, charged as one call beside the abort.
+func TestAbortMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+	be.BatchDeleteEnabled = true
+	parts := putParts(t, be, 3)
+	store, _ := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, parts, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	if err := mgr.AbortMultipartUpload(context.Background(), "multi", "key", "upload-1"); err != nil {
+		t.Fatalf("AbortMultipartUpload: %v", err)
+	}
+	if be.BatchDeleteCalls != 1 || len(be.Objects) != 0 {
+		t.Errorf("batch calls = %d, objects left = %d; want 1 and 0", be.BatchDeleteCalls, len(be.Objects))
+	}
+	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+		t.Errorf("apiRequests = %d, want 2 (1 batch delete + 1 abort)", got)
+	}
+}
+
+// TestCompleteMultipartUpload_DeletesPartsInOneBatch verifies a completion
+// removes every part in one batch request.
+func TestCompleteMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+	be.BatchDeleteEnabled = true
+	parts := putParts(t, be, 3)
+	store, _ := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1", ContentType: "application/zip"}, parts, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2, 3)); err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+	if be.BatchDeleteCalls != 1 {
+		t.Errorf("batch calls = %d, want one for all three parts", be.BatchDeleteCalls)
+	}
+	for _, p := range parts {
+		if be.Has(multipartPartKey("upload-1", p.PartNumber)) {
+			t.Errorf("part %d still on the backend", p.PartNumber)
+		}
 	}
 }
 

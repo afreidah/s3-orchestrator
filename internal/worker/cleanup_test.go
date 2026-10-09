@@ -39,7 +39,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil) // backend value doesn't matter for this test
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "orphan.txt").Return(nil)
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"orphan.txt"}).Return(nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
@@ -67,7 +67,8 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "stuck.txt").Return(errors.New("timeout"))
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"stuck.txt"}).
+		Return(map[string]error{"stuck.txt": errors.New("timeout")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
@@ -97,8 +98,8 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "phantom.txt").
-		Return(&httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"phantom.txt"}).
+		Return(map[string]error{"phantom.txt": &httpError{code: 404, msg: "NoSuchKey"}})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
@@ -123,6 +124,35 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_BatchesRowsPerBackend verifies rows on one backend go
+// out in a single DeleteMany under one admission slot, and each row still gets
+// its own outcome: the deleted row completes and the failed one is retried.
+func TestProcessCleanupQueue_BatchesRowsPerBackend(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := newMockOps(ctrl)
+
+	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "a.txt"},
+		{ID: 2, BackendName: "b1", ObjectKey: "b.txt"},
+	}}
+	ops.EXPECT().GetBackend("b1").Return(nil, nil)
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
+	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"a.txt", "b.txt"}).
+		Return(map[string]error{"b.txt": errors.New("timeout")})
+
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 2, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	sum := w.ProcessCleanupQueue(context.Background())
+
+	if sum.Succeeded != 1 || sum.Failed != 1 {
+		t.Errorf("succeeded=%d failed=%d, want 1/1", sum.Succeeded, sum.Failed)
+	}
+	if len(ms.completedIDs) != 1 || ms.completedIDs[0] != 1 {
+		t.Errorf("completed = %v, want only row 1", ms.completedIDs)
+	}
+}
+
 // TestProcessCleanupQueue_AdmissionBlocked verifies the process cleanup queue admission blocked contract.
 // Asserts that expected 0/0 when blocked, got /.
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
@@ -133,6 +163,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	st := core.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
 
+	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
@@ -154,8 +185,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	st := core.CleanupItem{ID: 1, BackendName: "gone", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
 
-	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
-	ops.EXPECT().ReleaseAdmission()
+	// An unregistered backend has nothing to delete, so no admission slot is taken.
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
@@ -184,7 +214,8 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed.txt").Return(errors.New("permanent failure"))
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"doomed.txt"}).
+		Return(map[string]error{"doomed.txt": errors.New("permanent failure")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
@@ -224,7 +255,8 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed2.txt").Return(errors.New("upstream timeout"))
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"doomed2.txt"}).
+		Return(map[string]error{"doomed2.txt": errors.New("upstream timeout")})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
@@ -254,7 +286,7 @@ func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend(backend).Return(nil, nil)
-	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "k").Return(nil)
+	ops.EXPECT().DeleteMany(gomock.Any(), backend, gomock.Any(), []string{"k"}).Return(nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))

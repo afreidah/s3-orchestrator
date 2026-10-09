@@ -461,12 +461,12 @@ func TestCore_StreamCopy_AdmitsWithinLimits(t *testing.T) {
 	}
 }
 
-func TestCore_DeleteWithTimeout_ForwardsToBackend(t *testing.T) {
+func TestCore_Delete_ForwardsToBackend(t *testing.T) {
 	t.Parallel()
 	rb := &recordingBackend{}
 	c := newTestCore(t)
-	if err := c.DeleteWithTimeout(context.Background(), rb, "k"); err != nil {
-		t.Fatalf("DeleteWithTimeout: %v", err)
+	if err := c.Delete(context.Background(), "b1", rb, "k"); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 	if len(rb.deleted) != 1 || rb.deleted[0] != "k" {
 		t.Errorf("recorded deletes = %v, want [k]", rb.deleted)

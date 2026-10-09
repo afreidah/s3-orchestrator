@@ -12,6 +12,9 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -19,9 +22,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
+	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // -------------------------------------------------------------------------
@@ -142,35 +145,79 @@ func (w *CleanupWorker) processCleanupQueue(ctx context.Context) WorkSummary {
 		)
 	}
 
+	deleted := w.deleteClaimed(ctx, items)
+
 	runner := BatchRunner[core.CleanupItem]{Name: "cleanup", Log: w.log, Concurrency: w.concurrency}
 	sum := runner.Run(ctx, items, func(ctx context.Context, item core.CleanupItem) ItemResult {
-		var res ItemResult
-		WithAdmission(ctx, w.deps, WorkerNameCleanup, func() {
-			res = w.processCleanupItem(ctx, &item)
-		})
-		return res
+		d, attempted := deleted[item.ID]
+		if !attempted {
+			return ItemResult{} // admission declined its backend; the row waits for a later cycle
+		}
+		return w.settleCleanupItem(ctx, &item, d)
 	})
 
 	w.recordCleanupDepths(ctx)
 	return sum
 }
 
-// processCleanupItem handles one cleanup queue row: resolve the backend,
-// attempt the delete, and either complete, retry, or graduate the row to
-// the DLQ depending on the outcome.
-func (w *CleanupWorker) processCleanupItem(ctx context.Context, item *core.CleanupItem) ItemResult {
-	be, err := w.deps.GetBackend(item.BackendName)
-	if err != nil {
+// cleanupDelete is what deleting one claimed row's bytes came to.
+// unknownBackend means the row names a backend that is no longer registered,
+// so nothing was attempted.
+type cleanupDelete struct {
+	err            error
+	unknownBackend bool
+}
+
+// deleteClaimed deletes every claimed row's bytes, one batched delete per
+// backend, each under one admission slot. It deletes each row's queued path,
+// not the object's key: the row names the bytes one write put on the backend,
+// and a later write of the same object has its own bytes this must not reach.
+func (w *CleanupWorker) deleteClaimed(ctx context.Context, items []core.CleanupItem) map[int64]cleanupDelete {
+	byBackend := make(map[string][]core.CleanupItem)
+	for i := range items {
+		byBackend[items[i].BackendName] = append(byBackend[items[i].BackendName], items[i])
+	}
+
+	var mu sync.Mutex
+	deleted := make(map[int64]cleanupDelete, len(items))
+	record := func(id int64, d cleanupDelete) {
+		mu.Lock()
+		deleted[id] = d
+		mu.Unlock()
+	}
+	groups := slices.Collect(maps.Values(byBackend))
+	workerpool.Run(ctx, w.concurrency, groups, func(ctx context.Context, group []core.CleanupItem) {
+		name := group[0].BackendName
+		be, err := w.deps.GetBackend(name)
+		if err != nil {
+			for i := range group {
+				record(group[i].ID, cleanupDelete{unknownBackend: true})
+			}
+			return
+		}
+		paths := make([]string, len(group))
+		for i := range group {
+			paths[i] = core.StoragePath(group[i].ObjectKey, group[i].StorageKey)
+		}
+		WithAdmission(ctx, w.deps, WorkerNameCleanup, func() {
+			failed := w.deps.DeleteMany(ctx, name, be, paths)
+			for i := range group {
+				record(group[i].ID, cleanupDelete{err: failed[paths[i]]})
+			}
+		})
+	})
+	return deleted
+}
+
+// settleCleanupItem gives one cleanup queue row its outcome from deleting its
+// bytes: complete, retry, or graduate to the DLQ.
+func (w *CleanupWorker) settleCleanupItem(ctx context.Context, item *core.CleanupItem, d cleanupDelete) ItemResult {
+	if d.unknownBackend {
 		w.completeUnknownBackendItem(ctx, item)
 		return ItemResult{Outcome: ItemSucceeded, Status: "success"}
 	}
 
-	// Delete the queued path, not the object's key. The row names the bytes one
-	// write put on this backend, and a later write of the same object has its
-	// own bytes that this deletion must not reach.
-	delErr := w.deps.DeleteWithTimeout(ctx, be, core.StoragePath(item.ObjectKey, item.StorageKey))
-	w.deps.Acct().APICall(s3op.DeleteObject, item.BackendName)
-
+	delErr := d.err
 	if delErr == nil {
 		w.completeCleanupSuccess(ctx, item)
 		return ItemResult{Outcome: ItemSucceeded, Status: "success"}

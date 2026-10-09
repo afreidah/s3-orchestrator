@@ -102,18 +102,18 @@ func (mr *MockOpsMockRecorder) Backends() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockOps)(nil).Backends))
 }
 
-// DeleteWithTimeout mocks base method.
-func (m *MockOps) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
+// DeleteMany mocks base method.
+func (m *MockOps) DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteWithTimeout", ctx, be, key)
-	ret0, _ := ret[0].(error)
+	ret := m.ctrl.Call(m, "DeleteMany", ctx, name, be, storageKeys)
+	ret0, _ := ret[0].(map[string]error)
 	return ret0
 }
 
-// DeleteWithTimeout indicates an expected call of DeleteWithTimeout.
-func (mr *MockOpsMockRecorder) DeleteWithTimeout(ctx, be, key any) *gomock.Call {
+// DeleteMany indicates an expected call of DeleteMany.
+func (mr *MockOpsMockRecorder) DeleteMany(ctx, name, be, storageKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWithTimeout", reflect.TypeOf((*MockOps)(nil).DeleteWithTimeout), ctx, be, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMany", reflect.TypeOf((*MockOps)(nil).DeleteMany), ctx, name, be, storageKeys)
 }
 
 // ExcludeDraining mocks base method.
@@ -282,6 +282,18 @@ func NewMockPlacement(ctrl *gomock.Controller) *MockPlacement {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockPlacement) EXPECT() *MockPlacementMockRecorder {
 	return m.recorder
+}
+
+// DeleteDisplaced mocks base method.
+func (m *MockPlacement) DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "DeleteDisplaced", ctx, key, displaced)
+}
+
+// DeleteDisplaced indicates an expected call of DeleteDisplaced.
+func (mr *MockPlacementMockRecorder) DeleteDisplaced(ctx, key, displaced any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDisplaced", reflect.TypeOf((*MockPlacement)(nil).DeleteDisplaced), ctx, key, displaced)
 }
 
 // DeleteOrEnqueue mocks base method.

@@ -3,7 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Pure-function coverage for ObjectFromStoredForm and displacedFromExisting.
+// Pure-function coverage for ObjectFromStoredForm, displacedFromExisting, and
+// DeletedCopy.Cleanup.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -628,5 +629,23 @@ func TestStoredForm_Unreadable(t *testing.T) {
 				t.Errorf("Unreadable() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDeletedCopy_Cleanup verifies the cleanup request carries the copy's own
+// path and size, and keeps a reason the store set over the caller's default.
+func TestDeletedCopy_Cleanup(t *testing.T) {
+	t.Parallel()
+	dc := DeletedCopy{BackendName: "b1", StorageKey: "k!1", SizeBytes: 7}
+
+	got := dc.Cleanup("k", "overwrite_displaced")
+	want := CleanupRequest{BackendName: "b1", ObjectKey: "k", StorageKey: "k!1", Reason: "overwrite_displaced", SizeBytes: 7}
+	if *got != want {
+		t.Errorf("Cleanup = %+v, want %+v", *got, want)
+	}
+
+	dc.Reason = CleanupReasonSupersededIntent
+	if got := dc.Cleanup("k", "overwrite_displaced"); got.Reason != CleanupReasonSupersededIntent {
+		t.Errorf("Reason = %q, want the copy's own %q", got.Reason, CleanupReasonSupersededIntent)
 	}
 }
