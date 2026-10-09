@@ -19,6 +19,7 @@ package postgres
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -64,68 +65,67 @@ func assertNoTags(t *testing.T, s *Store, key, msg string) {
 	}
 }
 
+// locationTagCounts returns the tag count each of a key's location rows
+// carries, in row order.
+func locationTagCounts(t *testing.T, s *Store, key string) []int {
+	t.Helper()
+	locs, err := s.GetAllObjectLocations(context.Background(), key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	counts := make([]int, len(locs))
+	for i := range locs {
+		counts[i] = locs[i].TagCount
+	}
+	return counts
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestStoreInt_CountObjectTags_MatchesTheSetSize verifies the count the read
-// path serves agrees with the set the tagging endpoint returns, and that it
-// follows the set down when a replace shrinks it. A count drifting from the
-// set is what sends clients after tags that are not there.
-func TestStoreInt_CountObjectTags_MatchesTheSetSize(t *testing.T) {
+// TestStoreInt_GetAllObjectLocations_TagCountOnEveryCopy verifies every copy's
+// row carries the key's full tag count, and that the count follows the set down
+// when a replace shrinks it. Tags belong to the key, so a count joined per copy
+// or read from stale rows would put the wrong tagging-count header on reads.
+func TestStoreInt_GetAllObjectLocations_TagCountOnEveryCopy(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "tags-count")
 
-	seedTaggedObject(t, s, key, "backend-a", []core.Tag{
-		{Key: "a", Value: "1"},
-		{Key: "b", Value: "2"},
-		{Key: "c", Value: "3"},
-	})
-
-	n, err := s.CountObjectTags(ctx, key)
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}, {Backend: "backend-b"}}, Size: 1024,
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
 	}
-	if n != 3 {
-		t.Fatalf("count = %d, want 3", n)
+	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{
+		{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"},
+	}); err != nil {
+		t.Fatalf("ReplaceObjectTags: %v", err)
+	}
+	if got := locationTagCounts(t, s, key); !slices.Equal(got, []int{3, 3}) {
+		t.Fatalf("tag counts = %v, want [3 3]", got)
 	}
 
 	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{{Key: "a", Value: "1"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags (shrink): %v", err)
 	}
-	if n, err = s.CountObjectTags(ctx, key); err != nil {
-		t.Fatalf("CountObjectTags after shrink: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("count after shrink = %d, want 1", n)
+	if got := locationTagCounts(t, s, key); !slices.Equal(got, []int{1, 1}) {
+		t.Errorf("tag counts after shrink = %v, want [1 1]", got)
 	}
 }
 
-// TestStoreInt_CountObjectTags_UntaggedAndUnknown verifies both an object
-// holding no tags and a key the store has never held count zero rather than
-// erroring. The read path asks this of every object it serves, and reaches it
-// only once the object has been located.
-func TestStoreInt_CountObjectTags_UntaggedAndUnknown(t *testing.T) {
+// TestStoreInt_GetAllObjectLocations_UntaggedCountsZero verifies an object
+// holding no tags reports a zero count rather than dropping its rows. The read
+// path looks up every object it serves this way, and most carry no tags.
+func TestStoreInt_GetAllObjectLocations_UntaggedCountsZero(t *testing.T) {
 	s := adapterPgStore(t)
-	ctx := context.Background()
 	key := uniqueKey(t, "tags-count-untagged")
 
 	seedTaggedObject(t, s, key, "backend-a", nil)
 
-	n, err := s.CountObjectTags(ctx, key)
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("untagged count = %d, want 0", n)
-	}
-
-	if n, err = s.CountObjectTags(ctx, uniqueKey(t, "tags-count-absent")); err != nil {
-		t.Fatalf("CountObjectTags on an unknown key: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("unknown-key count = %d, want 0", n)
+	if got := locationTagCounts(t, s, key); !slices.Equal(got, []int{0}) {
+		t.Errorf("tag counts = %v, want [0]", got)
 	}
 }
 

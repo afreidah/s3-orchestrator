@@ -16,6 +16,7 @@ package sqlite
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -77,33 +78,49 @@ func TestObjectTags_ReplaceAndRead(t *testing.T) {
 	}
 }
 
-// TestCountObjectTags_MatchesTheSetSize verifies the count the read path serves
-// agrees with the set the tagging endpoint returns. A count that drifts from
-// the set sends clients after tags that are not there, or hides ones that are.
-func TestCountObjectTags_MatchesTheSetSize(t *testing.T) {
+// locationTagCounts returns the tag count each of a key's location rows
+// carries, in row order.
+func locationTagCounts(t *testing.T, s *Store, key string) []int {
+	t.Helper()
+	locs, err := s.GetAllObjectLocations(context.Background(), key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	counts := make([]int, len(locs))
+	for i := range locs {
+		counts[i] = locs[i].TagCount
+	}
+	return counts
+}
+
+// TestGetAllObjectLocations_TagCountOnEveryCopy verifies every copy's row
+// carries the key's full tag count. Tags belong to the key, so a count joined
+// per copy, or one that drifts from the set the tagging endpoint returns,
+// would put the wrong tagging-count header on reads served by some copies.
+func TestGetAllObjectLocations_TagCountOnEveryCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedObject(t, s, "bucket/tagged", "backend-a")
-
-	tags := []core.Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"}}
-	if err := s.ReplaceObjectTags(ctx, "bucket/tagged", tags); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/tagged", Copies: []core.ObjectCopy{{Backend: "backend-a"}, {Backend: "backend-b"}}, Size: 1024,
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if err := s.ReplaceObjectTags(ctx, "bucket/tagged", []core.Tag{
+		{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"},
+	}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
 
-	n, err := s.CountObjectTags(ctx, "bucket/tagged")
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
-	}
-	if n != len(tags) {
-		t.Errorf("count = %d, want %d", n, len(tags))
+	if got := locationTagCounts(t, s, "bucket/tagged"); !slices.Equal(got, []int{3, 3}) {
+		t.Errorf("tag counts = %v, want [3 3]", got)
 	}
 }
 
-// TestCountObjectTags_FollowsAReplace verifies the count tracks a set that
-// shrinks. Replace is a delete plus inserts, so a count reading stale rows
-// would keep reporting the size the object used to have.
-func TestCountObjectTags_FollowsAReplace(t *testing.T) {
+// TestGetAllObjectLocations_TagCountFollowsAReplace verifies the count tracks a
+// set that shrinks. Replace is a delete plus inserts, so a count reading stale
+// rows would keep reporting the size the object used to have.
+func TestGetAllObjectLocations_TagCountFollowsAReplace(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -118,45 +135,21 @@ func TestCountObjectTags_FollowsAReplace(t *testing.T) {
 		t.Fatalf("ReplaceObjectTags (shrink): %v", err)
 	}
 
-	n, err := s.CountObjectTags(ctx, "bucket/tagged")
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("count = %d, want 1", n)
+	if got := locationTagCounts(t, s, "bucket/tagged"); !slices.Equal(got, []int{1}) {
+		t.Errorf("tag counts = %v, want [1]", got)
 	}
 }
 
-// TestCountObjectTags_UntaggedObject verifies an object holding no tags counts
-// zero rather than erroring. The read path asks this of every object it
-// serves, and most of them carry no tags at all.
-func TestCountObjectTags_UntaggedObject(t *testing.T) {
+// TestGetAllObjectLocations_UntaggedCountsZero verifies an object holding no
+// tags reports a zero count rather than dropping its rows. The read path looks
+// up every object it serves this way, and most of them carry no tags at all.
+func TestGetAllObjectLocations_UntaggedCountsZero(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	seedObject(t, s, "bucket/plain", "backend-a")
 
-	n, err := s.CountObjectTags(context.Background(), "bucket/plain")
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("count = %d, want 0", n)
-	}
-}
-
-// TestCountObjectTags_UnknownKey verifies a key the store has never held counts
-// zero too. The read path reaches the count only after the object has been
-// located, so a key with no rows is not a condition to report here.
-func TestCountObjectTags_UnknownKey(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-
-	n, err := s.CountObjectTags(context.Background(), "bucket/never-existed")
-	if err != nil {
-		t.Fatalf("CountObjectTags: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("count = %d, want 0", n)
+	if got := locationTagCounts(t, s, "bucket/plain"); !slices.Equal(got, []int{0}) {
+		t.Errorf("tag counts = %v, want [0]", got)
 	}
 }
 

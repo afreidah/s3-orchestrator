@@ -92,7 +92,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	o.recordHeadIdentity(ctx, key, result, locs)
 
 	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
-	return &HeadResult{HeadObjectResult: result, TagCount: o.countObjectTags(ctx, key)}, nil
+	return &HeadResult{HeadObjectResult: result, TagCount: tagCountOf(locs)}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -107,6 +107,16 @@ func (o *Manager) locationsForHead(ctx context.Context, key string) []core.Objec
 		return nil
 	}
 	return locs
+}
+
+// tagCountOf reports the key's tag count from its location rows, which all
+// carry the same value. No rows reports zero, which leaves the tagging-count
+// header off.
+func tagCountOf(locs []core.ObjectLocation) int {
+	if len(locs) == 0 {
+		return 0
+	}
+	return locs[0].TagCount
 }
 
 // headFromMetadata answers a HEAD from the rows the caller already read, when
@@ -137,7 +147,7 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 	}
 	telemetry.HeadServedFromMetadataTotal.Inc()
 	pobserve.HeadCompleted(ctx, key, "metadata", res.Size)
-	return &HeadResult{HeadObjectResult: res, TagCount: o.countObjectTags(ctx, key)}, true
+	return &HeadResult{HeadObjectResult: res, TagCount: loc.TagCount}, true
 }
 
 // recordHeadIdentity persists what a backend HEAD reported so the next one is
