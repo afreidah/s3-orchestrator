@@ -269,11 +269,11 @@ CREATE TABLE IF NOT EXISTS pending_objects (
 CREATE INDEX IF NOT EXISTS idx_pending_objects_created
     ON pending_objects(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
-    ON pending_objects(backend_name);
-
 CREATE INDEX IF NOT EXISTS idx_pending_objects_key
     ON pending_objects(object_key);
+
+CREATE INDEX IF NOT EXISTS idx_pending_objects_backend_storage_key
+    ON pending_objects(backend_name, storage_key);
 
 -- S3 object tags, keyed by object rather than by copy so replicas of a key
 -- cannot disagree about the set. Rows rather than a JSON column because
@@ -388,4 +388,4 @@ LEFT JOIN (
 LEFT JOIN backend_drains d ON d.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (22);
+INSERT INTO schema_version (version) VALUES (23);

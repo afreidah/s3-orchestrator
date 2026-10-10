@@ -334,9 +334,9 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 }
 
 // ListedPathStates reports what the ledger says about each listed path on the
-// backend: 2 for a delete still queued or dead-lettered, 1 for a recorded copy.
-// Untracked paths are absent from the map, and a path matching several arms
-// keeps the highest state.
+// backend: 3 for a delete still queued or dead-lettered, 2 for a write's intent
+// naming the path; its commit is still to come, 1 for a recorded copy. Untracked
+// paths are absent from the map, and a path matching several arms keeps the highest state.
 func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
 	if len(paths) == 0 {
 		return map[string]core.PathState{}, nil
@@ -346,10 +346,13 @@ func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, 
 		return nil, fmt.Errorf("marshal listed paths: %w", err)
 	}
 	rows, err := a.q.QueryContext(ctx, `
-		SELECT storage_key, 2 FROM cleanup_queue
+		SELECT storage_key, 3 FROM cleanup_queue
 		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
 		UNION ALL
-		SELECT storage_key, 2 FROM cleanup_dlq
+		SELECT storage_key, 3 FROM cleanup_dlq
+		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
+		UNION ALL
+		SELECT storage_key, 2 FROM pending_objects
 		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
 		UNION ALL
 		SELECT storage_key, 1 FROM object_locations

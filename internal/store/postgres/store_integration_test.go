@@ -1113,14 +1113,35 @@ func TestStoreInt_ListExpiredObjects(t *testing.T) {
 }
 
 // TestStoreInt_ListedPathStates verifies the one-query page lookup against real
-// Postgres: a recorded copy, a queued delete, a dead-lettered delete, and a path
-// both recorded and queued, where the pending delete wins. A copy on another
-// backend and an unknown path are absent.
+// Postgres: a recorded copy, an in-flight write intent, a queued delete, a dead-lettered
+// delete, a path both recorded and queued, and a path with both an intent and a queued
+// delete, where the pending delete wins. A copy on another backend and an unknown path are absent.
 func TestStoreInt_ListedPathStates(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	rec, queued, dlq, both, other, absent := uniqueKey(t, "rec"), uniqueKey(t, "queued"),
 		uniqueKey(t, "dlq"), uniqueKey(t, "both"), uniqueKey(t, "other"), uniqueKey(t, "absent")
+	intentOnly, intentAndQueued := uniqueKey(t, "intent-only"), uniqueKey(t, "intent-queued")
+
+	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID:    uniqueKey(t, "intent-1"),
+		ObjectKey:   intentOnly,
+		StorageKey:  intentOnly,
+		BackendName: "backend-a",
+		SizeBytes:   1,
+	}); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(intentOnly): fits=%v, err=%v", fits, err)
+	}
+
+	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID:    uniqueKey(t, "intent-2"),
+		ObjectKey:   intentAndQueued,
+		StorageKey:  intentAndQueued,
+		BackendName: "backend-a",
+		SizeBytes:   1,
+	}); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(intentAndQueued): fits=%v, err=%v", fits, err)
+	}
 
 	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", dlq, "test", 1)); err != nil {
 		t.Fatalf("EnqueueCleanup(dlq): %v", err)
@@ -1141,21 +1162,23 @@ func TestStoreInt_ListedPathStates(t *testing.T) {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 	}
-	for _, key := range []string{queued, both} {
+	for _, key := range []string{queued, both, intentAndQueued} {
 		if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 1)); err != nil {
 			t.Fatalf("EnqueueCleanup(%s): %v", key, err)
 		}
 	}
 
-	got, err := s.ListedPathStates(ctx, "backend-a", []string{rec, queued, dlq, both, other, absent})
+	got, err := s.ListedPathStates(ctx, "backend-a", []string{rec, intentOnly, intentAndQueued, queued, dlq, both, other, absent})
 	if err != nil {
 		t.Fatalf("ListedPathStates: %v", err)
 	}
 	want := map[string]core.PathState{
-		rec:    core.PathRecorded,
-		queued: core.PathPendingCleanup,
-		dlq:    core.PathPendingCleanup,
-		both:   core.PathPendingCleanup,
+		rec:             core.PathRecorded,
+		intentOnly:      core.PathInFlight,
+		intentAndQueued: core.PathPendingCleanup,
+		queued:          core.PathPendingCleanup,
+		dlq:             core.PathPendingCleanup,
+		both:            core.PathPendingCleanup,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("states = %v, want %v", got, want)
@@ -1196,6 +1219,37 @@ func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 	}
 	if other != core.ImportInserted {
 		t.Errorf("outcome = %s, want inserted on a backend with no pending delete", other)
+	}
+}
+
+// TestStoreInt_ImportSuppressedByInFlightIntent verifies an import is
+// suppressed when pending_objects holds an in-flight write intent for the path.
+func TestStoreInt_ImportSuppressedByInFlightIntent(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := t.Name() + "/in-flight"
+
+	p := &core.PendingObject{
+		IntentID:    uniqueKey(t, "intent"),
+		ObjectKey:   key,
+		StorageKey:  key,
+		BackendName: "backend-a",
+		SizeBytes:   500,
+	}
+	if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits: fits=%v err=%v", fits, err)
+	}
+
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 500})
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportSkippedExisting {
+		t.Errorf("outcome = %s, want skipped_existing", outcome)
+	}
+
+	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
+		t.Errorf("ledger error = %v, want ErrObjectNotFound for an in-flight path", err)
 	}
 }
 

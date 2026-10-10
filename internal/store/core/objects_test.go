@@ -605,6 +605,28 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 	}
 }
 
+// TestImportObject_SuppressedByInFlightIntent asserts a key whose write intent
+// is still in flight is skipped rather than imported as a new object.
+func TestImportObject_SuppressedByInFlightIntent(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{pathInFlight: true}
+
+	outcome, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100})
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != ImportSkippedExisting {
+		t.Errorf("outcome = %s, want skipped_existing", outcome)
+	}
+	if len(stub.ops) != 0 {
+		t.Errorf("quota was touched for an in-flight import: %+v", stub.ops)
+	}
+	if stub.importedLoc != nil {
+		t.Errorf("row was inserted for an in-flight import: %+v", stub.importedLoc)
+	}
+}
+
 // TestImportObject_KeepsBackendWriteTime asserts a reported modification time
 // becomes the row's CreatedAt. A discovered object was written before the
 // orchestrator knew about it, so stamping the moment it was found would report

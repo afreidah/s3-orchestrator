@@ -416,6 +416,7 @@ type PathState uint8
 const (
 	PathUntracked      PathState = iota // nothing in the ledger names the path
 	PathRecorded                        // a copy is recorded at the path
+	PathInFlight                        // a write's intent names the path; its commit is still to come
 	PathPendingCleanup                  // a delete for the path is queued or dead-lettered
 )
 
@@ -458,7 +459,7 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 		switch states[req.Key] {
 		case PathPendingCleanup:
 			return ImportSkippedPendingCleanup, nil
-		case PathRecorded:
+		case PathRecorded, PathInFlight:
 			return ImportSkippedExisting, nil
 		}
 

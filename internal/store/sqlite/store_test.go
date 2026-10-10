@@ -107,6 +107,10 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{23, func() {
+			exec("drop the pending storage-key index", `DROP INDEX IF EXISTS idx_pending_objects_backend_storage_key`)
+			exec("restore the pending backend index", `CREATE INDEX IF NOT EXISTS idx_pending_objects_backend ON pending_objects(backend_name)`)
+		}},
 		{22, func() {
 			exec("drop the drain paging index", `DROP INDEX IF EXISTS idx_object_locations_managed_size`)
 			exec("drop the cleanup path index", `DROP INDEX IF EXISTS idx_cleanup_queue_backend_storage_key`)
@@ -487,13 +491,14 @@ func TestListObjectsByBackend(t *testing.T) {
 }
 
 // TestListedPathStates verifies one lookup reports every state a listed path
-// can be in on the backend asked about: a recorded copy, a queued delete, a
-// dead-lettered delete, and a path both recorded and queued, where the
-// pending delete wins. Copies on another backend and unknown paths are
-// absent.
+// can be in on the backend asked about: a recorded copy, an in-flight write intent,
+// a queued delete, a dead-lettered delete, a path both recorded and queued, and a path
+// with both an intent and a queued delete, where the pending delete wins. Copies on
+// another backend and unknown paths are absent.
 func TestListedPathStates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	mustEnqueueCleanup(t, s, "backend-a", "bucket/dlq")
 	dlqAll(t, s, "gave up")
@@ -503,22 +508,45 @@ func TestListedPathStates(t *testing.T) {
 	mustEnqueueCleanup(t, s, "backend-a", "bucket/queued")
 	mustEnqueueCleanup(t, s, "backend-a", "bucket/both")
 
-	got, err := s.ListedPathStates(context.Background(), "backend-a",
-		[]string{"bucket/rec", "bucket/queued", "bucket/dlq", "bucket/both", "bucket/other", "bucket/absent"})
+	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID:    "intent-only",
+		ObjectKey:   "bucket/intent-only",
+		StorageKey:  "bucket/intent-only",
+		BackendName: "backend-a",
+		SizeBytes:   10,
+	}); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(intent-only): fits=%v, err=%v", fits, err)
+	}
+
+	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID:    "intent-queued",
+		ObjectKey:   "bucket/intent-queued",
+		StorageKey:  "bucket/intent-queued",
+		BackendName: "backend-a",
+		SizeBytes:   10,
+	}); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(intent-queued): fits=%v, err=%v", fits, err)
+	}
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/intent-queued")
+
+	got, err := s.ListedPathStates(ctx, "backend-a",
+		[]string{"bucket/rec", "bucket/intent-only", "bucket/intent-queued", "bucket/queued", "bucket/dlq", "bucket/both", "bucket/other", "bucket/absent"})
 	if err != nil {
 		t.Fatalf("ListedPathStates: %v", err)
 	}
 	want := map[string]core.PathState{
-		"bucket/rec":    core.PathRecorded,
-		"bucket/queued": core.PathPendingCleanup,
-		"bucket/dlq":    core.PathPendingCleanup,
-		"bucket/both":   core.PathPendingCleanup,
+		"bucket/rec":           core.PathRecorded,
+		"bucket/intent-only":   core.PathInFlight,
+		"bucket/intent-queued": core.PathPendingCleanup,
+		"bucket/queued":        core.PathPendingCleanup,
+		"bucket/dlq":           core.PathPendingCleanup,
+		"bucket/both":          core.PathPendingCleanup,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("states = %v, want %v", got, want)
 	}
 
-	if empty, err := s.ListedPathStates(context.Background(), "backend-a", nil); err != nil || len(empty) != 0 {
+	if empty, err := s.ListedPathStates(ctx, "backend-a", nil); err != nil || len(empty) != 0 {
 		t.Errorf("no paths = %v, %v; want an empty map", empty, err)
 	}
 }
@@ -608,6 +636,42 @@ func TestListObjectsByBackendKeyAsc_RespectsLimit(t *testing.T) {
 	}
 }
 
+// The listing stream reconcile deletes from must carry committed rows only.
+// An intent whose upload has not landed must never appear in it, or the merge
+// would delete the object's committed copy.
+func TestListObjectsByBackendKeyAsc_ExcludesPendingIntents(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// committed copy at k!old, plus an intent for k!new with no committed row
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key:    "bucket/k",
+		Size:   500,
+		Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!old"}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID:    "intent-new",
+		ObjectKey:   "bucket/k",
+		StorageKey:  "bucket/k!new",
+		BackendName: "backend-a",
+		SizeBytes:   600,
+	}); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits: fits=%v, err=%v", fits, err)
+	}
+
+	got, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsByBackendKeyAsc: %v", err)
+	}
+	if len(got) != 1 || got[0].StorageKey != "bucket/k!old" {
+		t.Errorf("got %+v, want only the committed copy", got)
+	}
+}
+
 // TestImportObject verifies that importing a pre-existing object records it correctly.
 func TestImportObject(t *testing.T) {
 	t.Parallel()
@@ -661,6 +725,42 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 
 	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("ledger error = %v, want ErrObjectNotFound for a suppressed import", err)
+	}
+}
+
+// TestImportObject_SuppressedByInFlightIntent verifies a path held only by an
+// in-flight PUT intent is not imported as a pre-existing object.
+func TestImportObject_SuppressedByInFlightIntent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const (
+		key     = "bucket/in-flight"
+		backend = "backend-a"
+	)
+
+	p := core.PendingObject{
+		IntentID:    "intent-import-skip",
+		ObjectKey:   key,
+		StorageKey:  key,
+		BackendName: backend,
+		SizeBytes:   500,
+	}
+	if fits, err := s.InsertPendingIfFits(ctx, &p); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits: fits=%v err=%v", fits, err)
+	}
+
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: backend, Size: 500})
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportSkippedExisting {
+		t.Errorf("outcome = %s, want skipped_existing", outcome)
+	}
+
+	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
+		t.Errorf("ledger error = %v, want ErrObjectNotFound for an in-flight path", err)
 	}
 }
 
