@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -37,7 +38,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.replication.Replicate(r.Context(), nil)
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicateResponse{
 			Status: statusSkipped, Reason: reason,
 		})
@@ -62,9 +63,6 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
 	h.streamSteps(w, "replicate", "replicating", false, func(obs progress.Observer) (stepResult, error) {
 		res, err := h.replication.Replicate(r.Context(), obs)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}
@@ -83,7 +81,7 @@ func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
 	res, err := h.replication.CountSurplus(r.Context())
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
 			Status: statusSkipped, Reason: reason,
 		})
@@ -112,7 +110,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	}
 
 	res, err := h.replication.CleanExcess(r.Context(), batchSize, nil)
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
 			Status: statusSkipped, Reason: reason,
 		})
@@ -137,9 +135,6 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, batchSize int) {
 	h.streamSteps(w, "over-replication", "removing", false, func(obs progress.Observer) (stepResult, error) {
 		res, err := h.replication.CleanExcess(r.Context(), batchSize, obs)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}

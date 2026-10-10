@@ -47,7 +47,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.integrity.Scrub(r.Context(), batchSize, backend, nil)
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.ScrubResponse{
 			Status: statusSkipped, Reason: reason,
 		})
@@ -89,7 +89,7 @@ func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusNotFound, "no copies of that key are recorded")
 		return
 	case err != nil:
-		if reason, skipped := skipReason(err); skipped {
+		if reason, skipped := ops.SkipReason(err); skipped {
 			httputil.WriteJSONError(w, http.StatusConflict, reason)
 			return
 		}
@@ -134,9 +134,6 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize int, backend string) {
 	h.streamSteps(w, "scrub", "verifying", true, func(obs progress.Observer) (stepResult, error) {
 		res, err := h.integrity.Scrub(r.Context(), batchSize, backend, obs)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}
@@ -179,7 +176,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	}
 
 	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, nil)
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
 			Status: statusSkipped, Reason: reason,
 		})
@@ -203,9 +200,6 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request, batchSize, maxObjects int, pause time.Duration, backend string) {
 	h.streamSteps(w, "backfill-checksums", "hashing", true, func(obs progress.Observer) (stepResult, error) {
 		res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, obs)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}

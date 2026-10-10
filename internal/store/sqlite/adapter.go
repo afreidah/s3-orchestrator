@@ -27,9 +27,25 @@ import (
 // TX ADAPTER
 // -------------------------------------------------------------------------
 
-// sqliteTxAdapter implements core.TxAdapter over a *sql.Tx.
+// sqlQuerier is the statement surface the adapter uses. Both *sql.Tx and
+// the store's breaker-wrapped db satisfy it.
+type sqlQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// sqliteTxAdapter implements core.TxAdapter over a sqlQuerier, which is a
+// *sql.Tx everywhere except direct.
 type sqliteTxAdapter struct {
-	tx *sql.Tx
+	q sqlQuerier
+}
+
+// direct returns an adapter over the store's own db, outside any
+// transaction. Store methods that run one statement delegate to it so each
+// statement has one implementation.
+func (s *Store) direct() *sqliteTxAdapter {
+	return &sqliteTxAdapter{q: s.db}
 }
 
 // AcquireKeyLock is a silent no-op on SQLite. The engine serializes
@@ -49,7 +65,7 @@ func (a *sqliteTxAdapter) AcquireKeyLock(_ context.Context, _ string) error {
 // Postgres gets from SELECT FOR UPDATE.
 func (a *sqliteTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, error) {
 	var probe string
-	err := a.tx.QueryRowContext(ctx,
+	err := a.q.QueryRowContext(ctx,
 		`SELECT intent_id FROM pending_objects WHERE intent_id = ?`, intentID,
 	).Scan(&probe)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -76,7 +92,7 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	if err != nil {
 		return nil, fmt.Errorf("marshal kept intents: %w", err)
 	}
-	rows, err := a.tx.QueryContext(ctx,
+	rows, err := a.q.QueryContext(ctx,
 		`SELECT intent_id, backend_name, storage_key, size_bytes
 		   FROM pending_objects
 		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
@@ -95,7 +111,7 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	if len(cleared) == 0 {
 		return nil, nil
 	}
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM pending_objects
 		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
 		objectKey, string(keepJSON)); err != nil {
@@ -106,7 +122,7 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 
 // DeletePending removes a pending intent.
 func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM pending_objects WHERE intent_id = ?`, intentID,
 	); err != nil {
 		return fmt.Errorf("delete pending object: %w", err)
@@ -121,7 +137,7 @@ func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) er
 // GetExistingCopiesForUpdate returns every copy of a key. SQLite's
 // single-writer model means no row lock is needed inside a write tx.
 func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]core.ExistingCopy, error) {
-	rows, err := a.tx.QueryContext(ctx,
+	rows, err := a.q.QueryContext(ctx,
 		`SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
 		        (encryption_key IS NOT NULL AND length(encryption_key) > 0)
 		 FROM object_locations
@@ -160,7 +176,7 @@ func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []
 	if err != nil {
 		return nil, fmt.Errorf("marshal keys: %w", err)
 	}
-	rows, err := a.tx.QueryContext(ctx, `
+	rows, err := a.q.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes
 		FROM object_locations
 		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
@@ -188,7 +204,7 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 	if err != nil {
 		return fmt.Errorf("marshal keys: %w", err)
 	}
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		DELETE FROM object_locations
 		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
 		return fmt.Errorf("delete objects by keys: %w", err)
@@ -206,7 +222,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 	if !loc.CreatedAt.IsZero() {
 		created = formatTime(loc.CreatedAt)
 	}
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		    key_id, plaintext_size, content_hash,
@@ -230,7 +246,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 
 // DeleteObjectCopies removes every object_locations row for the key.
 func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey string) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM object_locations WHERE object_key = ?`, objectKey,
 	); err != nil {
 		return fmt.Errorf("delete object copies: %w", err)
@@ -242,7 +258,7 @@ func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey stri
 // object_locations.
 func (a *sqliteTxAdapter) CheckObjectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error) {
 	var probe int
-	err := a.tx.QueryRowContext(ctx,
+	err := a.q.QueryRowContext(ctx,
 		`SELECT 1 FROM object_locations WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backend,
 	).Scan(&probe)
@@ -275,7 +291,7 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		probeLevel    sql.NullString
 		createdAt     sql.NullString
 	)
-	err := a.tx.QueryRowContext(ctx,
+	err := a.q.QueryRowContext(ctx,
 		`SELECT storage_key, size_bytes, encrypted, encryption_key,
 		        key_id, plaintext_size, content_hash,
 		        compression_algorithm, compression_level, compression_format_version, logical_size,
@@ -321,7 +337,7 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 // at storageKey, whichever object it belongs to.
 func (a *sqliteTxAdapter) CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error) {
 	var probe int
-	err := a.tx.QueryRowContext(ctx,
+	err := a.q.QueryRowContext(ctx,
 		`SELECT 1 FROM object_locations WHERE backend_name = ? AND storage_key = ?`,
 		backend, storageKey,
 	).Scan(&probe)
@@ -336,7 +352,7 @@ func (a *sqliteTxAdapter) CopyExistsAtPath(ctx context.Context, backend, storage
 
 // DeleteObjectFromBackend removes the single (key, backend) row.
 func (a *sqliteTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM object_locations WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backend,
 	); err != nil {
@@ -348,7 +364,7 @@ func (a *sqliteTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey
 // RecordCompressionProbe stores what the encoder measured for a copy it
 // declined to store compressed.
 func (a *sqliteTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`UPDATE object_locations
 		 SET compression_probe_size = ?, compression_probe_level = ?
 		 WHERE object_key = ? AND backend_name = ?`,
@@ -365,7 +381,7 @@ func (a *sqliteTxAdapter) RecordCompressionProbe(ctx context.Context, probe *cor
 
 // InsertObjectTag adds one tag row for an object.
 func (a *sqliteTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`INSERT INTO object_tags (object_key, tag_key, tag_value) VALUES (?, ?, ?)`,
 		objectKey, tagKey, tagValue,
 	); err != nil {
@@ -376,7 +392,7 @@ func (a *sqliteTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey
 
 // DeleteObjectTags removes every tag row for one object key.
 func (a *sqliteTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM object_tags WHERE object_key = ?`, objectKey,
 	); err != nil {
 		return fmt.Errorf("delete object tags: %w", err)
@@ -396,7 +412,7 @@ func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKey
 	if err != nil {
 		return fmt.Errorf("marshal keys: %w", err)
 	}
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		DELETE FROM object_tags
 		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
 		return fmt.Errorf("delete object tags for keys: %w", err)
@@ -462,7 +478,7 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.
 // judged against backend_capacity, the view every admission test reads.
 func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string, size int64) (bool, error) {
 	var fits bool
-	if err := a.tx.QueryRowContext(ctx, `
+	if err := a.q.QueryRowContext(ctx, `
 		SELECT accepting_writes AND (available_bytes IS NULL OR available_bytes >= ?)
 		FROM backend_capacity
 		WHERE backend_name = ?`, size, backendName).Scan(&fits); err != nil {
@@ -480,7 +496,7 @@ func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string
 func (a *sqliteTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, int64, error) {
 	var totalBytes sql.NullInt64
 	var rowCount int64
-	if err := a.tx.QueryRowContext(ctx,
+	if err := a.q.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*)
 		 FROM cleanup_queue
 		 WHERE storage_key = ? AND backend_name = ?`,
@@ -491,7 +507,7 @@ func (a *sqliteTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, stor
 	if rowCount == 0 {
 		return 0, 0, nil
 	}
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?`,
 		storageKey, backend,
 	); err != nil {
@@ -510,7 +526,7 @@ func (a *sqliteTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (cor
 		createdAt string
 		lastErr   sql.NullString
 	)
-	err := a.tx.QueryRowContext(ctx,
+	err := a.q.QueryRowContext(ctx,
 		`SELECT id, backend_name, object_key, storage_key, reason, size_bytes,
 		        attempts, created_at, last_error
 		 FROM cleanup_queue
@@ -542,7 +558,7 @@ func (a *sqliteTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.Cleanu
 	if row.LastError != "" {
 		lastErr = row.LastError
 	}
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`INSERT INTO cleanup_dlq (
 			original_id, backend_name, object_key, storage_key, reason, size_bytes,
 			attempts, first_enqueued_at, last_error
@@ -559,7 +575,7 @@ func (a *sqliteTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.Cleanu
 // MoveCleanupToDLQ so the queue->DLQ move is atomic with the insert
 // above.
 func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
-	if _, err := a.tx.ExecContext(ctx,
+	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM cleanup_queue WHERE id = ?`, id,
 	); err != nil {
 		return fmt.Errorf("delete cleanup_queue row: %w", err)
@@ -571,7 +587,7 @@ func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error
 // outstanding in either the retry queue or the dead-letter table.
 func (a *sqliteTxAdapter) HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error) {
 	var pending bool
-	err := a.tx.QueryRowContext(ctx, `
+	err := a.q.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?
 			UNION ALL
@@ -592,7 +608,7 @@ func (a *sqliteTxAdapter) HasPendingCleanup(ctx context.Context, storageKey, bac
 // backend's stripes up front. No clamp: a stripe is signed, and the total it
 // contributes to is what gets clamped when read.
 func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
 		VALUES (?, ?, ?)
 		ON CONFLICT (backend_name, stripe_id) DO UPDATE
@@ -607,7 +623,7 @@ func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName str
 // orphan_bytes counter (clamped at zero).
 func (a *sqliteTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error {
 	now := now()
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
 		WHERE backend_name = ?`, delta, now, backendName); err != nil {
@@ -623,7 +639,7 @@ func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]i
 	// Driven from backend_quotas rather than the stripes: a backend that has
 	// never been charged has no stripe rows, and reconciliation has to see it
 	// at zero to correct it rather than skipping it entirely.
-	rows, err := a.tx.QueryContext(ctx, `
+	rows, err := a.q.QueryContext(ctx, `
 		SELECT q.backend_name, COALESCE(MAX(0, s.bytes_used), 0)
 		FROM backend_quotas q
 		LEFT JOIN (
@@ -640,7 +656,7 @@ func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]i
 // SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
 // object_locations ledger, keyed by backend name.
 func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) {
-	rows, err := a.tx.QueryContext(ctx,
+	rows, err := a.q.QueryContext(ctx,
 		`SELECT backend_name, COALESCE(SUM(size_bytes), 0) FROM object_locations GROUP BY backend_name`)
 	if err != nil {
 		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
@@ -653,12 +669,12 @@ func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[stri
 // distribution that produced the old value carries no information once the
 // total has been recomputed from the ledger.
 func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		UPDATE backend_quota_stripes SET bytes_used = 0
 		WHERE backend_name = ? AND stripe_id <> 0`, backendName); err != nil {
 		return fmt.Errorf("clear quota stripes: %w", err)
 	}
-	if _, err := a.tx.ExecContext(ctx, `
+	if _, err := a.q.ExecContext(ctx, `
 		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
 		VALUES (?, 0, ?)
 		ON CONFLICT (backend_name, stripe_id) DO UPDATE
@@ -677,7 +693,7 @@ func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName s
 // base nonce and wrapped key, so leaving the old ones would describe bytes
 // nothing can decrypt.
 func (a *sqliteTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
-	res, err := a.tx.ExecContext(ctx, `
+	res, err := a.q.ExecContext(ctx, `
 		UPDATE object_locations
 		SET compression_algorithm = ?, compression_level = ?,
 		    compression_format_version = ?, logical_size = ?,
@@ -698,7 +714,7 @@ func (a *sqliteTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.Comp
 
 // MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
 func (a *sqliteTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	res, err := a.tx.ExecContext(ctx, `
+	res, err := a.q.ExecContext(ctx, `
 		UPDATE object_locations
 		SET encrypted = 1, encryption_key = ?, key_id = ?,
 		    plaintext_size = ?, size_bytes = ?
@@ -714,7 +730,7 @@ func (a *sqliteTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.Encrypt
 
 // MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
 func (a *sqliteTxAdapter) MarkCopyDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
-	res, err := a.tx.ExecContext(ctx, `
+	res, err := a.q.ExecContext(ctx, `
 		UPDATE object_locations
 		SET encrypted = 0, encryption_key = NULL, key_id = NULL,
 		    plaintext_size = NULL, size_bytes = ?
@@ -748,7 +764,7 @@ func changedIfNoRows(res sql.Result) error {
 // GetCopySizeBytes reads the size a copy currently reports.
 func (a *sqliteTxAdapter) GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error) {
 	var size int64
-	if err := a.tx.QueryRowContext(ctx, `
+	if err := a.q.QueryRowContext(ctx, `
 		SELECT size_bytes FROM object_locations
 		WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backendName,

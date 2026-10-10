@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -34,7 +35,7 @@ func (h *Handler) handleLifecycle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.expiry.Run(r.Context(), nil)
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.LifecycleResponse{Status: statusSkipped, Reason: reason})
 		return
 	}
@@ -56,9 +57,6 @@ func (h *Handler) handleLifecycle(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) streamLifecycle(w http.ResponseWriter, r *http.Request) {
 	h.streamSteps(w, "lifecycle", "expiring", true, func(obs progress.Observer) (stepResult, error) {
 		res, err := h.expiry.Run(r.Context(), obs)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}

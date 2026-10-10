@@ -13,7 +13,6 @@ package admin
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -43,7 +42,7 @@ const (
 // optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
 	backend := r.URL.Query().Get("backend")
-	limit := parseLimit(r.URL.Query().Get("limit"), defaultCleanupDLQLimit, maxCleanupDLQLimit)
+	limit := httputil.QueryLimit(r.URL.Query().Get("limit"), defaultCleanupDLQLimit, maxCleanupDLQLimit)
 
 	depth, err := h.cleanup.CleanupDLQDepth(r.Context())
 	if err != nil {
@@ -98,20 +97,4 @@ func cleanupDLQItems(items []core.CleanupDLQItem) []adminapi.CleanupDLQItem {
 		})
 	}
 	return out
-}
-
-// parseLimit returns a positive page limit from the raw query value, falling
-// back to def when unset or unparseable and clamping to max.
-func parseLimit(raw string, def, maxLimit int) int {
-	if raw == "" {
-		return def
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return def
-	}
-	if n > maxLimit {
-		return maxLimit
-	}
-	return n
 }

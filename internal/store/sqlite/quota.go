@@ -137,22 +137,6 @@ func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, am
 	return nil
 }
 
-// DecrementOrphanBytes subtracts bytes from the orphan_bytes counter for a
-// backend. Called when a cleanup queue item is successfully processed or
-// exhausted. Uses MAX(0, x-y) instead of PostgreSQL GREATEST to prevent
-// underflow.
-func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	now := now()
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
-		WHERE backend_name = ?`, amount, now, backendName)
-	if err != nil {
-		return fmt.Errorf("failed to decrement orphan bytes: %w", err)
-	}
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // USAGE DELTAS
 // -------------------------------------------------------------------------

@@ -14,7 +14,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -299,55 +298,32 @@ func scanCredential(rows *sql.Rows) (core.Credential, error) {
 
 // scanGrant reads one grants row.
 func scanGrant(rows *sql.Rows) (core.Grant, error) {
-	var (
-		g       core.Grant
-		perms   string
-		created string
-	)
-	var kind string
-	if err := rows.Scan(&g.UserID, &kind, &g.Resource.Name, &perms, &created); err != nil {
+	var userID, kind, name, perms, created string
+	if err := rows.Scan(&userID, &kind, &name, &perms, &created); err != nil {
 		return core.Grant{}, fmt.Errorf("scan grant: %w", err)
 	}
-	g.Resource.Kind = core.ParseResourceKind(kind)
-	// A value nothing recognises fails the read rather than resolving to some
-	// set. Falling back to full access would grant what nobody wrote down, and
-	// to none would refuse a caller the operator authorized.
-	var err error
-	if g.Permissions, err = core.ParsePermissions(g.Resource.Kind, perms); err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", g.UserID, g.Resource, err)
-	}
-	if g.CreatedAt, err = parseTime(created); err != nil {
+	createdAt, err := parseTime(created)
+	if err != nil {
 		return core.Grant{}, fmt.Errorf("parse grant created_at: %w", err)
 	}
-	return g, nil
+	return core.GrantFromColumns(userID, kind, name, perms, createdAt)
 }
 
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 
-// marshalCORS renders a bucket's browser rules for storage. A bucket with no
-// rules stores NULL rather than an empty array, so "no CORS configured" is one
-// value in the column rather than two.
+// marshalCORS encodes a bucket's browser rules as text. The cors column is
+// TEXT, and passing the encoded bytes would store a BLOB instead.
 func marshalCORS(rules []config.CORSRule) (sql.NullString, error) {
-	if len(rules) == 0 {
-		return sql.NullString{}, nil
-	}
-	encoded, err := json.Marshal(rules)
+	encoded, err := core.EncodeCORS(rules)
 	if err != nil {
-		return sql.NullString{}, fmt.Errorf("encode bucket cors: %w", err)
+		return sql.NullString{}, err
 	}
-	return sql.NullString{String: string(encoded), Valid: true}, nil
+	return nullableString(string(encoded)), nil
 }
 
-// unmarshalCORS reads a bucket's browser rules back.
+// unmarshalCORS reads a bucket's browser rules back from the text column.
 func unmarshalCORS(s sql.NullString) ([]config.CORSRule, error) {
-	if !s.Valid || s.String == "" {
-		return nil, nil
-	}
-	var rules []config.CORSRule
-	if err := json.Unmarshal([]byte(s.String), &rules); err != nil {
-		return nil, fmt.Errorf("decode bucket cors: %w", err)
-	}
-	return rules, nil
+	return core.DecodeCORS([]byte(nullStringValue(s)))
 }

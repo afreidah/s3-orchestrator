@@ -41,7 +41,7 @@ type fakeStatus struct {
 
 // fakeOp wraps run in an adminActionOp rendering fakeStatus, so the dispatcher
 // tests exercise the generic paths without depending on a real operation.
-func fakeOp(name string, run func(context.Context) (adminActionCounts, string, error)) adminActionOp[fakeStatus] {
+func fakeOp(name string, run func(context.Context) (adminActionCounts, error)) adminActionOp[fakeStatus] {
 	return adminActionOp[fakeStatus]{
 		name: name,
 		run:  run,
@@ -54,8 +54,8 @@ func fakeOp(name string, run func(context.Context) (adminActionCounts, string, e
 // noopOp returns an adminActionOp whose run closure does nothing useful;
 // used to exercise control-flow paths that exit before the goroutine fires.
 func noopOp(name string) adminActionOp[fakeStatus] {
-	return fakeOp(name, func(context.Context) (adminActionCounts, string, error) {
-		return adminActionCounts{}, "", nil
+	return fakeOp(name, func(context.Context) (adminActionCounts, error) {
+		return adminActionCounts{}, nil
 	})
 }
 
@@ -104,8 +104,8 @@ func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, fakeOp("encrypt-existing-test",
-		func(context.Context) (adminActionCounts, string, error) {
-			return adminActionCounts{Count: 7, Failed: 1, Total: 8}, "", nil
+		func(context.Context) (adminActionCounts, error) {
+			return adminActionCounts{Count: 7, Failed: 1, Total: 8}, nil
 		}))
 
 	if w.Code != http.StatusAccepted {
@@ -122,9 +122,9 @@ func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
 	}
 }
 
-// TestStartAdminAction_SkippedReason asserts that a skipped reason
-// returned by the run closure is propagated onto the asyncResult so the
-// status endpoint can render it.
+// TestStartAdminAction_SkippedReason asserts that a skip error returned by
+// the run closure lands on the asyncResult as a reason, not as a failure, so
+// the status endpoint can render it.
 func TestStartAdminAction_SkippedReason(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
@@ -132,13 +132,13 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, fakeOp("scrub-test",
-		func(context.Context) (adminActionCounts, string, error) {
-			return adminActionCounts{}, "integrity verification is not enabled", nil
+		func(context.Context) (adminActionCounts, error) {
+			return adminActionCounts{}, ops.ErrIntegrityDisabled
 		}))
 
 	res := waitForResult(t, h, "scrub-test")
-	if res.Skipped != "integrity verification is not enabled" {
-		t.Errorf("result.Skipped = %q", res.Skipped)
+	if res.Skipped != ops.ErrIntegrityDisabled.Reason || !res.OK || res.Error != "" {
+		t.Errorf("result = %+v, want a successful skip carrying the reason", res)
 	}
 }
 
@@ -151,8 +151,8 @@ func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, fakeOp("replicate-err-test",
-		func(context.Context) (adminActionCounts, string, error) {
-			return adminActionCounts{}, "", errors.New("boom")
+		func(context.Context) (adminActionCounts, error) {
+			return adminActionCounts{}, errors.New("boom")
 		}))
 
 	res := waitForResult(t, h, "replicate-err-test")

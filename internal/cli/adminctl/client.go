@@ -14,7 +14,7 @@ package adminctl
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -141,24 +141,14 @@ func (c *client) renderError(data []byte) {
 	fmt.Fprintf(c.stderr, "error: %s\n", errorMessage(data))
 }
 
-// fetchJSON issues an authenticated request and decodes the JSON body into out.
-// Returns an exitCode; a non-zero exitCode means the helper already reported an
-// error to stderr and the caller should propagate it. Shared by the
-// remove-backend preview and purge flows, which each carry only the
-// response-shape handling unique to them.
-func (c *client) fetchJSON(method, path string, out any) int {
-	resp, err := c.api.Do(context.Background(), method, path, nil, nil)
-	if err != nil {
-		fmt.Fprintf(c.stderr, fmtError, err)
-		return 1
+// reportError renders a failed call: an API error renders its body like any
+// other error response, and anything else prints as a plain error line.
+func (c *client) reportError(err error) {
+	if apiErr, ok := errors.AsType[*adminclient.Error](err); ok {
+		c.renderError([]byte(apiErr.Body))
+		return
 	}
-	defer resp.Body.Close()
-
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		fmt.Fprintf(c.stderr, "error: failed to parse response: %v\n", err)
-		return 1
-	}
-	return 0
+	fmt.Fprintf(c.stderr, fmtError, err)
 }
 
 // errorMessage extracts the "error" field from a JSON error body, falling back

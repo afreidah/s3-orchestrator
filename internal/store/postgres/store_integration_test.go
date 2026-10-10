@@ -1016,7 +1016,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 
 // TestStoreInt_CleanupQueueLifecycle covers EnqueueCleanup,
 // GetPendingCleanups, RetryCleanupItem, CompleteCleanupItem,
-// CleanupQueueDepth, and Increment/DecrementOrphanBytes.
+// CleanupQueueDepth, and IncrementOrphanBytes.
 func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1056,9 +1056,6 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	}
 	if err := s.IncrementOrphanBytes(ctx, "backend-a", 1024); err != nil {
 		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
-	if err := s.DecrementOrphanBytes(ctx, "backend-a", 512); err != nil {
-		t.Fatalf("DecrementOrphanBytes: %v", err)
 	}
 }
 

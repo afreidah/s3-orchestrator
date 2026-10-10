@@ -159,13 +159,5 @@ func (s *Store) CompressionStats(ctx context.Context) (map[string]core.Compressi
 // declined to store compressed, so a later pass can reach the same verdict
 // from the row rather than downloading and encoding the object again.
 func (s *Store) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE object_locations
-		 SET compression_probe_size = ?, compression_probe_level = ?
-		 WHERE object_key = ? AND backend_name = ?`,
-		probe.Size, probe.Level, probe.ObjectKey, probe.BackendName,
-	); err != nil {
-		return fmt.Errorf("record compression probe: %w", err)
-	}
-	return nil
+	return s.direct().RecordCompressionProbe(ctx, probe)
 }

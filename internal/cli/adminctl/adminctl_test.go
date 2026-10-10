@@ -513,6 +513,30 @@ func TestCommand_RemoveBackend_PurgePreviewPrintsCount(t *testing.T) {
 	}
 }
 
+// TestCommand_RemoveBackend_PurgePreviewReportsError verifies a refused preview
+// exits non-zero with the server's error rather than decoding the error body
+// as a preview and printing a backend with zero objects.
+func TestCommand_RemoveBackend_PurgePreviewReportsError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backend not found"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, testCreds, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing printed for a refused preview", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "backend not found") {
+		t.Errorf("stderr = %q, want the server's error", stderr.String())
+	}
+}
+
 // TestCommand_RemoveBackend_PurgeConfirm covers the two-phase confirm flow:
 // preview returns a confirm_token, the second DELETE includes it.
 func TestCommand_RemoveBackend_PurgeConfirm(t *testing.T) {

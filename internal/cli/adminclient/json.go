@@ -3,9 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Generic helpers that issue a request and decode the response into one of the
-// adminapi wire types. Free functions rather than methods because Go does not
-// allow type parameters on methods.
+// Generic methods that issue a request and decode the response into one of the
+// adminapi wire types.
 // -------------------------------------------------------------------------------
 
 package adminclient
@@ -30,6 +29,11 @@ func (c *Client) Post[T any](ctx context.Context, path string, q url.Values, bod
 	return c.do[T](ctx, http.MethodPost, path, q, body)
 }
 
+// Delete issues an authenticated DELETE and decodes the response into T.
+func (c *Client) Delete[T any](ctx context.Context, path string, q url.Values) (*T, error) {
+	return c.do[T](ctx, http.MethodDelete, path, q, nil)
+}
+
 // do issues a request and decodes the response into T. A >=400 status becomes
 // an *Error carrying the status and trimmed body.
 func (c *Client) do[T any](ctx context.Context, method, path string, q url.Values, body io.Reader) (*T, error) {
@@ -40,7 +44,7 @@ func (c *Client) do[T any](ctx context.Context, method, path string, q url.Value
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, readError(resp)
+		return nil, ReadError(resp)
 	}
 
 	var out T

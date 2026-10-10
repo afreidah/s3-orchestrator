@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
@@ -34,12 +35,11 @@ func acceptsStream(r *http.Request) bool {
 
 // stepResult is what a streamed operation reports on completion. Summary is the
 // human-readable result line (empty falls back to "processed N"); Fields carries
-// structured detail for JSON mode; a non-empty Skipped reports a skip.
+// structured detail for JSON mode. A skip comes back as an ops skip error.
 type stepResult struct {
 	Processed int
 	Summary   string
 	Fields    map[string]any
-	Skipped   string
 }
 
 // streamSteps runs a long-running operation as an NDJSON step stream: a start
@@ -68,11 +68,12 @@ func (h *Handler) streamSteps(w http.ResponseWriter, op, verb string, sequential
 	}
 
 	res, err := run(observer)
+	reason, skipped := ops.SkipReason(err)
 	switch {
+	case skipped:
+		emit(adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: reason})
 	case err != nil:
 		emit(adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeFailed, Error: err.Error()})
-	case res.Skipped != "":
-		emit(adminstream.Event{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeSkipped, Message: res.Skipped})
 	default:
 		emit(adminstream.Event{
 			Kind:       adminstream.KindResult,

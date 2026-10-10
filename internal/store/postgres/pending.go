@@ -47,10 +47,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 // successful commit (atomically inside the same transaction as RecordObject)
 // and by the reaper on the HEAD-404 path.
 func (s *Store) DeletePending(ctx context.Context, intentID string) error {
-	if err := s.queries.DeletePendingObject(ctx, intentID); err != nil {
-		return fmt.Errorf("delete pending object: %w", err)
-	}
-	return nil
+	return s.direct().DeletePending(ctx, intentID)
 }
 
 // GetStalePending returns pending intents whose created_at is at or before

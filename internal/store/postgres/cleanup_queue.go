@@ -178,20 +178,6 @@ func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, am
 	return nil
 }
 
-// DecrementOrphanBytes subtracts bytes from the orphan_bytes counter for a
-// backend. Called when a cleanup queue item is successfully processed or
-// exhausted (written off).
-func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	err := s.queries.DecrementOrphanBytes(ctx, db.DecrementOrphanBytesParams{
-		Amount:      amount,
-		BackendName: backendName,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to decrement orphan bytes: %w", err)
-	}
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------

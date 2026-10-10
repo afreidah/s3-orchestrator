@@ -380,20 +380,6 @@ func (mr *MockMetadataStoreMockRecorder) CreateUser(ctx, u any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUser", reflect.TypeOf((*MockMetadataStore)(nil).CreateUser), ctx, u)
 }
 
-// DecrementOrphanBytes mocks base method.
-func (m *MockMetadataStore) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrementOrphanBytes indicates an expected call of DecrementOrphanBytes.
-func (mr *MockMetadataStoreMockRecorder) DecrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementOrphanBytes", reflect.TypeOf((*MockMetadataStore)(nil).DecrementOrphanBytes), ctx, backendName, amount)
-}
-
 // DeleteBackendData mocks base method.
 func (m *MockMetadataStore) DeleteBackendData(ctx context.Context, backendName string) error {
 	m.ctrl.T.Helper()

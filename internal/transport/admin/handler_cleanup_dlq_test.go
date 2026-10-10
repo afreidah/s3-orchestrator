@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Covers the cleanup-dlq list and requeue endpoints (route + typed response
-// shape) plus the pure helpers parseLimit and cleanupDLQItems.
+// shape) plus the pure helper cleanupDLQItems.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -135,28 +135,6 @@ func TestHandleCleanupDLQRequeue_ErrorPath(t *testing.T) {
 	h.handleCleanupDLQRequeue(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/cleanup-dlq/requeue", nil))
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", w.Code)
-	}
-}
-
-// TestParseLimit covers the default, clamp, and parse-failure branches of the
-// limit query parser.
-func TestParseLimit(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		raw                 string
-		def, maxLimit, want int
-	}{
-		{"", 50, 500, 50},      // unset -> default
-		{"abc", 50, 500, 50},   // unparseable -> default
-		{"0", 50, 500, 50},     // non-positive -> default
-		{"-5", 50, 500, 50},    // negative -> default
-		{"25", 50, 500, 25},    // in range
-		{"9000", 50, 500, 500}, // over cap -> clamped
-	}
-	for _, c := range cases {
-		if got := parseLimit(c.raw, c.def, c.maxLimit); got != c.want {
-			t.Errorf("parseLimit(%q) = %d, want %d", c.raw, got, c.want)
-		}
 	}
 }
 

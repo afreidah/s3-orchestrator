@@ -129,7 +129,7 @@ func (c *Client) Stream(ctx context.Context, method, path string, q url.Values, 
 		return nil, err
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		err := readError(resp)
+		err := ReadError(resp)
 		_ = resp.Body.Close()
 		return nil, err
 	}

@@ -968,8 +968,8 @@ func TestGetQuotaStats(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes verifies the orphan bytes contract.
-// Asserts that IncrementOrphanBytes:.
+// TestOrphanBytes verifies IncrementOrphanBytes adds to the backend's
+// orphan_bytes counter. The decrement is covered by the adapter tests.
 func TestOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -982,15 +982,6 @@ func TestOrphanBytes(t *testing.T) {
 	stats, _ := s.GetQuotaStats(ctx)
 	if stats["backend-a"].OrphanBytes != 500 {
 		t.Errorf("orphan_bytes = %d, want 500", stats["backend-a"].OrphanBytes)
-	}
-
-	if err := s.DecrementOrphanBytes(ctx, "backend-a", 300); err != nil {
-		t.Fatalf("DecrementOrphanBytes: %v", err)
-	}
-
-	stats, _ = s.GetQuotaStats(ctx)
-	if stats["backend-a"].OrphanBytes != 200 {
-		t.Errorf("orphan_bytes = %d, want 200", stats["backend-a"].OrphanBytes)
 	}
 }
 

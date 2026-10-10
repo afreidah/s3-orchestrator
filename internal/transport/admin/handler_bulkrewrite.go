@@ -53,9 +53,6 @@ type bulkRewriteEndpoint struct {
 func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint, maxObjects int, backend string) {
 	h.streamSteps(w, ep.op, ep.verb, true, func(obs progress.Observer) (stepResult, error) {
 		res, err := ep.run(r.Context(), obs, maxObjects, backend)
-		if reason, skipped := skipReason(err); skipped {
-			return stepResult{Skipped: reason}, nil
-		}
 		if err != nil {
 			return stepResult{}, err
 		}
@@ -182,20 +179,13 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 // unavailable encryptor or codec is the caller's problem to fix in config; a
 // failed listing is the server's.
 func (h *Handler) writeBulkRewriteError(w http.ResponseWriter, r *http.Request, err error, listErrMsg string) bool {
-	switch {
-	case err == nil:
+	if err == nil {
 		return true
-	case isSkip(err):
-		reason, _ := skipReason(err)
+	}
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
-	default:
+	} else {
 		h.internalError(r.Context(), w, listErrMsg, err)
 	}
 	return false
-}
-
-// isSkip reports whether err is an operation declining to run.
-func isSkip(err error) bool {
-	_, skipped := skipReason(err)
-	return skipped
 }

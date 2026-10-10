@@ -106,7 +106,7 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 // otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
 	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		return fn(ctx, &sqliteTxAdapter{tx: tx})
+		return fn(ctx, &sqliteTxAdapter{q: tx})
 	})
 }
 

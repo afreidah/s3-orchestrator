@@ -13,10 +13,8 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -68,7 +66,8 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 	}
 	out := make([]core.Grant, 0, len(rows))
 	for i := range rows {
-		g, err := grantFromRow(&rows[i])
+		r := &rows[i]
+		g, err := core.GrantFromColumns(r.UserID, r.ResourceKind, r.ResourceName, r.Permissions, r.CreatedAt.Time)
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +82,7 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 
 // CreateBucket inserts a bucket.
 func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := marshalCORS(b.CORS)
+	cors, err := core.EncodeCORS(b.CORS)
 	if err != nil {
 		return err
 	}
@@ -141,7 +140,7 @@ func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 // UpdateBucket writes what a bucket carries. The name identifies it and its
 // objects, so it is the lookup rather than something this can change.
 func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
-	cors, err := marshalCORS(b.CORS)
+	cors, err := core.EncodeCORS(b.CORS)
 	if err != nil {
 		return err
 	}
@@ -225,7 +224,7 @@ func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource)
 
 // bucketFromRow converts a sqlc buckets row into the canonical core.Bucket.
 func bucketFromRow(r *db.Bucket) (core.Bucket, error) {
-	cors, err := unmarshalCORS(r.Cors)
+	cors, err := core.DecodeCORS(r.Cors)
 	if err != nil {
 		return core.Bucket{}, err
 	}
@@ -263,29 +262,6 @@ func credentialFromRow(r *db.Credential) core.Credential {
 	}
 }
 
-// grantFromRow converts a sqlc grants row into the canonical type, compiling
-// the stored permission list into the bit set the request path tests against.
-//
-// A value nothing recognises fails the read rather than resolving to some set.
-// Assembly stops, which is the safe direction: falling back to full access
-// would grant what nobody wrote down, and to none would refuse a caller the
-// operator authorized.
-func grantFromRow(r *db.ListGrantsRow) (core.Grant, error) {
-	resource := core.Resource{Kind: core.ParseResourceKind(r.ResourceKind), Name: r.ResourceName}
-	// The empty stored value means different things on the two planes, so the
-	// resource is what the parse is told.
-	perms, err := core.ParsePermissions(resource.Kind, r.Permissions)
-	if err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", r.UserID, resource, err)
-	}
-	return core.Grant{
-		UserID:      r.UserID,
-		Resource:    resource,
-		Permissions: perms,
-		CreatedAt:   r.CreatedAt.Time,
-	}, nil
-}
-
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
@@ -297,30 +273,4 @@ func nullableString(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// marshalCORS renders a bucket's browser rules for storage. A bucket with no
-// rules stores NULL rather than an empty array, so "no CORS configured" is one
-// value in the column rather than two.
-func marshalCORS(rules []config.CORSRule) ([]byte, error) {
-	if len(rules) == 0 {
-		return nil, nil
-	}
-	encoded, err := json.Marshal(rules)
-	if err != nil {
-		return nil, fmt.Errorf("encode bucket cors: %w", err)
-	}
-	return encoded, nil
-}
-
-// unmarshalCORS reads a bucket's browser rules back.
-func unmarshalCORS(raw []byte) ([]config.CORSRule, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var rules []config.CORSRule
-	if err := json.Unmarshal(raw, &rules); err != nil {
-		return nil, fmt.Errorf("decode bucket cors: %w", err)
-	}
-	return rules, nil
 }

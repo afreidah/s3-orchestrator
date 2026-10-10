@@ -22,3 +22,13 @@ func QueryPositiveInt(v string) int {
 	}
 	return 0
 }
+
+// QueryLimit parses a page limit, falling back to def when the value is absent
+// or not a positive int, and clamping to maxLimit.
+func QueryLimit(v string, def, maxLimit int) int {
+	n := QueryPositiveInt(v)
+	if n == 0 {
+		return def
+	}
+	return min(n, maxLimit)
+}

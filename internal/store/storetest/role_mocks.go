@@ -406,20 +406,6 @@ func (mr *MockCleanupStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockCleanupStore)(nil).CompleteCleanupItem), ctx, id)
 }
 
-// DecrementOrphanBytes mocks base method.
-func (m *MockCleanupStore) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrementOrphanBytes indicates an expected call of DecrementOrphanBytes.
-func (mr *MockCleanupStoreMockRecorder) DecrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementOrphanBytes", reflect.TypeOf((*MockCleanupStore)(nil).DecrementOrphanBytes), ctx, backendName, amount)
-}
-
 // EnqueueCleanup mocks base method.
 func (m *MockCleanupStore) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
 	m.ctrl.T.Helper()

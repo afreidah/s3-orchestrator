@@ -34,7 +34,7 @@ func closedAdapter(t *testing.T, s *Store) *sqliteTxAdapter {
 	if err := tx.Rollback(); err != nil {
 		t.Fatalf("Rollback: %v", err)
 	}
-	return &sqliteTxAdapter{tx: tx}
+	return &sqliteTxAdapter{q: tx}
 }
 
 // -------------------------------------------------------------------------

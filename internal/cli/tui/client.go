@@ -14,11 +14,9 @@ package tui
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -170,8 +168,7 @@ func (c *apiClient) DownloadObject(ctx context.Context, key string) (io.ReadClos
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return nil, 0, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		return nil, 0, adminclient.ReadError(resp)
 	}
 	return resp.Body, resp.ContentLength, nil
 }
@@ -184,45 +181,25 @@ func (c *apiClient) UploadObject(ctx context.Context, key string, body io.Reader
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusBadRequest {
-		payload, _ := io.ReadAll(resp.Body)
-		return &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(payload))}
+		return adminclient.ReadError(resp)
 	}
 	return nil
 }
 
 // DeleteObject removes one object and every copy of it.
 func (c *apiClient) DeleteObject(ctx context.Context, key string) (*adminapi.ObjectDeleteResponse, error) {
-	return c.deleteJSON(ctx, objectPath(key), nil)
+	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, objectPath(key), nil)
 }
 
 // DeletePrefix removes every object under prefix and reports how many it
 // removed.
 func (c *apiClient) DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
-	return c.deleteJSON(ctx, objectsPath, url.Values{"prefix": {prefix}})
+	return c.c.Delete[adminapi.ObjectDeleteResponse](ctx, objectsPath, url.Values{"prefix": {prefix}})
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// deleteJSON issues a DELETE and decodes the JSON summary, which the shared
-// helpers do not cover since they only wrap GET and POST.
-func (c *apiClient) deleteJSON(ctx context.Context, path string, q url.Values) (*adminapi.ObjectDeleteResponse, error) {
-	resp, err := c.c.Do(ctx, http.MethodDelete, path, q, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
-	}
-	var out adminapi.ObjectDeleteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
 
 // objectPath is the per-object endpoint. Keys contain slashes, which the
 // wildcard route accepts verbatim.
@@ -249,20 +226,7 @@ func (c *apiClient) DrainProgress(ctx context.Context, backend string) (*adminap
 
 // CancelDrain aborts an in-flight drain. Copies already migrated stay migrated.
 func (c *apiClient) CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
-	resp, err := c.c.Do(ctx, http.MethodDelete, backendDrainPath(backend), nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
-	}
-	var out adminapi.BackendOperationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return c.c.Delete[adminapi.BackendOperationResponse](ctx, backendDrainPath(backend), nil)
 }
 
 // ReconcileBackend reconciles metadata against one backend's storage rather
@@ -294,8 +258,7 @@ func (c *apiClient) RunOp(ctx context.Context, act *opsAction, req opsRequest) (
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		return nil, adminclient.ReadError(resp)
 	}
 
 	event, err := act.result(resp.Body)

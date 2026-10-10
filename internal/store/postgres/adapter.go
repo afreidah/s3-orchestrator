@@ -33,6 +33,13 @@ type pgTxAdapter struct {
 	q *db.Queries
 }
 
+// direct returns an adapter over the store's own Queries, outside any
+// transaction. Store methods that run one statement delegate to it so each
+// statement has one implementation.
+func (s *Store) direct() *pgTxAdapter {
+	return &pgTxAdapter{q: s.queries}
+}
+
 // AcquireKeyLock takes a transaction-scoped advisory lock keyed by
 // objectKey. Postgres uses pg_advisory_xact_lock(hashtext(...)) under
 // the hood via the sqlc query.
@@ -453,18 +460,6 @@ func (a *pgTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64
 	return totalsByBackend(rows, func(r db.GetAllQuotaStatsRow) (string, int64) {
 		return r.BackendName, r.BytesUsed
 	}), nil
-}
-
-// totalsByBackend folds a per-backend result set into the map its caller
-// returns, so the two callers state only which columns carry the name and the
-// total.
-func totalsByBackend[T any](rows []T, split func(T) (string, int64)) map[string]int64 {
-	out := make(map[string]int64, len(rows))
-	for i := range rows {
-		name, total := split(rows[i])
-		out[name] = total
-	}
-	return out
 }
 
 // SumObjectSizesByBackend returns SUM(size_bytes) per backend from the

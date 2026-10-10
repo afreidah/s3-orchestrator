@@ -17,7 +17,6 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -27,16 +26,6 @@ import (
 // paramMax is the query parameter capping how many objects a bulk pass rewrites
 // in one run, named to match the admin API's own.
 const paramMax = "max"
-
-// skipReason reports the reason an operation declined to run, and whether it
-// declined at all. The dashboard surfaces a skip as a completed action
-// carrying the reason rather than as a failure.
-func skipReason(err error) (string, bool) {
-	if skip, ok := errors.AsType[*ops.SkipError](err); ok {
-		return skip.Reason, true
-	}
-	return "", false
-}
 
 // -------------------------------------------------------------------------
 // SHARED SHAPE
@@ -63,13 +52,15 @@ type adminActionState struct {
 }
 
 // adminActionOp describes one one-shot admin action. R is the response type
-// this action publishes, which exists only to name its success count.
+// this action publishes, which exists only to name its success count. run
+// reports a skip as an ops skip error, which the dashboard shows as a
+// completed action carrying the reason rather than as a failure.
 //
 // render is held on the op rather than passed to the status endpoint so the
 // trigger and the poll cannot disagree about the shape they report.
 type adminActionOp[R any] struct {
 	name   string
-	run    func(context.Context) (adminActionCounts, string, error)
+	run    func(context.Context) (adminActionCounts, error)
 	render func(adminActionState, adminActionCounts) R
 }
 
@@ -90,14 +81,15 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 
 	go func() {
 		ctx := context.Background()
-		counts, skipped, err := op.run(ctx)
+		counts, err := op.run(ctx)
+		reason, skipped := ops.SkipReason(err)
 		switch {
+		case skipped:
+			h.log.InfoContext(ctx, op.name+" skipped", "reason", reason)
+			h.asyncOps.Complete(op.name, &asyncResult{OK: true, Counts: counts, Skipped: reason})
 		case err != nil:
 			h.log.ErrorContext(ctx, op.name+" failed", "error", err)
 			h.asyncOps.Complete(op.name, &asyncResult{Error: op.name + " failed"})
-		case skipped != "":
-			h.log.InfoContext(ctx, op.name+" skipped", "reason", skipped)
-			h.asyncOps.Complete(op.name, &asyncResult{OK: true, Counts: counts, Skipped: skipped})
 		default:
 			h.log.InfoContext(ctx, op.name+" completed", "count", counts.Count)
 			h.asyncOps.Complete(op.name, &asyncResult{OK: true, Counts: counts})
@@ -151,15 +143,12 @@ type replicateStatus struct {
 func (h *Handler) replicateOp() adminActionOp[replicateStatus] {
 	return adminActionOp[replicateStatus]{
 		name: "replicate",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.replication.Replicate(ctx, nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.CopiesCreated, Failed: res.Failed}, "", nil
+			return adminActionCounts{Count: res.CopiesCreated, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) replicateStatus {
 			return replicateStatus{adminActionState: s, CopiesCreated: c.Count, Failed: c.Failed}
@@ -194,15 +183,12 @@ type scrubStatus struct {
 func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
 	return adminActionOp[scrubStatus]{
 		name: "scrub",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.integrity.Scrub(ctx, 0, "", nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Checked, Failed: res.Failed}, "", nil
+			return adminActionCounts{Count: res.Checked, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) scrubStatus {
 			return scrubStatus{adminActionState: s, Checked: c.Count, Failed: c.Failed}
@@ -237,15 +223,12 @@ type backfillStatus struct {
 func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
 	return adminActionOp[backfillStatus]{
 		name: "backfill-checksums",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.integrity.BackfillChecksums(ctx, 0, 0, 0, "", nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Processed}, "", nil
+			return adminActionCounts{Count: res.Processed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) backfillStatus {
 			return backfillStatus{adminActionState: s, Processed: c.Count}
@@ -271,19 +254,16 @@ func (h *Handler) handleAPIBackfillChecksumsStatus(w http.ResponseWriter, _ *htt
 
 // bulkRewriteCounts folds one rewrite pass into the shared counts. All four
 // passes report identically, which is the point of them sharing a driver.
-func bulkRewriteCounts(res ops.BulkRewriteResult, err error) (adminActionCounts, string, error) {
-	if reason, skipped := skipReason(err); skipped {
-		return adminActionCounts{}, reason, nil
-	}
+func bulkRewriteCounts(res ops.BulkRewriteResult, err error) (adminActionCounts, error) {
 	if err != nil {
-		return adminActionCounts{}, "", err
+		return adminActionCounts{}, err
 	}
 	return adminActionCounts{
 		Count:   res.Succeeded,
 		Skipped: res.Skipped,
 		Failed:  res.Failed,
 		Total:   res.Total,
-	}, "", nil
+	}, nil
 }
 
 // encryptExistingStatus reports an encrypt-existing pass.
@@ -300,7 +280,7 @@ type encryptExistingStatus struct {
 func (h *Handler) encryptOp(maxObjects int) adminActionOp[encryptExistingStatus] {
 	return adminActionOp[encryptExistingStatus]{
 		name: "encrypt-existing",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			return bulkRewriteCounts(h.encryption.EncryptExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) encryptExistingStatus {
@@ -342,7 +322,7 @@ type compressExistingStatus struct {
 func (h *Handler) compressOp(maxObjects int) adminActionOp[compressExistingStatus] {
 	return adminActionOp[compressExistingStatus]{
 		name: "compress-existing",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			return bulkRewriteCounts(h.compression.CompressExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) compressExistingStatus {
@@ -379,7 +359,7 @@ type decompressExistingStatus struct {
 func (h *Handler) decompressOp(maxObjects int) adminActionOp[decompressExistingStatus] {
 	return adminActionOp[decompressExistingStatus]{
 		name: "decompress-existing",
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			return bulkRewriteCounts(h.compression.DecompressExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) decompressExistingStatus {
@@ -419,15 +399,12 @@ type lifecycleStatus struct {
 func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
 	return adminActionOp[lifecycleStatus]{
 		name: opLifecycle,
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.expiry.Run(ctx, nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Deleted, Failed: res.Failed}, "", nil
+			return adminActionCounts{Count: res.Deleted, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) lifecycleStatus {
 			return lifecycleStatus{adminActionState: s, Deleted: c.Count, Failed: c.Failed}

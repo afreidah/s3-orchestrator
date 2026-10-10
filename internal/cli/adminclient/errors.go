@@ -73,8 +73,9 @@ func UnavailableReason(err error) string {
 	return "not available on this instance"
 }
 
-// readError drains an error response into an *Error.
-func readError(resp *http.Response) error {
+// ReadError drains an error response into an *Error, for callers that read
+// the raw response rather than going through the typed helpers.
+func ReadError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)
 	return &Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 }
