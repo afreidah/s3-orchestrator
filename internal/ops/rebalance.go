@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -40,11 +41,6 @@ const (
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
-
-// RebalanceResult reports one rebalance cycle.
-type RebalanceResult struct {
-	Moved int
-}
 
 // RebalanceDeps holds the collaborators Rebalance requires.
 type RebalanceDeps struct {
@@ -75,20 +71,21 @@ func NewRebalance(d RebalanceDeps) *Rebalance {
 	}
 }
 
-// Run executes one rebalance cycle. observer, when non-nil, receives a step
-// per move. Reports a skip when the rebalancer plans no moves, so a caller can
-// tell that apart from a cycle that ran and moved nothing.
-func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (RebalanceResult, error) {
+// Run executes one rebalance cycle and reports its tally; Succeeded counts the
+// objects moved. observer, when non-nil, receives a step per move. Reports a
+// skip when the rebalancer plans no moves, so a caller can tell that apart from
+// a cycle that ran and moved nothing.
+func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.Summary, error) {
 	if r.rebalancer == nil {
-		return RebalanceResult{}, ErrRebalancerUnavailable
+		return batch.Summary{}, ErrRebalancerUnavailable
 	}
 
 	sum, err := r.rebalancer.Rebalance(ctx, r.runConfig(), observer)
 	if err != nil {
-		return RebalanceResult{}, err
+		return batch.Summary{}, err
 	}
 	if sum.SkipReason != "" {
-		return RebalanceResult{}, Skip(sum.SkipReason)
+		return batch.Summary{}, Skip(sum.SkipReason)
 	}
 
 	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
@@ -97,7 +94,7 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (Rebala
 
 	event.Publish(event.RebalanceCompleted, "", map[string]any{"moved": sum.Succeeded})
 	r.log.InfoContext(ctx, "rebalance completed", "moved", sum.Succeeded)
-	return RebalanceResult{Moved: sum.Succeeded}, nil
+	return sum.Summary, nil
 }
 
 // runConfig resolves the settings for one manual cycle: whatever the worker

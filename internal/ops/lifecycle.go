@@ -19,15 +19,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
-
-// LifecycleResult reports one expiration sweep. Failed counts the objects a
-// rule selected but could not delete, so a sweep that deleted nothing because
-// everything failed does not read the same as one with nothing to expire.
-type LifecycleResult struct {
-	Deleted int
-	Failed  int
-}
 
 // LifecycleDeps holds the collaborators Lifecycle requires.
 type LifecycleDeps struct {
@@ -50,27 +43,28 @@ func NewLifecycle(d LifecycleDeps) *Lifecycle {
 	}
 }
 
-// Run applies every configured rule once and reports what it removed. It
-// declines when no rules are configured, so an empty config is not mistaken
-// for a sweep that found nothing.
+// Run applies every configured rule once and reports its tally; Succeeded
+// counts the objects deleted and Failed the ones a rule selected but could not
+// delete. It declines when no rules are configured, so an empty config is not
+// mistaken for a sweep that found nothing.
 //
 // It does not take the scheduled tick's advisory lock, so a manual sweep can
 // overlap a scheduled one; applyRule is idempotent, so that is harmless.
-func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (LifecycleResult, error) {
+func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (batch.Summary, error) {
 	if l.expiry == nil {
-		return LifecycleResult{}, ErrLifecycleUnavailable
+		return batch.Summary{}, ErrLifecycleUnavailable
 	}
 	cfg := l.expiry.Config()
 	if cfg == nil || len(cfg.Rules) == 0 {
-		return LifecycleResult{}, Skip("no lifecycle rules are configured")
+		return batch.Summary{}, Skip("no lifecycle rules are configured")
 	}
 
-	deleted, failed := l.expiry.ProcessRules(ctx, cfg.Rules, observer)
+	sum := l.expiry.ProcessRules(ctx, cfg.Rules, observer)
 
 	event.Publish(event.LifecycleCompleted, "", map[string]any{
-		"deleted": deleted,
-		"failed":  failed,
+		"deleted": sum.Succeeded,
+		"failed":  sum.Failed,
 	})
-	l.log.InfoContext(ctx, "expiration completed", "deleted", deleted, "failed", failed)
-	return LifecycleResult{Deleted: deleted, Failed: failed}, nil
+	l.log.InfoContext(ctx, "expiration completed", "deleted", sum.Succeeded, "failed", sum.Failed)
+	return sum, nil
 }

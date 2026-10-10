@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // usageFlushOps is the subset of *usage.Service that usageFlushService needs
@@ -67,5 +68,5 @@ type sharedChannelWatcher interface {
 // needs to read the lifecycle config and process a tick.
 type lifecycleOps interface {
 	Config() *config.LifecycleConfig
-	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) (deleted, failed int)
+	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) batch.Summary
 }

@@ -252,16 +252,16 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 				return nil
 			}
 			// No observer: nothing is watching a scheduled tick.
-			deleted, failed := manager.ProcessRules(ctx, cfg.Rules, nil)
-			if deleted > 0 || failed > 0 {
+			sum := manager.ProcessRules(ctx, cfg.Rules, nil)
+			if sum.Succeeded > 0 || sum.Failed > 0 {
 				log.InfoContext(ctx, "expiration completed",
-					"deleted", deleted, "failed", failed)
+					"deleted", sum.Succeeded, "failed", sum.Failed)
 				event.Publish(event.LifecycleCompleted, "", map[string]any{
-					"deleted": deleted,
-					"failed":  failed,
+					"deleted": sum.Succeeded,
+					"failed":  sum.Failed,
 				})
 			}
-			if failed > 0 {
+			if sum.Failed > 0 {
 				telemetry.LifecycleRunsTotal.WithLabelValues("partial").Inc()
 			} else {
 				telemetry.LifecycleRunsTotal.WithLabelValues("success").Inc()

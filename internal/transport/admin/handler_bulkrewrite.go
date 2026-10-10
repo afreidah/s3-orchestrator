@@ -35,66 +35,36 @@ import (
 // handler serve all four rather than each carrying its own copy of the plumbing.
 type bulkRewritePass func(context.Context, progress.Observer, int, string) (ops.BulkRewriteResult, error)
 
-// bulkRewriteEndpoint is one rewrite direction as the transport sees it: the
-// pass to run, how to word it, and how to render what it reported. body
-// renders the endpoint's own response type, since each names its success
-// count differently on the wire.
-type bulkRewriteEndpoint struct {
-	op         string
-	verb       string
-	listErrMsg string
-	run        bulkRewritePass
-	body       func(ops.BulkRewriteResult) any
-}
-
-// streamBulkRewrite runs one pass as an NDJSON step stream, reporting each
-// object as it is rewritten. Skipped objects are counted apart from failures.
-// The pass runs under the request context, so a disconnecting caller stops it.
-func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint, maxObjects int, backend string) {
-	h.streamSteps(w, ep.op, ep.verb, true, func(obs progress.Observer) (stepResult, error) {
-		res, err := ep.run(r.Context(), obs, maxObjects, backend)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: res.Succeeded,
-			Summary: fmt.Sprintf("rewrote %d, skipped %d, changed %d, failed %d, of %d",
-				res.Succeeded, res.Skipped, res.Changed, res.Failed, res.Total),
-			Fields: map[string]any{
-				"rewritten": res.Succeeded,
-				"skipped":   res.Skipped,
-				"changed":   res.Changed,
-				"failed":    res.Failed,
-				"total":     res.Total,
-			},
-		}, nil
-	})
-}
-
-// handleBulkRewrite serves one rewrite endpoint. Streams per-object NDJSON
-// progress when the client accepts the stream content type; otherwise returns a
-// single JSON result. The optional max parameter caps how many copies are
-// rewritten (0 or absent means all); a repeated capped request resumes where
-// the last stopped, because converted and ratio-declined copies leave the
-// selection. The optional backend parameter limits the pass to one backend.
-func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint) {
+// handleBulkRewrite serves one rewrite endpoint. The optional max parameter
+// caps how many copies are rewritten (0 or absent means all); a repeated capped
+// request resumes where the last stopped, because converted and ratio-declined
+// copies leave the selection. The optional backend parameter limits the pass to
+// one backend. A skip means the encryptor or codec is not configured, which is
+// the caller's to fix, so it is answered as a bad request. body renders the
+// endpoint's own response type, since each names its success count differently
+// on the wire.
+func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, op, verb, listErrMsg string, run bulkRewritePass, body func(ops.BulkRewriteResult) any) {
 	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
 	}
 
-	if acceptsStream(r) {
-		h.streamBulkRewrite(w, r, ep, maxObjects, backend)
-		return
-	}
-
-	res, err := ep.run(r.Context(), nil, maxObjects, backend)
-	if !h.writeBulkRewriteError(w, r, err, ep.listErrMsg) {
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, ep.body(res))
+	h.servePass(w, r, passEndpoint[ops.BulkRewriteResult]{
+		op:          op,
+		verb:        verb,
+		sequential:  true,
+		failMsg:     listErrMsg,
+		skipIsError: true,
+		run: func(ctx context.Context, obs progress.Observer) (ops.BulkRewriteResult, error) {
+			return run(ctx, obs, maxObjects, backend)
+		},
+		body: func(_ adminapi.Outcome, res ops.BulkRewriteResult) any { return body(res) },
+		summary: func(res ops.BulkRewriteResult) (int, string) {
+			return res.Succeeded, fmt.Sprintf("rewrote %d, skipped %d, changed %d, failed %d, of %d",
+				res.Succeeded, res.Skipped, res.Changed, res.Failed, res.Total)
+		},
+	})
 }
 
 // bulkRewriteOutcome is the part of the response that does not vary between the
@@ -110,82 +80,46 @@ func bulkRewriteOutcome(res ops.BulkRewriteResult) adminapi.BulkRewriteOutcome {
 
 // handleCompressExisting encodes every copy currently stored verbatim.
 func (h *Handler) handleCompressExisting(w http.ResponseWriter, r *http.Request) {
-	h.handleBulkRewrite(w, r, bulkRewriteEndpoint{
-		op:         "compress-existing",
-		verb:       "compressing",
-		listErrMsg: "failed to list uncompressed objects",
-		run:        h.compression.CompressExisting,
-		body: func(res ops.BulkRewriteResult) any {
+	h.handleBulkRewrite(w, r, "compress-existing", "compressing", "failed to list uncompressed objects",
+		h.compression.CompressExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.CompressExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Compressed:         res.Succeeded,
 			}
-		},
-	})
+		})
 }
 
 // handleDecompressExisting rewrites every encoded copy back to the bytes the
 // client wrote.
 func (h *Handler) handleDecompressExisting(w http.ResponseWriter, r *http.Request) {
-	h.handleBulkRewrite(w, r, bulkRewriteEndpoint{
-		op:         "decompress-existing",
-		verb:       "decompressing",
-		listErrMsg: "failed to list compressed objects",
-		run:        h.compression.DecompressExisting,
-		body: func(res ops.BulkRewriteResult) any {
+	h.handleBulkRewrite(w, r, "decompress-existing", "decompressing", "failed to list compressed objects",
+		h.compression.DecompressExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.DecompressExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Decompressed:       res.Succeeded,
 			}
-		},
-	})
+		})
 }
 
 // handleEncryptExisting rewrites every plaintext copy as ciphertext.
 func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
-	h.handleBulkRewrite(w, r, bulkRewriteEndpoint{
-		op:         "encrypt-existing",
-		verb:       "encrypting",
-		listErrMsg: "failed to list unencrypted objects",
-		run:        h.encryption.EncryptExisting,
-		body: func(res ops.BulkRewriteResult) any {
+	h.handleBulkRewrite(w, r, "encrypt-existing", "encrypting", "failed to list unencrypted objects",
+		h.encryption.EncryptExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.EncryptExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Encrypted:          res.Succeeded,
 			}
-		},
-	})
+		})
 }
 
 // handleDecryptExisting rewrites every encrypted copy as plaintext. Encryption
 // must still be configured, since the key provider is what unwraps each DEK.
 func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) {
-	h.handleBulkRewrite(w, r, bulkRewriteEndpoint{
-		op:         "decrypt-existing",
-		verb:       "decrypting",
-		listErrMsg: "failed to list encrypted objects",
-		run:        h.encryption.DecryptExisting,
-		body: func(res ops.BulkRewriteResult) any {
+	h.handleBulkRewrite(w, r, "decrypt-existing", "decrypting", "failed to list encrypted objects",
+		h.encryption.DecryptExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.DecryptExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Decrypted:          res.Succeeded,
 			}
-		},
-	})
-}
-
-// writeBulkRewriteError renders whatever went wrong with a bulk rewrite and
-// reports whether the caller should go on to write the success body. An
-// unavailable encryptor or codec is the caller's problem to fix in config; a
-// failed listing is the server's.
-func (h *Handler) writeBulkRewriteError(w http.ResponseWriter, r *http.Request, err error, listErrMsg string) bool {
-	if err == nil {
-		return true
-	}
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
-	} else {
-		h.internalError(r.Context(), w, listErrMsg, err)
-	}
-	return false
+		})
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -48,7 +49,7 @@ func (s *expiryStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules records that the sweep ran, brackets one step per object it
 // claims to have handled, and reports the fixed outcome.
-func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, obs progress.Observer) (int, int) {
+func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	s.called = true
 	for i := range s.deleted {
 		progress.Track(obs, fmt.Sprintf("gone-%d", i), func() string { return progress.StatusOK })
@@ -56,7 +57,7 @@ func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, o
 	for i := range s.failed {
 		progress.Track(obs, fmt.Sprintf("stuck-%d", i), func() string { return progress.StatusFailed })
 	}
-	return s.deleted, s.failed
+	return batch.Summary{Succeeded: s.deleted, Failed: s.failed}
 }
 
 // -------------------------------------------------------------------------

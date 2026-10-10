@@ -194,7 +194,7 @@ func TestBackfillChecksums_HashesEveryRowAcrossPages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
-	if res.Processed != 25 || !res.Done {
+	if res.Succeeded != 25 || !res.Done {
 		t.Errorf("res = %+v, want all 25 processed and the backlog drained", res)
 	}
 	if len(b.keys) != 0 {

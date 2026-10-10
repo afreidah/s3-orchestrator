@@ -10,12 +10,9 @@
 
 package adminapi
 
-// RebalanceResponse is the outcome of one rebalance cycle. Status is "ok" when
-// the pass ran and "skipped" when the rebalancer is not wired; Reason carries
-// the explanation on the skipped path and is absent otherwise, so both
-// outcomes share one shape.
+// RebalanceResponse is the outcome of one rebalance cycle. A cycle is skipped
+// when the rebalancer is not wired.
 type RebalanceResponse struct {
-	Status string `json:"status"`
-	Moved  int    `json:"moved"`
-	Reason string `json:"reason,omitempty"`
+	Outcome
+	Moved int `json:"moved"`
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // fakeStatus stands in for a real action's response type: the shared state
@@ -406,8 +407,8 @@ type uiExpiryStub struct {
 func (s *uiExpiryStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules reports the fixed outcome.
-func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule, progress.Observer) (int, int) {
-	return s.deleted, s.failed
+func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule, progress.Observer) batch.Summary {
+	return batch.Summary{Succeeded: s.deleted, Failed: s.failed}
 }
 
 // TestHandleAPILifecycle_ReportsCountsThroughStatus drives the dashboard's

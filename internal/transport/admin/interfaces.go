@@ -39,8 +39,7 @@ type DashboardReader interface {
 // Reconciler is the slice of *worker.Reconciler the admin handler uses for the
 // on-demand reconciliation endpoint.
 type Reconciler interface {
-	Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error)
-	ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error)
+	Reconcile(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error)
 }
 
 // Compile-time assertions.

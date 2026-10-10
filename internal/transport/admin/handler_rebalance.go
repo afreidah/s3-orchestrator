@@ -15,47 +15,24 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
-// handleRebalance triggers one rebalance cycle. Streams per-move NDJSON
-// progress when the client accepts the stream content type; otherwise returns a
-// single JSON result.
+// handleRebalance triggers one rebalance cycle. A streamed step names the
+// object and the backends it travelled between; moves run concurrently, so
+// each line is emitted on completion rather than bracketed.
 func (h *Handler) handleRebalance(w http.ResponseWriter, r *http.Request) {
-	if acceptsStream(r) {
-		h.streamRebalance(w, r)
-		return
-	}
-
-	res, err := h.rebalance.Run(r.Context(), nil)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.RebalanceResponse{Status: statusSkipped, Reason: reason})
-		return
-	}
-	if err != nil {
-		h.internalError(r.Context(), w, "rebalance failed", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.RebalanceResponse{Status: statusOK, Moved: res.Moved})
-}
-
-// streamRebalance runs a rebalance as an NDJSON step stream, one line per move
-// naming the object and the backends it travelled between. Moves run
-// concurrently, so each line is emitted on completion rather than bracketed.
-func (h *Handler) streamRebalance(w http.ResponseWriter, r *http.Request) {
-	h.streamSteps(w, "rebalance", "moving", false, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.rebalance.Run(r.Context(), obs)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: res.Moved,
-			Summary:   fmt.Sprintf("moved %d objects", res.Moved),
-			Fields:    map[string]any{"moved": res.Moved},
-		}, nil
+	h.servePass(w, r, passEndpoint[batch.Summary]{
+		op:      "rebalance",
+		verb:    "moving",
+		failMsg: "rebalance failed",
+		run:     h.rebalance.Run,
+		body: func(o adminapi.Outcome, res batch.Summary) any {
+			return adminapi.RebalanceResponse{Outcome: o, Moved: res.Succeeded}
+		},
+		summary: func(res batch.Summary) (int, string) {
+			return res.Succeeded, fmt.Sprintf("moved %d objects", res.Succeeded)
+		},
 	})
 }
