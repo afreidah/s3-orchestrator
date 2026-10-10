@@ -441,9 +441,7 @@ func (r *chunkReader) computeChunkSig(body []byte) string {
 		emptyStringSHA256,
 		hex.EncodeToString(chunkHash[:]),
 	}, "\n")
-	mac := hmac.New(sha256.New, r.signingKey)
-	mac.Write([]byte(stringToSign))
-	return hex.EncodeToString(mac.Sum(nil))
+	return hex.EncodeToString(hmacSHA256(r.signingKey, stringToSign))
 }
 
 // -------------------------------------------------------------------------
@@ -747,9 +745,7 @@ func (r *chunkReader) computeTrailerSig(canonical string) string {
 		r.prevSig,
 		hex.EncodeToString(canonicalHash[:]),
 	}, "\n")
-	mac := hmac.New(sha256.New, r.signingKey)
-	mac.Write([]byte(stringToSign))
-	return hex.EncodeToString(mac.Sum(nil))
+	return hex.EncodeToString(hmacSHA256(r.signingKey, stringToSign))
 }
 
 // -------------------------------------------------------------------------

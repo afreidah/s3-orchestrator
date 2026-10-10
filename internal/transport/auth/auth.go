@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -383,7 +385,7 @@ func verifySigV4Signature(canonicalRequest, signature string, key keyMaterial, d
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(key.SecretAccessKey, dateStamp, region, service)
-	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
 		return nil, fmt.Errorf("signature mismatch")
 	}
@@ -701,20 +703,57 @@ func isUnreservedPathByte(b byte) bool {
 	return false
 }
 
-// deriveSigningKey computes the SigV4 signing key from the secret.
+// deriveSigningKey computes the SigV4 signing key from the secret. The four
+// steps share one digest and pad, so a request pays for one SHA-256 state
+// rather than two per step. A known and an unknown access key do the same work.
 func deriveSigningKey(secret, dateStamp, region, service string) []byte {
-	kDate := hmacSHA256([]byte("AWS4"+secret), []byte(dateStamp))
-	kRegion := hmacSHA256(kDate, []byte(region))
-	kService := hmacSHA256(kRegion, []byte(service))
-	kSigning := hmacSHA256(kService, []byte("aws4_request"))
-	return kSigning
+	m := &hmacSHA256State{d: sha256.New()}
+	var key [sha256.Size]byte
+	m.sum(&key, []byte("AWS4"+secret), dateStamp)
+	m.sum(&key, key[:], region)
+	m.sum(&key, key[:], service)
+	m.sum(&key, key[:], "aws4_request")
+	return key[:]
 }
 
 // hmacSHA256 computes HMAC-SHA256.
-func hmacSHA256(key, data []byte) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write(data)
-	return h.Sum(nil)
+func hmacSHA256(key []byte, msg string) []byte {
+	var out [sha256.Size]byte
+	(&hmacSHA256State{d: sha256.New()}).sum(&out, key, msg)
+	return out[:]
+}
+
+// hmacSHA256State is a reusable SHA-256 digest and pad for computing HMACs in
+// sequence. crypto/hmac fixes its key at construction, which a key chain
+// cannot reuse.
+type hmacSHA256State struct {
+	d   hash.Hash
+	pad [sha256.BlockSize]byte
+}
+
+// sum writes HMAC-SHA256(key, msg) into out, following RFC 2104. key may
+// alias out.
+func (m *hmacSHA256State) sum(out *[sha256.Size]byte, key []byte, msg string) {
+	if len(key) > sha256.BlockSize {
+		hashed := sha256.Sum256(key)
+		key = hashed[:]
+	}
+	clear(m.pad[:])
+	copy(m.pad[:], key)
+	for i := range m.pad {
+		m.pad[i] ^= 0x36
+	}
+	m.d.Reset()
+	m.d.Write(m.pad[:])
+	_, _ = io.WriteString(m.d, msg)
+	m.d.Sum(out[:0])
+	for i := range m.pad {
+		m.pad[i] ^= 0x36 ^ 0x5c
+	}
+	m.d.Reset()
+	m.d.Write(m.pad[:])
+	m.d.Write(out[:])
+	m.d.Sum(out[:0])
 }
 
 // hashSHA256 computes a hex-encoded SHA256 hash.
@@ -724,34 +763,35 @@ func hashSHA256(data []byte) string {
 }
 
 // collapseWhitespace replaces runs of whitespace (spaces, tabs, newlines)
-// with a single space, per the SigV4 canonical header value rules.
+// with a single space, per the SigV4 canonical header value rules. A value
+// that needs no rewrite is returned as is. Works on bytes so the value's other
+// bytes reach the canonical request exactly as the client signed them.
 func collapseWhitespace(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	inWS := false
-	for _, r := range s {
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-			if !inWS {
-				b.WriteByte(' ')
-				inWS = true
-			}
-			continue
-		}
-		inWS = false
-		b.WriteRune(r)
+	if !strings.ContainsAny(s, "\t\n\r") && !strings.Contains(s, "  ") {
+		return s
 	}
-	return b.String()
+	b := make([]byte, 0, len(s))
+	for i := range len(s) {
+		switch c := s[i]; c {
+		case ' ', '\t', '\n', '\r':
+			if len(b) == 0 || b[len(b)-1] != ' ' {
+				b = append(b, ' ')
+			}
+		default:
+			b = append(b, c)
+		}
+	}
+	return string(b)
 }
 
-// stripWhitespace removes all whitespace characters from a string.
-// Used for header names which must not contain any whitespace per HTTP spec.
+// stripWhitespace removes all whitespace characters from a string. Used for
+// header names which must not contain any whitespace per HTTP spec.
+// strings.Map returns a name with none unchanged, without allocating.
 func stripWhitespace(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
-			b.WriteRune(r)
+	return strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			return -1
 		}
-	}
-	return b.String()
+		return r
+	}, s)
 }

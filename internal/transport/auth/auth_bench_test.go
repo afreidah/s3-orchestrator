@@ -43,7 +43,7 @@ func benchSignedRequest(accessKey, secret string) *http.Request {
 	credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
 	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	r.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
@@ -146,7 +146,7 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 			credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
 			stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
 			signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-			signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+			signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 			r.Header.Set("Authorization",
 				"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
 					", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
@@ -199,7 +199,7 @@ func benchPresignedRequest(accessKey, secret string) *http.Request {
 	canonicalRequest := buildPresignedCanonicalRequest(r, []string{"host"})
 	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	q.Set("X-Amz-Signature", signature)
 	r.URL.RawQuery = q.Encode()

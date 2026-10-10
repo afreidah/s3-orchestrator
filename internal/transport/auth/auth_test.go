@@ -12,6 +12,8 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -86,24 +88,39 @@ func TestBuildCanonicalQueryString(t *testing.T) {
 	}
 }
 
-// TestDeriveSigningKey verifies the derive signing key contract.
-// Asserts that signing key length = , want 32.
+// referenceHMAC is HMAC-SHA256 from crypto/hmac, the standard the reused-digest
+// implementation is checked against.
+func referenceHMAC(key []byte, msg string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(msg))
+	return h.Sum(nil)
+}
+
+// TestDeriveSigningKey checks the reused-digest chain against the same chain
+// built with crypto/hmac, for secrets that fit the HMAC block and one that
+// must be hashed first.
 func TestDeriveSigningKey(t *testing.T) {
 	t.Parallel()
-	// AWS test vector from SigV4 documentation
-	key := deriveSigningKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20120215", "us-east-1", "iam")
-	if len(key) != 32 {
-		t.Errorf("signing key length = %d, want 32", len(key))
+	for _, secret := range []string{"", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", strings.Repeat("s", 200)} {
+		want := referenceHMAC([]byte("AWS4"+secret), "20120215")
+		for _, step := range []string{"us-east-1", "iam", "aws4_request"} {
+			want = referenceHMAC(want, step)
+		}
+		if got := deriveSigningKey(secret, "20120215", "us-east-1", "iam"); !hmac.Equal(got, want) {
+			t.Errorf("secret of %d bytes: key = %x, want %x", len(secret), got, want)
+		}
 	}
 }
 
-// TestHmacSHA256 verifies the hmac sha256 contract.
-// Asserts that hmacSHA256 result length = , want 32.
+// TestHmacSHA256 checks hmacSHA256 against crypto/hmac for keys shorter than,
+// equal to and longer than the SHA-256 block.
 func TestHmacSHA256(t *testing.T) {
 	t.Parallel()
-	result := hmacSHA256([]byte("key"), []byte("data"))
-	if len(result) != 32 {
-		t.Errorf("hmacSHA256 result length = %d, want 32", len(result))
+	for _, n := range []int{0, 3, sha256.BlockSize, sha256.BlockSize + 1, 300} {
+		key := []byte(strings.Repeat("k", n))
+		if got, want := hmacSHA256(key, "data"), referenceHMAC(key, "data"); !hmac.Equal(got, want) {
+			t.Errorf("key of %d bytes: mac = %x, want %x", n, got, want)
+		}
 	}
 }
 
@@ -172,7 +189,7 @@ func signedRequestFor(tb testing.TB, accessKey, secret string) *http.Request {
 	scope := dateStamp + "/us-east-1/s3/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hashSHA256([]byte(canonical))
 	key := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	sig := hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
+	sig := hex.EncodeToString(hmacSHA256(key, stringToSign))
 	r.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+scope+
 			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
@@ -267,7 +284,7 @@ func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + staleDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	r.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
@@ -299,7 +316,7 @@ func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	r.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
@@ -369,7 +386,7 @@ func signRequest(t *testing.T, method, path, accessKey, secret string) *http.Req
 	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	r.Header.Set("Authorization",
 		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
@@ -592,7 +609,7 @@ func presignRequest(t *testing.T, method, path, accessKey, secret string, expire
 	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 
 	// Now add the signature to the query string
 	q.Set("X-Amz-Signature", signature)
@@ -658,7 +675,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 	canonicalRequest := buildPresignedCanonicalRequest(r, []string{"host"})
 	stringToSign := "AWS4-HMAC-SHA256\n" + dateStamp + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 	signingKey := deriveSigningKey(secret, ds, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 	q.Set("X-Amz-Signature", signature)
 	r.URL.RawQuery = q.Encode()
 
@@ -935,11 +952,23 @@ func TestCollapseWhitespace(t *testing.T) {
 		{"", ""},
 		{"\n", " "},
 		{"\t\t\t", " "},
+		{"bad\xffbyte\tx", "bad\xffbyte x"},
 	}
 	for _, tt := range tests {
 		if got := collapseWhitespace(tt.in); got != tt.want {
 			t.Errorf("collapseWhitespace(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// TestWhitespace_NoRewriteDoesNotAllocate pins the common case: a header
+// name or value that needs no rewrite comes back as is.
+func TestWhitespace_NoRewriteDoesNotAllocate(t *testing.T) {
+	if n := testing.AllocsPerRun(100, func() { _ = collapseWhitespace("text/plain; charset=utf-8") }); n != 0 {
+		t.Errorf("collapseWhitespace allocated %v times on a value needing no rewrite", n)
+	}
+	if n := testing.AllocsPerRun(100, func() { _ = stripWhitespace("x-amz-content-sha256") }); n != 0 {
+		t.Errorf("stripWhitespace allocated %v times on a name needing no rewrite", n)
 	}
 }
 
