@@ -12,6 +12,8 @@
 package core
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -127,4 +129,58 @@ type Grant struct {
 	Resource    Resource
 	Permissions PermissionSet
 	CreatedAt   time.Time
+}
+
+// -------------------------------------------------------------------------
+// COLUMN HELPERS
+// -------------------------------------------------------------------------
+
+// EncodeCORS renders a bucket's browser rules for storage. A bucket with no
+// rules encodes to nil, which both engines store as NULL, so "no CORS
+// configured" is one value in the column rather than two.
+func EncodeCORS(rules []config.CORSRule) ([]byte, error) {
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(rules)
+	if err != nil {
+		return nil, fmt.Errorf("encode bucket cors: %w", err)
+	}
+	return encoded, nil
+}
+
+// DecodeCORS reads a bucket's browser rules back. A column holding something
+// that is not a rule set is an error rather than a bucket with no CORS, which
+// would silently drop a browser policy.
+func DecodeCORS(b []byte) ([]config.CORSRule, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var rules []config.CORSRule
+	if err := json.Unmarshal(b, &rules); err != nil {
+		return nil, fmt.Errorf("decode bucket cors: %w", err)
+	}
+	return rules, nil
+}
+
+// GrantFromColumns builds a grant from its stored columns, compiling the
+// permission list into the bit set the request path tests against.
+//
+// A value nothing recognises fails the read rather than resolving to some set.
+// Falling back to full access would grant what nobody wrote down, and falling
+// back to none would refuse a caller the operator authorized.
+func GrantFromColumns(userID, kind, name, perms string, createdAt time.Time) (Grant, error) {
+	resource := Resource{Kind: ParseResourceKind(kind), Name: name}
+	// The empty stored value means different things on the two planes, so the
+	// resource kind is passed to the parse.
+	permissions, err := ParsePermissions(resource.Kind, perms)
+	if err != nil {
+		return Grant{}, fmt.Errorf("grant %s -> %s: %w", userID, resource, err)
+	}
+	return Grant{
+		UserID:      userID,
+		Resource:    resource,
+		Permissions: permissions,
+		CreatedAt:   createdAt,
+	}, nil
 }

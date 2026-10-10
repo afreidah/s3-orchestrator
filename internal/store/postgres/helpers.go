@@ -82,6 +82,18 @@ func mapSlice[I, O any](in []I, fn func(*I) O) []O {
 	return out
 }
 
+// totalsByBackend folds a per-backend result set into the map its caller
+// returns, so each caller states only which columns carry the name and the
+// total.
+func totalsByBackend[T any](rows []T, split func(T) (string, int64)) map[string]int64 {
+	out := make(map[string]int64, len(rows))
+	for i := range rows {
+		name, total := split(rows[i])
+		out[name] = total
+	}
+	return out
+}
+
 // existingCopiesFromRows maps sqlc GetExistingCopiesForUpdate rows onto
 // core.ExistingCopy values.
 func existingCopiesFromRows(rows []db.GetExistingCopiesForUpdateRow) []core.ExistingCopy {

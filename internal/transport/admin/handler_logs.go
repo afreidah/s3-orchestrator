@@ -41,7 +41,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	opts := telemetry.LogQueryOpts{
 		MinLevel: telemetry.ParseLevel(r.URL.Query().Get("level")),
-		Limit:    parseLimit(r.URL.Query().Get("limit"), defaultLogLimit, maxLogLimit),
+		Limit:    httputil.QueryLimit(r.URL.Query().Get("limit"), defaultLogLimit, maxLogLimit),
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.LogsResponse{
 		Entries: logEntries(h.logs.Entries(&opts)),

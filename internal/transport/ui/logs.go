@@ -16,7 +16,6 @@ package ui
 import (
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -62,7 +61,7 @@ func buildLogQueryOpts(q url.Values) (telemetry.LogQueryOpts, int) {
 		Before:    parseLogTimestamp(q.Get("before")),
 		Component: q.Get("component")}
 
-	requestedLimit := parseLogLimit(q.Get("limit"))
+	requestedLimit := httputil.QueryPositiveInt(q.Get("limit"))
 	if requestedLimit > 0 {
 		opts.Limit = requestedLimit + 1
 	}
@@ -81,17 +80,4 @@ func parseLogTimestamp(s string) time.Time {
 		return time.Time{}
 	}
 	return t
-}
-
-// parseLogLimit parses the requested page size. Non-positive or
-// unparseable values disable client-side limiting (return 0).
-func parseLogLimit(s string) int {
-	if s == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return n
 }

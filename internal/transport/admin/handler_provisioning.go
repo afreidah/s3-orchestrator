@@ -386,21 +386,15 @@ func wireGrants(u *provisioning.User) []adminapi.Grant {
 	return out
 }
 
-// wireCORS converts a bucket's rules onto the wire.
+// wireCORS converts a bucket's rules onto the wire. The two rule types differ
+// only in tags, so a field added to one and not the other fails to compile.
 func wireCORS(rules []config.CORSRule) []adminapi.CORSRule {
 	if len(rules) == 0 {
 		return nil
 	}
-	out := make([]adminapi.CORSRule, 0, len(rules))
+	out := make([]adminapi.CORSRule, len(rules))
 	for i := range rules {
-		r := &rules[i]
-		out = append(out, adminapi.CORSRule{
-			AllowedOrigins: r.AllowedOrigins,
-			AllowedMethods: r.AllowedMethods,
-			AllowedHeaders: r.AllowedHeaders,
-			ExposeHeaders:  r.ExposeHeaders,
-			MaxAge:         r.MaxAge,
-		})
+		out[i] = adminapi.CORSRule(rules[i])
 	}
 	return out
 }
@@ -410,16 +404,9 @@ func configCORS(rules []adminapi.CORSRule) []config.CORSRule {
 	if len(rules) == 0 {
 		return nil
 	}
-	out := make([]config.CORSRule, 0, len(rules))
+	out := make([]config.CORSRule, len(rules))
 	for i := range rules {
-		r := &rules[i]
-		out = append(out, config.CORSRule{
-			AllowedOrigins: r.AllowedOrigins,
-			AllowedMethods: r.AllowedMethods,
-			AllowedHeaders: r.AllowedHeaders,
-			ExposeHeaders:  r.ExposeHeaders,
-			MaxAge:         r.MaxAge,
-		})
+		out[i] = config.CORSRule(rules[i])
 	}
 	return out
 }

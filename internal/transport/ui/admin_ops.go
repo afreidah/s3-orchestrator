@@ -45,15 +45,12 @@ type rebalanceStatus struct {
 func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
 	return adminActionOp[rebalanceStatus]{
 		name: opRebalance,
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.rebalance.Run(ctx, nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Moved}, "", nil
+			return adminActionCounts{Count: res.Moved}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) rebalanceStatus {
 			return rebalanceStatus{adminActionState: s, Moved: c.Count}
@@ -90,15 +87,12 @@ type cleanExcessStatus struct {
 func (h *Handler) cleanExcessOp() adminActionOp[cleanExcessStatus] {
 	return adminActionOp[cleanExcessStatus]{
 		name: opCleanExcess,
-		run: func(ctx context.Context) (adminActionCounts, string, error) {
+		run: func(ctx context.Context) (adminActionCounts, error) {
 			res, err := h.replication.CleanExcess(ctx, 0, nil)
-			if reason, skipped := skipReason(err); skipped {
-				return adminActionCounts{}, reason, nil
-			}
 			if err != nil {
-				return adminActionCounts{}, "", err
+				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.CopiesRemoved, Failed: res.Failed}, "", nil
+			return adminActionCounts{Count: res.CopiesRemoved, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) cleanExcessStatus {
 			return cleanExcessStatus{adminActionState: s, Removed: c.Count, Failed: c.Failed}

@@ -227,12 +227,6 @@ func (m *mockMetadataStore) RetryCleanupItem(_ context.Context, _ int64, _ time.
 	return nil
 }
 
-// DecrementOrphanBytes is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) error {
-	return nil
-}
-
 // CleanupQueueDepth is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) CleanupQueueDepth(_ context.Context) (int64, error) {

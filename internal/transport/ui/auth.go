@@ -16,15 +16,11 @@
 package ui
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -91,14 +87,7 @@ func (h *Handler) validCSRFToken(r *http.Request) bool {
 // The session names the user and the access key that proved it, so each later
 // request can check the key still belongs to that user.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID, accessKey string) {
-	expiry := time.Now().Add(sessionTTL).Unix()
-	payload := fmt.Sprintf("%s|%s|%d", userID, accessKey, expiry)
-
-	mac := hmac.New(sha256.New, h.sessionKey)
-	mac.Write([]byte(payload))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	value := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+	value := httputil.SignToken(h.sessionKey, userID+"|"+accessKey, time.Now().Add(sessionTTL))
 	// Secure is not forced on: browsers drop a Secure cookie set over plain
 	// HTTP, which would break login. forceSecure opts in; otherwise
 	// IsTLSRequest infers TLS, trusting X-Forwarded-Proto only from trusted
@@ -168,38 +157,11 @@ func (h *Handler) sessionClaims(r *http.Request) (userID, accessKey string, ok b
 	if err != nil {
 		return "", "", false
 	}
-
-	parts := strings.SplitN(cookie.Value, ".", 2)
-	if len(parts) != 2 {
+	payload, ok := httputil.VerifyToken(h.sessionKey, cookie.Value, time.Now())
+	if !ok {
 		return "", "", false
 	}
-
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return "", "", false
-	}
-	payload := string(payloadBytes)
-
-	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", "", false
-	}
-
-	mac := hmac.New(sha256.New, h.sessionKey)
-	mac.Write([]byte(payload))
-	if !hmac.Equal(mac.Sum(nil), sig) {
-		return "", "", false
-	}
-
-	rest, rawExpiry, found := strings.CutLast(payload, "|")
-	if !found {
-		return "", "", false
-	}
-	expiry, err := strconv.ParseInt(rawExpiry, 10, 64)
-	if err != nil || time.Now().Unix() >= expiry {
-		return "", "", false
-	}
-	userID, accessKey, found = strings.CutLast(rest, "|")
+	userID, accessKey, found := strings.CutLast(payload, "|")
 	if !found || userID == "" || accessKey == "" {
 		return "", "", false
 	}

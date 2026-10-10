@@ -48,7 +48,7 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 	if params.KeyID != "" {
 		keyID = params.KeyID
 	}
-	res, err := s.db.ExecContext(ctx,
+	return s.execChanged(ctx, "failed to create multipart upload",
 		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity
@@ -56,14 +56,6 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID,
 		core.EncodeTags(params.Tags), now, params.BackendName,
 	)
-	if err != nil {
-		return false, fmt.Errorf("failed to create multipart upload: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("failed to create multipart upload: %w", err)
-	}
-	return n > 0, nil
 }
 
 // GetMultipartUpload retrieves metadata for a multipart upload.

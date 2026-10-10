@@ -148,20 +148,6 @@ func (mr *MockCoordinatorStoresMockRecorder) CreateMultipartUpload(ctx, params a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMultipartUpload", reflect.TypeOf((*MockCoordinatorStores)(nil).CreateMultipartUpload), ctx, params)
 }
 
-// DecrementOrphanBytes mocks base method.
-func (m *MockCoordinatorStores) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrementOrphanBytes indicates an expected call of DecrementOrphanBytes.
-func (mr *MockCoordinatorStoresMockRecorder) DecrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementOrphanBytes", reflect.TypeOf((*MockCoordinatorStores)(nil).DecrementOrphanBytes), ctx, backendName, amount)
-}
-
 // DeleteObject mocks base method.
 func (m *MockCoordinatorStores) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()

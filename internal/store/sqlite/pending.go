@@ -41,7 +41,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 	if p.Encrypted {
 		encrypted = 1
 	}
-	res, err := s.db.ExecContext(ctx,
+	return s.execChanged(ctx, "insert pending object",
 		// created_at is set here rather than left to the column default: the
 		// default renders milliseconds while every other write renders
 		// nanoseconds, and the reaper's min-age check compares the two as text.
@@ -64,24 +64,11 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		now(), string(p.RoleOrDefault()),
 		p.BackendName, p.SizeBytes,
 	)
-	if err != nil {
-		return false, fmt.Errorf("insert pending object: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("check pending insert: %w", err)
-	}
-	return n > 0, nil
 }
 
 // DeletePending removes a pending intent.
 func (s *Store) DeletePending(ctx context.Context, intentID string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE intent_id = ?`, intentID,
-	); err != nil {
-		return fmt.Errorf("delete pending object: %w", err)
-	}
-	return nil
+	return s.direct().DeletePending(ctx, intentID)
 }
 
 // GetStalePending returns pending intents at or older than olderThan,

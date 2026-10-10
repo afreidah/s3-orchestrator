@@ -76,22 +76,12 @@ func stubOrphanIncrement(c *orphanCalls, err error) func(context.Context, string
 	}
 }
 
-// stubOrphanDecrement captures DecrementOrphanBytes args.
-func stubOrphanDecrement(c *orphanCalls) func(context.Context, string, int64) error {
-	return func(_ context.Context, backend string, size int64) error {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.decrement = append(c.decrement, orphanBytesEntry{backendName: backend, sizeBytes: size})
-		return nil
-	}
-}
-
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
 // TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes asserts the
-// success path calls DecrementOrphanBytes with the row's size.
+// success path credits the row's size back to orphan_bytes.
 func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -103,8 +93,6 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	stubCleanupQueue(t, store, c, []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 4},
 	}, nil)
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -115,10 +103,10 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
 	if len(c.decrement) != 1 {
-		t.Fatalf("expected 1 DecrementOrphanBytes call, got %d", len(c.decrement))
+		t.Fatalf("expected 1 orphan-bytes decrement, got %d", len(c.decrement))
 	}
 	if c.decrement[0].backendName != "b1" || c.decrement[0].sizeBytes != 4 {
-		t.Errorf("unexpected DecrementOrphanBytes call: %+v", c.decrement[0])
+		t.Errorf("unexpected orphan-bytes decrement: %+v", c.decrement[0])
 	}
 }
 
@@ -135,8 +123,6 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	stubCleanupQueue(t, store, c, []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 0},
 	}, nil)
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -147,7 +133,7 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 		t.Fatalf("expected processed=1, got %d", processed)
 	}
 	if len(c.decrement) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls for zero-size item, got %d", len(c.decrement))
+		t.Errorf("expected 0 orphan-bytes decrements for zero-size item, got %d", len(c.decrement))
 	}
 }
 
@@ -164,8 +150,6 @@ func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 	stubCleanupQueue(t, store, c, []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9, SizeBytes: 8192},
 	}, nil)
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -176,7 +160,7 @@ func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
 	if len(c.decrement) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls for exhausted item, got %d", len(c.decrement))
+		t.Errorf("expected 0 orphan-bytes decrements for exhausted item, got %d", len(c.decrement))
 	}
 	if len(c.complete) != 0 {
 		t.Errorf("expected 0 CompleteCleanupItem calls, got %d", len(c.complete))
@@ -207,8 +191,6 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 	}, nil)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -222,7 +204,7 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 		t.Errorf("expected 0 IncrementOrphanBytes calls on retry, got %d", len(c.increment))
 	}
 	if len(c.decrement) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls on retry, got %d", len(c.decrement))
+		t.Errorf("expected 0 orphan-bytes decrements on retry, got %d", len(c.decrement))
 	}
 }
 
@@ -308,8 +290,6 @@ func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 	stubCleanupQueue(t, store, c, []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "test", Attempts: 9, SizeBytes: 512},
 	}, errors.New("db error"))
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
 	cw, _ := newCleanupFor(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -715,8 +695,6 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
-	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
 			items := pending
@@ -779,7 +757,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		t.Fatalf("step 2: expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
 	if len(c.decrement) != 1 {
-		t.Fatalf("step 2: expected 1 DecrementOrphanBytes, got %d", len(c.decrement))
+		t.Fatalf("step 2: expected 1 orphan-bytes decrement, got %d", len(c.decrement))
 	}
 	if c.decrement[0].sizeBytes != 1024 {
 		t.Errorf("step 2: expected 1024 bytes decremented, got %d", c.decrement[0].sizeBytes)

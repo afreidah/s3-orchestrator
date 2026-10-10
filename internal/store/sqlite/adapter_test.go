@@ -26,8 +26,7 @@ import (
 // -------------------------------------------------------------------------
 
 // withAdapter opens a transaction on s, hands the wrapping adapter to fn,
-// and rolls back when fn returns. Tests that need a committed effect can
-// call adapter.tx.Commit() before returning.
+// and rolls back when fn returns.
 func withAdapter(t *testing.T, s *Store, fn func(*sqliteTxAdapter)) {
 	t.Helper()
 	ctx := context.Background()
@@ -36,7 +35,7 @@ func withAdapter(t *testing.T, s *Store, fn func(*sqliteTxAdapter)) {
 		t.Fatalf("BeginTx: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	fn(&sqliteTxAdapter{tx: tx})
+	fn(&sqliteTxAdapter{q: tx})
 }
 
 // -------------------------------------------------------------------------
@@ -91,7 +90,7 @@ func seedPendingIntent(t *testing.T, s *Store, intentID, key, backendName string
 func countPendingForKey(t *testing.T, a *sqliteTxAdapter, key string) int {
 	t.Helper()
 	var n int
-	if err := a.tx.QueryRowContext(context.Background(),
+	if err := a.q.QueryRowContext(context.Background(),
 		`SELECT COUNT(*) FROM pending_objects WHERE object_key = ?`, key).Scan(&n); err != nil {
 		t.Fatalf("count pending for %s: %v", key, err)
 	}
@@ -285,7 +284,7 @@ func TestAdapter_InsertObjectLocation_PreservesEncryptionFields(t *testing.T) {
 		var encKey []byte
 		var keyID, hash string
 		var plaintext int64
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT encrypted, encryption_key, key_id, plaintext_size, content_hash
 			 FROM object_locations WHERE object_key = ? AND backend_name = ?`, "k", "backend-a",
 		).Scan(&enc, &encKey, &keyID, &plaintext, &hash); err != nil {
@@ -602,7 +601,7 @@ func TestAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals(t *testing
 		}
 		// Confirm the rows are gone.
 		var n int64
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM cleanup_queue WHERE object_key = ? AND backend_name = ?`,
 			"bucket/k", "backend-a",
 		).Scan(&n); err != nil {
@@ -751,7 +750,7 @@ func TestAdapter_InsertCleanupDLQ_PersistsRow(t *testing.T) {
 			attempts  int32
 			lastError string
 		)
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT original_id, backend_name, object_key, reason, size_bytes, attempts, COALESCE(last_error, '')
 			 FROM cleanup_dlq WHERE original_id = ?`, row.ID,
 		).Scan(&origID, &backend, &key, &reason, &size, &attempts, &lastError); err != nil {
@@ -780,7 +779,7 @@ func TestAdapter_InsertCleanupDLQ_DefaultsFirstEnqueuedAtWhenZero(t *testing.T) 
 			t.Fatalf("InsertCleanupDLQ: %v", err)
 		}
 		var firstEnqueued string
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT first_enqueued_at FROM cleanup_dlq WHERE original_id = ?`, row.ID,
 		).Scan(&firstEnqueued); err != nil {
 			t.Fatalf("probe: %v", err)
@@ -810,7 +809,7 @@ func TestAdapter_DeleteCleanupItem_RemovesRow(t *testing.T) {
 			t.Fatalf("DeleteCleanupItem: %v", err)
 		}
 		var n int64
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM cleanup_queue`,
 		).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
@@ -830,7 +829,7 @@ func TestAdapter_DeleteCleanupItem_RemovesRow(t *testing.T) {
 func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16) int64 {
 	t.Helper()
 	var used int64
-	if err := a.tx.QueryRowContext(context.Background(),
+	if err := a.q.QueryRowContext(context.Background(),
 		`SELECT COALESCE(SUM(bytes_used), 0) FROM backend_quota_stripes
 		 WHERE backend_name = ? AND stripe_id = ?`, backend, stripe,
 	).Scan(&used); err != nil {
@@ -1009,7 +1008,7 @@ func TestAdapter_DecrementOrphanBytes_SubtractsAndClamps(t *testing.T) {
 			t.Fatalf("DecrementOrphanBytes: %v", err)
 		}
 		var orphans int64
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
 		).Scan(&orphans); err != nil {
 			t.Fatalf("query: %v", err)
@@ -1021,7 +1020,7 @@ func TestAdapter_DecrementOrphanBytes_SubtractsAndClamps(t *testing.T) {
 		if err := a.DecrementOrphanBytes(ctx, "backend-a", 9999); err != nil {
 			t.Fatalf("DecrementOrphanBytes(over): %v", err)
 		}
-		if err := a.tx.QueryRowContext(ctx,
+		if err := a.q.QueryRowContext(ctx,
 			`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
 		).Scan(&orphans); err != nil {
 			t.Fatalf("query: %v", err)

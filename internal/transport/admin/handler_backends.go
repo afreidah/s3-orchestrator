@@ -13,14 +13,9 @@
 package admin
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -178,45 +173,15 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 	})
 }
 
-// generateRemoveToken creates an HMAC-signed token encoding the backend name
-// and expiry. Uses the admin token as the HMAC key.
+// generateRemoveToken signs a purge confirmation for one backend under the
+// handler's per-process confirm key.
 func (h *Handler) generateRemoveToken(name string) string {
-	expiry := time.Now().Add(removeConfirmTTL).Unix()
-	payload := fmt.Sprintf("purge|%s|%d", name, expiry)
-	mac := hmac.New(sha256.New, h.confirmKey)
-	mac.Write([]byte(payload))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+	return httputil.SignToken(h.confirmKey, "purge|"+name, time.Now().Add(removeConfirmTTL))
 }
 
-// validRemoveToken verifies a purge confirmation token.
+// validRemoveToken verifies a purge confirmation token was issued for
+// expectedName and has not expired.
 func (h *Handler) validRemoveToken(token, expectedName string) bool {
-	parts := strings.SplitN(token, ".", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return false
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return false
-	}
-
-	mac := hmac.New(sha256.New, h.confirmKey)
-	mac.Write(payloadBytes)
-	if !hmac.Equal(mac.Sum(nil), sig) {
-		return false
-	}
-
-	fields := strings.SplitN(string(payloadBytes), "|", 3)
-	if len(fields) != 3 || fields[0] != "purge" || fields[1] != expectedName {
-		return false
-	}
-	expiry, err := strconv.ParseInt(fields[2], 10, 64)
-	if err != nil {
-		return false
-	}
-	return time.Now().Unix() < expiry
+	payload, ok := httputil.VerifyToken(h.confirmKey, token, time.Now())
+	return ok && payload == "purge|"+expectedName
 }

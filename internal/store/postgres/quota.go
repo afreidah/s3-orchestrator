@@ -95,12 +95,9 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query object counts: %w", err)
 	}
-
-	counts := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		counts[row.BackendName] = row.ObjectCount
-	}
-	return counts, nil
+	return totalsByBackend(rows, func(r db.GetObjectCountsByBackendRow) (string, int64) {
+		return r.BackendName, r.ObjectCount
+	}), nil
 }
 
 // GetUnverifiedObjectCounts returns the number of objects per backend whose
@@ -112,11 +109,9 @@ func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64
 	if err != nil {
 		return nil, fmt.Errorf("failed to query unverified object counts: %w", err)
 	}
-	counts := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		counts[row.BackendName] = row.ObjectCount
-	}
-	return counts, nil
+	return totalsByBackend(rows, func(r db.GetUnverifiedObjectCountsByBackendRow) (string, int64) {
+		return r.BackendName, r.ObjectCount
+	}), nil
 }
 
 // GetActiveMultipartCounts returns the number of in-progress multipart uploads
@@ -126,10 +121,7 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 	if err != nil {
 		return nil, fmt.Errorf("failed to query multipart counts: %w", err)
 	}
-
-	counts := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		counts[row.BackendName] = row.UploadCount
-	}
-	return counts, nil
+	return totalsByBackend(rows, func(r db.GetActiveMultipartCountsByBackendRow) (string, int64) {
+		return r.BackendName, r.UploadCount
+	}), nil
 }

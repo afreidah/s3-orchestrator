@@ -18,7 +18,6 @@ package admin
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -186,17 +185,6 @@ const (
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// skipReason reports the reason an operation declined to run, and whether it
-// declined at all. An operation that skips is answering the caller, not
-// failing, so every handler renders it as a successful response carrying the
-// reason rather than as a server error.
-func skipReason(err error) (string, bool) {
-	if skip, ok := errors.AsType[*ops.SkipError](err); ok {
-		return skip.Reason, true
-	}
-	return "", false
-}
 
 // internalError logs err with any extra attrs and writes msg as a 500 JSON
 // response, so the underlying error never reaches the caller.

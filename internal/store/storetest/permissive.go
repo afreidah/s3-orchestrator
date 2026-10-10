@@ -45,7 +45,6 @@ func Permissive(m *MockMetadataStore) {
 	r.CountActiveMultipartUploads(a, a).Return(int64(0), nil).AnyTimes()
 	r.CountOverReplicatedObjects(a, a).Return(int64(0), nil).AnyTimes()
 	r.CreateMultipartUpload(a, a).Return(true, nil).AnyTimes()
-	r.DecrementOrphanBytes(a, a, a).Return(nil).AnyTimes()
 	r.DeleteBackendData(a, a).Return(nil).AnyTimes()
 	r.DeleteMultipartUpload(a, a).Return(nil).AnyTimes()
 	r.DeleteObject(a, a).Return(nil, nil, nil).AnyTimes()

@@ -34,11 +34,7 @@ import (
 func (c *client) stream(method, path, body string) int {
 	events, err := c.api.Stream(context.Background(), method, path, nil, bodyReader(body))
 	if err != nil {
-		if apiErr, ok := errors.AsType[*adminclient.Error](err); ok {
-			c.renderError([]byte(apiErr.Body))
-		} else {
-			fmt.Fprintf(c.stderr, fmtError, err)
-		}
+		c.reportError(err)
 		return 1
 	}
 	defer events.Close()

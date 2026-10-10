@@ -135,7 +135,6 @@ type CleanupStore interface {
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
-	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error)
 
 	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)

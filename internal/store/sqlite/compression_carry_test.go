@@ -588,7 +588,7 @@ func TestTxAdapterRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
 		}
 		// Dropped inside the transaction, so the adapter's UPDATE fails and the
 		// rollback puts the table back for anything else sharing this store.
-		if _, err := adapter.tx.ExecContext(ctx, `DROP TABLE object_locations`); err != nil {
+		if _, err := adapter.q.ExecContext(ctx, `DROP TABLE object_locations`); err != nil {
 			t.Fatalf("drop object_locations: %v", err)
 		}
 		return adapter.RecordCompressionProbe(ctx, &core.CompressionProbe{

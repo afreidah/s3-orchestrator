@@ -21,21 +21,13 @@ import (
 // StartDrain records a drain for the backend, or restarts a failed one. Reports
 // false when the backend is already draining or drained.
 func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
+	return s.execChanged(ctx, "start drain", `
 		INSERT INTO backend_drains (backend_name, state, started_at)
 		VALUES (?, 'draining', ?)
 		ON CONFLICT (backend_name) DO UPDATE
 		SET state = 'draining', objects_moved = 0, last_error = NULL,
 		    started_at = excluded.started_at, finished_at = NULL
 		WHERE backend_drains.state = 'failed'`, backendName, now())
-	if err != nil {
-		return false, fmt.Errorf("start drain: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("start drain: %w", err)
-	}
-	return n > 0, nil
 }
 
 // ListDrains returns every drain record, whatever its state.
@@ -98,7 +90,7 @@ func (s *Store) MarkDrainFailed(ctx context.Context, backendName, reason string)
 // not counted: a drain leaves them, and removing the backend deletes them.
 // Reports false when something remains, which leaves the drain in progress.
 func (s *Store) CompleteDrain(ctx context.Context, backendName string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
+	return s.execChanged(ctx, "complete drain", `
 		UPDATE backend_drains SET state = 'drained', finished_at = ?2
 		WHERE backend_name = ?1
 		  AND state = 'draining'
@@ -106,26 +98,10 @@ func (s *Store) CompleteDrain(ctx context.Context, backendName string) (bool, er
 		  AND NOT EXISTS (SELECT 1 FROM pending_objects WHERE backend_name = ?1)
 		  AND NOT EXISTS (SELECT 1 FROM multipart_uploads WHERE backend_name = ?1)`,
 		backendName, now())
-	if err != nil {
-		return false, fmt.Errorf("complete drain: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("complete drain: %w", err)
-	}
-	return n > 0, nil
 }
 
 // ClearDrain deletes the backend's drain record, which makes it writable again.
 // Reports whether there was one.
 func (s *Store) ClearDrain(ctx context.Context, backendName string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM backend_drains WHERE backend_name = ?`, backendName)
-	if err != nil {
-		return false, fmt.Errorf("clear drain: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("clear drain: %w", err)
-	}
-	return n > 0, nil
+	return s.execChanged(ctx, "clear drain", `DELETE FROM backend_drains WHERE backend_name = ?`, backendName)
 }

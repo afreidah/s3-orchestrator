@@ -34,7 +34,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if reason, skipped := skipReason(err); skipped {
+	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
 		return
 	}

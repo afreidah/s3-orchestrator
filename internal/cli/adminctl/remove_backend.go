@@ -12,9 +12,11 @@
 package adminctl
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
@@ -46,10 +48,10 @@ func cmdRemoveBackend(args []string, c *client) int {
 // removePreview calls the purge endpoint without confirmation and prints what
 // would be destroyed.
 func (c *client) removePreview(name string) int {
-	path := adminBackendsPath + name + "?purge=true"
-	var preview adminapi.RemoveBackendPreview
-	if code := c.fetchJSON(http.MethodDelete, path, &preview); code != 0 {
-		return code
+	preview, err := c.fetchPurgePreview(name)
+	if err != nil {
+		c.reportError(err)
+		return 1
 	}
 
 	//nolint:gosec // G705: stdout print of admin-CLI response, not an HTML/HTTP write  -  no XSS surface
@@ -62,15 +64,23 @@ func (c *client) removePreview(name string) int {
 // removePurge performs the two-phase purge: gets a confirmation token from the
 // preview endpoint, then executes with the token.
 func (c *client) removePurge(name string) int {
-	path := adminBackendsPath + name + "?purge=true"
-	var preview adminapi.RemoveBackendPreview
-	if code := c.fetchJSON(http.MethodDelete, path, &preview); code != 0 {
-		return code
+	preview, err := c.fetchPurgePreview(name)
+	if err != nil {
+		c.reportError(err)
+		return 1
 	}
 
 	if preview.ConfirmToken == "" {
 		fmt.Fprintf(c.stderr, "error: server did not return a confirmation token\n")
 		return 1
 	}
-	return c.stream(http.MethodDelete, path+"&confirm="+preview.ConfirmToken, "")
+	path := adminBackendsPath + name + "?purge=true&confirm=" + url.QueryEscape(preview.ConfirmToken)
+	return c.stream(http.MethodDelete, path, "")
+}
+
+// fetchPurgePreview asks the purge endpoint, without a confirmation token,
+// what a purge would destroy and for the token that authorizes it.
+func (c *client) fetchPurgePreview(name string) (*adminapi.RemoveBackendPreview, error) {
+	return c.api.Delete[adminapi.RemoveBackendPreview](context.Background(),
+		adminBackendsPath+name, url.Values{"purge": {"true"}})
 }

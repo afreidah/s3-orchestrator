@@ -42,11 +42,7 @@ func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after 
 	if err != nil {
 		return nil, fmt.Errorf("list uncompressed locations: %w", err)
 	}
-	out := make([]core.RewritableLocation, len(rows))
-	for i := range rows {
-		out[i] = rewritableFromRow((*rewritableRow)(&rows[i]))
-	}
-	return out, nil
+	return rewritablesFrom(rows), nil
 }
 
 // ListCompressedLocations returns a page of copies whose bytes are an encoding.
@@ -60,11 +56,7 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 	if err != nil {
 		return nil, fmt.Errorf("list compressed locations: %w", err)
 	}
-	out := make([]core.RewritableLocation, len(rows))
-	for i := range rows {
-		out[i] = rewritableFromRow((*rewritableRow)(&rows[i]))
-	}
-	return out, nil
+	return rewritablesFrom(rows), nil
 }
 
 // -------------------------------------------------------------------------
@@ -94,15 +86,7 @@ func (s *Store) CompressionStats(ctx context.Context) (map[string]core.Compressi
 // declined to store compressed, so a later pass can reach the same verdict
 // from the row rather than downloading and encoding the object again.
 func (s *Store) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	if err := s.queries.RecordCompressionProbe(ctx, db.RecordCompressionProbeParams{
-		ObjectKey:             probe.ObjectKey,
-		BackendName:           probe.BackendName,
-		CompressionProbeSize:  int64Ptr(probe.Size),
-		CompressionProbeLevel: strPtr(probe.Level),
-	}); err != nil {
-		return fmt.Errorf("record compression probe: %w", err)
-	}
-	return nil
+	return s.direct().RecordCompressionProbe(ctx, probe)
 }
 
 // rewritableRow is the shape both listings return. The two generated row types
@@ -112,6 +96,16 @@ type rewritableRow = db.ListUncompressedLocationsRow
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// rewritablesFrom converts a page from either listing to the canonical type.
+func rewritablesFrom[R db.ListUncompressedLocationsRow | db.ListCompressedLocationsRow](rows []R) []core.RewritableLocation {
+	out := make([]core.RewritableLocation, len(rows))
+	for i := range rows {
+		row := rewritableRow(rows[i])
+		out[i] = rewritableFromRow(&row)
+	}
+	return out
+}
 
 // rewritableFromRow converts one generated row to the canonical type.
 func rewritableFromRow(r *rewritableRow) core.RewritableLocation {

@@ -31,6 +31,15 @@ func Skip(reason string) error {
 	return &SkipError{Reason: reason}
 }
 
+// SkipReason reports whether err is a skip anywhere in its chain, and its
+// reason.
+func SkipReason(err error) (string, bool) {
+	if skip, ok := errors.AsType[*SkipError](err); ok {
+		return skip.Reason, true
+	}
+	return "", false
+}
+
 // Skips for subsystems that are unavailable in the running configuration.
 // Each is a *SkipError, so a transport handles a fixed and a runtime skip
 // through the same errors.As branch. ErrCompressionUnavailable means no codec
