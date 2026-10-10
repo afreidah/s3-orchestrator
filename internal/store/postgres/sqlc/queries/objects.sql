@@ -133,7 +133,11 @@ FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at, managed
+-- tag_count serves the read path's tagging-count header without a second
+-- query. The object_tags primary key leads with object_key, so the count is an
+-- index-only scan over the one key's rows.
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at, managed,
+    (SELECT count(*) FROM object_tags WHERE object_tags.object_key = $1) AS tag_count
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;

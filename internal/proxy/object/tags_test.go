@@ -332,16 +332,15 @@ func TestDeleteObjectTags_SurfacesStoreError(t *testing.T) {
 	}
 }
 
-// taggedLocationsStore wires one location and a tag count for it. The count is
+// taggedLocationsStore wires one location carrying a tag count. The location is
 // declared ahead of the permissive defaults, which answer every method with a
 // zero value, so this is the expectation gomock matches.
 func taggedLocationsStore(t *testing.T, tagCount int) *storetest.MockMetadataStore {
 	t.Helper()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	objectsStubs(store)
-	store.EXPECT().CountObjectTags(gomock.Any(), "key").Return(tagCount, nil).AnyTimes()
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "key", BackendName: "b1"}}, nil).AnyTimes()
+		Return([]core.ObjectLocation{{ObjectKey: "key", BackendName: "b1", TagCount: tagCount}}, nil).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -388,33 +387,16 @@ func TestHeadObject_CarriesTheTagCount(t *testing.T) {
 	}
 }
 
-// TestCountObjectTags_ReportsTheStoreCount verifies the read path reports what
-// the store holds, since that number is what decides whether the response
-// carries a tagging-count header at all.
-func TestCountObjectTags_ReportsTheStoreCount(t *testing.T) {
+// TestTagCountOf_ReadsTheFirstRow verifies HEAD reports the count the location
+// rows carry, and zero when a degraded read has no rows, which leaves the
+// tagging-count header off.
+func TestTagCountOf_ReadsTheFirstRow(t *testing.T) {
 	t.Parallel()
-	m, store := newTagTestManager(t)
-
-	store.EXPECT().CountObjectTags(gomock.Any(), "k").Return(3, nil)
-
-	if n := m.countObjectTags(context.Background(), "k"); n != 3 {
+	if n := tagCountOf([]core.ObjectLocation{{TagCount: 3}, {TagCount: 3}}); n != 3 {
 		t.Errorf("count = %d, want 3", n)
 	}
-}
-
-// TestCountObjectTags_StoreFailureReportsNone verifies an unreadable count is
-// reported as none rather than surfacing. The object's bytes are already
-// correct by the time this runs, so a GET must not fail because one advisory
-// header could not be filled in.
-func TestCountObjectTags_StoreFailureReportsNone(t *testing.T) {
-	t.Parallel()
-	m, store := newTagTestManager(t)
-
-	store.EXPECT().CountObjectTags(gomock.Any(), "k").
-		Return(0, errors.New("store unavailable"))
-
-	if n := m.countObjectTags(context.Background(), "k"); n != 0 {
-		t.Errorf("count = %d, want 0", n)
+	if n := tagCountOf(nil); n != 0 {
+		t.Errorf("count with no rows = %d, want 0", n)
 	}
 }
 

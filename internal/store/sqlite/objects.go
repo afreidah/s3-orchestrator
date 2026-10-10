@@ -78,15 +78,17 @@ type keyBackend struct {
 }
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
-// ascending (oldest/primary first). Used for read failover.
+// ascending (oldest/primary first), each carrying the key's tag count. Used
+// for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at, etag, content_type, user_metadata, managed
+		       created_at, last_scrubbed_at, etag, content_type, user_metadata, managed,
+		       (SELECT count(*) FROM object_tags WHERE object_tags.object_key = ?1) AS tag_count
 		FROM object_locations
-		WHERE object_key = ?
+		WHERE object_key = ?1
 		ORDER BY created_at ASC`, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object locations: %w", err)
@@ -645,8 +647,9 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 // -------------------------------------------------------------------------
 
 // scanIdentifiedObjectLocation scans a row that also selects the three
-// identity columns and the managed flag, which only the read path's query
-// selects. These columns come last, after the ones the shared scanner reads.
+// identity columns, the managed flag, and the key's tag count, which only the
+// read path's query selects. These columns come last, after the ones the
+// shared scanner reads.
 func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	var (
 		loc          core.ObjectLocation
@@ -656,7 +659,7 @@ func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 		userMetadata sql.NullString
 		managed      bool
 	)
-	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata, &managed)
+	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata, &managed, &loc.TagCount)
 	if err := rows.Scan(dest...); err != nil {
 		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}

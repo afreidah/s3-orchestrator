@@ -55,6 +55,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	// one fetches whole chunks.
 	var selfMetered atomic.Bool
 	var wireBytes atomic.Int64
+	var tagCount atomic.Int64
 	result, backendName, err := o.failover.Read(ctx, "GetObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
@@ -67,6 +68,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 			res, wire, err := o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
 			if err == nil {
 				wireBytes.Store(wire)
+				tagCount.Store(int64(loc.TagCount))
 				applyStoredIdentity(res.Value, loc)
 			}
 			return res, err
@@ -80,13 +82,14 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
 
-	// Counted before the cache tee is attached so the entry this read populates
-	// carries the count, and a later hit can answer without the store.
-	tagCount := o.countObjectTags(ctx, key)
-	if err := o.populateObjectCache(key, rangeHeader, result, tagCount); err != nil {
+	// The count came with the location rows. A degraded read has no rows and
+	// reports zero, which leaves the tagging-count header off. The cache entry
+	// carries it so a later hit can answer without the store.
+	tags := int(tagCount.Load())
+	if err := o.populateObjectCache(key, rangeHeader, result, tags); err != nil {
 		return nil, err
 	}
-	return &GetResult{GetObjectResult: result, TagCount: tagCount}, nil
+	return &GetResult{GetObjectResult: result, TagCount: tags}, nil
 }
 
 // -------------------------------------------------------------------------

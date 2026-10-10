@@ -80,6 +80,10 @@ func (f *StoredForm) Unreadable() bool {
 // when not selected. CompressionProbeSize and CompressionProbeLevel record what
 // the encoder measured for a copy it declined, so a later pass need not
 // download it again.
+//
+// TagCount is how many tags the key carries. Tags belong to the key, so every
+// copy reports the same count. Only GetAllObjectLocations fills it in, for the
+// tagging-count header on the read path.
 type ObjectLocation struct {
 	ObjectKey                string
 	BackendName              string
@@ -100,6 +104,7 @@ type ObjectLocation struct {
 	LastScrubbedAt           *time.Time
 	Unmanaged                bool
 	Identity                 *ObjectIdentity
+	TagCount                 int
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion

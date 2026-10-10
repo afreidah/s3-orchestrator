@@ -28,7 +28,8 @@ import (
 // -------------------------------------------------------------------------
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
-// ascending (oldest/primary first). Used for read failover.
+// ascending (oldest/primary first), each carrying the key's tag count. Used
+// for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.GetAllObjectLocations(ctx, key)
 	if err != nil {
@@ -39,7 +40,11 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 		return nil, core.ErrObjectNotFound
 	}
 
-	return toIdentifiedObjectLocations(rows), nil
+	locs := toIdentifiedObjectLocations(rows)
+	for i := range locs {
+		locs[i].TagCount = int(rows[i].TagCount)
+	}
+	return locs, nil
 }
 
 // GetObjectBackendsForKeys returns a map from each supplied object_key to
