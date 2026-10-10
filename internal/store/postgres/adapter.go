@@ -189,7 +189,7 @@ func (a *pgTxAdapter) ListedPathStates(ctx context.Context, backend string, path
 	}
 	states := make(map[string]core.PathState, len(rows))
 	for i := range rows {
-		states[rows[i].StorageKey] = max(states[rows[i].StorageKey], core.PathState(rows[i].State)) //nolint:gosec // G115: state is 1 or 2
+		states[rows[i].StorageKey] = max(states[rows[i].StorageKey], core.PathState(rows[i].State)) //nolint:gosec // G115: state is 1, 2, or 3
 	}
 	return states, nil
 }

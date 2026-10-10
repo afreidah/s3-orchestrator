@@ -77,7 +77,7 @@ func (p *PageImporter) Import(ctx context.Context, objects []backend.ListedObjec
 			p.warnPendingCleanup(ctx, obj.Key)
 			res.Skipped++
 			continue
-		case core.PathRecorded:
+		case core.PathRecorded, core.PathInFlight:
 			res.Skipped++
 			continue
 		}

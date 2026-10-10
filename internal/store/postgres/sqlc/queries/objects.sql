@@ -76,17 +76,20 @@ SELECT EXISTS(
 
 -- name: ListedPathStates :many
 -- What the ledger says about paths a backend listed, in one round trip for a
--- whole listing page. State 2 is a delete still outstanding, queued or
+-- whole listing page. State 3 is a delete still outstanding, queued or
 -- dead-lettered: the bytes are meant to be gone, so import must not bring them
--- back. State 1 is a copy recorded at the path under whatever object it
--- belongs to; import would otherwise record a per-write path as an object
--- named after the path. A path can match several arms, and the caller keeps
--- the highest state.
-SELECT q.storage_key, 2::int AS state FROM cleanup_queue q
+-- back. State 2 is a write's intent naming the path; its commit is still to come.
+-- State 1 is a copy recorded at the path under whatever object it belongs to;
+-- import would otherwise record a per-write path as an object named after the path.
+-- A path can match several arms, and the caller keeps the highest state.
+SELECT q.storage_key, 3::int AS state FROM cleanup_queue q
  WHERE q.backend_name = @backend_name AND q.storage_key = ANY(@paths::text[])
 UNION ALL
-SELECT d.storage_key, 2::int AS state FROM cleanup_dlq d
+SELECT d.storage_key, 3::int AS state FROM cleanup_dlq d
  WHERE d.backend_name = @backend_name AND d.storage_key = ANY(@paths::text[])
+UNION ALL
+SELECT p.storage_key, 2::int AS state FROM pending_objects p
+ WHERE p.backend_name = @backend_name AND p.storage_key = ANY(@paths::text[])
 UNION ALL
 SELECT o.storage_key, 1::int AS state FROM object_locations o
  WHERE o.backend_name = @backend_name AND o.storage_key = ANY(@paths::text[]);

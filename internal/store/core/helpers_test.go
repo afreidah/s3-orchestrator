@@ -225,6 +225,7 @@ type quotaTxStub struct {
 	existingCopies []ExistingCopy
 	existingErr    error
 	pendingCleanup bool
+	pathInFlight   bool
 	pendingErr     error
 	importedLoc    *ObjectLocation
 
@@ -388,6 +389,10 @@ func (s *quotaTxStub) ListedPathStates(_ context.Context, _ string, paths []stri
 	if s.pendingCleanup {
 		for _, p := range paths {
 			states[p] = PathPendingCleanup
+		}
+	} else if s.pathInFlight {
+		for _, p := range paths {
+			states[p] = PathInFlight
 		}
 	}
 	return states, s.pendingErr
