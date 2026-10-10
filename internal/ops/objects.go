@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -228,23 +229,26 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 	}
 
 	var res DeletePrefixResult
-	startAfter := ""
-	for {
-		page, err := o.objects.ListObjects(ctx, prefix, "", startAfter, deletePrefixPageSize)
-		if err != nil {
-			return res, err
-		}
-
-		keys := make([]string, 0, len(page.Objects))
-		for i := range page.Objects {
-			keys = append(keys, page.Objects[i].ObjectKey)
-		}
+	pager := batch.Pager[string, string]{
+		PageSize: batch.FixedPage(deletePrefixPageSize),
+		List: func(ctx context.Context, limit int, after string) ([]string, error) {
+			page, err := o.objects.ListObjects(ctx, prefix, "", after, limit)
+			if err != nil {
+				return nil, err
+			}
+			keys := make([]string, len(page.Objects))
+			for i := range page.Objects {
+				keys[i] = page.Objects[i].ObjectKey
+			}
+			return keys, nil
+		},
+		CursorOf: func(key string) string { return key },
+	}
+	if _, err := pager.Walk(ctx, func(ctx context.Context, keys []string) (batch.Step, error) {
 		o.deletePage(ctx, keys, observer, &res)
-
-		if !page.IsTruncated {
-			break
-		}
-		startAfter = page.NextContinuationToken
+		return batch.Step{}, nil
+	}); err != nil {
+		return res, err
 	}
 
 	o.log.InfoContext(ctx, "prefix delete completed", "prefix", prefix, "deleted", res.Deleted, "failed", res.Failed)
@@ -258,10 +262,6 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 // deletePage removes one page of keys and folds the per-key outcomes into res,
 // reporting each one through the observer as the batch reports it.
 func (o *Objects) deletePage(ctx context.Context, keys []string, observer progress.Observer, res *DeletePrefixResult) {
-	if len(keys) == 0 {
-		return
-	}
-
 	res.Total += len(keys)
 	for _, item := range o.objects.DeleteObjects(ctx, keys) {
 		status := "ok"

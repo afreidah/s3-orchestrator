@@ -14,6 +14,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -106,6 +107,14 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{22, func() {
+			exec("drop the drain paging index", `DROP INDEX IF EXISTS idx_object_locations_managed_size`)
+			exec("drop the cleanup path index", `DROP INDEX IF EXISTS idx_cleanup_queue_backend_storage_key`)
+			exec("drop the dlq path index", `DROP INDEX IF EXISTS idx_cleanup_dlq_backend_storage_key`)
+			exec("restore the managed index", `CREATE INDEX IF NOT EXISTS idx_object_locations_managed ON object_locations(backend_name) WHERE managed`)
+			exec("restore the backend index", `CREATE INDEX IF NOT EXISTS idx_object_locations_backend ON object_locations(backend_name)`)
+			exec("restore the dlq backend index", `CREATE INDEX IF NOT EXISTS idx_cleanup_dlq_backend ON cleanup_dlq(backend_name)`)
+		}},
 		// The view goes before the storage-key columns: it reads the pending
 		// table, and SQLite refuses to alter a table a view depends on.
 		{20, func() {
@@ -444,22 +453,73 @@ func TestListObjects_Pagination(t *testing.T) {
 	}
 }
 
-// TestListObjectsByBackend verifies the list objects by backend contract.
-// Asserts that ListObjectsByBackend:.
+// TestListObjectsByBackend verifies the listing returns only the backend's
+// objects, smallest first with the key breaking ties, and that the cursor
+// resumes after the last (size, key) it returned.
 func TestListObjectsByBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	mustRecordObject(t, s, "bucket/c", "backend-a", 200)
+	mustRecordObject(t, s, "bucket/b", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/b", "backend-b", 200)
+	mustRecordObject(t, s, "bucket/other", "backend-b", 50)
 
-	locs, err := s.ListObjectsByBackend(ctx, "backend-a", 10)
-	if err != nil {
-		t.Fatalf("ListObjectsByBackend: %v", err)
+	keys := func(after core.SizeCursor) []string {
+		t.Helper()
+		locs, err := s.ListObjectsByBackend(ctx, "backend-a", 2, after)
+		if err != nil {
+			t.Fatalf("ListObjectsByBackend: %v", err)
+		}
+		out := make([]string, len(locs))
+		for i := range locs {
+			out[i] = locs[i].ObjectKey
+		}
+		return out
 	}
-	if len(locs) != 1 {
-		t.Errorf("expected 1, got %d", len(locs))
+	if got := keys(core.SizeCursor{}); !slices.Equal(got, []string{"bucket/a", "bucket/b"}) {
+		t.Fatalf("first page = %v, want a then b at the same size", got)
+	}
+	if got := keys(core.SizeCursor{SizeBytes: 100, ObjectKey: "bucket/b"}); !slices.Equal(got, []string{"bucket/c"}) {
+		t.Errorf("page after (100, b) = %v, want only c", got)
+	}
+}
+
+// TestListedPathStates verifies one lookup reports every state a listed path
+// can be in on the backend asked about: a recorded copy, a queued delete, a
+// dead-lettered delete, and a path both recorded and queued, where the
+// pending delete wins. Copies on another backend and unknown paths are
+// absent.
+func TestListedPathStates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/dlq")
+	dlqAll(t, s, "gave up")
+	mustRecordObject(t, s, "bucket/rec", "backend-a", 10)
+	mustRecordObject(t, s, "bucket/both", "backend-a", 10)
+	mustRecordObject(t, s, "bucket/other", "backend-b", 10)
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/queued")
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/both")
+
+	got, err := s.ListedPathStates(context.Background(), "backend-a",
+		[]string{"bucket/rec", "bucket/queued", "bucket/dlq", "bucket/both", "bucket/other", "bucket/absent"})
+	if err != nil {
+		t.Fatalf("ListedPathStates: %v", err)
+	}
+	want := map[string]core.PathState{
+		"bucket/rec":    core.PathRecorded,
+		"bucket/queued": core.PathPendingCleanup,
+		"bucket/dlq":    core.PathPendingCleanup,
+		"bucket/both":   core.PathPendingCleanup,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("states = %v, want %v", got, want)
+	}
+
+	if empty, err := s.ListedPathStates(context.Background(), "backend-a", nil); err != nil || len(empty) != 0 {
+		t.Errorf("no paths = %v, %v; want an empty map", empty, err)
 	}
 }
 
@@ -2007,6 +2067,26 @@ func TestListExpiredObjects(t *testing.T) {
 	}
 }
 
+// TestListExpiredObjects_PagesAfterTheCursor verifies After resumes past the
+// previous page's last key, which is what lets lifecycle pass over an object
+// whose delete failed instead of re-listing it.
+func TestListExpiredObjects_PagesAfterTheCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, k := range []string{"bucket/a", "bucket/b", "bucket/c"} {
+		mustRecordObject(t, s, k, "backend-a", 10)
+	}
+	q := core.ExpiredObjectsQuery{Prefix: "bucket/", Cutoff: time.Now().Add(time.Hour), Limit: 2}
+
+	if got := expiredKeys(t, s, q); !slices.Equal(got, []string{"bucket/a", "bucket/b"}) {
+		t.Fatalf("first page = %v, want a and b", got)
+	}
+	q.After = "bucket/b"
+	if got := expiredKeys(t, s, q); !slices.Equal(got, []string{"bucket/c"}) {
+		t.Errorf("page after bucket/b = %v, want only c", got)
+	}
+}
+
 // expiredKeys runs one query and returns the keys it selected, sorted, so a
 // test can compare against a literal without depending on row order.
 func expiredKeys(t *testing.T, s *Store, q core.ExpiredObjectsQuery) []string {
@@ -2483,7 +2563,7 @@ func TestCorruptTimestamp_GetStaleMultipartUploads(t *testing.T) {
 		t.Fatalf("corrupt timestamp: %v", err)
 	}
 
-	_, err = s.GetStaleMultipartUploads(ctx, 0)
+	_, err = s.ScanMultipartUploads(ctx, core.MultipartUploadFilter{CreatedBefore: time.Now()}, 10, "")
 	if err == nil {
 		t.Fatal("expected error from corrupt stale multipart timestamp, got nil")
 	}
@@ -2527,7 +2607,7 @@ func TestCorruptTimestamp_ListObjectsByBackend(t *testing.T) {
 		t.Fatalf("corrupt timestamp: %v", err)
 	}
 
-	_, err = s.ListObjectsByBackend(ctx, "backend-a", 100)
+	_, err = s.ListObjectsByBackend(ctx, "backend-a", 100, core.SizeCursor{})
 	if err == nil {
 		t.Fatal("expected error from corrupt timestamp, got nil")
 	}
@@ -2784,105 +2864,98 @@ func TestDeleteObjectLocation(t *testing.T) {
 	}
 }
 
-// TestGetObjectCounts verifies per-backend object count aggregation.
-func TestGetObjectCounts(t *testing.T) {
+// ledgerOf reads the store's per-backend ledger figures, failing the test on
+// error.
+func ledgerOf(t *testing.T, s *Store) core.LedgerStats {
+	t.Helper()
+	ledger, err := s.LedgerStats(context.Background())
+	if err != nil {
+		t.Fatalf("LedgerStats: %v", err)
+	}
+	return ledger
+}
+
+// coverageOf reads verification coverage over the reachable backends as of
+// now.
+func coverageOf(t *testing.T, s *Store, reachable []string) core.CoverageStat {
+	t.Helper()
+	return ledgerOf(t, s).Coverage(reachable, time.Now())
+}
+
+// TestLedgerStats_ObjectCounts verifies per-backend object count aggregation.
+func TestLedgerStats_ObjectCounts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 	mustRecordObject(t, s, "bucket/c", "backend-b", 300)
 
-	counts, err := s.GetObjectCounts(ctx)
-	if err != nil {
-		t.Fatalf("GetObjectCounts: %v", err)
-	}
-	if counts["backend-a"] != 2 {
-		t.Errorf("backend-a count = %d, want 2", counts["backend-a"])
-	}
-	if counts["backend-b"] != 1 {
-		t.Errorf("backend-b count = %d, want 1", counts["backend-b"])
+	counts := ledgerOf(t, s).ObjectCounts()
+	if counts["backend-a"] != 2 || counts["backend-b"] != 1 {
+		t.Errorf("counts = %v, want backend-a 2 and backend-b 1", counts)
 	}
 }
 
-// TestGetUnverifiedObjectCounts pins the per-backend NULL-content_hash
-// aggregation that drives the dashboard's "Unverified" column (#405).
-// Records two objects with hashes and one without, asserts the count
-// per backend matches the NULL population.
-func TestGetUnverifiedObjectCounts(t *testing.T) {
+// TestLedgerStats_UnhashedCounts pins the per-backend NULL-content_hash count
+// that drives the dashboard's "Unverified" column, with one hashed and one
+// unhashed object on the same backend.
+func TestLedgerStats_UnhashedCounts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// One object on backend-a has no content hash (NULL); one does.
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	hashed := &core.StoredForm{ContentHash: "deadbeef"}
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/b", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 200, Form: hashed}); err != nil {
 		t.Fatalf("RecordObject hashed: %v", err)
 	}
-	// One object on backend-b has no content hash.
 	mustRecordObject(t, s, "bucket/c", "backend-b", 300)
 
-	counts, err := s.GetUnverifiedObjectCounts(ctx)
-	if err != nil {
-		t.Fatalf("GetUnverifiedObjectCounts: %v", err)
-	}
-	if counts["backend-a"] != 1 {
-		t.Errorf("backend-a unverified = %d, want 1", counts["backend-a"])
-	}
-	if counts["backend-b"] != 1 {
-		t.Errorf("backend-b unverified = %d, want 1", counts["backend-b"])
+	counts := ledgerOf(t, s).UnhashedCounts()
+	if counts["backend-a"] != 1 || counts["backend-b"] != 1 {
+		t.Errorf("unhashed = %v, want 1 on each backend", counts)
 	}
 }
 
-// TestGetStaleMultipartUploads verifies the get stale multipart uploads contract.
-// Asserts that GetStaleMultipartUploads:.
-func TestGetStaleMultipartUploads(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustCreateUpload(t, s, "u1", "bucket/a", "backend-a")
-
-	// Nothing stale with a long threshold
-	stale, err := s.GetStaleMultipartUploads(ctx, 24*time.Hour)
-	if err != nil {
-		t.Fatalf("GetStaleMultipartUploads: %v", err)
-	}
-	if len(stale) != 0 {
-		t.Errorf("expected 0 stale, got %d", len(stale))
-	}
-
-	// Everything stale with zero threshold
-	stale, err = s.GetStaleMultipartUploads(ctx, 0)
-	if err != nil {
-		t.Fatalf("GetStaleMultipartUploads zero: %v", err)
-	}
-	if len(stale) != 1 {
-		t.Errorf("expected 1 stale, got %d", len(stale))
-	}
-}
-
-// TestGetMultipartUploadsByBackend verifies the get multipart uploads by backend contract.
-// Asserts that GetMultipartUploadsByBackend:.
-func TestGetMultipartUploadsByBackend(t *testing.T) {
+// TestScanMultipartUploads verifies each filter narrows the scan, an empty
+// filter matches every upload, and the cursor resumes after the last id.
+func TestScanMultipartUploads(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
 	mustCreateUpload(t, s, "u1", "bucket/a", "backend-a")
 	mustCreateUpload(t, s, "u2", "bucket/b", "backend-b")
+	mustCreateUpload(t, s, "u3", "bucket/c", "backend-a")
 
-	uploads, err := s.GetMultipartUploadsByBackend(ctx, "backend-a")
-	if err != nil {
-		t.Fatalf("GetMultipartUploadsByBackend: %v", err)
+	ids := func(filter core.MultipartUploadFilter, limit int, after string) []string {
+		t.Helper()
+		uploads, err := s.ScanMultipartUploads(ctx, filter, limit, after)
+		if err != nil {
+			t.Fatalf("ScanMultipartUploads: %v", err)
+		}
+		out := make([]string, len(uploads))
+		for i := range uploads {
+			out[i] = uploads[i].UploadID
+		}
+		return out
 	}
-	if len(uploads) != 1 {
-		t.Errorf("expected 1, got %d", len(uploads))
+
+	if got := ids(core.MultipartUploadFilter{}, 10, ""); !slices.Equal(got, []string{"u1", "u2", "u3"}) {
+		t.Errorf("unfiltered = %v, want every upload in id order", got)
 	}
-	if uploads[0].UploadID != "u1" {
-		t.Errorf("upload_id = %q, want u1", uploads[0].UploadID)
+	if got := ids(core.MultipartUploadFilter{Backend: "backend-a"}, 10, ""); !slices.Equal(got, []string{"u1", "u3"}) {
+		t.Errorf("backend-a = %v, want u1 and u3", got)
+	}
+	if got := ids(core.MultipartUploadFilter{CreatedBefore: time.Now().Add(-24 * time.Hour)}, 10, ""); len(got) != 0 {
+		t.Errorf("created a day ago = %v, want none", got)
+	}
+	if got := ids(core.MultipartUploadFilter{CreatedBefore: time.Now().Add(time.Hour)}, 10, ""); len(got) != 3 {
+		t.Errorf("created before an hour from now = %v, want all three", got)
+	}
+	if got := ids(core.MultipartUploadFilter{}, 1, "u1"); !slices.Equal(got, []string{"u2"}) {
+		t.Errorf("page after u1 = %v, want only u2", got)
 	}
 }
 
@@ -2909,27 +2982,36 @@ func TestGetUnderReplicatedObjectsExcluding(t *testing.T) {
 	}
 }
 
-// TestCountOverReplicatedObjects verifies the count over replicated objects contract.
-// Asserts that CountOverReplicatedObjects:.
-func TestCountOverReplicatedObjects(t *testing.T) {
+// TestCountReplicationBacklog verifies both directions against one ledger, and
+// that an in-flight intent counts toward the under figure as it does in the
+// replicator's scan.
+func TestCountReplicationBacklog(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	mustRecordObject(t, s, "bucket/key1", "backend-a", 100)
-	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/two", "backend-a", 100)
+	mustRecordReplica(t, s, "bucket/two", "backend-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/one", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/landing", "backend-a", 100)
+	seedPendingIntent(t, s, "intent-landing", "bucket/landing", "backend-b", 100)
 
-	count, err := s.CountOverReplicatedObjects(ctx, 1)
-	if err != nil {
-		t.Fatalf("CountOverReplicatedObjects: %v", err)
+	cases := []struct {
+		factor int
+		want   core.ReplicationBacklog
+	}{
+		{1, core.ReplicationBacklog{Under: 0, Over: 1}},
+		{2, core.ReplicationBacklog{Under: 1, Over: 0}},
+		{3, core.ReplicationBacklog{Under: 3, Over: 0}},
 	}
-	if count != 1 {
-		t.Errorf("count = %d, want 1", count)
-	}
-
-	count, _ = s.CountOverReplicatedObjects(ctx, 2)
-	if count != 0 {
-		t.Errorf("count at factor 2 = %d, want 0", count)
+	for _, c := range cases {
+		got, err := s.CountReplicationBacklog(ctx, c.factor)
+		if err != nil {
+			t.Fatalf("CountReplicationBacklog(%d): %v", c.factor, err)
+		}
+		if got != c.want {
+			t.Errorf("factor %d: backlog = %+v, want %+v", c.factor, got, c.want)
+		}
 	}
 }
 
@@ -3241,7 +3323,7 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	}
 
 	// The rebalance, placement and drain candidate scan sees only the owned one.
-	movable, err := s.ListObjectsByBackend(ctx, "backend-a", 10)
+	movable, err := s.ListObjectsByBackend(ctx, "backend-a", 10, core.SizeCursor{})
 	if err != nil {
 		t.Fatalf("ListObjectsByBackend: %v", err)
 	}
@@ -3297,17 +3379,7 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 	}
 
 	assertListsOnly(t, s, "bucket/live")
-
-	unreadable, err := s.ListUnreadableLocations(ctx, 10)
-	if err != nil {
-		t.Fatalf("ListUnreadableLocations: %v", err)
-	}
-	if len(unreadable) != 1 || unreadable[0].ObjectKey != "bucket/gone" || unreadable[0].SizeBytes != 508 {
-		t.Errorf("unreadable = %+v, want only bucket/gone", unreadable)
-	}
-	if n, err := s.CountUnreadableLocations(ctx); err != nil || n != 1 {
-		t.Errorf("CountUnreadableLocations = %d, %v; want 1", n, err)
-	}
+	assertUnreadableOnly(t, s, "bucket/gone", 508)
 
 	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10)
 	if err != nil {
@@ -3319,6 +3391,27 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
 	assertNotQueued(t, "checksum backfill", unhashed, "bucket/gone")
+}
+
+// assertUnreadableOnly fails unless the unreadable listing and count report
+// exactly the one copy, and a page started past it is empty.
+func assertUnreadableOnly(t *testing.T, s *Store, key string, size int64) {
+	t.Helper()
+	ctx := context.Background()
+	unreadable, err := s.ListUnreadableLocations(ctx, 10, core.Cursor{})
+	if err != nil {
+		t.Fatalf("ListUnreadableLocations: %v", err)
+	}
+	if len(unreadable) != 1 || unreadable[0].ObjectKey != key || unreadable[0].SizeBytes != size {
+		t.Fatalf("unreadable = %+v, want only %s", unreadable, key)
+	}
+	past := core.Cursor{ObjectKey: unreadable[0].ObjectKey, BackendName: unreadable[0].BackendName}
+	if rest, err := s.ListUnreadableLocations(ctx, 10, past); err != nil || len(rest) != 0 {
+		t.Errorf("ListUnreadableLocations past the only row = %+v, %v; want none", rest, err)
+	}
+	if n, err := s.CountUnreadableLocations(ctx); err != nil || n != 1 {
+		t.Errorf("CountUnreadableLocations = %d, %v; want 1", n, err)
+	}
 }
 
 // assertListsOnly fails unless both client listings of bucket/ return exactly
@@ -3374,7 +3467,7 @@ func TestRunMigrations_MarksExistingUnreadableRowsUnmanaged(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE object_locations SET managed = 1`); err != nil {
 		t.Fatalf("mark rows managed: %v", err)
 	}
-	rewindToSchemaVersion(t, s, expectedSchemaVersion-1)
+	rewindToSchemaVersion(t, s, 20)
 
 	if err := s.RunMigrations(ctx); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
@@ -3496,21 +3589,17 @@ func keysOf(locs []core.ObjectLocation) []string {
 	return keys
 }
 
-// TestIntegrityCoverage_ReportsCoverage verifies the figures the dashboard and
-// the alerting rule read: how long the most overdue reachable copy has gone
+// TestLedgerStats_ReportsCoverage verifies the figures the dashboard and the
+// alerting rule read: how long the most overdue reachable copy has gone
 // unverified, and how many reachable copies have never been verified.
-func TestIntegrityCoverage_ReportsCoverage(t *testing.T) {
+func TestLedgerStats_ReportsCoverage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	reachable := []string{"backend-a"}
 
 	// No hashed copies at all: nothing to report.
-	stat, err := s.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		t.Fatalf("IntegrityCoverage on an empty ledger: %v", err)
-	}
-	if stat != (core.CoverageStat{}) {
+	if stat := coverageOf(t, s, reachable); stat != (core.CoverageStat{}) {
 		t.Errorf("empty ledger reported %+v, want the zero value", stat)
 	}
 
@@ -3522,10 +3611,7 @@ func TestIntegrityCoverage_ReportsCoverage(t *testing.T) {
 	// Hashed but unverified: both count, and the age reports the backlog from
 	// when they were written rather than reading as zero for want of a stamp.
 	backdateCreatedAt(t, s, "bucket/a", "backend-a", 48*time.Hour)
-	stat, err = s.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		t.Fatalf("IntegrityCoverage: %v", err)
-	}
+	stat := coverageOf(t, s, reachable)
 	if stat.NeverVerified != 2 {
 		t.Errorf("never verified = %d, want 2", stat.NeverVerified)
 	}
@@ -3538,10 +3624,7 @@ func TestIntegrityCoverage_ReportsCoverage(t *testing.T) {
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
 		t.Fatalf("MarkObjectScrubbed: %v", err)
 	}
-	stat, err = s.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		t.Fatalf("IntegrityCoverage after stamping: %v", err)
-	}
+	stat = coverageOf(t, s, reachable)
 	if stat.NeverVerified != 1 {
 		t.Errorf("never verified = %d, want 1", stat.NeverVerified)
 	}
@@ -3550,13 +3633,12 @@ func TestIntegrityCoverage_ReportsCoverage(t *testing.T) {
 	}
 }
 
-// TestIntegrityCoverage_UnreachableBackendIsDeferred pins the property the
+// TestLedgerStats_UnreachableBackendIsDeferred pins the property the coverage
 // figures exist for: a copy the sweep may not read is reported as deferred
 // rather than inflating an age no amount of scrubbing could bring down.
-func TestIntegrityCoverage_UnreachableBackendIsDeferred(t *testing.T) {
+func TestLedgerStats_UnreachableBackendIsDeferred(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	// backend-b stands in for the over-limit backend: the sweep is told it may
 	// read backend-a only, which is what affordableBackends produces.
@@ -3567,10 +3649,7 @@ func TestIntegrityCoverage_UnreachableBackendIsDeferred(t *testing.T) {
 	mustRecordObject(t, s, "bucket/new", "backend-a", 100)
 	hashAtWrite(t, s, "bucket/new", "backend-a")
 
-	stat, err := s.IntegrityCoverage(ctx, []string{"backend-a"})
-	if err != nil {
-		t.Fatalf("IntegrityCoverage: %v", err)
-	}
+	stat := coverageOf(t, s, []string{"backend-a"})
 	if stat.Deferred != 1 {
 		t.Errorf("deferred = %d, want the copy on the over-limit backend", stat.Deferred)
 	}
@@ -3596,10 +3675,7 @@ func TestUpdateContentHash_StampsAsVerified(t *testing.T) {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
 
-	stat, err := s.IntegrityCoverage(ctx, []string{"backend-a"})
-	if err != nil {
-		t.Fatalf("IntegrityCoverage: %v", err)
-	}
+	stat := coverageOf(t, s, []string{"backend-a"})
 	if stat.NeverVerified != 0 {
 		t.Errorf("never verified = %d, want the backfilled copy stamped", stat.NeverVerified)
 	}
@@ -3658,20 +3734,16 @@ func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
 	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"}, scrubAllCutoff()); err == nil {
 		t.Error("GetLeastRecentlyScrubbedObjects should surface a closed database")
 	}
-	// A zero count from a failing database would read as "nothing deferred",
-	// hiding exactly the backlog this figure exists to report.
-	// A zero from a failing database would read as a fully encrypted fleet.
-	if _, err := s.CountUnencryptedLocations(ctx); err == nil {
-		t.Error("CountUnencryptedLocations should surface a closed database")
+	// Zeroed ledger figures from a failing database would read as a fully
+	// encrypted fleet with nothing deferred, hiding exactly what they report.
+	if _, err := s.LedgerStats(ctx); err == nil {
+		t.Error("LedgerStats should surface a closed database")
 	}
 	if _, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-a"}, scrubAllCutoff()); err == nil {
 		t.Error("CountScrubCandidatesOnBackends should surface a closed database")
 	}
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err == nil {
 		t.Error("MarkObjectScrubbed should surface a closed database")
-	}
-	if _, err := s.IntegrityCoverage(ctx, []string{"backend-a"}); err == nil {
-		t.Error("IntegrityCoverage should surface a closed database")
 	}
 }
 
@@ -4015,15 +4087,16 @@ func TestApplyMigration_FailedStatementRecordsNothing(t *testing.T) {
 	}
 }
 
-// TestCountUnencryptedLocations counts what encrypt-existing would process, so
-// the figure an operator sees matches the work the command would actually do.
-func TestCountUnencryptedLocations(t *testing.T) {
+// TestLedgerStats_PlaintextCopies counts what encrypt-existing would process,
+// so the figure an operator sees matches the work the command would actually
+// do.
+func TestLedgerStats_PlaintextCopies(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if n, err := s.CountUnencryptedLocations(ctx); err != nil || n != 0 {
-		t.Fatalf("empty store: count=%d err=%v, want 0/nil", n, err)
+	if n := ledgerOf(t, s).PlaintextCopies(); n != 0 {
+		t.Fatalf("empty store: count=%d, want 0", n)
 	}
 
 	mustRecordObject(t, s, "bucket/plain-a", "backend-a", 100)
@@ -4036,10 +4109,7 @@ func TestCountUnencryptedLocations(t *testing.T) {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
-	n, err := s.CountUnencryptedLocations(ctx)
-	if err != nil {
-		t.Fatalf("CountUnencryptedLocations: %v", err)
-	}
+	n := ledgerOf(t, s).PlaintextCopies()
 	if n != 2 {
 		t.Errorf("count = %d, want 2 (the encrypted copy must not be counted)", n)
 	}

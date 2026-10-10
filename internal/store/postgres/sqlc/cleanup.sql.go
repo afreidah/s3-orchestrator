@@ -18,7 +18,7 @@ WITH candidate AS (
     WHERE cq.next_retry <= NOW()
       AND cq.attempts < 10
       AND (cq.claimed_at IS NULL OR cq.claimed_at < $2::timestamptz)
-    ORDER BY cq.created_at ASC
+    ORDER BY cq.next_retry ASC, cq.created_at ASC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 ),
@@ -61,6 +61,10 @@ type ClaimPendingCleanupsRow struct {
 // NULL) or its claim has aged past the grace cutoff (claimed_at <
 // @grace_cutoff). The reclaimed projection lets the worker increment
 // s3o_cleanup_queue_stale_claims_recovered_total per recovered row.
+//
+// The order matches idx_cleanup_queue_claim, so the scan stops at the limit
+// instead of sorting every due row. A new row's next_retry is its enqueue
+// time, so first attempts still run oldest first.
 func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingCleanupsParams) ([]ClaimPendingCleanupsRow, error) {
 	rows, err := q.db.Query(ctx, claimPendingCleanups, arg.Limit, arg.GraceCutoff, arg.ClaimedBy)
 	if err != nil {
@@ -263,7 +267,7 @@ SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
        claimed_at, claimed_by
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
-ORDER BY created_at ASC
+ORDER BY next_retry ASC, created_at ASC
 LIMIT $1
 `
 
@@ -282,7 +286,8 @@ type GetPendingCleanupsRow struct {
 // Read-only listing for the admin endpoint and operator visibility. The
 // worker uses ClaimPendingCleanups instead, which also stamps the row.
 // claimed_at and claimed_by are projected so the admin view can render
-// which rows are currently held by a worker.
+// which rows are currently held by a worker. Ordered like the claim, so the
+// listing shows rows in the order the worker will take them.
 func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPendingCleanupsRow, error) {
 	rows, err := q.db.Query(ctx, getPendingCleanups, limit)
 	if err != nil {
@@ -311,34 +316,6 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 		return nil, err
 	}
 	return items, nil
-}
-
-const hasPendingCleanup = `-- name: HasPendingCleanup :one
-SELECT EXISTS (
-    SELECT 1 FROM cleanup_queue q
-     WHERE q.storage_key = $1 AND q.backend_name = $2
-    UNION ALL
-    SELECT 1 FROM cleanup_dlq d
-     WHERE d.storage_key = $1 AND d.backend_name = $2
-) AS pending
-`
-
-type HasPendingCleanupParams struct {
-	StorageKey  string
-	BackendName string
-}
-
-// Reports whether a delete for (object_key, backend_name) is still
-// outstanding: either waiting in the retry queue or dead-lettered after
-// exhausting its attempts. Both mean the bytes are still on the backend and
-// the object is meant to be gone, which is what stops reconcile importing it
-// back. Dead-lettered counts because retrying stopped, not because the delete
-// was withdrawn.
-func (q *Queries) HasPendingCleanup(ctx context.Context, arg HasPendingCleanupParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingCleanup, arg.StorageKey, arg.BackendName)
-	var pending bool
-	err := row.Scan(&pending)
-	return pending, err
 }
 
 const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec

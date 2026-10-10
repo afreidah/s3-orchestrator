@@ -59,9 +59,7 @@ func NewUser(id, name string, grants map[string]core.PermissionSet) *User {
 		Name:   name,
 		grants: make(map[string]core.PermissionSet, len(grants)),
 	}
-	for bucket, perms := range grants {
-		u.grants[bucket] = perms
-	}
+	maps.Copy(u.grants, grants)
 	return u
 }
 

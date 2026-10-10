@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Covers rule application end to end: which objects get deleted, how batches
-// page, and the two ways a rule stops early - the store running dry and the
-// zero-progress guard that keeps a backend outage from looping forever.
+// page by key, and that a page of failed deletes is passed over rather than
+// re-listed, so a backend outage cannot loop a rule.
 //
 // Exercises the manager against a 1-method ExpiredObjectsLister mock and a
 // 1-method ObjectDeleter mock rather than standing up a full proxy stack.
@@ -253,18 +253,26 @@ func TestProcessRules_ListError(t *testing.T) {
 	}
 }
 
-// TestProcessRules_ZeroProgressTerminates is the infinite-loop guard: when a
-// full batch deletes nothing, the rule stops instead of re-listing the same
-// rows forever. Without it a backend outage spins until the tick is cancelled.
-func TestProcessRules_ZeroProgressTerminates(t *testing.T) {
+// TestProcessRules_FailedObjectsArePassedOver verifies a page whose deletes all
+// fail does not re-list those objects: the next query starts after the page's
+// last key. A failed object stays in the real listing, so re-reading the head
+// would retry it on every page while a backend is down.
+func TestProcessRules_FailedObjectsArePassedOver(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 	m.SetConfig(&config.LifecycleConfig{BatchSize: 2})
 
-	// The store would happily keep returning full batches forever.
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryLimit(2)).
-		Return(objectsNamed("a", "b"), nil).Times(1)
+	queryAfter := func(after string) queryMatcher {
+		return queryMatcher{
+			name:  "query after " + after,
+			match: func(q core.ExpiredObjectsQuery) bool { return q.After == after },
+		}
+	}
+	gomock.InOrder(
+		lister.EXPECT().ListExpiredObjects(gomock.Any(), queryAfter("")).Return(objectsNamed("a", "b"), nil),
+		lister.EXPECT().ListExpiredObjects(gomock.Any(), queryAfter("b")).Return(nil, nil),
+	)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 		Return(errors.New("backend down")).Times(2)
 

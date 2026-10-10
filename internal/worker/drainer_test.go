@@ -37,10 +37,18 @@ func drainedObject() *core.ObjectLocation {
 	return &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 }
 
-// onlyOnB1 answers GetAllObjectLocations with a single copy on b1.
-func onlyOnB1(store *storetest.MockMetadataStore) {
-	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{*drainedObject()}, nil).AnyTimes()
+// onlyOnB1 and alsoOnB2 are what the page lookup reports holding the drained
+// object's copies: the draining backend alone, or it and another.
+var (
+	onlyOnB1 = []string{"b1"}
+	alsoOnB2 = []string{"b1", "b2"}
+)
+
+// removesDrainedCopy has the conditional removal drop the drained copy and
+// report its path and size.
+func removesDrainedCopy(store *storetest.MockMetadataStore) {
+	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).
+		Return(core.RemovedCopy{StorageKey: "key1", SizeBytes: 4, Removed: true}, nil).AnyTimes()
 }
 
 // captureEnqueue records the reason of every cleanup row enqueued.
@@ -126,16 +134,64 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 	src.Objects["key1"] = backendtest.Object{Data: []byte("data")}
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{*drainedObject(), {ObjectKey: "key1", BackendName: "b2", SizeBytes: 4}}, nil).AnyTimes()
+	removesDrainedCopy(store)
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
-	if !d.drainOne(context.Background(), src, "b1", drainedObject()) {
+	if !d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
 		t.Fatal("drainOne failed with a copy on another backend")
 	}
 	if src.Has("key1") {
 		t.Error("the draining backend still holds its copy")
+	}
+}
+
+// TestDrainOne_OtherCopyGone_MovesInstead verifies that when the copy the page
+// lookup saw elsewhere is gone by the time the drop runs, the conditional
+// removal keeps the drained copy and the object is moved off instead of lost.
+func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
+	t.Parallel()
+	src := backendtest.NewInMemory()
+	src.Objects["key1"] = backendtest.Object{Data: []byte("abcd"), ContentType: "text/plain"}
+	dst := backendtest.NewInMemory()
+
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).Return(core.RemovedCopy{}, nil)
+	moves := 0
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, *core.MoveLocation) (int64, error) {
+			moves++
+			return 4, nil
+		}).AnyTimes()
+	storetest.Permissive(store)
+
+	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
+	if !d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
+		t.Fatal("drainOne failed to move the object once its other copy was gone")
+	}
+	if moves != 1 {
+		t.Errorf("moved %d times, want the object moved off once", moves)
+	}
+}
+
+// TestDrainOne_KeepsTheOnlyUsableKey verifies a drained copy that holds the only
+// usable encryption key is kept and the item fails, rather than the drop
+// leaving the object's other copies undecryptable.
+func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
+	t.Parallel()
+	src := backendtest.NewInMemory()
+	src.Objects["key1"] = backendtest.Object{Data: []byte("data")}
+
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).Return(core.RemovedCopy{}, core.ErrCopyHoldsOnlyDEK)
+	storetest.Permissive(store)
+
+	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
+	if d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
+		t.Fatal("drainOne dropped the copy holding the only usable key")
+	}
+	if !src.Has("key1") {
+		t.Error("the copy holding the only usable key was deleted")
 	}
 }
 
@@ -149,7 +205,6 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	dst := backendtest.NewInMemory()
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	onlyOnB1(store)
 	var moved core.MoveLocation
 	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, m *core.MoveLocation) (int64, error) {
@@ -159,7 +214,7 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if !d.drainOne(context.Background(), src, "b1", drainedObject()) {
+	if !d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
 		t.Fatal("drainOne failed to move the only copy")
 	}
 	if moved.StorageKey == "" || moved.StorageKey == "key1" || !dst.Has(moved.StorageKey) {
@@ -189,14 +244,13 @@ func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 			dst.DeleteErr = errors.New("backend down")
 
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
-			onlyOnB1(store)
 			store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
 				Return(tc.moved, tc.err).AnyTimes()
 			reasons := captureEnqueue(store)
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-			if d.drainOne(context.Background(), src, "b1", drainedObject()) {
+			if d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
 				t.Fatal("drainOne reported success")
 			}
 			if len(*reasons) != 1 || (*reasons)[0] != tc.reason {
@@ -211,26 +265,19 @@ func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 func TestDrainOne_Failures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		setup func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend
+		name   string
+		copies []string
+		setup  func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend
 	}{
-		{"location lookup fails", func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
-			return map[string]backend.ObjectBackend{"b1": src}
-		}},
-		{"dropping the drained row fails", func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-				Return([]core.ObjectLocation{*drainedObject(), {ObjectKey: "key1", BackendName: "b2", SizeBytes: 4}}, nil).AnyTimes()
-			store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(int64(0), errors.New("db error")).AnyTimes()
+		{"dropping the drained row fails", alsoOnB2, func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
+			store.EXPECT().RemoveExcessCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(core.RemovedCopy{}, errors.New("db error")).AnyTimes()
 			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}
 		}},
-		{"no destination", func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			onlyOnB1(store)
+		{"no destination", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
 			return map[string]backend.ObjectBackend{"b1": src}
 		}},
-		{"source read fails", func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			onlyOnB1(store)
+		{"source read fails", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
 			src.GetErr = errors.New("read failure")
 			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}
 		}},
@@ -244,10 +291,29 @@ func TestDrainOne_Failures(t *testing.T) {
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, backends, nil)
-			if d.drainOne(context.Background(), src, "b1", drainedObject()) {
+			if d.drainOne(context.Background(), src, "b1", drainedObject(), tc.copies) {
 				t.Error("drainOne reported success")
 			}
 		})
+	}
+}
+
+// TestMovePage_CopyLookupFailureEndsThePage verifies a page whose copy lookup
+// fails returns the error for the next tick to retry, without moving anything.
+func TestMovePage_CopyLookupFailureEndsThePage(t *testing.T) {
+	t.Parallel()
+	src := backendtest.NewInMemory()
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().GetObjectBackendsForKeys(gomock.Any(), []string{"key1"}).Return(nil, errors.New("db error"))
+	storetest.Permissive(store)
+
+	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src}, nil)
+	sum, err := d.movePage(context.Background(), src, "b1", []core.ObjectLocation{*drainedObject()}, nil)
+	if err == nil {
+		t.Fatal("movePage succeeded with a failed copy lookup")
+	}
+	if sum.Attempted != 0 {
+		t.Errorf("attempted %d moves after the lookup failed", sum.Attempted)
 	}
 }
 
@@ -442,7 +508,7 @@ func TestDrain_ListFailures(t *testing.T) {
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
 			store.EXPECT().ListDrains(gomock.Any()).
 				Return([]core.BackendDrain{{BackendName: "b1", State: core.DrainStateDraining}}, nil).AnyTimes()
-			store.EXPECT().ListObjectsByBackend(gomock.Any(), "b1", gomock.Any()).Return(nil, tc.listErr).AnyTimes()
+			store.EXPECT().ListObjectsByBackend(gomock.Any(), "b1", gomock.Any(), gomock.Any()).Return(nil, tc.listErr).AnyTimes()
 			failed := false
 			store.EXPECT().MarkDrainFailed(gomock.Any(), "b1", gomock.Any()).
 				DoAndReturn(func(context.Context, string, string) error { failed = true; return nil }).AnyTimes()

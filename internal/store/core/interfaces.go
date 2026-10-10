@@ -49,10 +49,11 @@ type ObjectStore interface {
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
-	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
+	ListObjectsByBackend(ctx context.Context, backendName string, limit int, after SizeCursor) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
+	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
 }
@@ -87,8 +88,15 @@ type MultipartStore interface {
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
-	GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error)
-	GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error)
+	ScanMultipartUploads(ctx context.Context, filter MultipartUploadFilter, limit int, afterUploadID string) ([]MultipartUpload, error)
+}
+
+// MultipartUploadFilter selects uploads for an abort scan. Backend, when set,
+// keeps one backend's uploads; CreatedBefore, when non-zero, keeps uploads
+// started before it.
+type MultipartUploadFilter struct {
+	Backend       string
+	CreatedBefore time.Time
 }
 
 // CreateMultipartUploadParams bundles the fields a CreateMultipartUpload
@@ -111,7 +119,7 @@ type ReplicationStore interface {
 	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
 	RecordReplica(ctx context.Context, r *ReplicaInsert) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
+	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
 	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (RemovedCopy, error)
 }
 
@@ -166,20 +174,21 @@ type IntegrityStore interface {
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error)
 	GetObjectsWithoutHash(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
-	ListUnreadableLocations(ctx context.Context, limit int) ([]ObjectLocation, error)
+	ListUnreadableLocations(ctx context.Context, limit int, after Cursor) ([]ObjectLocation, error)
 	CountUnreadableLocations(ctx context.Context) (int64, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
-	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)
 }
 
 // ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
 // and Tags are optional and every one set must match; a query with neither
-// matches the whole namespace, which config validation refuses.
+// matches the whole namespace, which config validation refuses. After is the
+// last key of the previous page, in byte order; empty starts at the first key.
 type ExpiredObjectsQuery struct {
 	Prefix string
 	Tags   map[string]string
 	Cutoff time.Time
+	After  string
 	Limit  int
 }
 
@@ -229,15 +238,11 @@ type AdvisoryLocker interface {
 // aggregator.
 type DashboardStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error)
+	LedgerStats(ctx context.Context) (LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
 	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]PoolUsage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
-	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)
-	CountUnencryptedLocations(ctx context.Context) (int64, error)
-	CompressionStats(ctx context.Context) (map[string]CompressionStat, error)
 }
 
 // -------------------------------------------------------------------------
@@ -262,7 +267,6 @@ type EncryptionAdmin interface {
 	ListEncryptedLocations(ctx context.Context, keyID string, limit int, after Cursor) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
 	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]UnencryptedLocation, error)
-	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
 	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error

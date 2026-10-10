@@ -28,12 +28,15 @@ import (
 // OBJECT LOCATION OPERATIONS
 // -------------------------------------------------------------------------
 
-// ListObjectsByBackend returns objects stored on a specific backend, ordered by
-// size ascending (smallest first). Used by the rebalancer to find movable objects.
-func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+// ListObjectsByBackend returns up to limit managed objects on a backend after
+// the cursor, smallest first. Backs the rebalance, placement, drain and purge
+// scans.
+func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackend(ctx, db.ListObjectsByBackendParams{
 		BackendName: backendName,
-		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		AfterSize:   after.SizeBytes,
+		AfterKey:    after.ObjectKey,
+		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
@@ -55,6 +58,12 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
 	}
 	return toSlimObjectLocations(rows), nil
+}
+
+// ListedPathStates reports what the ledger says about paths the backend
+// listed, in one query for a whole listing page.
+func (s *Store) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	return s.direct().ListedPathStates(ctx, backend, paths)
 }
 
 // ListObjects returns objects matching the given prefix, sorted by key.
@@ -166,6 +175,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 	}
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
 		Prefix:   likeEscaper.Replace(q.Prefix),
+		AfterKey: q.After,
 		Cutoff:   pgTimestamptz(q.Cutoff),
 		TagCount: int32(len(q.Tags)), //nolint:gosec // G115: capped at MaxTagsPerObject by config validation
 		Tags:     tags,

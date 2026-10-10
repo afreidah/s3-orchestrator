@@ -168,9 +168,11 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // -------------------------------------------------------------------------
 
 // importer is the slice of the metadata store the sync command writes
-// to: a single ImportObject per backend row. Declared locally so the
-// command owns its own dependency contract.
+// to: one ledger lookup per listing page, an ImportObject per path the ledger
+// does not hold, and the sibling lookup classification needs. Declared
+// locally so the command owns its own dependency contract.
 type importer interface {
+	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error)
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
@@ -265,7 +267,8 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	if opts.DryRun {
 		mode = "dry-run"
 	}
-	synccmdLogger().InfoContext(ctx, "starting sync",
+	synccmdLogger().InfoContext(
+		ctx, "starting sync",
 		"backend", run.BackendCfg.Name,
 		"virtual_bucket", opts.BucketName,
 		"backend_bucket", run.BackendCfg.Bucket,
@@ -276,18 +279,32 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	var totalImported, totalSkipped int
 	var totalBytes int64
 	pageNum := 0
+	pages := reconcile.PageImporter{
+		Store: run.Store,
+		Classify: reconcile.ClassifyDeps{
+			Backend: s3b,
+			Stores:  run.Store,
+			Codec:   run.Codec,
+			Source:  "sync",
+			Log:     synccmdLogger(),
+		},
+		BackendName: run.BackendCfg.Name,
+		Prefixes:    bucketPrefixes(run.Buckets),
+		DryRun:      opts.DryRun,
+	}
 
 	err := s3b.ListObjects(ctx, opts.Prefix, func(objects []backend.ListedObject) error {
 		pageNum++
-		imported, skipped, bytes, err := importPage(ctx, s3b, run, objects)
+		page, err := pages.Import(ctx, objects)
 		if err != nil {
 			return err
 		}
-		totalImported += imported
-		totalSkipped += skipped
-		totalBytes += bytes
-		synccmdLogger().InfoContext(ctx, "synced page",
-			"page", pageNum, "imported", imported, "skipped", skipped,
+		totalImported += page.Imported
+		totalSkipped += page.Skipped
+		totalBytes += page.ImportedBytes
+		synccmdLogger().InfoContext(
+			ctx, "synced page",
+			"page", pageNum, "imported", page.Imported, "skipped", page.Skipped,
 			"total_imported", totalImported, "total_skipped", totalSkipped,
 		)
 		return nil
@@ -296,7 +313,8 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 		return err
 	}
 
-	synccmdLogger().InfoContext(ctx, "sync complete",
+	synccmdLogger().InfoContext(
+		ctx, "sync complete",
 		"backend", run.BackendCfg.Name,
 		"imported", totalImported,
 		"skipped", totalSkipped,
@@ -304,60 +322,4 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 		"mode", mode,
 	)
 	return nil
-}
-
-// importPage imports one page of backend objects into the metadata store
-// (or logs them under dry-run), returning per-page counters. Keys are imported
-// exactly as the backend holds them; an object outside every configured bucket
-// prefix is recorded as unmanaged so it counts toward quota without any worker
-// acting on it.
-func importPage(ctx context.Context, s3b backend.ObjectBackend, run *importRun, objects []backend.ListedObject) (imported, skipped int, bytes int64, err error) {
-	backendName := run.BackendCfg.Name
-	prefixes := bucketPrefixes(run.Buckets)
-	for _, obj := range objects {
-		unmanaged := reconcile.Unmanaged(obj.Key, prefixes)
-		if run.Opts.DryRun {
-			synccmdLogger().InfoContext(ctx, "would import",
-				"key", obj.Key, "size", obj.SizeBytes, "unmanaged", unmanaged)
-			imported++
-			bytes += obj.SizeBytes
-			continue
-		}
-		form, err := reconcile.ClassifyImport(ctx, reconcile.ClassifyDeps{
-			Backend: s3b,
-			Stores:  run.Store,
-			Codec:   run.Codec,
-			Source:  "sync",
-			Log:     synccmdLogger(),
-		}, backendName, obj.Key, obj.SizeBytes)
-		if err != nil {
-			return imported, skipped, bytes, err
-		}
-		outcome, err := run.Store.ImportObject(ctx, &core.ImportObjectRequest{
-			Key:       obj.Key,
-			Backend:   backendName,
-			Size:      obj.SizeBytes,
-			Unmanaged: unmanaged,
-			Form:      form,
-			WrittenAt: obj.LastModified,
-		})
-		if err != nil {
-			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
-		}
-		switch outcome {
-		case core.ImportInserted:
-			imported++
-			bytes += obj.SizeBytes
-		case core.ImportSkippedPendingCleanup:
-			// Reported rather than counted silently: the bytes are on the
-			// backend because a delete could not reach it, so importing
-			// them would undo that delete.
-			synccmdLogger().WarnContext(ctx, "skipping object with an outstanding delete",
-				"key", obj.Key, "backend", backendName)
-			skipped++
-		default:
-			skipped++
-		}
-	}
-	return imported, skipped, bytes, nil
 }

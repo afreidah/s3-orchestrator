@@ -12,8 +12,8 @@
 // egress in the system. Everything here that looks defensive - per-object usage
 // admission, the cap counting rewrites rather than rows - is there because a
 // pass that gets one of them wrong either exhausts a metered backend or
-// silently skips part of the fleet while reporting success. Paging is shared
-// with the other fleet-wide passes through walkPages.
+// silently skips part of the fleet while reporting success. Paging is a
+// batch.Pager cursor walk, shared with the other paged passes.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -142,6 +143,19 @@ const (
 // INTERNALS
 // -------------------------------------------------------------------------
 
+// item maps one outcome onto the shared tally. A changed copy was declined, so
+// it tallies as skipped.
+func (o rewriteOutcome) item() batch.ItemOutcome {
+	switch o {
+	case rewriteDone:
+		return batch.ItemSucceeded
+	case rewriteSkipped, rewriteChanged:
+		return batch.ItemSkipped
+	default:
+		return batch.ItemFailed
+	}
+}
+
 // status renders one outcome for a progress step, in the vocabulary the other
 // streaming passes already use.
 func (o rewriteOutcome) status() string {
@@ -162,26 +176,29 @@ func (o rewriteOutcome) status() string {
 // obs reports each object as it is processed and may be nil.
 func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
-	list := func(ctx context.Context, limit int, after core.Cursor) ([]L, error) {
-		rows, err := op.listFn(ctx, limit, after)
-		if err != nil {
-			env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
-		}
-		return rows, err
+	pager := batch.Pager[L, core.Cursor]{
+		// A capped run's last page is asked for short, so the walk compares
+		// each page against what was asked for rather than the batch constant.
+		PageSize: func() int { return bulkRewritePageSize(op.maxRewrites, res.Succeeded) },
+		List: func(ctx context.Context, limit int, after core.Cursor) ([]L, error) {
+			rows, err := op.listFn(ctx, limit, after)
+			if err != nil {
+				env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
+			}
+			return rows, err
+		},
+		CursorOf: func(row L) core.Cursor {
+			return core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
+		},
 	}
-	// A capped run's last page is asked for short, so walkPages compares each
-	// page against what was asked for rather than the batch constant.
-	pageSize := func() int { return bulkRewritePageSize(op.maxRewrites, res.Succeeded) }
-	cursorOf := func(row L) core.Cursor {
-		return core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
-	}
-	stopped, err := walkPages(ctx, pageSize, list, cursorOf, func(ctx context.Context, rows []L) (bool, error) {
-		return op.runPage(ctx, env, obs, rows, &res)
+	stop, err := pager.Walk(ctx, func(ctx context.Context, rows []L) (batch.Step, error) {
+		capped, err := op.runPage(ctx, env, obs, rows, &res)
+		return batch.Step{Stop: capped}, err
 	})
 	if err != nil {
 		return res, err
 	}
-	if stopped {
+	if stop == batch.Stopped {
 		env.log.InfoContext(ctx, op.opName+" reached its limit",
 			op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed)
 		return res, nil
@@ -192,42 +209,36 @@ func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs prog
 	return res, nil
 }
 
-// runPage processes one listing page, advancing res. Reports whether the pass
-// should stop because it reached its cap.
+// runPage rewrites one listing page and folds its outcomes into res. A
+// cancelled pass stops dispatching rows, so the copies it never reached are not
+// reported as failed downloads. A changed copy is tallied as skipped by the
+// runner and counted apart here. Reports whether the pass reached its cap; the
+// page was asked for no more rows than the cap had room for, so the cap is
+// checked once the page is done.
 func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []L, res *BulkRewriteResult) (bool, error) {
-	for _, row := range rows {
-		// Checked per row rather than per page: without it a cancelled pass
-		// runs out the rest of the page, failing every remaining copy's
-		// download and reporting a hundred failures that never happened.
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		res.Total++
-		outcome := rewriteErrored
-		progress.Track(obs, row.rewriteKey(), func() string {
-			outcome = op.processLocation(ctx, env, row)
-			return outcome.status()
-		})
-		res.tally(outcome)
-		if op.maxRewrites > 0 && res.Succeeded >= op.maxRewrites {
-			return true, nil
-		}
+	changed := 0
+	runner := batch.Runner[L]{
+		Name:        op.opName,
+		Concurrency: 1,
+		Observer:    obs,
+		Key:         func(row L) string { return row.rewriteKey() },
 	}
-	return false, nil
-}
-
-// tally records one copy's outcome against the running counts.
-func (r *BulkRewriteResult) tally(outcome rewriteOutcome) {
-	switch outcome {
-	case rewriteDone:
-		r.Succeeded++
-	case rewriteSkipped:
-		r.Skipped++
-	case rewriteChanged:
-		r.Changed++
-	case rewriteErrored:
-		r.Failed++
+	sum := runner.Run(ctx, rows, func(ctx context.Context, row L) batch.ItemResult {
+		outcome := op.processLocation(ctx, env, row)
+		if outcome == rewriteChanged {
+			changed++
+		}
+		return batch.ItemResult{Outcome: outcome.item(), Status: outcome.status()}
+	})
+	res.Succeeded += sum.Succeeded
+	res.Failed += sum.Failed
+	res.Changed += changed
+	res.Skipped += sum.Skipped - changed
+	res.Total += sum.Attempted + sum.Skipped
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
+	return op.maxRewrites > 0 && res.Succeeded >= op.maxRewrites, nil
 }
 
 // bulkRewritePageSize is how many rows to ask for next: a full page, or only

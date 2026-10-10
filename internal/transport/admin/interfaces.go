@@ -33,7 +33,7 @@ type BackendOps interface {
 // DashboardReader is the dashboard surface the admin handler reads for its
 // status endpoint. *dashboard.Aggregator satisfies it.
 type DashboardReader interface {
-	GetData(ctx context.Context) (*dashboard.Data, error)
+	GetStatus(ctx context.Context) (*dashboard.Data, error)
 }
 
 // Reconciler is the slice of *worker.Reconciler the admin handler uses for the

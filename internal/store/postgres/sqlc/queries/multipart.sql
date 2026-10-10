@@ -58,15 +58,16 @@ LIMIT @row_limit;
 DELETE FROM multipart_uploads
 WHERE upload_id = $1;
 
--- name: GetStaleMultipartUploads :many
+-- name: ScanMultipartUploads :many
+-- Full rows for the abort scans, paged by upload_id. An empty backend filter
+-- and a NULL cutoff each match every upload.
 SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
-WHERE created_at < $1;
-
--- name: GetMultipartUploadsByBackend :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
-FROM multipart_uploads
-WHERE backend_name = $1;
+WHERE (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR created_at < sqlc.narg(created_before)::timestamptz)
+  AND upload_id > sqlc.arg(after_upload_id)::text
+ORDER BY upload_id
+LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteMultipartUploadsByBackend :exec
 DELETE FROM multipart_uploads WHERE backend_name = $1;

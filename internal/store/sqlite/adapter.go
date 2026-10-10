@@ -333,21 +333,45 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 	return loc, true, nil
 }
 
-// CopyExistsAtPath reports whether the backend already holds a recorded copy
-// at storageKey, whichever object it belongs to.
-func (a *sqliteTxAdapter) CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error) {
-	var probe int
-	err := a.q.QueryRowContext(ctx,
-		`SELECT 1 FROM object_locations WHERE backend_name = ? AND storage_key = ?`,
-		backend, storageKey,
-	).Scan(&probe)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+// ListedPathStates reports what the ledger says about each listed path on the
+// backend: 2 for a delete still queued or dead-lettered, 1 for a recorded copy.
+// Untracked paths are absent from the map, and a path matching several arms
+// keeps the highest state.
+func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	if len(paths) == 0 {
+		return map[string]core.PathState{}, nil
 	}
+	pathsJSON, err := json.Marshal(paths)
 	if err != nil {
-		return false, fmt.Errorf("check copy at path: %w", err)
+		return nil, fmt.Errorf("marshal listed paths: %w", err)
 	}
-	return true, nil
+	rows, err := a.q.QueryContext(ctx, `
+		SELECT storage_key, 2 FROM cleanup_queue
+		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
+		UNION ALL
+		SELECT storage_key, 2 FROM cleanup_dlq
+		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
+		UNION ALL
+		SELECT storage_key, 1 FROM object_locations
+		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))`,
+		backend, string(pathsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("look up listed paths: %w", err)
+	}
+	defer rows.Close()
+	states := make(map[string]core.PathState, len(paths))
+	for rows.Next() {
+		var path string
+		var state core.PathState
+		if err := rows.Scan(&path, &state); err != nil {
+			return nil, fmt.Errorf("scan listed path: %w", err)
+		}
+		states[path] = max(states[path], state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate listed paths: %w", err)
+	}
+	return states, nil
 }
 
 // DeleteObjectFromBackend removes the single (key, backend) row.
@@ -581,22 +605,6 @@ func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error
 		return fmt.Errorf("delete cleanup_queue row: %w", err)
 	}
 	return nil
-}
-
-// HasPendingCleanup reports whether a delete for (storageKey, backend) is still
-// outstanding in either the retry queue or the dead-letter table.
-func (a *sqliteTxAdapter) HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error) {
-	var pending bool
-	err := a.q.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?
-			UNION ALL
-			SELECT 1 FROM cleanup_dlq   WHERE storage_key = ? AND backend_name = ?
-		)`, storageKey, backend, storageKey, backend).Scan(&pending)
-	if err != nil {
-		return false, fmt.Errorf("check pending cleanup: %w", err)
-	}
-	return pending, nil
 }
 
 // -------------------------------------------------------------------------

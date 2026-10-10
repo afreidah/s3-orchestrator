@@ -29,12 +29,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // outcomeLabels is every label a cycle can report itself under. Asserting on
 // all of them, rather than only the expected one, is what stops a cycle passing
 // by reporting two.
-var outcomeLabels = []string{OutcomeSuccess, OutcomePartial, OutcomeFailed, OutcomeEmpty, OutcomeError}
+var outcomeLabels = []string{batch.OutcomeSuccess, batch.OutcomePartial, batch.OutcomeFailed, batch.OutcomeEmpty, batch.OutcomeError}
 
 // wantOutcomeLabel asserts fn moved exactly one of the counters counterFor
 // resolves - the one named by want - and left the rest alone. Counters are
@@ -63,33 +64,6 @@ func wantOutcomeLabel(t *testing.T, counterFor func(string) prometheus.Counter, 
 func wantCycleLabel(t *testing.T, vec *prometheus.CounterVec, want string, fn func()) {
 	t.Helper()
 	wantOutcomeLabel(t, func(l string) prometheus.Counter { return vec.WithLabelValues(l) }, want, fn)
-}
-
-// -------------------------------------------------------------------------
-// OUTCOME VOCABULARY
-// -------------------------------------------------------------------------
-
-// TestWorkSummary_OutcomeVocabulary pins the label each tally reports under.
-// These strings are the contract operator alert rules are written against.
-func TestWorkSummary_OutcomeVocabulary(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		sum  WorkSummary
-		want string
-	}{
-		{"all succeeded", WorkSummary{Succeeded: 3}, OutcomeSuccess},
-		{"some failed", WorkSummary{Succeeded: 2, Failed: 1}, OutcomePartial},
-		{"all failed", WorkSummary{Failed: 3}, OutcomeFailed},
-		{"nothing to do", WorkSummary{}, OutcomeEmpty},
-		{"only skipped", WorkSummary{Skipped: 4}, OutcomeEmpty},
-		{"deferred only", WorkSummary{Deferred: 5}, OutcomeEmpty},
-	}
-	for _, tc := range cases {
-		if got := tc.sum.Outcome(); got != tc.want {
-			t.Errorf("%s: Outcome() = %q, want %q", tc.name, got, tc.want)
-		}
-	}
 }
 
 // -------------------------------------------------------------------------
@@ -188,13 +162,13 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 		failing []string
 		want    string
 	}{
-		{name: "every object copied", keys: []string{"key1"}, want: OutcomeSuccess},
-		{name: "every object failed", keys: []string{"key1"}, failing: []string{"key1"}, want: OutcomeFailed},
+		{name: "every object copied", keys: []string{"key1"}, want: batch.OutcomeSuccess},
+		{name: "every object failed", keys: []string{"key1"}, failing: []string{"key1"}, want: batch.OutcomeFailed},
 		{
 			name:    "one of two objects failed",
 			keys:    []string{"key1", "key2"},
 			failing: []string{"key2"},
-			want:    OutcomePartial,
+			want:    batch.OutcomePartial,
 		},
 	}
 
@@ -225,7 +199,7 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
 	f := newReplicaFleet(t, &mockMetadataStore{}, "b1", "b2")
 
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, OutcomeEmpty, func() {
+	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeEmpty, func() {
 		sum, err := f.replicator().Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Replicate: %v", err)
@@ -241,7 +215,7 @@ func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
 func TestReplicate_QueryFailureReportsError(t *testing.T) {
 	f := newReplicaFleet(t, &mockMetadataStore{underReplicatedErr: errors.New("ledger unavailable")}, "b1", "b2")
 
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, OutcomeError, func() {
+	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeError, func() {
 		if _, err := f.replicator().Replicate(context.Background(), replicationConfig(2), nil); err == nil {
 			t.Fatal("Replicate returned nil error despite the query failing")
 		}
@@ -260,7 +234,7 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
 	r := newTestReplicator(ops, NewMockPlacement(ctrl), store)
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, OutcomeEmpty, func() {
+	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeEmpty, func() {
 		sum, err := r.Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Replicate: %v", err)
@@ -292,7 +266,7 @@ func TestReplicate_SummaryCountsObjectsAndCopies(t *testing.T) {
 		t.Errorf("CopiesCreated = %d, want 2", sum.CopiesCreated)
 	}
 	if sum.Planned != 1 || sum.Succeeded != 1 || sum.Failed != 0 {
-		t.Errorf("tally = %+v, want one planned object that succeeded", sum.WorkSummary)
+		t.Errorf("tally = %+v, want one planned object that succeeded", sum.Summary)
 	}
 }
 
@@ -305,14 +279,14 @@ func TestReplicaOutcomeResult_ClassifiesAnObject(t *testing.T) {
 	cases := []struct {
 		name string
 		out  ReplicationOutcome
-		want ItemOutcome
+		want batch.ItemOutcome
 	}{
-		{"copies made", ReplicationOutcome{Created: 2}, ItemSucceeded},
-		{"copy errored", ReplicationOutcome{CopyErrors: 1}, ItemFailed},
-		{"record errored", ReplicationOutcome{RecordErrors: 1}, ItemFailed},
-		{"source superseded", ReplicationOutcome{Superseded: 1}, ItemFailed},
-		{"partly created still fails", ReplicationOutcome{Created: 1, CopyErrors: 1}, ItemFailed},
-		{"nowhere to put it", ReplicationOutcome{NoTarget: true}, ItemSkipped},
+		{"copies made", ReplicationOutcome{Created: 2}, batch.ItemSucceeded},
+		{"copy errored", ReplicationOutcome{CopyErrors: 1}, batch.ItemFailed},
+		{"record errored", ReplicationOutcome{RecordErrors: 1}, batch.ItemFailed},
+		{"source superseded", ReplicationOutcome{Superseded: 1}, batch.ItemFailed},
+		{"partly created still fails", ReplicationOutcome{Created: 1, CopyErrors: 1}, batch.ItemFailed},
+		{"nowhere to put it", ReplicationOutcome{NoTarget: true}, batch.ItemSkipped},
 	}
 	for _, tc := range cases {
 		if got := replicaOutcomeResult(&tc.out); got.Outcome != tc.want {
@@ -387,9 +361,9 @@ func TestClean_ReportsCycleOutcome(t *testing.T) {
 		rows []core.ObjectLocation
 		want string
 	}{
-		{name: "surplus removed", rows: cleanable, want: OutcomeSuccess},
-		{name: "removal could not complete", rows: stranded, want: OutcomeFailed},
-		{name: "one object of two failed", rows: append(append([]core.ObjectLocation{}, cleanable...), stranded...), want: OutcomePartial},
+		{name: "surplus removed", rows: cleanable, want: batch.OutcomeSuccess},
+		{name: "removal could not complete", rows: stranded, want: batch.OutcomeFailed},
+		{name: "one object of two failed", rows: append(append([]core.ObjectLocation{}, cleanable...), stranded...), want: batch.OutcomePartial},
 	}
 
 	for _, tc := range cases {
@@ -413,7 +387,7 @@ func TestClean_MetadataRefusalIsAFailure(t *testing.T) {
 		removeExcessErr: errors.New("deadlock detected"),
 	})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, OutcomeFailed, func() {
+	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeFailed, func() {
 		sum, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Clean: %v", err)
@@ -433,13 +407,13 @@ func TestClean_BenignRaceIsNotAFailure(t *testing.T) {
 		removeExcessNoOp: true,
 	})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, OutcomeEmpty, func() {
+	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeEmpty, func() {
 		sum, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Clean: %v", err)
 		}
 		if sum.Skipped != 1 || sum.Failed != 0 {
-			t.Errorf("tally = %+v, want the raced object skipped and nothing failed", sum.WorkSummary)
+			t.Errorf("tally = %+v, want the raced object skipped and nothing failed", sum.Summary)
 		}
 	})
 }
@@ -449,7 +423,7 @@ func TestClean_BenignRaceIsNotAFailure(t *testing.T) {
 func TestClean_QueryFailureReportsError(t *testing.T) {
 	f := newCleanerFleet(t, &mockMetadataStore{overReplicatedErr: errors.New("ledger unavailable")})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, OutcomeError, func() {
+	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeError, func() {
 		if _, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil); err == nil {
 			t.Fatal("Clean returned nil error despite the query failing")
 		}
@@ -470,7 +444,7 @@ func TestClean_SummaryCountsObjectsAndCopies(t *testing.T) {
 		t.Errorf("CopiesRemoved = %d, want 2", sum.CopiesRemoved)
 	}
 	if sum.Planned != 1 || sum.Succeeded != 1 || sum.Failed != 0 {
-		t.Errorf("tally = %+v, want one planned object that succeeded", sum.WorkSummary)
+		t.Errorf("tally = %+v, want one planned object that succeeded", sum.Summary)
 	}
 }
 
@@ -483,12 +457,12 @@ func TestCleanupItemResult_ClassifiesAnObject(t *testing.T) {
 		name     string
 		removed  int
 		failures int
-		want     ItemOutcome
+		want     batch.ItemOutcome
 	}{
-		{"surplus removed", 2, 0, ItemSucceeded},
-		{"removed some, failed some", 1, 1, ItemSucceeded},
-		{"every removal failed", 0, 2, ItemFailed},
-		{"nothing left to remove", 0, 0, ItemSkipped},
+		{"surplus removed", 2, 0, batch.ItemSucceeded},
+		{"removed some, failed some", 1, 1, batch.ItemSucceeded},
+		{"every removal failed", 0, 2, batch.ItemFailed},
+		{"nothing left to remove", 0, 0, batch.ItemSkipped},
 	}
 	for _, tc := range cases {
 		if got := cleanupItemResult(tc.removed, tc.failures); got.Outcome != tc.want {
@@ -550,8 +524,8 @@ func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 		moveErr error
 		want    string
 	}{
-		{name: "moves landed", want: OutcomeSuccess},
-		{name: "every move failed", moveErr: errors.New("stream copy: timeout"), want: OutcomeFailed},
+		{name: "moves landed", want: batch.OutcomeSuccess},
+		{name: "every move failed", moveErr: errors.New("stream copy: timeout"), want: batch.OutcomeFailed},
 	}
 
 	for _, tc := range cases {
@@ -573,7 +547,7 @@ func TestRebalance_QuotaQueryFailureReportsError(t *testing.T) {
 	r := NewRebalancer(newMockOps(ctrl), NewMockPlacement(ctrl),
 		&mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")})
 
-	wantRebalanceLabel(t, OutcomeError, func() {
+	wantRebalanceLabel(t, batch.OutcomeError, func() {
 		if _, err := r.Rebalance(context.Background(), spreadConfig, nil); err == nil {
 			t.Fatal("Rebalance returned nil error despite the quota query failing")
 		}

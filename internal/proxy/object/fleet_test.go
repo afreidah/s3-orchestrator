@@ -17,6 +17,7 @@ package object
 
 import (
 	"cmp"
+	"maps"
 	"testing"
 	"time"
 
@@ -135,7 +136,7 @@ func newFleet(
 		MaxObjectSizes:  opts.MaxObjectSizes,
 		AdmissionSem:    opts.AdmissionSem,
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: usage, BackendNames: names,
 	}))
 	if len(opts.Draining) > 0 {
@@ -180,9 +181,7 @@ func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) 
 	for _, name := range names {
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
-	for name, usage := range baselines {
-		primed[name] = usage
-	}
+	maps.Copy(primed, baselines)
 	quota := counter.NewQuotaTracker(names)
 	quota.SetBaselines(primed)
 	return quota

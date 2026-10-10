@@ -128,6 +128,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		Drains:  drainManager,
 		Locker:  locker,
 	}))
+	sm.Register("fleet-snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
 	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
 		sm.Register("flight-recorder", fr)

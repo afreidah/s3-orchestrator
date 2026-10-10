@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -189,15 +190,18 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 	}
 
 	var res RotateKeyResult
-	list := func(ctx context.Context, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
-		return e.store.ListEncryptedLocations(ctx, oldKeyID, limit, after)
+	pager := batch.Pager[core.EncryptedLocation, core.Cursor]{
+		PageSize: batch.FixedPage(rotateBatchSize),
+		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
+			return e.store.ListEncryptedLocations(ctx, oldKeyID, limit, after)
+		},
+		CursorOf: func(loc core.EncryptedLocation) core.Cursor {
+			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
+		},
 	}
-	cursorOf := func(loc core.EncryptedLocation) core.Cursor {
-		return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
-	}
-	_, err := walkPages(ctx, fixedPage(rotateBatchSize), list, cursorOf, func(ctx context.Context, locs []core.EncryptedLocation) (bool, error) {
+	_, err := pager.Walk(ctx, func(ctx context.Context, locs []core.EncryptedLocation) (batch.Step, error) {
 		e.rotateBatch(ctx, locs, &res)
-		return false, nil
+		return batch.Step{}, nil
 	})
 	if err != nil {
 		return res, err
@@ -213,14 +217,16 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 
 // rotateBatch re-wraps one page of locations and folds the outcomes into res.
 func (e *Encryption) rotateBatch(ctx context.Context, locs []core.EncryptedLocation, res *RotateKeyResult) {
-	for _, loc := range locs {
+	runner := batch.Runner[core.EncryptedLocation]{Name: "key-rotation", Concurrency: 1}
+	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.EncryptedLocation) batch.ItemResult {
 		if e.rotateOneLocation(ctx, loc) {
-			res.Rotated++
-		} else {
-			res.Failed++
+			return batch.ItemResult{Outcome: batch.ItemSucceeded}
 		}
-	}
-	res.Total += len(locs)
+		return batch.ItemResult{Outcome: batch.ItemFailed}
+	})
+	res.Rotated += sum.Succeeded
+	res.Failed += sum.Failed
+	res.Total += sum.Attempted
 }
 
 // rotateOneLocation re-wraps the DEK for a single encrypted location. Reports

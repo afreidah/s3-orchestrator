@@ -18,6 +18,7 @@ import (
 	object "github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
+	batch "github.com/afreidah/s3-orchestrator/internal/util/batch"
 	worker "github.com/afreidah/s3-orchestrator/internal/worker"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -309,18 +310,18 @@ func (mr *MockObjectStoreMockRecorder) ListObjects(ctx, prefix, startAfter, maxK
 }
 
 // ListObjectsByBackend mocks base method.
-func (m *MockObjectStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+func (m *MockObjectStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit)
+	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjectsByBackend indicates an expected call of ListObjectsByBackend.
-func (mr *MockObjectStoreMockRecorder) ListObjectsByBackend(ctx, backendName, limit any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) ListObjectsByBackend(ctx, backendName, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsByBackend), ctx, backendName, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsByBackend), ctx, backendName, limit, after)
 }
 
 // ListObjectsByBackendKeyAsc mocks base method.
@@ -351,6 +352,21 @@ func (m *MockObjectStore) ListObjectsDelimited(ctx context.Context, prefix, deli
 func (mr *MockObjectStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
+}
+
+// ListedPathStates mocks base method.
+func (m *MockObjectStore) ListedPathStates(ctx context.Context, arg1 string, paths []string) (map[string]core.PathState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListedPathStates", ctx, arg1, paths)
+	ret0, _ := ret[0].(map[string]core.PathState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListedPathStates indicates an expected call of ListedPathStates.
+func (mr *MockObjectStoreMockRecorder) ListedPathStates(ctx, arg1, paths any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListedPathStates", reflect.TypeOf((*MockObjectStore)(nil).ListedPathStates), ctx, arg1, paths)
 }
 
 // MoveObjectLocation mocks base method.
@@ -738,10 +754,10 @@ func (m *MockScrubberOps) EXPECT() *MockScrubberOpsMockRecorder {
 }
 
 // HashCopies mocks base method.
-func (m *MockScrubberOps) HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
+func (m *MockScrubberOps) HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "HashCopies", ctx, locs, observer)
-	ret0, _ := ret[0].(worker.WorkSummary)
+	ret0, _ := ret[0].(batch.Summary)
 	return ret0
 }
 
@@ -768,10 +784,10 @@ func (mr *MockScrubberOpsMockRecorder) ListUnreadable(ctx, limit any) *gomock.Ca
 }
 
 // PurgeUnreadable mocks base method.
-func (m *MockScrubberOps) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary {
+func (m *MockScrubberOps) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PurgeUnreadable", ctx, batchSize, observer)
-	ret0, _ := ret[0].(worker.WorkSummary)
+	ret0, _ := ret[0].(batch.Summary)
 	return ret0
 }
 
@@ -782,10 +798,10 @@ func (mr *MockScrubberOpsMockRecorder) PurgeUnreadable(ctx, batchSize, observer 
 }
 
 // Scrub mocks base method.
-func (m *MockScrubberOps) Scrub(ctx context.Context, batchSize int, arg2 string, observer progress.Observer) worker.WorkSummary {
+func (m *MockScrubberOps) Scrub(ctx context.Context, batchSize int, arg2 string, observer progress.Observer) batch.Summary {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Scrub", ctx, batchSize, arg2, observer)
-	ret0, _ := ret[0].(worker.WorkSummary)
+	ret0, _ := ret[0].(batch.Summary)
 	return ret0
 }
 
@@ -910,21 +926,6 @@ func NewMockEncryptionStore(ctrl *gomock.Controller) *MockEncryptionStore {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockEncryptionStore) EXPECT() *MockEncryptionStoreMockRecorder {
 	return m.recorder
-}
-
-// CountUnencryptedLocations mocks base method.
-func (m *MockEncryptionStore) CountUnencryptedLocations(ctx context.Context) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountUnencryptedLocations", ctx)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountUnencryptedLocations indicates an expected call of CountUnencryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).CountUnencryptedLocations), ctx)
 }
 
 // ListAllEncryptedLocations mocks base method.

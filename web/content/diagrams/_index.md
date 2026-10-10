@@ -84,7 +84,7 @@ weight: 35
     <i class="fas fa-cogs landing-card-icon" style="color: #8b949e;"></i>
     <div>
       <strong>Background Services</strong>
-      <p>Periodic workers: replicator, rebalancer, over-replication cleaner, cleanup queue, pending reaper, drainer, scrubber, reconciler, lifecycle, multipart cleanup, usage flusher, and notification delivery.</p>
+      <p>Periodic workers: replicator, rebalancer, over-replication cleaner, cleanup queue, pending reaper, drainer, scrubber, reconciler, lifecycle, multipart cleanup, usage flusher, fleet snapshot, and notification delivery.</p>
     </div>
   </a>
   <a class="landing-card" href="database-schema/">

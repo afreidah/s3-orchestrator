@@ -13,6 +13,7 @@
 package provisioning
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -65,12 +66,7 @@ func countNotices(notices []Notice, kind string) int {
 
 // reaches reports whether a user's bucket list contains a name.
 func reaches(u *User, bucket string) bool {
-	for _, b := range u.Buckets {
-		if b == bucket {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(u.Buckets, bucket)
 }
 
 // -------------------------------------------------------------------------

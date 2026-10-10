@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // hashString reports whether h string.
@@ -496,6 +497,28 @@ func TestPurgeUnreadable_RowDeleteFailureFails(t *testing.T) {
 	}
 }
 
+// TestPurgeUnreadable_FailingCopiesTriedOncePerPurge verifies the purge pages
+// past copies it fails to discard. The fixture never removes a row, as a row
+// whose delete fails stays in the real listing, so a purge that re-read the
+// head would retry the same copy on every page.
+func TestPurgeUnreadable_FailingCopiesTriedOncePerPurge(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+	ms.unreadable = []core.ObjectLocation{
+		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 1, Encrypted: true},
+		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 1, Encrypted: true},
+		{ObjectKey: "bucket/c", BackendName: "b1", SizeBytes: 1, Encrypted: true},
+	}
+	ms.deleteLocationErr = errors.New("db down")
+	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(3)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, gomock.Any()).Times(3)
+
+	sum := s.PurgeUnreadable(context.Background(), 1, nil)
+	if sum.Failed != 3 || sum.Succeeded != 0 {
+		t.Errorf("summary = %+v, want each of the 3 copies failed once", sum)
+	}
+}
+
 // TestBackfill_SkipsKeylessRow verifies a row encrypted with no key is skipped
 // as unreadable without a backend read, rather than failing every cycle.
 func TestBackfill_SkipsKeylessRow(t *testing.T) {
@@ -514,7 +537,7 @@ func TestBackfill_SkipsKeylessRow(t *testing.T) {
 		}
 	}
 	sum := s.HashCopies(context.Background(), locs, observer)
-	if sum.Skipped != 1 || sum.Failed != 0 || sum.Outcome() != OutcomeEmpty {
+	if sum.Skipped != 1 || sum.Failed != 0 || sum.Outcome() != batch.OutcomeEmpty {
 		t.Errorf("summary = %+v (outcome %s), want one skip and an empty outcome", sum, sum.Outcome())
 	}
 	if !slices.Equal(statuses, []string{progress.StatusUnreadable}) {
@@ -597,8 +620,9 @@ func TestScrub_StampsEveryAttempt(t *testing.T) {
 func TestScrub_ReportsCoverage(t *testing.T) {
 	s, ops, _, _, ms := setupScrubber(t)
 
-	ms.oldestUnverified = 36 * time.Hour
-	ms.neverVerified = 42
+	ms.ledger = core.LedgerStats{"b1": {
+		Verifiable: 42, NeverVerified: 42, OldestTouched: time.Now().Add(-36 * time.Hour),
+	}}
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	s.Scrub(context.Background(), 10, "", nil)
@@ -606,8 +630,9 @@ func TestScrub_ReportsCoverage(t *testing.T) {
 	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 42 {
 		t.Errorf("never-verified gauge = %v, want 42", got)
 	}
-	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got != (36 * time.Hour).Seconds() {
-		t.Errorf("oldest-unverified gauge = %v, want %v", got, (36 * time.Hour).Seconds())
+	want := (36 * time.Hour).Seconds()
+	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got < want || got > want+60 {
+		t.Errorf("oldest-unverified gauge = %v, want about %v", got, want)
 	}
 }
 
@@ -624,7 +649,7 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 	}
 	ms.markScrubbedErr = errors.New("stamp failed")
 	ms.deleteLocationErr = errors.New("row removal failed")
-	ms.oldestUnverifiedErr = errors.New("coverage query failed")
+	ms.ledgerErr = errors.New("coverage query failed")
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
@@ -847,9 +872,10 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{
 		deferredCandidates: 40,
-		oldestUnverified:   72 * time.Hour,
-		neverVerified:      40,
-		deferredCopies:     40,
+		ledger: core.LedgerStats{
+			"b1": {Verifiable: 1, NeverVerified: 1, OldestTouched: time.Now().Add(-time.Hour)},
+			"b2": {Verifiable: 40, NeverVerified: 40, OldestTouched: time.Now().Add(-72 * time.Hour)},
+		},
 	}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
@@ -864,11 +890,11 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 		t.Fatalf("Deferred = %d, want 40", sum.Deferred)
 	}
 
-	// The coverage query is scoped to exactly the backends the batch drew from.
-	// Any wider and it would count copies no sweep can stamp, which pegs the
-	// age gauge to wall clock and leaves it there.
-	if !slices.Equal(ms.coverageReachable, []string{"b1"}) {
-		t.Errorf("coverage scoped to %v, want only the affordable backend b1", ms.coverageReachable)
+	// Coverage is scoped to exactly the backends the batch drew from. Any
+	// wider and it would count copies no sweep can stamp, which pegs the age
+	// gauge to wall clock and leaves it there.
+	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got >= (72 * time.Hour).Seconds() {
+		t.Errorf("age gauge = %v, want the unreachable b2 backlog excluded", got)
 	}
 
 	// The backlog the deferred copies represent is still reported, on its own

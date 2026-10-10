@@ -35,8 +35,6 @@ import (
 func stubMetricsStore(t *testing.T) *MockDeps {
 	t.Helper()
 	store := NewMockDeps(gomock.NewController(t))
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	return store
 }
 
@@ -49,7 +47,7 @@ func TestRecordOperation_Success(t *testing.T) {
 	t.Parallel()
 	store := stubMetricsStore(t)
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	mc.RecordOperation("PutObject", "b1", time.Now(), nil)
 }
 
@@ -58,7 +56,7 @@ func TestRecordOperation_Error(t *testing.T) {
 	t.Parallel()
 	store := stubMetricsStore(t)
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	mc.RecordOperation("GetObject", "b1", time.Now(), errors.New("backend down"))
 }
 
@@ -68,16 +66,14 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
 			"b2": {BytesUsed: 0, BytesLimit: 0},
 		}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).
-		Return(map[string]int64{"b1": 42}, nil).
+	store.EXPECT().LedgerStats(gomock.Any()).
+		Return(core.LedgerStats{"b1": {Objects: 42}}, nil).
 		AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
 		Return(map[string]int64{"b1": 3}, nil).
@@ -92,7 +88,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 		AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2"}, ReplicationFactor: func() int { return 0 }})
 
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
@@ -106,11 +102,9 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 func TestUpdateQuotaMetrics_PublishesPoolGauges(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 1, BytesLimit: 1000}}, nil).AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 40}}, nil).AnyTimes()
@@ -125,7 +119,7 @@ func TestUpdateQuotaMetrics_PublishesPoolGauges(t *testing.T) {
 		t.Fatalf("build limits: %v", err)
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{"b1": lim})
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
@@ -155,10 +149,8 @@ func TestUpdateQuotaMetrics_PoolUsageError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil).AnyTimes()
@@ -166,7 +158,7 @@ func TestUpdateQuotaMetrics_PoolUsageError(t *testing.T) {
 		Return(nil, errors.New("db error")).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 
 	// Non-fatal, like the usage-stats error above it: the tick reports what it
 	// could and tries again next time.
@@ -181,8 +173,6 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
@@ -190,13 +180,13 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 			"b3": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 50},
 		}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2", "b3"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2", "b3"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -208,12 +198,10 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err == nil {
 		t.Fatal("expected error from GetQuotaStats failure")
 	}
@@ -225,12 +213,10 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 
@@ -239,7 +225,7 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (object counts error is non-fatal): %v", err)
 	}
@@ -251,18 +237,16 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (multipart counts error is non-fatal): %v", err)
 	}
@@ -274,18 +258,16 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (usage error is non-fatal): %v", err)
 	}
@@ -297,22 +279,19 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100}}, nil).
+	store.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).
+		Return(core.ReplicationBacklog{Under: 1}, nil).
 		AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	store.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -324,18 +303,16 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -347,21 +324,19 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil).AnyTimes()
+	store.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 5}}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db error")).
+	store.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).
+		Return(core.ReplicationBacklog{}, errors.New("db error")).
 		AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := New(CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
+	mc := New(&CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (under-replicated query error is non-fatal): %v", err)
 	}
@@ -380,7 +355,7 @@ func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mc := New(CollectorDeps{Store: store, Usage: counter.NewUsageTracker(nil, nil), BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
+	mc := New(&CollectorDeps{Store: store, Usage: counter.NewUsageTracker(nil, nil), BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}

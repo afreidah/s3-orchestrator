@@ -273,6 +273,8 @@ backends:
 #     # listen: "127.0.0.1:9001"
 #     # require_listener: true   # default; fail startup when that address cannot be bound.
 #     #                          # Set false for dev, where the port may be taken.
+#     # fleet_interval: 60s      # default; how often the fleet-wide gauges and dashboard
+#     #                          # figures are recomputed. Minimum 10s.
 #   tracing:
 #     enabled: false
 #     endpoint: ${TRACING_ENDPOINT}

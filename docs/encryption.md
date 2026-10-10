@@ -86,7 +86,7 @@ s3-orchestrator admin encrypt-existing
 
 It walks every copy still recorded as plaintext, downloads it, encrypts it, re-uploads the ciphertext, and updates the ledger row. It is safe to re-run: copies already encrypted are not selected. Expect it to cost a full read and write of every affected object, which is metered egress and ingress on most providers, so run it deliberately rather than on a schedule.
 
-**Knowing whether you need to.** Three places report how much of the fleet is still plaintext:
+**Knowing whether you need to.** These places report how much of the fleet is still plaintext. All of them read the fleet snapshot, so a count can lag a finished `encrypt-existing` run by up to one `telemetry.metrics.fleet_interval`:
 
 | Where | What it shows |
 |-------|---------------|

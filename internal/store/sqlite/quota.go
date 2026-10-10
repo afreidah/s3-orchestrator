@@ -96,27 +96,53 @@ func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaU
 	})
 }
 
-// GetObjectCounts returns the number of objects stored on each backend.
-func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	return s.countObjectsByBackend(ctx, "", "object counts")
-}
-
-// GetUnverifiedObjectCounts returns the number of objects per backend with no
-// content_hash, which the dashboard shows as needing backfill.
-func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
-	return s.countObjectsByBackend(ctx, "WHERE content_hash IS NULL", "unverified counts")
-}
-
-// countObjectsByBackend counts object_locations rows per backend. whereClause
-// is appended verbatim, so it must be one of the fixed clauses in this file and
-// never caller input; errLabel names the query in the wrapped error.
-func (s *Store) countObjectsByBackend(ctx context.Context, whereClause, errLabel string) (map[string]int64, error) {
-	query := "SELECT backend_name, COUNT(*) FROM object_locations " + whereClause + " GROUP BY backend_name"
-	rows, err := s.db.QueryContext(ctx, query)
+// LedgerStats returns every per-backend ledger figure from one grouped pass
+// over object_locations. Each FILTER keeps the predicate of the figure it
+// reports: plaintext matches ListUnencryptedLocations, unreadable matches
+// ListUnreadableLocations, compression counts encoded copies only, and the
+// verification figures count hashed managed rows, the scrub population. The
+// oldest touch falls back to created_at as the scrub queue ordering does.
+func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT backend_name,
+		       COUNT(*),
+		       COUNT(*) FILTER (WHERE content_hash IS NULL),
+		       COUNT(*) FILTER (WHERE encrypted = 0),
+		       COUNT(*) FILTER (WHERE `+unreadablePredicate+`),
+		       COUNT(*) FILTER (WHERE compression_algorithm IS NOT NULL),
+		       COALESCE(SUM(logical_size) FILTER (WHERE compression_algorithm IS NOT NULL), 0),
+		       COALESCE(SUM(size_bytes) FILTER (WHERE compression_algorithm IS NOT NULL), 0),
+		       COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed),
+		       COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed AND last_scrubbed_at IS NULL),
+		       MIN(COALESCE(last_scrubbed_at, created_at)) FILTER (WHERE content_hash IS NOT NULL AND managed)
+		FROM object_locations
+		GROUP BY backend_name`)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query %s: %w", errLabel, err)
+		return nil, fmt.Errorf("failed to query ledger stats: %w", err)
 	}
-	return collectMap(rows, errLabel, scanNameValue)
+	return collectMap(rows, "ledger stats", scanLedgerStat)
+}
+
+// scanLedgerStat reads one backend's row of LedgerStats.
+func scanLedgerStat(rows *sql.Rows) (string, core.LedgerStat, error) {
+	var (
+		name   string
+		st     core.LedgerStat
+		oldest sql.NullString
+	)
+	if err := rows.Scan(&name, &st.Objects, &st.Unhashed, &st.Plaintext, &st.Unreadable,
+		&st.Compressed.Objects, &st.Compressed.LogicalBytes, &st.Compressed.StoredBytes,
+		&st.Verifiable, &st.NeverVerified, &oldest); err != nil {
+		return "", core.LedgerStat{}, fmt.Errorf("scan ledger stats: %w", err)
+	}
+	if oldest.Valid {
+		t, err := parseTime(oldest.String)
+		if err != nil {
+			return "", core.LedgerStat{}, fmt.Errorf("parse oldest touch %q: %w", oldest.String, err)
+		}
+		st.OldestTouched = t
+	}
+	return name, st, nil
 }
 
 // -------------------------------------------------------------------------

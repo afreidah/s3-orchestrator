@@ -135,52 +135,6 @@ func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetM
 	return i, err
 }
 
-const getMultipartUploadsByBackend = `-- name: GetMultipartUploadsByBackend :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
-FROM multipart_uploads
-WHERE backend_name = $1
-`
-
-type GetMultipartUploadsByBackendRow struct {
-	UploadID      string
-	ObjectKey     string
-	BackendName   string
-	ContentType   *string
-	Metadata      []byte
-	EncryptionKey []byte
-	KeyID         *string
-	CreatedAt     pgtype.Timestamptz
-}
-
-func (q *Queries) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]GetMultipartUploadsByBackendRow, error) {
-	rows, err := q.db.Query(ctx, getMultipartUploadsByBackend, backendName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetMultipartUploadsByBackendRow{}
-	for rows.Next() {
-		var i GetMultipartUploadsByBackendRow
-		if err := rows.Scan(
-			&i.UploadID,
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.ContentType,
-			&i.Metadata,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getParts = `-- name: GetParts :many
 SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM multipart_parts
@@ -218,52 +172,6 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getStaleMultipartUploads = `-- name: GetStaleMultipartUploads :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
-FROM multipart_uploads
-WHERE created_at < $1
-`
-
-type GetStaleMultipartUploadsRow struct {
-	UploadID      string
-	ObjectKey     string
-	BackendName   string
-	ContentType   *string
-	Metadata      []byte
-	EncryptionKey []byte
-	KeyID         *string
-	CreatedAt     pgtype.Timestamptz
-}
-
-func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype.Timestamptz) ([]GetStaleMultipartUploadsRow, error) {
-	rows, err := q.db.Query(ctx, getStaleMultipartUploads, createdAt)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetStaleMultipartUploadsRow{}
-	for rows.Next() {
-		var i GetStaleMultipartUploadsRow
-		if err := rows.Scan(
-			&i.UploadID,
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.ContentType,
-			&i.Metadata,
-			&i.EncryptionKey,
-			&i.KeyID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -368,6 +276,70 @@ func (q *Queries) ListParts(ctx context.Context, arg ListPartsParams) ([]ListPar
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scanMultipartUploads = `-- name: ScanMultipartUploads :many
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
+FROM multipart_uploads
+WHERE ($1::text = '' OR backend_name = $1::text)
+  AND ($2::timestamptz IS NULL OR created_at < $2::timestamptz)
+  AND upload_id > $3::text
+ORDER BY upload_id
+LIMIT $4
+`
+
+type ScanMultipartUploadsParams struct {
+	BackendFilter string
+	CreatedBefore pgtype.Timestamptz
+	AfterUploadID string
+	RowLimit      int32
+}
+
+type ScanMultipartUploadsRow struct {
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Full rows for the abort scans, paged by upload_id. An empty backend filter
+// and a NULL cutoff each match every upload.
+func (q *Queries) ScanMultipartUploads(ctx context.Context, arg ScanMultipartUploadsParams) ([]ScanMultipartUploadsRow, error) {
+	rows, err := q.db.Query(ctx, scanMultipartUploads,
+		arg.BackendFilter,
+		arg.CreatedBefore,
+		arg.AfterUploadID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScanMultipartUploadsRow{}
+	for rows.Next() {
+		var i ScanMultipartUploadsRow
+		if err := rows.Scan(
+			&i.UploadID,
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.ContentType,
+			&i.Metadata,
+			&i.EncryptionKey,
+			&i.KeyID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

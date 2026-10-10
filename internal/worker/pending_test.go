@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -476,7 +477,7 @@ func TestDropIntent_BackendRemoved(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "gone")
 
-	if got := r.dropIntent(context.Background(), &p, "backend_removed"); got != ItemSucceeded {
+	if got := r.dropIntent(context.Background(), &p, "backend_removed"); got != batch.ItemSucceeded {
 		t.Errorf("dropIntent outcome = %v, want ItemSucceeded", got)
 	}
 	if len(ms.deletedPendingIDs) != 1 || ms.deletedPendingIDs[0] != "i1" {
@@ -492,7 +493,7 @@ func TestDropIntent_Head404(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	if got := r.dropIntent(context.Background(), &p, "head_404"); got != ItemSucceeded {
+	if got := r.dropIntent(context.Background(), &p, "head_404"); got != batch.ItemSucceeded {
 		t.Errorf("dropIntent outcome = %v, want ItemSucceeded", got)
 	}
 	if len(ms.deletedPendingIDs) != 1 {
@@ -529,7 +530,7 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	if got := r.dropIntent(context.Background(), &p, "head_404"); got != ItemFailed {
+	if got := r.dropIntent(context.Background(), &p, "head_404"); got != batch.ItemFailed {
 		t.Errorf("dropIntent outcome = %v, want ItemFailed on delete failure", got)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -244,31 +245,23 @@ func collectMultipartUploads[T any](rows []T, conv func(*T) *multipartRow) ([]co
 	return uploads, nil
 }
 
-// GetStaleMultipartUploads returns uploads older than the given duration.
-func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
-	cutoff := time.Now().Add(-olderThan)
-	rows, err := s.queries.GetStaleMultipartUploads(ctx, pgTimestamptz(cutoff))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
+// ScanMultipartUploads returns up to limit uploads matching filter after
+// afterUploadID, in upload_id order, for the abort scans.
+func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartUploadFilter, limit int, afterUploadID string) ([]core.MultipartUpload, error) {
+	var cutoff pgtype.Timestamptz
+	if !filter.CreatedBefore.IsZero() {
+		cutoff = pgTimestamptz(filter.CreatedBefore)
 	}
-	return collectMultipartUploads(rows, func(r *db.GetStaleMultipartUploadsRow) *multipartRow {
-		return &multipartRow{
-			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
-			ContentType: r.ContentType, Metadata: r.Metadata,
-			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
-		}
+	rows, err := s.queries.ScanMultipartUploads(ctx, db.ScanMultipartUploadsParams{
+		BackendFilter: filter.Backend,
+		CreatedBefore: cutoff,
+		AfterUploadID: afterUploadID,
+		RowLimit:      int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
-}
-
-// GetMultipartUploadsByBackend returns all in-progress multipart uploads on
-// the given backend. Used by drain to abort uploads before migrating objects.
-// Requires live PostgreSQL  -  covered by integration tests.
-func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
-	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
+		return nil, fmt.Errorf("failed to scan multipart uploads: %w", err)
 	}
-	return collectMultipartUploads(rows, func(r *db.GetMultipartUploadsByBackendRow) *multipartRow {
+	return collectMultipartUploads(rows, func(r *db.ScanMultipartUploadsRow) *multipartRow {
 		return &multipartRow{
 			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
 			ContentType: r.ContentType, Metadata: r.Metadata,

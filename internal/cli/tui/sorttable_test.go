@@ -223,7 +223,7 @@ func TestSorts_OrderEveryColumn(t *testing.T) {
 	t.Parallel()
 	b1, b2 := adminapi.BackendStatus{Name: "a"}, adminapi.BackendStatus{Name: "b", Healthy: true, BytesLimit: 1, BytesUsed: 1}
 	assertOrders(t, "backends", backendSorts, b1, b2)
-	e1, e2 := bucketEntry{Bucket: adminapi.Bucket{Name: "a"}}, bucketEntry{Bucket: adminapi.Bucket{Name: "b", MaxMultipartUploads: 3}, reachedBy: []string{"ci"}}
+	e1, e2 := bucketEntry{Name: "a"}, bucketEntry{Name: "b", MaxMultipartUploads: 3, reachedBy: []string{"ci"}}
 	assertOrders(t, "buckets", bucketSorts, e1, e2)
 	if bucketSorts["MULTIPART"](&e1, &e2) <= 0 {
 		t.Error("an unlimited multipart cap should sort above a real one")

@@ -130,31 +130,6 @@ func scanRewritable(rows *sql.Rows) (core.RewritableLocation, error) {
 // STATISTICS AND WRITES
 // -------------------------------------------------------------------------
 
-// CompressionStats reports per-backend compression totals for the dashboard.
-// Backends holding no encoded copies are absent rather than present as zeroes,
-// so a caller can tell "nothing compressed here" from "compressed to nothing".
-func (s *Store) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, COUNT(*),
-		       COALESCE(SUM(logical_size), 0), COALESCE(SUM(size_bytes), 0)
-		FROM object_locations
-		WHERE compression_algorithm IS NOT NULL
-		GROUP BY backend_name`)
-	if err != nil {
-		return nil, fmt.Errorf("compression stats: %w", err)
-	}
-	return collectMap(rows, "compression stats", func(rows *sql.Rows) (string, core.CompressionStat, error) {
-		var (
-			name string
-			stat core.CompressionStat
-		)
-		if err := rows.Scan(&name, &stat.Objects, &stat.LogicalBytes, &stat.StoredBytes); err != nil {
-			return "", core.CompressionStat{}, fmt.Errorf("scan compression stats: %w", err)
-		}
-		return name, stat, nil
-	})
-}
-
 // RecordCompressionProbe stores what the encoder produced for a copy it
 // declined to store compressed, so a later pass can reach the same verdict
 // from the row rather than downloading and encoding the object again.

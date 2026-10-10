@@ -63,25 +63,6 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 // STATISTICS AND WRITES
 // -------------------------------------------------------------------------
 
-// CompressionStats reports per-backend compression totals for the dashboard.
-// Backends holding no encoded copies are absent rather than present as zeroes,
-// so a caller can tell "nothing compressed here" from "compressed to nothing".
-func (s *Store) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
-	rows, err := s.queries.CompressionStats(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("compression stats: %w", err)
-	}
-	out := make(map[string]core.CompressionStat, len(rows))
-	for i := range rows {
-		out[rows[i].BackendName] = core.CompressionStat{
-			Objects:      rows[i].Objects,
-			LogicalBytes: rows[i].LogicalBytes,
-			StoredBytes:  rows[i].StoredBytes,
-		}
-	}
-	return out, nil
-}
-
 // RecordCompressionProbe stores what the encoder produced for a copy it
 // declined to store compressed, so a later pass can reach the same verdict
 // from the row rather than downloading and encoding the object again.

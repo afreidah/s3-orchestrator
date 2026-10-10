@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -716,30 +717,44 @@ func TestStoreInt_ListMultipartUploads(t *testing.T) {
 	}
 }
 
-// TestStoreInt_GetMultipartUploadsByBackend verifies the helper
-// returns uploads scoped to a backend.
-func TestStoreInt_GetMultipartUploadsByBackend(t *testing.T) {
+// TestStoreInt_ScanMultipartUploads verifies the backend filter and the
+// created-before cutoff each narrow the scan against real Postgres, including
+// the NULL cutoff that matches every upload, and that the cursor pages past
+// the last id.
+func TestStoreInt_ScanMultipartUploads(t *testing.T) {
 	s := adapterPgStore(t)
+	ctx := context.Background()
 	seedMultipartUpload(t, s, "", nil)
 
-	uploads, err := s.GetMultipartUploadsByBackend(context.Background(), "backend-a")
-	if err != nil {
-		t.Fatalf("GetMultipartUploadsByBackend: %v", err)
+	scan := func(filter core.MultipartUploadFilter, limit int, after string) []core.MultipartUpload {
+		t.Helper()
+		uploads, err := s.ScanMultipartUploads(ctx, filter, limit, after)
+		if err != nil {
+			t.Fatalf("ScanMultipartUploads: %v", err)
+		}
+		return uploads
 	}
-	if len(uploads) == 0 {
-		t.Error("expected at least one upload on backend-a")
+
+	onA := scan(core.MultipartUploadFilter{Backend: "backend-a"}, 10000, "")
+	if len(onA) == 0 {
+		t.Fatal("expected at least one upload on backend-a")
 	}
-}
-
-// TestStoreInt_GetStaleMultipartUploads verifies the helper runs
-// without error against a fresh upload (passing a negative duration
-// matches uploads created at any time).
-func TestStoreInt_GetStaleMultipartUploads(t *testing.T) {
-	s := adapterPgStore(t)
-	seedMultipartUpload(t, s, "", nil)
-
-	if _, err := s.GetStaleMultipartUploads(context.Background(), -time.Hour); err != nil {
-		t.Fatalf("GetStaleMultipartUploads: %v", err)
+	for i := range onA {
+		if onA[i].BackendName != "backend-a" {
+			t.Errorf("backend filter returned an upload on %s", onA[i].BackendName)
+		}
+	}
+	if got := scan(core.MultipartUploadFilter{Backend: "backend-a", CreatedBefore: time.Now().Add(-24 * time.Hour)}, 10000, ""); len(got) != 0 {
+		t.Errorf("uploads created a day ago = %d, want none", len(got))
+	}
+	first := scan(core.MultipartUploadFilter{}, 1, "")
+	if len(first) != 1 {
+		t.Fatalf("first page = %d uploads, want 1", len(first))
+	}
+	for _, u := range scan(core.MultipartUploadFilter{}, 10000, first[0].UploadID) {
+		if u.UploadID <= first[0].UploadID {
+			t.Errorf("page after %s returned %s", first[0].UploadID, u.UploadID)
+		}
 	}
 }
 
@@ -831,27 +846,43 @@ func TestStoreInt_GetQuotaStats(t *testing.T) {
 	}
 }
 
-// TestStoreInt_GetObjectCounts_GetActiveMultipartCounts verifies both
-// dashboard helpers run without error and return one entry per
-// backend that has data.
-func TestStoreInt_GetObjectCounts_GetActiveMultipartCounts(t *testing.T) {
+// pgLedger reads the per-backend ledger figures, failing the test on error.
+func pgLedger(t *testing.T, s *Store) core.LedgerStats {
+	t.Helper()
+	ledger, err := s.LedgerStats(context.Background())
+	if err != nil {
+		t.Fatalf("LedgerStats: %v", err)
+	}
+	return ledger
+}
+
+// pgCoverage reads verification coverage over the reachable backends as of now.
+func pgCoverage(t *testing.T, s *Store, reachable []string) core.CoverageStat {
+	t.Helper()
+	return pgLedger(t, s).Coverage(reachable, time.Now())
+}
+
+// TestStoreInt_LedgerStats_CountsAndUnhashed verifies the grouped pass counts a
+// new copy on its backend and, with no content hash, in the unhashed backlog.
+// The suite shares one database, so the assertions are deltas.
+func TestStoreInt_LedgerStats_CountsAndUnhashed(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
-	if _, err := s.GetObjectCounts(ctx); err != nil {
-		t.Errorf("GetObjectCounts: %v", err)
+	before := pgLedger(t, s)["backend-a"]
+
+	key := uniqueKey(t, "ledger")
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	after := pgLedger(t, s)["backend-a"]
+	if after.Objects != before.Objects+1 || after.Unhashed != before.Unhashed+1 {
+		t.Errorf("objects %d -> %d, unhashed %d -> %d; want each up by one",
+			before.Objects, after.Objects, before.Unhashed, after.Unhashed)
 	}
 	if _, err := s.GetActiveMultipartCounts(ctx); err != nil {
 		t.Errorf("GetActiveMultipartCounts: %v", err)
-	}
-}
-
-// TestStoreInt_GetUnverifiedObjectCounts pins the dashboard #405 helper:
-// runs the per-backend NULL-content_hash query against the real
-// Postgres + sqlc-generated query.
-func TestStoreInt_GetUnverifiedObjectCounts(t *testing.T) {
-	s := adapterPgStore(t)
-	if _, err := s.GetUnverifiedObjectCounts(context.Background()); err != nil {
-		t.Errorf("GetUnverifiedObjectCounts: %v", err)
 	}
 }
 
@@ -873,8 +904,8 @@ func TestStoreInt_ReplicationQueries(t *testing.T) {
 	if _, err := s.GetOverReplicatedObjects(ctx, 1, 100); err != nil {
 		t.Errorf("GetOverReplicatedObjects: %v", err)
 	}
-	if _, err := s.CountOverReplicatedObjects(ctx, 1); err != nil {
-		t.Errorf("CountOverReplicatedObjects: %v", err)
+	if _, err := s.CountReplicationBacklog(ctx, 1); err != nil {
+		t.Errorf("CountReplicationBacklog: %v", err)
 	}
 }
 
@@ -1081,6 +1112,56 @@ func TestStoreInt_ListExpiredObjects(t *testing.T) {
 	}
 }
 
+// TestStoreInt_ListedPathStates verifies the one-query page lookup against real
+// Postgres: a recorded copy, a queued delete, a dead-lettered delete, and a path
+// both recorded and queued, where the pending delete wins. A copy on another
+// backend and an unknown path are absent.
+func TestStoreInt_ListedPathStates(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	rec, queued, dlq, both, other, absent := uniqueKey(t, "rec"), uniqueKey(t, "queued"),
+		uniqueKey(t, "dlq"), uniqueKey(t, "both"), uniqueKey(t, "other"), uniqueKey(t, "absent")
+
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", dlq, "test", 1)); err != nil {
+		t.Fatalf("EnqueueCleanup(dlq): %v", err)
+	}
+	pending, err := s.GetPendingCleanups(ctx, 10000)
+	if err != nil {
+		t.Fatalf("GetPendingCleanups: %v", err)
+	}
+	for i := range pending {
+		if pending[i].StorageKey == dlq {
+			if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, "gave up"); err != nil {
+				t.Fatalf("MoveCleanupToDLQ: %v", err)
+			}
+		}
+	}
+	for key, be := range map[string]string{rec: "backend-a", both: "backend-a", other: "backend-b"} {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: be}}, Size: 1}); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+	}
+	for _, key := range []string{queued, both} {
+		if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 1)); err != nil {
+			t.Fatalf("EnqueueCleanup(%s): %v", key, err)
+		}
+	}
+
+	got, err := s.ListedPathStates(ctx, "backend-a", []string{rec, queued, dlq, both, other, absent})
+	if err != nil {
+		t.Fatalf("ListedPathStates: %v", err)
+	}
+	want := map[string]core.PathState{
+		rec:    core.PathRecorded,
+		queued: core.PathPendingCleanup,
+		dlq:    core.PathPendingCleanup,
+		both:   core.PathPendingCleanup,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("states = %v, want %v", got, want)
+	}
+}
+
 // TestStoreInt_ImportSuppressedByPendingCleanup verifies an import is
 // suppressed while cleanup_queue or cleanup_dlq holds a delete for the key.
 // Without it, reconcile would bring back an object whose delete could not
@@ -1132,6 +1213,29 @@ func expiredKeysPg(t *testing.T, s *Store, q core.ExpiredObjectsQuery) []string 
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// TestStoreInt_ListExpiredObjectsPagesAfterTheCursor verifies After resumes
+// past the previous page's last key in byte order.
+func TestStoreInt_ListExpiredObjectsPagesAfterTheCursor(t *testing.T) {
+	s := adapterPgStore(t)
+	prefix := uniqueKey(t, "expiry-page") + "/"
+	for _, k := range []string{"a", "b", "c"} {
+		if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+			Key: prefix + k, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
+		}); err != nil {
+			t.Fatalf("RecordObject(%s): %v", k, err)
+		}
+	}
+	q := core.ExpiredObjectsQuery{Prefix: prefix, Cutoff: time.Now().Add(time.Hour), Limit: 2}
+
+	if got := expiredKeysPg(t, s, q); !slices.Equal(got, []string{prefix + "a", prefix + "b"}) {
+		t.Fatalf("first page = %v, want a and b", got)
+	}
+	q.After = prefix + "b"
+	if got := expiredKeysPg(t, s, q); !slices.Equal(got, []string{prefix + "c"}) {
+		t.Errorf("page after b = %v, want only c", got)
+	}
 }
 
 // TestStoreInt_ListExpiredObjectsTagFilter proves the lifecycle tag filter
@@ -1646,19 +1750,16 @@ func TestStoreInt_ScrubFloorExcludesRecentlyVerified(t *testing.T) {
 	}
 }
 
-// TestStoreInt_CountUnencryptedLocations pins the figure the dashboard, the
+// TestStoreInt_LedgerStats_PlaintextCopies pins the figure the dashboard, the
 // status endpoint and the plaintext gauge all read. It has to agree with
 // ListUnencryptedLocations, because that is the set encrypt-existing processes:
 // a count that drifts from the work would tell an operator the fleet is covered
 // when it is not.
-func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
+func TestStoreInt_LedgerStats_PlaintextCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	before, err := s.CountUnencryptedLocations(ctx)
-	if err != nil {
-		t.Fatalf("CountUnencryptedLocations: %v", err)
-	}
+	before := pgLedger(t, s).PlaintextCopies()
 
 	key := uniqueKey(t, "plaintext")
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
@@ -1666,10 +1767,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	after, err := s.CountUnencryptedLocations(ctx)
-	if err != nil {
-		t.Fatalf("CountUnencryptedLocations: %v", err)
-	}
+	after := pgLedger(t, s).PlaintextCopies()
 	if after != before+1 {
 		t.Errorf("count = %d after writing one plaintext copy, want %d", after, before+1)
 	}
@@ -1682,10 +1780,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
-	encrypted, err := s.CountUnencryptedLocations(ctx)
-	if err != nil {
-		t.Fatalf("CountUnencryptedLocations: %v", err)
-	}
+	encrypted := pgLedger(t, s).PlaintextCopies()
 	if encrypted != before {
 		t.Errorf("count = %d after encrypting the copy, want %d", encrypted, before)
 	}
@@ -1756,11 +1851,11 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	}
 }
 
-// TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies verifies a copy with
-// no scrub stamp is aged from when it was written, so an unscrubbed fleet does
-// not report an age of zero. The suite shares one database, so the assertion
-// is a lower bound; other rows are younger than the backdated copy.
-func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
+// TestStoreInt_LedgerStats_CountsNeverVerifiedCopies verifies a copy with no
+// scrub stamp is aged from when it was written, so an unscrubbed fleet does not
+// report an age of zero. The suite shares one database, so the assertion is a
+// lower bound; other rows are younger than the backdated copy.
+func TestStoreInt_LedgerStats_CountsNeverVerifiedCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	reachable := []string{"backend-a", "backend-b"}
@@ -1779,10 +1874,7 @@ func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 		t.Fatalf("hashing at write and backdating created_at: %v", err)
 	}
 
-	stat, err := s.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		t.Fatalf("IntegrityCoverage: %v", err)
-	}
+	stat := pgCoverage(t, s, reachable)
 	if stat.NeverVerified < 1 {
 		t.Errorf("never verified = %d, want at least the copy just written", stat.NeverVerified)
 	}
@@ -1793,10 +1885,7 @@ func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	// Scoping the query away from the copy's backend moves it out of the age
 	// and into the deferred count, which is what keeps an unreachable copy from
 	// pinning a figure the sweep can never bring down.
-	stat, err = s.IntegrityCoverage(ctx, []string{"backend-b"})
-	if err != nil {
-		t.Fatalf("IntegrityCoverage scoped away from backend-a: %v", err)
-	}
+	stat = pgCoverage(t, s, []string{"backend-b"})
 	if stat.Deferred < 1 {
 		t.Errorf("deferred = %d, want at least the copy on the excluded backend", stat.Deferred)
 	}
@@ -1808,10 +1897,7 @@ func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
 		t.Fatalf("MarkObjectScrubbed: %v", err)
 	}
-	stat, err = s.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		t.Fatalf("IntegrityCoverage after stamping: %v", err)
-	}
+	stat = pgCoverage(t, s, reachable)
 	if stat.OldestUnverifiedAge >= 47*time.Hour {
 		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", stat.OldestUnverifiedAge)
 	}

@@ -36,11 +36,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, N
 -- bucket prefix are tracked for accounting but are not the orchestrator's to
 -- move.
 -- name: ListObjectsByBackend :many
+-- Smallest first, paged by (size_bytes, object_key). idx_object_locations_
+-- managed_size serves the filter, the order and the cursor, so a page stops at
+-- its limit instead of sorting every managed row on the backend.
 SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1 AND managed
-ORDER BY size_bytes ASC
-LIMIT $2;
+WHERE backend_name = sqlc.arg(backend_name) AND managed
+  AND (size_bytes, object_key) > (sqlc.arg(after_size)::bigint, sqlc.arg(after_key)::text)
+ORDER BY size_bytes ASC, object_key ASC
+LIMIT sqlc.arg(row_limit);
 
 -- ListObjectsByBackendKeyAsc returns rows for a backend in ascending
 -- storage_key order, starting strictly after the supplied cursor. Used by
@@ -70,15 +74,22 @@ SELECT EXISTS(
     WHERE object_key = $1 AND backend_name = $2
 ) AS exists;
 
--- name: CopyExistsAtPath :one
--- Whether the backend already has a copy recorded at this path, whatever
--- object it belongs to. Import asks before adopting bytes it found: it would
--- record them under the path as the object key, so it cannot otherwise see that
--- a path the orchestrator wrote already has a row under the real object's key.
-SELECT EXISTS(
-    SELECT 1 FROM object_locations
-    WHERE backend_name = $1 AND storage_key = $2
-) AS exists;
+-- name: ListedPathStates :many
+-- What the ledger says about paths a backend listed, in one round trip for a
+-- whole listing page. State 2 is a delete still outstanding, queued or
+-- dead-lettered: the bytes are meant to be gone, so import must not bring them
+-- back. State 1 is a copy recorded at the path under whatever object it
+-- belongs to; import would otherwise record a per-write path as an object
+-- named after the path. A path can match several arms, and the caller keeps
+-- the highest state.
+SELECT q.storage_key, 2::int AS state FROM cleanup_queue q
+ WHERE q.backend_name = @backend_name AND q.storage_key = ANY(@paths::text[])
+UNION ALL
+SELECT d.storage_key, 2::int AS state FROM cleanup_dlq d
+ WHERE d.backend_name = @backend_name AND d.storage_key = ANY(@paths::text[])
+UNION ALL
+SELECT o.storage_key, 1::int AS state FROM object_locations o
+ WHERE o.backend_name = @backend_name AND o.storage_key = ANY(@paths::text[]);
 
 -- name: LockObjectOnBackend :one
 -- Every column describing the stored bytes, because the caller moving this row
@@ -187,9 +198,13 @@ ORDER BY is_dir DESC, name ASC;
 -- Requiring the count to equal tag_count is what makes several tags an AND.
 -- The primary key allows one row per (object_key, tag_key), so a count equal to
 -- the number of pairs asked for means every one of them matched.
+--
+-- Paged by key, so an object whose delete fails is passed over and retried by
+-- the next sweep rather than on every page of this one.
 SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
 WHERE ol.object_key LIKE @prefix::text || '%' ESCAPE '\'
+  AND ol.object_key COLLATE "C" > @after_key::text
   AND ol.created_at < @cutoff
   AND (
     @tag_count::int = 0
@@ -226,26 +241,6 @@ LIMIT sqlc.arg(row_limit);
 UPDATE object_locations
 SET encryption_key = $3, key_id = $4
 WHERE object_key = $1 AND backend_name = $2;
-
--- name: CountUnencryptedLocations :one
--- Copies still stored as plaintext. Uses the same predicate as
--- ListUnencryptedLocations, so the figure is exactly what encrypt-existing
--- would process rather than a differently-scoped count that happens to be near
--- it.
-SELECT count(*) FROM object_locations WHERE encrypted = FALSE;
-
--- name: CompressionStats :many
--- What compression is worth, per backend. Only encoded copies are counted:
--- including the verbatim ones would report a ratio no encoder produced. The
--- saving is logical - stored, left to the caller so it cannot disagree with the
--- two figures it comes from.
-SELECT backend_name,
-       count(*) AS objects,
-       COALESCE(SUM(logical_size), 0)::bigint AS logical_bytes,
-       COALESCE(SUM(size_bytes), 0)::bigint AS stored_bytes
-FROM object_locations
-WHERE compression_algorithm IS NOT NULL
-GROUP BY backend_name;
 
 -- name: ListUnencryptedLocations :many
 -- Paged by cursor rather than offset. Encrypting a copy takes it out of this
@@ -449,32 +444,6 @@ UPDATE object_locations
 SET last_scrubbed_at = NOW()
 WHERE object_key = $1 AND backend_name = $2;
 
--- name: IntegrityCoverage :one
--- How far behind verification is, split by whether the sweep can reach the copy
--- at all. Reachable is the same backend set the scrub queue draws from.
---
--- The age and the never-verified count cover reachable copies only. A copy the
--- sweep is not allowed to read can never be stamped, so counting it pins
--- MIN(COALESCE(last_scrubbed_at, created_at)) to a fixed timestamp and the age
--- then tracks wall clock rather than the backlog: it climbs by a day every day
--- no matter how much the sweep verifies, and no amount of scrubbing lowers it.
---
--- Deferred counts the rest rather than discarding them, so a fleet holding most
--- of its copies on a backend over its usage limit cannot report as healthy.
---
--- The age falls back to created_at exactly as the queue ordering does, so a
--- never-verified copy is measured from when it was written. Taking MIN over
--- last_scrubbed_at alone skips those rows entirely, which reports a fleet that
--- has never been scrubbed as an age of zero.
-SELECT
-    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at))
-        FILTER (WHERE backend_name = ANY(@reachable_backends::text[])))), 0)::bigint AS age_seconds,
-    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL
-        AND backend_name = ANY(@reachable_backends::text[]))::bigint AS never_verified,
-    COUNT(*) FILTER (WHERE NOT (backend_name = ANY(@reachable_backends::text[])))::bigint AS deferred
-FROM object_locations
-WHERE content_hash IS NOT NULL AND managed;
-
 -- name: GetObjectsWithoutHash :many
 -- Return object locations that have no content hash, for backfill. Hashing
 -- reads the whole body, so unmanaged rows are left alone rather than spending
@@ -489,12 +458,13 @@ ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListUnreadableLocations :many
--- Copies imported as encrypted with no key, which nothing can decrypt. Purging
--- a copy takes it out of this set, so the purge re-reads from the start rather
--- than paging.
+-- Copies imported as encrypted with no key, which nothing can decrypt. Paged by
+-- cursor, so a copy the purge fails to discard is passed over and retried by the
+-- next purge rather than on every page of this one.
 SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
 WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
 

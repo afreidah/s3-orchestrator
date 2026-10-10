@@ -380,10 +380,17 @@ func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { 
 // real test fixtures.
 func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error { return nil }
 
-// HasPendingCleanup reports whatever the fixture was primed with, so an import
-// can be driven down the ordinary path, the suppressed path, or the error path.
-func (s *quotaTxStub) HasPendingCleanup(context.Context, string, string) (bool, error) {
-	return s.pendingCleanup, s.pendingErr
+// ListedPathStates reports every path as pending cleanup when the fixture was
+// primed with one, so an import can be driven down the ordinary path, the
+// suppressed path, or the error path.
+func (s *quotaTxStub) ListedPathStates(_ context.Context, _ string, paths []string) (map[string]PathState, error) {
+	states := map[string]PathState{}
+	if s.pendingCleanup {
+		for _, p := range paths {
+			states[p] = PathPendingCleanup
+		}
+	}
+	return states, s.pendingErr
 }
 
 // InsertObjectLocationIfNotExists records the row an import built so a test can

@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -106,9 +107,6 @@ func (emptyEncAdmin) ListEncryptedLocations(context.Context, string, int, core.C
 func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
-
-// CountUnencryptedLocations reports no plaintext copies.
-func (emptyEncAdmin) CountUnencryptedLocations(_ context.Context) (int64, error) { return 0, nil }
 
 // ListUnencryptedLocations lists no plaintext locations.
 func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.UnencryptedLocation, error) {
@@ -472,11 +470,11 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 	var locked bool
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, int, string, progress.Observer) worker.WorkSummary {
+		DoAndReturn(func(context.Context, int, string, progress.Observer) batch.Summary {
 			if !locked {
 				t.Error("scrub ran outside the advisory lock")
 			}
-			return worker.WorkSummary{Attempted: 3}
+			return batch.Summary{Attempted: 3}
 		})
 
 	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
@@ -955,17 +953,12 @@ func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
 	}
 }
 
-// TestPurgeUnreadable_RunsUntilAPassPurgesNothing asserts the purge keeps
-// taking batches while they make progress, and stops on the first that
-// purges nothing so copies that keep failing cannot loop it.
-func TestPurgeUnreadable_RunsUntilAPassPurgesNothing(t *testing.T) {
+// TestPurgeUnreadable_DefaultsTheBatchAndReportsTheTally asserts a zero batch
+// size asks the scrubber for the default, and the result carries its tally.
+func TestPurgeUnreadable_DefaultsTheBatchAndReportsTheTally(t *testing.T) {
 	t.Parallel()
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	gomock.InOrder(
-		scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(worker.WorkSummary{Succeeded: 100}),
-		scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(worker.WorkSummary{Succeeded: 3, Failed: 1}),
-		scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(worker.WorkSummary{Failed: 1}),
-	)
+	scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(batch.Summary{Succeeded: 103, Failed: 2})
 
 	res := integrityOver(t, scrubber).PurgeUnreadable(context.Background(), 0, nil)
 	if res.Purged != 103 || res.Failed != 2 {
@@ -1484,10 +1477,10 @@ func TestBackfillChecksums_StopsOnCancelledContext(t *testing.T) {
 
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
+		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
 			progress.Track(observer, "key", func() string { return progress.StatusOK })
 			cancel()
-			return worker.WorkSummary{Attempted: len(locs), Succeeded: len(locs)}
+			return batch.Summary{Attempted: len(locs), Succeeded: len(locs)}
 		}).Times(1)
 
 	res, err := integrityWithBacklog(t, scrubber, newBacklog(20)).BackfillChecksums(ctx, 10, 0, time.Millisecond, "", nil)

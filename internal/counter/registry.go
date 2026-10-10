@@ -14,7 +14,10 @@
 
 package counter
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -95,9 +98,7 @@ func (r *Registry[T]) All() map[string]*T {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make(map[string]*T, len(r.entries))
-	for key, entry := range r.entries {
-		out[key] = entry
-	}
+	maps.Copy(out, r.entries)
 	return out
 }
 

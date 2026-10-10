@@ -277,7 +277,7 @@ func TestRebalance_CopyMapFetchFails_Propagates(t *testing.T) {
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		}, nil).AnyTimes()
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "k", BackendName: "b1", SizeBytes: 100}}, nil).AnyTimes()
 	store.EXPECT().GetObjectBackendsForKeys(gomock.Any(), gomock.Any()).
 		Return(nil, fmt.Errorf("db down")).AnyTimes()
@@ -339,7 +339,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		}, nil).AnyTimes()
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
 	storetest.Permissive(store)
 
@@ -383,10 +383,10 @@ func rebalanceStoreWithList(t *testing.T, objects []core.ObjectLocation, listErr
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	if listErr != nil {
-		store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, listErr).AnyTimes()
 	} else {
-		store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(objects, nil).AnyTimes()
 	}
 	if backendsForKeys != nil {

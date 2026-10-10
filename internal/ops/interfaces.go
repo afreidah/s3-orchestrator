@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -169,11 +170,11 @@ type OverReplicationOps interface {
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.
 type ScrubberOps interface {
-	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) worker.WorkSummary
+	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
-	HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary
+	HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary
 	ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error)
-	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary
+	PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary
 }
 
 // AdvisoryLocker is the cluster-wide mutual exclusion an operator-triggered

@@ -15,6 +15,7 @@ import (
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	drain "github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	metrics "github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
@@ -70,6 +71,21 @@ func (m *MockFleetView) Backends() map[string]backend.ObjectBackend {
 func (mr *MockFleetViewMockRecorder) Backends() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockFleetView)(nil).Backends))
+}
+
+// FleetSnapshot mocks base method.
+func (m *MockFleetView) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FleetSnapshot", ctx)
+	ret0, _ := ret[0].(*metrics.FleetSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FleetSnapshot indicates an expected call of FleetSnapshot.
+func (mr *MockFleetViewMockRecorder) FleetSnapshot(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FleetSnapshot", reflect.TypeOf((*MockFleetView)(nil).FleetSnapshot), ctx)
 }
 
 // IsDraining mocks base method.

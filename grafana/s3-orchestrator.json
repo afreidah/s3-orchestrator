@@ -1348,6 +1348,7 @@
       "type": "stat",
       "id": 28,
       "title": "Replication Pending",
+      "description": "Objects with fewer copies than the replication factor, counting writes still uploading a copy. An exact count over the whole ledger, recomputed every telemetry.metrics.fleet_interval (default 60s) and after each replication pass.",
       "gridPos": {
         "x": 0,
         "y": 71,
@@ -1377,6 +1378,7 @@
       "fieldConfig": {
         "defaults": {
           "noValue": "0",
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -3968,6 +3970,7 @@
       "type": "stat",
       "id": 69,
       "title": "Over-Replicated Objects",
+      "description": "Objects with more recorded copies than the replication factor. An exact count over the whole ledger, recomputed every telemetry.metrics.fleet_interval (default 60s) and after each over-replication pass.",
       "gridPos": {
         "x": 0,
         "y": 203,
@@ -3976,6 +3979,7 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [

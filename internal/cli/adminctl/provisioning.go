@@ -372,7 +372,7 @@ func grantAdd(args []string, c *client) int {
 // here as well would put the same list in two places to drift apart.
 func splitPermissions(s string) []string {
 	var out []string
-	for _, field := range strings.Split(s, ",") {
+	for field := range strings.SplitSeq(s, ",") {
 		if name := strings.TrimSpace(field); name != "" {
 			out = append(out, name)
 		}

@@ -62,7 +62,7 @@ func newFleet(
 		Usage:           usage,
 		RoutingStrategy: config.RoutingPack,
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: usage, BackendNames: names,
 	}))
 	return New(rt, store), rt

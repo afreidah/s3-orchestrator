@@ -103,6 +103,21 @@ func (mr *MockStoresMockRecorder) ListObjectsByBackendKeyAsc(ctx, backendName, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackendKeyAsc", reflect.TypeOf((*MockStores)(nil).ListObjectsByBackendKeyAsc), ctx, backendName, afterKey, limit)
 }
 
+// ListedPathStates mocks base method.
+func (m *MockStores) ListedPathStates(ctx context.Context, arg1 string, paths []string) (map[string]core.PathState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListedPathStates", ctx, arg1, paths)
+	ret0, _ := ret[0].(map[string]core.PathState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListedPathStates indicates an expected call of ListedPathStates.
+func (mr *MockStoresMockRecorder) ListedPathStates(ctx, arg1, paths any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListedPathStates", reflect.TypeOf((*MockStores)(nil).ListedPathStates), ctx, arg1, paths)
+}
+
 // SweepStaleCleanupQueueRows mocks base method.
 func (m *MockStores) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backendName string) (int64, error) {
 	m.ctrl.T.Helper()

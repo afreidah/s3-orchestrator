@@ -350,6 +350,7 @@ telemetry:
     path: "/metrics"             # default: /metrics
     # listen: "127.0.0.1:9091"  # serve on separate address (keeps /metrics off the public port)
     # require_listener: true    # default; fail startup if that address cannot be bound
+    # fleet_interval: "60s"     # default; how often the fleet-wide gauges are recomputed (minimum 10s)
   tracing:
     enabled: false
     endpoint: "localhost:4317"   # OTLP gRPC endpoint
@@ -366,6 +367,8 @@ That default is deliberate. The alternative is an orchestrator that serves S3 tr
 Set it to `false` for development or embedded use, where the port may well be taken and best-effort metrics are fine. Startup then proceeds with a warning naming the address that failed. The setting only applies to a separate `listen` address; metrics served inline share the main socket and have nothing of their own to fail.
 
 A metrics listener that dies *after* startup also stops the process, for the same reason.
+
+**`fleet_interval`** sets how often the fleet snapshot is recomputed: the quota, object, multipart, plaintext, unreadable and replication gauges, and the figures the dashboard and `/admin/api/status` report. Defaults to `60s`; values below `10s` fail validation. Each computation scans the object ledger, so a large fleet may want a longer interval. With several instances only one computes per interval and the others load its result. Like the rest of `telemetry`, it takes effect on restart.
 
 **Production sample rate guidance:** A `sample_rate` of 1.0 traces every request, which is appropriate for development and low-traffic deployments. For production workloads above ~100 RPS, reduce to 0.01-0.1 to avoid overwhelming the trace backend with storage, network, and CPU overhead. Metrics and logs are unaffected by sample rate.
 

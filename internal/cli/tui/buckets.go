@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -191,11 +192,8 @@ func usersReaching(users []adminapi.User, bucket string) []string {
 			out = append(out, u.Name+perms)
 			continue
 		}
-		for _, b := range u.Buckets {
-			if b == bucket {
-				out = append(out, u.Name)
-				break
-			}
+		if slices.Contains(u.Buckets, bucket) {
+			out = append(out, u.Name)
 		}
 	}
 	return out

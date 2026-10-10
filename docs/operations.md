@@ -128,7 +128,7 @@ A drain is a record in the metadata database. Starting one writes the record, an
    s3-orchestrator admin drain <backend-name>
    ```
 
-   The drain worker picks the drain up within its 10-second tick. Each pass aborts the backend's open multipart uploads, then moves its objects off 100 at a time. An object that also has a copy on another backend loses only its copy on the draining one; an object the draining backend holds the only copy of is copied to the least-utilized eligible backend, its database row moved there, and the source bytes deleted.
+   The drain worker picks the drain up within its 10-second tick. Each pass aborts the backend's open multipart uploads, then moves its objects off 100 at a time, smallest first. An object that also has a copy on another backend loses only its copy on the draining one, unless that copy holds the only usable encryption key, in which case it is kept and the object reported as failed; an object the draining backend holds the only copy of is copied to the least-utilized eligible backend, its database row moved there, and the source bytes deleted.
 
 2. **Monitor progress:**
 
@@ -138,7 +138,7 @@ A drain is a record in the metadata database. Starting one writes the record, an
 
    Returns the drain's `state` (`draining`, `drained`, or `failed`), objects moved so far, and, while it is in progress, the objects and bytes still on the backend. A failed drain also carries the error that stopped it.
 
-3. **Wait for `drained`.** The drain finishes only once nothing it moves is left on the backend: no object rows, no writes that were admitted before the drain and are still uploading, and no multipart uploads. Until then it stays `draining` and the worker checks again each tick. Objects that fail to move are retried on the next tick rather than skipped. [Unmanaged](admin-api.md#objects-the-orchestrator-does-not-own) objects, which reconcile found outside every virtual bucket prefix or could not decrypt, are left where they are and do not hold the drain up; removing the backend deletes their rows.
+3. **Wait for `drained`.** The drain finishes only once nothing it moves is left on the backend: no object rows, no writes that were admitted before the drain and are still uploading, and no multipart uploads. Until then it stays `draining` and the worker checks again each tick. An object that fails to move is passed over for the rest of the pass and retried on the next tick, so one stuck object does not stop the rest of the backend from draining. [Unmanaged](admin-api.md#objects-the-orchestrator-does-not-own) objects, which reconcile found outside every virtual bucket prefix or could not decrypt, are left where they are and do not hold the drain up; removing the backend deletes their rows.
 
 4. **Remove the backend:**
 

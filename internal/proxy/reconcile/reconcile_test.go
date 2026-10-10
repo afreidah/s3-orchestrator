@@ -23,6 +23,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -304,12 +305,11 @@ func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 // dbCursorStream  -  paginated DB iterator
 // -------------------------------------------------------------------------
 
-// fakeLister is a hand-rolled DBKeyLister that returns a slice of
-// pre-batched pages. Each ListObjectsByBackendKeyAsc call pops one and
-// applies the cursor + limit so tests can assert real pagination
-// semantics rather than blindly returning whatever the test wired.
+// fakeLister is a hand-rolled DBKeyLister over a fixed row set, listed in
+// storage-key order with the cursor and limit applied, as the store does.
+// errAt fails that call number (zero-based) with err.
 type fakeLister struct {
-	pages [][]core.ObjectLocation
+	rows  []core.ObjectLocation
 	calls int
 	err   error
 	errAt int
@@ -317,50 +317,55 @@ type fakeLister struct {
 
 // ListObjectsByBackendKeyAsc lists objects by backend storage key asc.
 //
-// A page row left without a storage key takes its object key, the value a row
+// A row left without a storage key takes its object key, the value a row
 // stored at its key holds and the value an imported object gets. The cursor is
 // a storage key, so the comparison is against that column.
 func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
-	if f.err != nil && f.calls == f.errAt {
-		f.calls++
+	call := f.calls
+	f.calls++
+	if f.err != nil && call == f.errAt {
 		return nil, f.err
 	}
-	f.calls++
-	if len(f.pages) == 0 {
-		return nil, nil
-	}
-	page := f.pages[0]
-	f.pages = f.pages[1:]
-	out := make([]core.ObjectLocation, 0, len(page))
-	for i := range page {
-		row := page[i]
-		if row.StorageKey == "" {
-			row.StorageKey = row.ObjectKey
+	rows := slices.Clone(f.rows)
+	for i := range rows {
+		if rows[i].StorageKey == "" {
+			rows[i].StorageKey = rows[i].ObjectKey
 		}
-		if row.StorageKey > afterStorageKey {
-			out = append(out, row)
-			if len(out) >= limit {
-				break
-			}
+	}
+	slices.SortFunc(rows, func(a, b core.ObjectLocation) int { return strings.Compare(a.StorageKey, b.StorageKey) })
+	var out []core.ObjectLocation
+	for i := range rows {
+		if len(out) == limit {
+			break
+		}
+		if rows[i].StorageKey > afterStorageKey {
+			out = append(out, rows[i])
 		}
 	}
 	return out, nil
 }
 
-// TestDBCursorStream_DrainsAcrossPages verifies the iterator pulls page
-// after page until ListObjectsByBackendKeyAsc returns empty.
-func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
-	lister := &fakeLister{
-		pages: [][]core.ObjectLocation{
-			{{ObjectKey: "vb/a"}, {ObjectKey: "vb/b"}},
-			{{ObjectKey: "vb/c"}, {ObjectKey: "vb/d"}},
-		},
+// keyedRows builds n rows named vb/00000, vb/00001, ... in storage-key order.
+func keyedRows(n int) []core.ObjectLocation {
+	rows := make([]core.ObjectLocation, n)
+	for i := range rows {
+		rows[i] = core.ObjectLocation{ObjectKey: fmt.Sprintf("vb/%05d", i)}
 	}
+	return rows
+}
+
+// TestDBCursorStream_DrainsAcrossPages verifies the iterator pulls page after
+// page past the page size and yields every row once, in order.
+func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
+	rows := keyedRows(2*dbCursorPageSize + 5)
+	lister := &fakeLister{rows: rows}
 	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	got := drainStream(t, it)
-	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
-	if !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	if len(got) != len(rows) || got[0] != rows[0].ObjectKey || got[len(got)-1] != rows[len(rows)-1].ObjectKey {
+		t.Errorf("drained %d rows, want all %d in order", len(got), len(rows))
+	}
+	if lister.calls != 3 {
+		t.Errorf("listed %d pages, want 3 with the short last page ending the walk", lister.calls)
 	}
 }
 
@@ -370,12 +375,10 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 // every pass.
 func TestDBCursorStream_YieldsEveryBucket(t *testing.T) {
 	lister := &fakeLister{
-		pages: [][]core.ObjectLocation{
-			{
-				{ObjectKey: "other/x"},
-				{ObjectKey: "vb/a"},
-				{ObjectKey: "vb/b"},
-			},
+		rows: []core.ObjectLocation{
+			{ObjectKey: "other/x"},
+			{ObjectKey: "vb/a"},
+			{ObjectKey: "vb/b"},
 		},
 	}
 	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
@@ -387,24 +390,19 @@ func TestDBCursorStream_YieldsEveryBucket(t *testing.T) {
 
 // TestDBCursorStream_PropagatesError verifies the cursor surfaces a
 // store-side error. fakeLister.errAt=1 fails the second list call, so the
-// iterator returns page 1 successfully then errs on the page-2 fetch.
+// iterator returns the full first page then errs on the page-2 fetch.
 func TestDBCursorStream_PropagatesError(t *testing.T) {
 	want := errors.New("query failed")
-	lister := &fakeLister{
-		pages: [][]core.ObjectLocation{
-			{{ObjectKey: "vb/a"}, {ObjectKey: "vb/b"}},
-		},
-		err:   want,
-		errAt: 1, // fail on the second page fetch
-	}
+	rows := keyedRows(dbCursorPageSize + 1)
+	lister := &fakeLister{rows: rows, err: want, errAt: 1}
 	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
+	defer it.Stop()
 	ctx := context.Background()
 
-	// Page 1  -  should succeed.
-	for i, want := range []string{"vb/a", "vb/b"} {
+	for i := range dbCursorPageSize {
 		ent, ok, err := it.Next(ctx)
-		if err != nil || !ok || ent.key != want {
-			t.Fatalf("page-1[%d]: got (%v,%v,%v), want (%s,true,nil)", i, ent.key, ok, err, want)
+		if err != nil || !ok || ent.key != rows[i].ObjectKey {
+			t.Fatalf("page-1[%d]: got (%v,%v,%v), want (%s,true,nil)", i, ent.key, ok, err, rows[i].ObjectKey)
 		}
 	}
 
@@ -415,13 +413,11 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 	}
 }
 
-// TestDBCursorStream_StopIsNoop confirms stop is callable and idempotent
-//   - it has no goroutine to halt, so the contract is "does not panic and
-//
-// has no side effect on subsequent next calls."
+// TestDBCursorStream_StopIsNoop confirms Stop before the first Next is a
+// no-op and idempotent: nothing has started, so iteration proceeds normally.
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
-	lister := &fakeLister{pages: [][]core.ObjectLocation{{{ObjectKey: "vb/a"}}}}
+	lister := &fakeLister{rows: []core.ObjectLocation{{ObjectKey: "vb/a"}}}
 	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	it.Stop()
 	it.Stop() // idempotent
@@ -434,9 +430,7 @@ func TestDBCursorStream_StopIsNoop(t *testing.T) {
 // TestDBCursorStream_ContextCancellation verifies the cursor stops trying
 // to fetch new pages once the context is cancelled.
 func TestDBCursorStream_ContextCancellation(t *testing.T) {
-	lister := &fakeLister{pages: [][]core.ObjectLocation{
-		{{ObjectKey: "vb/a"}},
-	}}
+	lister := &fakeLister{rows: []core.ObjectLocation{{ObjectKey: "vb/a"}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})

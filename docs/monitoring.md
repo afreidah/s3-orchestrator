@@ -15,7 +15,7 @@ A ready-to-import Grafana dashboard covering every metric ships at `grafana/s3-o
 
 ### Web dashboard
 
-When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of:
+When `ui.enabled` is `true`, the dashboard at `{path}/` shows the following. Quota, object counts, multipart uploads, integrity coverage, plaintext copies and compression come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; monthly usage, drain progress and backend health are read live:
 
 - **Storage summary** - total bytes used/capacity across all backends
 - **Backend quota** - bytes used/limit with progress bars per backend, object counts, active multipart uploads
@@ -268,7 +268,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
 | `s3o_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
 | `s3o_rebalance_pending` | Gauge | - | Objects planned for rebalance |
-| `s3o_replication_pending` | Gauge | - | Objects below replication factor |
+| `s3o_replication_pending` | Gauge | - | Objects below replication factor, counting in-flight writes as copies (exact, refreshed every `fleet_interval`) |
 | `s3o_replication_copies_created_total` | Counter | - | Replica copies created |
 | `s3o_replication_write_copies_total` | Counter | `outcome` | Further copies placed during the write (`committed`, `untrusted`, `failed`) |
 | `s3o_replication_write_copies_committed` | Histogram | - | Copies committed per fan-out write, including the one that answered the client. Sitting at `replication.factor` means writes reach it unaided; drifting toward 1 means they are degrading to a single copy |
@@ -278,7 +278,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_replication_duration_seconds` | Histogram | - | Replication cycle time |
 | `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |
 | `s3o_replication_health_copies_total` | Counter | - | Copies created to replace copies on circuit-broken backends |
-| `s3o_over_replication_pending` | Gauge | - | Objects exceeding the replication factor |
+| `s3o_over_replication_pending` | Gauge | - | Objects exceeding the replication factor (exact, refreshed every `fleet_interval`) |
 | `s3o_over_replication_removed_total` | Counter | - | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | - | Over-replication cleanup errors |
 | `s3o_over_replication_key_preserved_total` | Counter | - | Copies kept because they held the only usable encryption key for the object |
@@ -373,7 +373,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_notification_store_errors_total` | Counter | - | Outbox persistence failures |
 | `s3o_http_panic_recovered_total` | Counter | route | Handler panics caught by the recovery middleware |
 
-Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
+The fleet-wide gauges - quota bytes, object, multipart, plaintext and unreadable counts, and the replication and over-replication pending counts - are recomputed from the database every `telemetry.metrics.fleet_interval` (default 60s, no backend API calls), and immediately after a rebalance, replication, over-replication, reconcile or reload pass that changes something. With several instances one computes per interval and the others load its result. The replication counts are exact, not sampled.
 
 #### Worker cycle outcomes
 

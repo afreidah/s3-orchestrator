@@ -12,11 +12,13 @@
 package metrics
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -35,14 +37,11 @@ import (
 
 type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
+	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
 	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
-	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
-	CountUnencryptedLocations(ctx context.Context) (int64, error)
-	CountUnreadableLocations(ctx context.Context) (int64, error)
+	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
 }
 
 // Collector records Prometheus metrics for manager-level operations and
@@ -53,32 +52,38 @@ type Collector struct {
 	backendNames      []string
 	replicationFactor func() int  // returns 0 when replication is disabled
 	shared            SharedState // nil on a single instance
+	fleetInterval     time.Duration
 	log               *slog.Logger
 
-	repMu   sync.RWMutex        // guards repSnap
-	repSnap ReplicationSnapshot // last-computed replication state, served to admin
+	snapMu   sync.RWMutex        // guards repSnap and lastSnap
+	repSnap  ReplicationSnapshot // last-computed replication state, served to admin
+	lastSnap *FleetSnapshot      // last snapshot applied here, computed or loaded
 }
 
 // CollectorDeps groups the metrics collector's constructor parameters.
 // ReplicationFactor returns 0 when replication is disabled. Shared is where
 // the fleet snapshot is published and read, and is nil on a single instance.
+// FleetInterval is the snapshot recompute cadence; zero means
+// config.DefaultFleetInterval.
 type CollectorDeps struct {
 	Store             Deps
 	Usage             *counter.UsageTracker
 	BackendNames      []string
 	ReplicationFactor func() int
 	Shared            SharedState
+	FleetInterval     time.Duration
 }
 
 // New creates a Collector with references to the store and usage tracker
 // needed for gauge refreshes.
-func New(deps CollectorDeps) *Collector {
+func New(deps *CollectorDeps) *Collector {
 	return &Collector{
 		store:             deps.Store,
 		usage:             deps.Usage,
 		backendNames:      deps.BackendNames,
 		replicationFactor: deps.ReplicationFactor,
 		shared:            deps.Shared,
+		fleetInterval:     cmp.Or(deps.FleetInterval, config.DefaultFleetInterval),
 		log:               slog.Default().With(logfmt.Component("metrics_collector")),
 	}
 }

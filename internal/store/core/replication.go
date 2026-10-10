@@ -33,6 +33,14 @@ type RemovedCopy struct {
 	Removed    bool
 }
 
+// ReplicationBacklog counts the keys whose copy count is off the target
+// factor. Under counts in-flight intents as copies, as the replicator's scan
+// does; Over counts recorded copies only, as the cleaner's scan does.
+type ReplicationBacklog struct {
+	Under int64
+	Over  int64
+}
+
 // ReplicaInsert is one replica the replicator is recording. StorageKey is the
 // path the caller uploaded to, not the source's, so cleanup of either copy
 // reaches only that copy's bytes.

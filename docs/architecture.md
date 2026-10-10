@@ -125,6 +125,7 @@ Long-running workers keep the metadata layer consistent with the backends:
 | **Scrubber** | Verifies stored SHA-256 hashes against backend content |
 | **Reconciler** | Detects orphans (backend objects with no DB record) and stale DB rows |
 | **Usage flush** | Periodically writes unflushed usage counters to the DB |
+| **Fleet snapshot** | Computes the fleet-wide gauges, replication counts and dashboard figures once per `fleet_interval` |
 
 All workers are advisory-locked so a multi-instance deployment runs each one on exactly one instance at a time.
 

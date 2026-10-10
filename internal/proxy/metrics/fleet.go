@@ -34,12 +34,9 @@ import (
 // fleetSnapshotKey names the published snapshot in shared state.
 const fleetSnapshotKey = "fleet_snapshot"
 
-// fleetSnapshotTTL bounds how long a published snapshot outlives the last
-// instance that refreshed it.
-const fleetSnapshotTTL = 10 * time.Minute
-
-// underReplicatedScanLimit caps the rows the under-replication count reads.
-const underReplicatedScanLimit = 10000
+// fleetSnapshotTTLIntervals is how many fleet intervals a published snapshot
+// outlives the last instance that refreshed it.
+const fleetSnapshotTTLIntervals = 3
 
 // capacityWarningUtilization is the fraction of a quota at which a backend
 // is reported as approaching capacity.
@@ -56,17 +53,16 @@ type SharedState interface {
 	GetShared(ctx context.Context, name string) ([]byte, error)
 }
 
-// FleetSnapshot is one computation of the fleet-wide gauges. A nil field
-// marks a store read that failed, and applying the snapshot leaves the gauges
-// that read feeds as they were.
+// FleetSnapshot is one computation of the fleet-wide gauges. Ledger carries
+// every per-backend ledger figure from one pass, so the gauges and the admin
+// status read the same numbers. A nil field marks a store read that failed,
+// and applying the snapshot leaves the gauges that read feeds as they were.
 type FleetSnapshot struct {
-	ComputedAt       time.Time                 `json:"computed_at"`
-	Quota            map[string]core.QuotaStat `json:"quota"`
-	Objects          map[string]int64          `json:"objects"`
-	Multipart        map[string]int64          `json:"multipart"`
-	Replication      *ReplicationSnapshot      `json:"replication"`
-	PlaintextCopies  *int64                    `json:"plaintext_copies"`
-	UnreadableCopies *int64                    `json:"unreadable_copies"`
+	ComputedAt  time.Time                 `json:"computed_at"`
+	Quota       map[string]core.QuotaStat `json:"quota"`
+	Ledger      core.LedgerStats          `json:"ledger"`
+	Multipart   map[string]int64          `json:"multipart"`
+	Replication *ReplicationSnapshot      `json:"replication"`
 }
 
 // ReplicationSnapshot is the last-computed replication state, retained so a
@@ -89,22 +85,45 @@ type ReplicationSnapshot struct {
 // fleet gauges and replication status as the one that did. A no-op without
 // shared state, or before any snapshot has been published.
 func (mc *Collector) LoadFleetMetrics(ctx context.Context) error {
-	if mc.shared == nil {
-		return nil
-	}
-	data, err := mc.shared.GetShared(ctx, fleetSnapshotKey)
-	if err != nil {
+	snap, err := mc.loadPublished(ctx)
+	if err != nil || snap == nil {
 		return err
 	}
-	if data == nil {
+	mc.applyFleet(snap)
+	return nil
+}
+
+// RefreshFleetIfStale recomputes the fleet snapshot unless another instance
+// published one within the last half interval, in which case it applies that
+// one. Every instance's tick takes the fleet lock in turn, so without the
+// check the ledger would be scanned once per instance per interval.
+func (mc *Collector) RefreshFleetIfStale(ctx context.Context) error {
+	snap, err := mc.loadPublished(ctx)
+	if err != nil {
+		mc.log.WarnContext(ctx, "fleet snapshot load failed, recomputing", logfmt.Err(err))
+	}
+	if snap != nil && time.Since(snap.ComputedAt) < mc.fleetInterval/2 {
+		mc.applyFleet(snap)
 		return nil
+	}
+	return mc.UpdateFleetMetrics(ctx)
+}
+
+// loadPublished reads the published snapshot. It returns nil without shared
+// state or before any snapshot has been published.
+func (mc *Collector) loadPublished(ctx context.Context) (*FleetSnapshot, error) {
+	if mc.shared == nil {
+		return nil, nil
+	}
+	data, err := mc.shared.GetShared(ctx, fleetSnapshotKey)
+	if err != nil || data == nil {
+		return nil, err
 	}
 	var snap FleetSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
-		return fmt.Errorf("decode fleet snapshot: %w", err)
+		return nil, fmt.Errorf("decode fleet snapshot: %w", err)
 	}
-	mc.applyFleet(&snap)
-	return nil
+	return &snap, nil
 }
 
 // ReplicationSnapshot returns the newest replication state. With shared
@@ -114,28 +133,34 @@ func (mc *Collector) LoadFleetMetrics(ctx context.Context) error {
 // copy when shared state is absent, unreachable or holds nothing. Ready is
 // false until a snapshot has been computed or loaded.
 func (mc *Collector) ReplicationSnapshot(ctx context.Context) ReplicationSnapshot {
-	if snap, ok := mc.sharedReplication(ctx); ok {
-		return snap
+	if snap, err := mc.loadPublished(ctx); err == nil && snap != nil && snap.Replication != nil {
+		return *snap.Replication
 	}
-	mc.repMu.RLock()
-	defer mc.repMu.RUnlock()
+	mc.snapMu.RLock()
+	defer mc.snapMu.RUnlock()
 	return mc.repSnap
 }
 
-// sharedReplication reads the replication state from the published snapshot.
-func (mc *Collector) sharedReplication(ctx context.Context) (ReplicationSnapshot, bool) {
-	if mc.shared == nil {
-		return ReplicationSnapshot{}, false
+// FleetSnapshot returns the newest fleet snapshot: the published one, else the
+// last one applied here, else one computed now. Callers must not modify it.
+func (mc *Collector) FleetSnapshot(ctx context.Context) (*FleetSnapshot, error) {
+	if snap, err := mc.loadPublished(ctx); err == nil && snap != nil {
+		return snap, nil
 	}
-	data, err := mc.shared.GetShared(ctx, fleetSnapshotKey)
-	if err != nil || data == nil {
-		return ReplicationSnapshot{}, false
+	if snap := mc.lastSnapshot(); snap != nil {
+		return snap, nil
 	}
-	var snap FleetSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil || snap.Replication == nil {
-		return ReplicationSnapshot{}, false
+	if err := mc.UpdateFleetMetrics(ctx); err != nil {
+		return nil, err
 	}
-	return *snap.Replication, true
+	return mc.lastSnapshot(), nil
+}
+
+// lastSnapshot returns the snapshot last applied on this instance.
+func (mc *Collector) lastSnapshot() *FleetSnapshot {
+	mc.snapMu.RLock()
+	defer mc.snapMu.RUnlock()
+	return mc.lastSnap
 }
 
 // refreshFleet computes the fleet snapshot from the store, applies it here,
@@ -159,7 +184,7 @@ func (mc *Collector) publishFleet(ctx context.Context, snap *FleetSnapshot) {
 		mc.log.ErrorContext(ctx, "failed to encode fleet snapshot", logfmt.Err(err))
 		return
 	}
-	if err := mc.shared.PutShared(ctx, fleetSnapshotKey, data, fleetSnapshotTTL); err != nil {
+	if err := mc.shared.PutShared(ctx, fleetSnapshotKey, data, fleetSnapshotTTLIntervals*mc.fleetInterval); err != nil {
 		mc.log.WarnContext(ctx, "failed to publish fleet snapshot", logfmt.Err(err))
 	}
 }
@@ -172,10 +197,12 @@ func (mc *Collector) publishFleet(ctx context.Context, snap *FleetSnapshot) {
 func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.QuotaStat) FleetSnapshot {
 	snap := FleetSnapshot{Quota: stats}
 
-	if objects, err := mc.store.GetObjectCounts(ctx); err != nil {
-		mc.log.ErrorContext(ctx, "failed to get object counts", logfmt.Err(err))
+	// Counted here rather than from the dashboard so the figures keep moving
+	// on a deployment that scrapes Prometheus and never opens the web UI.
+	if ledger, err := mc.store.LedgerStats(ctx); err != nil {
+		mc.log.ErrorContext(ctx, "failed to read ledger stats", logfmt.Err(err))
 	} else {
-		snap.Objects = objects
+		snap.Ledger = ledger
 	}
 
 	if multipart, err := mc.store.GetActiveMultipartCounts(ctx); err != nil {
@@ -185,22 +212,6 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 	}
 
 	snap.Replication = mc.computeReplication(ctx)
-
-	// Counted here rather than from the dashboard so the figure keeps moving
-	// on a deployment that scrapes Prometheus and never opens the web UI.
-	// Encryption applies to new writes only, so without this nothing reports
-	// that a fleet configured for encryption is still partly plaintext.
-	if plaintext, err := mc.store.CountUnencryptedLocations(ctx); err != nil {
-		mc.log.WarnContext(ctx, "failed to count unencrypted copies", logfmt.Err(err))
-	} else {
-		snap.PlaintextCopies = &plaintext
-	}
-	if unreadable, err := mc.store.CountUnreadableLocations(ctx); err != nil {
-		mc.log.WarnContext(ctx, "failed to count unreadable copies", logfmt.Err(err))
-	} else {
-		snap.UnreadableCopies = &unreadable
-	}
-
 	snap.ComputedAt = time.Now()
 	return snap
 }
@@ -219,20 +230,15 @@ func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapsho
 		return &ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()}
 	}
 
-	locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, underReplicatedScanLimit)
+	backlog, err := mc.store.CountReplicationBacklog(ctx, factor)
 	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to get under-replicated objects", logfmt.Err(err))
-		return nil
-	}
-	over, err := mc.store.CountOverReplicatedObjects(ctx, factor)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to count over-replicated objects", logfmt.Err(err))
+		mc.log.ErrorContext(ctx, "failed to count replication backlog", logfmt.Err(err))
 		return nil
 	}
 	return &ReplicationSnapshot{
 		Factor:          factor,
-		UnderReplicated: int64(len(core.GroupByKey(locations))),
-		OverReplicated:  over,
+		UnderReplicated: backlog.Under,
+		OverReplicated:  backlog.Over,
 		ComputedAt:      time.Now(),
 		Ready:           true,
 	}
@@ -271,23 +277,26 @@ func (mc *Collector) warnNearCapacity(ctx context.Context, stats map[string]core
 // -------------------------------------------------------------------------
 
 // applyFleet publishes a snapshot's figures to the gauges and the replication
-// status, whether this instance computed it or loaded it.
+// status, whether this instance computed it or loaded it, and keeps it for
+// FleetSnapshot.
 func (mc *Collector) applyFleet(snap *FleetSnapshot) {
+	mc.snapMu.Lock()
+	mc.lastSnap = snap
+	mc.snapMu.Unlock()
 	applyQuotaGauges(snap.Quota)
-	if snap.Objects != nil {
-		applyPerBackendCounts(telemetry.ObjectCount, snap.Quota, snap.Objects)
+	if snap.Ledger != nil {
+		applyPerBackendCounts(telemetry.ObjectCount, snap.Quota, snap.Ledger.ObjectCounts())
+		// Encryption applies to new writes only, so without this nothing
+		// reports that a fleet configured for encryption is still partly
+		// plaintext.
+		telemetry.EncryptionPlaintextCopies.Set(float64(snap.Ledger.PlaintextCopies()))
+		telemetry.UnreadableCopies.Set(float64(snap.Ledger.UnreadableCopies()))
 	}
 	if snap.Multipart != nil {
 		applyPerBackendCounts(telemetry.ActiveMultipartUploads, snap.Quota, snap.Multipart)
 	}
 	if snap.Replication != nil {
 		mc.applyReplication(snap.Replication)
-	}
-	if snap.PlaintextCopies != nil {
-		telemetry.EncryptionPlaintextCopies.Set(float64(*snap.PlaintextCopies))
-	}
-	if snap.UnreadableCopies != nil {
-		telemetry.UnreadableCopies.Set(float64(*snap.UnreadableCopies))
 	}
 }
 
@@ -326,7 +335,7 @@ func (mc *Collector) applyReplication(rep *ReplicationSnapshot) {
 		telemetry.ReplicationPending.Set(float64(rep.UnderReplicated))
 		telemetry.OverReplicationPending.Set(float64(rep.OverReplicated))
 	}
-	mc.repMu.Lock()
+	mc.snapMu.Lock()
 	mc.repSnap = *rep
-	mc.repMu.Unlock()
+	mc.snapMu.Unlock()
 }

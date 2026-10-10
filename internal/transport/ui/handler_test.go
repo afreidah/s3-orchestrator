@@ -91,7 +91,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	mockStore.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
 	}, nil).AnyTimes()
-	mockStore.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 42}, nil).AnyTimes()
+	mockStore.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 42}}, nil).AnyTimes()
 	mockStore.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 0}, nil).AnyTimes()
 	mockStore.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 100}}, nil).AnyTimes()

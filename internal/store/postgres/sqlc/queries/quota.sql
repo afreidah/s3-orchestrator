@@ -44,20 +44,33 @@ LEFT JOIN (
     GROUP BY backend_name
 ) s ON s.backend_name = q.backend_name;
 
--- name: GetObjectCountsByBackend :many
-SELECT backend_name, COUNT(*) AS object_count
+-- name: LedgerStats :many
+-- Every per-backend ledger figure in one grouped pass, so the dashboard and the
+-- fleet snapshot read the table once rather than once per figure. Each FILTER
+-- keeps the predicate of the figure it reports: unhashed counts every row,
+-- plaintext matches ListUnencryptedLocations, unreadable matches
+-- ListUnreadableLocations, compression counts encoded copies only, and the
+-- verification figures count hashed managed rows, the population the scrub
+-- queue draws from. The oldest touch falls back to created_at as the queue
+-- ordering does, so a never-scrubbed copy is measured from when it was
+-- written.
+SELECT backend_name,
+    COUNT(*)::bigint AS objects,
+    COUNT(*) FILTER (WHERE content_hash IS NULL)::bigint AS unhashed,
+    COUNT(*) FILTER (WHERE encrypted = FALSE)::bigint AS plaintext,
+    COUNT(*) FILTER (WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0))::bigint AS unreadable,
+    COUNT(*) FILTER (WHERE compression_algorithm IS NOT NULL)::bigint AS compressed_objects,
+    COALESCE(SUM(logical_size) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_logical_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_stored_bytes,
+    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed)::bigint AS verifiable,
+    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed AND last_scrubbed_at IS NULL)::bigint AS never_verified,
+    MIN(COALESCE(last_scrubbed_at, created_at)) FILTER (WHERE content_hash IS NOT NULL AND managed)::timestamptz AS oldest_touched
 FROM object_locations
 GROUP BY backend_name;
 
 -- name: GetActiveMultipartCountsByBackend :many
 SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
-GROUP BY backend_name;
-
--- name: GetUnverifiedObjectCountsByBackend :many
-SELECT backend_name, COUNT(*) AS object_count
-FROM object_locations
-WHERE content_hash IS NULL
 GROUP BY backend_name;
 
 -- name: GetObjectSizeBytes :one

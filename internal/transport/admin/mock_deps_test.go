@@ -96,19 +96,19 @@ func (m *MockDashboardReader) EXPECT() *MockDashboardReaderMockRecorder {
 	return m.recorder
 }
 
-// GetData mocks base method.
-func (m *MockDashboardReader) GetData(ctx context.Context) (*dashboard.Data, error) {
+// GetStatus mocks base method.
+func (m *MockDashboardReader) GetStatus(ctx context.Context) (*dashboard.Data, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetData", ctx)
+	ret := m.ctrl.Call(m, "GetStatus", ctx)
 	ret0, _ := ret[0].(*dashboard.Data)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetData indicates an expected call of GetData.
-func (mr *MockDashboardReaderMockRecorder) GetData(ctx any) *gomock.Call {
+// GetStatus indicates an expected call of GetStatus.
+func (mr *MockDashboardReaderMockRecorder) GetStatus(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetData", reflect.TypeOf((*MockDashboardReader)(nil).GetData), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStatus", reflect.TypeOf((*MockDashboardReader)(nil).GetStatus), ctx)
 }
 
 // MockReconciler is a mock of Reconciler interface.

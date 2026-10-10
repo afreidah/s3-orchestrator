@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -252,35 +251,25 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 		likeEscape(bucketPrefix))
 }
 
-// GetStaleMultipartUploads returns uploads older than the given duration.
-func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
-	cutoff := formatTime(time.Now().Add(-olderThan))
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
-		 FROM multipart_uploads
-		 WHERE created_at < ?`,
-		cutoff,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
+// ScanMultipartUploads returns up to limit uploads matching filter after
+// afterUploadID, in upload_id order, for the abort scans.
+func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartUploadFilter, limit int, afterUploadID string) ([]core.MultipartUpload, error) {
+	cutoff := ""
+	if !filter.CreatedBefore.IsZero() {
+		cutoff = formatTime(filter.CreatedBefore)
 	}
-	defer rows.Close()
-
-	return scanMultipartUploads(rows)
-}
-
-// GetMultipartUploadsByBackend returns all in-progress multipart uploads on
-// the given backend. Used by drain to abort uploads before migrating objects.
-func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 		 FROM multipart_uploads
-		 WHERE backend_name = ?`,
-		backendName,
+		 WHERE (?1 = '' OR backend_name = ?1)
+		   AND (?2 = '' OR created_at < ?2)
+		   AND upload_id > ?3
+		 ORDER BY upload_id
+		 LIMIT ?4`,
+		filter.Backend, cutoff, afterUploadID, limit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
+		return nil, fmt.Errorf("failed to scan multipart uploads: %w", err)
 	}
 	defer rows.Close()
 

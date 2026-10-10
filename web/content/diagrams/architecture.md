@@ -7,7 +7,7 @@ weight: -1
 
 High-level architecture of the S3 Orchestrator showing the request path, storage layer, background services, and observability. **Hover over any component** for implementation details.
 
-The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush and the backend circuit breaker watchdog, which run in every mode.
+The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush, the fleet snapshot and the backend circuit breaker watchdog, which run in every mode.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -109,6 +109,8 @@ The gray background workers run only when the process starts in `worker` or `all
     '    SCRUB --> PG',
     '    RECON[Reconciler]:::background --> CB1',
     '    RECON --> PG',
+    '    FLEET[Fleet<br>Snapshot]:::background --> PG',
+    '    FLEET --> PROM',
     '',
     '    HTTP --> PROM[Prometheus<br>Metrics]:::observability',
     '    HTTP --> TEMPO[OpenTelemetry<br>Tracing]:::observability',
@@ -292,7 +294,7 @@ The gray background workers run only when the process starts in `worker` or `all
     CLEAN: {
       title: 'Cleanup Queue',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, processes up to 50 items with 10 concurrent goroutines.</p><p>Each tick uses <code>ClaimPendingCleanups</code> (<code>UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)</code>) to atomically reserve rows and stamp the calling instance\'s identifier so concurrent ticks across instances always see disjoint sets. A claim older than <code>cleanup_queue.claim_grace_period</code> (default 5m) is reclaimable so a worker that died mid-process does not leave a row stuck. Successful retries call <code>CompleteCleanupItem</code>, which deletes the row and decrements <code>orphan_bytes</code> in a single atomic CTE.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p>On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>core.MoveCleanupToDLQ</code> and the <code>cleanup.exhausted</code> notification is emitted; <code>orphan_bytes</code> is intentionally untouched because the bytes are still on disk.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_dlq_depth, s3o_cleanup_dlq_enqueued_total{backend}</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, claiming 50 rows at a time for up to 20 batches, with 10 concurrent goroutines.</p><p>Each tick uses <code>ClaimPendingCleanups</code> (<code>UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)</code>) to atomically reserve rows and stamp the calling instance\'s identifier so concurrent ticks across instances always see disjoint sets. A claim older than <code>cleanup_queue.claim_grace_period</code> (default 5m) is reclaimable so a worker that died mid-process does not leave a row stuck. Successful retries call <code>CompleteCleanupItem</code>, which deletes the row and decrements <code>orphan_bytes</code> in a single atomic CTE.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p>On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>core.MoveCleanupToDLQ</code> and the <code>cleanup.exhausted</code> notification is emitted; <code>orphan_bytes</code> is intentionally untouched because the bytes are still on disk.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_dlq_depth, s3o_cleanup_dlq_enqueued_total{backend}</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     LIFE: {
       title: 'Lifecycle Expiration',
@@ -329,10 +331,15 @@ The gray background workers run only when the process starts in `worker` or `all
       badge: 'background', badgeText: 'background worker',
       body: '<p>Scans each backend\'s bucket and imports objects the metadata store does not track, such as orphans from failed writes or manual uploads, so quota accounting stays accurate.</p><p>Registered only when <code>reconcile.enabled</code> is true. Runs every <code>reconcile.interval</code> (default 24h) under advisory lock <code>LockReconcile</code> (1009).</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
+    FLEET: {
+      title: 'Fleet Snapshot',
+      badge: 'background', badgeText: 'every mode',
+      body: '<p>Computes the fleet-wide figures every <code>telemetry.metrics.fleet_interval</code> (default 60s) under advisory lock 1013: quota bytes, one grouped ledger pass for per-backend object, unverified, plaintext, unreadable, compression and coverage figures, multipart counts, and exact under- and over-replicated counts.</p><p>Applies them to the Prometheus gauges and, with Redis, publishes them so every instance serves the same numbers. An instance that finds a snapshot younger than half the interval applies it instead of recomputing. The dashboard and <code>/admin/api/status</code> read this snapshot rather than querying the ledger per request.</p>'
+    },
     PROM: {
       title: 'Prometheus Metrics',
       badge: 'observability', badgeText: 'observability',
-      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open, 2=half-open).</p>'
+      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. The fleet-wide gauges are set by the fleet snapshot every <code>fleet_interval</code>. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open, 2=half-open).</p>'
     },
     TEMPO: {
       title: 'OpenTelemetry Tracing',

@@ -120,16 +120,14 @@ func TestTempfileReadersAreIndependent(t *testing.T) {
 	read := make([][]byte, copies)
 	errs := make([]error, copies)
 	for i := range copies {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r, err := mb.Reader()
 			if err != nil {
 				errs[i] = err
 				return
 			}
 			read[i], errs[i] = io.ReadAll(r)
-		}()
+		})
 	}
 	wg.Wait()
 

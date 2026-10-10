@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.151.x (current)
+### v0.154.x (current)
+
+**Fleet figures on their own cadence ([#1638](https://github.com/afreidah/s3-orchestrator/issues/1638), v0.154.0)**
+
+The fleet-wide gauges were recomputed on every usage-flush tick, and the dashboard and `/admin/api/status` ran the same ledger scans again on every request. A new fleet-snapshot service now computes them once per `telemetry.metrics.fleet_interval`, from one grouped pass over the object ledger, and every instance and endpoint reads that result.
+
+**Operator action items after upgrade:**
+
+- **One migration applies automatically** (Postgres `00035`, SQLite `0022`). It adds indexes the drain, cleanup and reconcile scans use and drops three that nothing reads any more. On Postgres the indexes are built `CONCURRENTLY`, so writes continue while they build; the first start takes longer on a large database.
+- **New optional setting `telemetry.metrics.fleet_interval`** (default `60s`, minimum `10s`). Quota, object, multipart, plaintext, unreadable and replication figures on the gauges, the dashboard and `/admin/api/status` can now be up to one interval old.
+- **`s3o_replication_pending` is now exact.** It was capped by a 10,000-row scan, so a larger backlog read as a lower number than it was. Expect the gauge to jump on a fleet with a large backlog; nothing changed in the backlog itself.
+- **A new advisory lock, `1013`**, appears in `pg_locks` while the fleet snapshot computes.
+
+### v0.151.x
 
 **Unreadable imports are unmanaged ([#1578](https://github.com/afreidah/s3-orchestrator/issues/1578), v0.151.6)**
 

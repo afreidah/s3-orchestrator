@@ -84,15 +84,25 @@ FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
 
--- name: CountOverReplicatedObjects :one
-SELECT COUNT(*)::bigint AS count
-FROM (
-    SELECT object_key
-    FROM object_locations
-    WHERE managed
+-- name: CountReplicationBacklog :one
+-- One grouped pass for both directions. Under applies GetUnderReplicatedObjects'
+-- in-flight rule; over counts recorded copies only, as GetOverReplicatedObjects
+-- does.
+WITH inflight AS (
+    SELECT object_key, COUNT(*) AS copies
+    FROM pending_objects
     GROUP BY object_key
-    HAVING COUNT(*) > @factor::bigint
-) over_replicated;
+),
+copies AS (
+    SELECT COUNT(*) AS held, COALESCE(i.copies, 0) AS inflight
+    FROM object_locations ol
+    LEFT JOIN inflight i ON i.object_key = ol.object_key
+    WHERE ol.managed
+    GROUP BY ol.object_key, i.copies
+)
+SELECT COUNT(*) FILTER (WHERE held + inflight < @factor::bigint)::bigint AS under_replicated,
+       COUNT(*) FILTER (WHERE held > @factor::bigint)::bigint AS over_replicated
+FROM copies;
 
 -- name: InsertReplicaConditional :one
 -- Returns the size_bytes that was actually inserted into object_locations

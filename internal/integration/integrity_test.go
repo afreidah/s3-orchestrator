@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -44,7 +45,7 @@ func replicationFactorTwo() config.ReplicationConfig {
 
 // backfillPage hashes the first page of copies a backfill run would take from
 // store, which covers every copy these tests write.
-func backfillPage(ctx context.Context, t *testing.T, scrubber *worker.Scrubber, store *postgres.Store) worker.WorkSummary {
+func backfillPage(ctx context.Context, t *testing.T, scrubber *worker.Scrubber, store *postgres.Store) batch.Summary {
 	t.Helper()
 	locs, err := store.GetObjectsWithoutHash(ctx, 100, core.Cursor{}, "")
 	if err != nil {

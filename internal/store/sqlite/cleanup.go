@@ -49,7 +49,7 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 		        claimed_at, claimed_by
 		 FROM cleanup_queue
 		 WHERE next_retry <= ? AND attempts < 10
-		 ORDER BY created_at ASC
+		 ORDER BY next_retry ASC, created_at ASC
 		 LIMIT ?`,
 		now, limit,
 	)
@@ -102,7 +102,8 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 }
 
 // selectClaimableRows fetches the next batch of cleanup_queue rows
-// that satisfy ClaimPendingCleanups' eligibility predicates.
+// that satisfy ClaimPendingCleanups' eligibility predicates, in
+// idx_cleanup_queue_claim order so the scan stops at the limit.
 func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, limit int) ([]core.CleanupItem, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
@@ -111,7 +112,7 @@ func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, li
 		 WHERE next_retry <= ?
 		   AND attempts < 10
 		   AND (claimed_at IS NULL OR claimed_at < ?)
-		 ORDER BY created_at ASC
+		 ORDER BY next_retry ASC, created_at ASC
 		 LIMIT ?`,
 		now, cutoff, limit,
 	)

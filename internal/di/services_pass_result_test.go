@@ -114,13 +114,9 @@ func TestHandlePassResult_OtherErrorSurfaces(t *testing.T) {
 // keeps the mock strict about everything else.
 func expectCollectorReads(m *storetest.MockMetadataStore) {
 	m.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
-	m.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	m.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	m.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
 	m.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	m.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	m.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
-	m.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	m.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
-	m.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	m.EXPECT().CountUnreadableLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
+	m.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).Return(core.ReplicationBacklog{}, nil).AnyTimes()
 }

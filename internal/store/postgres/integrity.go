@@ -84,24 +84,6 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 // REPORTING
 // -------------------------------------------------------------------------
 
-// IntegrityCoverage reports how far behind verification is, split by whether
-// the sweep can reach the copy. reachable is the same backend set the scrub
-// queue draws from; a copy outside it can never be stamped, so counting it in
-// the age would pin that figure to wall clock rather than to the backlog.
-// A never-verified copy is measured from when it was written, matching the
-// fallback the queue ordering itself uses.
-func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
-	row, err := s.queries.IntegrityCoverage(ctx, reachable)
-	if err != nil {
-		return core.CoverageStat{}, fmt.Errorf("failed to read integrity coverage: %w", err)
-	}
-	return core.CoverageStat{
-		OldestUnverifiedAge: time.Duration(row.AgeSeconds) * time.Second,
-		NeverVerified:       row.NeverVerified,
-		Deferred:            row.Deferred,
-	}, nil
-}
-
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, in key order after the cursor. Used by the backfill command.
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
@@ -117,10 +99,14 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core
 	return toFatObjectLocations(rows), nil
 }
 
-// ListUnreadableLocations returns up to limit copies that are encrypted with no
-// key, which nothing can decrypt.
-func (s *Store) ListUnreadableLocations(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.ListUnreadableLocations(ctx, int32(max(0, min(limit, math.MaxInt32)))) //nolint:gosec // clamped
+// ListUnreadableLocations returns up to limit copies after the cursor that are
+// encrypted with no key, which nothing can decrypt.
+func (s *Store) ListUnreadableLocations(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	rows, err := s.queries.ListUnreadableLocations(ctx, db.ListUnreadableLocationsParams{
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(max(0, min(limit, math.MaxInt32))), //nolint:gosec // clamped
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list unreadable locations: %w", err)
 	}

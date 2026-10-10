@@ -21,7 +21,6 @@ import (
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -70,9 +69,8 @@ type panicDeps struct{ Deps }
 // one collector and loads it into another that never reads the store.
 func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
 	shared := newMemoryShared()
-	under := []core.ObjectLocation{{ObjectKey: "a"}, {ObjectKey: "b"}}
 	computing := &Collector{
-		store:             fakeReplicationDeps{under: under, over: 1, plaintext: 4},
+		store:             fakeReplicationDeps{under: 2, over: 1, plaintext: 4},
 		replicationFactor: func() int { return 2 },
 		shared:            shared,
 		log:               slog.Default(),
@@ -119,7 +117,7 @@ func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
 	t.Parallel()
 	shared := newMemoryShared()
 	computing := &Collector{
-		store:             fakeReplicationDeps{under: []core.ObjectLocation{{ObjectKey: "a"}}},
+		store:             fakeReplicationDeps{under: 1},
 		replicationFactor: func() int { return 2 },
 		shared:            shared,
 		log:               slog.Default(),
@@ -176,6 +174,119 @@ func TestFleetSnapshot_PublishFailureKeepsLocalResult(t *testing.T) {
 	}
 	if !mc.ReplicationSnapshot(context.Background()).Ready {
 		t.Error("computing instance lost its own snapshot when the publish failed")
+	}
+}
+
+// TestRefreshFleetIfStale_RecomputesAStaleSnapshot replaces a published
+// snapshot older than half the interval with a fresh computation.
+func TestRefreshFleetIfStale_RecomputesAStaleSnapshot(t *testing.T) {
+	t.Parallel()
+	shared := newMemoryShared()
+	old := time.Now().Add(-time.Minute)
+	shared.data[fleetSnapshotKey] = []byte(`{"computed_at":"` + old.Format(time.RFC3339Nano) + `"}`)
+	mc := &Collector{
+		store:             fakeReplicationDeps{under: 3},
+		replicationFactor: func() int { return 2 },
+		shared:            shared,
+		fleetInterval:     time.Minute,
+		log:               slog.Default(),
+	}
+	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
+		t.Fatalf("RefreshFleetIfStale: %v", err)
+	}
+	if got := mc.ReplicationSnapshot(context.Background()); got.UnderReplicated != 3 || !got.ComputedAt.After(old) {
+		t.Errorf("snapshot = %+v, want a fresh computation", got)
+	}
+}
+
+// TestRefreshFleetIfStale_LoadFailureRecomputes computes the snapshot when the
+// published one cannot be read, rather than leaving the gauges unrefreshed.
+func TestRefreshFleetIfStale_LoadFailureRecomputes(t *testing.T) {
+	t.Parallel()
+	shared := newMemoryShared()
+	shared.getErr = errors.New("redis down")
+	mc := &Collector{
+		store:             fakeReplicationDeps{under: 2},
+		replicationFactor: func() int { return 2 },
+		shared:            shared,
+		fleetInterval:     time.Minute,
+		log:               slog.Default(),
+	}
+	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
+		t.Fatalf("RefreshFleetIfStale: %v", err)
+	}
+	shared.getErr = nil
+	if got := mc.ReplicationSnapshot(context.Background()); got.UnderReplicated != 2 {
+		t.Errorf("snapshot = %+v, want the recomputed one", got)
+	}
+}
+
+// TestRefreshFleetIfStale_SingleInstanceAlwaysComputes has nothing published
+// to reuse without shared state, so every tick computes.
+func TestRefreshFleetIfStale_SingleInstanceAlwaysComputes(t *testing.T) {
+	t.Parallel()
+	mc := New(&CollectorDeps{
+		Store:             fakeReplicationDeps{over: 4},
+		ReplicationFactor: func() int { return 2 },
+	})
+	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
+		t.Fatalf("RefreshFleetIfStale: %v", err)
+	}
+	if got := mc.ReplicationSnapshot(context.Background()); got.OverReplicated != 4 {
+		t.Errorf("snapshot = %+v, want a computed one", got)
+	}
+}
+
+// TestFleetSnapshot_LookupOrder serves the published snapshot first, then the
+// last one applied locally, and computes one only when neither exists.
+func TestFleetSnapshot_LookupOrder(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	shared := newMemoryShared()
+	publisher := &Collector{
+		store:             fakeReplicationDeps{under: 1},
+		replicationFactor: func() int { return 2 },
+		shared:            shared,
+		log:               slog.Default(),
+	}
+	if err := publisher.UpdateFleetMetrics(ctx); err != nil {
+		t.Fatalf("UpdateFleetMetrics: %v", err)
+	}
+
+	reader := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
+	snap, err := reader.FleetSnapshot(ctx)
+	if err != nil || snap.Replication.UnderReplicated != 1 {
+		t.Fatalf("published lookup = %+v, %v; want the published snapshot", snap, err)
+	}
+
+	// With shared state down the reader serves the copy it last loaded, and
+	// the panicking store proves it does not compute one.
+	if err := reader.LoadFleetMetrics(ctx); err != nil {
+		t.Fatalf("LoadFleetMetrics: %v", err)
+	}
+	shared.getErr = errors.New("redis down")
+	snap, err = reader.FleetSnapshot(ctx)
+	if err != nil || snap.Replication.UnderReplicated != 1 {
+		t.Errorf("local lookup = %+v, %v; want the loaded copy", snap, err)
+	}
+}
+
+// TestFleetSnapshot_ComputesWhenNoneExists computes and keeps a snapshot on
+// first use, then serves the kept one.
+func TestFleetSnapshot_ComputesWhenNoneExists(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mc := New(&CollectorDeps{
+		Store:             fakeReplicationDeps{over: 2},
+		ReplicationFactor: func() int { return 2 },
+	})
+	first, err := mc.FleetSnapshot(ctx)
+	if err != nil || first.Replication.OverReplicated != 2 {
+		t.Fatalf("first lookup = %+v, %v; want a computed snapshot", first, err)
+	}
+	second, err := mc.FleetSnapshot(ctx)
+	if err != nil || second != first {
+		t.Errorf("second lookup = %p, %v; want the kept snapshot %p", second, err, first)
 	}
 }
 

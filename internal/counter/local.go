@@ -173,12 +173,10 @@ func (l *LocalCounterBackend) SwapAllBackends() map[string]Snapshot {
 	result := make(map[string]Snapshot, len(old))
 	for name, c := range old {
 		result[name] = Snapshot{
-			LoadAllResult: LoadAllResult{
-				APIRequests:  c.apiRequests.Load(),
-				EgressBytes:  c.egressBytes.Load(),
-				IngressBytes: c.ingressBytes.Load(),
-			},
-			Pools: c.poolValues(),
+			APIRequests:  c.apiRequests.Load(),
+			EgressBytes:  c.egressBytes.Load(),
+			IngressBytes: c.ingressBytes.Load(),
+			Pools:        c.poolValues(),
 		}
 	}
 	return result

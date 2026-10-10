@@ -106,8 +106,8 @@ type noDrains struct{}
 
 func (noDrains) Refresh(_ context.Context) error { return nil }
 
-func (r recordingFleet) UpdateFleetMetrics(_ context.Context) error {
-	*r.calls = append(*r.calls, "UpdateFleetMetrics")
+func (r recordingFleet) RefreshFleetIfStale(_ context.Context) error {
+	*r.calls = append(*r.calls, "RefreshFleetIfStale")
 	return r.err
 }
 
@@ -253,6 +253,7 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 		multipart.NewCleanupService(f.stack.Multipart, locker, 0),
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
 		worker.NewRebalancerService(f.stack.Runtime, f.rebalancer, locker),
+		NewFleetSnapshotService(f.stack.Runtime, locker, time.Minute),
 		NewLifecycleService(f.expirer, locker),
 		worker.NewOverReplicationService(f.stack.Runtime, f.overRep, locker),
 		worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker),
@@ -276,15 +277,16 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 }
 
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
-// order. An instance that loses the lock must still refresh its usage
-// baselines and load the holder's fleet snapshot. Without Redis the losing
-// locker proves no lock is taken. Drain states reload last regardless of the
-// lock, and store errors never cut the tick short.
+// order. The tick never computes the fleet snapshot; with Redis every
+// instance loads the published one whether or not it won the flush lock.
+// Without Redis the losing locker proves no lock is taken. Drain states
+// reload last regardless of the lock, and store errors never cut the tick
+// short.
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
-	single := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines", "RefreshDrains"}
-	won := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshDrains"}
+	single := []string{"FlushQuota", "FlushUsage", "RefreshUsageBaselines", "RefreshDrains"}
+	won := []string{"FlushQuota", "FlushUsage", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshDrains"}
 
 	tests := []struct {
 		name   string
@@ -332,6 +334,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		svc  any
 	}{
 		{"UsageFlush", NewUsageFlushService(f.flushDeps(locker))},
+		{"FleetSnapshot", NewFleetSnapshotService(f.stack.Runtime, locker, time.Minute)},
 		{"MultipartCleanup", multipart.NewCleanupService(f.stack.Multipart, locker, 0)},
 		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
 		{"Rebalancer", worker.NewRebalancerService(f.stack.Runtime, f.rebalancer, locker)},

@@ -89,29 +89,32 @@ func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaU
 	return usage, nil
 }
 
-// GetObjectCounts returns the number of objects stored on each backend.
-func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.queries.GetObjectCountsByBackend(ctx)
+// LedgerStats returns every per-backend ledger figure from one grouped pass
+// over object_locations.
+func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
+	rows, err := s.queries.LedgerStats(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query object counts: %w", err)
+		return nil, fmt.Errorf("failed to query ledger stats: %w", err)
 	}
-	return totalsByBackend(rows, func(r db.GetObjectCountsByBackendRow) (string, int64) {
-		return r.BackendName, r.ObjectCount
-	}), nil
-}
-
-// GetUnverifiedObjectCounts returns the number of objects per backend whose
-// content_hash column is NULL (objects predating integrity verification
-// or otherwise not yet checksummed). Drives the dashboard's "needs
-// backfill" column.
-func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.queries.GetUnverifiedObjectCountsByBackend(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query unverified object counts: %w", err)
+	out := make(core.LedgerStats, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		out[r.BackendName] = core.LedgerStat{
+			Objects:    r.Objects,
+			Unhashed:   r.Unhashed,
+			Plaintext:  r.Plaintext,
+			Unreadable: r.Unreadable,
+			Compressed: core.CompressionStat{
+				Objects:      r.CompressedObjects,
+				LogicalBytes: r.CompressedLogicalBytes,
+				StoredBytes:  r.CompressedStoredBytes,
+			},
+			Verifiable:    r.Verifiable,
+			NeverVerified: r.NeverVerified,
+			OldestTouched: r.OldestTouched.Time,
+		}
 	}
-	return totalsByBackend(rows, func(r db.GetUnverifiedObjectCountsByBackendRow) (string, int64) {
-		return r.BackendName, r.ObjectCount
-	}), nil
+	return out, nil
 }
 
 // GetActiveMultipartCounts returns the number of in-progress multipart uploads

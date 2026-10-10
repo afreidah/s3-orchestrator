@@ -177,17 +177,21 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 	return loc, true, nil
 }
 
-// CopyExistsAtPath reports whether the backend already holds a recorded copy
-// at storageKey, whichever object it belongs to.
-func (a *pgTxAdapter) CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error) {
-	exists, err := a.q.CopyExistsAtPath(ctx, db.CopyExistsAtPathParams{
-		BackendName: backend,
-		StorageKey:  storageKey,
-	})
-	if err != nil {
-		return false, fmt.Errorf("check copy at path: %w", err)
+// ListedPathStates reports what the ledger says about each listed path on the
+// backend. Untracked paths are absent from the map.
+func (a *pgTxAdapter) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	if len(paths) == 0 {
+		return map[string]core.PathState{}, nil
 	}
-	return exists, nil
+	rows, err := a.q.ListedPathStates(ctx, db.ListedPathStatesParams{BackendName: backend, Paths: paths})
+	if err != nil {
+		return nil, fmt.Errorf("look up listed paths: %w", err)
+	}
+	states := make(map[string]core.PathState, len(rows))
+	for i := range rows {
+		states[rows[i].StorageKey] = max(states[rows[i].StorageKey], core.PathState(rows[i].State)) //nolint:gosec // G115: state is 1 or 2
+	}
+	return states, nil
 }
 
 // DeleteObjectFromBackend removes the single (objectKey, backend)
@@ -406,19 +410,6 @@ func (a *pgTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete cleanup_queue row: %w", err)
 	}
 	return nil
-}
-
-// HasPendingCleanup reports whether a delete for (storageKey, backend) is still
-// outstanding in either the retry queue or the dead-letter table.
-func (a *pgTxAdapter) HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error) {
-	pending, err := a.q.HasPendingCleanup(ctx, db.HasPendingCleanupParams{
-		StorageKey:  storageKey,
-		BackendName: backend,
-	})
-	if err != nil {
-		return false, fmt.Errorf("check pending cleanup: %w", err)
-	}
-	return pending, nil
 }
 
 // -------------------------------------------------------------------------

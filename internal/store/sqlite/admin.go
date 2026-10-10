@@ -69,18 +69,6 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // ENCRYPT EXISTING
 // -------------------------------------------------------------------------
 
-// CountUnencryptedLocations reports how many copies are still stored as
-// plaintext. Enabling encryption only affects new writes, so existing copies
-// stay in this count until encrypt-existing rewrites them.
-func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
-	var n int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM object_locations WHERE encrypted = 0`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count unencrypted locations: %w", err)
-	}
-	return n, nil
-}
-
 // ListUnencryptedLocations returns a page of plaintext copies for
 // encrypt-existing, on one backend or on all when backend is empty. It pages
 // by cursor because encrypting a copy removes it from the set, so an offset
