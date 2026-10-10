@@ -3,22 +3,23 @@
 //
 // Author: Alex Freidah
 //
-// Queries the metadata store and counter.UsageTracker to build dashboard
-// snapshots. Exposes GetData for the main dashboard page and
-// GetDirectoryChildren for lazy-loaded directory expansion. Delegates to
-// the underlying core.DashboardStore, benefiting from the circuit breaker
-// when wired through CircuitBreakerStore.
+// Builds the dashboard and admin status views from the fleet snapshot the
+// metrics collector maintains, the current period's usage and the live fleet
+// state. Exposes GetStatus for the admin status endpoint, GetData for the main
+// dashboard page and GetDirectoryChildren for lazy-loaded directory expansion.
 // -------------------------------------------------------------------------------
 
 package dashboard
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -34,6 +35,10 @@ const maxDirectoryChildren = 200
 // scrubReadOp is the operation the scrub queue is admitted against, so asking
 // which backends it can reach means asking about a read.
 var scrubReadOp = []s3op.Operation{s3op.GetObject}
+
+// errIncompleteSnapshot reports a fleet snapshot missing the ledger or
+// multipart figures because the store read behind them failed.
+var errIncompleteSnapshot = errors.New("fleet snapshot is missing figures; the store read behind them failed")
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -69,9 +74,11 @@ type Data struct {
 
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
 
-// FleetView is the backend-fleet surface the aggregator reads to decorate
-// stored stats with live state. *infra.BackendRuntime satisfies it.
+// FleetView is the backend-fleet surface the aggregator reads: the fleet
+// snapshot the ledger figures come from, and the live state it decorates them
+// with. *infra.BackendRuntime satisfies it.
 type FleetView interface {
+	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 	BackendOrder() []string
 	IsDraining(name string) bool
 	Backends() map[string]backend.ObjectBackend
@@ -136,9 +143,6 @@ func (da *Aggregator) scrubbableBackends() []string {
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.DrainingBackends = make(map[string]drain.Progress)
 	data.UnhealthyBackends = make(map[string]bool)
-	if da.fleet == nil {
-		return
-	}
 
 	if da.drain != nil {
 		for _, name := range da.fleet.BackendOrder() {
@@ -162,68 +166,52 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// GetData fetches all stats needed for the web UI in one call.
-func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
-	limits := da.usage.GetLimits()
+// GetStatus builds the status figures from the fleet snapshot, plus this
+// period's usage and the live fleet state. It fails rather than report zeroes
+// when the snapshot is missing a figure because its store read failed.
+func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
+	snap, err := da.fleet.FleetSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if snap.Ledger == nil || snap.Multipart == nil {
+		return nil, errIncompleteSnapshot
+	}
 
+	coverage := snap.Ledger.Coverage(da.scrubbableBackends(), time.Now())
 	data := &Data{
-		BackendOrder: da.order,
-		UsageLimits:  limits,
-		UsagePeriod:  counter.CurrentPeriod(),
+		BackendOrder:           da.order,
+		UsageLimits:            da.usage.GetLimits(),
+		UsagePeriod:            counter.CurrentPeriod(),
+		QuotaStats:             snap.Quota,
+		ObjectCounts:           snap.Ledger.ObjectCounts(),
+		UnverifiedObjectCounts: snap.Ledger.UnhashedCounts(),
+		OldestUnverifiedAge:    coverage.OldestUnverifiedAge,
+		NeverVerifiedCopies:    coverage.NeverVerified,
+		DeferredCopies:         coverage.Deferred,
+		PlaintextCopies:        snap.Ledger.PlaintextCopies(),
+		CompressionStats:       snap.Ledger.Compression(),
+		ActiveMultipartCounts:  snap.Multipart,
 	}
-
-	var err error
-
-	data.QuotaStats, err = da.store.GetQuotaStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data.ObjectCounts, err = da.store.GetObjectCounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data.UnverifiedObjectCounts, err = da.store.GetUnverifiedObjectCounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	coverage, err := da.store.IntegrityCoverage(ctx, da.scrubbableBackends())
-	if err != nil {
-		return nil, err
-	}
-	data.OldestUnverifiedAge = coverage.OldestUnverifiedAge
-	data.NeverVerifiedCopies = coverage.NeverVerified
-	data.DeferredCopies = coverage.Deferred
-
-	data.PlaintextCopies, err = da.store.CountUnencryptedLocations(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data.CompressionStats, err = da.store.CompressionStats(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data.ActiveMultipartCounts, err = da.store.GetActiveMultipartCounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	data.UsageStats, err = da.store.GetUsageForPeriod(ctx, data.UsagePeriod)
 	if err != nil {
 		return nil, err
 	}
+	da.decorateLiveState(ctx, data)
+	return data, nil
+}
 
-	// Fetch top-level directory entries for the lazy-loaded file browser.
+// GetData is GetStatus plus the top-level entries of the web UI's file
+// browser.
+func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
+	data, err := da.GetStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
 	data.TopLevelEntries, err = da.store.ListDirectoryChildren(ctx, "", "", maxDirectoryChildren)
 	if err != nil {
 		return nil, err
 	}
-
-	da.decorateLiveState(ctx, data)
 	return data, nil
 }
 

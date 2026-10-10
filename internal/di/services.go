@@ -9,6 +9,8 @@
 //
 //   - usageFlushService: adapts its tick interval at runtime based on
 //     observed load; does not fit the plain tickrunner.Service shape.
+//   - fleetSnapshotService: recomputes the fleet-wide gauges on the
+//     telemetry.metrics.fleet_interval cadence through the runtime.
 //   - lifecycleService: a small tickrunner wrapper that needs the
 //     manager-side lifecycleOps surface to read rules and process them.
 //   - provisioningWatcher: rebuilds the provisioning view when another
@@ -134,10 +136,11 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 }
 
 // flushTick runs a single flush+metrics cycle. With Redis counters only the
-// advisory lock holder performs the destructive GETSET and computes the fleet
-// snapshot; the others load the snapshot it published. Every instance then
-// reloads its own usage baselines, or its limit checks would keep admitting
-// work against budget already spent.
+// advisory lock holder performs the destructive GETSET, and every instance
+// loads the fleet snapshot and worker gauges last published. Every instance
+// then reloads its own usage baselines, or its limit checks would keep
+// admitting work against budget already spent. The fleet snapshot itself is
+// computed by the fleet snapshot service on its own cadence.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	// Outside the advisory lock: the byte deltas are this instance's own, so
 	// every instance flushes its own set. Skipping them on a lost lock would
@@ -149,7 +152,7 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	if s.flusher.RedisCounterConfigured() {
 		s.flushFleetTick(ctx)
 	} else {
-		s.flushSharedUsage(ctx)
+		s.flushUsage(ctx)
 	}
 
 	// After the flush, so the lock holder's baseline includes what it wrote.
@@ -166,13 +169,13 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 }
 
 // flushFleetTick is the shared-counter half of a tick: the lock holder flushes
-// and publishes the fleet snapshot, the others load it, and every instance
-// loads the worker gauges, which each worker's own lock holder published and
-// which need not be this instance or the flush lock's holder.
+// the counters, and every instance loads the fleet snapshot and the worker
+// gauges, which their own lock holders published and which need not be this
+// instance or the flush lock's holder.
 func (s *usageFlushService) flushFleetTick(ctx context.Context) {
 	acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
 		func(lockCtx context.Context) error {
-			s.flushSharedUsage(lockCtx)
+			s.flushUsage(lockCtx)
 			return nil
 		})
 	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
@@ -180,24 +183,46 @@ func (s *usageFlushService) flushFleetTick(ctx context.Context) {
 	}
 	if !acquired {
 		s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
-		if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
-			s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
-		}
+	}
+	if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
+		s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
 	}
 	if err := s.fleet.LoadWorkerGauges(ctx); err != nil {
 		s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
 	}
 }
 
-// flushSharedUsage writes the usage counters to the store and computes the
-// fleet snapshot. With Redis counters it runs only under the advisory lock.
-func (s *usageFlushService) flushSharedUsage(ctx context.Context) {
+// flushUsage writes the usage counters to the store. With Redis counters it
+// runs only under the advisory lock.
+func (s *usageFlushService) flushUsage(ctx context.Context) {
 	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
 	}
-	if err := s.fleet.UpdateFleetMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "fleet metrics refresh failed", "error", err)
-	}
+}
+
+// -------------------------------------------------------------------------
+// FLEET SNAPSHOT
+// -------------------------------------------------------------------------
+
+// NewFleetSnapshotService constructs the service that recomputes the
+// fleet-wide gauges and admin status figures every interval. It runs in every
+// mode under its own advisory lock; an instance that finds a fresh snapshot
+// already published applies it instead of scanning the ledger again.
+func NewFleetSnapshotService(fleet fleetSnapshotRefresher, locker tickrunner.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
+	const slug = "fleet_snapshot"
+	return tickrunner.New(tickrunner.Config{
+		Locker:   locker,
+		Interval: interval,
+		LockID:   core.LockFleetSnapshot,
+		Name:     slug,
+		Log:      tickrunner.ComponentLogger(slug),
+		Work: func(ctx context.Context) error {
+			if err := fleet.RefreshFleetIfStale(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+				return err
+			}
+			return nil
+		},
+	})
 }
 
 // -------------------------------------------------------------------------

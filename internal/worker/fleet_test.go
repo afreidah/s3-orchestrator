@@ -97,7 +97,7 @@ func newFleet(
 		RoutingStrategy: routing,
 		MaxObjectSizes:  opts.MaxObjectSizes,
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: usage, BackendNames: names,
 	}))
 	if len(opts.Draining) > 0 {

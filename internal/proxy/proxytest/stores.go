@@ -12,6 +12,7 @@ package proxytest
 
 import (
 	"log/slog"
+	"maps"
 	"testing"
 	"time"
 
@@ -75,9 +76,7 @@ func NewQuotaTracker(names []string, baselines map[string]core.BackendQuotaUsage
 	for _, name := range names {
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
-	for name, usage := range baselines {
-		primed[name] = usage
-	}
+	maps.Copy(primed, baselines)
 	tracker := counter.NewQuotaTracker(names)
 	tracker.SetBaselines(primed)
 	return tracker
@@ -134,7 +133,7 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		Log:             slog.Default().With(logfmt.Component("proxytest")),
 	})
 	if opts.Metrics != nil {
-		rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+		rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 			Store:             opts.Metrics,
 			Usage:             tracker,
 			BackendNames:      names,

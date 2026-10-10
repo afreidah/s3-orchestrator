@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -84,6 +85,13 @@ func (w *CleanupWorker) SetGaugePublisher(p GaugePublisher) {
 // Beyond that the row graduates to cleanup_dlq for operator action.
 const maxCleanupAttempts = 10
 
+// cleanupClaimBatch is how many rows one claim reserves.
+const cleanupClaimBatch = 50
+
+// cleanupMaxBatchesPerTick bounds one tick, so it cannot hold the cleanup
+// queue lock indefinitely while a backlog drains.
+const cleanupMaxBatchesPerTick = 20
+
 // logMsgCompleteCleanupFailed is the shared error log message emitted
 // when CompleteCleanupItem fails. Hoisted to a constant so the three
 // completion paths (success, success_absent, unknown_backend) stay in
@@ -110,7 +118,7 @@ func CleanupBackoff(attempts int32) time.Duration {
 
 // ProcessCleanupQueue fetches pending cleanup items and attempts to
 // delete the orphaned objects from their respective backends.
-func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) WorkSummary {
+func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) batch.Summary {
 	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", w.processCleanupQueue)
 }
 
@@ -119,14 +127,52 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) WorkSummary {
 // -------------------------------------------------------------------------
 
 // processCleanupQueue is the body of ProcessCleanupQueue after the span is open.
-func (w *CleanupWorker) processCleanupQueue(ctx context.Context) WorkSummary {
-	graceCutoff := time.Now().Add(-w.claimGracePeriod)
-	items, err := w.store.ClaimPendingCleanups(ctx, 50, w.instanceID, graceCutoff)
-	if err != nil {
-		w.log.ErrorContext(ctx, "failed to claim pending cleanups", "error", err)
-		return WorkSummary{}
+// It keeps claiming while batches come back full, up to cleanupMaxBatchesPerTick,
+// so a backlog drains faster than one batch a tick. Claimed rows leave the
+// claimable set, and a retried row's next_retry moves past now, so each claim
+// takes new rows; a batch that settles nothing ends the tick, so a down backend
+// cannot churn through the whole queue.
+func (w *CleanupWorker) processCleanupQueue(ctx context.Context) batch.Summary {
+	pager := batch.Pager[core.CleanupItem, struct{}]{
+		PageSize: batch.FixedPage(cleanupClaimBatch),
+		List: func(ctx context.Context, limit int, _ struct{}) ([]core.CleanupItem, error) {
+			graceCutoff := time.Now().Add(-w.claimGracePeriod)
+			return w.store.ClaimPendingCleanups(ctx, limit, w.instanceID, graceCutoff)
+		},
 	}
+	var total batch.Summary
+	batches := 0
+	stop, err := pager.Walk(ctx, func(ctx context.Context, items []core.CleanupItem) (batch.Step, error) {
+		sum := w.settleBatch(ctx, items)
+		total = total.Plus(sum)
+		batches++
+		return batch.Step{Progress: sum.Succeeded, Stop: batches == cleanupMaxBatchesPerTick}, nil
+	})
+	if stop == batch.Errored {
+		w.log.ErrorContext(ctx, "failed to claim pending cleanups", "error", err)
+	}
+	w.recordCleanupDepths(ctx)
+	return total
+}
 
+// settleBatch deletes one claimed batch's bytes and settles every row.
+func (w *CleanupWorker) settleBatch(ctx context.Context, items []core.CleanupItem) batch.Summary {
+	w.reportReclaimed(ctx, items)
+	deleted := w.deleteClaimed(ctx, items)
+
+	runner := batch.Runner[core.CleanupItem]{Name: "cleanup", Log: w.log, Concurrency: w.concurrency}
+	return runner.Run(ctx, items, func(ctx context.Context, item core.CleanupItem) batch.ItemResult {
+		d, attempted := deleted[item.ID]
+		if !attempted {
+			return batch.ItemResult{} // admission declined its backend; the row waits for a later cycle
+		}
+		return w.settleCleanupItem(ctx, &item, d)
+	})
+}
+
+// reportReclaimed records each row this claim took over from a claim that
+// outlived the grace period, which is a sign an instance died mid-batch.
+func (w *CleanupWorker) reportReclaimed(ctx context.Context, items []core.CleanupItem) {
 	for _, item := range items {
 		if !item.Reclaimed {
 			continue
@@ -144,20 +190,6 @@ func (w *CleanupWorker) processCleanupQueue(ctx context.Context) WorkSummary {
 			slog.String("reclaimed_by", w.instanceID),
 		)
 	}
-
-	deleted := w.deleteClaimed(ctx, items)
-
-	runner := BatchRunner[core.CleanupItem]{Name: "cleanup", Log: w.log, Concurrency: w.concurrency}
-	sum := runner.Run(ctx, items, func(ctx context.Context, item core.CleanupItem) ItemResult {
-		d, attempted := deleted[item.ID]
-		if !attempted {
-			return ItemResult{} // admission declined its backend; the row waits for a later cycle
-		}
-		return w.settleCleanupItem(ctx, &item, d)
-	})
-
-	w.recordCleanupDepths(ctx)
-	return sum
 }
 
 // cleanupDelete is what deleting one claimed row's bytes came to.
@@ -211,16 +243,16 @@ func (w *CleanupWorker) deleteClaimed(ctx context.Context, items []core.CleanupI
 
 // settleCleanupItem gives one cleanup queue row its outcome from deleting its
 // bytes: complete, retry, or graduate to the DLQ.
-func (w *CleanupWorker) settleCleanupItem(ctx context.Context, item *core.CleanupItem, d cleanupDelete) ItemResult {
+func (w *CleanupWorker) settleCleanupItem(ctx context.Context, item *core.CleanupItem, d cleanupDelete) batch.ItemResult {
 	if d.unknownBackend {
 		w.completeUnknownBackendItem(ctx, item)
-		return ItemResult{Outcome: ItemSucceeded, Status: "success"}
+		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: "success"}
 	}
 
 	delErr := d.err
 	if delErr == nil {
 		w.completeCleanupSuccess(ctx, item)
-		return ItemResult{Outcome: ItemSucceeded, Status: "success"}
+		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: "success"}
 	}
 
 	// 404 means the backend already agrees the object is gone, which is
@@ -228,16 +260,16 @@ func (w *CleanupWorker) settleCleanupItem(ctx context.Context, item *core.Cleanu
 	// a DLQ slot on a non-event.
 	if backend.IsNotFound(delErr) {
 		w.completeCleanupAlreadyAbsent(ctx, item)
-		return ItemResult{Outcome: ItemSucceeded, Status: "success_absent"}
+		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: "success_absent"}
 	}
 
 	newAttempts := item.Attempts + 1
 	if newAttempts >= maxCleanupAttempts {
 		w.exhaustCleanupToDLQ(ctx, item, newAttempts, delErr)
-		return ItemResult{Outcome: ItemFailed, Status: "exhausted"}
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: "exhausted"}
 	}
 	w.scheduleCleanupRetry(ctx, item, delErr)
-	return ItemResult{Outcome: ItemFailed, Status: "retry"}
+	return batch.ItemResult{Outcome: batch.ItemFailed, Status: "retry"}
 }
 
 // completeCleanupAlreadyAbsent retires a cleanup row whose backend DELETE

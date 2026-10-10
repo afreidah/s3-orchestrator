@@ -316,10 +316,11 @@ func TestStoreInt_CompressionStats_PerBackendTotals(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	stats, err := s.CompressionStats(ctx)
+	ledger, err := s.LedgerStats(ctx)
 	if err != nil {
-		t.Fatalf("CompressionStats: %v", err)
+		t.Fatalf("LedgerStats: %v", err)
 	}
+	stats := ledger.Compression()
 	got, ok := stats["backend-a"]
 	if !ok {
 		t.Fatalf("backend-a missing from %+v", stats)

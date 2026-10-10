@@ -16,14 +16,18 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // TestProcessCleanupQueue_DeleteSuccess verifies the process cleanup queue delete success contract.
@@ -121,6 +125,100 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	after := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
 	if after-before != 1 {
 		t.Errorf("success_absent metric delta = %v, want 1", after-before)
+	}
+}
+
+// claimingStore is a store whose claims hand out rows from next, which returns
+// up to limit fresh rows each call, and counts the claims.
+func claimingStore(t *testing.T, next func(limit int) []core.CleanupItem) (*storetest.MockMetadataStore, *atomic.Int32) {
+	t.Helper()
+	var claims atomic.Int32
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, limit int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			claims.Add(1)
+			return withCleanupPaths(next(limit)), nil
+		}).AnyTimes()
+	storetest.Permissive(store)
+	return store, &claims
+}
+
+// freshRows returns a next function that hands out total rows on b1 with
+// increasing ids, limit at a time; total < 0 never runs out.
+func freshRows(total int) func(limit int) []core.CleanupItem {
+	var id int64
+	return func(limit int) []core.CleanupItem {
+		var out []core.CleanupItem
+		for len(out) < limit && (total < 0 || int(id) < total) {
+			id++
+			out = append(out, core.CleanupItem{ID: id, BackendName: "b1", ObjectKey: fmt.Sprintf("orphan-%d", id)})
+		}
+		return out
+	}
+}
+
+// passingOps admits every batch and deletes every path, or fails every path
+// when deleteErr is set.
+func passingOps(t *testing.T, deleteErr error) *MockOps {
+	t.Helper()
+	ops := newMockOps(gomock.NewController(t))
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
+	ops.EXPECT().ReleaseAdmission().AnyTimes()
+	ops.EXPECT().GetBackend("b1").Return(nil, nil).AnyTimes()
+	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ backend.ObjectBackend, paths []string) map[string]error {
+			if deleteErr == nil {
+				return nil
+			}
+			failed := make(map[string]error, len(paths))
+			for _, p := range paths {
+				failed[p] = deleteErr
+			}
+			return failed
+		}).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	return ops
+}
+
+// TestProcessCleanupQueue_ClaimsUntilAShortBatch verifies a backlog larger than
+// one batch drains in one tick: the worker keeps claiming while batches come
+// back full and stops on the first short one.
+func TestProcessCleanupQueue_ClaimsUntilAShortBatch(t *testing.T) {
+	t.Parallel()
+	store, claims := claimingStore(t, freshRows(2*cleanupClaimBatch+20))
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+
+	sum := w.ProcessCleanupQueue(context.Background())
+	if sum.Succeeded != 2*cleanupClaimBatch+20 || claims.Load() != 3 {
+		t.Errorf("settled %d rows over %d claims, want %d over 3", sum.Succeeded, claims.Load(), 2*cleanupClaimBatch+20)
+	}
+}
+
+// TestProcessCleanupQueue_StopsAtTheBatchCap verifies a tick claims at most
+// cleanupMaxBatchesPerTick batches, so an endless backlog cannot hold the queue
+// lock indefinitely.
+func TestProcessCleanupQueue_StopsAtTheBatchCap(t *testing.T) {
+	t.Parallel()
+	store, claims := claimingStore(t, freshRows(-1))
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, nil), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+
+	sum := w.ProcessCleanupQueue(context.Background())
+	if claims.Load() != cleanupMaxBatchesPerTick || sum.Succeeded != cleanupMaxBatchesPerTick*cleanupClaimBatch {
+		t.Errorf("claimed %d batches settling %d rows, want %d batches", claims.Load(), sum.Succeeded, cleanupMaxBatchesPerTick)
+	}
+}
+
+// TestProcessCleanupQueue_StopsOnABatchThatSettlesNothing verifies a full batch
+// whose deletes all fail ends the tick, so a down backend does not walk the
+// worker through the whole queue.
+func TestProcessCleanupQueue_StopsOnABatchThatSettlesNothing(t *testing.T) {
+	t.Parallel()
+	store, claims := claimingStore(t, freshRows(-1))
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: passingOps(t, errors.New("backend down")), Store: store, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+
+	sum := w.ProcessCleanupQueue(context.Background())
+	if claims.Load() != 1 || sum.Failed != cleanupClaimBatch {
+		t.Errorf("claimed %d batches with %d failed, want 1 batch of %d failed", claims.Load(), sum.Failed, cleanupClaimBatch)
 	}
 }
 

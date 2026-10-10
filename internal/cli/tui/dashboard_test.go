@@ -155,7 +155,7 @@ func TestDashboard_FitsANarrowTerminal(t *testing.T) {
 	if got := lipgloss.Height(view); got != m.height {
 		t.Errorf("rendered %d lines, want %d", got, m.height)
 	}
-	for _, line := range strings.Split(view, "\n") {
+	for line := range strings.SplitSeq(view, "\n") {
 		if w := lipgloss.Width(line); w > m.contentWidth() {
 			t.Errorf("line is %d wide, past the %d-column content area: %q", w, m.contentWidth(), line)
 		}

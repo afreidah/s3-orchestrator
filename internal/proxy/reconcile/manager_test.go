@@ -85,6 +85,13 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 	}), stores, backends, usage
 }
 
+// ledgerHoldsNone has every listing-page lookup report that the ledger holds
+// none of the listed paths, for tests about what happens once a path is
+// imported.
+func ledgerHoldsNone(stores *MockStores) {
+	stores.EXPECT().ListedPathStates(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+}
+
 // importOf matches the import request for one discovered key. The write time
 // is deliberately not compared: it comes from whatever the backend reported and
 // varies per fixture, where these tests are about which keys get imported.
@@ -377,8 +384,11 @@ func TestSyncBackend_ImportsAndCountsSkips(t *testing.T) {
 	m, stores, backends, usage := newTestManager(t, ctrl)
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/new", SizeBytes: 1}, {Key: "vb/known", SizeBytes: 2}}}), nil).AnyTimes()
+	// The page is looked up once; the recorded path is skipped without an
+	// import, so only the miss reaches ImportObject.
+	stores.EXPECT().ListedPathStates(gomock.Any(), "b1", []string{"vb/new", "vb/known"}).
+		Return(map[string]core.PathState{"vb/known": core.PathRecorded}, nil)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/new", "b1", 1, false)).Return(core.ImportInserted, nil)
-	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/known", "b1", 2, false)).Return(core.ImportSkippedExisting, nil)
 	usage.EXPECT().APICalls(s3op.ListObjects, "b1", int64(1)).Times(1)
 
 	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
@@ -399,6 +409,7 @@ func TestSyncBackend_SkipsKeyWithPendingDelete(t *testing.T) {
 	m, stores, backends, usage := newTestManager(t, ctrl)
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/deleted", SizeBytes: 1}}}), nil).AnyTimes()
+	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/deleted", "b1", 1, false)).
 		Return(core.ImportSkippedPendingCleanup, nil)
 	usage.EXPECT().APICalls(s3op.ListObjects, "b1", int64(1)).Times(1)
@@ -420,6 +431,7 @@ func TestSyncBackend_ImportErrorAborts(t *testing.T) {
 	m, stores, backends, usage := newTestManager(t, ctrl)
 
 	backends.EXPECT().GetBackend(gomock.Any()).Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}}), nil).AnyTimes()
+	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).
 		Return(core.ImportSkippedExisting, errors.New("import boom"))
 	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
@@ -442,6 +454,7 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 		{{Key: "vb/b", SizeBytes: 2}},
 		{{Key: "vb/c", SizeBytes: 3}},
 	}), nil).AnyTimes()
+	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).
 		Return(core.ImportInserted, nil).AnyTimes()
 	// One charge per page, as each is consumed. A single lump charge of 3 is
@@ -543,6 +556,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 		{{Key: "vb/b", SizeBytes: 2}},
 	})
 	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+	ledgerHoldsNone(stores)
 
 	// Entry price, then the first page's charge reports no headroom left.
 	gomock.InOrder(
@@ -576,6 +590,7 @@ func TestSyncBackend_ChargesEachPageAsItGoes(t *testing.T) {
 		{{Key: "vb/c", SizeBytes: 3}},
 	})
 	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Cond(func(req *core.ImportObjectRequest) bool {
 		return req.Backend == "b1" && !req.Unmanaged
 	})).

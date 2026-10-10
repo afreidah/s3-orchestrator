@@ -41,49 +41,19 @@ func (m *MockDeps) EXPECT() *MockDepsMockRecorder {
 	return m.recorder
 }
 
-// CountOverReplicatedObjects mocks base method.
-func (m *MockDeps) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
+// CountReplicationBacklog mocks base method.
+func (m *MockDeps) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountOverReplicatedObjects", ctx, factor)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "CountReplicationBacklog", ctx, factor)
+	ret0, _ := ret[0].(core.ReplicationBacklog)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CountOverReplicatedObjects indicates an expected call of CountOverReplicatedObjects.
-func (mr *MockDepsMockRecorder) CountOverReplicatedObjects(ctx, factor any) *gomock.Call {
+// CountReplicationBacklog indicates an expected call of CountReplicationBacklog.
+func (mr *MockDepsMockRecorder) CountReplicationBacklog(ctx, factor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOverReplicatedObjects", reflect.TypeOf((*MockDeps)(nil).CountOverReplicatedObjects), ctx, factor)
-}
-
-// CountUnencryptedLocations mocks base method.
-func (m *MockDeps) CountUnencryptedLocations(ctx context.Context) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountUnencryptedLocations", ctx)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountUnencryptedLocations indicates an expected call of CountUnencryptedLocations.
-func (mr *MockDepsMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockDeps)(nil).CountUnencryptedLocations), ctx)
-}
-
-// CountUnreadableLocations mocks base method.
-func (m *MockDeps) CountUnreadableLocations(ctx context.Context) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountUnreadableLocations", ctx)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountUnreadableLocations indicates an expected call of CountUnreadableLocations.
-func (mr *MockDepsMockRecorder) CountUnreadableLocations(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnreadableLocations", reflect.TypeOf((*MockDeps)(nil).CountUnreadableLocations), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountReplicationBacklog", reflect.TypeOf((*MockDeps)(nil).CountReplicationBacklog), ctx, factor)
 }
 
 // GetActiveMultipartCounts mocks base method.
@@ -99,21 +69,6 @@ func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int
 func (mr *MockDepsMockRecorder) GetActiveMultipartCounts(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveMultipartCounts", reflect.TypeOf((*MockDeps)(nil).GetActiveMultipartCounts), ctx)
-}
-
-// GetObjectCounts mocks base method.
-func (m *MockDeps) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObjectCounts", ctx)
-	ret0, _ := ret[0].(map[string]int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetObjectCounts indicates an expected call of GetObjectCounts.
-func (mr *MockDepsMockRecorder) GetObjectCounts(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectCounts", reflect.TypeOf((*MockDeps)(nil).GetObjectCounts), ctx)
 }
 
 // GetPoolUsageForPeriod mocks base method.
@@ -146,21 +101,6 @@ func (mr *MockDepsMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockDeps)(nil).GetQuotaStats), ctx)
 }
 
-// GetUnderReplicatedObjects mocks base method.
-func (m *MockDeps) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUnderReplicatedObjects", ctx, factor, limit)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUnderReplicatedObjects indicates an expected call of GetUnderReplicatedObjects.
-func (mr *MockDepsMockRecorder) GetUnderReplicatedObjects(ctx, factor, limit any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnderReplicatedObjects", reflect.TypeOf((*MockDeps)(nil).GetUnderReplicatedObjects), ctx, factor, limit)
-}
-
 // GetUsageForPeriod mocks base method.
 func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
 	m.ctrl.T.Helper()
@@ -174,4 +114,19 @@ func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[st
 func (mr *MockDepsMockRecorder) GetUsageForPeriod(ctx, period any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockDeps)(nil).GetUsageForPeriod), ctx, period)
+}
+
+// LedgerStats mocks base method.
+func (m *MockDeps) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LedgerStats", ctx)
+	ret0, _ := ret[0].(core.LedgerStats)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LedgerStats indicates an expected call of LedgerStats.
+func (mr *MockDepsMockRecorder) LedgerStats(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LedgerStats", reflect.TypeOf((*MockDeps)(nil).LedgerStats), ctx)
 }

@@ -147,18 +147,31 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 	return scanObjectLocations(rows)
 }
 
-// CountOverReplicatedObjects returns the total number of objects with more
-// copies than the target replication factor.
-func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
-	return s.countRows(ctx, "over-replicated objects",
-		`SELECT COUNT(*) FROM (
-		     SELECT object_key
-		     FROM object_locations
-		     WHERE managed
-		     GROUP BY object_key
-		     HAVING COUNT(*) > ?
+// CountReplicationBacklog counts every key under and over the target factor,
+// uncapped, in one pass. Under applies GetUnderReplicatedObjects' in-flight
+// rule; over counts recorded copies only, as GetOverReplicatedObjects does.
+func (s *Store) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
+	var b core.ReplicationBacklog
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE held + inflight < ?1),
+		        COUNT(*) FILTER (WHERE held > ?1)
+		 FROM (
+		     SELECT COUNT(*) AS held, COALESCE(i.copies, 0) AS inflight
+		     FROM object_locations ol
+		     LEFT JOIN (
+		         SELECT object_key, COUNT(*) AS copies
+		         FROM pending_objects
+		         GROUP BY object_key
+		     ) i ON i.object_key = ol.object_key
+		     WHERE ol.managed
+		     GROUP BY ol.object_key, i.copies
 		 )`,
-		factor)
+		factor,
+	).Scan(&b.Under, &b.Over)
+	if err != nil {
+		return core.ReplicationBacklog{}, fmt.Errorf("failed to count replication backlog: %w", err)
+	}
+	return b, nil
 }
 
 // -------------------------------------------------------------------------

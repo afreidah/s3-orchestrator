@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -262,48 +263,48 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 }
 
 // PurgeBackendObjects deletes all objects from a backend's S3 storage and their
-// metadata rows, a page at a time with one batched backend delete per page.
-// Per-key failures are logged and skipped, but a page whose every
-// DeleteObjectLocation fails stops the purge, so a persistent DB error cannot
-// keep the loop listing and failing on the same rows forever.
+// metadata rows, walking the backend's listing a page at a time with one
+// batched backend delete per page. An object whose row cannot be dropped is
+// logged and passed over, so a persistent DB error costs each row one attempt.
 func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string, observer progress.Observer) {
-	for {
-		objects, err := d.objects.ListObjectsByBackend(ctx, name, purgePageSize)
-		if err != nil {
-			d.log.ErrorContext(ctx, "failed to list objects for purge",
-				slog.String("backend", name), "error", err)
-			return
-		}
-		if len(objects) == 0 {
-			return
-		}
-
-		paths := make([]string, len(objects))
+	pager := batch.Pager[core.ObjectLocation, core.SizeCursor]{
+		PageSize: batch.FixedPage(purgePageSize),
+		List: func(ctx context.Context, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
+			return d.objects.ListObjectsByBackend(ctx, name, limit, after)
+		},
+		CursorOf: func(obj core.ObjectLocation) core.SizeCursor {
+			return core.SizeCursor{SizeBytes: obj.SizeBytes, ObjectKey: obj.ObjectKey}
+		},
+	}
+	runner := batch.Runner[core.ObjectLocation]{
+		Name:        "purge",
+		Concurrency: 1,
+		Observer:    observer,
+		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
+	}
+	stop, err := pager.Walk(ctx, func(ctx context.Context, objects []core.ObjectLocation) (batch.Step, error) {
+		paths := make(map[string]string, len(objects))
+		list := make([]string, len(objects))
 		for i := range objects {
-			paths[i] = core.StoragePath(objects[i].ObjectKey, objects[i].StorageKey)
+			list[i] = core.StoragePath(objects[i].ObjectKey, objects[i].StorageKey)
+			paths[objects[i].ObjectKey] = list[i]
 		}
-		failed := d.infra.DeleteMany(ctx, name, be, paths)
-
-		dbDeleted := 0
-		for i := range objects {
-			progress.Track(observer, objects[i].ObjectKey, func() string {
-				return d.purgeOneObject(ctx, name, &objects[i], failed[paths[i]], &dbDeleted)
-			})
-		}
-
-		if dbDeleted == 0 {
-			d.log.ErrorContext(ctx, "purge made no DB progress on page; bailing to avoid an infinite list-and-fail loop",
-				slog.String("backend", name), slog.Int("page_size", len(objects)))
-			return
-		}
+		failed := d.infra.DeleteMany(ctx, name, be, list)
+		sum := runner.Run(ctx, objects, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
+			return d.purgeOneObject(ctx, name, &obj, failed[paths[obj.ObjectKey]])
+		})
+		return batch.Step{Progress: sum.Succeeded}, nil
+	})
+	if stop == batch.Errored {
+		d.log.ErrorContext(ctx, "failed to list objects for purge",
+			slog.String("backend", name), "error", err)
 	}
 }
 
 // purgeOneObject drops one purged object's metadata row, logging deleteErr when
-// its bytes could not be deleted from the backend. Increments dbDeleted on a
-// successful DB removal. Returns the progress status: failed when the DB record
-// could not be dropped (the signal the page made no progress), ok otherwise.
-func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.ObjectLocation, deleteErr error, dbDeleted *int) string {
+// its bytes could not be deleted from the backend. The item fails only when
+// the row could not be dropped.
+func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.ObjectLocation, deleteErr error) batch.ItemResult {
 	key := obj.ObjectKey
 	if deleteErr != nil {
 		d.log.WarnContext(ctx, "failed to delete object from backend during purge",
@@ -314,8 +315,7 @@ func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.Obj
 	if err != nil {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
-		return progress.StatusFailed
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
 	}
-	*dbDeleted++
-	return progress.StatusOK
+	return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
 }

@@ -18,10 +18,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
+
+// workerGaugesTTL bounds how long a worker's published gauges outlive the
+// last instance that refreshed them.
+const workerGaugesTTL = 10 * time.Minute
 
 // workerGaugesKey names one worker's published gauges in shared state.
 func workerGaugesKey(source string) string {
@@ -40,7 +45,7 @@ func (mc *Collector) PublishWorkerGauges(ctx context.Context, source string, g t
 		mc.log.ErrorContext(ctx, "failed to encode worker gauges", "source", source, logfmt.Err(err))
 		return
 	}
-	if err := mc.shared.PutShared(ctx, workerGaugesKey(source), data, fleetSnapshotTTL); err != nil {
+	if err := mc.shared.PutShared(ctx, workerGaugesKey(source), data, workerGaugesTTL); err != nil {
 		mc.log.WarnContext(ctx, "failed to publish worker gauges", "source", source, logfmt.Err(err))
 	}
 }

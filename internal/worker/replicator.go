@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -117,7 +118,7 @@ func (r *Replicator) IntegrityConfig() *config.IntegrityConfig {
 // counts differ because one under-replicated object can need several copies,
 // so CopiesCreated is not the number of items that succeeded.
 type ReplicationSummary struct {
-	WorkSummary
+	batch.Summary
 	CopiesCreated int
 }
 
@@ -152,12 +153,12 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		locations, err = r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	}
 	if err != nil {
-		telemetry.ReplicationRunsTotal.WithLabelValues(OutcomeError).Inc()
+		telemetry.ReplicationRunsTotal.WithLabelValues(batch.OutcomeError).Inc()
 		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
 
 	if len(locations) == 0 {
-		telemetry.ReplicationRunsTotal.WithLabelValues(WorkSummary{}.Outcome()).Inc()
+		telemetry.ReplicationRunsTotal.WithLabelValues(batch.Summary{}.Outcome()).Inc()
 		telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 		return ReplicationSummary{}, nil
 	}
@@ -167,15 +168,15 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	// The pending gauge comes from the fleet snapshot's ledger count, not this
 	// batch, so every instance serves the same figure.
 	var created atomic.Int64
-	runner := BatchRunner[replicaTask]{
+	runner := batch.Runner[replicaTask]{
 		Name:        "replication",
 		Log:         r.log,
 		Concurrency: cfg.Concurrency,
 		Observer:    observer,
 		Key:         func(t replicaTask) string { return t.key },
 	}
-	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) ItemResult {
-		var res ItemResult // zero value (ItemSkipped) when admission blocks the work
+	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) batch.ItemResult {
+		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
 			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
 			r.reportObjectOutcome(ctx, &outcome)
@@ -185,7 +186,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		return res
 	})
 
-	summary := ReplicationSummary{WorkSummary: sum, CopiesCreated: int(created.Load())}
+	summary := ReplicationSummary{Summary: sum, CopiesCreated: int(created.Load())}
 	telemetry.ReplicationCopiesCreatedTotal.Add(float64(summary.CopiesCreated))
 	if len(excluded) > 0 && summary.CopiesCreated > 0 {
 		telemetry.ReplicationHealthCopiesTotal.Add(float64(summary.CopiesCreated))
@@ -260,15 +261,15 @@ func (o ReplicationOutcome) Failed() int {
 // Any failed attempt makes the item failed even when other copies of the same
 // object landed, because the object did not reach its factor: reporting it as
 // succeeded would let a cycle that left objects under-replicated read as clean.
-func replicaOutcomeResult(o *ReplicationOutcome) ItemResult {
+func replicaOutcomeResult(o *ReplicationOutcome) batch.ItemResult {
 	switch {
 	case o.Failed() > 0:
-		return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
 	case o.Created > 0:
-		return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
 	default:
 		// No copy was attempted: target selection found nowhere to put one.
-		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusOK}
+		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
 	}
 }
 

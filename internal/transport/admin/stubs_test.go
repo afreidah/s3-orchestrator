@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -158,7 +159,7 @@ func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store o
 func newDashboardOps(t *testing.T, data *dashboard.Data, err error) *MockDashboardReader {
 	t.Helper()
 	m := NewMockDashboardReader(gomock.NewController(t))
-	m.EXPECT().GetData(gomock.Any()).Return(data, err).AnyTimes()
+	m.EXPECT().GetStatus(gomock.Any()).Return(data, err).AnyTimes()
 	return m
 }
 
@@ -299,9 +300,9 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	t.Helper()
 	m := opstest.NewMockScrubberOps(gomock.NewController(t))
 	m.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int, _ string, observer progress.Observer) worker.WorkSummary {
+		DoAndReturn(func(_ context.Context, _ int, _ string, observer progress.Observer) batch.Summary {
 			trackN(observer, cfg.scrubChecked, fixedKey(""))
-			return worker.WorkSummary{
+			return batch.Summary{
 				Attempted: cfg.scrubChecked,
 				Succeeded: cfg.scrubChecked - cfg.scrubFailed,
 				Failed:    cfg.scrubFailed,
@@ -314,11 +315,11 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 			return cfg.scrubKeyCopies, cfg.scrubKeyErr
 		}).AnyTimes()
 	m.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
+		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
 			cfg.backfillCalls++
 			cfg.backfillBacklog -= len(locs)
 			trackN(observer, len(locs), fixedKey(""))
-			return worker.WorkSummary{Attempted: len(locs), Succeeded: len(locs)}
+			return batch.Summary{Attempted: len(locs), Succeeded: len(locs)}
 		}).AnyTimes()
 	m.EXPECT().ListUnreadable(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, int) ([]core.ObjectLocation, int64, error) {
@@ -326,11 +327,11 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 		}).AnyTimes()
 	// Purges every unreadable copy in one pass, so the next pass finds none.
 	m.EXPECT().PurgeUnreadable(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
+		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) batch.Summary {
 			n := len(cfg.unreadable)
 			trackN(observer, n, fixedKey(""))
 			cfg.unreadable = nil
-			return worker.WorkSummary{Attempted: n, Succeeded: n}
+			return batch.Summary{Attempted: n, Succeeded: n}
 		}).AnyTimes()
 	return m
 }

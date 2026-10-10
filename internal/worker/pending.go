@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -99,17 +100,17 @@ func (r *PendingReaper) SetGaugePublisher(p GaugePublisher) {
 // their destinations, and promote or drop based on what the backend
 // reports. Returns the number of intents that completed (committed or
 // dropped) and the number that failed (left for the next tick).
-func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) WorkSummary {
+func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) batch.Summary {
 	return runTickCycle(ctx, "ProcessPendingQueue", "pending_queue", r.processPendingQueue)
 }
 
 // processPendingQueue is the body of ProcessPendingQueue after the span is open.
-func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
+func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 	cutoff := time.Now().Add(-r.minAge)
 	intents, err := r.store.GetStalePending(ctx, cutoff, r.batchSize)
 	if err != nil {
 		r.log.ErrorContext(ctx, "fetch stale pending intents", "error", err, logfmt.Outcome(logfmt.OutcomeError))
-		return WorkSummary{}
+		return batch.Summary{}
 	}
 
 	// skipped accumulates the per-backend count of intents short-circuited
@@ -117,8 +118,8 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
 	// One INFO log line is emitted per skipped backend at the end of the
 	// tick instead of per-intent WARN spam from the probe path.
 	var skipped sync.Map
-	runner := BatchRunner[core.PendingObject]{Name: "pending-reaper", Log: r.log, Concurrency: r.concurrency}
-	sum := runner.Run(ctx, intents, func(ctx context.Context, p core.PendingObject) ItemResult {
+	runner := batch.Runner[core.PendingObject]{Name: "pending-reaper", Log: r.log, Concurrency: r.concurrency}
+	sum := runner.Run(ctx, intents, func(ctx context.Context, p core.PendingObject) batch.ItemResult {
 		return r.resolveOneIntent(ctx, &p, &skipped)
 	})
 	skipped.Range(func(k, v any) bool {
@@ -141,30 +142,30 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
 // When the destination's circuit breaker is open the intent counts as failed,
 // so it stays queued, and is tallied in skipped so the caller logs once per
 // backend instead of once per intent.
-func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) ItemResult {
-	var res ItemResult // zero value (ItemSkipped) when admission blocks the work
+func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) batch.ItemResult {
+	var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
 	WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() {
 		be, err := r.deps.GetBackend(p.BackendName)
 		if err != nil {
-			res = ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}
+			res = batch.ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}
 			return
 		}
 
 		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && cb.State() == breaker.StateOpen {
 			cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
 			cnt.(*atomic.Int32).Add(1)
-			res = ItemResult{Outcome: ItemFailed}
+			res = batch.ItemResult{Outcome: batch.ItemFailed}
 			return
 		}
 
 		switch r.probeBackend(ctx, be, p) {
 		case probeFound:
-			res = ItemResult{Outcome: r.handlePromotion(ctx, p)}
+			res = batch.ItemResult{Outcome: r.handlePromotion(ctx, p)}
 		case probeNotFound:
-			res = ItemResult{Outcome: r.dropIntent(ctx, p, "head_404")}
+			res = batch.ItemResult{Outcome: r.dropIntent(ctx, p, "head_404")}
 		case probeError:
 			// Transient backend or network error; leave for the next tick.
-			res = ItemResult{Outcome: ItemFailed}
+			res = batch.ItemResult{Outcome: batch.ItemFailed}
 		}
 	})
 	return res
@@ -209,7 +210,7 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 // dropIntent deletes a pending row that has no recoverable bytes (either
 // the backend is gone or HEAD returned 404). reason is recorded as a slog
 // attribute so operators can distinguish the two paths in audit logs.
-func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, reason string) ItemOutcome {
+func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, reason string) batch.ItemOutcome {
 	if reason == "backend_removed" {
 		r.log.WarnContext(ctx, "backend not registered, dropping intent",
 			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID)
@@ -217,7 +218,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 	if err := r.store.DeletePending(ctx, p.IntentID); err != nil {
 		r.log.ErrorContext(ctx, "delete pending intent",
 			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
-		return ItemFailed
+		return batch.ItemFailed
 	}
 	telemetry.PendingIntentsResolvedTotal.WithLabelValues("dropped").Inc()
 	if reason == "head_404" {
@@ -227,19 +228,19 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 			slog.String("intent_id", p.IntentID),
 		)
 	}
-	return ItemSucceeded
+	return batch.ItemSucceeded
 }
 
 // handlePromotion resolves an intent whose backend HEAD returned 200 by
 // calling PromotePending and dispatching to one of the four result-code
 // handlers. Each handler updates metrics, audit logs, and the resolved/
 // failed counters as appropriate.
-func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject) ItemOutcome {
+func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject) batch.ItemOutcome {
 	result, displaced, _, err := r.store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
 			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
-		return ItemFailed
+		return batch.ItemFailed
 	}
 	switch result {
 	case core.PendingPromoteCommitted:
@@ -247,26 +248,26 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 		// transaction, moving them from what the backend has in flight to what
 		// it stores without either total ever missing them.
 		r.onPromoteCommitted(ctx, p, displaced)
-		return ItemSucceeded
+		return batch.ItemSucceeded
 	case core.PendingPromoteSuperseded:
 		r.onPromoteSuperseded(ctx, p)
-		return ItemSucceeded
+		return batch.ItemSucceeded
 	case core.PendingPromoteCompanionKept:
 		r.onCompanionResolved(ctx, p, "companion_kept", nil)
-		return ItemSucceeded
+		return batch.ItemSucceeded
 	case core.PendingPromoteCompanionDiscarded:
 		// Nothing recorded these bytes and nothing can vouch for them, so they
 		// go and the replication worker rebuilds the copy from one we trust.
 		r.onCompanionResolved(ctx, p, "companion_discarded", displaced)
-		return ItemSucceeded
+		return batch.ItemSucceeded
 	case core.PendingPromoteAmbiguous:
 		r.onPromoteAmbiguous(ctx, p)
-		return ItemFailed
+		return batch.ItemFailed
 	case core.PendingPromoteAlreadyResolved:
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("already_resolved").Inc()
-		return ItemSucceeded
+		return batch.ItemSucceeded
 	}
-	return ItemFailed
+	return batch.ItemFailed
 }
 
 // onPromoteCommitted records the success metric, emits an audit log, and

@@ -833,7 +833,7 @@ they truly belong to a new bounded concern - into a new role.
    **PostgreSQL** - add `internal/store/postgres/migrations/000NN_*.sql` and
    bump `postgres.ExpectedSchemaVersion` to the new migration number.
 
-   **SQLite** - add `internal/store/sqlite/migrations/000NN_*.sql`, apply the
+   **SQLite** - add `internal/store/sqlite/migrations/00NN_*.sql`, apply the
    same change to `internal/store/sqlite/schema.sql`, and bump both
    `sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version` value at
    the bottom of `schema.sql`.

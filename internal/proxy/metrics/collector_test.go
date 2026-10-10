@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Covers the replication snapshot the collector retains for the admin endpoint:
-// under-replicated (distinct keys) and over-replicated counts when replication
-// is enabled, and a ready, zeroed snapshot when it is disabled.
+// under- and over-replicated counts when replication is enabled, and a ready,
+// zeroed snapshot when it is disabled.
 // -------------------------------------------------------------------------------
 
 package metrics
@@ -29,7 +29,7 @@ import (
 // fakeReplicationDeps is a metrics.Deps returning canned replication and
 // plaintext figures, and nothing for the other reads.
 type fakeReplicationDeps struct {
-	under     []core.ObjectLocation
+	under     int64
 	over      int64
 	plaintext int64
 	countErr  error
@@ -42,14 +42,11 @@ type fakeReplicationDeps struct {
 func (fakeReplicationDeps) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil
 }
-func (f fakeReplicationDeps) CountUnencryptedLocations(context.Context) (int64, error) {
-	return f.plaintext, f.countErr
-}
-func (fakeReplicationDeps) CountUnreadableLocations(context.Context) (int64, error) {
-	return 0, nil
-}
-func (fakeReplicationDeps) GetObjectCounts(context.Context) (map[string]int64, error) {
-	return nil, nil
+func (f fakeReplicationDeps) LedgerStats(context.Context) (core.LedgerStats, error) {
+	if f.countErr != nil {
+		return nil, f.countErr
+	}
+	return core.LedgerStats{"b1": {Plaintext: f.plaintext}}, nil
 }
 func (fakeReplicationDeps) GetActiveMultipartCounts(context.Context) (map[string]int64, error) {
 	return nil, nil
@@ -60,19 +57,14 @@ func (fakeReplicationDeps) GetUsageForPeriod(context.Context, string) (map[strin
 func (fakeReplicationDeps) GetPoolUsageForPeriod(context.Context, string) (map[string]core.PoolUsage, error) {
 	return nil, nil
 }
-func (f fakeReplicationDeps) GetUnderReplicatedObjects(context.Context, int, int) ([]core.ObjectLocation, error) {
-	return f.under, nil
-}
-func (f fakeReplicationDeps) CountOverReplicatedObjects(context.Context, int) (int64, error) {
-	return f.over, nil
+func (f fakeReplicationDeps) CountReplicationBacklog(context.Context, int) (core.ReplicationBacklog, error) {
+	return core.ReplicationBacklog{Under: f.under, Over: f.over}, nil
 }
 
 func TestCollector_ReplicationSnapshot(t *testing.T) {
 	t.Parallel()
-	// under: 3 locations across 2 distinct keys -> 2 under-replicated objects.
-	under := []core.ObjectLocation{{ObjectKey: "a"}, {ObjectKey: "a"}, {ObjectKey: "b"}}
 	mc := &Collector{
-		store:             fakeReplicationDeps{under: under, over: 5},
+		store:             fakeReplicationDeps{under: 2, over: 5},
 		replicationFactor: func() int { return 2 },
 		log:               slog.Default(),
 	}

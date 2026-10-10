@@ -233,4 +233,5 @@ var (
 // Telemetry errors.
 var (
 	ErrTracingEndpointRequired = errors.New("telemetry.tracing.endpoint is required when tracing is enabled")
+	ErrFleetIntervalTooShort   = errors.New("telemetry.metrics.fleet_interval must be at least 10s")
 )

@@ -78,9 +78,6 @@ CREATE TABLE IF NOT EXISTS object_locations (
     PRIMARY KEY (object_key, backend_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_object_locations_backend
-    ON object_locations(backend_name);
-
 CREATE INDEX IF NOT EXISTS idx_object_locations_key_pattern
     ON object_locations(object_key);
 
@@ -95,8 +92,10 @@ CREATE INDEX IF NOT EXISTS idx_object_locations_scrub_queue
 CREATE INDEX IF NOT EXISTS idx_object_locations_key_created
     ON object_locations(object_key, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_object_locations_managed
-    ON object_locations(backend_name) WHERE managed;
+-- Backs drain and purge paging, which walk a backend's managed rows smallest
+-- first by (size_bytes, object_key).
+CREATE INDEX IF NOT EXISTS idx_object_locations_managed_size
+    ON object_locations(backend_name, size_bytes, object_key) WHERE managed;
 
 -- Backs reconcile's sorted-merge join, which walks the ledger in the byte order
 -- a backend listing returns. Being unique, it also enforces one object per path
@@ -192,6 +191,9 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_claim
     ON cleanup_queue(next_retry, created_at) WHERE attempts < 10;
 
+CREATE INDEX IF NOT EXISTS idx_cleanup_queue_backend_storage_key
+    ON cleanup_queue(backend_name, storage_key);
+
 -- Dead-letter for cleanup_queue rows that exhausted their retry budget
 -- without ever succeeding at the physical backend delete. The bytes are
 -- still on disk, so orphan_bytes is NOT decremented; operators inspect
@@ -211,8 +213,8 @@ CREATE TABLE IF NOT EXISTS cleanup_dlq (
     last_error        TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_cleanup_dlq_backend
-    ON cleanup_dlq(backend_name);
+CREATE INDEX IF NOT EXISTS idx_cleanup_dlq_backend_storage_key
+    ON cleanup_dlq(backend_name, storage_key);
 
 -- Durable webhook notification delivery queue.
 CREATE TABLE IF NOT EXISTS notification_outbox (
@@ -386,4 +388,4 @@ LEFT JOIN (
 LEFT JOIN backend_drains d ON d.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (21);
+INSERT INTO schema_version (version) VALUES (22);

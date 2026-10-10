@@ -35,11 +35,12 @@ import (
 // CONSUMER INTERFACES
 // -------------------------------------------------------------------------
 
-// Stores is the store surface reconciliation needs: import a discovered key,
-// drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
-// rows belonging to a key that no longer exists.
+// Stores is the store surface reconciliation needs: look up and import
+// discovered keys, drop a stale row, walk the ledger in byte order, and sweep
+// cleanup-queue rows belonging to a key that no longer exists.
 type Stores interface {
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
+	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
@@ -182,16 +183,21 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 
 	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
-	prefixes := BucketPrefixes(knownBuckets)
+	pages := PageImporter{
+		Store:       m.stores,
+		Classify:    m.classifyDeps(s3b),
+		BackendName: backendName,
+		Prefixes:    BucketPrefixes(knownBuckets),
+	}
 	budget := pageBudget{usage: m.usage, backendName: backendName}
 
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
 		// Charged before the import so the page is paid for even if importing
 		// it fails: the listing request reached the provider either way.
 		canContinue := budget.charge()
-		pImported, pSkipped, pErr := m.importPage(ctx, backendName, prefixes, objects)
-		imported += pImported
-		skipped += pSkipped
+		page, pErr := pages.Import(ctx, objects)
+		imported += page.Imported
+		skipped += page.Skipped
 		if pErr != nil {
 			return pErr
 		}
@@ -214,65 +220,27 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 	return imported, skipped, nil
 }
 
-// importPage imports one listing page, counting rows that were newly inserted
-// against rows the ledger already had.
-func (m *Manager) importPage(
-	ctx context.Context,
-	backendName string,
-	bucketPrefixes []string,
-	objects []backend.ListedObject,
-) (imported, skipped int, err error) {
-	for _, obj := range objects {
-		unmanaged := Unmanaged(obj.Key, bucketPrefixes)
-		outcome, importErr := m.importDiscovered(ctx, &core.ImportObjectRequest{
-			Key:       obj.Key,
-			Backend:   backendName,
-			Size:      obj.SizeBytes,
-			Unmanaged: unmanaged,
-			WrittenAt: obj.LastModified,
-		})
-		if importErr != nil {
-			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
-		}
-		switch outcome {
-		case core.ImportInserted:
-			imported++
-		case core.ImportSkippedPendingCleanup:
-			// Logged rather than folded silently into the skipped count: a
-			// key here is one whose delete never reached the backend, and an
-			// operator seeing a run full of them is looking at a cleanup
-			// queue that is not draining.
-			m.logger().WarnContext(ctx, "skipping key with an outstanding delete",
-				"key", obj.Key, "backend", backendName)
-			skipped++
-		default:
-			skipped++
-		}
-	}
-	return imported, skipped, nil
-}
-
-// importDiscovered records one key found on a backend, first working out
-// whether its bytes are an encryption envelope and, if so, which existing row
-// holds the key that reads them. Satisfies ImporterFn, so the sorted-merge
-// reconcile and the bulk sync scan classify identically.
+// importDiscovered records one key the sorted merge found only on a backend.
+// Satisfies ImporterFn, and goes through the same classify-and-import step as
+// the page import, so both passes classify identically.
 func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error) {
 	be, err := m.backends.GetBackend(req.Backend)
 	if err != nil {
 		return core.ImportSkippedExisting, err
 	}
-	form, err := ClassifyImport(ctx, ClassifyDeps{
+	return importListed(ctx, m.classifyDeps(be), m.stores, req)
+}
+
+// classifyDeps is how this manager's passes reach a backend's bytes and the
+// ledger when classifying a discovered key.
+func (m *Manager) classifyDeps(be backend.ObjectBackend) ClassifyDeps {
+	return ClassifyDeps{
 		Backend: be,
 		Stores:  m.stores,
 		Codec:   m.codec,
 		Source:  "reconcile",
 		Log:     m.logger(),
-	}, req.Backend, req.Key, req.Size)
-	if err != nil {
-		return core.ImportSkippedExisting, err
 	}
-	req.Form = form
-	return m.stores.ImportObject(ctx, req)
 }
 
 // ReconcileBackend diffs a backend against the ledger with the bounded-memory

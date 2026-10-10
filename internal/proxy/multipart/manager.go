@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -55,6 +56,9 @@ import (
 // creates so traces distinguish the manager layer ("Manager UploadPart")
 // from the backend layer ("Backend UploadPart") in the same trace.
 const spanPrefix = "Manager "
+
+// abortScanPageSize is how many uploads one page of an abort scan holds.
+const abortScanPageSize = 100
 
 // Stores is the persistence surface multipart needs: multipart row and part
 // operations, plus the advisory lock that serializes stale-upload sweeps.
@@ -619,27 +623,11 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
 func (mp *Manager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
-	uploads, err := mp.stores.GetStaleMultipartUploads(ctx, olderThan)
-	if err != nil {
-		mp.log.ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
-		return
-	}
-
-	cleaned := 0
-	for i := range uploads {
-		mu := &uploads[i]
-		mp.log.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
-		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
-			mp.log.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
-		} else {
-			cleaned++
-		}
-	}
-
-	if cleaned > 0 {
+	sum := mp.abortMatching(ctx, core.MultipartUploadFilter{CreatedBefore: time.Now().Add(-olderThan)})
+	if sum.Succeeded > 0 {
 		audit.Log(ctx, "storage.MultipartCleanup",
-			slog.Int("cleaned", cleaned),
-			slog.Int("total_stale", len(uploads)),
+			slog.Int("cleaned", sum.Succeeded),
+			slog.Int("total_stale", sum.Planned),
 		)
 	}
 }
@@ -647,20 +635,39 @@ func (mp *Manager) CleanupStaleMultipartUploads(ctx context.Context, olderThan t
 // AbortMultipartUploadsOnBackend aborts all in-progress multipart uploads
 // on the given backend.
 func (mp *Manager) AbortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
-	uploads, err := mp.stores.GetMultipartUploadsByBackend(ctx, backendName)
-	if err != nil {
-		mp.log.ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, "error", err)
-		return
-	}
+	mp.abortMatching(ctx, core.MultipartUploadFilter{Backend: backendName})
+}
 
-	for i := range uploads {
-		mu := &uploads[i]
-		mp.log.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
-		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
-			mp.log.ErrorContext(ctx, "failed to abort multipart upload",
-				"upload_id", mu.UploadID, "error", err)
-		}
+// abortMatching aborts every upload filter selects, walking them a page at a
+// time by upload id, and reports the tally. An upload that fails to abort is
+// logged and passed over, so the next run retries it.
+func (mp *Manager) abortMatching(ctx context.Context, filter core.MultipartUploadFilter) batch.Summary {
+	pager := batch.Pager[core.MultipartUpload, string]{
+		PageSize: batch.FixedPage(abortScanPageSize),
+		List: func(ctx context.Context, limit int, after string) ([]core.MultipartUpload, error) {
+			return mp.stores.ScanMultipartUploads(ctx, filter, limit, after)
+		},
+		CursorOf: func(mu core.MultipartUpload) string { return mu.UploadID },
 	}
+	runner := batch.Runner[core.MultipartUpload]{Name: "multipart-abort", Concurrency: 1}
+	var total batch.Summary
+	stop, err := pager.Walk(ctx, func(ctx context.Context, uploads []core.MultipartUpload) (batch.Step, error) {
+		sum := runner.Run(ctx, uploads, func(ctx context.Context, mu core.MultipartUpload) batch.ItemResult {
+			mp.log.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey, "backend", mu.BackendName)
+			if err := mp.abortByMultipartRow(ctx, &mu); err != nil {
+				mp.log.ErrorContext(ctx, "failed to abort multipart upload", "upload_id", mu.UploadID, "error", err)
+				return batch.ItemResult{Outcome: batch.ItemFailed}
+			}
+			return batch.ItemResult{Outcome: batch.ItemSucceeded}
+		})
+		total = total.Plus(sum)
+		return batch.Step{Progress: sum.Succeeded}, nil
+	})
+	if stop == batch.Errored {
+		mp.log.ErrorContext(ctx, "failed to list multipart uploads",
+			"backend", filter.Backend, "created_before", filter.CreatedBefore, "error", err)
+	}
+	return total
 }
 
 // CompleteMultipartUpload streams the parts into one assembled object, records

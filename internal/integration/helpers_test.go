@@ -900,7 +900,6 @@ type roleStore interface {
 type metricsAdapter struct {
 	core.DashboardStore
 	core.ReplicationStore
-	integrity core.IntegrityStore
 }
 
 // newMetricsAdapter returns a proxy.MetricsDeps-compatible value backed
@@ -909,14 +908,7 @@ func newMetricsAdapter(src roleStore) *metricsAdapter {
 	return &metricsAdapter{
 		DashboardStore:   src,
 		ReplicationStore: src,
-		integrity:        src,
 	}
-}
-
-// CountUnreadableLocations forwards to the integrity role, which the embedded
-// roles do not cover.
-func (a *metricsAdapter) CountUnreadableLocations(ctx context.Context) (int64, error) {
-	return a.integrity.CountUnreadableLocations(ctx)
 }
 
 // envOrDefault is an integration-test fixture helper; see file header for
@@ -1122,13 +1114,13 @@ func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.Quot
 	return f.inner.GetQuotaStats(ctx)
 }
 
-// GetObjectCounts is an integration-test fixture helper; see file header for
+// LedgerStats is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
+func (f *FailableStore) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.GetObjectCounts(ctx)
+	return f.inner.LedgerStats(ctx)
 }
 
 // GetActiveMultipartCounts is an integration-test fixture helper; see file header for
@@ -1140,13 +1132,13 @@ func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[strin
 	return f.inner.GetActiveMultipartCounts(ctx)
 }
 
-// GetStaleMultipartUploads is an integration-test fixture helper; see file header for
+// ScanMultipartUploads is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
+func (f *FailableStore) ScanMultipartUploads(ctx context.Context, filter core.MultipartUploadFilter, limit int, afterUploadID string) ([]core.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.GetStaleMultipartUploads(ctx, olderThan)
+	return f.inner.ScanMultipartUploads(ctx, filter, limit, afterUploadID)
 }
 
 // ListDirectoryChildren is an integration-test fixture helper; see file header for
@@ -1160,11 +1152,11 @@ func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, start
 
 // ListObjectsByBackend is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.ListObjectsByBackend(ctx, backendName, limit)
+	return f.inner.ListObjectsByBackend(ctx, backendName, limit, after)
 }
 
 // MoveObjectLocation is an integration-test fixture helper; see file header for
@@ -1203,13 +1195,13 @@ func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, li
 	return f.inner.GetOverReplicatedObjects(ctx, factor, limit)
 }
 
-// CountOverReplicatedObjects is an integration-test fixture helper; see file header for
+// CountReplicationBacklog is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
+func (f *FailableStore) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
 	if f.isFailing() {
-		return 0, errSimulatedDBOutage
+		return core.ReplicationBacklog{}, errSimulatedDBOutage
 	}
-	return f.inner.CountOverReplicatedObjects(ctx, factor)
+	return f.inner.CountReplicationBacklog(ctx, factor)
 }
 
 // RemoveExcessCopy is an integration-test fixture helper; see file header for

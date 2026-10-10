@@ -17,6 +17,7 @@ package multipart
 
 import (
 	"cmp"
+	"maps"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func newFleet(
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    opts.AdmissionSem,
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: usage, BackendNames: names,
 	}))
 
@@ -143,9 +144,7 @@ func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) 
 	for _, name := range names {
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
-	for name, usage := range baselines {
-		primed[name] = usage
-	}
+	maps.Copy(primed, baselines)
 	quota := counter.NewQuotaTracker(names)
 	quota.SetBaselines(primed)
 	return quota

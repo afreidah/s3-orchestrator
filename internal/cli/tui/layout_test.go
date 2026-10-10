@@ -210,7 +210,7 @@ func TestBackendsPane_NarrowTerminal(t *testing.T) {
 	m.width = 70
 
 	view := m.contentView()
-	for _, line := range strings.Split(view, "\n") {
+	for line := range strings.SplitSeq(view, "\n") {
 		if w := lipgloss.Width(line); w > m.contentWidth() {
 			t.Fatalf("line is %d wide, past the %d-column content area: %q", w, m.contentWidth(), line)
 		}
@@ -267,7 +267,7 @@ func TestTablePanes_FitANarrowTerminal(t *testing.T) {
 		if got := lipgloss.Height(view); got != m.height {
 			t.Errorf("%s: rendered %d lines, want %d", name, got, m.height)
 		}
-		for _, line := range strings.Split(view, "\n") {
+		for line := range strings.SplitSeq(view, "\n") {
 			if w := lipgloss.Width(line); w > m.contentWidth() {
 				t.Errorf("%s: line is %d wide, past the %d-column content area: %q", name, w, m.contentWidth(), line)
 			}

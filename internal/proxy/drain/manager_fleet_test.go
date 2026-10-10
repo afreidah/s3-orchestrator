@@ -12,8 +12,9 @@ package drain
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,9 +52,9 @@ type deleteLocationRecord struct {
 
 // pagedLister returns a DoAndReturn that hands out paginated
 // ListObjectsByBackend results.
-func pagedLister(pages [][]core.ObjectLocation) func(context.Context, string, int) ([]core.ObjectLocation, error) {
+func pagedLister(pages [][]core.ObjectLocation) func(context.Context, string, int, core.SizeCursor) ([]core.ObjectLocation, error) {
 	idx := 0
-	return func(context.Context, string, int) ([]core.ObjectLocation, error) {
+	return func(context.Context, string, int, core.SizeCursor) ([]core.ObjectLocation, error) {
 		if idx >= len(pages) {
 			return nil, nil
 		}
@@ -89,7 +90,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	c := &purgeCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{
 				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
@@ -140,7 +141,7 @@ func TestPurgeBackendObjects_EmitsProgressPerObject(t *testing.T) {
 	c := &purgeCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{
 				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
@@ -185,7 +186,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	c := &purgeCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "missing", BackendName: "b1", SizeBytes: 5}},
 			{},
@@ -206,32 +207,37 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	}
 }
 
-// TestPurgeBackendObjects_BailsOnZeroDBProgress asserts that when
-// DeleteObjectLocation fails on every key in a page, the purge stops after one
-// page instead of re-listing the same rows forever.
-func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
+// TestPurgeBackendObjects_PassesOverRowsItCannotDrop asserts that when
+// DeleteObjectLocation fails on every key in a page, the purge lists the next
+// page after the last failed row rather than re-listing the same rows. The
+// failed rows stay in the real listing, so re-reading the head would retry
+// them forever while the DB error persists.
+func TestPurgeBackendObjects_PassesOverRowsItCannotDrop(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 
-	// Lister returns the same non-empty page forever; if the bail
-	// guard misfires, the test deadlocks (we'd loop forever calling
-	// it). The atomic counter pins exact list-call count after bail.
-	var listCalls atomic.Int32
-	page := []core.ObjectLocation{
-		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1},
-		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 1},
+	var mu sync.Mutex
+	var cursors []core.SizeCursor
+	page := make([]core.ObjectLocation, purgePageSize)
+	for i := range page {
+		page[i] = core.ObjectLocation{ObjectKey: fmt.Sprintf("k%03d", i), BackendName: "b1", SizeBytes: 1}
 	}
+	last := page[len(page)-1]
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, _ int) ([]core.ObjectLocation, error) {
-			listCalls.Add(1)
-			return page, nil
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ int, after core.SizeCursor) ([]core.ObjectLocation, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			cursors = append(cursors, after)
+			if after == (core.SizeCursor{}) {
+				return page, nil
+			}
+			return nil, nil
 		}).AnyTimes()
-	// Every DeleteObjectLocation fails -> dbDeleted stays 0 -> bail.
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(0), errors.New("simulated persistent DB failure")).AnyTimes()
+		Return(int64(0), errors.New("simulated persistent DB failure")).Times(purgePageSize)
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -244,11 +250,12 @@ func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("PurgeBackendObjects deadlocked; bail-on-no-progress guard did not fire")
+		t.Fatal("PurgeBackendObjects did not finish; it is re-listing rows it cannot drop")
 	}
 
-	if got := listCalls.Load(); got != 1 {
-		t.Errorf("ListObjectsByBackend called %d times, want exactly 1 (bail after first zero-progress page)", got)
+	want := []core.SizeCursor{{}, {SizeBytes: last.SizeBytes, ObjectKey: last.ObjectKey}}
+	if !slices.Equal(cursors, want) {
+		t.Errorf("listed from cursors %v, want %v", cursors, want)
 	}
 }
 
@@ -260,7 +267,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1}},
 			{},
@@ -306,7 +313,7 @@ func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
@@ -325,7 +332,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 	c := &purgeCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
@@ -351,7 +358,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},

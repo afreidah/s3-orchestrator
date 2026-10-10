@@ -14,7 +14,9 @@
 package worker
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"time"
 
 	"go.uber.org/mock/gomock"
@@ -156,11 +158,8 @@ type mockMetadataStore struct {
 	markScrubbedErr     error
 	deletedLocations    []string
 	deleteLocationErr   error
-	oldestUnverifiedErr error
-	oldestUnverified    time.Duration
-	neverVerified       int64
-	deferredCopies      int64
-	coverageReachable   []string
+	ledgerErr           error
+	ledger              core.LedgerStats
 	lastUpdatedHash     string
 	lastRecordedETag    string
 	underReplicated     []core.ObjectLocation
@@ -286,20 +285,29 @@ func (m *mockMetadataStore) MarkObjectScrubbed(_ context.Context, key, backendNa
 	return m.markScrubbedErr
 }
 
-// IntegrityCoverage is a stub on mockMetadataStore; records the backend set the
-// caller scoped the query to and returns the test-set fixture fields.
-func (m *mockMetadataStore) IntegrityCoverage(_ context.Context, reachable []string) (core.CoverageStat, error) {
-	m.coverageReachable = reachable
-	return core.CoverageStat{
-		OldestUnverifiedAge: m.oldestUnverified,
-		NeverVerified:       m.neverVerified,
-		Deferred:            m.deferredCopies,
-	}, m.oldestUnverifiedErr
+// LedgerStats returns the test-set ledger fixture.
+func (m *mockMetadataStore) LedgerStats(context.Context) (core.LedgerStats, error) {
+	return m.ledger, m.ledgerErr
 }
 
-// ListUnreadableLocations returns the unreadable fixture, up to limit.
-func (m *mockMetadataStore) ListUnreadableLocations(_ context.Context, limit int) ([]core.ObjectLocation, error) {
-	return m.unreadable[:min(limit, len(m.unreadable))], nil
+// ListUnreadableLocations returns up to limit rows of the unreadable fixture
+// that sort after the cursor, in (object_key, backend_name) order.
+func (m *mockMetadataStore) ListUnreadableLocations(_ context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	rows := slices.Clone(m.unreadable)
+	slices.SortFunc(rows, func(a, b core.ObjectLocation) int {
+		return cmp.Or(cmp.Compare(a.ObjectKey, b.ObjectKey), cmp.Compare(a.BackendName, b.BackendName))
+	})
+	var out []core.ObjectLocation
+	for i := range rows {
+		r := &rows[i]
+		if len(out) == limit {
+			break
+		}
+		if r.ObjectKey > after.ObjectKey || (r.ObjectKey == after.ObjectKey && r.BackendName > after.BackendName) {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
 }
 
 // CountUnreadableLocations reports the size of the unreadable fixture.
@@ -383,10 +391,10 @@ func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int
 	return withPaths(m.overReplicated), m.overReplicatedErr
 }
 
-// CountOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64, error) {
-	return m.overReplicatedCount, nil
+// CountReplicationBacklog is a stub on mockMetadataStore; reports the test-set
+// over-replicated count.
+func (m *mockMetadataStore) CountReplicationBacklog(_ context.Context, _ int) (core.ReplicationBacklog, error) {
+	return core.ReplicationBacklog{Over: m.overReplicatedCount}, nil
 }
 
 // RemoveExcessCopy is a stub on mockMetadataStore; reports a successful
@@ -404,10 +412,24 @@ func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, key, _ string, _
 	return core.RemovedCopy{StorageKey: key, SizeBytes: m.removedCopySize, Removed: true}, nil
 }
 
-// ListObjectsByBackend is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, _ int) ([]core.ObjectLocation, error) {
-	return withPaths(m.objectsByBackend[name]), nil
+// ListObjectsByBackend returns up to limit of the backend's fixture objects
+// after the cursor, in (size_bytes, object_key) order as the stores do.
+func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
+	rows := slices.Clone(m.objectsByBackend[name])
+	slices.SortFunc(rows, func(a, b core.ObjectLocation) int {
+		return cmp.Or(cmp.Compare(a.SizeBytes, b.SizeBytes), cmp.Compare(a.ObjectKey, b.ObjectKey))
+	})
+	var out []core.ObjectLocation
+	for i := range rows {
+		r := &rows[i]
+		if len(out) == limit {
+			break
+		}
+		if r.SizeBytes > after.SizeBytes || (r.SizeBytes == after.SizeBytes && r.ObjectKey > after.ObjectKey) {
+			out = append(out, *r)
+		}
+	}
+	return withPaths(out), nil
 }
 
 // MoveObjectLocation is a stub on mockMetadataStore; returns either the test-set

@@ -8,8 +8,8 @@
 // failing their circuit breaker. Both are best-effort, so the interesting
 // cases are the ones where a dependency is absent or errors.
 //
-// These exercise the aggregator directly against a 7-method DashboardStore
-// mock instead of standing up a full proxy stack and the 79-method union.
+// These exercise the aggregator directly against the DashboardStore and
+// FleetView mocks instead of standing up a full proxy stack.
 // -------------------------------------------------------------------------------
 
 package dashboard
@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -33,22 +34,39 @@ import (
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// newStubStore returns a DashboardStore mock whose every read succeeds with
-// an empty result, so each test states only the calls it cares about.
+// newStubStore returns a DashboardStore mock whose reads the aggregator makes
+// succeed with an empty result, so each test states only the calls it cares
+// about.
 func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 	store := storetest.NewMockDashboardStore(ctrl)
-	store.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	store.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).Return(core.CoverageStat{}, nil).AnyTimes()
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
-	store.EXPECT().CompressionStats(gomock.Any()).Return(map[string]core.CompressionStat{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
-	store.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	return store
+}
+
+// emptySnapshot is a complete fleet snapshot of an empty fleet.
+func emptySnapshot() *metrics.FleetSnapshot {
+	return &metrics.FleetSnapshot{
+		Quota:     map[string]core.QuotaStat{},
+		Ledger:    core.LedgerStats{},
+		Multipart: map[string]int64{},
+	}
+}
+
+// expectSnapshot has fleet serve snap as the fleet snapshot.
+func expectSnapshot(fleet *MockFleetView, snap *metrics.FleetSnapshot) {
+	fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(snap, nil).AnyTimes()
+}
+
+// newStubFleet returns a FleetView serving snap over an idle fleet with no
+// backends.
+func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFleetView {
+	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, snap)
+	fleet.EXPECT().BackendOrder().Return(nil).AnyTimes()
+	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
+	return fleet
 }
 
 // -------------------------------------------------------------------------
@@ -93,6 +111,7 @@ func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
 
 	cb := trippedBackend(t, ctrl)
 	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": cb}).AnyTimes()
@@ -118,6 +137,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 		Name: "b1", Threshold: 5, Timeout: time.Minute,
 	})
 	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": healthy}).AnyTimes()
@@ -140,6 +160,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"draining", "idle"}).AnyTimes()
 	fleet.EXPECT().IsDraining("draining").Return(true).AnyTimes()
 	fleet.EXPECT().IsDraining("idle").Return(false).AnyTimes()
@@ -175,6 +196,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().IsDraining(gomock.Any()).Return(true).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
@@ -194,55 +216,23 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	}
 }
 
-// TestDecorateLiveState_NilDependencies covers a deployment with no drain
-// manager and one with no fleet at all: both must yield initialised empty maps
-// rather than nil maps or a panic.
-func TestDecorateLiveState_NilDependencies(t *testing.T) {
-	t.Parallel()
-
-	t.Run("no drain manager", func(t *testing.T) {
-		t.Parallel()
-		ctrl := gomock.NewController(t)
-		fleet := NewMockFleetView(ctrl)
-		fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-		fleet.EXPECT().IsDraining(gomock.Any()).Return(true).AnyTimes()
-		fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
-
-		agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
-		data, err := agg.GetData(t.Context())
-		if err != nil {
-			t.Fatalf("GetData: %v", err)
-		}
-		if data.DrainingBackends == nil || data.UnhealthyBackends == nil {
-			t.Error("live-state maps must be initialised even with no drain manager")
-		}
-	})
-
-	t.Run("no fleet", func(t *testing.T) {
-		t.Parallel()
-		ctrl := gomock.NewController(t)
-		agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, nil)
-		data, err := agg.GetData(t.Context())
-		if err != nil {
-			t.Fatalf("GetData: %v", err)
-		}
-		if data.DrainingBackends == nil || data.UnhealthyBackends == nil {
-			t.Error("live-state maps must be initialised even with no fleet")
-		}
-	})
-}
-
-// TestGetDataPropagatesStoreError asserts a failing store read fails the call
-// rather than returning partially-populated data.
-func TestGetDataPropagatesStoreError(t *testing.T) {
+// TestDecorateLiveState_NoDrainManager covers a deployment with no drain
+// manager: the live-state maps are still initialised rather than nil.
+func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
+	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
+	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet.EXPECT().IsDraining(gomock.Any()).Return(true).AnyTimes()
+	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
-	store := storetest.NewMockDashboardStore(ctrl)
-	store.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("query failed")).AnyTimes()
-
-	agg := New(store, stubUsage(ctrl), nil, nil, nil)
-	if _, err := agg.GetData(t.Context()); err == nil {
-		t.Error("expected the store error to propagate")
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	data, err := agg.GetData(t.Context())
+	if err != nil {
+		t.Fatalf("GetData: %v", err)
+	}
+	if data.DrainingBackends == nil || data.UnhealthyBackends == nil {
+		t.Error("live-state maps must be initialised even with no drain manager")
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -125,7 +126,7 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 		batchSize = icfg.ScrubberBatchSize
 	}
 
-	var sum worker.WorkSummary
+	var sum batch.Summary
 	acquired, err := i.locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
 		sum = i.scrubber.Scrub(lockCtx, batchSize, backend, observer)
 		return nil
@@ -185,9 +186,7 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 	i.log.InfoContext(ctx, "backfill-checksums started",
 		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 
-	var total int
-	done, unreadable := i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, backfillCounter(observer, &total), &total)
-	return BackfillResult{Processed: total, Unreadable: unreadable, Done: done}, nil
+	return i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, observer), nil
 }
 
 // -------------------------------------------------------------------------
@@ -195,36 +194,38 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 // -------------------------------------------------------------------------
 
 // drainBackfill hashes the backlog a page at a time until it drains, the
-// max-objects cap is hit, or the context is cancelled. Reports whether the
-// backlog was fully drained and how many copies were skipped as unreadable.
-// A listing failure ends the run as not drained.
-func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer, total *int) (done bool, unreadable int) {
-	list := func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-		return i.store.GetObjectsWithoutHash(ctx, limit, after, backend)
-	}
-	cursorOf := func(loc core.ObjectLocation) core.Cursor {
-		return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
+// max-objects cap is hit, or the context is cancelled. Done is set only when
+// the backlog ran out; a listing failure ends the run as not drained.
+func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) BackfillResult {
+	var res BackfillResult
+	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
+		PageSize: batch.FixedPage(batchSize),
+		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+			return i.store.GetObjectsWithoutHash(ctx, limit, after, backend)
+		},
+		CursorOf: func(loc core.ObjectLocation) core.Cursor {
+			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
+		},
 	}
 	// The cap and the pause sit between pages, so stopping on them leaves the
 	// page that was just hashed complete.
-	stopped, err := walkPages(ctx, fixedPage(batchSize), list, cursorOf, func(ctx context.Context, locs []core.ObjectLocation) (bool, error) {
-		unreadable += i.scrubber.HashCopies(ctx, locs, observer).Skipped
-		if maxObjects > 0 && *total >= maxObjects {
-			return true, nil
-		}
-		if ctx.Err() != nil {
-			return true, nil
+	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
+		sum := i.scrubber.HashCopies(ctx, locs, observer)
+		res.Processed += sum.Succeeded
+		res.Unreadable += sum.Skipped
+		if maxObjects > 0 && res.Processed >= maxObjects {
+			return batch.Step{Stop: true}, nil
 		}
 		if len(locs) < batchSize {
-			return false, nil // the last page, so there is nothing to pause before
+			return batch.Step{}, nil // the last page, so there is nothing to pause before
 		}
-		return pause > 0 && !sleepOrCancel(ctx, pause), nil
+		return batch.Step{Stop: pause > 0 && !sleepOrCancel(ctx, pause)}, nil
 	})
-	if err != nil {
+	if stop == batch.Errored {
 		i.log.ErrorContext(ctx, "backfill list failed", "error", err)
-		return false, unreadable
 	}
-	return !stopped, unreadable
+	res.Done = stop == batch.Exhausted
+	return res
 }
 
 // ListUnreadable returns up to limit copies that are encrypted with no key, and
@@ -241,36 +242,13 @@ func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableLi
 }
 
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
-// at a time. Stops when a pass purges nothing, so copies that keep failing do
-// not loop forever. batchSize <= 0 uses the default.
+// at a time. batchSize <= 0 uses the default.
 func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) PurgeResult {
 	if batchSize <= 0 {
 		batchSize = defaultUnreadableBatchSize
 	}
-	var res PurgeResult
-	for ctx.Err() == nil {
-		sum := i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
-		res.Purged += sum.Succeeded
-		res.Failed += sum.Failed
-		if sum.Succeeded == 0 {
-			break
-		}
-	}
-	return res
-}
-
-// backfillCounter wraps observer so each successfully hashed object bumps
-// total, keeping the cumulative count in step with the per-object steps the
-// caller renders. The wrapped observer may be nil.
-func backfillCounter(observer progress.Observer, total *int) progress.Observer {
-	return func(s progress.Step) {
-		if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
-			*total++
-		}
-		if observer != nil {
-			observer(s)
-		}
-	}
+	sum := i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
+	return PurgeResult{Purged: sum.Succeeded, Failed: sum.Failed}
 }
 
 // sleepOrCancel waits for d or for ctx to be cancelled, returning false when

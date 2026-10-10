@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Covers the fleet snapshot across two instances sharing one Redis. The
-// instance holding the usage-flush lock computes the fleet gauges and the
-// replication status; an instance that loses the lock must serve that result,
-// not whatever it last computed itself.
+// Covers the fleet snapshot across two instances sharing one Redis. The fleet
+// snapshot service computes the fleet gauges and the replication status on
+// one instance; every other instance must serve that result, not whatever it
+// last computed itself, and must not recompute a snapshot that is still fresh.
 // -------------------------------------------------------------------------------
 
 package di
@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -140,37 +141,57 @@ func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
 // TESTS
 // -------------------------------------------------------------------------
 
-// TestUsageFlushService_LockLoserServesHolderFleetSnapshot runs one flush tick
-// on the instance holding the lock and one on an instance that loses it, both
-// sharing a Redis. The loser must then report the holder's replication status.
-// Serving its own instead is how the admin API, and every client behind a load
-// balancer, saw the replication counts flip between instances.
-func TestUsageFlushService_LockLoserServesHolderFleetSnapshot(t *testing.T) {
+// fleetTick runs one fleet snapshot service tick on rt under locker.
+func fleetTick(rt *infra.BackendRuntime, locker tickrunner.AdvisoryLocker) {
+	NewFleetSnapshotService(rt, locker, time.Minute).(*tickrunner.Service).Tick(context.Background())
+}
+
+// TestUsageFlushService_ServesPublishedFleetSnapshot computes the snapshot on
+// one instance and runs a flush tick on another that loses the flush lock,
+// both sharing a Redis. The second must then report the first's replication
+// status. Serving its own instead is how the admin API, and every client
+// behind a load balancer, saw the replication counts flip between instances.
+func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 	t.Parallel()
 	shared := newMemoryRedis()
-	holder := newRedisInstance(t, shared)
-	loser := newRedisInstance(t, shared)
+	computer := newRedisInstance(t, shared)
+	other := newRedisInstance(t, shared)
 
-	tick := func(rt *infra.BackendRuntime, locker interface {
-		WithAdvisoryLock(context.Context, int64, func(context.Context) error) (bool, error)
-	}) {
-		NewUsageFlushService(&UsageFlushDeps{
-			Flusher: sharedCounterFlusher{},
-			Tracker: rt.Usage(),
-			Fleet:   rt,
-			Drains:  noDrains{},
-			Locker:  locker,
-		}).(*usageFlushService).flushTick(context.Background())
-	}
-	tick(holder, acquiringLocker{})
-	tick(loser, fakeLocker{})
+	fleetTick(computer, acquiringLocker{})
+	NewUsageFlushService(&UsageFlushDeps{
+		Flusher: sharedCounterFlusher{},
+		Tracker: other.Usage(),
+		Fleet:   other,
+		Drains:  noDrains{},
+		Locker:  fakeLocker{},
+	}).(*usageFlushService).flushTick(context.Background())
 
-	want := holder.MetricsCollector().ReplicationSnapshot(context.Background())
-	got := loser.MetricsCollector().ReplicationSnapshot(context.Background())
+	want := computer.MetricsCollector().ReplicationSnapshot(context.Background())
+	got := other.MetricsCollector().ReplicationSnapshot(context.Background())
 	if !want.Ready {
-		t.Fatalf("holder computed no replication snapshot: %+v", want)
+		t.Fatalf("fleet tick computed no replication snapshot: %+v", want)
 	}
 	if !got.Ready || !got.ComputedAt.Equal(want.ComputedAt) {
-		t.Errorf("lock loser serves %+v, want the holder's %+v", got, want)
+		t.Errorf("flush tick serves %+v, want the published %+v", got, want)
+	}
+}
+
+// TestFleetSnapshotService_FreshSnapshotIsNotRecomputed runs the fleet tick on
+// two instances in turn. The second finds a snapshot younger than half the
+// interval and applies it, so the ledger is scanned once per interval however
+// many instances take the lock.
+func TestFleetSnapshotService_FreshSnapshotIsNotRecomputed(t *testing.T) {
+	t.Parallel()
+	shared := newMemoryRedis()
+	first := newRedisInstance(t, shared)
+	second := newRedisInstance(t, shared)
+
+	fleetTick(first, acquiringLocker{})
+	published := first.MetricsCollector().ReplicationSnapshot(context.Background())
+	fleetTick(second, acquiringLocker{})
+
+	got := second.MetricsCollector().ReplicationSnapshot(context.Background())
+	if !published.Ready || !got.ComputedAt.Equal(published.ComputedAt) {
+		t.Errorf("second tick published %+v, want the fresh snapshot %+v left in place", got, published)
 	}
 }

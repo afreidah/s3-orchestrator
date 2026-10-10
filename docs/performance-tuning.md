@@ -296,7 +296,9 @@ The orchestrator tracks API requests, egress, and ingress in memory and periodic
 - **Higher `interval`**: less database load, but usage enforcement has more lag
 - **Adaptive flushing** automatically switches to `fast_interval` when any backend exceeds `adaptive_threshold` of its limits. This keeps enforcement tight near limits without paying the cost of frequent flushes during normal operation.
 
-For environments without usage limits, the flush still runs (it powers the dashboard and metrics) but accuracy is less critical. The 30-second default is fine.
+For environments without usage limits, the flush still runs (it powers the monthly usage figures) but accuracy is less critical. The 30-second default is fine.
+
+The fleet-wide gauges and dashboard figures are computed separately, every `telemetry.metrics.fleet_interval` (default 60s). Each computation scans the object ledger, so on a large fleet a longer interval lowers database load at the cost of staler gauges.
 
 ### Redis Shared Counters
 

@@ -11,22 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countOverReplicatedObjects = `-- name: CountOverReplicatedObjects :one
-SELECT COUNT(*)::bigint AS count
-FROM (
-    SELECT object_key
-    FROM object_locations
-    WHERE managed
+const countReplicationBacklog = `-- name: CountReplicationBacklog :one
+WITH inflight AS (
+    SELECT object_key, COUNT(*) AS copies
+    FROM pending_objects
     GROUP BY object_key
-    HAVING COUNT(*) > $1::bigint
-) over_replicated
+),
+copies AS (
+    SELECT COUNT(*) AS held, COALESCE(i.copies, 0) AS inflight
+    FROM object_locations ol
+    LEFT JOIN inflight i ON i.object_key = ol.object_key
+    WHERE ol.managed
+    GROUP BY ol.object_key, i.copies
+)
+SELECT COUNT(*) FILTER (WHERE held + inflight < $1::bigint)::bigint AS under_replicated,
+       COUNT(*) FILTER (WHERE held > $1::bigint)::bigint AS over_replicated
+FROM copies
 `
 
-func (q *Queries) CountOverReplicatedObjects(ctx context.Context, factor int64) (int64, error) {
-	row := q.db.QueryRow(ctx, countOverReplicatedObjects, factor)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CountReplicationBacklogRow struct {
+	UnderReplicated int64
+	OverReplicated  int64
+}
+
+// One grouped pass for both directions. Under applies GetUnderReplicatedObjects'
+// in-flight rule; over counts recorded copies only, as GetOverReplicatedObjects
+// does.
+func (q *Queries) CountReplicationBacklog(ctx context.Context, factor int64) (CountReplicationBacklogRow, error) {
+	row := q.db.QueryRow(ctx, countReplicationBacklog, factor)
+	var i CountReplicationBacklogRow
+	err := row.Scan(&i.UnderReplicated, &i.OverReplicated)
+	return i, err
 }
 
 const getOverReplicatedObjects = `-- name: GetOverReplicatedObjects :many

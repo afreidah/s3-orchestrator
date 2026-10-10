@@ -137,37 +137,6 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, 
 	return items, nil
 }
 
-const getObjectCountsByBackend = `-- name: GetObjectCountsByBackend :many
-SELECT backend_name, COUNT(*) AS object_count
-FROM object_locations
-GROUP BY backend_name
-`
-
-type GetObjectCountsByBackendRow struct {
-	BackendName string
-	ObjectCount int64
-}
-
-func (q *Queries) GetObjectCountsByBackend(ctx context.Context) ([]GetObjectCountsByBackendRow, error) {
-	rows, err := q.db.Query(ctx, getObjectCountsByBackend)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetObjectCountsByBackendRow{}
-	for rows.Next() {
-		var i GetObjectCountsByBackendRow
-		if err := rows.Scan(&i.BackendName, &i.ObjectCount); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getObjectSizeBytes = `-- name: GetObjectSizeBytes :one
 SELECT size_bytes FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
@@ -189,38 +158,6 @@ func (q *Queries) GetObjectSizeBytes(ctx context.Context, arg GetObjectSizeBytes
 	return size_bytes, err
 }
 
-const getUnverifiedObjectCountsByBackend = `-- name: GetUnverifiedObjectCountsByBackend :many
-SELECT backend_name, COUNT(*) AS object_count
-FROM object_locations
-WHERE content_hash IS NULL
-GROUP BY backend_name
-`
-
-type GetUnverifiedObjectCountsByBackendRow struct {
-	BackendName string
-	ObjectCount int64
-}
-
-func (q *Queries) GetUnverifiedObjectCountsByBackend(ctx context.Context) ([]GetUnverifiedObjectCountsByBackendRow, error) {
-	rows, err := q.db.Query(ctx, getUnverifiedObjectCountsByBackend)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetUnverifiedObjectCountsByBackendRow{}
-	for rows.Next() {
-		var i GetUnverifiedObjectCountsByBackendRow
-		if err := rows.Scan(&i.BackendName, &i.ObjectCount); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const incrementOrphanBytes = `-- name: IncrementOrphanBytes :exec
 UPDATE backend_quotas
 SET orphan_bytes = orphan_bytes + $1, updated_at = NOW()
@@ -235,6 +172,77 @@ type IncrementOrphanBytesParams struct {
 func (q *Queries) IncrementOrphanBytes(ctx context.Context, arg IncrementOrphanBytesParams) error {
 	_, err := q.db.Exec(ctx, incrementOrphanBytes, arg.Amount, arg.BackendName)
 	return err
+}
+
+const ledgerStats = `-- name: LedgerStats :many
+SELECT backend_name,
+    COUNT(*)::bigint AS objects,
+    COUNT(*) FILTER (WHERE content_hash IS NULL)::bigint AS unhashed,
+    COUNT(*) FILTER (WHERE encrypted = FALSE)::bigint AS plaintext,
+    COUNT(*) FILTER (WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0))::bigint AS unreadable,
+    COUNT(*) FILTER (WHERE compression_algorithm IS NOT NULL)::bigint AS compressed_objects,
+    COALESCE(SUM(logical_size) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_logical_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_stored_bytes,
+    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed)::bigint AS verifiable,
+    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed AND last_scrubbed_at IS NULL)::bigint AS never_verified,
+    MIN(COALESCE(last_scrubbed_at, created_at)) FILTER (WHERE content_hash IS NOT NULL AND managed)::timestamptz AS oldest_touched
+FROM object_locations
+GROUP BY backend_name
+`
+
+type LedgerStatsRow struct {
+	BackendName            string
+	Objects                int64
+	Unhashed               int64
+	Plaintext              int64
+	Unreadable             int64
+	CompressedObjects      int64
+	CompressedLogicalBytes int64
+	CompressedStoredBytes  int64
+	Verifiable             int64
+	NeverVerified          int64
+	OldestTouched          pgtype.Timestamptz
+}
+
+// Every per-backend ledger figure in one grouped pass, so the dashboard and the
+// fleet snapshot read the table once rather than once per figure. Each FILTER
+// keeps the predicate of the figure it reports: unhashed counts every row,
+// plaintext matches ListUnencryptedLocations, unreadable matches
+// ListUnreadableLocations, compression counts encoded copies only, and the
+// verification figures count hashed managed rows, the population the scrub
+// queue draws from. The oldest touch falls back to created_at as the queue
+// ordering does, so a never-scrubbed copy is measured from when it was
+// written.
+func (q *Queries) LedgerStats(ctx context.Context) ([]LedgerStatsRow, error) {
+	rows, err := q.db.Query(ctx, ledgerStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LedgerStatsRow{}
+	for rows.Next() {
+		var i LedgerStatsRow
+		if err := rows.Scan(
+			&i.BackendName,
+			&i.Objects,
+			&i.Unhashed,
+			&i.Plaintext,
+			&i.Unreadable,
+			&i.CompressedObjects,
+			&i.CompressedLogicalBytes,
+			&i.CompressedStoredBytes,
+			&i.Verifiable,
+			&i.NeverVerified,
+			&i.OldestTouched,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBackendQuotaUsage = `-- name: ListBackendQuotaUsage :many

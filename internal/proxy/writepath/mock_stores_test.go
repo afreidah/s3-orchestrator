@@ -402,18 +402,18 @@ func (mr *MockCoordinatorStoresMockRecorder) ListObjects(ctx, prefix, startAfter
 }
 
 // ListObjectsByBackend mocks base method.
-func (m *MockCoordinatorStores) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+func (m *MockCoordinatorStores) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit)
+	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjectsByBackend indicates an expected call of ListObjectsByBackend.
-func (mr *MockCoordinatorStoresMockRecorder) ListObjectsByBackend(ctx, backendName, limit any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) ListObjectsByBackend(ctx, backendName, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockCoordinatorStores)(nil).ListObjectsByBackend), ctx, backendName, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockCoordinatorStores)(nil).ListObjectsByBackend), ctx, backendName, limit, after)
 }
 
 // ListObjectsByBackendKeyAsc mocks base method.
@@ -444,6 +444,21 @@ func (m *MockCoordinatorStores) ListObjectsDelimited(ctx context.Context, prefix
 func (mr *MockCoordinatorStoresMockRecorder) ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockCoordinatorStores)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
+}
+
+// ListedPathStates mocks base method.
+func (m *MockCoordinatorStores) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListedPathStates", ctx, backend, paths)
+	ret0, _ := ret[0].(map[string]core.PathState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListedPathStates indicates an expected call of ListedPathStates.
+func (mr *MockCoordinatorStoresMockRecorder) ListedPathStates(ctx, backend, paths any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListedPathStates", reflect.TypeOf((*MockCoordinatorStores)(nil).ListedPathStates), ctx, backend, paths)
 }
 
 // MoveCleanupToDLQ mocks base method.

@@ -72,6 +72,9 @@ type KeyedExistingCopy struct {
 // InsertReplicaConditional returns the source row's size as read inside the
 // insert, for the caller to credit. RecordCompressionProbe stores what the
 // encoder measured for a copy it declined to store compressed.
+// ListedPathStates reports, for paths a backend listed, which hold a recorded
+// copy and which a queued or dead-lettered delete names; a pending delete
+// outranks a recorded copy.
 type ObjectsTxAdapter interface {
 	GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]ExistingCopy, error)
 	InsertObjectLocation(ctx context.Context, loc *ObjectLocation) error
@@ -81,7 +84,7 @@ type ObjectsTxAdapter interface {
 	DeleteObjectsByKeys(ctx context.Context, keys []string) error // rows must already be locked
 
 	CheckObjectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error)
-	CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error)                               // whatever object it belongs to
+	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)           // untracked paths are absent
 	LockObjectOnBackend(ctx context.Context, objectKey, backend string) (loc *ObjectLocation, ok bool, err error) // ok=false: row gone, a benign race
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
 	GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error)
@@ -102,14 +105,12 @@ type ObjectsTxAdapter interface {
 // CleanupTxAdapter exposes the transactional operations on the cleanup_queue
 // table that core orchestration needs; single-statement operations live on
 // CleanupStore. InsertCleanupDLQ keeps the queue row's id and created_at so an
-// operator can tell how long the cleanup was outstanding. HasPendingCleanup
-// matches on the path, since a queued deletion names particular bytes.
+// operator can tell how long the cleanup was outstanding.
 type CleanupTxAdapter interface {
 	SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (deleted int64, totalBytes int64, err error)
 	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
 	InsertCleanupDLQ(ctx context.Context, row *CleanupQueueRow) error // pointer: the row payload is 112 bytes
 	DeleteCleanupItem(ctx context.Context, id int64) error
-	HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error)
 }
 
 // -------------------------------------------------------------------------

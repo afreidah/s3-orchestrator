@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Tests cover flag parsing, config loading, store init dispatch, and the
-// page-import accumulator. The HTTP-going code paths (real S3 listing) are
-// out of scope here  -  they are covered by the integration suite.
+// drain refusal. Page import is reconcile.PageImporter and is tested there.
+// The HTTP-going code paths (real S3 listing) are out of scope here  -  they
+// are covered by the integration suite.
 // -------------------------------------------------------------------------------
 
 package synccmd
@@ -18,8 +19,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -28,8 +27,7 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// freshStore opens a fresh in-memory sqlite store for each test so
-// importPage can exercise the real importer surface end-to-end.
+// freshStore opens a fresh in-memory sqlite store for each test.
 func freshStore(t *testing.T) (importer, adminStore) {
 	t.Helper()
 	path := writeYAML(t, validYAML)
@@ -43,30 +41,6 @@ func freshStore(t *testing.T) (importer, adminStore) {
 	}
 	t.Cleanup(adminDB.Close)
 	return objects, adminDB
-}
-
-// errorObjectStore makes ImportObject return a specific error so
-// importPage's error-propagation branch can be driven without faking
-// any other store methods.
-type errorObjectStore struct {
-	err error
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-// ImportObject records the import call so the test can assert it
-// happened. The first return value mirrors the real store's
-// inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, *core.ImportObjectRequest) (core.ImportOutcome, error) {
-	return core.ImportSkippedExisting, e.err
-}
-
-// GetAllObjectLocations reports no existing copies, so a discovered object is
-// classified purely on its own bytes.
-func (e errorObjectStore) GetAllObjectLocations(context.Context, string) ([]core.ObjectLocation, error) {
-	return nil, core.ErrObjectNotFound
 }
 
 // writeYAML drops the given config content into a temp file and returns the
@@ -218,102 +192,6 @@ func TestInitStore_SQLiteHappyPath(t *testing.T) {
 	adminDB.Close()
 }
 
-// TestImportPage_DryRun verifies the dry-run path counts objects and bytes
-// without writing to the store.
-func TestImportPage_DryRun(t *testing.T) {
-	objects, _ := freshStore(t)
-	page := []backend.ListedObject{
-		{Key: "a.txt", SizeBytes: 10},
-		{Key: "b.txt", SizeBytes: 20},
-	}
-	imp, skip, bytesIn, err := importPage(
-		context.Background(), syncTestBackend(page),
-		testImportRun(objects, &Options{BucketName: "vb", DryRun: true}), page,
-	)
-	if err != nil {
-		t.Fatalf("importPage: %v", err)
-	}
-	if imp != 2 || skip != 0 || bytesIn != 30 {
-		t.Errorf("imp=%d skip=%d bytes=%d, want 2/0/30", imp, skip, bytesIn)
-	}
-}
-
-// TestImportPage_RealImportSkipsExisting drives a real import then re-runs
-// the same page to exercise the ImportObject(...) "already exists" return.
-func TestImportPage_RealImportSkipsExisting(t *testing.T) {
-	objects, _ := freshStore(t)
-	page := []backend.ListedObject{
-		{Key: "new.txt", SizeBytes: 10},
-		{Key: "existing.txt", SizeBytes: 5},
-	}
-
-	// First pass: both rows are created.
-	imp, skip, bytesIn, err := importPage(
-		context.Background(), syncTestBackend(page),
-		testImportRun(objects, &Options{BucketName: "vb"}), page,
-	)
-	if err != nil {
-		t.Fatalf("importPage first pass: %v", err)
-	}
-	if imp != 2 || skip != 0 || bytesIn != 15 {
-		t.Errorf("first pass imp=%d skip=%d bytes=%d, want 2/0/15", imp, skip, bytesIn)
-	}
-
-	// Second pass: both already exist, so ImportObject returns (false, nil).
-	imp, skip, bytesIn, err = importPage(
-		context.Background(), syncTestBackend(page),
-		testImportRun(objects, &Options{BucketName: "vb"}), page,
-	)
-	if err != nil {
-		t.Fatalf("importPage second pass: %v", err)
-	}
-	if imp != 0 || skip != 2 || bytesIn != 0 {
-		t.Errorf("second pass imp=%d skip=%d bytes=%d, want 0/2/0", imp, skip, bytesIn)
-	}
-}
-
-// TestImportPage_PropagatesError covers the wrap-and-return branch when the
-// underlying store fails.
-func TestImportPage_PropagatesError(t *testing.T) {
-	_, _ = freshStore(t)
-	wrapped := errorObjectStore{err: os.ErrPermission}
-	page := []backend.ListedObject{{Key: "x", SizeBytes: 1}}
-	_, _, _, err := importPage(
-		context.Background(), syncTestBackend(page),
-		testImportRun(wrapped, &Options{BucketName: "vb"}), page,
-	)
-	if err == nil {
-		t.Fatal("expected error to propagate")
-	}
-}
-
-// suppressedObjectStore refuses every import the way the store does for a key
-// whose delete is still outstanding.
-type suppressedObjectStore struct{ errorObjectStore }
-
-// ImportObject reports the key as suppressed rather than imported.
-func (suppressedObjectStore) ImportObject(context.Context, *core.ImportObjectRequest) (core.ImportOutcome, error) {
-	return core.ImportSkippedPendingCleanup, nil
-}
-
-// TestImportPage_SkipsKeyWithPendingDelete asserts a key refused because its
-// delete is still outstanding counts as skipped and contributes no bytes.
-// Counting it as imported would report a resurrection as a successful sync.
-func TestImportPage_SkipsKeyWithPendingDelete(t *testing.T) {
-	_, _ = freshStore(t)
-	page := []backend.ListedObject{{Key: "x", SizeBytes: 7}}
-	imp, skip, bytesIn, err := importPage(
-		context.Background(), syncTestBackend(page),
-		testImportRun(suppressedObjectStore{}, &Options{BucketName: "vb"}), page,
-	)
-	if err != nil {
-		t.Fatalf("importPage: %v", err)
-	}
-	if imp != 0 || skip != 1 || bytesIn != 0 {
-		t.Errorf("imported=%d skipped=%d bytes=%d, want 0/1/0", imp, skip, bytesIn)
-	}
-}
-
 // TestRefuseDrained_RefusesABackendWithADrainRecord verifies sync proceeds on a
 // backend with no drain record and refuses one that has any.
 func TestRefuseDrained_RefusesABackendWithADrainRecord(t *testing.T) {
@@ -349,30 +227,4 @@ func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1 (no live S3 backend at fixture URL)", code)
 	}
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// syncTestBackend returns an in-memory backend holding plaintext bytes for
-// every key in a listing page, so the import path's envelope inspection has
-// something real to read.
-// testImportRun builds the per-run state importPage reads, with no codec: these
-// cases seed plaintext bodies, which nothing tries to recognise.
-func testImportRun(store importer, opts *Options) *importRun {
-	return &importRun{
-		Store:      store,
-		BackendCfg: &config.BackendConfig{Name: "b1"},
-		Buckets:    []string{"vb"},
-		Opts:       opts,
-	}
-}
-
-func syncTestBackend(page []backend.ListedObject) *backendtest.InMemory {
-	be := backendtest.NewInMemory()
-	for _, o := range page {
-		be.Objects[o.Key] = backendtest.Object{Data: []byte("plaintext body")}
-	}
-	return be
 }

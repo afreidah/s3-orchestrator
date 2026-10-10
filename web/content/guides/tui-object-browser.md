@@ -163,7 +163,7 @@ Reading the columns:
 - **API** / **INGRESS** / **EGRESS** - request count and bytes transferred for the current usage period, shown in the title bar.
 - **SAVED** - bytes compression kept off this backend, summed across its copies.
 
-The title bar also reports the metadata database health and the usage period the counters cover. The snapshot refreshes every 10 seconds; press `r` to refresh it now. This is the interactive equivalent of `s3-orchestrator admin status`.
+The title bar also reports the metadata database health and the usage period the counters cover. The pane polls every 10 seconds; press `r` to poll now. Quota and object counts can be up to one `telemetry.metrics.fleet_interval` old, while the usage counters are current. This is the interactive equivalent of `s3-orchestrator admin status`.
 
 ## Step 5: Watch recent activity
 

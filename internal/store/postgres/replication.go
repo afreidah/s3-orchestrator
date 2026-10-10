@@ -131,12 +131,12 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 	return toFatObjectLocations(rows), nil
 }
 
-// CountOverReplicatedObjects returns the total number of objects with more
-// copies than the target replication factor.
-func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
-	count, err := s.queries.CountOverReplicatedObjects(ctx, int64(factor))
+// CountReplicationBacklog counts every key under and over the target factor,
+// uncapped, in one pass.
+func (s *Store) CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error) {
+	row, err := s.queries.CountReplicationBacklog(ctx, int64(factor))
 	if err != nil {
-		return 0, fmt.Errorf("failed to count over-replicated objects: %w", err)
+		return core.ReplicationBacklog{}, fmt.Errorf("failed to count replication backlog: %w", err)
 	}
-	return count, nil
+	return core.ReplicationBacklog{Under: row.UnderReplicated, Over: row.OverReplicated}, nil
 }

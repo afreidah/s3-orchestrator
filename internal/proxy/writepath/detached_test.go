@@ -96,14 +96,12 @@ func TestDetachedUploads_WaitReturnsWhenTheLastTailFinishes(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for _, release := range releases {
 			time.Sleep(time.Millisecond)
 			release()
 		}
-	}()
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -165,15 +163,13 @@ func TestDetachedUploads_ConcurrentBeginsRespectTheLimit(t *testing.T) {
 		wg       sync.WaitGroup
 	)
 	for range limit * 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, ok := d.Begin(); ok {
 				mu.Lock()
 				admitted++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

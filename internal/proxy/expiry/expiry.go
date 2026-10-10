@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -96,12 +97,11 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 	)
 	defer span.End()
 
+	var total batch.Summary
 	for _, rule := range rules {
-		d, f := m.applyRule(ctx, rule, batchSize, obs)
-		deleted += d
-		failed += f
+		total = total.Plus(m.applyRule(ctx, rule, batchSize, obs))
 	}
-	return deleted, failed
+	return total.Succeeded, total.Failed
 }
 
 // -------------------------------------------------------------------------
@@ -117,63 +117,52 @@ func batchSizeFor(cfg *config.LifecycleConfig) int {
 	return defaultBatchSize
 }
 
-// applyRule runs a single rule until the store stops returning expired
-// objects, or a full batch produces zero successful deletions. That second
-// condition is the infinite-loop guard: without it, a backend outage means
-// every batch fails and the same rows are re-listed forever.
-func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int, obs progress.Observer) (deleted, failed int) {
+// applyRule walks one rule's expired objects by key and deletes each. An object
+// whose delete fails is passed over, so a backend outage costs each object one
+// attempt per sweep rather than one per page. A listing failure counts as one
+// failure and ends the rule.
+func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int, obs progress.Observer) batch.Summary {
 	cutoff := time.Now().Add(-time.Duration(rule.ExpirationDays) * 24 * time.Hour)
-	for {
-		objects, err := m.store.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
-			Prefix: rule.Prefix,
-			Tags:   rule.Tags,
-			Cutoff: cutoff,
-			Limit:  batchSize,
-		})
-		if err != nil {
-			m.logger().ErrorContext(ctx, "failed to list expired objects",
-				slog.String("prefix", rule.Prefix), "error", err)
-			failed++
-			return deleted, failed
-		}
-		if len(objects) == 0 {
-			return deleted, failed
-		}
-
-		batchDeleted, batchFailed := m.deleteBatch(ctx, rule, objects, obs)
-		deleted += batchDeleted
-		failed += batchFailed
-
-		if batchDeleted == 0 {
-			m.logger().WarnContext(ctx, "batch yielded zero deletions, stopping rule",
-				"prefix", rule.Prefix, "batch_failed", len(objects))
-			return deleted, failed
-		}
-		if len(objects) < batchSize {
-			return deleted, failed
-		}
+	pager := batch.Pager[core.ObjectLocation, string]{
+		PageSize: batch.FixedPage(batchSize),
+		List: func(ctx context.Context, limit int, after string) ([]core.ObjectLocation, error) {
+			return m.store.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
+				Prefix: rule.Prefix,
+				Tags:   rule.Tags,
+				Cutoff: cutoff,
+				After:  after,
+				Limit:  limit,
+			})
+		},
+		CursorOf: func(o core.ObjectLocation) string { return o.ObjectKey },
 	}
-}
-
-// deleteBatch deletes one batch of expired objects, emitting an audit event
-// and a metric per outcome, and bracketing each object for the observer.
-func (m *Manager) deleteBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation, obs progress.Observer) (deleted, failed int) {
-	for i := range objects {
-		key := objects[i].ObjectKey
-		progress.Track(obs, key, func() string {
-			if err := m.deleteExpired(ctx, rule, key); err != nil {
-				failed++
-				return progress.StatusFailed
+	runner := batch.Runner[core.ObjectLocation]{
+		Name:        "lifecycle",
+		Concurrency: 1,
+		Observer:    obs,
+		Key:         func(o core.ObjectLocation) string { return o.ObjectKey },
+	}
+	var total batch.Summary
+	stop, err := pager.Walk(ctx, func(ctx context.Context, objects []core.ObjectLocation) (batch.Step, error) {
+		sum := runner.Run(ctx, objects, func(ctx context.Context, o core.ObjectLocation) batch.ItemResult {
+			if err := m.deleteExpired(ctx, rule, o.ObjectKey); err != nil {
+				return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
 			}
-			deleted++
-			return progress.StatusOK
+			return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
 		})
+		total = total.Plus(sum)
+		return batch.Step{Progress: sum.Succeeded}, nil
+	})
+	if stop == batch.Errored {
+		m.logger().ErrorContext(ctx, "failed to list expired objects",
+			slog.String("prefix", rule.Prefix), "error", err)
+		total.Failed++
 	}
-	return deleted, failed
+	return total
 }
 
 // deleteExpired removes one expired object and records the outcome, so the
-// bracketing in deleteBatch reports a status rather than carrying the work.
+// runner's per-item bracketing reports a status rather than carrying the work.
 func (m *Manager) deleteExpired(ctx context.Context, rule config.LifecycleRule, key string) error {
 	if err := m.objects.DeleteObject(ctx, key); err != nil {
 		m.logger().WarnContext(ctx, "failed to delete expired object",

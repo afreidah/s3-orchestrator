@@ -165,18 +165,18 @@ func (mr *MockObjectStoreMockRecorder) ListObjects(ctx, prefix, startAfter, maxK
 }
 
 // ListObjectsByBackend mocks base method.
-func (m *MockObjectStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+func (m *MockObjectStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit)
+	ret := m.ctrl.Call(m, "ListObjectsByBackend", ctx, backendName, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjectsByBackend indicates an expected call of ListObjectsByBackend.
-func (mr *MockObjectStoreMockRecorder) ListObjectsByBackend(ctx, backendName, limit any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) ListObjectsByBackend(ctx, backendName, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsByBackend), ctx, backendName, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackend", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsByBackend), ctx, backendName, limit, after)
 }
 
 // ListObjectsByBackendKeyAsc mocks base method.
@@ -207,6 +207,21 @@ func (m *MockObjectStore) ListObjectsDelimited(ctx context.Context, prefix, deli
 func (mr *MockObjectStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
+}
+
+// ListedPathStates mocks base method.
+func (m *MockObjectStore) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListedPathStates", ctx, backend, paths)
+	ret0, _ := ret[0].(map[string]core.PathState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListedPathStates indicates an expected call of ListedPathStates.
+func (mr *MockObjectStoreMockRecorder) ListedPathStates(ctx, backend, paths any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListedPathStates", reflect.TypeOf((*MockObjectStore)(nil).ListedPathStates), ctx, backend, paths)
 }
 
 // MoveObjectLocation mocks base method.
@@ -640,36 +655,6 @@ func (m *MockDashboardStore) EXPECT() *MockDashboardStoreMockRecorder {
 	return m.recorder
 }
 
-// CompressionStats mocks base method.
-func (m *MockDashboardStore) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CompressionStats", ctx)
-	ret0, _ := ret[0].(map[string]core.CompressionStat)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CompressionStats indicates an expected call of CompressionStats.
-func (mr *MockDashboardStoreMockRecorder) CompressionStats(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompressionStats", reflect.TypeOf((*MockDashboardStore)(nil).CompressionStats), ctx)
-}
-
-// CountUnencryptedLocations mocks base method.
-func (m *MockDashboardStore) CountUnencryptedLocations(ctx context.Context) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountUnencryptedLocations", ctx)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountUnencryptedLocations indicates an expected call of CountUnencryptedLocations.
-func (mr *MockDashboardStoreMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockDashboardStore)(nil).CountUnencryptedLocations), ctx)
-}
-
 // GetActiveMultipartCounts mocks base method.
 func (m *MockDashboardStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()
@@ -683,21 +668,6 @@ func (m *MockDashboardStore) GetActiveMultipartCounts(ctx context.Context) (map[
 func (mr *MockDashboardStoreMockRecorder) GetActiveMultipartCounts(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveMultipartCounts", reflect.TypeOf((*MockDashboardStore)(nil).GetActiveMultipartCounts), ctx)
-}
-
-// GetObjectCounts mocks base method.
-func (m *MockDashboardStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObjectCounts", ctx)
-	ret0, _ := ret[0].(map[string]int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetObjectCounts indicates an expected call of GetObjectCounts.
-func (mr *MockDashboardStoreMockRecorder) GetObjectCounts(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectCounts", reflect.TypeOf((*MockDashboardStore)(nil).GetObjectCounts), ctx)
 }
 
 // GetPoolUsageForPeriod mocks base method.
@@ -730,21 +700,6 @@ func (mr *MockDashboardStoreMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockDashboardStore)(nil).GetQuotaStats), ctx)
 }
 
-// GetUnverifiedObjectCounts mocks base method.
-func (m *MockDashboardStore) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUnverifiedObjectCounts", ctx)
-	ret0, _ := ret[0].(map[string]int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUnverifiedObjectCounts indicates an expected call of GetUnverifiedObjectCounts.
-func (mr *MockDashboardStoreMockRecorder) GetUnverifiedObjectCounts(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnverifiedObjectCounts", reflect.TypeOf((*MockDashboardStore)(nil).GetUnverifiedObjectCounts), ctx)
-}
-
 // GetUsageForPeriod mocks base method.
 func (m *MockDashboardStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
 	m.ctrl.T.Helper()
@@ -760,19 +715,19 @@ func (mr *MockDashboardStoreMockRecorder) GetUsageForPeriod(ctx, period any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockDashboardStore)(nil).GetUsageForPeriod), ctx, period)
 }
 
-// IntegrityCoverage mocks base method.
-func (m *MockDashboardStore) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
+// LedgerStats mocks base method.
+func (m *MockDashboardStore) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IntegrityCoverage", ctx, reachable)
-	ret0, _ := ret[0].(core.CoverageStat)
+	ret := m.ctrl.Call(m, "LedgerStats", ctx)
+	ret0, _ := ret[0].(core.LedgerStats)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// IntegrityCoverage indicates an expected call of IntegrityCoverage.
-func (mr *MockDashboardStoreMockRecorder) IntegrityCoverage(ctx, reachable any) *gomock.Call {
+// LedgerStats indicates an expected call of LedgerStats.
+func (mr *MockDashboardStoreMockRecorder) LedgerStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IntegrityCoverage", reflect.TypeOf((*MockDashboardStore)(nil).IntegrityCoverage), ctx, reachable)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LedgerStats", reflect.TypeOf((*MockDashboardStore)(nil).LedgerStats), ctx)
 }
 
 // ListDirectoryChildren mocks base method.

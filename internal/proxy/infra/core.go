@@ -144,9 +144,14 @@ func (c *BackendRuntime) UpdateQuotaMetrics(ctx context.Context) error {
 	return c.metricsCollector.UpdateQuotaMetrics(ctx)
 }
 
-// UpdateFleetMetrics delegates to the metrics collector.
-func (c *BackendRuntime) UpdateFleetMetrics(ctx context.Context) error {
-	return c.metricsCollector.UpdateFleetMetrics(ctx)
+// FleetSnapshot delegates to the metrics collector.
+func (c *BackendRuntime) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error) {
+	return c.metricsCollector.FleetSnapshot(ctx)
+}
+
+// RefreshFleetIfStale delegates to the metrics collector.
+func (c *BackendRuntime) RefreshFleetIfStale(ctx context.Context) error {
+	return c.metricsCollector.RefreshFleetIfStale(ctx)
 }
 
 // LoadFleetMetrics delegates to the metrics collector.

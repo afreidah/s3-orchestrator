@@ -524,6 +524,15 @@ type Cursor struct {
 	BackendName string
 }
 
+// SizeCursor is the position a backend's smallest-first listing resumes from:
+// the last (size_bytes, object_key) it returned. An object key appears once per
+// backend, so it breaks ties between copies of equal size. The zero value
+// starts at the beginning.
+type SizeCursor struct {
+	SizeBytes int64
+	ObjectKey string
+}
+
 // CompressionStat reports the encoded copies on one backend, their logical
 // size and what they occupy; the saving is LogicalBytes - StoredBytes. Copies
 // stored verbatim are excluded.

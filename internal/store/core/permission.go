@@ -161,7 +161,7 @@ func ParsePermissions(kind ResourceKind, s string) (PermissionSet, error) {
 	}
 
 	var out PermissionSet
-	for _, field := range strings.Split(s, ",") {
+	for field := range strings.SplitSeq(s, ",") {
 		name := strings.ToLower(strings.TrimSpace(field))
 		if name == "" {
 			continue

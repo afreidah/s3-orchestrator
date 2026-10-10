@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -94,7 +95,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 // over-replicated object can carry several surplus copies, so CopiesRemoved is
 // not the number of items that succeeded.
 type OverReplicationSummary struct {
-	WorkSummary
+	batch.Summary
 	CopiesRemoved int
 }
 
@@ -158,15 +159,15 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	// The pending gauge is the fleet snapshot's ledger count, which every
 	// instance serves; this pass's task list is one batch of it.
 	var removed atomic.Int64
-	runner := BatchRunner[cleanupTask]{
+	runner := batch.Runner[cleanupTask]{
 		Name:        "over_replication",
 		Log:         c.log,
 		Concurrency: cfg.Concurrency,
 		Observer:    observer,
 		Key:         func(t cleanupTask) string { return t.key },
 	}
-	sum := runner.Run(ctx, tasks, func(ctx context.Context, task cleanupTask) ItemResult {
-		var res ItemResult // zero value (ItemSkipped) when admission blocks the work
+	sum := runner.Run(ctx, tasks, func(ctx context.Context, task cleanupTask) batch.ItemResult {
+		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
 		WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() {
 			n, failures := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
 			removed.Add(int64(n))
@@ -175,7 +176,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		return res
 	})
 
-	out.summary = OverReplicationSummary{WorkSummary: sum, CopiesRemoved: int(removed.Load())}
+	out.summary = OverReplicationSummary{Summary: sum, CopiesRemoved: int(removed.Load())}
 	return out.summary, nil
 }
 
@@ -183,14 +184,14 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 // tally. An object whose removals all failed is a failed item; one that gave
 // up nothing without erroring was a benign race (a parallel delete or an
 // earlier tick already absorbed the excess) and is skipped, not failed.
-func cleanupItemResult(removed, failures int) ItemResult {
+func cleanupItemResult(removed, failures int) batch.ItemResult {
 	switch {
 	case removed > 0:
-		return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
 	case failures > 0:
-		return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
 	default:
-		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusOK}
+		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
 	}
 }
 
@@ -201,7 +202,7 @@ func cleanupItemResult(removed, failures int) ItemResult {
 func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start time.Time, out *cleanOutcome) {
 	duration := time.Since(start)
 	if out.err != nil {
-		telemetry.OverReplicationRunsTotal.WithLabelValues(OutcomeError).Inc()
+		telemetry.OverReplicationRunsTotal.WithLabelValues(batch.OutcomeError).Inc()
 		return
 	}
 	telemetry.OverReplicationRunsTotal.WithLabelValues(out.summary.Outcome()).Inc()
@@ -220,7 +221,8 @@ func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start tim
 
 // CountPending returns the number of objects exceeding the replication factor.
 func (c *OverReplicationCleaner) CountPending(ctx context.Context, factor int) (int64, error) {
-	return c.store.CountOverReplicatedObjects(ctx, factor)
+	backlog, err := c.store.CountReplicationBacklog(ctx, factor)
+	return backlog.Over, err
 }
 
 // -------------------------------------------------------------------------

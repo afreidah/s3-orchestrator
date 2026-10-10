@@ -1,10 +1,10 @@
 // -------------------------------------------------------------------------------
-// Ops - Cursor Paging Tests
+// Ops - Paged Pass Tests
 //
 // Author: Alex Freidah
 //
-// Covers walkPages and the passes built on it against listings that shrink as
-// rows are processed, which is the case offset paging gets wrong.
+// Covers the passes that walk a listing by cursor against listings that shrink
+// as rows are processed, which is the case offset paging gets wrong.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -13,7 +13,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -24,7 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -77,8 +76,8 @@ func backlogHasher(t *testing.T, b *backlog, unreadable func(key string) bool) *
 	t.Helper()
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().HashCopies(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) worker.WorkSummary {
-			var sum worker.WorkSummary
+		DoAndReturn(func(_ context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
+			var sum batch.Summary
 			for i := range locs {
 				key := locs[i].ObjectKey
 				sum.Attempted++
@@ -177,80 +176,6 @@ func (s *rotatingStore) UpdateEncryptionKey(_ context.Context, objectKey, backen
 		}
 	}
 	return nil
-}
-
-// -------------------------------------------------------------------------
-// WALK PAGES
-// -------------------------------------------------------------------------
-
-// TestWalkPages_AdvancesTheCursorPastEachPage verifies each page is listed
-// after the last row of the one before, and a short page ends the walk.
-func TestWalkPages_AdvancesTheCursorPastEachPage(t *testing.T) {
-	t.Parallel()
-	rows := []string{"a", "b", "c", "d", "e"}
-	var cursors []string
-	list := func(_ context.Context, limit int, after core.Cursor) ([]string, error) {
-		cursors = append(cursors, after.ObjectKey)
-		var out []string
-		for _, r := range rows {
-			if r > after.ObjectKey && len(out) < limit {
-				out = append(out, r)
-			}
-		}
-		return out, nil
-	}
-	var seen []string
-	stopped, err := walkPages(context.Background(), fixedPage(2), list,
-		func(r string) core.Cursor { return core.Cursor{ObjectKey: r} },
-		func(_ context.Context, page []string) (bool, error) {
-			seen = append(seen, page...)
-			return false, nil
-		})
-	if err != nil || stopped {
-		t.Fatalf("walkPages = (%v, %v), want (false, nil)", stopped, err)
-	}
-	if !slices.Equal(seen, rows) {
-		t.Errorf("seen = %v, want %v", seen, rows)
-	}
-	if want := []string{"", "b", "d"}; !slices.Equal(cursors, want) {
-		t.Errorf("cursors = %v, want %v", cursors, want)
-	}
-}
-
-// TestWalkPages_StopsWhenVisitAsks verifies a visit asking to stop ends the
-// walk without listing another page, and is reported.
-func TestWalkPages_StopsWhenVisitAsks(t *testing.T) {
-	t.Parallel()
-	var lists int
-	list := func(context.Context, int, core.Cursor) ([]int, error) {
-		lists++
-		return []int{1, 2}, nil
-	}
-	stopped, err := walkPages(context.Background(), fixedPage(2), list,
-		func(int) core.Cursor { return core.Cursor{} },
-		func(context.Context, []int) (bool, error) { return true, nil })
-	if err != nil || !stopped || lists != 1 {
-		t.Errorf("walkPages = (%v, %v) after %d lists, want (true, nil) after 1", stopped, err, lists)
-	}
-}
-
-// TestWalkPages_ReturnsListAndVisitErrors verifies a failure on either side
-// ends the walk with that error.
-func TestWalkPages_ReturnsListAndVisitErrors(t *testing.T) {
-	t.Parallel()
-	wantErr := errors.New("boom")
-	failingList := func(context.Context, int, core.Cursor) ([]int, error) { return nil, wantErr }
-	okList := func(context.Context, int, core.Cursor) ([]int, error) { return []int{1}, nil }
-	cursorOf := func(int) core.Cursor { return core.Cursor{} }
-	noop := func(context.Context, []int) (bool, error) { return false, nil }
-	failingVisit := func(context.Context, []int) (bool, error) { return false, wantErr }
-
-	if _, err := walkPages(context.Background(), fixedPage(1), failingList, cursorOf, noop); !errors.Is(err, wantErr) {
-		t.Errorf("list failure: err = %v, want %v", err, wantErr)
-	}
-	if _, err := walkPages(context.Background(), fixedPage(1), okList, cursorOf, failingVisit); !errors.Is(err, wantErr) {
-		t.Errorf("visit failure: err = %v, want %v", err, wantErr)
-	}
 }
 
 // -------------------------------------------------------------------------

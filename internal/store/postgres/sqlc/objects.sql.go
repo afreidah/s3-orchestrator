@@ -48,75 +48,6 @@ func (q *Queries) CheckObjectExistsOnBackend(ctx context.Context, arg CheckObjec
 	return exists, err
 }
 
-const compressionStats = `-- name: CompressionStats :many
-SELECT backend_name,
-       count(*) AS objects,
-       COALESCE(SUM(logical_size), 0)::bigint AS logical_bytes,
-       COALESCE(SUM(size_bytes), 0)::bigint AS stored_bytes
-FROM object_locations
-WHERE compression_algorithm IS NOT NULL
-GROUP BY backend_name
-`
-
-type CompressionStatsRow struct {
-	BackendName  string
-	Objects      int64
-	LogicalBytes int64
-	StoredBytes  int64
-}
-
-// What compression is worth, per backend. Only encoded copies are counted:
-// including the verbatim ones would report a ratio no encoder produced. The
-// saving is logical - stored, left to the caller so it cannot disagree with the
-// two figures it comes from.
-func (q *Queries) CompressionStats(ctx context.Context) ([]CompressionStatsRow, error) {
-	rows, err := q.db.Query(ctx, compressionStats)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []CompressionStatsRow{}
-	for rows.Next() {
-		var i CompressionStatsRow
-		if err := rows.Scan(
-			&i.BackendName,
-			&i.Objects,
-			&i.LogicalBytes,
-			&i.StoredBytes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const copyExistsAtPath = `-- name: CopyExistsAtPath :one
-SELECT EXISTS(
-    SELECT 1 FROM object_locations
-    WHERE backend_name = $1 AND storage_key = $2
-) AS exists
-`
-
-type CopyExistsAtPathParams struct {
-	BackendName string
-	StorageKey  string
-}
-
-// Whether the backend already has a copy recorded at this path, whatever
-// object it belongs to. Import asks before adopting bytes it found: it would
-// record them under the path as the object key, so it cannot otherwise see that
-// a path the orchestrator wrote already has a row under the real object's key.
-func (q *Queries) CopyExistsAtPath(ctx context.Context, arg CopyExistsAtPathParams) (bool, error) {
-	row := q.db.QueryRow(ctx, copyExistsAtPath, arg.BackendName, arg.StorageKey)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
 SELECT count(DISTINCT object_key)
 FROM object_locations
@@ -155,21 +86,6 @@ type CountScrubCandidatesOnBackendsParams struct {
 // work the cycle would have done, not copies that were never due.
 func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, arg CountScrubCandidatesOnBackendsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countScrubCandidatesOnBackends, arg.BackendNames, arg.ScrubbedBefore)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countUnencryptedLocations = `-- name: CountUnencryptedLocations :one
-SELECT count(*) FROM object_locations WHERE encrypted = FALSE
-`
-
-// Copies still stored as plaintext. Uses the same predicate as
-// ListUnencryptedLocations, so the figure is exactly what encrypt-existing
-// would process rather than a differently-scoped count that happens to be near
-// it.
-func (q *Queries) CountUnencryptedLocations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUnencryptedLocations)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -767,46 +683,6 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	return inserted, err
 }
 
-const integrityCoverage = `-- name: IntegrityCoverage :one
-SELECT
-    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at))
-        FILTER (WHERE backend_name = ANY($1::text[])))), 0)::bigint AS age_seconds,
-    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL
-        AND backend_name = ANY($1::text[]))::bigint AS never_verified,
-    COUNT(*) FILTER (WHERE NOT (backend_name = ANY($1::text[])))::bigint AS deferred
-FROM object_locations
-WHERE content_hash IS NOT NULL AND managed
-`
-
-type IntegrityCoverageRow struct {
-	AgeSeconds    int64
-	NeverVerified int64
-	Deferred      int64
-}
-
-// How far behind verification is, split by whether the sweep can reach the copy
-// at all. Reachable is the same backend set the scrub queue draws from.
-//
-// The age and the never-verified count cover reachable copies only. A copy the
-// sweep is not allowed to read can never be stamped, so counting it pins
-// MIN(COALESCE(last_scrubbed_at, created_at)) to a fixed timestamp and the age
-// then tracks wall clock rather than the backlog: it climbs by a day every day
-// no matter how much the sweep verifies, and no amount of scrubbing lowers it.
-//
-// Deferred counts the rest rather than discarding them, so a fleet holding most
-// of its copies on a backend over its usage limit cannot report as healthy.
-//
-// The age falls back to created_at exactly as the queue ordering does, so a
-// never-verified copy is measured from when it was written. Taking MIN over
-// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
-// has never been scrubbed as an age of zero.
-func (q *Queries) IntegrityCoverage(ctx context.Context, reachableBackends []string) (IntegrityCoverageRow, error) {
-	row := q.db.QueryRow(ctx, integrityCoverage, reachableBackends)
-	var i IntegrityCoverageRow
-	err := row.Scan(&i.AgeSeconds, &i.NeverVerified, &i.Deferred)
-	return i, err
-}
-
 const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
 SELECT object_key, backend_name, storage_key, size_bytes, encryption_key, key_id, plaintext_size, etag
 FROM object_locations
@@ -1065,23 +941,25 @@ const listExpiredObjects = `-- name: ListExpiredObjects :many
 SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
 WHERE ol.object_key LIKE $1::text || '%' ESCAPE '\'
-  AND ol.created_at < $2
+  AND ol.object_key COLLATE "C" > $2::text
+  AND ol.created_at < $3
   AND (
-    $3::int = 0
+    $4::int = 0
     OR (
       SELECT COUNT(*)
       FROM object_tags t
-      JOIN jsonb_each_text($4::jsonb) AS f(k, v)
+      JOIN jsonb_each_text($5::jsonb) AS f(k, v)
         ON t.tag_key = f.k AND t.tag_value = f.v
       WHERE t.object_key = ol.object_key
-    ) = $3::int
+    ) = $4::int
   )
 ORDER BY ol.object_key COLLATE "C", ol.created_at ASC
-LIMIT $5
+LIMIT $6
 `
 
 type ListExpiredObjectsParams struct {
 	Prefix   string
+	AfterKey string
 	Cutoff   pgtype.Timestamptz
 	TagCount int32
 	Tags     []byte
@@ -1108,9 +986,13 @@ type ListExpiredObjectsRow struct {
 // Requiring the count to equal tag_count is what makes several tags an AND.
 // The primary key allows one row per (object_key, tag_key), so a count equal to
 // the number of pairs asked for means every one of them matched.
+//
+// Paged by key, so an object whose delete fails is passed over and retried by
+// the next sweep rather than on every page of this one.
 func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ListExpiredObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredObjects,
 		arg.Prefix,
+		arg.AfterKey,
 		arg.Cutoff,
 		arg.TagCount,
 		arg.Tags,
@@ -1144,13 +1026,16 @@ const listObjectsByBackend = `-- name: ListObjectsByBackend :many
 SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
 WHERE backend_name = $1 AND managed
-ORDER BY size_bytes ASC
-LIMIT $2
+  AND (size_bytes, object_key) > ($2::bigint, $3::text)
+ORDER BY size_bytes ASC, object_key ASC
+LIMIT $4
 `
 
 type ListObjectsByBackendParams struct {
 	BackendName string
-	Limit       int32
+	AfterSize   int64
+	AfterKey    string
+	RowLimit    int32
 }
 
 type ListObjectsByBackendRow struct {
@@ -1165,8 +1050,16 @@ type ListObjectsByBackendRow struct {
 // scans, so it returns managed rows only. Objects outside every configured
 // bucket prefix are tracked for accounting but are not the orchestrator's to
 // move.
+// Smallest first, paged by (size_bytes, object_key). idx_object_locations_
+// managed_size serves the filter, the order and the cursor, so a page stops at
+// its limit instead of sorting every managed row on the backend.
 func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBackendParams) ([]ListObjectsByBackendRow, error) {
-	rows, err := q.db.Query(ctx, listObjectsByBackend, arg.BackendName, arg.Limit)
+	rows, err := q.db.Query(ctx, listObjectsByBackend,
+		arg.BackendName,
+		arg.AfterSize,
+		arg.AfterKey,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1617,9 +1510,16 @@ const listUnreadableLocations = `-- name: ListUnreadableLocations :many
 SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
 WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
+  AND (object_key, backend_name) > ($1::text, $2::text)
 ORDER BY object_key, backend_name
-LIMIT $1
+LIMIT $3
 `
+
+type ListUnreadableLocationsParams struct {
+	AfterKey     string
+	AfterBackend string
+	RowLimit     int32
+}
 
 type ListUnreadableLocationsRow struct {
 	ObjectKey   string
@@ -1629,11 +1529,11 @@ type ListUnreadableLocationsRow struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// Copies imported as encrypted with no key, which nothing can decrypt. Purging
-// a copy takes it out of this set, so the purge re-reads from the start rather
-// than paging.
-func (q *Queries) ListUnreadableLocations(ctx context.Context, rowLimit int32) ([]ListUnreadableLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listUnreadableLocations, rowLimit)
+// Copies imported as encrypted with no key, which nothing can decrypt. Paged by
+// cursor, so a copy the purge fails to discard is passed over and retried by the
+// next purge rather than on every page of this one.
+func (q *Queries) ListUnreadableLocations(ctx context.Context, arg ListUnreadableLocationsParams) ([]ListUnreadableLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listUnreadableLocations, arg.AfterKey, arg.AfterBackend, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -1648,6 +1548,54 @@ func (q *Queries) ListUnreadableLocations(ctx context.Context, rowLimit int32) (
 			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listedPathStates = `-- name: ListedPathStates :many
+SELECT q.storage_key, 2::int AS state FROM cleanup_queue q
+ WHERE q.backend_name = $1 AND q.storage_key = ANY($2::text[])
+UNION ALL
+SELECT d.storage_key, 2::int AS state FROM cleanup_dlq d
+ WHERE d.backend_name = $1 AND d.storage_key = ANY($2::text[])
+UNION ALL
+SELECT o.storage_key, 1::int AS state FROM object_locations o
+ WHERE o.backend_name = $1 AND o.storage_key = ANY($2::text[])
+`
+
+type ListedPathStatesParams struct {
+	BackendName string
+	Paths       []string
+}
+
+type ListedPathStatesRow struct {
+	StorageKey string
+	State      int32
+}
+
+// What the ledger says about paths a backend listed, in one round trip for a
+// whole listing page. State 2 is a delete still outstanding, queued or
+// dead-lettered: the bytes are meant to be gone, so import must not bring them
+// back. State 1 is a copy recorded at the path under whatever object it
+// belongs to; import would otherwise record a per-write path as an object
+// named after the path. A path can match several arms, and the caller keeps
+// the highest state.
+func (q *Queries) ListedPathStates(ctx context.Context, arg ListedPathStatesParams) ([]ListedPathStatesRow, error) {
+	rows, err := q.db.Query(ctx, listedPathStates, arg.BackendName, arg.Paths)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListedPathStatesRow{}
+	for rows.Next() {
+		var i ListedPathStatesRow
+		if err := rows.Scan(&i.StorageKey, &i.State); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // Entry is the unit the merge consumes. key is the storage path both sides
@@ -356,13 +358,9 @@ type DBKeyLister interface {
 // the cursor skipped would look backend-only to the merge and be re-imported
 // on every pass.
 type DBCursorStream struct {
-	store       DBKeyLister
-	backendName string
-
-	page      []core.ObjectLocation
-	idx       int
-	cursor    string
-	exhausted bool
+	pager batch.Pager[core.ObjectLocation, string]
+	next  func() (core.ObjectLocation, error, bool)
+	stop  func()
 }
 
 // DBCursorStreamDeps groups the cursor stream's parameters.
@@ -375,45 +373,38 @@ type DBCursorStreamDeps struct {
 // the first next call pulls the first page.
 func NewDBCursorStream(deps DBCursorStreamDeps) *DBCursorStream {
 	return &DBCursorStream{
-		store:       deps.Store,
-		backendName: deps.BackendName,
+		pager: batch.Pager[core.ObjectLocation, string]{
+			PageSize: batch.FixedPage(dbCursorPageSize),
+			List: func(ctx context.Context, limit int, after string) ([]core.ObjectLocation, error) {
+				return deps.Store.ListObjectsByBackendKeyAsc(ctx, deps.BackendName, after, limit)
+			},
+			CursorOf: func(row core.ObjectLocation) string { return row.StorageKey },
+		},
 	}
 }
 
 // Next returns the next row from the DB cursor, fetching a fresh bounded page
-// when the in-memory buffer drains. Returns (zero, false, nil) at
-// end-of-stream, and never blocks on the DB once exhausted.
+// when the current one is used up. The walk runs under the ctx of the first
+// call. Returns (zero, false, nil) at end-of-stream.
 func (d *DBCursorStream) Next(ctx context.Context) (Entry, bool, error) {
-	for {
-		// Drain the in-memory page first.
-		if d.idx < len(d.page) {
-			row := d.page[d.idx]
-			d.idx++
-			d.cursor = row.StorageKey
-			return Entry{key: row.StorageKey, objectKey: row.ObjectKey, size: row.SizeBytes}, true, nil
-		}
-		if d.exhausted {
-			return Entry{}, false, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return Entry{}, false, err
-		}
-		rows, err := d.store.ListObjectsByBackendKeyAsc(ctx, d.backendName, d.cursor, dbCursorPageSize)
-		if err != nil {
-			return Entry{}, false, fmt.Errorf("page DB objects: %w", err)
-		}
-		if len(rows) == 0 {
-			d.exhausted = true
-			return Entry{}, false, nil
-		}
-		d.page = rows
-		d.idx = 0
+	if d.next == nil {
+		d.next, d.stop = iter.Pull2(d.pager.Rows(ctx))
 	}
+	row, err, ok := d.next()
+	if !ok {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("page DB objects: %w", err)
+	}
+	return Entry{key: row.StorageKey, objectKey: row.ObjectKey, size: row.SizeBytes}, true, nil
 }
 
-// Stop is a no-op; the DB cursor holds nothing to release.
+// Stop ends the walk if one was started.
 func (d *DBCursorStream) Stop() {
-	// Nothing to release.
+	if d.stop != nil {
+		d.stop()
+	}
 }
 
 // -------------------------------------------------------------------------

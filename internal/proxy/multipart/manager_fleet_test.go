@@ -864,7 +864,7 @@ func TestCleanupStaleMultipartUploads_AbortFailureLogged(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetStaleMultipartUploads(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartUpload{
 			{UploadID: "abandoned-1", ObjectKey: "k", BackendName: "missing"},
 		}, nil).AnyTimes()
@@ -883,7 +883,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFailureLogged(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetMultipartUploadsByBackend(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartUpload{
 			{UploadID: "abandoned-2", ObjectKey: "k", BackendName: "missing"},
 		}, nil).AnyTimes()
@@ -900,7 +900,7 @@ func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetStaleMultipartUploads(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
@@ -919,8 +919,11 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetStaleMultipartUploads(gomock.Any(), gomock.Any()).
-		Return([]core.MultipartUpload{{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}}, nil).AnyTimes()
+	staleOnly := gomock.Cond(func(f core.MultipartUploadFilter) bool {
+		return f.Backend == "" && time.Since(f.CreatedBefore) > 59*time.Minute
+	})
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), staleOnly, gomock.Any(), "").
+		Return([]core.MultipartUpload{{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}}, nil)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}, nil).AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
@@ -1020,7 +1023,7 @@ func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetStaleMultipartUploads(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartUpload{{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}}, nil).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).AnyTimes()
@@ -1036,7 +1039,7 @@ func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetMultipartUploadsByBackend(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
@@ -1055,10 +1058,10 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetMultipartUploadsByBackend(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), core.MultipartUploadFilter{Backend: "b1"}, gomock.Any(), "").
 		Return([]core.MultipartUpload{
 			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
-		}, nil).AnyTimes()
+		}, nil)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"}, nil).AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
@@ -1081,7 +1084,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetMultipartUploadsByBackend(gomock.Any(), gomock.Any()).
+	store.EXPECT().ScanMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartUpload{{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"}}, nil).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).AnyTimes()

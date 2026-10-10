@@ -3,12 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Tests for dashboard data aggregation: successful assembly, individual query
-// errors, empty data, and directory listing edge cases.
+// Tests for dashboard data aggregation: successful assembly from the fleet
+// snapshot, snapshot and store read failures, and directory listing edge
+// cases.
 //
-// Drives the aggregator against the generated 6-method DashboardStore mock, so
-// a test states only the reads it cares about and any unstubbed call fails the
-// test rather than returning a silent zero value.
+// Drives the aggregator against the generated DashboardStore and FleetView
+// mocks, so a test states only the reads it cares about and any unstubbed call
+// fails the test rather than returning a silent zero value.
 // -------------------------------------------------------------------------------
 
 package dashboard
@@ -16,10 +17,10 @@ package dashboard
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -28,29 +29,28 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestAggregator_Success verifies the aggregator success contract.
-// Asserts that BytesUsed = , want 100.
+// TestAggregator_Success assembles the dashboard from the fleet snapshot plus
+// the live usage and directory reads.
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
 	store := storetest.NewMockDashboardStore(ctrl)
-	store.EXPECT().GetQuotaStats(gomock.Any()).
-		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100}}, nil)
-	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil)
-	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil)
-	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 1}, nil)
-	store.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).
-		Return(core.CoverageStat{OldestUnverifiedAge: 2 * time.Hour, NeverVerified: 3, Deferred: 4}, nil)
-	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(7), nil)
-	store.EXPECT().CompressionStats(gomock.Any()).
-		Return(map[string]core.CompressionStat{"b1": {Objects: 2, LogicalBytes: 1000, StoredBytes: 250}}, nil)
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
+	fleet := newStubFleet(ctrl, &metrics.FleetSnapshot{
+		Quota: map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
+		Ledger: core.LedgerStats{"b1": {
+			Objects:    5,
+			Plaintext:  7,
+			Compressed: core.CompressionStat{Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
+		}},
+		Multipart: map[string]int64{"b1": 1},
+	})
 
-	da := New(store, stubUsage(ctrl), []string{"b1"}, nil, nil)
+	da := New(store, stubUsage(ctrl), []string{"b1"}, fleet, nil)
 	data, err := da.GetData(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +61,12 @@ func TestAggregator_Success(t *testing.T) {
 	}
 	if data.ObjectCounts["b1"] != 5 {
 		t.Errorf("ObjectCounts = %d, want 5", data.ObjectCounts["b1"])
+	}
+	if data.PlaintextCopies != 7 {
+		t.Errorf("PlaintextCopies = %d, want 7", data.PlaintextCopies)
+	}
+	if data.CompressionStats["b1"].StoredBytes != 250 {
+		t.Errorf("CompressionStats = %+v, want b1 stored 250", data.CompressionStats)
 	}
 	if len(data.BackendOrder) != 1 || data.BackendOrder[0] != "b1" {
 		t.Errorf("BackendOrder = %v, want [b1]", data.BackendOrder)
@@ -79,59 +85,11 @@ type dashboardRead struct {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// dashboardReads lists every read GetData issues, in the order it issues them.
+// dashboardReads lists every store read GetData issues, in the order it issues
+// them.
 func dashboardReads() []dashboardRead {
 	a := gomock.Any()
 	return []dashboardRead{
-		{"quota stats",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetQuotaStats(a).Return(map[string]core.QuotaStat{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().GetQuotaStats(a).Return(nil, err)
-			}},
-		{"object counts",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetObjectCounts(a).Return(map[string]int64{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().GetObjectCounts(a).Return(nil, err)
-			}},
-		{"unverified counts",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetUnverifiedObjectCounts(a).Return(map[string]int64{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().GetUnverifiedObjectCounts(a).Return(nil, err)
-			}},
-		{"integrity coverage",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().IntegrityCoverage(a, a).Return(core.CoverageStat{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().IntegrityCoverage(a, a).Return(core.CoverageStat{}, err)
-			}},
-		{"plaintext copies",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().CountUnencryptedLocations(a).Return(int64(0), nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().CountUnencryptedLocations(a).Return(int64(0), err)
-			}},
-		{"compression stats",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().CompressionStats(a).Return(map[string]core.CompressionStat{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().CompressionStats(a).Return(nil, err)
-			}},
-		{"multipart counts",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetActiveMultipartCounts(a).Return(map[string]int64{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().GetActiveMultipartCounts(a).Return(nil, err)
-			}},
 		{"usage stats",
 			func(m *storetest.MockDashboardStore) {
 				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.UsageStat{}, nil)
@@ -171,9 +129,42 @@ func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 			}
 			c.fail(store, errors.New("db down"))
 
-			da := New(store, stubUsage(ctrl), nil, nil, nil)
+			da := New(store, stubUsage(ctrl), nil, newStubFleet(ctrl, emptySnapshot()), nil)
 			if _, err := da.GetData(t.Context()); err == nil {
 				t.Fatalf("GetData succeeded despite %s failing", c.name)
+			}
+		})
+	}
+}
+
+// TestAggregator_SnapshotFailuresFailGetStatus fails the status rather than
+// report zeroes when the snapshot cannot be had, or is missing a figure because
+// the store read behind it failed.
+func TestAggregator_SnapshotFailuresFailGetStatus(t *testing.T) {
+	t.Parallel()
+	noLedger := emptySnapshot()
+	noLedger.Ledger = nil
+	noMultipart := emptySnapshot()
+	noMultipart.Multipart = nil
+
+	for _, c := range []struct {
+		name string
+		snap *metrics.FleetSnapshot
+		err  error
+	}{
+		{"snapshot error", nil, errors.New("db down")},
+		{"ledger missing", noLedger, nil},
+		{"multipart missing", noMultipart, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			fleet := NewMockFleetView(ctrl)
+			fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(c.snap, c.err)
+
+			da := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+			if _, err := da.GetStatus(t.Context()); err == nil {
+				t.Fatal("GetStatus succeeded without a complete snapshot")
 			}
 		})
 	}

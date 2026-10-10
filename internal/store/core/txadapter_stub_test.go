@@ -57,8 +57,8 @@ func (*noopTxAdapter) CheckObjectExistsOnBackend(context.Context, string, string
 	return false, nil
 }
 
-func (*noopTxAdapter) CopyExistsAtPath(context.Context, string, string) (bool, error) {
-	return false, nil
+func (*noopTxAdapter) ListedPathStates(context.Context, string, []string) (map[string]PathState, error) {
+	return map[string]PathState{}, nil
 }
 
 func (*noopTxAdapter) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
@@ -98,10 +98,6 @@ func (*noopTxAdapter) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRo
 func (*noopTxAdapter) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
 
 func (*noopTxAdapter) DeleteCleanupItem(context.Context, int64) error { return nil }
-
-func (*noopTxAdapter) HasPendingCleanup(context.Context, string, string) (bool, error) {
-	return false, nil
-}
 
 func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) error { return nil }
 

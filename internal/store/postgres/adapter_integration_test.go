@@ -911,7 +911,7 @@ func assertUnreadableHidden(t *testing.T, s *Store, key string) {
 		t.Errorf("ListObjectsDelimited = %+v, want the unreadable row left out", delimited)
 	}
 
-	unreadable, err := s.ListUnreadableLocations(ctx, 10000)
+	unreadable, err := s.ListUnreadableLocations(ctx, 10000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUnreadableLocations: %v", err)
 	}

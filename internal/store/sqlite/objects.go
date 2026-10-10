@@ -294,7 +294,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 // intersection. EXISTS rather than a join because the dedup subquery groups by
 // object_key and a join would multiply its input row per matching tag.
 func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
-	args := []any{likeEscaper.Replace(q.Prefix), formatTime(q.Cutoff)}
+	args := []any{likeEscaper.Replace(q.Prefix), q.After, formatTime(q.Cutoff)}
 
 	var tagFilter strings.Builder
 	for _, key := range sortedTagKeys(q.Tags) {
@@ -314,6 +314,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 			SELECT object_key, MIN(rowid) AS min_rowid
 			FROM object_locations
 			WHERE object_key LIKE ? || '%' ESCAPE '\'
+			  AND object_key > ?
 			  AND created_at < ?`+tagFilter.String()+`
 			GROUP BY object_key
 		) dedup ON ol.rowid = dedup.min_rowid
@@ -339,16 +340,17 @@ func sortedTagKeys(tags map[string]string) []string {
 	return keys
 }
 
-// ListObjectsByBackend returns objects stored on a specific backend, ordered by
-// size ascending (smallest first). Backs the rebalance, placement and drain
-// candidate scans, so it returns managed rows only.
-func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
+// ListObjectsByBackend returns up to limit managed objects on a backend after
+// the cursor, smallest first. Backs the rebalance, placement, drain and purge
+// scans.
+func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes, created_at
 		FROM object_locations
 		WHERE backend_name = ? AND managed
-		ORDER BY size_bytes ASC
-		LIMIT ?`, backendName, limit)
+		  AND (size_bytes, object_key) > (?, ?)
+		ORDER BY size_bytes ASC, object_key ASC
+		LIMIT ?`, backendName, after.SizeBytes, after.ObjectKey, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
 	}
@@ -374,6 +376,12 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 	defer rows.Close()
 
 	return scanSlimObjectLocations(rows)
+}
+
+// ListedPathStates reports what the ledger says about paths the backend
+// listed, in one query for a whole listing page.
+func (s *Store) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
+	return s.direct().ListedPathStates(ctx, backend, paths)
 }
 
 // scanListedObjectLocations scans a listing row, which carries the ETag on top
@@ -534,49 +542,6 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 	return nil
 }
 
-// IntegrityCoverage reports how far behind verification is, split by whether
-// the sweep can reach the copy. reachable is the same backend set the scrub
-// queue draws from.
-//
-// The age and the never-verified count cover reachable copies only, because a
-// copy the sweep may not read can never be stamped and would pin the age to
-// wall clock. Deferred counts the rest, so a fleet holding most of its copies
-// on a backend over its usage limit cannot report as healthy. A never-verified
-// copy is aged from created_at, as in the queue ordering, so an unscrubbed
-// fleet does not report an age of zero.
-func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
-	backendsJSON, err := json.Marshal(reachable)
-	if err != nil {
-		return core.CoverageStat{}, fmt.Errorf("encode reachable backend list: %w", err)
-	}
-
-	var oldest sql.NullString
-	var stat core.CoverageStat
-	err = s.db.QueryRowContext(ctx,
-		`SELECT MIN(CASE WHEN reachable THEN COALESCE(last_scrubbed_at, created_at) END),
-		        COUNT(*) FILTER (WHERE reachable AND last_scrubbed_at IS NULL),
-		        COUNT(*) FILTER (WHERE NOT reachable)
-		 FROM (
-		     SELECT last_scrubbed_at, created_at,
-		            backend_name IN (SELECT value FROM json_each(?)) AS reachable
-		     FROM object_locations
-		     WHERE content_hash IS NOT NULL AND managed
-		 )`, string(backendsJSON),
-	).Scan(&oldest, &stat.NeverVerified, &stat.Deferred)
-	if err != nil {
-		return core.CoverageStat{}, fmt.Errorf("failed to read integrity coverage: %w", err)
-	}
-	if !oldest.Valid {
-		return stat, nil
-	}
-	ts, err := time.Parse(time.RFC3339Nano, oldest.String)
-	if err != nil {
-		return stat, fmt.Errorf("failed to parse scrub queue head timestamp %q: %w", oldest.String, err)
-	}
-	stat.OldestUnverifiedAge = time.Since(ts)
-	return stat, nil
-}
-
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, in key order after the cursor. Used by the backfill command. An empty
 // backend selects every one. Paged by cursor because hashing a copy takes it
@@ -602,15 +567,16 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core
 // unreadablePredicate selects copies that are encrypted with no key.
 const unreadablePredicate = `encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)`
 
-// ListUnreadableLocations returns up to limit copies that are encrypted with no
-// key, which nothing can decrypt.
-func (s *Store) ListUnreadableLocations(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+// ListUnreadableLocations returns up to limit copies after the cursor that are
+// encrypted with no key, which nothing can decrypt.
+func (s *Store) ListUnreadableLocations(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes, created_at
 		FROM object_locations
 		WHERE `+unreadablePredicate+`
+		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ?`, limit)
+		LIMIT ?`, after.ObjectKey, after.BackendName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list unreadable locations: %w", err)
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -106,9 +107,9 @@ const (
 )
 
 // RebalanceSummary is one cycle's outcome. SkipReason is set when the cycle
-// never planned any moves; the embedded WorkSummary is zero in that case.
+// never planned any moves; the embedded Summary is zero in that case.
 type RebalanceSummary struct {
-	WorkSummary
+	batch.Summary
 	SkipReason string
 }
 
@@ -130,7 +131,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		stats, err := r.store.GetQuotaStats(ctx)
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, OutcomeError).Inc()
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, batch.OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
 		}
 
@@ -151,7 +152,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			return RebalanceSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
 		}
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, OutcomeError).Inc()
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, batch.OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
 		}
 
@@ -175,7 +176,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			slog.Int("planned", len(plan)),
 			slog.Duration("duration", time.Since(start)),
 		)
-		return RebalanceSummary{WorkSummary: sum}, nil
+		return RebalanceSummary{Summary: sum}, nil
 	})
 }
 
@@ -475,7 +476,7 @@ func (r *Rebalancer) spreadMovesFromSource(
 	stats map[string]core.QuotaStat,
 	state *planState,
 ) ([]RebalanceMove, error) {
-	objects, err := r.store.ListObjectsByBackend(ctx, src.Name, state.remaining)
+	objects, err := r.store.ListObjectsByBackend(ctx, src.Name, state.remaining, core.SizeCursor{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 	}
@@ -551,21 +552,21 @@ func findSpreadDestination(
 // Skips individual moves that fail and continues with the rest, returning
 // the count of successful moves. observer, when non-nil, receives a step per
 // move labelled with the object and the backends it travels between.
-func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int, observer progress.Observer) WorkSummary {
-	runner := BatchRunner[RebalanceMove]{
+func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int, observer progress.Observer) batch.Summary {
+	runner := batch.Runner[RebalanceMove]{
 		Name:        "rebalance",
 		Log:         r.log,
 		Concurrency: concurrency,
 		Observer:    observer,
 		Key:         RebalanceMove.progressLabel,
 	}
-	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) ItemResult {
-		var res ItemResult // zero value (ItemSkipped) when admission blocks the move
+	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) batch.ItemResult {
+		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the move
 		WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() {
 			if r.ExecuteOneMove(ctx, mv, strategy) {
-				res = ItemResult{Outcome: ItemSucceeded}
+				res = batch.ItemResult{Outcome: batch.ItemSucceeded}
 			} else {
-				res = ItemResult{Outcome: ItemFailed}
+				res = batch.ItemResult{Outcome: batch.ItemFailed}
 			}
 		})
 		return res

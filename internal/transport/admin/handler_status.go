@@ -74,7 +74,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // handleStatus returns backend health and circuit breaker state.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	data, err := h.dashboardOps.GetData(r.Context())
+	data, err := h.dashboardOps.GetStatus(r.Context())
 	if err != nil {
 		h.internalError(r.Context(), w, "failed to fetch status", err)
 		return

@@ -406,6 +406,19 @@ type ImportObjectRequest struct {
 	WrittenAt time.Time
 }
 
+// PathState is what the ledger says about a path a backend listed. A path
+// with a delete outstanding ranks above one with a recorded copy, because the
+// pending delete is what decides that import must leave the path alone.
+type PathState uint8
+
+// PathUntracked and the other states. An untracked path is absent from the
+// map ListedPathStates returns.
+const (
+	PathUntracked      PathState = iota // nothing in the ledger names the path
+	PathRecorded                        // a copy is recorded at the path
+	PathPendingCleanup                  // a delete for the path is queued or dead-lettered
+)
+
 // ImportOutcome reports what an import did with a discovered key.
 // ImportSkippedPendingCleanup means a delete is outstanding and the bytes are
 // an orphan, which callers must count apart from ImportSkippedExisting.
@@ -435,22 +448,17 @@ func (o ImportOutcome) String() string {
 // orphan and its bytes.
 func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) (ImportOutcome, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
-		pending, err := tx.HasPendingCleanup(ctx, req.Key, req.Backend)
-		if err != nil {
-			return ImportSkippedExisting, err
-		}
-		if pending {
-			return ImportSkippedPendingCleanup, nil
-		}
-
 		// Bytes at a recorded path belong to a known copy under its real key;
-		// without this check a sync would import every per-write path as an
-		// object named after its path.
-		recorded, err := tx.CopyExistsAtPath(ctx, req.Backend, req.Key)
+		// without the recorded check a sync would import every per-write path
+		// as an object named after its path.
+		states, err := tx.ListedPathStates(ctx, req.Backend, []string{req.Key})
 		if err != nil {
 			return ImportSkippedExisting, err
 		}
-		if recorded {
+		switch states[req.Key] {
+		case PathPendingCleanup:
+			return ImportSkippedPendingCleanup, nil
+		case PathRecorded:
 			return ImportSkippedExisting, nil
 		}
 
