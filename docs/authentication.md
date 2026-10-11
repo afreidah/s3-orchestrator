@@ -52,7 +52,7 @@ It is an ordinary user that happens to hold every permission on every resource. 
 
 Declaring it is optional. A deployment that administers itself through credentials its store already holds can leave `auth.root` out and run as a pure S3 endpoint. Enabling the dashboard requires it, because a deployment with no credential at all would have nothing able to log in and create the first user.
 
-The rest of the admin API is the control plane - backend drain, key rotation, provisioning, worker triggers. Each of those endpoints declares a permission over a **backend** or over the **instance**, and a credential reaches it only by holding a grant carrying that permission. A credential holding only bucket grants is refused on all of them.
+The rest of the admin API is the control plane - backend cordon and drain, key rotation, provisioning, worker triggers. Each of those endpoints declares a permission over a **backend** or over the **instance**, and a credential reaches it only by holding a grant carrying that permission. A credential holding only bucket grants is refused on all of them.
 
 A pass that names no backend runs against every one, so it is authorized as `backend:*`: an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. See [the admin API's authorization section](admin-api.md#authorization) for the permission each endpoint declares.
 

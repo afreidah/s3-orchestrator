@@ -116,6 +116,27 @@ s3-orchestrator admin bucket delete -name app3-files
 
 Each refusal names what is in the way and returns a non-zero exit code, so a script that runs these out of order stops rather than half-completing.
 
+### Cordoning a backend
+
+Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads already in progress on it can complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled.
+
+```bash
+# Stop new copies landing on the backend
+s3-orchestrator admin cordon <backend-name>
+
+# Let them land on it again
+s3-orchestrator admin uncordon <backend-name>
+```
+
+The same change is `POST` and `DELETE` on `/admin/api/backends/{name}/cordon`, under the `admin-cordon` permission, and `C` on the TUI's Backends pane. A cordon takes effect on every instance at once: admission reads it from the database, so a write ranked against an instance's cached view is still refused. It shows as `cordoned` in the `flags` of `/admin/api/status`, in the State column of `admin status` and the TUI, and as a badge on the web dashboard.
+
+**Cordon or drain:**
+
+- **Cordon** when the data can stay where it is but the backend should take nothing new: it is nearly full, its provider has a write-side problem while reads still work, or it is being retired slowly as its objects are deleted or expire.
+- **Drain** when the data has to come off: the backend is being decommissioned and its objects must live elsewhere first.
+
+**Cordon then drain.** Cordoning first stops new writes at once, before deciding whether to move the data. A drain started on a cordoned backend keeps the cordon, so cancelling that drain leaves the backend cordoned rather than returning it to service, and uncordoning mid-drain leaves the drain running. Uncordon once the backend should take writes again, or remove it after a drain finishes.
+
 ### Draining a backend
 
 Draining migrates all objects off a backend to other backends without data loss. Use this when decommissioning a backend but preserving all stored objects.
@@ -154,7 +175,7 @@ A drain is a record in the metadata database. Starting one writes the record, an
 s3-orchestrator admin drain-cancel <backend-name>
 ```
 
-Cancelling clears the drain record, whatever its state, and the backend accepts new writes again. A drain in progress stops before its next page of 100. Objects already moved are not moved back.
+Cancelling clears the drain, whatever its state, and the backend accepts new writes again unless it is [cordoned](#cordoning-a-backend). A drain in progress stops before its next page of 100. Objects already moved are not moved back.
 
 **When a drain fails:** a drain that hits an error it cannot retry, such as the backend's object listing failing or the backend no longer being configured, is marked `failed` with the reason. The backend stays out of placement. Run `drain` again to restart it from the objects still on the backend, or `drain-cancel` to put the backend back into service.
 

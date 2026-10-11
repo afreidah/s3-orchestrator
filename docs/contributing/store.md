@@ -43,9 +43,10 @@ concrete store driver fails CI with a pointer back to this page.
    `sqlite/store.go` and `postgres/store.go` fails the build if either
    implementation is missing, naming the method that is absent.
 3. From the repo root run `go generate ./internal/store/storetest/...`
-   to regenerate the gomock mock. The composite `storetest.MetadataStore`
-   is the single mock source of truth; tests that need imperative control
-   wrap it via `testutil.NewMockStore`.
+   to regenerate the gomock mocks. The composite `storetest.MetadataStore`
+   is the single mock source of truth. `storetest/permissive.go` is
+   hand-written: if a fixture may pass through the new method, add a stanza
+   for it there, because mockgen does not.
 4. The driver-level circuit breaker installed by `NewDatabaseBreaker`
    wraps the `database/sql` DBTX surface, so the new method picks up
    `core.ErrDBUnavailable` semantics automatically. No per-method

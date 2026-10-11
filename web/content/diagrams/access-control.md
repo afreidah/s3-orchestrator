@@ -17,7 +17,7 @@ A **grant** pairs a user with a resource and a set of permissions. There are thr
 - **`backend:wasabi-eu`** - one storage provider the orchestrator writes to. A single object in a bucket may have copies on several backends at once, and a backend grant is about those copies rather than about the objects a client sees. `backend:*` is every provider, including ones added later.
 - **`orchestrator`** - the service running in front of both, and what a grant names for work belonging to no single bucket or provider: reading logs, rotating keys, flushing the cache, creating users. It carries no name, because a deployment has one orchestrator.
 
-The permissions are a bitmask - `list`, `read`, `write`, `delete`, `tags`, `list-buckets` on the data plane, and ten `admin-*` permissions on the control plane, in a disjoint bit range. A data-plane set can therefore never be mistaken for an administrative one.
+The permissions are a bitmask - `list`, `read`, `write`, `delete`, `tags`, `list-buckets` on the data plane, and eleven `admin-*` permissions on the control plane, in a disjoint bit range. A data-plane set can therefore never be mistaken for an administrative one.
 
 #### Why one registry
 
@@ -223,7 +223,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     BITS: {
       title: 'Does the grant carry the bit?',
       badge: 'filter', badgeText: 'permission',
-      body: '<p>Six data-plane permissions, as bits 0-5 of a <code>uint64</code>: <code>list-buckets</code>, <code>list</code>, <code>read</code>, <code>write</code>, <code>delete</code>, <code>tags</code>. The operation the request names decides which bits are required, and the check requires <b>all</b> of them.</p><p>A bucket grant recording none carries all six, because rows predate the vocabulary and carried full access before it existed.</p><p>The ten admin permissions occupy bits 6 through 15, a disjoint range, so a data-plane set can never be read as an administrative one by accident.</p>'
+      body: '<p>Six data-plane permissions, as bits 0-5 of a <code>uint64</code>: <code>list-buckets</code>, <code>list</code>, <code>read</code>, <code>write</code>, <code>delete</code>, <code>tags</code>. The operation the request names decides which bits are required, and the check requires <b>all</b> of them.</p><p>A bucket grant recording none carries all six, because rows predate the vocabulary and carried full access before it existed.</p><p>The eleven admin permissions occupy bits 6 through 16, a disjoint range, so a data-plane set can never be read as an administrative one by accident.</p>'
     },
     RES: {
       title: 'The resource a route declares',
@@ -238,7 +238,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     ABITS: {
       title: 'Does the grant carry the admin bit?',
       badge: 'filter', badgeText: 'permission',
-      body: '<p>Ten control-plane permissions: <code>admin-read</code>, <code>admin-logs</code>, <code>admin-maintain</code>, <code>admin-convert</code>, <code>admin-keys</code>, <code>admin-cache</code>, <code>admin-drain</code>, <code>admin-decommission</code>, <code>admin-config</code>, <code>admin-provision</code>.</p><p>They are genuinely separate, not one flag in ten spellings: a credential holding <code>admin-read</code> is refused key rotation, provisioning, log reading and log-level changes alike.</p><p><code>admin-provision</code> is deliberately its own permission rather than part of <code>admin-config</code>, because a grant carrying it can mint a grant carrying anything.</p>'
+      body: '<p>Eleven control-plane permissions: <code>admin-read</code>, <code>admin-logs</code>, <code>admin-maintain</code>, <code>admin-convert</code>, <code>admin-keys</code>, <code>admin-cache</code>, <code>admin-drain</code>, <code>admin-cordon</code>, <code>admin-decommission</code>, <code>admin-config</code>, <code>admin-provision</code>.</p><p>They are genuinely separate, not one flag in eleven spellings: a credential holding <code>admin-read</code> is refused key rotation, provisioning, log reading and log-level changes alike.</p><p><code>admin-provision</code> is deliberately its own permission rather than part of <code>admin-config</code>, because a grant carrying it can mint a grant carrying anything.</p>'
     },
     FORBID: {
       title: '403 Forbidden',
@@ -354,18 +354,18 @@ An access key the registry does not hold still computes a full HMAC, against a f
 
 ## How a permission set is stored
 
-A grant records a resource and a permission set. The resource is one of three kinds - `bucket:name`, `backend:name` (or `backend:*`), or `orchestrator` - and the kind decides which vocabulary the set is drawn from: a bucket takes the six data-plane permissions, a backend or the orchestrator takes the ten `admin-*` ones.
+A grant records a resource and a permission set. The resource is one of three kinds - `bucket:name`, `backend:name` (or `backend:*`), or `orchestrator` - and the kind decides which vocabulary the set is drawn from: a bucket takes the six data-plane permissions, a backend or the orchestrator takes the eleven `admin-*` ones.
 
 The set itself is a single `uint64`. Each permission is one bit, so a grant is one integer column rather than a join table, and authorizing a request is one bitwise `AND` rather than a query.
 
 The two vocabularies occupy **disjoint bits**. The control-plane permissions continue where the data-plane ones stop:
 
 ```text
- bit  15 14 13 12 11 10  9  8  7  6    5  4  3  2  1  0
-      +-----------------------------+ +-----------------+
-      |  ten admin-* permissions    | |  six bucket     |
-      |  64 .. 32768                | |  1 .. 32        |
-      +-----------------------------+ +-----------------+
+ bit  16 15 14 13 12 11 10  9  8  7  6    5  4  3  2  1  0
+      +--------------------------------+ +-----------------+
+      |  eleven admin-* permissions    | |  six bucket     |
+      |  64 .. 65536                   | |  1 .. 32        |
+      +--------------------------------+ +-----------------+
 ```
 
 Which bit a permission sits on carries no meaning beyond being distinct from every other. The stored form is the names - `permissions` is a `TEXT` column holding `list,read`, not an integer - so the bitmask is rebuilt in memory on every registry assembly and a bit could be renumbered without touching a single row.
@@ -415,10 +415,11 @@ Carried by a grant on a **backend** or on the **orchestrator**.
   <tr><td class="c-bit">10</td><td class="c-mask">0x0400</td><td class="c-dec">1024</td><td class="c-name n-admin">admin-keys</td><td class="c-what">Rotating the encryption master key</td></tr>
   <tr><td class="c-bit">11</td><td class="c-mask">0x0800</td><td class="c-dec">2048</td><td class="c-name n-admin">admin-cache</td><td class="c-what">Flushing and invalidating the object data cache</td></tr>
   <tr><td class="c-bit">12</td><td class="c-mask">0x1000</td><td class="c-dec">4096</td><td class="c-name n-admin">admin-drain</td><td class="c-what">Starting and cancelling a backend drain</td></tr>
-  <tr><td class="c-bit">13</td><td class="c-mask">0x2000</td><td class="c-dec">8192</td><td class="c-name n-admin">admin-decommission</td><td class="c-what">Removing a backend, including purging its objects</td></tr>
-  <tr><td class="c-bit">14</td><td class="c-mask">0x4000</td><td class="c-dec">16384</td><td class="c-name n-admin">admin-config</td><td class="c-what">Changing runtime configuration, such as the log level</td></tr>
-  <tr><td class="c-bit">15</td><td class="c-mask">0x8000</td><td class="c-dec">32768</td><td class="c-name n-admin">admin-provision</td><td class="c-what">Reading the provisioning view; creating, changing and removing buckets, users, credentials and grants</td></tr>
-  <tr class="total"><td class="c-bit"></td><td class="c-mask">0xFFC0</td><td class="c-dec">65472</td><td class="c-name">admin-all</td><td class="c-what">Every control-plane permission</td></tr>
+  <tr><td class="c-bit">13</td><td class="c-mask">0x2000</td><td class="c-dec">8192</td><td class="c-name n-admin">admin-cordon</td><td class="c-what">Cordoning and uncordoning a backend: stopping new copies landing on it, and letting them land again</td></tr>
+  <tr><td class="c-bit">14</td><td class="c-mask">0x4000</td><td class="c-dec">16384</td><td class="c-name n-admin">admin-decommission</td><td class="c-what">Removing a backend, including purging its objects</td></tr>
+  <tr><td class="c-bit">15</td><td class="c-mask">0x8000</td><td class="c-dec">32768</td><td class="c-name n-admin">admin-config</td><td class="c-what">Changing runtime configuration, such as the log level</td></tr>
+  <tr><td class="c-bit">16</td><td class="c-mask">0x10000</td><td class="c-dec">65536</td><td class="c-name n-admin">admin-provision</td><td class="c-what">Reading the provisioning view; creating, changing and removing buckets, users, credentials and grants</td></tr>
+  <tr class="total"><td class="c-bit"></td><td class="c-mask">0x1FFC0</td><td class="c-dec">131008</td><td class="c-name">admin-all</td><td class="c-what">Every control-plane permission</td></tr>
 </table>
 
 Each is split from its neighbour where a real principal wants one and not the other: a monitoring credential reads status but not logs, an on-call engineer runs the repair passes but does not rewrite every object. `admin-provision` is alone because a grant carrying it can mint any other permission.
@@ -471,11 +472,11 @@ The `== want` rather than `!= 0` matters whenever a route declares more than one
 Take the most permissive bucket grant there is - `all`, every data-plane bit lit - and check it against a control-plane permission:
 
 ```text
-                  admin        bucket
-     held       0000000000     111111        63    bucket grant: all
- AND want       0000010000     000000      4096    admin-drain
-     ----------------------------------------
-   = result     0000000000     000000         0    != want  -> 403
+                  admin         bucket
+     held       00000000000     111111        63    bucket grant: all
+ AND want       00001000000     000000      4096    admin-drain
+     -----------------------------------------
+   = result     00000000000     000000         0    != want  -> 403
 ```
 
 The two operands share no bit, so the result is zero no matter how much access the bucket grant carries. There is no combination of data-plane permissions that adds up to an administrative one, and none that can be reached by arithmetic on a stored value.

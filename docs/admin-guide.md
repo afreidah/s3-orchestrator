@@ -22,7 +22,7 @@ The admin guide has been split into per-topic pages so each topic has a focused 
 
 ## Operations
 
-- **[Operations](operations.md)** - drain, rebalance, scrub, cache management, trace snapshot, credential rotation
+- **[Operations](operations.md)** - cordon, drain, rebalance, scrub, cache management, trace snapshot, credential rotation
 - **[Replication](replication.md)** - replication factor, over-replication cleanup, orphan reconciliation
 - **[Cleanup and lifecycle](cleanup-and-lifecycle.md)** - cleanup queue, PUT-before-COMMIT pending intents, lifecycle expiration
 - **[CLI subcommands](cli.md)** - `version`, `init`, `validate`, `sync`, `admin`, `tui`

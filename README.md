@@ -46,7 +46,7 @@ Clients see one endpoint and one namespace. The backends never learn the orchest
 - **Encryption and compression.** Envelope encryption (AES-256-GCM; master key inline, in a file, or in Vault Transit) and chunked zstd compression. Both optional and transparent to clients; sizes, ETags and content hashes stay those of the object the client wrote. With both on, compression runs first, because ciphertext does not compress.
 - **Terraform provider.** Published to the [Terraform](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) and [OpenTofu](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) registries. Manages the buckets, users, credentials and grants a deployment serves.
 - **Database.** Embedded SQLite with no external dependencies, single-node PostgreSQL, or many instances with Redis-backed shared counters so quotas hold across the fleet.
-- **Operator tooling.** Online drain, rebalance, import of an existing bucket, integrity scrub, a cleanup queue with a dead-letter table, hot config reload, an admin API, a web dashboard and a terminal object browser.
+- **Operator tooling.** Backend cordon and online drain, rebalance, import of an existing bucket, integrity scrub, a cleanup queue with a dead-letter table, hot config reload, an admin API, a web dashboard and a terminal object browser.
 
 ## Moving providers without downtime
 
@@ -152,7 +152,7 @@ Deeper details: [docs/architecture.md](docs/architecture.md).
 | Envelope encryption, Vault Transit | [docs/encryption.md](docs/encryption.md) |
 | At-rest compression (chunked zstd) | [docs/compression.md](docs/compression.md) |
 | Object tagging (key/value labels) | [docs/tagging.md](docs/tagging.md) |
-| Operations (drain, rebalance, scrub, cache, trace) | [docs/operations.md](docs/operations.md) |
+| Operations (cordon, drain, rebalance, scrub, cache, trace) | [docs/operations.md](docs/operations.md) |
 | Monitoring (Prometheus, OTel, audit log) | [docs/monitoring.md](docs/monitoring.md) |
 | Background services reference | [docs/background-services.md](docs/background-services.md) |
 | Webhook notifications | [docs/notifications.md](docs/notifications.md) |

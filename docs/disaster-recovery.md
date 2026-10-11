@@ -132,6 +132,14 @@ s3-orchestrator admin remove-backend <backend-name>
 
 Then remove the backend from the config file and restart.
 
+### Writes failing, reads working
+
+If a backend's writes are failing but it still serves reads, [cordon](operations.md#cordoning-a-backend) it. New copies go elsewhere at once, and reads of what it holds carry on while you decide whether to wait out the provider or drain it:
+
+```bash
+s3-orchestrator admin cordon <backend-name>
+```
+
 ### Planned decommission
 
 If a backend is still reachable but you want to decommission it, use the drain operation to migrate all objects to other backends first (no data loss):

@@ -93,7 +93,7 @@ When the replicator needs to place a new copy, it iterates through backends **in
 
 A backend is eligible if it meets all of these conditions:
 
-- It is **not draining**
+- It carries **no state flag**: it is not cordoned and not draining
 - It **does not already hold** a copy of the object
 - Its **circuit breaker is not open** (the backend is healthy)
 - It has **enough free space**: `quota - used_bytes - orphan_bytes >= object_size`
@@ -164,7 +164,7 @@ Each copy receives a retention score. Lower scores are removed first:
 
 | Backend State | Score | Rationale |
 |---|---|---|
-| Draining | 0 | Data is being migrated off — remove first |
+| Cordoned or draining | 0 | Takes no new copies, or data is being migrated off - remove first |
 | Circuit-broken | 1 | Backend is unreliable — prefer removing from here |
 | Healthy | 2.0 – 3.0 | `2 + (1 - utilization_ratio)` — fuller backends score lower, keeping copies on backends with more headroom |
 
@@ -189,6 +189,8 @@ When a backend enters the draining state:
 - The drain worker handles its own object migration independently — if an object already has a replica on another backend, the drain worker simply deletes the draining copy without any data transfer
 
 Draining and replication do not compete. The drain worker moves or deletes objects from the draining backend, while the replicator ensures the target factor is maintained on the remaining healthy backends. A backend whose drain has finished or failed stays excluded from replica placement until its drain is cleared or the backend is removed.
+
+A [cordoned](../../docs/operations/#cordoning-a-backend) backend is excluded from target selection the same way, but nothing moves its data off: its copies still count toward the factor, so cordoning a backend does not trigger new replicas. When an object has more copies than the factor, the cordoned backend's copy is the first removed.
 
 ## Rebalancer Interaction
 

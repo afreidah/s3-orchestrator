@@ -32,7 +32,7 @@ description: "The project's Go conventions: comment and file-header format, pack
 
 - **ASCII-only characters** - Never use Unicode em-dashes, en-dashes, or box-drawing characters
 - **Dashes, not equals** - Always use `-` for dividers, never `=`
-- **Box comment spacing** - ALL box comments (79-char file headers and 73-char sections) ALWAYS have a blank line after
+- **Box comment spacing** - ALL box comments (file headers with 79-dash dividers and sections with 73-dash dividers) ALWAYS have a blank line after
 - **Professional tone** - No personal references, no numbered lists, no casual language
 - **Self-documenting** - Code explains *why*, not just *what*
 - **Streaming over buffering** - Use `io.Pipe` and streaming patterns for object data; never buffer entire objects in memory
@@ -43,7 +43,9 @@ description: "The project's Go conventions: comment and file-header format, pack
 
 ## Comment Types and Spacing
 
-### File Header (79 characters)
+### File Header (79-dash dividers)
+
+The divider is `// ` followed by 79 dashes, 82 characters in all.
 
 **Format:**
 ```go
@@ -66,7 +68,9 @@ package mypackage
 - Blank line before closing divider
 - **Blank line after closing divider** - always separate box from code
 
-### Major Section Box (73 characters)
+### Major Section Box (73-dash dividers)
+
+The divider is `// ` followed by 73 dashes, 76 characters in all.
 
 **Format:**
 ```go
@@ -89,7 +93,7 @@ func doSomething() {
 
 Every file with more than one logical group of declarations carries section boxes, so a reader lands in a familiar shape whichever file they open. A file under roughly 100 lines with a single concern does not - a box per file is noise, not structure.
 
-**Section vocabulary.** Prefer these names, in this order, so the same concept is not called three things across the tree:
+**Section vocabulary.** Use these names, in this order, so the same concept is not called three things across the tree:
 
 | Section | Holds |
 |---------|-------|
@@ -97,11 +101,12 @@ Every file with more than one logical group of declarations carries section boxe
 | `TYPES` | the types a file declares |
 | `INTERFACE` | a consumer-declared or role interface |
 | `CONSTRUCTOR` | `New*` and the wiring it needs |
-| *domain sections* | the file's actual work, named for it: `ADMISSION`, `FLUSH`, `LISTINGS`, `SCRUB QUEUE`, `UNDER-REPLICATION` |
+| `PUBLIC API` | the exported methods and functions, when the file has one concern |
+| *domain sections* | the file's work, named for it, when it has several: `ADMISSION`, `FLUSH`, `LISTINGS`, `SCRUB QUEUE`, `UNDER-REPLICATION` |
 | `LIFECYCLE` | `Close`, `Shutdown`, and other teardown |
-| `INTERNALS` / `HELPERS` | unexported helpers the sections above call |
+| `INTERNALS` | unexported helpers the sections above call |
 
-Domain sections carry the weight: a file with `LISTINGS` / `STATISTICS AND WRITES` / `INTERNALS` tells a reader more than one split into `PUBLIC API` / `PRIVATE`.
+`PUBLIC API` and `INTERNALS` are the most common pair in the tree. When a file's exported surface splits into distinct areas, name the areas instead: `LISTINGS` / `STATISTICS AND WRITES` / `INTERNALS` tells a reader more than one `PUBLIC API` box over all of it.
 
 ### Comments Inside Declaration Blocks
 
@@ -170,10 +175,10 @@ m.usage.Record(backendName, 2, movedSize, 0) // Get + Delete, egress
 
 ```
 Is this a file header?
-  YES -> Use 79-char divider, blank line AFTER
+  YES -> Use 79-dash dividers, blank line AFTER
 
 Is this a major section (types, public API, internals)?
-  YES -> Use 73-char box, blank line AFTER
+  YES -> Use a box with 73-dash dividers, blank line AFTER
 
 Is this a minor division or label within a function?
   YES -> Use a standard single-line comment, NO blank line before code
@@ -182,13 +187,13 @@ Is this explaining a specific line?
   YES -> Use inline comment
 ```
 
-**Key Rule:** ALL box comments (79-char and 73-char) have a blank line after. Single-line comments have no extra spacing.
+**Key Rule:** ALL box comments (79-dash and 73-dash) have a blank line after. Single-line comments have no extra spacing.
 
 ---
 
 ## File Headers
 
-Every `.go` file starts with a 79-char header block:
+Every hand-written `.go` file starts with a header block with 79-dash dividers. Generated files (sqlc output under `store/postgres/sqlc`, mockgen output) keep the header their generator writes.
 
 ```go
 // -------------------------------------------------------------------------------
@@ -228,7 +233,7 @@ package backend
 **Rules:**
 - One sentence is the floor; pin the package's invariants and link out to the implementation files for per-symbol detail
 - Only `doc.go` carries a package comment; every other file keeps its box header + blank line before `package`
-- Every package has one, including `main` and test-only helper packages. A new package without a `doc.go` is incomplete
+- Every hand-written package has one, including `main` and test-only helper packages. A new package without a `doc.go` is incomplete. The generated `store/postgres/sqlc` package is the exception
 
 `go/doc` concatenates every package comment it finds, in file-name order, so a second one does not replace the first - it appends to it, and the rendered overview says the same thing twice. That is the reason for the one-file rule.
 
@@ -254,39 +259,37 @@ import (
     "fmt"
     "time"
 
+    "github.com/prometheus/client_golang/prometheus"
+    "go.opentelemetry.io/otel/attribute"
+
     "github.com/afreidah/s3-orchestrator/internal/observe/audit"
     "github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-
-    "go.opentelemetry.io/otel/attribute"
-    "github.com/prometheus/client_golang/prometheus"
 )
 ```
 
-Order: stdlib, internal packages, external packages.
+Order: stdlib, external packages, this module's packages. `goimports` enforces it through `local-prefixes: github.com/afreidah/s3-orchestrator` in `.golangci.yml`. When two imports share a name, alias the less central one by role (`s3be`, `objcache`, `pobserve`) rather than by abbreviation.
 
 ### Naming
 
 - **Exported types** get standard Go doc comments placed directly above the declaration
 - **Constants** grouped by concern with `const` blocks, named in `CamelCase`
 - **Sentinel errors** use `Err` prefix: `ErrObjectNotFound`, `ErrDBUnavailable`
-- **S3Error type** wraps HTTP status + S3 error code for typed error responses
-- **Operation names** are consistent PascalCase strings matching S3 API names: `"PutObject"`, `"GetObject"`, `"CreateMultipartUpload"`
+- **S3Error type** (`store/core/errors.go`) wraps HTTP status + S3 error code for typed error responses
+- **Operation names** are the typed constants of `s3op.Operation`, named for the S3 API call: `s3op.PutObject`, `s3op.GetObject`. The set is closed: accounting, usage limits and config validation all take an `s3op.Operation`, never a bare string
 
 ### Struct Organization
 
-Group related fields with inline comments explaining non-obvious fields:
+Group related fields, with end-of-line comments on the ones whose role is not obvious from the name and type (`internal/proxy/object/manager.go`, abridged):
 
 ```go
 type Manager struct {
-    core        Runtime                // infrastructure subset: backends, usage, timeout, metrics
-    coord       *writepath.Coordinator // write-path helpers, shared with the multipart manager
+    core        Runtime                // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+    coord       *writepath.Coordinator // write-path helpers shared with the multipart manager
     stores      Stores                 // direct store access for read paths and quota inspection
-    encryptor   *encryption.Encryptor  // nil when encryption is disabled
-    cache       *LocationCache         // key -> backend, consulted only in degraded mode
+    encryptor   *encryption.Encryptor
     objectCache objcache.ObjectCache   // nil when object data caching is disabled
-    failover    *readpath.Failover     // per-key read failover + degraded-mode broadcast
-
-    integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // shared with the multipart manager
+    failover    *readpath.Failover     // per-key read failover + degraded-mode broadcast orchestrator
+    log         *slog.Logger
 }
 ```
 
@@ -310,8 +313,10 @@ Applied across `internal/store` (the per-role store interfaces consumed at use s
 
 | Location | Holds |
 |---|---|
-| `internal/proxy/<consumer>/consumer_interfaces.go` | All narrow interfaces this consumer declares against other proxy subpackages and external clients |
-| `internal/worker/ops_runtime.go` | The worker-side `Ops` interface against the proxy infrastructure |
+| `internal/proxy/<consumer>/consumer_interfaces.go` | The narrow interfaces `readpath`, `multipart`, `writepath` and `object` declare against other proxy subpackages |
+| Beside the constructor that takes it | Everywhere else: `backendstate.Runtime` in `manager.go`, `writepath.CoordinatorStores` in `coordinator.go`, the `Stores` composites of `object`, `multipart`, `reconcile` and `usage` |
+| `internal/worker/ops_runtime.go` | The worker-side `Ops`, `FleetOps` and `Placement` interfaces against the proxy infrastructure |
+| `internal/ops/interfaces.go` | What the operations layer needs from workers and the runtime (`ReplicatorOps`, `ScrubberOps`, ...) |
 | `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
 
 **Naming convention:** name the interface for the producer concept and let the package name the consumer - `multipart.Runtime` and `object.Runtime` are each package's view of `*infra.BackendRuntime`.
@@ -335,14 +340,20 @@ type Manager struct {
 }
 ```
 
-**Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, add a `//go:generate mockgen -source=consumer_interfaces.go -destination=mock/<file>.go -package=<pkg>mock` directive at the top of the consumer interface file and run `make generate`. Until a mock is needed, the interface declaration alone documents the dependency surface - generating unused mocks is busywork.
+**Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, put a directive directly above it that writes a `_test.go` mock into the same package, and run `make generate`:
+
+```go
+//go:generate mockgen -destination=mock_stores_test.go -package=writepath github.com/afreidah/s3-orchestrator/internal/proxy/writepath CoordinatorStores
+```
+
+Until a mock is needed, the interface declaration alone documents the dependency surface - generating unused mocks is busywork.
 
 **When NOT to declare a narrow interface (#918).** A consumer-side interface earns its keep when at least one of these is true:
 
 1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
-2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `admin.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps`/`Reconciler` whose fakes drive admin handler branches).
+2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `ops.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps` and `admin.Reconciler`, whose fakes drive the operations layer and the admin handlers).
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` - without the interface, `readpath` would have to import `object` which already imports `readpath`).
-4. **The interface models a real domain boundary** between subsystems (`drain.Runtime`, `multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
+4. **The interface models a real domain boundary** between subsystems (`backendstate.Runtime`, `multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 
 If none apply - single impl, single consumer, no test fake, no cycle, no boundary - pass the concrete `*Type` directly. Examples cut: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, `object.Coordinator`. Splitting one dependency into role interfaces that nothing uses on its own fails the same test.
 
@@ -352,22 +363,26 @@ If none apply - single impl, single consumer, no test fake, no cycle, no boundar
 - `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles.
 - `storetest.MetadataStore`, the mockgen target, so one generated mock stands in wherever a test needs a fully-populated store.
 
-The union is not a fact about the domain: nothing in persistence requires one object to implement all seventeen roles, and a design that split persistence across several objects would satisfy every role interface and violate nothing. What it encodes is that there happens to be one store type per engine, which is wiring rather than domain.
+The union is not a fact about the domain: nothing in persistence requires one object to implement all nineteen roles, and a design that split persistence across several objects would satisfy every role interface and violate nothing. What it encodes is that there happens to be one store type per engine, which is wiring rather than domain.
 
-Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/transport/*` declares its own role-composite naming exactly the per-role interfaces it needs:
+Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/transport/*` declares its own role-composite naming exactly the per-role interfaces it needs, plus any single methods it calls from a role it otherwise does not need:
 
   ```go
   // internal/worker/scrubber.go
   type ScrubberStore interface {
       core.IntegrityStore
+      LedgerStats(ctx context.Context) (core.LedgerStats, error)
+      DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
+      // ...
   }
 
   // internal/proxy/writepath/coordinator.go
-  type Stores interface {
+  type CoordinatorStores interface {
       core.ObjectStore
       core.QuotaStore
       core.PendingStore
       core.CleanupStore
+      CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error)
   }
   ```
 
@@ -390,7 +405,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
 
 For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` - `KeyProvider`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 
-Multi-method interfaces are exempt: `worker.Ops`, `object.Runtime`, `drain.Runtime` describe a role, not a single action, so the `-er` form does not apply.
+Multi-method interfaces are exempt: `worker.Ops`, `object.Runtime`, `backendstate.Runtime` describe a role, not a single action, so the `-er` form does not apply.
 
 ### Where new methods live
 
@@ -403,7 +418,7 @@ The split is by **persistence coupling**:
   metadata-store dependency along.
 - **A collaborator under `internal/proxy/*`** owns methods that read or write
   the metadata store, open transactions, or coordinate more than one of the
-  others. `object`, `multipart`, `writepath`, `drain` and `usage` each own a
+  others. `object`, `multipart`, `writepath`, `backendstate` and `usage` each own a
   slice of that, and each takes the store roles it needs directly.
 
 When in doubt: if the method needs the store, it belongs to whichever
@@ -417,10 +432,11 @@ Per-backend usage and per-operation metric accounting flow through one shared he
 
 | Intent | Use | Avoid |
 |---|---|---|
-| Backend call attempted, no bytes (success or failure) | `acct.APICall(backend)` | `Usage().Record(b, 1, 0, 0)` |
-| N backend calls (paginated lists, multipart bulks) | `acct.APICalls(backend, n)` | `Usage().Record(b, n, 0, 0)` |
-| Successful GET-like (bytes left the backend) | `acct.Egress(backend, size)` | `Usage().Record(b, 1, size, 0)` |
-| Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(backend, size)` | `Usage().Record(b, 1, 0, size)` |
+| May this backend take the call (usage limits) | `acct.Allow(backend, ops, egress, ingress)` | `Usage().WithinLimits(...)` |
+| Backend call attempted, no bytes (success or failure) | `acct.APICall(op, backend)` | `Usage().Record(b, 1, 0, 0)` |
+| N backend calls (paginated lists, multipart bulks) | `acct.APICalls(op, backend, n)` | `Usage().Record(b, n, 0, 0)` |
+| Successful GET-like (bytes left the backend) | `acct.Egress(op, backend, size)` | `Usage().Record(b, 1, size, 0)` |
+| Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(op, backend, size)` | `Usage().Record(b, 1, 0, size)` |
 | Per-operation Prometheus histogram | `acct.Operation(op, backend, start, err)` | `RecordOperation(op, b, start, err)` |
 | Common combo: Operation + Ingress | `acct.PutSuccess(op, backend, size, start)` | both above, two lines |
 | Common combo: Operation + Egress | `acct.GetSuccess(op, backend, size, start)` | both above, two lines |
@@ -430,7 +446,7 @@ The cardinal rule "every backend call costs one API-call charge regardless of ou
 
 Exceptions - *not* every Usage call goes through Recorder:
 - The operations layer's bulk passes take a `UsageGate` and call `Record(b, apiCalls, egress, ingress)` on the tracker with an arbitrary tuple. That bypasses the per-attempt rule on purpose: a fleet-wide rewrite asks once and spends in units the Recorder has no name for.
-- Tests that exercise the tracker's own semantics (`manager_usage_test.go`) call `Usage().Record` directly - they're verifying the tracker, not the accounting rule.
+- The usage tracker's own tests in `internal/counter` call `Record` directly - they're verifying the tracker, not the accounting rule.
 
 ### Variable Naming
 
@@ -457,6 +473,17 @@ const (
     RoutingSpread RoutingStrategy = "spread"
 )
 ```
+
+### Bit-Flag Sets
+
+A set of independent yes/no properties is an integer of bits, not a struct of bools or one string state. The two in the tree are `core.PermissionSet` (what a grant allows) and `core.BackendFlags` (an operator-set backend state: cordoned, draining, drained, drain-failed).
+
+- **Declare the bits and one vocabulary.** The type declares its bits with `1 << iota` and one `bitset.Vocabulary` pairing each bit with its name, in render order. It renders through the vocabulary (`Names`, `Join`) and its test calls `Vocabulary.Validate`, which fails on a shared bit or a repeated name. `internal/util/bitset` holds only what every flag type uses; anything one type needs on its own (`PermissionSet.Has`, the `all` shorthands, parsing operator input) stays with that type.
+- **Masks live beside the type, named by purpose.** Consumers import `core.AcceptForWrite` or `core.AcceptForReconcile` and never assemble a mask of their own, so two consumers that want the same backends share one definition, and a deliberate difference between them is two names in one file.
+- **Prefer accept masks.** A consumer states the flags it tolerates and tests `(flags &^ accept) == 0`. A flag added later is then refused everywhere until a mask accepts it, so a forgotten update holds a backend back instead of sending it work.
+- **Say how the set is stored, because it decides whether bits may move.** `PermissionSet` is stored as names in a text column, so its bits may be renumbered. `BackendFlags` is stored as an integer because SQL tests it, so its bit positions are part of the schema: bits are only ever added. The type's doc comment states which rule applies, and a set stored as an integer is signed (`int64`) to match the column.
+- **No bit numbers in SQL.** A mask or a bit reaches a query only as a parameter the store binding passes from `core`: `(c.flags & ~@accepts::bigint) = 0`, never `(c.flags & 15) = 0`. sqlc does not recognize a parameter directly after `~`, so wrap it: `~(@accepts::bigint)`.
+- **Parenthesize the test.** Write `(flags & mask) != 0`, not `flags&mask != 0`, so the grouping reads at a glance. gofmt keeps the spaces inside parentheses.
 
 ### No Empty Cleanup Funcs
 
@@ -503,7 +530,9 @@ When the cleanup truly must be a callback (e.g., interface contract), wrap it in
 - **`syncutil.TTLCache[K,V]`** for generic TTL-based caches with background eviction
 - **Atomic counters** for usage tracking, flushed periodically to the database
 - **Context-scoped timeouts** via helper methods (`m.WithTimeout(ctx)`) for backend calls
-- **Graceful shutdown** via `context.WithCancel` + signal handling
+- **`workerpool.Run`** for bounded fan-out over a slice; never hand-roll a semaphore and `WaitGroup`
+- **`batch`** (`Pager`, `Runner`, `Summary`) for any pass that pages through rows and acts on each: it owns the cursor walk, per-item outcome counting and the zero-progress guard
+- **Graceful shutdown** via `signal.NotifyContext` in `main`; the cancelled context drives every service's shutdown
 
 ---
 
@@ -514,39 +543,59 @@ responsibility matches; an outer layer must not import a more outer layer, and
 inner layers must never import the transport packages.
 
 ```
-cmd/s3-orchestrator/         # Binary entry point: flag parsing + os.Exit wrapper
+cmd/s3-orchestrator/         # Binary entry point: one file per subcommand, dispatch + os.Exit
 internal/
-  cli/                       # Subcommand dispatch (admin, init, sync, serve, validate)
-    serve/                   # Server bootstrap: builds DI injector, starts HTTP listener
-    adminctl/                # `s3-orchestrator admin ...` subcommands (HTTP client to admin API)
-    initcmd/                 # `s3-orchestrator init` interactive config writer
-    synccmd/                 # `s3-orchestrator sync` bucket reconcile entry point
+  cli/                       # Subcommand implementations
+    serve/                   # `serve`: load config, build a runtime.Runtime, run it
+    adminctl/                # `admin ...` subcommands over the admin API
+    adminclient/             # Shared HTTP transport for the admin API (adminctl, tui)
+    admintarget/             # Resolves the admin address and credentials from flags/env/config
+    output/                  # Terminal rendering of admin API responses
+    tui/                     # `tui`: the terminal dashboard
+    initcmd/                 # `init`: interactive config writer
+    synccmd/                 # `sync`: import a bucket's existing objects
+    validatecmd/             # `validate`: config check
+  runtime/                   # Daemon composition root: observability, DI, listener, workers, reload, shutdown order
+  reload/                    # SIGHUP-driven config reload
   config/                    # YAML + env config: types, defaults, validators
   transport/                 # HTTP layer (no business logic)
+    httpserver/              # The listener and route mux for S3, admin, UI and metrics
     s3api/                   # S3-compatible XML/REST handlers
-    admin/                   # Admin API handlers
+    admin/                   # Admin API handlers and the route table
     ui/                      # Dashboard handlers + templates
-    auth/                    # SigV4 verification + bucket auth
+    auth/                    # SigV4 verification, users, grants, bucket registry
+    cors/                    # Browser preflight for the S3 surface
     httputil/                # Cross-cutting HTTP helpers (trusted proxies, login throttle, cert reload)
+  ops/                       # Operations layer: what the orchestrator can be told to do, shared by admin and UI
   proxy/                     # Orchestration layer: a namespace over the collaborators below, with no root object
-    infra/                   # BackendRuntime: fleet, usage counters, admission, timeouts
+    infra/                   # BackendRuntime: fleet, usage counters, admission, timeouts, error classification
+    accounting/              # Recorder: per-backend usage and per-operation metrics
     object/                  # Object CRUD, read failover, broadcast reads
     multipart/               # Multipart upload lifecycle
     writepath/               # Shared write helpers: routing, pending intents, recovery
     readpath/                # Read failover orchestrator
+    backendstate/            # Operator-set backend flags: cordon, drain
+    reconcile/               # Folding a backend's real contents into the ledger
+    expiry/                  # Lifecycle expiration rules
     usage/                   # Counter flush to the store + the drift reconcile
     metrics/                 # Per-backend metric collector
-    drain/                   # Backend drain coordinator
     dashboard/               # Dashboard read aggregator
-  worker/                    # Background services: replicator, rebalancer, cleanup, scrubber, reaper
-  store/                     # Metadata persistence
-    core/                    # Engine-agnostic orchestration (TxAdapter, Runner, business rules)
-    postgres/                # Postgres engine adapter (sqlc-generated under sqlc/); CB protection lives in the DBTX wrapper
-    sqlite/                  # SQLite engine adapter; CB protection lives in the DB wrapper
-  backend/                   # S3-compatible client interface + per-provider adapters
+    etag/                    # S3 entity tags
+    observe/                 # Per-operation completion observability
+    proxytest/               # Shared store fixtures for proxy tests
+  worker/                    # Background services: replicator, rebalancer, over-replication, cleanup, pending reaper, scrubber, drainer, reconciler
+  store/                     # Metadata persistence; store/circuitbreaker.go wraps both engines
+    core/                    # Engine-agnostic types, role interfaces, business rules
+    postgres/                # Postgres engine (goose migrations, sqlc-generated queries under sqlc/)
+    sqlite/                  # SQLite engine
+    storetest/               # Generated store mocks + the hand-written permissive store
+  backend/                   # The ObjectBackend interface, the S3 implementation, breaker and recovery wrappers
   encryption/                # Envelope encryption: chunked AES-GCM, key providers (config/file/Vault)
-  observe/
+  compression/               # Chunked seekable zstd
+  provisioning/              # Merging config-declared and stored buckets, users and grants
+  observe/                   # Span envelope helpers (span.go)
     audit/                   # Request-id context plumbing + structured audit log helper
+    logfmt/                  # Shared slog attribute helpers
     telemetry/               # Prometheus metrics + OTel span helpers
     event/                   # Notification event types (CloudEvents)
   notify/                    # Webhook delivery worker (consumes notification_outbox)
@@ -555,37 +604,55 @@ internal/
   breaker/                   # Generic three-state CircuitBreaker (used for DB and backends)
   lifecycle/                 # Service supervisor: restart-on-panic, graceful Stop
   di/                        # samber/do/v2 wiring point (NewInjector + every Provide func)
+  debug/                     # Opt-in diagnostic services (flight recorder)
+  s3op/                      # The closed set of backend operation names
+  internalkey/               # The "bucket/userkey" namespacing convention
+  instanceid/                # Stable per-process identifier
+  progress/                  # Transport-agnostic progress observer for long passes
   util/
+    bitset/                  # Shared bit-flag vocabulary (see Bit-Flag Sets)
+    batch/                   # Paged walks, item runners, outcome summaries
     bufpool/                 # Pooled byte buffers for streaming I/O
+    humanize/                # Operator-facing units
+    ioutilx/                 # io.Reader composition helpers
+    materialize/             # One-shot stream to seekable reader
+    must/                    # Required-dependency panics for constructors
     syncutil/                # AtomicConfig, TTLCache primitives
     workerpool/              # Bounded-concurrency worker pool
-  integration/               # End-to-end integration tests against MinIO + Postgres testcontainers
+  testutil/testx/            # Generic test helpers
+  integration/               # End-to-end tests (build tag `integration`) against MinIO + Postgres testcontainers
 ```
 
 ### Layer Responsibilities
 
-| Layer | Imports | Responsibility |
-|---|---|---|
-| `cmd/`, `cli/` | Everything | Wire flags, build the DI injector, invoke top-level services |
-| `transport/` | `proxy`, `auth`, `observe` | Decode HTTP, authenticate, dispatch to manager, encode S3-XML response |
-| `proxy/` | `worker`, `store`, `backend`, `observe`, `counter` | Routing strategy, broadcast reads, location cache, worker hosts |
-| `worker/` | `store`, `backend`, `observe` | Background services driven by the lifecycle manager |
-| `store/` | nothing app-specific | Metadata persistence; engine-agnostic orchestration in `core/`, engines under `postgres/` and `sqlite/` |
-| `backend/` | nothing app-specific | Per-provider S3 client wrappers behind one `ObjectBackend` interface |
-| `observe/` | nothing app-specific | Logging, tracing, metrics, audit |
-| `di/` | All public surfaces | Single wiring point that registers every provider |
+| Layer | Responsibility |
+|---|---|
+| `cmd/`, `cli/`, `runtime/` | Parse flags, build the DI injector, run and stop top-level services |
+| `transport/` | Decode HTTP, authenticate, authorize, dispatch, encode the response. The S3 handlers call the object and multipart managers; admin and UI call `ops` |
+| `ops/` | Operations the control plane can request, expressed once for every transport. Returns domain values; knows nothing about HTTP |
+| `proxy/` | Routing, admission, failover, write coordination, backend state |
+| `worker/` | Background services driven by the lifecycle manager |
+| `store/` | Metadata persistence; engine-agnostic rules in `core/`, engines under `postgres/` and `sqlite/` |
+| `backend/` | S3 client behind one `ObjectBackend` interface |
+| `observe/` | Logging, tracing, metrics, audit |
+| `di/` | Single wiring point that registers every provider |
 
-Inner layers must not import outer layers (no `store` importing `transport`).
-The compiler does not enforce this, so reviewers must - it is the rule that
-keeps the code testable and the dependency graph acyclic.
+Inner layers must not import outer layers (no `store` importing `transport`,
+no `proxy` importing `ops`). One part of this is enforced: the `store-boundary`
+depguard rule in `.golangci.yml` refuses an import of `store/postgres` or
+`store/sqlite` outside `store`, `di`, `cli` and `cmd`, so feature code reaches
+the store only through the role interfaces in `store/core`. The rest is held
+by review, and it is the rule that keeps the code testable and the dependency
+graph acyclic.
 
 ### Layered Read of a Single PUT
 
 ```
-client -> transport/s3api  (parse, auth)
-       -> proxy/manager    (routing, quota check, location cache)
-       -> backend          (S3 PUT)
-       -> store/core       (RecordObject in a tx)
+client -> transport/s3api      (parse, authenticate, authorize)
+       -> proxy/object         (admission, encryption/compression, choose a target)
+       -> proxy/writepath      (pending intent, claim the target)
+       -> backend              (S3 PUT)
+       -> store/core           (record the object and promote the intent in one tx)
        -> response back through the layers
 ```
 
@@ -596,10 +663,12 @@ The arrow direction is strict: `store/core` never calls back into `proxy`.
 ## Dependency Injection
 
 DI uses [samber/do/v2](https://github.com/samber/do/v2) and is centralised
-in `internal/di/di.go`. Every external dependency, store role, worker, and
-top-level handler has a `Provide<Name>` function registered there. Callers
-resolve dependencies via `do.Invoke[Foo](inj)` at the moment they are
-needed; nothing is constructed until it is asked for.
+in `internal/di`. Every external dependency, collaborator, worker, and
+top-level handler has a `Provide<Name>` function, and `NewInjector` in
+`injector.go` registers them all. Store roles are not providers: the opened
+engine is registered once as `metadataStore` and aliased into the roles a
+consumer resolves directly with `do.MustAs`. Nothing is constructed until it
+is asked for.
 
 ### Two Foundational Rules
 
@@ -614,25 +683,32 @@ needed; nothing is constructed until it is asked for.
 
 ### Provider Pattern
 
-Every provider follows the same shape:
+Every provider follows the same shape. A provider with more than one
+dependency resolves them through the batch `resolver` (`resolve.go`) and
+checks the error once:
 
 ```go
-// ProvideRebalancer constructs the rebalancer worker.
-func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
-    c, err := resolveWorkerCore(i)
-    if err != nil {
-        return nil, err
+// ProvideS3Server creates the S3 API server.
+func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
+    r := newResolver(i)
+    cfg := r.Resolve[*config.Config]()
+    objects := r.Resolve[*object.Manager]()
+    multipartManager := r.Resolve[*multipart.Manager]()
+    bucketAuth := r.Resolve[*auth.BucketRegistry]()
+    if r.err != nil {
+        return nil, r.err
     }
-    // Fleet primitives come from the runtime; the write coordinator
-    // supplies the Placement facet (target selection, delete/move).
-    return worker.NewRebalancer(c.Runtime, c.Coord, c.Stores), nil
+    srv := s3api.NewServer(objects, multipartManager, cfg.Server.MaxObjectSize)
+    srv.SetBucketAuth(bucketAuth)
+    return srv, nil
 }
 ```
 
 Providers take a `do.Injector`, resolve their own dependencies through it,
-and return either the value or an error. They never panic, never log, and
-never spawn goroutines. CB protection lives inside each driver's DBTX/DB
-chokepoint, so providers do not wrap stores with per-role decorators.
+and return either the value or an error. They never panic and never spawn
+goroutines, and they log only to report a degraded optional dependency. CB
+protection lives inside each driver's DBTX/DB chokepoint, so providers do not
+wrap stores with per-role decorators.
 
 ### Wiring Point
 
@@ -641,71 +717,87 @@ package that imports the concrete engine packages (`store/postgres`,
 `store/sqlite`, each backend driver, etc.). Providers are split across
 focused files by concern:
 
-- `injector.go` - `NewInjector` and the top-level registration order
-- `store.go`    - database, role aliases, instance ID, metrics deps
-- `backend.go`  - S3 backends, breaker registry, backend manager, and the
-                  optional providers feeding it (encryption, Redis counters,
-                  object cache)
-- `workers.go`  - background worker providers
+- `injector.go`  - `NewInjector`, the top-level registration order, and the
+                   `do.MustAs` role aliases
+- `store.go`     - database, the `metadataStore` union, instance ID
+- `backend.go`   - S3 backends, breaker registry, backend runtime, the
+                   proxy collaborators, and the optional providers feeding
+                   them (encryption, Redis counters, object cache)
+- `workers.go`   - background worker providers and the backend state manager
 - `lifecycle.go` - lifecycle manager and per-mode service registration
-- `transport.go` - S3, admin, UI, notifier, rate limiter, login throttle
-- `optional.go`  - `invokeOptional[T]` and `resolveOptional*` helpers
-- `services.go`  - lifecycle Runner wrappers (locked-ticker background jobs)
+- `transport.go` - S3, ops, admin, UI, CORS, notifier, rate limiter, login throttle
+- `provisioning.go` - the provisioning registry and its cross-instance refresh
+- `debug.go`     - opt-in diagnostic services
+- `services.go`  - lifecycle Runner wrappers (locked-ticker background jobs),
+                   with their consumer interfaces in `service_interfaces.go`
+- `resolve.go`   - the batch `resolver`
+- `optional.go`  - `Optional[T]` and `IsRegistered[T]`
+- `wiring.go`    - `WireManager`, the boot-time smoke check that every
+                   required worker resolves
 
-New providers go in the file matching their concern, with `73-char`
-section dividers when a single file hosts multiple groups.
+New providers go in the file matching their concern, with section boxes
+when a single file hosts multiple groups.
 
 ### Consuming a Service
 
-The transport layer and CLI commands resolve services from the injector:
+Components never hold the injector. A provider resolves what a component
+needs and passes it to the constructor, usually as a `Deps` struct:
 
 ```go
-func (h *Handler) handleAdminReplicate(w http.ResponseWriter, r *http.Request) {
-    repl, err := do.Invoke[*worker.Replicator](h.inj)
+func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
+    d, err := resolveAdminHandlerRequiredDeps(i)
     if err != nil {
-        writeError(w, http.StatusInternalServerError, err)
-        return
+        return nil, err
     }
-    n, err := repl.Replicate(r.Context(), repl.Config())
-    // ...
+    // ... optional deps
+    return admin.New(deps), nil
 }
 ```
 
-The handler holds `do.Injector`, not the resolved service - that keeps
-the handler decoupled from concrete provider behaviour and lets tests
-substitute fakes by registering a different provider.
+The only code that holds `do.Injector` is the composition layer around the
+injector itself: `runtime`, `reload` and `httpserver`, which resolves the
+top-level handlers once when it builds the route mux. Tests build a
+component with fakes in its `Deps` rather than registering a fake provider.
 
 ### Adding a New Provider
 
-1. Add a `Provide<Name>` function in the appropriate section of
-   `internal/di/di.go`.
-2. Inside the function, call `do.Invoke[Dep](i)` for each dependency.
-3. Construct the new component and return `(value, nil)`.
-4. If the new component is consumed somewhere, the consumer should call
-   `do.Invoke[Name](inj)` rather than holding the value as a field.
+1. Add a `Provide<Name>` function to the `internal/di` file matching its
+   concern.
+2. Resolve its dependencies with `newResolver(i)` and check `r.err` once.
+3. Construct the component, passing what it resolved, and return
+   `(value, nil)`.
+4. Register it in `NewInjector`. A worker the lifecycle manager runs is
+   also added to `registerWorkerServices` in `lifecycle.go`.
 
 ### Optional Providers
 
 Some providers register only when a feature is enabled (encryption,
 Redis counters, UI, notifications) or only in specific run modes
-(reconciler is worker/all-only). Consumers that may run in either mode
-use the `invokeOptional[T]` helper, which returns the zero value of `T`
-when the service is not registered:
+(the reconciler runs in worker/all mode only). A consumer that may run
+without one resolves it with `Optional[T]`, which tells apart "not
+registered" (`ResolutionDisabled`) from "registered but failed to build"
+(`Failed()`):
 
 ```go
-return admin.New(&admin.Deps{
-    // ... required deps from resolveAdminHandlerRequiredDeps
-    Reconciler: invokeOptional[*worker.Reconciler](i),
-})
+recRes := Optional[*worker.Reconciler](i)
+if recRes.Failed() {
+    slog.WarnContext(ctx, "reconciler resolution failed; admin reconcile endpoint will be inert",
+        logfmt.Component("di"), "error", recRes.Err)
+}
+deps := &admin.Deps{
+    // ...
+    Reconciler: recRes.Value,
+}
 ```
 
-Required providers should still bail with the `do.Invoke` error so a
-genuinely missing dependency surfaces at boot, not at first use.
+`IsRegistered[T]` checks presence without building the service. Required
+providers still return the resolution error so a genuinely missing
+dependency surfaces at boot, not at first use.
 
 ### Anti-Patterns
 
 - Constructing a real dependency in a constructor that already has a
-  provider. Always go through `do.Invoke`.
+  provider. Take it as a parameter and let the provider resolve it.
 - Passing a `*slog.Logger` through the constructor argument list.
   Long-lived components hold a private `log *slog.Logger` field set
   inside the constructor body via
@@ -713,12 +805,10 @@ genuinely missing dependency surfaces at boot, not at first use.
   `observe/telemetry` package-level vars directly. Free helper
   functions call `slog.XContext(ctx, ...)` directly. See
   [`docs/contributing/logging.md`](contributing/logging.md).
-- Storing the injector as a field on a non-handler struct. Workers,
-  managers, and stores receive their dependencies as constructor args
-  resolved in the provider; only handlers (HTTP/CLI entry points) carry
-  the injector itself. Adding a store method has its own mechanical
-  checklist, in
-  [`docs/contributing/store.md`](contributing/store.md).
+- Storing the injector as a field. Workers, managers, handlers and
+  stores receive their dependencies as constructor args resolved in the
+  provider; only the composition layer (`runtime`, `reload`,
+  `httpserver`) holds the injector itself.
 
 ### Constructor Patterns
 
@@ -740,7 +830,7 @@ Constructors at the DI/wiring boundary panic on missing required
 dependencies via `internal/util/must`. The boundary is the set of
 constructors a DI provider or a test fixture builds directly:
 every `worker.New*`, every `transport/{s3api,admin,ui}.New*`, and the
-`proxy/{drain,readpath,multipart,object,writepath,usage}` package
+`proxy/{backendstate,readpath,multipart,object,writepath,usage,reconcile}` package
 constructors that take a `*Deps` or interface bag. Internal helpers that are only called from one
 already-validated site (`accounting.New`, `metrics.New`,
 `dashboard.New`, `infra.New`) trust their caller and skip the panic.
@@ -785,8 +875,11 @@ mis-wiring the program, return an error instead of panicking.
 these types directly, it provides real or `gomock`-generated deps for
 every required field. Don't loosen production validation to fit lazy
 test wiring; widen the test fixture instead. The shared fixtures in
-`internal/proxy/proxytest`, `internal/testutil`, and the per-package
-`newTestHandler*` helpers exist for this purpose.
+`internal/proxy/proxytest`, `internal/store/storetest`, and the per-package
+`newTestHandler*` helpers exist for this purpose. Integration tests build
+some `Deps` literals by hand (`admin.Deps` among them), and they sit behind
+the `integration` build tag, so after adding a required field run
+`go vet -tags integration ./...` - a plain `go vet ./...` never compiles them.
 
 ---
 
@@ -795,93 +888,117 @@ test wiring; widen the test fixture instead. The shared fixtures in
 Each component type has a fixed checklist; following it keeps the code
 shape uniform across contributors.
 
-### Adding a New Backend
+### Supporting a New Storage Provider
 
-1. Implement the `backend.ObjectBackend` interface in
-   `internal/backend/<name>.go`. Constructor is `New<Name>(cfg config.BackendConfig)`.
-2. Add the new backend type to the config validator in
-   `internal/config/backends.go`.
-3. Wire it into the backend factory in `internal/di/di.go` so existing
-   `ProvideBackends` returns the new type when configured.
-4. Add a unit test in `internal/backend/<name>_test.go`. Integration
-   coverage comes from the existing MinIO testcontainer suite for any
-   S3-compatible provider.
-5. Update `README.md` and `docs/configuration.md` config sections.
+There is one backend implementation, `backend.S3Backend`, built by
+`NewS3Backend(ctx, *config.BackendConfig)`; a provider is a configuration
+of it, not a new type. Supporting a provider whose S3 dialect differs means
+a `BackendConfig` option (`ForcePathStyle`, `DisableChecksum` and
+`StripSDKHeaders` exist for GCS and friends), validated in
+`internal/config/backends.go` and applied in `internal/backend/s3.go`.
 
-### Adding a New Store Role
+1. Add the option to `BackendConfig` with its default and validation.
+2. Apply it where `NewS3Backend` builds the client, with a unit test in
+   `internal/backend/s3_test.go`. Integration coverage comes from the
+   MinIO testcontainer suite.
+3. Document it in `docs/backends.md` (the provider quick-reference) and
+   `docs/configuration.md`.
 
-The narrow-role layering means new operations slot into one of the
-existing role interfaces in `internal/store/core/interfaces.go`, or - if
-they truly belong to a new bounded concern - into a new role.
+### Adding a Store Method or Role
 
-1. Add the SQL in `internal/store/postgres/sqlc/queries/<role>.sql` and
-   the matching method in `internal/store/sqlite/<role>.go`.
-2. Run `make generate` to regenerate the sqlc-typed wrappers.
-3. Surface the operation on the role interface in
-   `internal/store/core/interfaces.go`. If business logic spans multiple
-   tables or transactions, add the orchestration to
-   `internal/store/core/<topic>.go` against `TxAdapter` so both engines
-   share one implementation.
-4. Add the CB-decorator method in `internal/store/cb_<role>.go`.
-5. Update `MockStore` in `internal/testutil/mock_store.go` and any
-   handwritten test mocks (`internal/proxy/mock_store_test.go` etc.).
-6. Add a `Provide<Role>` provider in `internal/di/di.go` if it is a new
-   role; otherwise the existing provider already covers it.
-7. Schema changes are written twice, once per engine, and both engines pin the
-   version they expect:
+The mechanical checklist - which interfaces to touch, `core.AssertEngine`,
+the mocks - is in [`docs/contributing/store.md`](contributing/store.md),
+the source of truth for the store. In short: a method goes on a role
+interface in `internal/store/core/interfaces.go`, is implemented in both
+`internal/store/postgres` and `internal/store/sqlite`, and the mocks are
+regenerated with `make generate`. A new role is also embedded in
+`core.engineRoles`, in `di.metadataStore`, and in
+`storetest.MetadataStore`. Three things are easy to miss:
 
-   **PostgreSQL** - add `internal/store/postgres/migrations/000NN_*.sql` and
-   bump `postgres.ExpectedSchemaVersion` to the new migration number.
+- `internal/store/storetest/permissive.go` is hand-written. A new method
+  that a fixture may pass through needs a stanza there; mockgen does not
+  add one.
+- `storetest/role_mocks.go` generates per-role mocks from the list in the
+  `go:generate` directive in `storetest/interface.go`. A test that needs a
+  mock of one role adds the role to that list.
+- Postgres queries live in `internal/store/postgres/sqlc/queries/*.sql`.
+  `make generate` runs `sqlc generate` against them, using the Postgres
+  migrations as the schema. sqlc does not recognize a named parameter
+  directly after an operator such as `~` or inside arithmetic: wrap it,
+  `~(@mask::bigint)`, or compute the value in Go and pass it whole.
 
-   **SQLite** - add `internal/store/sqlite/migrations/00NN_*.sql`, apply the
-   same change to `internal/store/sqlite/schema.sql`, and bump both
-   `sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version` value at
-   the bottom of `schema.sql`.
+If business logic spans multiple tables or transactions, put the
+orchestration in `internal/store/core/<topic>.go` against `TxAdapter` so
+both engines share one implementation.
 
-   Both files are needed because they serve different databases. `schema.sql`
-   is the baseline a fresh database is created from; the numbered migration is
-   what an existing database is upgraded through. A change made in only one of
-   them means a new install and an upgraded install disagree, which is the kind
-   of drift nothing notices until an operator hits it.
+### Changing the Schema
 
-   Migrations are named `<version>_<description>.sql`; the runner reads the
-   version from the file name, applies every migration above the recorded
-   version in order, and writes the version row in the same transaction as the
-   migration itself.
+Schema changes are written twice, once per engine, and both engines pin the
+version they expect. The engines number their migrations independently:
 
-   Data repair belongs in a migration too, not in a startup pass. A one-off
-   fixup that runs on every boot is unversioned, unrecorded, and invisible to
-   the operator whose data it rewrites.
+**PostgreSQL** - add `internal/store/postgres/migrations/000NN_*.sql` (goose
+format, `-- +goose Up` / `-- +goose Down`) and bump
+`postgres.ExpectedSchemaVersion` to the new number.
 
-   Missing a version bump leaves the binary refusing to start against a
-   database it just migrated, and only the integration suite catches it: those
-   tests are behind `//go:build integration`, so `go test ./...` compiles and
-   passes without them. Verify schema work with `make integration-test`.
+**SQLite** - add `internal/store/sqlite/migrations/00NN_*.sql`, apply the
+same change to `internal/store/sqlite/schema.sql`, and bump both
+`sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version` value at
+the bottom of `schema.sql`. Add a step undoing the migration to
+`schemaRewindSteps` in `sqlite/store_test.go`, so the upgrade tests can
+rewind a fresh database to the previous version and migrate it forward.
+
+Both SQLite files are needed because they serve different databases.
+`schema.sql` is the baseline a fresh database is created from; the numbered
+migration is what an existing database is upgraded through. A change made in
+only one of them means a new install and an upgraded install disagree, which
+is the kind of drift nothing notices until an operator hits it.
+
+Data repair belongs in a migration too, not in a startup pass. A one-off
+fixup that runs on every boot is unversioned, unrecorded, and invisible to
+the operator whose data it rewrites.
+
+A missed version bump is caught by unit tests on both engines
+(`TestMigrations_AreNumberedAndReachExpectedVersion`). Whether the migration
+works against a real database is only covered by the integration suite,
+which is behind `//go:build integration`: verify schema work with
+`make integration-test`.
 
 ### Adding a New Worker
 
-1. Implement the worker in `internal/worker/<name>.go`. Define a narrow
-   ops interface (e.g. `<Name>Ops`) and a narrow store interface
-   (e.g. `<Name>WorkerStore`); the worker takes both as constructor args.
-2. The worker exposes `Run(ctx) error` (long-lived) or `Process<X>(ctx)`
-   (called per tick) - lifetime determines which.
-3. Register a `Provide<Name>` provider in `internal/di/di.go`.
-4. Register the worker with the lifecycle manager in `registerWorkerServices`
-   inside `di.go`. Long-lived workers go through `lifecycle.Manager`;
-   periodic workers wrap a ticker and an advisory lock.
-5. Add metrics in a per-worker file under
-   `internal/observe/telemetry/metrics_<worker>.go` if needed.
+1. Implement the worker in `internal/worker/<name>.go`. It takes the
+   shared worker interfaces it needs from `ops_runtime.go` (`Ops`,
+   `FleetOps`, `Placement`) plus a `<Name>Store` role composite naming
+   the store roles it uses (`RebalancerStore`, `ScrubberStore`).
+2. The worker exposes `Run(ctx)` (a long-lived loop) or a per-tick
+   `Process<X>(ctx) batch.Summary` - lifetime determines which.
+3. Add a `Provide<Name>` provider in `internal/di/workers.go` and
+   register it in `NewInjector`.
+4. Register it with the lifecycle manager in `registerWorkerServices`
+   (`internal/di/lifecycle.go`). Periodic workers run on a ticker under
+   an advisory lock.
+5. Add metrics to the domain's file under `internal/observe/telemetry/`
+   (`metrics_workers.go` for the shared per-worker families).
 
-### Adding a New HTTP Handler
+### Adding an Admin API Endpoint
 
-1. Define the handler in the appropriate `internal/transport/` sub-
-   package. Handler signatures are `func (h *Handler) handle<X>(w http.ResponseWriter, r *http.Request)`.
-2. The handler resolves its dependencies through the injector held on
-   `*Handler`; it never constructs services itself.
-3. Authentication middleware is applied at the `Server` level - do not
-   reimplement auth inside individual handlers.
-4. Audit-log every state-changing request via `audit.Log(ctx, "<event>", ...)`.
-5. Update `docs/api-reference.md` for any new admin or UI endpoint.
+1. Add the route to the table in
+   `internal/transport/admin/handler_routes.go`, declaring its `Kind`
+   (the resource the permission is checked against) and `Perm`.
+   Authentication and authorization run from the table; handlers never
+   check permissions themselves.
+2. Put the work in `internal/ops` when it is an operation the dashboard
+   could also request, and keep the handler to decoding, calling, and
+   encoding.
+3. Audit-log every state-changing request through `audit.Log`.
+4. Run `make openapi` to regenerate `docs/openapi.yaml`.
+   `TestOpenAPISpec_MatchesRouteTable` fails on a stale spec, and the
+   `openapi-breaking` CI job flags a breaking change to an existing route.
+5. A new admin permission is a new bit on `core.PermissionSet`: add it to
+   the bit list and the vocabulary, include it in `PermAdminAll`, and
+   update the permission table in `docs/admin-api.md` and the bit table in
+   `web/content/diagrams/access-control.md`.
+6. Add the CLI verb in `internal/cli/adminctl` and, if the TUI offers it,
+   the client method in `internal/cli/adminclient`.
 
 ### Adding a New Metric
 
@@ -902,24 +1019,25 @@ they truly belong to a new bounded concern - into a new role.
 
 ### S3 Errors
 
-Use the `S3Error` type for errors that map to S3 HTTP responses:
+Use the `S3Error` type, declared with its sentinels in `internal/store/core/errors.go`, for errors that map to S3 HTTP responses:
 
 ```go
-var ErrObjectNotFound = &S3Error{
-    StatusCode: 404,
+ErrObjectNotFound = &S3Error{
+    StatusCode: http.StatusNotFound,
     Code:       "NoSuchKey",
-    Message:    "The specified key does not exist",
+    Message:    "object not found",
 }
 ```
 
-Handlers use `writeStorageError` to convert `S3Error` instances into XML responses. Untyped errors fall back to `502 InternalError`.
+The S3 handlers use `writeStorageError(w, err, fallbackMsg)` to turn an error into an XML response. A streaming-signature failure takes precedence (`403 SignatureDoesNotMatch`), then any `*S3Error` in the chain; anything else falls back to `502 InternalError`.
 
 ### Error Classification
 
-The `classifyWriteError` helper distinguishes database unavailability (circuit breaker open) from other failures, returning appropriate S3 error codes:
+`(*infra.BackendRuntime).ClassifyWriteError(span, op, err)` translates a store error on the write path into an S3 error and marks the span:
 
-- `ErrDBUnavailable` -> `503 ServiceUnavailable`
-- Other errors -> `502 InternalError`
+- `ErrDBUnavailable` (circuit breaker open) -> `ErrServiceUnavailable`, `503`, and a degraded-write rejection is counted
+- `ErrNoSpaceAvailable` -> `ErrInsufficientStorage`, `507`
+- Anything else is recorded on the span and returned unchanged
 
 ### Background Operation Errors
 
@@ -929,8 +1047,9 @@ Background workers (rebalancer, replicator, cleanup) log errors and continue rat
 
 ## Logging and Audit
 
-All logs are structured `log/slog` JSON with the JSON handler set in
-`internal/cli/serve/serve.go` `initLogging`. The full operational
+All logs are structured `log/slog` JSON. The handler chain (JSON, then
+the error handler, then `telemetry.TraceHandler`) is built in
+`startObservability` in `internal/runtime/observability.go`. The full operational
 logging conventions (helper package, attribute glossary, banned keys,
 component scoping, outcome rollups) live in
 [`docs/contributing/logging.md`](contributing/logging.md). This
@@ -946,16 +1065,18 @@ once in its constructor with the canonical `component` attribute:
 type PendingReaper struct {
     deps      Ops
     placement Placement
-    store     PendingReaperStore
+    store     core.PendingStore
     log       *slog.Logger
     // ...
 }
 
-func NewPendingReaper(deps Ops, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
+func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
+    must.NotNil("Ops", deps.Ops)
+    // ...
     return &PendingReaper{
-        deps:      deps,
-        placement: placement,
-        store:     store,
+        deps:      deps.Ops,
+        placement: deps.Placement,
+        store:     deps.Store,
         log:       slog.Default().With(logfmt.Component("pending_reaper")),
         // ...
     }
@@ -1031,17 +1152,15 @@ audit.Log(ctx, "rebalance.start",
 ### Request ID Propagation
 
 Request IDs flow through context via `audit.WithRequestID` /
-`audit.RequestID`. The `logfmt` package's init wires `audit.RequestID`
-as the accessor `logfmt.RequestIDFromCtx` reads, so worker logs can
-surface the inbound request ID without importing the audit package
-directly.
+`audit.RequestID`, and the acting user via `audit.WithUser` /
+`audit.User`. `audit.Log` reads both from context.
 
 - S3 API requests: extracted from `X-Request-Id` header or generated,
-  set on context before auth.
-- Internal operations: generated at the start of each background task
-  tick or batch run.
-- The ID is also set as a `s3o.request_id` attribute on OpenTelemetry
-  spans.
+  set on context before auth. The S3 server also sets it as the
+  `s3o.request_id` attribute on the request's server span.
+- Operator-driven worker cycles (`runOpsCycle` in `worker/cycle.go`)
+  mint a fresh ID with `audit.NewID()`. Periodic ticks do not: a tick is
+  not an operator action.
 - `trace_id` and `span_id` are automatically injected into JSON log
   output by `telemetry.TraceHandler` for any log call with an active
   span in context - use `*Context` slog variants
@@ -1060,53 +1179,71 @@ directly.
 
 ## Tracing
 
-OpenTelemetry tracing is wired in `internal/observe/telemetry`. Every
-S3 request, manager call, backend call, and significant background tick
-produces a span; spans inherit the request id from `audit.RequestID(ctx)`
-so log lines and traces cross-link.
+OpenTelemetry tracing is wired in `internal/observe/telemetry`, with the
+span helpers in `internal/observe`. Every S3 request, manager call,
+backend call, and worker cycle produces a span. Postgres queries are
+traced by `otelpgx` at the driver; SQLite is not traced.
 
-### Starting a Span
+### Wrapping a Unit of Work
 
-Use `telemetry.StartSpan` rather than the OTel API directly. The helper
-guarantees the `s3o.request_id` attribute is set when the context carries
-one and that the span is registered on the global tracer:
+Prefer the `observe.Run` envelope over a hand-opened span. It ends the
+span, sets the status on success and failure, records the error, and
+hands the elapsed time to an optional metrics recorder, so none of that
+is repeated at the call site:
 
 ```go
-ctx, span := telemetry.StartSpan(ctx, "Manager PutObject",
-    telemetry.AttrOperation.String("PutObject"),
-    telemetry.AttrBackend.String(backendName),
+return observe.Run(ctx,
+    observe.Client(spanPrefix+operation, attrs, b.recordOperation),
+    func(ctx context.Context) (string, error) {
+        // ...
+    })
+```
+
+`observe.Client` opens a client span (a call leaving the process, such as
+a backend request) and `observe.Internal` an internal one. `RunErr` is the
+form for work that returns only an error, and `RunValue` for work that
+cannot fail. Worker cycles go through `runOpsCycle` / `runTickCycle` in
+`worker/cycle.go`, which wrap the same envelope.
+
+### Starting a Span by Hand
+
+When the span has to stay open across code that does not fit one closure,
+use `telemetry.StartSpan` (or `StartServerSpan` at an HTTP entry point)
+rather than the OTel API directly, and defer `span.End()` on the next line
+so an early return cannot leave it open:
+
+```go
+ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
+    telemetry.AttrObjectKey.String(key),
 )
 defer span.End()
 ```
-
-Always defer `span.End()` on the line after the `StartSpan` call so an
-early return cannot leave the span open.
 
 ### Span Naming
 
 Span names are stable strings (no per-request data) so traces aggregate
 cleanly:
 
-| Layer | Prefix | Example |
+| Layer | Form | Example |
 |---|---|---|
 | Manager | `Manager <Op>` | `Manager PutObject`, `Manager GetObject` |
 | Backend | `Backend <Op>` | `Backend PutObject`, `Backend GetObject` |
-| Background worker | `<Worker>.<Op>` | `Replicator.Replicate`, `CleanupWorker.ProcessCleanupQueue` |
-| Store engine | `<Engine> <Op>` | `Postgres RecordObject`, `SQLite ListObjects` |
+| Worker cycle | `<Op>` | `ProcessCleanupQueue`, `ProcessPendingQueue` |
 
-The `Manager `/`Backend ` prefixes are constants (`managerSpanPrefix`,
-`spanPrefix`) so the layer attribution stays consistent if the prefix
-ever changes.
+The `Manager ` and `Backend ` prefixes are package constants
+(`managerSpanPrefix` in `object`, `spanPrefix` in `backend`, `readpath`
+and `multipart`), so a call site never spells the prefix itself.
 
 ### Attributes
 
-Standard attribute keys live in `internal/observe/telemetry/attrs.go` so
-every span uses the same string. Add new keys there rather than inlining
-strings at call sites.
+Standard attribute keys are the `Attr*` variables in
+`internal/observe/telemetry/tracing.go`, all under the `s3o.` namespace,
+so every span uses the same string. Add new keys there rather than
+inlining strings at call sites.
 
 ```go
 span.SetAttributes(
-    telemetry.AttrBackend.String(backendName),
+    telemetry.AttrBackendName.String(backendName),
     telemetry.AttrObjectSize.Int64(size),
 )
 ```
@@ -1117,15 +1254,17 @@ worker spans because that explodes trace storage cardinality.
 
 ### Recording Errors
 
-Span errors are recorded via the OTel `RecordError` + `SetStatus` pair
-so trace UIs flag the span as failing. Do not log the error inside the
-span block - the audit/slog log line already carries the error and
-trace correlation links the two.
+Inside `observe.Run` errors are recorded for you. On a hand-opened span,
+use `observe.RecordSpanError(span, err)` for an error, or
+`observe.MarkSpanError(span, msg)` to fail the span with a message when
+the error itself is translated away (as `ClassifyWriteError` does). Both
+set the error status so trace UIs flag the span. Do not log the error
+inside the span block - the audit/slog log line already carries the
+error and trace correlation links the two.
 
 ```go
 if err != nil {
-    span.RecordError(err)
-    span.SetStatus(codes.Error, err.Error())
+    observe.RecordSpanError(span, err)
     return err
 }
 ```
@@ -1163,8 +1302,10 @@ conventions.
 ### File Layout
 
 Group metrics by domain in `internal/observe/telemetry/metrics_<domain>.go`.
-Existing domains: `audit`, `breaker`, `cache`, `cleanup`, `encryption`,
-`meta`, `quota`, `rebalance`, `replication`, `request`. Add a new file
+Existing domains: `audit`, `auth`, `breaker`, `cache`, `cleanup`,
+`compression`, `cors`, `encryption`, `meta`, `quota`, `rebalance`,
+`replication`, `request`, `workers`; the per-worker gauge publisher is in
+`worker_gauges.go`. Add a new file
 when a new feature has its own logical domain - do not append to a
 random existing file just to avoid creating one.
 
@@ -1180,9 +1321,11 @@ Labels multiply storage cost. Hard rules:
 - **Forbidden labels**: `key`, `request_id`, `user`, IP, anything
   user-supplied or identity-bearing. These create unbounded label
   cardinality and will eventually crash Prometheus.
-- Buckets for histograms must be explicit (`prometheus.LinearBuckets`
-  or `ExponentialBuckets`); never default. Pick buckets that span the
-  expected p50 to p99.9 range with at most 10-15 buckets total.
+- Histograms on the request path or a backend call declare explicit
+  buckets (a literal slice, `LinearBuckets` or `ExponentialBuckets`) that
+  span the expected p50 to p99.9 range with at most 10-15 buckets.
+  `prometheus.DefBuckets` is acceptable only for internal timings whose
+  range it already fits (the breaker and metadata-query histograms).
 
 ### Updating a Metric
 
@@ -1193,7 +1336,7 @@ declaration; Prometheus does not protect against argument-order swaps.
 ```go
 telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
 telemetry.CleanupDLQDepth.Set(float64(depth))
-telemetry.RequestDurationSeconds.WithLabelValues(operation, status).Observe(elapsed.Seconds())
+telemetry.RequestDuration.WithLabelValues(method).Observe(elapsed.Seconds())
 ```
 
 ### Tying Metrics, Tracing, and Audit Together
@@ -1220,15 +1363,18 @@ missing audit log means a customer dispute cannot be reconstructed.
 - Test files live alongside the code they test: `server_test.go`, `objects_test.go`
 - Use table-driven tests for operations with multiple input/output combinations
 - Use `go.uber.org/mock/mockgen` for generating mocks from interfaces. Add `//go:generate mockgen` directives and run `make generate`. Generated mocks live alongside the interface they mock.
-- Legacy hand-written mocks exist in `internal/testutil/` and some packages; prefer generated mocks for new tests
+- Shared test doubles live in `-test` suffixed packages beside what they stand in for: `store/storetest` (store mocks and the permissive store), `backend/backendtest`, `ops/opstest`, `proxy/proxytest`
 - Test names follow `TestFunctionName_Scenario` convention
+- `make test` is the gate: `go test -race -cover ./...`. A bare `go test ./...` (`make test-fast`) skips the race detector
+- `make lint` runs golangci-lint, the same check CI runs; `make fmt` applies the formatting it enforces
 
 ### Integration Tests
 
-- Located in `internal/integration/`
-- Gated behind the `integration` build tag
-- Run in-process with real MinIO and PostgreSQL containers
+- Located in `internal/integration/`, plus `*_integration_test.go` files beside the engine code in `internal/store/postgres`
+- Gated behind the `integration` build tag; run with `make integration-test`
+- Run in-process with real MinIO and PostgreSQL containers. The Postgres image is glibc-based on purpose: musl collates as byte order, which would hide collation bugs
 - Cover end-to-end flows: CRUD, quota enforcement, multipart, replication, circuit breaker
+- Because `go vet ./...` and `make test` never compile them, run `go vet -tags integration ./...` after changing an exported API
 
 ### Benchmarks
 
@@ -1246,7 +1392,7 @@ missing audit log means a customer dispute cannot be reconstructed.
 
 - Fuzz test files use the `_fuzz_test.go` suffix: `auth_fuzz_test.go`, `xml_fuzz_test.go`
 - Run fuzz targets: `make fuzz` (default 30s per target). Override with `FUZZ_TIME=5m make fuzz` for deeper exploration
-- CI runs a 10s smoke test per target to catch regressions
+- The `fuzz` workflow runs every target nightly for 2 minutes each; pull-request CI does not fuzz
 - Seed the corpus with valid inputs, edge cases, and adversarial inputs via `f.Add()`
 - Fuzz callbacks must never panic - verify invariants with `t.Errorf` instead
 - Match the production code path - use `xml.NewDecoder().Decode` not `xml.Unmarshal` when production uses streaming decoders
@@ -1257,25 +1403,24 @@ missing audit log means a customer dispute cannot be reconstructed.
 ### Test Patterns
 
 - **Generated mocks** (`mockgen`) are the preferred approach for new tests - they stay in sync with interfaces automatically
-- **FailableStore** wraps a store to inject errors for circuit breaker testing
+- **`backendtest.FailableBackend`** wraps a backend to inject errors for failover and circuit breaker testing
 - Test assertions use standard `testing.T` methods, not external assertion libraries
 
-### Coverage Exclusions
+### Coverage
 
-Go has no built-in coverage ignore directive. Use the Codecov `// codecov:ignore` inline comment to exclude untestable code (process entry points, `os.Exit` wrappers) from coverage reports. Always include a reason after the directive:
+Coverage is reported to SonarCloud from the unit, integration and Terraform
+provider runs. New and changed code in a pull request should land above 80%;
+measure it before pushing, since the Postgres bindings and transport wiring
+are where gaps usually hide.
 
-```go
-func runValidate() { // codecov:ignore -- os.Exit wrapper, logic tested via validateConfig
-    // ...
-    os.Exit(1)
-}
-```
-
-Use this sparingly and only for code that genuinely cannot be tested:
-- `main()` and subcommand entry points that call `os.Exit`
-- Signal handlers and process lifecycle glue
-
-Do **not** use `codecov:ignore` for code that requires a database, S3 backend, or Redis - integration tests run with testcontainers and contribute coverage. Extract testable logic into separate functions that return errors instead of calling `os.Exit` directly.
+Exclusions are path-based, in `sonar.coverage.exclusions` in
+`sonar-project.properties`: `cmd/**`, generated code (`sqlc`), test-double
+packages, and a few files that need an external service (`encryption/vault.go`).
+There is no inline ignore directive. Keep `cmd/` to dispatch and `os.Exit`,
+and put anything worth testing in a function under `internal/` that returns
+an error. Do not add a path to the exclusions for code that needs a
+database, S3 backend, or Redis - integration tests run with testcontainers
+and contribute coverage.
 
 ---
 
@@ -1290,8 +1435,13 @@ Do **not** use `codecov:ignore` for code that requires a database, S3 backend, o
 **NEVER USE:**
 - Unicode em-dash (U+2014)
 - Unicode en-dash (U+2013)
+- Unicode arrows (U+2192); write `->`
 - Unicode box-drawing (U+2500)
 - Equals signs for dividers
+
+The rule covers everything the project publishes, not only Go source:
+docs, workflow files, commit messages, PR descriptions and issues. No
+lint check enforces it, so it falls to review.
 
 ### Professional Tone
 
@@ -1311,12 +1461,11 @@ Use:
 
 ## Versioning
 
-The `.version` file in the repository root controls the version baked into binaries, Docker images, and Debian packages. Every PR that changes Go or SQL files must bump the version.
+The `.version` file in the repository root controls the version baked into binaries, Docker images, and Debian packages. CI's `version-check` job fails a PR that changes a `.go` or `.sql` file, or `sqlc.yaml`, without bumping it. Docs-only and workflow-only changes need no bump. Bump from the version on `main`, once per PR.
 
 **Patch bump** (v0.X.Y -> v0.X.Y+1) for:
 - Bug fixes
 - Refactoring (no behavior change)
-- Documentation updates
 - Test improvements
 - Dependency updates
 - Cleanup and code style changes
@@ -1325,6 +1474,12 @@ The `.version` file in the repository root controls the version baked into binar
 - New features (new config fields, new API endpoints, new CLI commands)
 - Breaking changes (required config fields, changed defaults, removed options)
 - Schema migrations that add tables or columns
+
+`CHANGELOG.md` is generated from commit messages by git-cliff at release
+(`cliff.toml`); never edit it by hand. That is why commit subjects follow
+[Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
+`fix:`, `docs:`, `refactor:`, `test:`). Each PR is one commit and is
+squash-merged, so the PR's single commit is the changelog entry.
 
 ---
 
@@ -1338,10 +1493,19 @@ When a PR changes config fields, API behavior, or deployment requirements, updat
 - `docs/*.md` - per-topic operational documentation (see `docs/admin-guide.md` for the index)
 - `docs/security-hardening.md` - if security-relevant
 - `docs/disaster-recovery.md` - if it affects failure modes
+- `docs/version-migration.md` - an entry under Version History for any change an operator upgrading has to know about
+- `docs/openapi.yaml` - regenerated with `make openapi`, never edited by hand
 - `web/content/guides/*.md` - deployment guides
+- `web/content/diagrams/*.md` - the interactive diagrams. They restate behavior (permission bits, write routing, state machines) and rot silently, so when behavior changes, read the whole affected diagram against the code
 - `deploy/` - Nomad, Kubernetes, and Helm manifests
 
+`web/content/godoc/` is generated by `make web-godoc` from the package
+docs, so it follows the code rather than being edited.
+
 Search across all docs with `grep -rn 'field_name' README.md docs/ web/content/ packaging/ deploy/` before committing to catch every reference.
+
+Doc comments carry information or are left out: `make doc-stub-check`
+(run in CI) fails on a tautological stub such as `// Foo foo.`.
 
 ---
 
@@ -1357,16 +1521,16 @@ Examples:
 - `GH_ISSUE_251-worker-pool-parallelism`
 - `GH_ISSUE_42-multipart-upload-cleanup`
 
-For branches without a linked issue, use a short kebab-case description of the topic.
+For branches without a linked issue, use a short kebab-case description of the topic, prefixed with the change type where it helps (`fix-<description>`), and link or file an issue in the PR body.
 
 ---
 
 ## Quick Reference
 
-| Comment Type | Length | Spacing After | Use Case |
+| Comment Type | Divider | Spacing After | Use Case |
 |-------------|--------|---------------|----------|
-| File header | 79 chars | 1 blank line | Top of every `.go` file |
-| Major section | 73 chars | 1 blank line | Major divisions (types, API, internals) |
+| File header | 79 dashes | 1 blank line | Top of every hand-written `.go` file |
+| Major section | 73 dashes | 1 blank line | Major divisions (types, API, internals) |
 | Single-line comment | Variable | None | Minor divisions within functions |
 | Inline | Brief | N/A | Specific line explanation |
 

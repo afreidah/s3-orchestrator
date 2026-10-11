@@ -121,13 +121,13 @@ s3-orchestrator admin credential issue -user user-mon -label "prometheus sidecar
 s3-orchestrator admin grant add -user user-mon -kind orchestrator -permissions admin-read
 ```
 
-That credential runs `status`, `workers` and `reload-status`, and is refused key rotation, provisioning, log reading and log-level changes alike - the ten `admin-` permissions are genuinely separate, not one flag in ten spellings.
+That credential runs `status`, `workers` and `reload-status`, and is refused key rotation, provisioning, log reading and log-level changes alike - the eleven `admin-` permissions are genuinely separate, not one flag in eleven spellings.
 
 An operator who may retire hardware but must not touch encryption keys:
 
 ```bash
 s3-orchestrator admin grant add -user user-ops \
-  -kind backend -name '*' -permissions admin-drain,admin-decommission
+  -kind backend -name '*' -permissions admin-cordon,admin-drain,admin-decommission
 ```
 
 `-name '*'` covers every backend including ones added later. Scoping to a single provider instead is `-name wasabi-eu`, and it means what it says: a pass that names no backend runs against the whole fleet, so it is authorized as `backend:*` and an operator granted one provider cannot start a conversion that spends egress on the rest.
