@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -395,6 +396,29 @@ func TestAPIClient_DrainVerbs(t *testing.T) {
 	}
 	if gotMethod != http.MethodDelete {
 		t.Errorf("cancel method = %s, want DELETE", gotMethod)
+	}
+}
+
+// TestAPIClient_SetCordon_MethodAndPath asserts cordon posts and uncordon
+// deletes the backend's cordon route.
+func TestAPIClient_SetCordon_MethodAndPath(t *testing.T) {
+	t.Parallel()
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"status":"ok","backend":"minio-a"}`))
+	}))
+	defer srv.Close()
+
+	client := newAPIClient(testTarget(srv.URL))
+	for _, cordoned := range []bool{true, false} {
+		if _, err := client.SetCordon(context.Background(), "minio-a", cordoned); err != nil {
+			t.Fatalf("SetCordon(%v): %v", cordoned, err)
+		}
+	}
+	want := []string{"POST /admin/api/backends/minio-a/cordon", "DELETE /admin/api/backends/minio-a/cordon"}
+	if !slices.Equal(got, want) {
+		t.Errorf("requests = %v, want %v", got, want)
 	}
 }
 

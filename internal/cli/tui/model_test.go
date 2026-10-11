@@ -128,6 +128,10 @@ func (errLister) CancelDrain(_ context.Context, _ string) (*adminapi.BackendOper
 	return nil, errors.New("nope")
 }
 
+func (errLister) SetCordon(_ context.Context, _ string, _ bool) (*adminapi.BackendOperationResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) ReconcileBackend(_ context.Context, _ string) (*adminapi.ReconcileResponse, error) {
 	return nil, errors.New("nope")
 }

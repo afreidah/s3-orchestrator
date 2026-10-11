@@ -12,6 +12,7 @@ package tui
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -357,6 +358,66 @@ func TestBackendActions_ActOnTheSecondRow(t *testing.T) {
 // TestDrain_StartsPollsAndFinishes drives a drain from acceptance through a
 // progress reading to completion, which is what makes the counts move without
 // a stream.
+func TestCordon_TogglesWithTheSelectedBackend(t *testing.T) {
+	t.Parallel()
+	f := &fakeLister{}
+	m := backendsModel(t, f)
+
+	if label := cordonHintLabel(m); label != "cordon" {
+		t.Errorf("hint for a backend in service = %q, want cordon", label)
+	}
+	m.handleBackendsKey(key("C"))
+	if m.confirm == nil || !strings.HasPrefix(m.confirm.text, "Cordon minio-a?") {
+		t.Fatalf("confirm = %+v, want a cordon of minio-a", m.confirm)
+	}
+	if msg, ok := accept(t, m).(backendCordonMsg); !ok || !msg.cordoned || msg.backend != "minio-a" {
+		t.Fatalf("msg = %#v, want a cordon of minio-a", msg)
+	}
+
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
+		{Name: "minio-a", Healthy: true, Flags: []string{"cordoned"}},
+		{Name: "minio-b", Healthy: true},
+	}})
+	if label := cordonHintLabel(m); label != "uncordon" {
+		t.Errorf("hint for a cordoned backend = %q, want uncordon", label)
+	}
+	m.handleBackendsKey(key("C"))
+	if m.confirm == nil || !strings.HasPrefix(m.confirm.text, "Uncordon minio-a?") {
+		t.Fatalf("confirm = %+v, want an uncordon of minio-a", m.confirm)
+	}
+	if msg, ok := accept(t, m).(backendCordonMsg); !ok || msg.cordoned {
+		t.Fatalf("msg = %#v, want an uncordon", msg)
+	}
+
+	if !slices.Equal(f.cordonCalls, []string{"cordon minio-a", "uncordon minio-a"}) {
+		t.Errorf("client calls = %v", f.cordonCalls)
+	}
+}
+
+// TestApplyBackendCordon_ReportsAndRefreshes verifies a cordon that went
+// through refreshes the status, so the STATE column shows it, and one that
+// failed reports why without a refresh.
+func TestApplyBackendCordon_ReportsAndRefreshes(t *testing.T) {
+	t.Parallel()
+	m := backendsModel(t, &fakeLister{})
+	if _, cmd := m.applyBackendCordon(backendCordonMsg{backend: "minio-a", cordoned: true}); cmd == nil {
+		t.Error("a cordon that went through should refresh the status")
+	}
+	if _, cmd := m.applyBackendCordon(backendCordonMsg{backend: "minio-a", err: errors.New("refused")}); cmd != nil {
+		t.Error("a failed uncordon should not refresh the status")
+	}
+}
+
+// cordonHintLabel is the label the backends keymap gives C right now.
+func cordonHintLabel(m *model) string {
+	for _, h := range m.backendsKeys() {
+		if h.key == "C" {
+			return h.label
+		}
+	}
+	return ""
+}
+
 func TestDrain_StartsPollsAndFinishes(t *testing.T) {
 	t.Parallel()
 	f := &fakeLister{drainProgress: []*adminapi.DrainProgressResponse{

@@ -115,11 +115,17 @@ func (m *model) filesKeys() []keyHint {
 }
 
 // backendsKeys is the backends keymap. Cancel is listed only while the pane
-// is following a drain, so it cannot read as available with nothing to stop.
+// is following a drain, so it cannot read as available with nothing to stop,
+// and C names whichever of cordon and uncordon the highlighted backend takes.
 func (m *model) backendsKeys() []keyHint {
+	cordon := keyHint{key: "C", desc: "cordon the backend: stop new copies landing on it", label: "cordon"}
+	if m.selectedCordoned() {
+		cordon = keyHint{key: "C", desc: "uncordon the backend: let new copies land on it again", label: "uncordon"}
+	}
 	keys := []keyHint{hintMove,
 		{key: "enter", desc: "the backend's action menu", label: "actions"},
 		{key: "d", desc: "drain the backend", label: "drain"},
+		cordon,
 		{key: "R", desc: "reconcile metadata against the backend", label: "reconcile"},
 		{key: "Q", desc: "requeue the backend's dead-lettered cleanups"},
 	}

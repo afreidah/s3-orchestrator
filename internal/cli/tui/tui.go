@@ -68,6 +68,7 @@ type adminClient interface {
 	StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
 	DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error)
 	CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
+	SetCordon(ctx context.Context, backend string, cordoned bool) (*adminapi.BackendOperationResponse, error)
 	ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error)
 }
 

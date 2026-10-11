@@ -215,18 +215,28 @@ func objectPath(key string) string {
 // away from it. Returns as soon as the drain is accepted; progress is polled
 // with DrainProgress.
 func (c *apiClient) StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
-	return c.c.Post[adminapi.BackendOperationResponse](ctx, backendDrainPath(backend), nil, nil)
+	return c.c.Post[adminapi.BackendOperationResponse](ctx, backendPath(backend, drainSubpath), nil, nil)
 }
 
 // DrainProgress reports how far an in-flight drain has got. Active is false
 // once the migration finished, was cancelled, or never started.
 func (c *apiClient) DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error) {
-	return c.c.Get[adminapi.DrainProgressResponse](ctx, backendDrainPath(backend), nil)
+	return c.c.Get[adminapi.DrainProgressResponse](ctx, backendPath(backend, drainSubpath), nil)
 }
 
 // CancelDrain aborts an in-flight drain. Copies already migrated stay migrated.
 func (c *apiClient) CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
-	return c.c.Delete[adminapi.BackendOperationResponse](ctx, backendDrainPath(backend), nil)
+	return c.c.Delete[adminapi.BackendOperationResponse](ctx, backendPath(backend, drainSubpath), nil)
+}
+
+// SetCordon cordons the backend when cordoned is true, stopping new copies
+// landing on it, and uncordons it when false.
+func (c *apiClient) SetCordon(ctx context.Context, backend string, cordoned bool) (*adminapi.BackendOperationResponse, error) {
+	path := backendPath(backend, cordonSubpath)
+	if cordoned {
+		return c.c.Post[adminapi.BackendOperationResponse](ctx, path, nil, nil)
+	}
+	return c.c.Delete[adminapi.BackendOperationResponse](ctx, path, nil)
 }
 
 // ReconcileBackend reconciles metadata against one backend's storage rather
@@ -236,10 +246,16 @@ func (c *apiClient) ReconcileBackend(ctx context.Context, backend string) (*admi
 		url.Values{"backend": {backend}}, nil)
 }
 
-// backendDrainPath is the drain endpoint for one backend, shared by the three
-// verbs so the path cannot drift between them.
-func backendDrainPath(backend string) string {
-	return "/admin/api/backends/" + backend + "/drain"
+// The per-backend state endpoints, under /admin/api/backends/{name}.
+const (
+	drainSubpath  = "/drain"
+	cordonSubpath = "/cordon"
+)
+
+// backendPath is a per-backend endpoint, shared by every verb on it so the path
+// cannot drift between them.
+func backendPath(backend, subpath string) string {
+	return "/admin/api/backends/" + backend + subpath
 }
 
 // RunOp starts an admin instance action and returns its event stream. A

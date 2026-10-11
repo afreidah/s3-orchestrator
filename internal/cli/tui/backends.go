@@ -14,6 +14,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,13 @@ type drainCancelledMsg struct {
 	err     error
 }
 
+// backendCordonMsg reports the outcome of cordoning or uncordoning a backend.
+type backendCordonMsg struct {
+	backend  string
+	cordoned bool
+	err      error
+}
+
 // backendReconciledMsg carries the outcome of reconciling one backend.
 type backendReconciledMsg struct {
 	backend string
@@ -144,6 +152,19 @@ func (m *model) cancelDrain(backend string) tea.Cmd {
 		})
 }
 
+// setCordon returns a command that cordons one backend when cordoned is true
+// and uncordons it when false.
+func (m *model) setCordon(backend string, cordoned bool) tea.Cmd {
+	client := m.client
+	return backendCmd(backend,
+		func(ctx context.Context, name string) (*adminapi.BackendOperationResponse, error) {
+			return client.SetCordon(ctx, name, cordoned)
+		},
+		func(_ *adminapi.BackendOperationResponse, err error) tea.Msg {
+			return backendCordonMsg{backend: backend, cordoned: cordoned, err: err}
+		})
+}
+
 // reconcileBackend returns a command that reconciles metadata against one
 // backend's storage.
 func (m *model) reconcileBackend(backend string) tea.Cmd {
@@ -189,7 +210,7 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.backends.loading = !m.backends.list.loaded()
 		cmd := m.fetch(pollStatus)
 		return m, cmd
-	case "d", "R", "Q", "x":
+	case "d", "R", "Q", "x", "C":
 		return m.armBackendAction(key.String())
 	case "a", "enter", "right", "l":
 		return m.openBackendActions()
@@ -247,6 +268,17 @@ func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
 			confirm: "Cancel the drain on " + name + "? Copies already moved stay moved.",
 			run:     m.cancelDrain(name),
 		})
+	case "C":
+		if m.selectedCordoned() {
+			return m.startAction(adminAction{
+				confirm: "Uncordon " + name + "? New copies can land on it again.",
+				run:     m.setCordon(name, false),
+			})
+		}
+		return m.startAction(adminAction{
+			confirm: "Cordon " + name + "? New copies stop landing on it; reads continue.",
+			run:     m.setCordon(name, true),
+		})
 	}
 	return m, nil
 }
@@ -254,6 +286,16 @@ func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
 // selectedBackend names the highlighted row, or "" when the table is empty.
 func (m *model) selectedBackend() string {
 	return m.backends.list.selectedKey()
+}
+
+// flagCordoned is the status response's name for the cordon flag.
+const flagCordoned = "cordoned"
+
+// selectedCordoned reports whether the highlighted backend is cordoned, which
+// decides whether C cordons it or uncordons it.
+func (m *model) selectedCordoned() bool {
+	b, ok := m.backends.list.selected()
+	return ok && slices.Contains(b.Flags, flagCordoned)
 }
 
 // -------------------------------------------------------------------------
@@ -273,6 +315,9 @@ func (m *model) updateBackends(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return model, cmd, true
 	case drainCancelledMsg:
 		model, cmd := m.applyDrainCancelled(msg)
+		return model, cmd, true
+	case backendCordonMsg:
+		model, cmd := m.applyBackendCordon(msg)
 		return model, cmd, true
 	case backendReconciledMsg:
 		model, cmd := m.applyBackendReconciled(msg)
@@ -358,6 +403,22 @@ func (m *model) applyBackendReconciled(msg backendReconciledMsg) (tea.Model, tea
 	}
 	m.report(true, fmt.Sprintf("reconciled %s: imported %d, removed %d",
 		msg.backend, msg.resp.Imported, msg.resp.Removed))
+	refresh := m.fetch(pollStatus)
+	return m, refresh
+}
+
+// applyBackendCordon reports a cordon or uncordon and refreshes the status, so
+// the backend's STATE column shows the change.
+func (m *model) applyBackendCordon(msg backendCordonMsg) (tea.Model, tea.Cmd) {
+	verb := "uncordon"
+	if msg.cordoned {
+		verb = "cordon"
+	}
+	if msg.err != nil {
+		m.report(false, verb+" "+msg.backend+": "+msg.err.Error())
+		return m, nil
+	}
+	m.report(true, verb+"ed "+msg.backend)
 	refresh := m.fetch(pollStatus)
 	return m, refresh
 }

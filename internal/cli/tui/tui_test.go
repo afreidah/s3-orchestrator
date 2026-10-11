@@ -59,6 +59,7 @@ type fakeLister struct {
 	drainCancelled string                            // backend passed to CancelDrain
 	drainProgress  []*adminapi.DrainProgressResponse // readings served in order
 	drainErr       error                             // when set, every drain call fails
+	cordonCalls    []string                          // "cordon b" or "uncordon b", in call order
 	reconciled     string                            // backend passed to ReconcileBackend
 	reconcileResp  *adminapi.ReconcileResponse       // canned reconcile counts
 	reconcileErr   error                             // when set, ReconcileBackend fails
@@ -270,6 +271,16 @@ func (f *fakeLister) CancelDrain(_ context.Context, backend string) (*adminapi.B
 	if f.drainErr != nil {
 		return nil, f.drainErr
 	}
+	return &adminapi.BackendOperationResponse{Backend: backend}, nil
+}
+
+// SetCordon records each cordon and uncordon, in order.
+func (f *fakeLister) SetCordon(_ context.Context, backend string, cordoned bool) (*adminapi.BackendOperationResponse, error) {
+	verb := "uncordon "
+	if cordoned {
+		verb = "cordon "
+	}
+	f.cordonCalls = append(f.cordonCalls, verb+backend)
 	return &adminapi.BackendOperationResponse{Backend: backend}, nil
 }
 
