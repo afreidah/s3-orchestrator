@@ -6,6 +6,7 @@
 //	mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 //
 
+// Package storetest is a generated GoMock package.
 package storetest
 
 import (
@@ -117,19 +118,19 @@ func (mr *MockMetadataStoreMockRecorder) CleanupQueueDepth(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockMetadataStore)(nil).CleanupQueueDepth), ctx)
 }
 
-// ClearDrain mocks base method.
-func (m *MockMetadataStore) ClearDrain(ctx context.Context, backendName string) (bool, error) {
+// ClearBackendState mocks base method.
+func (m *MockMetadataStore) ClearBackendState(ctx context.Context, backendName string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ClearDrain", ctx, backendName)
+	ret := m.ctrl.Call(m, "ClearBackendState", ctx, backendName)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ClearDrain indicates an expected call of ClearDrain.
-func (mr *MockMetadataStoreMockRecorder) ClearDrain(ctx, backendName any) *gomock.Call {
+// ClearBackendState indicates an expected call of ClearBackendState.
+func (mr *MockMetadataStoreMockRecorder) ClearBackendState(ctx, backendName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearDrain", reflect.TypeOf((*MockMetadataStore)(nil).ClearDrain), ctx, backendName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearBackendState", reflect.TypeOf((*MockMetadataStore)(nil).ClearBackendState), ctx, backendName)
 }
 
 // Close mocks base method.
@@ -923,6 +924,21 @@ func (mr *MockMetadataStoreMockRecorder) ListBackendQuotaUsage(ctx any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendQuotaUsage", reflect.TypeOf((*MockMetadataStore)(nil).ListBackendQuotaUsage), ctx)
 }
 
+// ListBackendStates mocks base method.
+func (m *MockMetadataStore) ListBackendStates(ctx context.Context) ([]core.BackendStateRecord, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBackendStates", ctx)
+	ret0, _ := ret[0].([]core.BackendStateRecord)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBackendStates indicates an expected call of ListBackendStates.
+func (mr *MockMetadataStoreMockRecorder) ListBackendStates(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendStates", reflect.TypeOf((*MockMetadataStore)(nil).ListBackendStates), ctx)
+}
+
 // ListBuckets mocks base method.
 func (m *MockMetadataStore) ListBuckets(ctx context.Context) ([]core.Bucket, error) {
 	m.ctrl.T.Helper()
@@ -996,21 +1012,6 @@ func (m *MockMetadataStore) ListDirectoryChildren(ctx context.Context, prefix, s
 func (mr *MockMetadataStoreMockRecorder) ListDirectoryChildren(ctx, prefix, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDirectoryChildren", reflect.TypeOf((*MockMetadataStore)(nil).ListDirectoryChildren), ctx, prefix, startAfter, maxKeys)
-}
-
-// ListDrains mocks base method.
-func (m *MockMetadataStore) ListDrains(ctx context.Context) ([]core.BackendDrain, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListDrains", ctx)
-	ret0, _ := ret[0].([]core.BackendDrain)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListDrains indicates an expected call of ListDrains.
-func (mr *MockMetadataStoreMockRecorder) ListDrains(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDrains", reflect.TypeOf((*MockMetadataStore)(nil).ListDrains), ctx)
 }
 
 // ListEncryptedLocations mocks base method.

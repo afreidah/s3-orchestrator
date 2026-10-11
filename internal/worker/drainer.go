@@ -44,11 +44,12 @@ var errListDrainObjects = errors.New("list objects")
 // -------------------------------------------------------------------------
 
 // DrainerStore is the persistence surface the drainer needs: the backend's
-// objects and their copies, the drain records it advances, and the conditional
-// removal that drops a drained copy only while another copy remains.
+// objects and their copies, the backend state records it advances, and the
+// conditional removal that drops a drained copy only while another copy
+// remains.
 type DrainerStore interface {
 	core.ObjectStore
-	core.DrainStore
+	core.BackendStateStore
 	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error)
 }
 
@@ -59,18 +60,19 @@ type Drainer struct {
 	placement    Placement
 	store        DrainerStore
 	abortUploads func(ctx context.Context, backendName string)
-	onRecords    func(drains []core.BackendDrain)
+	onRecords    func(records []core.BackendStateRecord)
 }
 
 // DrainerDeps groups the drainer's constructor dependencies. AbortUploads
 // aborts a backend's open multipart uploads. OnRecords is optional and receives
-// the drain records each pass reads, so whatever caches them stays current.
+// the backend state records each pass reads, so whatever caches them stays
+// current.
 type DrainerDeps struct {
 	Ops          Ops
 	Placement    Placement
 	Store        DrainerStore
 	AbortUploads func(ctx context.Context, backendName string)
-	OnRecords    func(drains []core.BackendDrain)
+	OnRecords    func(records []core.BackendStateRecord)
 }
 
 // NewDrainer creates a Drainer with the given dependencies.
@@ -105,14 +107,14 @@ type DrainSummary struct {
 // start and end step per object.
 func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainSummary, error) {
 	return runOpsCycle(ctx, "Drain", "drain", func(ctx context.Context) (DrainSummary, error) {
-		drains, err := d.store.ListDrains(ctx)
+		records, err := d.store.ListBackendStates(ctx)
 		if err != nil {
-			return DrainSummary{}, fmt.Errorf("list drains: %w", err)
+			return DrainSummary{}, fmt.Errorf("list backend states: %w", err)
 		}
 		if d.onRecords != nil {
-			d.onRecords(drains)
+			d.onRecords(records)
 		}
-		active := inProgress(drains)
+		active := inProgress(records)
 		telemetry.DrainActive.Set(float64(len(active)))
 
 		var out DrainSummary
@@ -134,12 +136,12 @@ func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainS
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// inProgress returns the drains still in progress.
-func inProgress(drains []core.BackendDrain) []core.BackendDrain {
-	var active []core.BackendDrain
-	for i := range drains {
-		if drains[i].State == core.DrainStateDraining {
-			active = append(active, drains[i])
+// inProgress returns the records whose drain is still in progress.
+func inProgress(records []core.BackendStateRecord) []core.BackendStateRecord {
+	var active []core.BackendStateRecord
+	for i := range records {
+		if records[i].State == core.BackendStateDraining {
+			active = append(active, records[i])
 		}
 	}
 	return active
@@ -151,7 +153,7 @@ func inProgress(drains []core.BackendDrain) []core.BackendDrain {
 // while any object remains, and the next tick retries what is left. Reports
 // whether the drain finished. Returns an error only for a store failure the
 // next tick should retry; a failure that ends the drain is recorded on it.
-func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendDrain, observer progress.Observer) (batch.Summary, bool, error) {
+func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord, observer progress.Observer) (batch.Summary, bool, error) {
 	name := rec.BackendName
 	src, err := d.ops.GetBackend(name)
 	if err != nil {
@@ -241,13 +243,13 @@ func (d *Drainer) movePage(ctx context.Context, src backend.ObjectBackend, srcNa
 // stillDraining reports whether the backend's record is still a drain in
 // progress.
 func (d *Drainer) stillDraining(ctx context.Context, name string) (bool, error) {
-	drains, err := d.store.ListDrains(ctx)
+	records, err := d.store.ListBackendStates(ctx)
 	if err != nil {
 		return false, err
 	}
-	for i := range drains {
-		if drains[i].BackendName == name {
-			return drains[i].State == core.DrainStateDraining, nil
+	for i := range records {
+		if records[i].BackendName == name {
+			return records[i].State == core.BackendStateDraining, nil
 		}
 	}
 	return false, nil
@@ -257,7 +259,7 @@ func (d *Drainer) stillDraining(ctx context.Context, name string) (bool, error) 
 // the whole listing. The store declines while any managed object remains, a
 // write admitted before the drain is still uploading, or a multipart upload is
 // open, and the next tick asks again.
-func (d *Drainer) complete(ctx context.Context, rec *core.BackendDrain, movedThisPass int) (bool, error) {
+func (d *Drainer) complete(ctx context.Context, rec *core.BackendStateRecord, movedThisPass int) (bool, error) {
 	done, err := d.store.CompleteDrain(ctx, rec.BackendName)
 	if err != nil || !done {
 		return false, err
@@ -277,7 +279,7 @@ func (d *Drainer) complete(ctx context.Context, rec *core.BackendDrain, movedThi
 
 // fail records why the drain stopped. The record stays, so the backend keeps
 // refusing writes until an operator retries or clears the drain.
-func (d *Drainer) fail(ctx context.Context, rec *core.BackendDrain, movedThisPass int, cause error) error {
+func (d *Drainer) fail(ctx context.Context, rec *core.BackendStateRecord, movedThisPass int, cause error) error {
 	if err := d.store.MarkDrainFailed(ctx, rec.BackendName, cause.Error()); err != nil {
 		return err
 	}
@@ -383,13 +385,13 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 }
 
 // pickDestination chooses the emptiest backend, other than the source and any
-// backend being drained, with room for the object. It reads the same
+// backend refusing writes, with room for the object. It reads the same
 // in-memory view a client write is ranked against, so a drain and a write do
 // not disagree about where there is room.
 func (d *Drainer) pickDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, backend.ObjectBackend, bool) {
 	candidates := make([]string, 0, len(d.ops.BackendOrder()))
 	for _, name := range d.ops.BackendOrder() {
-		if name != srcName && !d.ops.IsDraining(name) {
+		if name != srcName && d.ops.AcceptsWrites(name) {
 			candidates = append(candidates, name)
 		}
 	}

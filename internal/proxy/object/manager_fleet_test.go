@@ -240,12 +240,12 @@ func TestPutObject_Success(t *testing.T) {
 	}
 }
 
-// flippingDrainChecker reports a backend as not draining on the first
-// IsDraining call and as draining on every subsequent call. Simulates
+// flippingDrainChecker reports a backend as accepting writes on the first
+// AcceptsWrites call and as draining on every subsequent call. Simulates
 // the exact race the attemptPutOnBackend re-check closes: the upstream
-// EligibleForWrite filter sees the backend healthy (call 1 -> false), a
+// EligibleForWrite filter sees the backend accepting (call 1 -> true), a
 // drain starts mid-PUT, and the post-PutObject re-check fires
-// (call 2 -> true) so the orchestrator aborts the commit on the now-
+// (call 2 -> false) so the orchestrator aborts the commit on the now-
 // draining backend.
 type flippingDrainChecker struct {
 	mu      sync.Mutex
@@ -257,19 +257,25 @@ type flippingDrainChecker struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func (f *flippingDrainChecker) IsDraining(name string) bool {
+func (f *flippingDrainChecker) AcceptsWrites(name string) bool {
 	if name != f.backend {
-		return false
+		return true
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	return f.calls > 1
+	return f.calls <= 1
+}
+
+func (f *flippingDrainChecker) IsDraining(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return name == f.backend && f.calls > 1
 }
 
 // TestPutObject_DrainRace_AbortsAndFailsOver triggers a drain that starts
-// mid-write. The flipping checker reports b1 healthy on the first IsDraining
-// call (eligibility) and draining on later ones (the post-PUT re-check), so the
+// mid-write. The flipping checker reports b1 accepting on the first
+// AcceptsWrites call (eligibility) and draining on later ones (the post-PUT re-check), so the
 // commit on b1 aborts, its bytes are cleaned up, and the write fails over to b2.
 func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	// Not parallel: asserts an exact +1 delta on the global
@@ -279,7 +285,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	healthy := backendtest.NewInMemory()
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": drained, "b2": healthy}, &fleetOpts{Order: []string{"b1", "b2"}})
-	mgr.Runtime.SetDrainChecker(&flippingDrainChecker{backend: "b1"})
+	mgr.Runtime.SetStateChecker(&flippingDrainChecker{backend: "b1"})
 
 	before := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal)
 	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
@@ -313,7 +319,7 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": drainedA, "b2": drainedB}, &fleetOpts{Order: []string{"b1", "b2"}})
 	// Drain checker that flips both backends to draining after their
 	// EligibleForWrite check; the per-attempt re-check fires for each.
-	mgr.Runtime.SetDrainChecker(&allFlippingDrainChecker{})
+	mgr.Runtime.SetStateChecker(&allFlippingDrainChecker{})
 
 	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err == nil {
@@ -324,21 +330,27 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	}
 }
 
-// allFlippingDrainChecker reports every backend as not draining on its
-// first IsDraining call and as draining on every subsequent call.
+// allFlippingDrainChecker reports every backend as accepting writes on its
+// first AcceptsWrites call and as draining on every subsequent call.
 // Drives the all-backends-flip-mid-write scenario.
 type allFlippingDrainChecker struct {
 	mu    sync.Mutex
 	calls map[string]int
 }
 
-func (a *allFlippingDrainChecker) IsDraining(name string) bool {
+func (a *allFlippingDrainChecker) AcceptsWrites(name string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.calls == nil {
 		a.calls = make(map[string]int)
 	}
 	a.calls[name]++
+	return a.calls[name] <= 1
+}
+
+func (a *allFlippingDrainChecker) IsDraining(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.calls[name] > 1
 }
 

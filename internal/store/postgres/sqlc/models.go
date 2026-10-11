@@ -18,15 +18,6 @@ type BackendCapacity struct {
 	AcceptingWrites bool
 }
 
-type BackendDrain struct {
-	BackendName  string
-	State        string
-	ObjectsMoved int64
-	LastError    *string
-	StartedAt    pgtype.Timestamptz
-	FinishedAt   pgtype.Timestamptz
-}
-
 type BackendQuota struct {
 	BackendName string
 	BytesLimit  int64
@@ -46,6 +37,15 @@ type BackendRequestUsage struct {
 	Pool        string
 	Requests    int64
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type BackendState struct {
+	BackendName  string
+	State        string
+	ObjectsMoved int64
+	LastError    *string
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
 }
 
 type BackendUsage struct {

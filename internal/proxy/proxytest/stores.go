@@ -22,7 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -160,7 +160,7 @@ type Stack struct {
 	Coord        *writepath.Coordinator
 	Objects      *object.Manager
 	Multipart    *multipart.Manager
-	Drain        *drain.Manager
+	States       *backendstate.Manager
 	Drainer      *worker.Drainer
 	Usage        *usage.Service
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
@@ -228,19 +228,19 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		BackendTimeout:               opts.BackendTimeout,
 	})
 
-	dm := drain.New(rt, store, store, store)
-	rt.SetDrainChecker(dm)
+	states := backendstate.New(rt, store, store)
+	rt.SetStateChecker(states)
 
 	return &Stack{
 		Runtime:   rt,
 		Coord:     coord,
 		Objects:   om,
 		Multipart: mp,
-		Drain:     dm,
+		States:    states,
 		Drainer: worker.NewDrainer(worker.DrainerDeps{
 			Ops: rt, Placement: coord, Store: store,
 			AbortUploads: mp.AbortMultipartUploadsOnBackend,
-			OnRecords:    dm.SetStates,
+			OnRecords:    states.SetStates,
 		}),
 		Usage:        NewUsage(rt, store),
 		IntegrityCfg: integrityCfg,
@@ -251,9 +251,9 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 // WORKERS
 // -------------------------------------------------------------------------
 
-// Workers bundles every worker plus the drain manager a test might need to
-// poke. Drain is the stack's own drain.Manager, so eligibility filters and
-// write-path drain checks see the same live state the workers do.
+// Workers bundles every worker plus the backend state manager a test might
+// need to poke. States is the stack's own backendstate.Manager, so eligibility
+// filters and write-path state checks see the same live state the workers do.
 type Workers struct {
 	Rebalancer             *worker.Rebalancer
 	Replicator             *worker.Replicator
@@ -261,7 +261,7 @@ type Workers struct {
 	CleanupWorker          *worker.CleanupWorker
 	PendingReaper          *worker.PendingReaper
 	Scrubber               *worker.Scrubber
-	Drain                  *drain.Manager
+	States                 *backendstate.Manager
 	Drainer                *worker.Drainer
 }
 
@@ -308,7 +308,7 @@ func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features Work
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		Drain:   s.Drain,
+		States:  s.States,
 		Drainer: s.Drainer,
 	}
 }

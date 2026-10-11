@@ -27,10 +27,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 )
 
-// DrainChecker reports whether a named backend is currently being drained.
-// *BackendRuntime consumes this so drain ownership can live in the drain subpackage
-// while *BackendRuntime filters write eligibility.
-type DrainChecker interface {
+// StateChecker reports a named backend's state: whether it takes new writes and
+// whether it is being drained. *BackendRuntime consumes this so state ownership
+// can live in the backendstate subpackage while *BackendRuntime filters write
+// eligibility.
+type StateChecker interface {
+	AcceptsWrites(name string) bool
 	IsDraining(name string) bool
 }
 
@@ -53,13 +55,13 @@ type Config struct {
 // each collaborator takes the store roles it needs directly. For which methods
 // belong here, see docs/style-guide.md "Where new methods live".
 //
-// drainMgr is wired after construction by SetDrainChecker. A nil admissionSem
+// states is wired after construction by SetStateChecker. A nil admissionSem
 // means unbounded admission, and a zero backendTimeout disables the per-call
 // timeout.
 type BackendRuntime struct {
 	backends         map[string]backend.ObjectBackend
 	order            []string
-	drainMgr         DrainChecker
+	states           StateChecker
 	usage            *counter.UsageTracker
 	maxObjectSizes   map[string]int64
 	quota            *counter.QuotaTracker

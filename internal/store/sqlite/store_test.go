@@ -107,6 +107,11 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// The view reads the table, so it goes first; 0023 recreates it.
+		{23, func() {
+			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			exec("rename backend_states back", `ALTER TABLE backend_states RENAME TO backend_drains`)
+		}},
 		{22, func() {
 			exec("drop the drain paging index", `DROP INDEX IF EXISTS idx_object_locations_managed_size`)
 			exec("drop the cleanup path index", `DROP INDEX IF EXISTS idx_cleanup_queue_backend_storage_key`)

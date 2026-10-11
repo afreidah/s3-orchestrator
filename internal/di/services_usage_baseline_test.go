@@ -73,7 +73,7 @@ func TestUsageFlushService_LockLoserRefreshesBaseline(t *testing.T) {
 		Flusher: sharedCounterFlusher{},
 		Tracker: rt.Usage(),
 		Fleet:   rt,
-		Drains:  noDrains{},
+		States:  noStates{},
 		Locker:  fakeLocker{},
 	}).(*usageFlushService)
 	svc.flushTick(context.Background())

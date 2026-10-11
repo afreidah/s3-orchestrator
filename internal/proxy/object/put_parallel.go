@@ -178,7 +178,7 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 		o.core.Acct().APICall(s3op.PutObject, p.BackendName)
 		return err
 	}
-	if o.core.IsDraining(p.BackendName) {
+	if !o.core.AcceptsWrites(p.BackendName) {
 		telemetry.DrainRaceAbortedTotal.Inc()
 		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
 			BackendName: p.BackendName,

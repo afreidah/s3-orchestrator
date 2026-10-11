@@ -24,7 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -247,30 +247,30 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	}), nil
 }
 
-// ProvideDrainManager constructs the drain manager, the operator side of a
-// drain, from the backend runtime and the opened store's object, drain and
-// backend-lifecycle roles.
-func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
+// ProvideBackendStateManager constructs the backend state manager, the
+// operator side of a drain and a backend removal, from the backend runtime and
+// the opened store's object and backend-state roles.
+func ProvideBackendStateManager(i do.Injector) (*backendstate.Manager, error) {
 	r := newResolver(i)
 	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
 	stores := r.ResolveNamed[metadataStore]("MetadataStore")
 	if r.err != nil {
 		return nil, r.err
 	}
-	return drain.New(rt, stores, stores, stores), nil
+	return backendstate.New(rt, stores, stores), nil
 }
 
-// ProvideDrainer constructs the drain worker. It hands every set of drain
-// records it reads to the drain manager, which is what keeps IsDraining current
-// on the instance that runs it, and aborts a drained backend's open uploads
-// through the multipart manager.
+// ProvideDrainer constructs the drain worker. It hands every set of backend
+// state records it reads to the backend state manager, which is what keeps
+// AcceptsWrites current on the instance that runs it, and aborts a drained
+// backend's open uploads through the multipart manager.
 func ProvideDrainer(i do.Injector) (*worker.Drainer, error) {
 	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
 	r := newResolver(i)
-	dm := r.Resolve[*drain.Manager]()
+	dm := r.Resolve[*backendstate.Manager]()
 	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
 	if r.err != nil {
 		return nil, r.err

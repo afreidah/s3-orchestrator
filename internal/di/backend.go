@@ -30,8 +30,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -520,10 +520,10 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 		return nil, r.err
 	}
 
-	// A nil *drain.Manager must stay a nil interface, not a non-nil interface
-	// holding a nil pointer.
+	// A nil *backendstate.Manager must stay a nil interface, not a non-nil
+	// interface holding a nil pointer.
 	var drainReader dashboard.DrainProgressReader
-	if dm, err := do.Invoke[*drain.Manager](i); err == nil && dm != nil {
+	if dm, err := do.Invoke[*backendstate.Manager](i); err == nil && dm != nil {
 		drainReader = dm
 	}
 	return dashboard.New(stores, rt.Usage(), br.Order, rt, drainReader), nil

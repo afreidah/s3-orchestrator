@@ -1,16 +1,16 @@
 // -------------------------------------------------------------------------------
-// Drain Manager - Backend Drain and Remove Operations
+// Backend State Manager - Drain and Remove Operations
 //
 // Author: Alex Freidah
 //
-// The operator side of two backend lifecycle operations. A drain is a record in
-// the metadata store: starting one writes it, cancelling one clears it, and the
+// The operator side of a backend's state record. A drain is a state in the
+// metadata store: starting one writes it, cancelling one clears it, and the
 // drainer worker moves the objects off while it is in progress. Remove drops
 // every database record for a backend, optionally purging its stored objects,
 // and runs synchronously.
 // -------------------------------------------------------------------------------
 
-package drain
+package backendstate
 
 import (
 	"context"
@@ -40,9 +40,9 @@ type Runtime interface {
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 }
 
-// Progress holds the current state of a drain operation. Active is true while
-// the drain is in progress; State is empty for a backend with no drain record.
-type Progress struct {
+// DrainProgress holds the current state of a drain operation. Active is true
+// while the drain is in progress; State is empty for a backend with no record.
+type DrainProgress struct {
 	Active           bool   `json:"active"`
 	State            string `json:"state,omitempty"`
 	ObjectsRemaining int64  `json:"objects_remaining"`
@@ -51,68 +51,72 @@ type Progress struct {
 	Error            string `json:"error,omitempty"`
 }
 
-// Manager handles draining and removing backends.
+// Manager handles a backend's state record: draining and removing backends.
 //
-// states caches every backend's drain state from the records, so IsDraining
+// states caches every backend's state from the records, so AcceptsWrites
 // answers on the write path without a query. It is refreshed whenever this
-// manager starts or cancels a drain, on every usage-flush tick, and whenever
-// the drainer reads the records. A stale entry only costs a ranking: admission
-// reads the records itself.
+// manager changes a record, on every usage-flush tick, and whenever the drainer
+// reads the records. A stale entry only costs a ranking: admission reads the
+// records itself.
 type Manager struct {
-	log              *slog.Logger
-	infra            Runtime
-	objects          core.ObjectStore
-	drains           core.DrainStore
-	backendLifecycle core.BackendLifecycleStore
-	states           atomic.Pointer[map[string]core.DrainState]
+	log     *slog.Logger
+	infra   Runtime
+	objects core.ObjectStore
+	store   core.BackendStateStore
+	states  atomic.Pointer[map[string]core.BackendState]
 }
 
 // New creates a Manager.
-func New(infra Runtime, objects core.ObjectStore, drains core.DrainStore, backendLifecycle core.BackendLifecycleStore) *Manager {
+func New(infra Runtime, objects core.ObjectStore, store core.BackendStateStore) *Manager {
 	must.NotNil("infra", infra)
 	must.NotNil("objects", objects)
-	must.NotNil("drains", drains)
-	must.NotNil("backendLifecycle", backendLifecycle)
+	must.NotNil("store", store)
 	return &Manager{
-		infra:            infra,
-		objects:          objects,
-		drains:           drains,
-		backendLifecycle: backendLifecycle,
-		log:              slog.Default().With(logfmt.Component("drain")),
+		infra:   infra,
+		objects: objects,
+		store:   store,
+		log:     slog.Default().With(logfmt.Component("backendstate")),
 	}
 }
 
-// IsDraining reports whether the named backend has a drain record of any
-// state. A drained or failed backend is refused writes as much as one in
-// progress.
-func (d *Manager) IsDraining(name string) bool {
+// AcceptsWrites reports whether the named backend takes new writes: it has no
+// state record. A backend in any state, a drain that finished or failed
+// included, is refused.
+func (d *Manager) AcceptsWrites(name string) bool {
 	_, ok := d.stateOf(name)
-	return ok
+	return !ok
 }
 
-// Refresh reloads the cached drain states from the records.
+// IsDraining reports whether the named backend's state belongs to a drain:
+// in progress, finished or failed.
+func (d *Manager) IsDraining(name string) bool {
+	state, ok := d.stateOf(name)
+	return ok && state.IsDrain()
+}
+
+// Refresh reloads the cached states from the records.
 func (d *Manager) Refresh(ctx context.Context) error {
-	drains, err := d.drains.ListDrains(ctx)
+	records, err := d.store.ListBackendStates(ctx)
 	if err != nil {
-		return fmt.Errorf("list drains: %w", err)
+		return fmt.Errorf("list backend states: %w", err)
 	}
-	d.SetStates(drains)
+	d.SetStates(records)
 	return nil
 }
 
-// SetStates replaces the cached drain states with the given records. The
-// drainer hands it the records each pass reads.
-func (d *Manager) SetStates(drains []core.BackendDrain) {
-	states := make(map[string]core.DrainState, len(drains))
-	for i := range drains {
-		states[drains[i].BackendName] = drains[i].State
+// SetStates replaces the cached states with the given records. The drainer
+// hands it the records each pass reads.
+func (d *Manager) SetStates(records []core.BackendStateRecord) {
+	states := make(map[string]core.BackendState, len(records))
+	for i := range records {
+		states[records[i].BackendName] = records[i].State
 	}
 	d.states.Store(&states)
 }
 
-// stateOf returns the cached drain state of the named backend, and false when
-// it has no drain record.
-func (d *Manager) stateOf(name string) (core.DrainState, bool) {
+// stateOf returns the cached state of the named backend, and false when it has
+// no record.
+func (d *Manager) stateOf(name string) (core.BackendState, bool) {
 	states := d.states.Load()
 	if states == nil {
 		return "", false
@@ -132,7 +136,7 @@ func (d *Manager) StartDrain(ctx context.Context, name string) error {
 	if _, ok := d.infra.Backends()[name]; !ok {
 		return fmt.Errorf("backend %q not found", name)
 	}
-	started, err := d.drains.StartDrain(ctx, name)
+	started, err := d.store.StartDrain(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -147,22 +151,22 @@ func (d *Manager) StartDrain(ctx context.Context, name string) error {
 
 // GetDrainProgress returns the state of the backend's drain. Objects and bytes
 // remaining are read live while the drain is in progress.
-func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*Progress, error) {
+func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*DrainProgress, error) {
 	rec, err := d.record(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	if rec == nil {
-		return &Progress{}, nil
+		return &DrainProgress{}, nil
 	}
-	p := &Progress{
-		Active:       rec.State == core.DrainStateDraining,
+	p := &DrainProgress{
+		Active:       rec.State == core.BackendStateDraining,
 		State:        string(rec.State),
 		ObjectsMoved: rec.ObjectsMoved,
 		Error:        rec.LastError,
 	}
 	if p.Active {
-		count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
+		count, bytes, err := d.store.BackendObjectStats(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get backend stats: %w", err)
 		}
@@ -172,26 +176,26 @@ func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*Progress,
 	return p, nil
 }
 
-// record reads the backend's drain record from the store, bypassing the cache,
+// record reads the backend's state record from the store, bypassing the cache,
 // and returns nil when it has none.
-func (d *Manager) record(ctx context.Context, name string) (*core.BackendDrain, error) {
-	drains, err := d.drains.ListDrains(ctx)
+func (d *Manager) record(ctx context.Context, name string) (*core.BackendStateRecord, error) {
+	records, err := d.store.ListBackendStates(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list drains: %w", err)
+		return nil, fmt.Errorf("list backend states: %w", err)
 	}
-	for i := range drains {
-		if drains[i].BackendName == name {
-			return &drains[i], nil
+	for i := range records {
+		if records[i].BackendName == name {
+			return &records[i], nil
 		}
 	}
 	return nil, nil
 }
 
-// CancelDrain clears the backend's drain record, which makes it writable again.
+// CancelDrain clears the backend's state record, which makes it writable again.
 // A drain in progress stops before its next page; objects already moved are
 // not moved back.
 func (d *Manager) CancelDrain(ctx context.Context, name string) error {
-	cleared, err := d.drains.ClearDrain(ctx, name)
+	cleared, err := d.store.ClearBackendState(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -209,7 +213,7 @@ func (d *Manager) CancelDrain(ctx context.Context, name string) error {
 // already written, and admission reads it directly.
 func (d *Manager) refreshAfterChange(ctx context.Context) {
 	if err := d.Refresh(ctx); err != nil {
-		d.log.WarnContext(ctx, "failed to refresh drain states", logfmt.Err(err))
+		d.log.WarnContext(ctx, "failed to refresh backend states", logfmt.Err(err))
 	}
 }
 
@@ -217,7 +221,7 @@ func (d *Manager) refreshAfterChange(ctx context.Context) {
 // REMOVE
 // -------------------------------------------------------------------------
 
-// RemoveBackend deletes all database records for a backend, its drain record
+// RemoveBackend deletes all database records for a backend, its state record
 // included. If purge is true and the backend is reachable, also deletes objects
 // from the backend's S3 storage. This is destructive and cannot be undone.
 // observer, when non-nil, receives a start and end step per object purged.
@@ -229,7 +233,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 	if err != nil {
 		return err
 	}
-	if rec != nil && rec.State == core.DrainStateDraining {
+	if rec != nil && rec.State == core.BackendStateDraining {
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
 
@@ -241,11 +245,11 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 		}
 	}
 
-	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
+	if err := d.store.DeleteBackendData(ctx, name); err != nil {
 		return fmt.Errorf("failed to delete backend data: %w", err)
 	}
-	if _, err := d.drains.ClearDrain(ctx, name); err != nil {
-		return fmt.Errorf("failed to clear drain record: %w", err)
+	if _, err := d.store.ClearBackendState(ctx, name); err != nil {
+		return fmt.Errorf("failed to clear backend state: %w", err)
 	}
 	d.refreshAfterChange(ctx)
 

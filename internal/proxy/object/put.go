@@ -398,9 +398,9 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// A drain that started after the claim would have to move the object
 	// straight back off, so abort the commit and let the write try another
 	// backend. The intent stays for the reaper, which finds no bytes and drops
-	// it. The check reads cached drain state, so a drain started on another
+	// it. The check reads cached backend state, so a drain started on another
 	// instance is caught late, but it cannot finish while this intent exists.
-	if o.core.IsDraining(backendName) {
+	if !o.core.AcceptsWrites(backendName) {
 		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
 			"key", key, "backend", backendName)
 		telemetry.DrainRaceAbortedTotal.Inc()

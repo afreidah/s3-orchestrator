@@ -25,7 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -54,8 +54,8 @@ type Handler struct {
 	encryption   *ops.Encryption
 	compression  *ops.Compression
 	provision    *ops.Provisioning
-	drain        *drain.Manager
-	lifecycle    core.BackendLifecycleStore
+	states       *backendstate.Manager
+	stateStore   core.BackendStateStore
 	reconciler   Reconciler
 	dbHealthy    func() bool
 	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
@@ -87,8 +87,8 @@ type Deps struct {
 	Encryption   *ops.Encryption
 	Compression  *ops.Compression
 	Provision    *ops.Provisioning
-	Drain        *drain.Manager
-	Lifecycle    core.BackendLifecycleStore
+	States       *backendstate.Manager
+	StateStore   core.BackendStateStore
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
 	LogBuffer    LogReader                      // nil when the log buffer is not wired
@@ -117,8 +117,8 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Encryption", d.Encryption)
 	must.NotNil("d.Compression", d.Compression)
 	must.NotNil("d.Provision", d.Provision)
-	must.NotNil("d.Drain", d.Drain)
-	must.NotNil("d.Lifecycle", d.Lifecycle)
+	must.NotNil("d.States", d.States)
+	must.NotNil("d.StateStore", d.StateStore)
 	must.NotNil("d.Cleanup", d.Cleanup)
 	must.NotNil("d.LogLevel", d.LogLevel)
 	must.NotNil("d.Registry", d.Registry)
@@ -135,8 +135,8 @@ func New(d *Deps) *Handler {
 		encryption:   d.Encryption,
 		compression:  d.Compression,
 		provision:    d.Provision,
-		drain:        d.Drain,
-		lifecycle:    d.Lifecycle,
+		states:       d.States,
+		stateStore:   d.StateStore,
 		reconciler:   d.Reconciler,
 		dbHealthy:    d.DBHealthy,
 		workerHealth: d.WorkerHealth,

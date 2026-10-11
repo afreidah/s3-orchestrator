@@ -1,15 +1,16 @@
 // -------------------------------------------------------------------------------
-// Drain Test Fleet
+// Backend State Test Fleet
 //
 // Author: Alex Freidah
 //
-// Builds a drain Manager over a live fleet: a real backend runtime over the
-// supplied backends and whatever store the test hands it. The purge tests use a
-// mock store to assert the calls they care about; the drain-record tests use a
-// real SQLite store so start, cancel and progress run against actual records.
+// Builds a backend state Manager over a live fleet: a real backend runtime over
+// the supplied backends and whatever store the test hands it. The purge tests
+// use a mock store to assert the calls they care about; the drain-record tests
+// use a real SQLite store so start, cancel and progress run against actual
+// records.
 // -------------------------------------------------------------------------------
 
-package drain
+package backendstate
 
 import (
 	"context"
@@ -28,16 +29,16 @@ import (
 // test trips it incidentally.
 const fleetTimeout = 30 * time.Second
 
-// drainStore is what New needs from a store, satisfied by both the mock union
+// fleetStore is what New needs from a store, satisfied by both the mock union
 // and the SQLite store.
-type drainStore interface {
+type fleetStore interface {
 	core.ObjectStore
-	core.DrainStore
-	core.BackendLifecycleStore
+	core.BackendStateStore
 }
 
-// newDrainFleet builds a drain Manager over the supplied backends and store.
-func newDrainFleet(t *testing.T, store drainStore, backends map[string]backend.ObjectBackend) (*Manager, *infra.BackendRuntime) {
+// newDrainFleet builds a backend state Manager over the supplied backends and
+// store.
+func newDrainFleet(t *testing.T, store fleetStore, backends map[string]backend.ObjectBackend) (*Manager, *infra.BackendRuntime) {
 	t.Helper()
 	names := make([]string, 0, len(backends))
 	for name := range backends {
@@ -52,8 +53,8 @@ func newDrainFleet(t *testing.T, store drainStore, backends map[string]backend.O
 		Quota:           counter.NewQuotaTracker(names),
 		RoutingStrategy: config.RoutingPack,
 	})
-	mgr := New(rt, store, store, store)
-	rt.SetDrainChecker(mgr)
+	mgr := New(rt, store, store)
+	rt.SetStateChecker(mgr)
 	return mgr, rt
 }
 

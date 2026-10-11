@@ -162,7 +162,7 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 		Flusher: sharedCounterFlusher{},
 		Tracker: other.Usage(),
 		Fleet:   other,
-		Drains:  noDrains{},
+		States:  noStates{},
 		Locker:  fakeLocker{},
 	}).(*usageFlushService).flushTick(context.Background())
 

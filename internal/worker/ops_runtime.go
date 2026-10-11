@@ -36,8 +36,7 @@ var (
 type Ops interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
-	IsDraining(name string) bool
-	ExcludeDraining(eligible []string) []string
+	AcceptsWrites(name string) bool
 	AcquireAdmission(ctx context.Context) bool
 	ReleaseAdmission()
 	GetBackend(name string) (backend.ObjectBackend, error)

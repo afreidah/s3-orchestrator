@@ -13,8 +13,8 @@ package admin
 import (
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -25,7 +25,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	data := &dashboard.Data{
 		BackendOrder:      []string{"b1", "b2"},
 		UnhealthyBackends: map[string]bool{"b2": true},
-		DrainingBackends:  map[string]drain.Progress{"b1": {Active: true, State: "draining"}},
+		DrainingBackends:  map[string]backendstate.DrainProgress{"b1": {Active: true, State: "draining"}},
 		QuotaStats: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},

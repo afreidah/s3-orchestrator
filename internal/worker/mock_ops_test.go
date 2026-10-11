@@ -46,6 +46,20 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
+// AcceptsWrites mocks base method.
+func (m *MockOps) AcceptsWrites(name string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcceptsWrites", name)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// AcceptsWrites indicates an expected call of AcceptsWrites.
+func (mr *MockOpsMockRecorder) AcceptsWrites(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptsWrites", reflect.TypeOf((*MockOps)(nil).AcceptsWrites), name)
+}
+
 // Acct mocks base method.
 func (m *MockOps) Acct() *accounting.Recorder {
 	m.ctrl.T.Helper()
@@ -116,20 +130,6 @@ func (mr *MockOpsMockRecorder) DeleteMany(ctx, name, be, storageKeys any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMany", reflect.TypeOf((*MockOps)(nil).DeleteMany), ctx, name, be, storageKeys)
 }
 
-// ExcludeDraining mocks base method.
-func (m *MockOps) ExcludeDraining(eligible []string) []string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExcludeDraining", eligible)
-	ret0, _ := ret[0].([]string)
-	return ret0
-}
-
-// ExcludeDraining indicates an expected call of ExcludeDraining.
-func (mr *MockOpsMockRecorder) ExcludeDraining(eligible any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExcludeDraining", reflect.TypeOf((*MockOps)(nil).ExcludeDraining), eligible)
-}
-
 // GetBackend mocks base method.
 func (m *MockOps) GetBackend(name string) (backend.ObjectBackend, error) {
 	m.ctrl.T.Helper()
@@ -174,20 +174,6 @@ func (m *MockOps) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend,
 func (mr *MockOpsMockRecorder) HeadWithTimeout(ctx, be, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadWithTimeout", reflect.TypeOf((*MockOps)(nil).HeadWithTimeout), ctx, be, key)
-}
-
-// IsDraining mocks base method.
-func (m *MockOps) IsDraining(name string) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsDraining", name)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsDraining indicates an expected call of IsDraining.
-func (mr *MockOpsMockRecorder) IsDraining(name any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockOps)(nil).IsDraining), name)
 }
 
 // Quota mocks base method.

@@ -52,9 +52,9 @@ type fleetSnapshotRefresher interface {
 	RefreshFleetIfStale(ctx context.Context) error
 }
 
-// drainStateRefresher reloads this instance's cached drain states from the
-// drain records. *drain.Manager satisfies it.
-type drainStateRefresher interface {
+// backendStateRefresher reloads this instance's cached backend states from the
+// records. *backendstate.Manager satisfies it.
+type backendStateRefresher interface {
 	Refresh(ctx context.Context) error
 }
 

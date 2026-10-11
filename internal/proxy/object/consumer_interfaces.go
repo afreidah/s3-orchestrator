@@ -24,14 +24,14 @@ import (
 )
 
 // Runtime is the subset of *infra.BackendRuntime the Manager and its read
-// failover use. IsDraining backs the post-PUT drain-race re-check, since the
+// failover use. AcceptsWrites backs the post-PUT re-check, since the
 // EligibleForWrite filter ahead of it is racy.
 type Runtime interface {
 	RangeFetchRuntime
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
 	GetBackend(name string) (backend.ObjectBackend, error)
-	IsDraining(name string) bool
+	AcceptsWrites(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Drain Tests - Backend Purge and Remove Operations
+// Backend State Tests - Backend Purge and Remove Operations
 //
 // Author: Alex Freidah
 //
@@ -7,7 +7,7 @@
 // during iteration to avoid infinite loops, and that S3 objects are cleaned up.
 // -------------------------------------------------------------------------------
 
-package drain
+package backendstate
 
 import (
 	"context"
@@ -297,7 +297,7 @@ func TestRemoveBackend_DrainLookupFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListDrains(gomock.Any()).Return(nil, errors.New("db down"))
+	store.EXPECT().ListBackendStates(gomock.Any()).Return(nil, errors.New("db down"))
 	store.EXPECT().DeleteBackendData(gomock.Any(), gomock.Any()).Times(0)
 	storetest.Permissive(store)
 

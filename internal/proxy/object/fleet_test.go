@@ -85,10 +85,13 @@ type fleetOpts struct {
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
-// drain.Manager's one-method infra.DrainChecker surface.
+// backendstate.Manager's infra.StateChecker surface.
 type drainingSet map[string]bool
 
-// IsDraining implements infra.DrainChecker.
+// AcceptsWrites implements infra.StateChecker.
+func (d drainingSet) AcceptsWrites(name string) bool { return !d[name] }
+
+// IsDraining implements infra.StateChecker.
 func (d drainingSet) IsDraining(name string) bool { return d[name] }
 
 // fleet is an object Manager plus the collaborators a test asserts against:
@@ -144,7 +147,7 @@ func newFleet(
 		for _, name := range opts.Draining {
 			d[name] = true
 		}
-		rt.SetDrainChecker(d)
+		rt.SetStateChecker(d)
 	}
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}

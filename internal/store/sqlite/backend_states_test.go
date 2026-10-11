@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Backend Drain Record Tests
+// Backend State Record Tests
 //
 // Author: Alex Freidah
 //
-// Drives a drain record through its states and checks that admission refuses
+// Drives a drain through the backend state record and checks that admission refuses
 // the backend for as long as a record of any state exists.
 // -------------------------------------------------------------------------------
 
@@ -21,11 +21,11 @@ const drainBackendName = "backend-a"
 
 // drainFor returns the named backend's drain record, failing the test when
 // there is none.
-func drainFor(t *testing.T, s *Store, backend string) core.BackendDrain {
+func drainFor(t *testing.T, s *Store, backend string) core.BackendStateRecord {
 	t.Helper()
-	drains, err := s.ListDrains(context.Background())
+	drains, err := s.ListBackendStates(context.Background())
 	if err != nil {
-		t.Fatalf("ListDrains: %v", err)
+		t.Fatalf("ListBackendStates: %v", err)
 	}
 	for _, d := range drains {
 		if d.BackendName == backend {
@@ -33,7 +33,7 @@ func drainFor(t *testing.T, s *Store, backend string) core.BackendDrain {
 		}
 	}
 	t.Fatalf("no drain record for %s in %+v", backend, drains)
-	return core.BackendDrain{}
+	return core.BackendStateRecord{}
 }
 
 // admits reports whether admission accepts a one-byte write on the backend.
@@ -81,7 +81,7 @@ func TestDrainRecord_StartRefusesAdmission(t *testing.T) {
 	s := newTestStore(t)
 	mustStartDrain(t, s, drainBackendName)
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.DrainStateDraining || d.FinishedAt != nil {
+	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDraining || d.FinishedAt != nil {
 		t.Errorf("after start: %+v, want draining and unfinished", d)
 	}
 	if again, err := s.StartDrain(context.Background(), drainBackendName); err != nil || again {
@@ -120,7 +120,7 @@ func TestDrainRecord_FailureKeepsRefusing(t *testing.T) {
 	mustStartDrain(t, s, drainBackendName)
 	mustFailDrain(t, s, drainBackendName, "list failed")
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.DrainStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
+	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
 		t.Errorf("after failure: %+v, want failed with its reason and finished", d)
 	}
 	if admits(t, s, drainBackendName, "while-failed") {
@@ -139,7 +139,7 @@ func TestDrainRecord_RestartAfterFailure(t *testing.T) {
 	mustFailDrain(t, s, drainBackendName, "list failed")
 	mustStartDrain(t, s, drainBackendName)
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.DrainStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
+	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
 		t.Errorf("after restart: %+v, want a fresh draining record", d)
 	}
 }
@@ -151,11 +151,11 @@ func TestDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	ctx := context.Background()
 	mustStartDrain(t, s, drainBackendName)
 
-	if cleared, err := s.ClearDrain(ctx, drainBackendName); err != nil || !cleared {
-		t.Fatalf("ClearDrain = %v, %v; want cleared", cleared, err)
+	if cleared, err := s.ClearBackendState(ctx, drainBackendName); err != nil || !cleared {
+		t.Fatalf("ClearBackendState = %v, %v; want cleared", cleared, err)
 	}
-	if cleared, err := s.ClearDrain(ctx, drainBackendName); err != nil || cleared {
-		t.Errorf("second ClearDrain = %v, %v; want nothing to clear", cleared, err)
+	if cleared, err := s.ClearBackendState(ctx, drainBackendName); err != nil || cleared {
+		t.Errorf("second ClearBackendState = %v, %v; want nothing to clear", cleared, err)
 	}
 	if !admits(t, s, drainBackendName, "after-clear") {
 		t.Error("admission refused a backend whose drain record was cleared")
@@ -224,7 +224,7 @@ func TestCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if !completes(t, s, drainBackendName) {
 		t.Fatal("did not complete once the backend was empty")
 	}
-	if d := drainFor(t, s, drainBackendName); d.State != core.DrainStateDrained || d.FinishedAt == nil {
+	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDrained || d.FinishedAt == nil {
 		t.Errorf("after completion: %+v, want drained and finished", d)
 	}
 }

@@ -70,7 +70,7 @@ func testSync(st *proxytest.Stack, store reconcile.Stores) *reconcile.Manager {
 }
 
 func testDashboard(st *proxytest.Stack, store core.DashboardStore) *dashboard.Aggregator {
-	return dashboard.New(store, st.Runtime.Usage(), st.Runtime.BackendOrder(), st.Runtime, st.Drain)
+	return dashboard.New(store, st.Runtime.Usage(), st.Runtime.BackendOrder(), st.Runtime, st.States)
 }
 
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {

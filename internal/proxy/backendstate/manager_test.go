@@ -1,14 +1,14 @@
 // -------------------------------------------------------------------------------
-// Drain Manager - Drain Record Tests
+// Backend State Manager - Drain Record Tests
 //
 // Author: Alex Freidah
 //
 // Starting, cancelling and reporting a drain against a real SQLite store, so
-// each operation is checked by the record it leaves and by what IsDraining and
-// admission make of it.
+// each operation is checked by the record it leaves and by what IsDraining,
+// AcceptsWrites and admission make of it.
 // -------------------------------------------------------------------------------
 
-package drain
+package backendstate
 
 import (
 	"context"
@@ -46,11 +46,14 @@ func TestStartDrain_RecordsAndRefusesWrites(t *testing.T) {
 	if !mgr.IsDraining("b1") || mgr.IsDraining("b2") {
 		t.Errorf("IsDraining b1=%v b2=%v, want only b1", mgr.IsDraining("b1"), mgr.IsDraining("b2"))
 	}
+	if mgr.AcceptsWrites("b1") || !mgr.AcceptsWrites("b2") {
+		t.Errorf("AcceptsWrites b1=%v b2=%v, want only b2", mgr.AcceptsWrites("b1"), mgr.AcceptsWrites("b2"))
+	}
 	p, err := mgr.GetDrainProgress(ctx, "b1")
 	if err != nil {
 		t.Fatalf("GetDrainProgress: %v", err)
 	}
-	if !p.Active || p.State != string(core.DrainStateDraining) {
+	if !p.Active || p.State != string(core.BackendStateDraining) {
 		t.Errorf("progress = %+v, want an active draining record", p)
 	}
 	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
@@ -90,8 +93,8 @@ func TestCancelDrain_ClearsTheRecord(t *testing.T) {
 	if err := mgr.CancelDrain(ctx, "b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
-	if mgr.IsDraining("b1") {
-		t.Error("IsDraining still true after cancel")
+	if mgr.IsDraining("b1") || !mgr.AcceptsWrites("b1") {
+		t.Error("backend still held back after cancel")
 	}
 	if p, err := mgr.GetDrainProgress(ctx, "b1"); err != nil || p.State != "" || p.Active {
 		t.Errorf("progress after cancel = %+v, %v; want no record", p, err)
@@ -106,7 +109,7 @@ func TestCancelDrain_ClearsTheRecord(t *testing.T) {
 }
 
 // TestGetDrainProgress_ReportsAFailedDrain verifies a failed record reads back
-// inactive with its reason, and that IsDraining still holds the backend back.
+// inactive with its reason, and that the backend still refuses writes.
 func TestGetDrainProgress_ReportsAFailedDrain(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -125,10 +128,10 @@ func TestGetDrainProgress_ReportsAFailedDrain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDrainProgress: %v", err)
 	}
-	if p.Active || p.State != string(core.DrainStateFailed) || p.Error != "list failed" {
+	if p.Active || p.State != string(core.BackendStateFailed) || p.Error != "list failed" {
 		t.Errorf("progress = %+v, want inactive, failed, with its reason", p)
 	}
-	if !mgr.IsDraining("b1") {
+	if mgr.AcceptsWrites("b1") {
 		t.Error("a failed drain left the backend open to writes")
 	}
 }
@@ -156,8 +159,8 @@ func TestRemoveBackend_RefusesADrainInProgress(t *testing.T) {
 	if err := mgr.RemoveBackend(ctx, "b1", false, nil); err != nil {
 		t.Fatalf("RemoveBackend after the drain finished: %v", err)
 	}
-	if mgr.IsDraining("b1") {
-		t.Error("removing the backend left its drain record behind")
+	if !mgr.AcceptsWrites("b1") {
+		t.Error("removing the backend left its state record behind")
 	}
 }
 

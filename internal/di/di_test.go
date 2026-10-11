@@ -31,7 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -73,7 +73,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"CleanupWorker", func(i do.Injector) error { _, err := ProvideCleanupWorker(i); return err }},
 		{"PendingReaper", func(i do.Injector) error { _, err := ProvidePendingReaper(i); return err }},
 		{"Scrubber", func(i do.Injector) error { _, err := ProvideScrubber(i); return err }},
-		{"DrainManager", func(i do.Injector) error { _, err := ProvideDrainManager(i); return err }},
+		{"BackendStateManager", func(i do.Injector) error { _, err := ProvideBackendStateManager(i); return err }},
 		{"Reconciler", func(i do.Injector) error { _, err := ProvideReconciler(i); return err }},
 		{"BucketAuth", func(i do.Injector) error { _, err := ProvideBucketAuth(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
@@ -625,8 +625,8 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	if _, err := do.Invoke[*worker.Scrubber](inj); err != nil {
 		t.Errorf("Scrubber: %v", err)
 	}
-	if _, err := do.Invoke[*drain.Manager](inj); err != nil {
-		t.Errorf("DrainManager: %v", err)
+	if _, err := do.Invoke[*backendstate.Manager](inj); err != nil {
+		t.Errorf("BackendStateManager: %v", err)
 	}
 	// Always registered: every write claims its bytes with an intent, so a
 	// deployment without the reaper would strand rows holding headroom.

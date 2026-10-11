@@ -2367,10 +2367,10 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	// Nothing runs drain passes here, so the drain itself does not race the
 	// explicit Clean below.
 	drainTarget := backends[0]
-	if err := st.Drain.StartDrain(ctx, drainTarget); err != nil {
+	if err := st.States.StartDrain(ctx, drainTarget); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
-	defer func() { _ = st.Drain.CancelDrain(ctx, drainTarget) }()
+	defer func() { _ = st.States.CancelDrain(ctx, drainTarget) }()
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
@@ -4168,7 +4168,7 @@ func TestDrainBackend(t *testing.T) {
 	assertObjectsOnBackend(t, keys, "minio-1")
 	ws.assertIntact(ctx, "before drain")
 
-	if err := testStack.Drain.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testStack.States.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	drainToCompletion(t, ctx, testStack, "minio-1")
@@ -4222,7 +4222,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 	}
 
 	// Start drain of minio-1.
-	if err := testStack.Drain.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testStack.States.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -4270,7 +4270,7 @@ func TestRemoveBackend(t *testing.T) {
 	}
 
 	// Remove without purge (just DB records).
-	if err := testStack.Drain.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
+	if err := testStack.States.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 

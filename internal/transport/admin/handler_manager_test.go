@@ -76,14 +76,14 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.Drain),
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
 		objects:      svc.Objects,
 		integrity:    svc.Integrity,
 		replication:  svc.Replication,
 		rebalance:    svc.Rebalance,
 		encryption:   svc.Encryption,
-		drain:        st.Drain,
-		lifecycle:    mock,
+		states:       st.States,
+		stateStore:   mock,
 		dbHealthy:    cb.IsHealthy,
 		cleanup:      mock,
 		logLevel:     &lv,
@@ -709,7 +709,7 @@ func TestHandleLogLevel_PutInvalidBody(t *testing.T) {
 }
 
 // TestHandleDrainProgress_InactiveShape pins the drain-progress wire shape for
-// a backend that is not draining. The handler converts drain.Progress at its
+// a backend that is not draining. The handler converts DrainProgress at its
 // boundary, so this is what keeps an internal field rename from reaching the
 // API.
 func TestHandleDrainProgress_InactiveShape(t *testing.T) {
@@ -825,13 +825,13 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	h := &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.Drain),
-		drain:        st.Drain,
-		lifecycle:    mock,
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
+		states:       st.States,
+		stateStore:   mock,
 		logLevel:     &lv,
 		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
-	t.Cleanup(func() { _ = h.drain.CancelDrain(context.Background(), "b1") })
+	t.Cleanup(func() { _ = h.states.CancelDrain(context.Background(), "b1") })
 
 	mux := http.NewServeMux()
 	h.Register(mux)

@@ -27,11 +27,11 @@ func (c *BackendRuntime) MaxObjectSize(name string) int64 {
 	return c.maxObjectSizes[name]
 }
 
-// EligibleForWrite returns backends, in configured order, that are not
-// draining, not circuit-broken, and within usage limits and max object size
-// for the given operation.
+// EligibleForWrite returns backends, in configured order, that accept writes,
+// are not circuit-broken, and are within usage limits and max object size for
+// the given operation.
 func (c *BackendRuntime) EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string {
-	eligible := c.ExcludeUnhealthy(c.ExcludeDraining(c.order))
+	eligible := c.ExcludeUnhealthy(c.AcceptingWrites(c.order))
 	return slices.DeleteFunc(eligible, func(name string) bool {
 		return !c.withinLimits(name, ops, egress, ingress)
 	})

@@ -493,7 +493,7 @@ func TestIntegrity_RemoveBackendKeepsSurvivingCopies(t *testing.T) {
 	}
 	ws.assertIntact(ctx, "before backend removal")
 
-	if err := testStack.Drain.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
+	if err := testStack.States.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 	defer resyncQuotaLimits(t, ctx)

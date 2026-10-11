@@ -31,11 +31,11 @@ func Permissive(m *MockMetadataStore) {
 
 	r.BackendObjectStats(a, a).Return(int64(0), int64(0), nil).AnyTimes()
 	r.StartDrain(a, a).Return(true, nil).AnyTimes()
-	r.ListDrains(a).Return(nil, nil).AnyTimes()
+	r.ListBackendStates(a).Return(nil, nil).AnyTimes()
 	r.AddDrainedObjects(a, a, a).Return(nil).AnyTimes()
 	r.MarkDrainFailed(a, a, a).Return(nil).AnyTimes()
 	r.CompleteDrain(a, a).Return(false, nil).AnyTimes()
-	r.ClearDrain(a, a).Return(false, nil).AnyTimes()
+	r.ClearBackendState(a, a).Return(false, nil).AnyTimes()
 	r.ClaimPendingCleanups(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.CleanupDLQDepth(a).Return(int64(0), nil).AnyTimes()
 	r.CleanupQueueDepth(a).Return(int64(0), nil).AnyTimes()

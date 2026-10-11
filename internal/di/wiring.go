@@ -5,8 +5,8 @@
 //
 // WireManager verifies that every required worker provider resolves
 // cleanly (a smoke check at boot rather than at first request) and points
-// the backend runtime's eligibility filter at the drain manager so
-// IsDraining reflects live drain state.
+// the backend runtime's eligibility filters at the backend state manager so
+// AcceptsWrites and IsDraining reflect live state.
 //
 // Called once from cli/serve after NewInjector.
 // -------------------------------------------------------------------------------
@@ -21,13 +21,13 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // WireManager resolves every required worker as a smoke check and points the
-// runtime's eligibility filter at the drain manager. It returns the first
+// runtime's eligibility filters at the backend state manager. It returns the first
 // required resolution error; a Failed PendingReaper is only logged.
 func WireManager(inj do.Injector) error {
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
@@ -60,17 +60,17 @@ func WireManager(inj do.Injector) error {
 	if err != nil {
 		return fmt.Errorf("resolve BackendRuntime: %w", err)
 	}
-	dm, err := do.Invoke[*drain.Manager](inj)
+	states, err := do.Invoke[*backendstate.Manager](inj)
 	if err != nil {
-		return fmt.Errorf("resolve DrainManager: %w", err)
+		return fmt.Errorf("resolve BackendStateManager: %w", err)
 	}
-	rt.SetDrainChecker(dm)
+	rt.SetStateChecker(states)
 	// Loaded before the first request so a drained backend is never offered
 	// to the write path after a restart. A failure is not fatal: admission
 	// reads the records itself, and the drainer reloads them each tick.
-	if err := dm.Refresh(context.Background()); err != nil {
+	if err := states.Refresh(context.Background()); err != nil {
 		//nolint:sloglint // bootstrap warn; no request/span ctx exists during wiring
-		slog.Warn("failed to load drain states; refusing writes falls to admission until the next refresh",
+		slog.Warn("failed to load backend states; refusing writes falls to admission until the next refresh",
 			logfmt.Component("di"),
 			"error", err)
 	}

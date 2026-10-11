@@ -62,7 +62,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.154.x (current)
+### v0.155.x (current)
+
+**Drain records renamed to backend states ([#1665](https://github.com/afreidah/s3-orchestrator/issues/1665), v0.155.2)**
+
+The table that records a backend's drain is renamed from `backend_drains` to `backend_states`, so states other than a drain can live in it. Columns, values and behavior are unchanged.
+
+**Operator action items after upgrade:**
+
+- **One migration applies automatically** (Postgres `00036`, SQLite `0023`), renaming the table. Queries or dashboards that read `backend_drains` directly need the new name.
+
+### v0.154.x
 
 **Fleet figures on their own cadence ([#1638](https://github.com/afreidah/s3-orchestrator/issues/1638), v0.154.0)**
 

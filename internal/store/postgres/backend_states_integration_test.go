@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Backend Drain Record Integration Tests
+// Backend State Record Integration Tests
 //
 // Author: Alex Freidah
 //
-// Drives a drain record through its states against a real PostgreSQL and checks
+// Drives a drain through the backend state record against a real PostgreSQL and checks
 // that admission refuses the backend for as long as a record of any state
 // exists. The database is shared across tests, so each test drains a backend of
 // its own.
@@ -30,17 +30,17 @@ func drainBackend(t *testing.T, s *Store) string {
 	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{{Name: name, QuotaBytes: 1 << 30}}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
-	t.Cleanup(func() { _, _ = s.ClearDrain(context.Background(), name) })
+	t.Cleanup(func() { _, _ = s.ClearBackendState(context.Background(), name) })
 	return name
 }
 
 // pgDrainFor returns the named backend's drain record, failing the test when
 // there is none.
-func pgDrainFor(t *testing.T, s *Store, backend string) core.BackendDrain {
+func pgDrainFor(t *testing.T, s *Store, backend string) core.BackendStateRecord {
 	t.Helper()
-	drains, err := s.ListDrains(context.Background())
+	drains, err := s.ListBackendStates(context.Background())
 	if err != nil {
-		t.Fatalf("ListDrains: %v", err)
+		t.Fatalf("ListBackendStates: %v", err)
 	}
 	for _, d := range drains {
 		if d.BackendName == backend {
@@ -48,7 +48,7 @@ func pgDrainFor(t *testing.T, s *Store, backend string) core.BackendDrain {
 		}
 	}
 	t.Fatalf("no drain record for %s", backend)
-	return core.BackendDrain{}
+	return core.BackendStateRecord{}
 }
 
 // pgAdmits reports whether admission accepts a one-byte write on the backend,
@@ -117,7 +117,7 @@ func TestPgDrainRecord_StartRefusesAdmission(t *testing.T) {
 	backend := drainBackend(t, s)
 	pgStartDrain(t, s, backend)
 
-	if d := pgDrainFor(t, s, backend); d.State != core.DrainStateDraining || d.FinishedAt != nil {
+	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDraining || d.FinishedAt != nil {
 		t.Errorf("after start: %+v, want draining and unfinished", d)
 	}
 	if again, err := s.StartDrain(context.Background(), backend); err != nil || again {
@@ -158,7 +158,7 @@ func TestPgDrainRecord_FailureKeepsRefusing(t *testing.T) {
 	pgStartDrain(t, s, backend)
 	pgFailDrain(t, s, backend, "list failed")
 
-	if d := pgDrainFor(t, s, backend); d.State != core.DrainStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
+	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
 		t.Errorf("after failure: %+v, want failed with its reason and finished", d)
 	}
 	if pgAdmits(t, s, backend, "while-failed") {
@@ -178,7 +178,7 @@ func TestPgDrainRecord_RestartAfterFailure(t *testing.T) {
 	pgFailDrain(t, s, backend, "list failed")
 	pgStartDrain(t, s, backend)
 
-	if d := pgDrainFor(t, s, backend); d.State != core.DrainStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
+	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
 		t.Errorf("after restart: %+v, want a fresh draining record", d)
 	}
 }
@@ -191,11 +191,11 @@ func TestPgDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	backend := drainBackend(t, s)
 	pgStartDrain(t, s, backend)
 
-	if cleared, err := s.ClearDrain(ctx, backend); err != nil || !cleared {
-		t.Fatalf("ClearDrain = %v, %v; want cleared", cleared, err)
+	if cleared, err := s.ClearBackendState(ctx, backend); err != nil || !cleared {
+		t.Fatalf("ClearBackendState = %v, %v; want cleared", cleared, err)
 	}
-	if cleared, err := s.ClearDrain(ctx, backend); err != nil || cleared {
-		t.Errorf("second ClearDrain = %v, %v; want nothing to clear", cleared, err)
+	if cleared, err := s.ClearBackendState(ctx, backend); err != nil || cleared {
+		t.Errorf("second ClearBackendState = %v, %v; want nothing to clear", cleared, err)
 	}
 	if !pgAdmits(t, s, backend, "after-clear") {
 		t.Error("admission refused a backend whose drain record was cleared")
@@ -245,7 +245,7 @@ func TestPgCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if !pgCompletes(t, s, backend) {
 		t.Fatal("did not complete once the backend was empty")
 	}
-	if d := pgDrainFor(t, s, backend); d.State != core.DrainStateDrained || d.FinishedAt == nil {
+	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDrained || d.FinishedAt == nil {
 		t.Errorf("after completion: %+v, want drained and finished", d)
 	}
 }

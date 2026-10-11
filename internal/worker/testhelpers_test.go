@@ -128,7 +128,7 @@ type mockMetadataStore struct {
 	core.PendingStore
 	core.IntegrityStore
 	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
+	core.BackendStateStore
 	core.DashboardStore
 	core.UsageFlusher
 	core.AdvisoryLocker

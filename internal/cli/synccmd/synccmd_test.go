@@ -200,7 +200,7 @@ func TestRefuseDrained_RefusesABackendWithADrainRecord(t *testing.T) {
 	if err := refuseDrained(ctx, adminDB, "b1"); err != nil {
 		t.Fatalf("refuseDrained with no drain record: %v", err)
 	}
-	drains, ok := adminDB.(core.DrainStore)
+	drains, ok := adminDB.(core.BackendStateStore)
 	if !ok {
 		t.Fatalf("store %T does not record drains", adminDB)
 	}

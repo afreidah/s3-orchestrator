@@ -122,7 +122,7 @@ func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	// headroom against writes that are never coming.
 	do.Provide(inj, ProvidePendingReaper)
 	do.Provide(inj, ProvideScrubber)
-	do.Provide(inj, ProvideDrainManager)
+	do.Provide(inj, ProvideBackendStateManager)
 	do.Provide(inj, ProvideDrainer)
 	if mode.IsWorker() {
 		do.Provide(inj, ProvideReconciler)

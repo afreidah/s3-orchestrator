@@ -46,8 +46,7 @@ type metadataStore interface {
 	core.PendingStore
 	core.IntegrityStore
 	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
-	core.DrainStore
+	core.BackendStateStore
 	core.UsageFlusher
 	core.AdvisoryLocker
 	core.DashboardStore

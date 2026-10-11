@@ -22,7 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -54,10 +54,10 @@ type lifecycleWorkerSet struct {
 // -------------------------------------------------------------------------
 
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
-// registers a service for. drain.Manager is not among them: di.WireManager
-// owns that resolution and runs first, as part of cli/serve's startup, so the
-// runtime already knows about the drain manager by the time the lifecycle
-// manager assembles its service list.
+// registers a service for. backendstate.Manager is not among them:
+// di.WireManager owns that resolution and runs first, as part of cli/serve's
+// startup, so the runtime already knows about the backend state manager by the
+// time the lifecycle manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	r := newResolver(i)
 	ws := lifecycleWorkerSet{
@@ -109,7 +109,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	usageSvc := r.Resolve[*usage.Service]()
 	registry := r.Resolve[*breaker.Registry]()
 	locker := r.Resolve[core.AdvisoryLocker]()
-	drainManager := r.Resolve[*drain.Manager]()
+	states := r.Resolve[*backendstate.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -125,7 +125,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		Flusher: usageSvc,
 		Tracker: rt.Usage(),
 		Fleet:   rt,
-		Drains:  drainManager,
+		States:  states,
 		Locker:  locker,
 	}))
 	sm.Register("fleet-snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))

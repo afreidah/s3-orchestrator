@@ -62,8 +62,8 @@ func TestNewStack_WiresEveryCollaborator(t *testing.T) {
 	if st.Multipart == nil {
 		t.Error("Multipart not wired")
 	}
-	if st.Drain == nil {
-		t.Error("Drain not wired")
+	if st.States == nil {
+		t.Error("States not wired")
 	}
 	if st.Usage == nil {
 		t.Error("Usage not wired")
@@ -114,7 +114,7 @@ func TestBuildWorkers(t *testing.T) {
 	if w.Scrubber == nil {
 		t.Error("Scrubber not wired")
 	}
-	if w.Drain != st.Drain {
-		t.Error("Workers.Drain is not the stack's own drain manager")
+	if w.States != st.States {
+		t.Error("Workers.States is not the stack's own backend state manager")
 	}
 }

@@ -108,12 +108,12 @@ func TestCore_BackendForwarders(t *testing.T) {
 func TestCore_DrainForwarders_NoCheckerThenWired(t *testing.T) {
 	t.Parallel()
 	c := newTestCore(t)
-	if c.IsDraining("b1") {
-		t.Error("IsDraining(b1) = true before any checker wired")
+	if c.IsDraining("b1") || !c.AcceptsWrites("b1") {
+		t.Error("b1 held back before any checker wired")
 	}
-	c.SetDrainChecker(staticDrainChecker{"b1": true})
-	if !c.IsDraining("b1") {
-		t.Error("IsDraining(b1) = false after wiring drain checker")
+	c.SetStateChecker(staticDrainChecker{"b1": true})
+	if !c.IsDraining("b1") || c.AcceptsWrites("b1") {
+		t.Error("b1 not held back after wiring the state checker")
 	}
 	if got := c.ExcludeDraining([]string{"b1", "b2"}); len(got) != 1 || got[0] != "b2" {
 		t.Errorf("ExcludeDraining = %v, want [b2]", got)
@@ -168,7 +168,7 @@ func TestCore_UsageForwarders(t *testing.T) {
 func TestCore_EligibleForWrite_AppliesAllFilters(t *testing.T) {
 	t.Parallel()
 	c := newTestCore(t)
-	c.SetDrainChecker(staticDrainChecker{"b1": true})
+	c.SetStateChecker(staticDrainChecker{"b1": true})
 
 	// b1 is draining -> excluded. b2 has max 1024; ingress 2048 -> excluded.
 	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 2048); len(got) != 0 {

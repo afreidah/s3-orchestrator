@@ -23,7 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -169,7 +169,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	drainReader := NewMockDrainProgressReader(ctrl)
 	// Only the draining backend is asked; querying the idle one would be a bug.
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), "draining").
-		Return(&drain.Progress{Active: true, ObjectsRemaining: 6, ObjectsMoved: 4}, nil).Times(1)
+		Return(&backendstate.DrainProgress{Active: true, ObjectsRemaining: 6, ObjectsMoved: 4}, nil).Times(1)
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
 

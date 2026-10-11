@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
-	drain "github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	backendstate "github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	metrics "github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -127,10 +127,10 @@ func (m *MockDrainProgressReader) EXPECT() *MockDrainProgressReaderMockRecorder 
 }
 
 // GetDrainProgress mocks base method.
-func (m *MockDrainProgressReader) GetDrainProgress(ctx context.Context, name string) (*drain.Progress, error) {
+func (m *MockDrainProgressReader) GetDrainProgress(ctx context.Context, name string) (*backendstate.DrainProgress, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetDrainProgress", ctx, name)
-	ret0, _ := ret[0].(*drain.Progress)
+	ret0, _ := ret[0].(*backendstate.DrainProgress)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

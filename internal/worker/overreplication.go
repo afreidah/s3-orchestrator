@@ -237,14 +237,14 @@ type scoredCopy struct {
 }
 
 // ScoreCopy assigns a retention score to a copy based on its backend's state:
-//   - draining backend: 0 (always remove first)
+//   - backend refusing writes, such as a draining one: 0 (always remove first)
 //   - circuit-broken backend: 1 (remove next)
 //   - healthy backend: 2 + (1 - utilization_ratio), range [2..3]
 //
 // Among healthy backends the most utilized scores lowest, so its copy is
 // removed first.
 func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
-	if c.ops.IsDraining(loc.BackendName) {
+	if !c.ops.AcceptsWrites(loc.BackendName) {
 		return 0
 	}
 

@@ -183,7 +183,7 @@ type importer interface {
 type adminStore interface {
 	RunMigrations(ctx context.Context) error
 	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
-	ListDrains(ctx context.Context) ([]core.BackendDrain, error)
+	ListBackendStates(ctx context.Context) ([]core.BackendStateRecord, error)
 	Close()
 }
 
@@ -232,17 +232,17 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 	return objects, adminDB, 0
 }
 
-// refuseDrained returns an error when the backend has a drain record of any
-// state. Importing onto a backend being drained re-adds rows the drain has to
-// move off, and onto a drained one resurrects what it already moved.
+// refuseDrained returns an error when the backend's state belongs to a drain.
+// Importing onto a backend being drained re-adds rows the drain has to move
+// off, and onto a drained one resurrects what it already moved.
 func refuseDrained(ctx context.Context, store adminStore, backendName string) error {
-	drains, err := store.ListDrains(ctx)
+	records, err := store.ListBackendStates(ctx)
 	if err != nil {
-		return fmt.Errorf("list drains: %w", err)
+		return fmt.Errorf("list backend states: %w", err)
 	}
-	for i := range drains {
-		if drains[i].BackendName == backendName {
-			return fmt.Errorf("backend %q is %s; clear its drain before syncing it", backendName, drains[i].State)
+	for i := range records {
+		if records[i].BackendName == backendName && records[i].State.IsDrain() {
+			return fmt.Errorf("backend %q is %s; clear its drain before syncing it", backendName, records[i].State)
 		}
 	}
 	return nil

@@ -197,27 +197,25 @@ type ExpiredObjectsLister interface {
 	ListExpiredObjects(ctx context.Context, q ExpiredObjectsQuery) ([]ObjectLocation, error)
 }
 
-// BackendLifecycleStore defines backend-level admin operations.
-type BackendLifecycleStore interface {
-	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
-	DeleteBackendData(ctx context.Context, backendName string) error
-}
-
-// DrainStore persists each backend's drain record, shared across instances and
-// restarts. Admission refuses a backend with a record in any state.
+// BackendStateStore persists each backend's state record, shared across
+// instances and restarts, and the backend-wide operations that act on it.
+// Admission refuses a backend with a record in any state.
 //
 // StartDrain reports false when the backend is already draining or drained; a
 // failed drain is restarted. AddDrainedObjects and MarkDrainFailed act only on a
 // drain in progress. CompleteDrain reports false while managed rows, intents or
-// multipart uploads remain on the backend. ClearDrain deletes the record, making
-// the backend writable again.
-type DrainStore interface {
+// multipart uploads remain on the backend. ClearBackendState deletes the
+// record, making the backend writable again. BackendObjectStats counts the
+// backend's objects and bytes, and DeleteBackendData drops every row it holds.
+type BackendStateStore interface {
+	ListBackendStates(ctx context.Context) ([]BackendStateRecord, error)
+	ClearBackendState(ctx context.Context, backendName string) (bool, error)
 	StartDrain(ctx context.Context, backendName string) (bool, error)
-	ListDrains(ctx context.Context) ([]BackendDrain, error)
 	AddDrainedObjects(ctx context.Context, backendName string, moved int64) error
 	MarkDrainFailed(ctx context.Context, backendName, reason string) error
 	CompleteDrain(ctx context.Context, backendName string) (bool, error)
-	ClearDrain(ctx context.Context, backendName string) (bool, error)
+	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
+	DeleteBackendData(ctx context.Context, backendName string) error
 }
 
 // UsageFlusher defines the store methods used by UsageTracker.FlushUsage.

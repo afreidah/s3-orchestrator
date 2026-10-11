@@ -30,11 +30,12 @@ import (
 // backendRegistry
 // -------------------------------------------------------------------------
 
-// staticDrainChecker is a fixed-set drain checker the registry test
-// uses to drive ExcludeDraining without standing up drain.Manager.
+// staticDrainChecker is a fixed set of draining backends the registry tests use
+// to drive the state filters without standing up backendstate.Manager.
 type staticDrainChecker map[string]bool
 
-func (s staticDrainChecker) IsDraining(name string) bool { return s[name] }
+func (s staticDrainChecker) AcceptsWrites(name string) bool { return !s[name] }
+func (s staticDrainChecker) IsDraining(name string) bool    { return s[name] }
 
 // stubBackend satisfies backend.ObjectBackend at the interface level
 // so registry.All() / Get() have something to return. None of its
@@ -73,10 +74,13 @@ func TestBackendRegistry_ExcludeDraining_NoCheckerWiredKeepsAll(t *testing.T) {
 func TestBackendRegistry_ExcludeDraining_DropsActiveDrains(t *testing.T) {
 	t.Parallel()
 	r := &BackendRuntime{order: []string{"a", "b", "c"}}
-	r.SetDrainChecker(staticDrainChecker{"b": true})
+	r.SetStateChecker(staticDrainChecker{"b": true})
 	got := r.ExcludeDraining([]string{"a", "b", "c"})
 	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
 		t.Errorf("ExcludeDraining = %v, want [a c]", got)
+	}
+	if got := r.AcceptingWrites([]string{"a", "b", "c"}); len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Errorf("AcceptingWrites = %v, want [a c]", got)
 	}
 }
 

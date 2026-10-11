@@ -30,8 +30,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -221,7 +221,7 @@ type adminHandlerRequiredDeps struct {
 	cb       *breaker.CircuitBreaker
 	logLevel *slog.LevelVar
 	stores   metadataStore
-	drain    *drain.Manager
+	states   *backendstate.Manager
 	ops      *ops.Services
 }
 
@@ -239,7 +239,7 @@ func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, e
 		cb:       r.Resolve[*breaker.CircuitBreaker](),
 		logLevel: r.Resolve[*slog.LevelVar](),
 		stores:   r.Resolve[metadataStore](),
-		drain:    r.Resolve[*drain.Manager](),
+		states:   r.Resolve[*backendstate.Manager](),
 		ops:      r.Resolve[*ops.Services](),
 	}
 	if r.err != nil {
@@ -316,8 +316,8 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Encryption:   d.ops.Encryption,
 		Compression:  d.ops.Compression,
 		Provision:    d.ops.Provision,
-		Drain:        d.drain,
-		Lifecycle:    d.stores,
+		States:       d.states,
+		StateStore:   d.stores,
 		DBHealthy:    d.cb.IsHealthy,
 		WorkerHealth: workerHealth,
 		Cleanup:      d.stores,

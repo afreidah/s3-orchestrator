@@ -641,7 +641,7 @@ func resetState(t *testing.T) {
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
-		"DELETE FROM backend_drains",
+		"DELETE FROM backend_states",
 	} {
 		if _, err := testDB.Exec(q); err != nil {
 			t.Fatalf("resetState: %v", err)
@@ -664,8 +664,8 @@ func resetState(t *testing.T) {
 	// reload or placement keeps ordering backends by the rows just deleted.
 	refreshQuota(t)
 	testStack.Objects.LocationCache().Clear()
-	if err := testStack.Drain.Refresh(context.Background()); err != nil {
-		t.Fatalf("resetState: refresh drain states: %v", err)
+	if err := testStack.States.Refresh(context.Background()); err != nil {
+		t.Fatalf("resetState: refresh backend states: %v", err)
 	}
 }
 
@@ -679,14 +679,14 @@ func drainToCompletion(t *testing.T, ctx context.Context, st *proxytest.Stack, b
 		if _, err := st.Drainer.Drain(ctx, nil); err != nil {
 			t.Fatalf("Drain: %v", err)
 		}
-		progress, err := st.Drain.GetDrainProgress(ctx, backend)
+		progress, err := st.States.GetDrainProgress(ctx, backend)
 		if err != nil {
 			t.Fatalf("GetDrainProgress(%s): %v", backend, err)
 		}
-		switch core.DrainState(progress.State) {
-		case core.DrainStateDrained:
+		switch core.BackendState(progress.State) {
+		case core.BackendStateDrained:
 			return
-		case core.DrainStateFailed:
+		case core.BackendStateFailed:
 			t.Fatalf("drain of %s failed: %s", backend, progress.Error)
 		}
 	}
@@ -890,7 +890,7 @@ type roleStore interface {
 	core.PendingStore
 	core.IntegrityStore
 	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
+	core.BackendStateStore
 	core.DashboardStore
 	core.UsageFlusher
 	core.AdvisoryLocker

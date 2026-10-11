@@ -294,23 +294,35 @@ type BackendQuotaUsage struct {
 	InflightBytes int64
 }
 
-// DrainState is where a backend's drain stands. A backend in any of these
-// states is refused new writes.
-type DrainState string
+// BackendState is the state a backend's record holds. A backend in any state
+// is refused new writes; a backend with no record takes them.
+type BackendState string
 
-// Drain states. Draining is in progress, drained has moved every object off,
-// and failed stopped on an error and waits for an operator to retry or clear it.
+// Backend states. Draining is a drain in progress, drained has moved every
+// object off, and failed stopped on an error and waits for an operator to
+// retry or clear it.
 const (
-	DrainStateDraining DrainState = "draining"
-	DrainStateDrained  DrainState = "drained"
-	DrainStateFailed   DrainState = "failed"
+	BackendStateDraining BackendState = "draining"
+	BackendStateDrained  BackendState = "drained"
+	BackendStateFailed   BackendState = "failed"
 )
 
-// BackendDrain is one backend's drain record. FinishedAt is nil while the drain
-// is in progress, and LastError is set only for a failed drain.
-type BackendDrain struct {
+// IsDrain reports whether the state belongs to a drain: in progress, finished
+// or failed.
+func (s BackendState) IsDrain() bool {
+	switch s {
+	case BackendStateDraining, BackendStateDrained, BackendStateFailed:
+		return true
+	}
+	return false
+}
+
+// BackendStateRecord is one backend's state record. ObjectsMoved, LastError and
+// FinishedAt describe a drain: FinishedAt is nil while it is in progress, and
+// LastError is set only when it failed.
+type BackendStateRecord struct {
 	BackendName  string
-	State        DrainState
+	State        BackendState
 	ObjectsMoved int64
 	LastError    string
 	StartedAt    time.Time

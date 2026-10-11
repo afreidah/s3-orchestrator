@@ -1,12 +1,13 @@
 // -------------------------------------------------------------------------------
-// Test Main - Drain Package Goroutine Leak Detection
+// Test Main - Backend State Package Goroutine Leak Detection
 //
 // Author: Alex Freidah
 //
-// Verifies that no goroutines are leaked after all drain tests complete.
+// Verifies that no goroutines are leaked after all backend state tests
+// complete.
 // -------------------------------------------------------------------------------
 
-package drain
+package backendstate
 
 import (
 	"log/slog"

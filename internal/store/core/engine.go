@@ -25,7 +25,7 @@ type engineRoles interface {
 	PendingStore
 	IntegrityStore
 	ExpiredObjectsLister
-	BackendLifecycleStore
+	BackendStateStore
 	UsageFlusher
 	AdvisoryLocker
 	DashboardStore

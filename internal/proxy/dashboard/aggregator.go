@@ -18,7 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -68,7 +68,7 @@ type Data struct {
 	UsageLimits            map[string]core.UsageLimits
 	UsagePeriod            string
 	TopLevelEntries        *core.DirectoryListResult
-	DrainingBackends       map[string]drain.Progress
+	DrainingBackends       map[string]backendstate.DrainProgress
 	UnhealthyBackends      map[string]bool
 }
 
@@ -95,9 +95,10 @@ type UsageReader interface {
 }
 
 // DrainProgressReader reports per-backend drain progress.
-// *drain.Manager satisfies it. Nil when the deployment runs no drain manager.
+// *backendstate.Manager satisfies it. Nil when the deployment runs no backend
+// state manager.
 type DrainProgressReader interface {
-	GetDrainProgress(ctx context.Context, name string) (*drain.Progress, error)
+	GetDrainProgress(ctx context.Context, name string) (*backendstate.DrainProgress, error)
 }
 
 // Aggregator queries the metadata store and usage tracker to build
@@ -141,7 +142,7 @@ func (da *Aggregator) scrubbableBackends() []string {
 // whose drain progress cannot be read is simply omitted rather than failing
 // the whole dashboard.
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
-	data.DrainingBackends = make(map[string]drain.Progress)
+	data.DrainingBackends = make(map[string]backendstate.DrainProgress)
 	data.UnhealthyBackends = make(map[string]bool)
 
 	if da.drain != nil {

@@ -228,7 +228,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
-    '    backend_drains {',
+    '    backend_states {',
     '        TEXT backend_name PK',
     '        TEXT state',
     '        BIGINT objects_moved',
@@ -266,7 +266,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     backend_quotas: {
       title: 'backend_quotas',
       badge: 'core', badgeText: 'core table',
-      body: '<p>Central registry of S3 backends. These tables reference it through a <code>backend_name</code> foreign key: <code>object_locations</code>, <code>backend_quota_stripes</code> (ON DELETE CASCADE), <code>multipart_uploads</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code> and <code>pending_objects</code>. <code>object_tags</code>, <code>notification_outbox</code>, <code>buckets</code>, <code>users</code>, <code>credentials</code>, <code>grants</code> and <code>backend_drains</code> do not. Created at startup from config; quota limits synced on each boot via <code>UpsertQuotaLimit</code>.</p>' +
+      body: '<p>Central registry of S3 backends. These tables reference it through a <code>backend_name</code> foreign key: <code>object_locations</code>, <code>backend_quota_stripes</code> (ON DELETE CASCADE), <code>multipart_uploads</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code> and <code>pending_objects</code>. <code>object_tags</code>, <code>notification_outbox</code>, <code>buckets</code>, <code>users</code>, <code>credentials</code>, <code>grants</code> and <code>backend_states</code> do not. Created at startup from config; quota limits synced on each boot via <code>UpsertQuotaLimit</code>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY</td></tr>' +
         '<tr><td>bytes_limit</td><td>BIGINT</td><td>Quota cap (0 = unlimited)</td></tr>' +
@@ -545,20 +545,20 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<p class="ac-idx"><b>Indexes:</b> PK on (user_id, resource_kind, resource_name)</p>' +
         '<p>Used by: <a href="../../godoc/provisioning/">provisioning.Merge</a> (joins each user onto the buckets it reaches). Backend and orchestrator grants authorize the admin routes (<code>transport/admin/handler_routes.go</code>). A grant naming a bucket neither source declares is reported as a notice and skipped rather than failing startup, since a bucket can leave the config file while the grant stays behind.</p>'
     },
-    backend_drains: {
-      title: 'backend_drains',
-      badge: 'core', badgeText: 'drain record',
-      body: '<p>One row per backend with a drain, from the moment it starts until it is cancelled or the backend is removed. The row is the drain: admission refuses a backend that has one, in any state, and the drain worker moves the objects off while it is in progress, so a restart resumes a drain rather than forgetting it.</p>' +
+    backend_states: {
+      title: 'backend_states',
+      badge: 'core', badgeText: 'backend state',
+      body: '<p>One row per backend in a state other than normal service, such as a drain from the moment it starts until it is cancelled or the backend is removed. Admission refuses a backend that has a row, in any state, and the drain worker moves the objects off while a drain is in progress, so a restart resumes a drain rather than forgetting it.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY. No foreign key to backend_quotas, so the record outlives that row</td></tr>' +
-        '<tr><td>state</td><td>TEXT</td><td>draining, drained, or failed, enforced by the backend_drains_state_check CHECK constraint</td></tr>' +
+        '<tr><td>state</td><td>TEXT</td><td>draining, drained, or failed, enforced by the backend_states_state_check CHECK constraint</td></tr>' +
         '<tr><td>objects_moved</td><td>BIGINT</td><td>Objects moved off so far</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Why a failed drain stopped</td></tr>' +
         '<tr><td>started_at</td><td>TIMESTAMPTZ</td><td>When the drain started, or last restarted</td></tr>' +
         '<tr><td>finished_at</td><td>TIMESTAMPTZ</td><td>NULL while in progress</td></tr></table>' +
-        '<p>The <code>backend_capacity</code> view joins it: per backend, the limit, stored, orphan and in-flight bytes, the bytes still available, and <code>accepting_writes</code>, false while the backend has a drain record. Every admission test reads that view.</p>' +
-        '<p>Used by: <a href="../../godoc/drain/">drain.Manager</a> (start, cancel, progress) &bull; the drain worker (progress, completion, failure) &bull; admission through <code>backend_capacity</code></p>' +
-        '<p class="ac-metric">Key queries: StartDrain, ListDrains, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearDrain</p>' +
+        '<p>The <code>backend_capacity</code> view joins it: per backend, the limit, stored, orphan and in-flight bytes, the bytes still available, and <code>accepting_writes</code>, false while the backend has a state record. Every admission test reads that view.</p>' +
+        '<p>Used by: <a href="../../godoc/backendstate/">backendstate.Manager</a> (start, cancel, progress) &bull; the drain worker (progress, completion, failure) &bull; admission through <code>backend_capacity</code></p>' +
+        '<p class="ac-metric">Key queries: StartDrain, ListBackendStates, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearBackendState</p>' +
         '<p class="ac-metric">Metrics: s3o_drain_active, s3o_drain_objects_moved_total, s3o_drain_bytes_moved_total &bull; Audit events: storage.DrainStart, storage.DrainCancel, storage.DrainMove, storage.DrainRemoveReplica, storage.DrainComplete &bull; Events: backend.drain.completed, backend.drain.failed</p>'
     }
   };
@@ -623,7 +623,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants', 'backend_drains'];
+      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants', 'backend_states'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -676,7 +676,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | **users** | The identity a credential proves, which grants are held by | `id` |
 | **credentials** | One keypair proving one user; several may name the same user | `access_key_id` |
 | **grants** | Pairs a user with a bucket, a backend, or the orchestrator, and the permissions it carries there | `(user_id, resource_kind, resource_name)` |
-| **backend_drains** | A backend's drain record; admission refuses a backend that has one | `backend_name` |
+| **backend_states** | A backend's state record, such as a drain; admission refuses a backend that has one | `backend_name` |
 
 ### Schema Migrations
 
@@ -717,3 +717,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00033_storage_key_indexes` | Add `idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C")` for the reconcile walk, which compares the ledger with a backend listing by path, and the unique `idx_object_locations_backend_storage_key_unique (backend_name, storage_key)`. Drop `idx_object_locations_backend_key_collate_c`. Built `CONCURRENTLY` outside a transaction |
 | `00034_unreadable_rows_unmanaged` | Mark rows that are encrypted with no key as unmanaged, so they keep their quota without being replicated, listed or served. Import marks such rows itself; this brings rows imported earlier into line |
 | `00035_worker_scan_indexes` | Add `idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed` for the drain's smallest-first walk, and `idx_cleanup_queue_backend_storage_key` and `idx_cleanup_dlq_backend_storage_key (backend_name, storage_key)` for reconcile's per-page classification. Drop `idx_object_locations_managed`, `idx_object_locations_backend` and `idx_cleanup_dlq_backend`, each a prefix of an index that remains. Built `CONCURRENTLY` outside a transaction |
+| `00036_backend_states` | Rename `backend_drains` to `backend_states`, with its CHECK constraint and primary key, so states other than a drain can live in it. `backend_capacity` follows the rename |

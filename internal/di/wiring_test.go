@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Covers the happy path (every required dependency resolves and the
-// drain manager lands on the BackendRuntime) and each
+// backend state manager lands on the BackendRuntime) and each
 // dependency-missing branch by feeding WireManager a bare injector
 // instead of the full one NewInjector assembles.
 // -------------------------------------------------------------------------------
@@ -20,14 +20,14 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // TestWireManager_HappyPath builds a fully-populated injector via
 // NewInjector, runs WireManager, and asserts every worker resolves and
-// the drain manager was installed on the BackendRuntime. PendingReaper is
+// the backend state manager was installed on the BackendRuntime. PendingReaper is
 // expected nil because happyPathConfig leaves the pending pattern
 // disabled, which exercises the invokeOptional branch.
 func TestWireManager_HappyPath(t *testing.T) {
@@ -46,8 +46,8 @@ func TestWireManager_HappyPath(t *testing.T) {
 	if _, err := do.Invoke[*infra.BackendRuntime](inj); err != nil {
 		t.Fatalf("resolve BackendRuntime: %v", err)
 	}
-	if dm, err := do.Invoke[*drain.Manager](inj); err != nil || dm == nil {
-		t.Errorf("drain manager not resolvable after wiring: %v", err)
+	if dm, err := do.Invoke[*backendstate.Manager](inj); err != nil || dm == nil {
+		t.Errorf("backend state manager not resolvable after wiring: %v", err)
 	}
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
 		t.Errorf("resolve Rebalancer: %v", err)
@@ -98,7 +98,7 @@ func TestWireManager_NoWorkers(t *testing.T) {
 		t.Fatal("expected error for missing worker")
 	}
 	// At minimum the wrap should mention one of the required workers
-	// or the drain manager; any of them failing satisfies the contract
+	// or the backend state manager; any of them failing satisfies the contract
 	// that WireManager surfaces resolution failures rather than panicking.
 	if !strings.Contains(err.Error(), "resolve") {
 		t.Errorf("error = %q, want to contain \"resolve\"", err.Error())
@@ -162,9 +162,9 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 			errSubstr: "resolve BackendRuntime",
 		},
 		{
-			name:      "missing DrainManager",
+			name:      "missing BackendStateManager",
 			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber, provideRuntime},
-			errSubstr: "resolve DrainManager",
+			errSubstr: "resolve BackendStateManager",
 		},
 	}
 
@@ -183,8 +183,8 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 			}
 		})
 	}
-	// Sanity: drain.Manager package import stays live so go vet is happy.
-	_ = (*drain.Manager)(nil)
+	// Sanity: backendstate.Manager package import stays live so go vet is happy.
+	_ = (*backendstate.Manager)(nil)
 }
 
 // TestWireManager_PendingReaperFailedLogsAndContinues drives the Failed

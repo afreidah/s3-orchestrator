@@ -40,7 +40,7 @@ const (
 // handleStartDrain begins draining a backend.
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.drain.StartDrain(r.Context(), name); err != nil {
+	if err := h.states.StartDrain(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
@@ -54,7 +54,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 // handleDrainProgress returns the current state of a drain operation.
 func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	progress, err := h.drain.GetDrainProgress(r.Context(), name)
+	progress, err := h.states.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, errDrainOperationFailed)
@@ -74,7 +74,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 // progress and making a drained or failed backend writable again.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.drain.CancelDrain(r.Context(), name); err != nil {
+	if err := h.states.CancelDrain(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
@@ -96,7 +96,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
-		if err := h.drain.RemoveBackend(r.Context(), name, false, nil); err != nil {
+		if err := h.states.RemoveBackend(r.Context(), name, false, nil); err != nil {
 			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
 			httputil.WriteJSONError(w, http.StatusBadRequest, "remove failed")
 			return
@@ -118,7 +118,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			h.streamRemovePurge(w, r, name)
 			return
 		}
-		if err := h.drain.RemoveBackend(r.Context(), name, true, nil); err != nil {
+		if err := h.states.RemoveBackend(r.Context(), name, true, nil); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
 			httputil.WriteJSONError(w, http.StatusBadRequest, "purge failed")
 			return
@@ -131,7 +131,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
-	objectCount, totalBytes, err := h.lifecycle.BackendObjectStats(r.Context(), name)
+	objectCount, totalBytes, err := h.stateStore.BackendObjectStats(r.Context(), name)
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "backend not found or stats unavailable")
 		return
@@ -161,7 +161,7 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 			}
 			obs(s)
 		}
-		if err := h.drain.RemoveBackend(r.Context(), name, true, counting); err != nil {
+		if err := h.states.RemoveBackend(r.Context(), name, true, counting); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
 			return stepResult{}, err
 		}

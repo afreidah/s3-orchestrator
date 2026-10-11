@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// Backend Drain Operations
+// Backend State Operations
 //
 // Author: Alex Freidah
 //
-// Implements the Postgres engine bindings for backend_drains, the durable record
-// of each backend's drain. Admission refuses a drained backend by reading the
-// same table through backend_capacity.
+// Implements the Postgres engine bindings for backend_states, the durable record
+// of each backend's state, such as a drain. Admission refuses a backend with a
+// record by reading the same table through backend_capacity.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -28,15 +28,15 @@ func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error
 	return n > 0, nil
 }
 
-// ListDrains returns every drain record, whatever its state.
-func (s *Store) ListDrains(ctx context.Context) ([]core.BackendDrain, error) {
-	rows, err := s.queries.ListDrains(ctx)
+// ListBackendStates returns every backend state record, whatever its state.
+func (s *Store) ListBackendStates(ctx context.Context) ([]core.BackendStateRecord, error) {
+	rows, err := s.queries.ListBackendStates(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list drains: %w", err)
+		return nil, fmt.Errorf("list backend states: %w", err)
 	}
-	out := make([]core.BackendDrain, len(rows))
+	out := make([]core.BackendStateRecord, len(rows))
 	for i := range rows {
-		out[i] = backendDrainFromRow(&rows[i])
+		out[i] = backendStateFromRow(&rows[i])
 	}
 	return out, nil
 }
@@ -74,21 +74,21 @@ func (s *Store) CompleteDrain(ctx context.Context, backendName string) (bool, er
 	return n > 0, nil
 }
 
-// ClearDrain deletes the backend's drain record, which makes it writable again.
-// Reports whether there was one.
-func (s *Store) ClearDrain(ctx context.Context, backendName string) (bool, error) {
-	n, err := s.queries.ClearDrain(ctx, backendName)
+// ClearBackendState deletes the backend's state record, which makes it
+// writable again. Reports whether there was one.
+func (s *Store) ClearBackendState(ctx context.Context, backendName string) (bool, error) {
+	n, err := s.queries.ClearBackendState(ctx, backendName)
 	if err != nil {
-		return false, fmt.Errorf("clear drain: %w", err)
+		return false, fmt.Errorf("clear backend state: %w", err)
 	}
 	return n > 0, nil
 }
 
-// backendDrainFromRow converts a sqlc backend_drains row to the core type.
-func backendDrainFromRow(r *db.BackendDrain) core.BackendDrain {
-	return core.BackendDrain{
+// backendStateFromRow converts a sqlc backend_states row to the core type.
+func backendStateFromRow(r *db.BackendState) core.BackendStateRecord {
+	return core.BackendStateRecord{
 		BackendName:  r.BackendName,
-		State:        core.DrainState(r.State),
+		State:        core.BackendState(r.State),
 		ObjectsMoved: r.ObjectsMoved,
 		LastError:    derefStr(r.LastError),
 		StartedAt:    r.StartedAt.Time,
