@@ -23,17 +23,17 @@ import (
 // are skipped. In-flight items run to completion. At most
 // min(concurrency, len(items)) worker goroutines are spawned.
 func Run[T any](ctx context.Context, concurrency int, items []T, fn func(context.Context, T)) {
+	n := len(items)
+	if n == 0 {
+		return
+	}
+
 	if concurrency <= 0 {
 		slog.WarnContext(ctx, "concurrency <= 0, clamping to 1",
 			logfmt.Component("workerpool"),
 			"requested", concurrency,
 		)
 		concurrency = 1
-	}
-
-	n := len(items)
-	if n == 0 {
-		return
 	}
 
 	// A pre-cancelled context dispatches zero items deterministically.

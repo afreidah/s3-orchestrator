@@ -10,7 +10,10 @@
 package workerpool
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -47,6 +50,26 @@ func TestRun_EmptySlice(t *testing.T) {
 	})
 	if got := count.Load(); got != 0 {
 		t.Errorf("processed %d items, want 0", got)
+	}
+}
+
+// TestRun_EmptySliceZeroConcurrencyIsSilent verifies an empty batch sized by
+// its own length returns without the misconfiguration warning, which still
+// fires once there is work. Not parallel: it swaps the default logger.
+func TestRun_EmptySliceZeroConcurrencyIsSilent(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	Run(context.Background(), 0, []int{}, func(context.Context, int) {})
+	if buf.Len() != 0 {
+		t.Errorf("empty batch logged %q, want nothing", buf.String())
+	}
+
+	Run(context.Background(), 0, []int{1}, func(context.Context, int) {})
+	if !strings.Contains(buf.String(), "clamping to 1") {
+		t.Errorf("zero concurrency with work logged %q, want the clamp warning", buf.String())
 	}
 }
 
