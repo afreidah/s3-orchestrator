@@ -223,7 +223,7 @@ Key metrics to alert on:
 | `s3o_pending_intents_resolved_total{status}` | Pending intents resolved by status (`committed` = atomic commit happy path, `promoted` = reaper found backend object and promoted the intent, `dropped` = reaper found HEAD 404 and dropped the intent, `ambiguous` = HEAD failed for non-404 reasons, `already_resolved` = race). A sustained `ambiguous` rate means the reaper cannot reach the backend |
 | `s3o_pending_intents_depth` | Current unresolved intents. Alert when consistently above the `batch_size` of the reaper - the reaper is not keeping up |
 | `s3o_drain_active` | Number of backends with a drain in progress, set from the drain records on each drain worker tick; 0 means no drains are running. Page on `s3o_drain_active > 0 for 6h` (drain stuck) |
-| `s3o_drain_race_aborted_total` | PutObject attempts aborted after drain started mid-write. Any non-zero rate is benign (the orchestrator recovers automatically) but a sustained rate suggests longer-than-expected gaps between `EligibleForWrite` and the backend PUT - typically very large objects against a fast-draining backend |
+| `s3o_write_target_refused_total` | PutObject attempts aborted because the backend was cordoned or started draining mid-write. Any non-zero rate is benign (the orchestrator recovers automatically) but a sustained rate suggests longer-than-expected gaps between `EligibleForWrite` and the backend PUT - typically very large objects against a backend whose state just changed |
 | `time() - s3o_worker_last_success_timestamp_seconds{service="..."}` | Alert when greater than the worker's expected tick interval times a margin (e.g. `> 4 * interval`) - the service has not completed a successful tick in that window |
 | `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 - the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
 | `rate(s3o_worker_ticks_total{result="error"}[15m])` | Persistent error rate; alongside `consecutive_failures` distinguishes flapping from sustained failure |
@@ -325,7 +325,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_drain_active` | Gauge | - | Number of backends with a drain in progress |
 | `s3o_drain_objects_moved_total` | Counter | - | Objects migrated during drain |
 | `s3o_drain_bytes_moved_total` | Counter | - | Bytes migrated during drain |
-| `s3o_drain_race_aborted_total` | Counter | - | PutObject attempts aborted after drain started mid-write |
+| `s3o_write_target_refused_total` | Counter | - | PutObject attempts aborted because the backend stopped accepting writes mid-write |
+| `s3o_backend_state` | Gauge | backend, state | 1 for each state flag a backend carries: cordoned, draining, drained, drain-failed |
 | `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations |
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
 | `s3o_encryption_unknown_key_id_total` | Counter | - | Decryption attempts refused because the keyID matches no configured key |

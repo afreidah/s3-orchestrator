@@ -22,12 +22,14 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // noDrains has the fleet report no backend as draining, so every backend it
 // lists is scanned.
 func noDrains(fleet *MockFleetOps) {
-	fleet.EXPECT().ExcludeDraining(gomock.Any()).DoAndReturn(func(names []string) []string { return names }).AnyTimes()
+	fleet.EXPECT().Accepted(gomock.Any(), core.AcceptForReconcile).DoAndReturn(
+		func(names []string, _ core.BackendFlags) []string { return names }).AnyTimes()
 }
 
 // TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising gomock.NewController, r.Run, context.Background.
@@ -162,7 +164,7 @@ func TestReconciler_SkipsDrainingBackends(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
-	fleet.EXPECT().ExcludeDraining([]string{"b1", "b2"}).Return([]string{"b2"})
+	fleet.EXPECT().Accepted([]string{"b1", "b2"}, core.AcceptForReconcile).Return([]string{"b2"})
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 0, nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
@@ -176,7 +178,7 @@ func TestReconcile_RefusesANamedDrainingBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	fleet := NewMockFleetOps(ctrl)
-	fleet.EXPECT().ExcludeDraining([]string{"b1"}).Return(nil)
+	fleet.EXPECT().Accepted([]string{"b1"}, core.AcceptForReconcile).Return(nil)
 
 	r := NewReconciler(&ReconcilerDeps{
 		Syncer: NewMockBackendSyncer(ctrl), Fleet: fleet, Usage: NewMockUsageReconciler(ctrl),

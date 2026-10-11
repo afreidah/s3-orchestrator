@@ -503,9 +503,9 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.
 func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string, size int64) (bool, error) {
 	var fits bool
 	if err := a.q.QueryRowContext(ctx, `
-		SELECT accepting_writes AND (available_bytes IS NULL OR available_bytes >= ?)
+		SELECT (flags & ~?) = 0 AND (available_bytes IS NULL OR available_bytes >= ?)
 		FROM backend_capacity
-		WHERE backend_name = ?`, size, backendName).Scan(&fits); err != nil {
+		WHERE backend_name = ?`, core.AcceptForWrite, size, backendName).Scan(&fits); err != nil {
 		return false, fmt.Errorf("check backend headroom: %w", err)
 	}
 	return fits, nil

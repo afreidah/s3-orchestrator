@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -45,13 +46,13 @@ type BackendSyncer interface {
 }
 
 // FleetOps is the fleet-wide surface the reconciler walks and republishes:
-// the backends to visit, which of them have a drain record, and the quota
-// gauges to refresh once a pass has changed what they report.
+// the backends to visit, which of them reconcile accepts, and the quota gauges
+// to refresh once a pass has changed what they report.
 // *infra.BackendRuntime satisfies it.
 type FleetOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 	BackendOrder() []string
-	ExcludeDraining(eligible []string) []string
+	Accepted(eligible []string, accept core.BackendFlags) []string
 }
 
 // UsageReconciler corrects the drift in the incrementally maintained byte
@@ -183,11 +184,11 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 	audit.Log(ctx, "usage.reconcile", slog.Int("backends_corrected", len(adjustments)))
 }
 
-// scannable returns the backends a reconcile may scan: every backend without a
-// drain record, since importing from one would re-add rows the drain is
-// moving off.
+// scannable returns the backends a reconcile may scan: every backend whose
+// flags reconcile accepts. A drain is refused, since importing from it would
+// re-add rows the drain is moving off; a cordon is not.
 func (r *Reconciler) scannable() []string {
-	return r.fleet.ExcludeDraining(r.fleet.BackendOrder())
+	return r.fleet.Accepted(r.fleet.BackendOrder(), core.AcceptForReconcile)
 }
 
 // backendsFor returns the backends an operator-driven reconcile scans: the one
@@ -196,7 +197,7 @@ func (r *Reconciler) backendsFor(backendName string) ([]string, error) {
 	if backendName == "" {
 		return r.scannable(), nil
 	}
-	if len(r.fleet.ExcludeDraining([]string{backendName})) == 0 {
+	if len(r.fleet.Accepted([]string{backendName}, core.AcceptForReconcile)) == 0 {
 		return nil, fmt.Errorf("backend %q has a drain record; reconcile skips it", backendName)
 	}
 	return []string{backendName}, nil

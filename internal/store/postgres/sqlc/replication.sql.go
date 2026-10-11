@@ -311,7 +311,7 @@ SELECT $1::text, $2::text, $3::text, ol.size_bytes, ol.encrypted, ol.encryption_
 FROM object_locations ol
 JOIN backend_capacity c ON c.backend_name = $2::text
 WHERE ol.object_key = $1::text AND ol.backend_name = $4
-  AND c.accepting_writes
+  AND (c.flags & ~($5::bigint)) = 0
   AND (c.available_bytes IS NULL OR c.available_bytes >= ol.size_bytes)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING size_bytes
@@ -322,6 +322,7 @@ type InsertReplicaConditionalParams struct {
 	TargetBackend string
 	StorageKey    string
 	SourceBackend string
+	Accepts       int64
 }
 
 // Returns the size_bytes that was actually inserted into object_locations
@@ -355,6 +356,7 @@ func (q *Queries) InsertReplicaConditional(ctx context.Context, arg InsertReplic
 		arg.TargetBackend,
 		arg.StorageKey,
 		arg.SourceBackend,
+		arg.Accepts,
 	)
 	var size_bytes int64
 	err := row.Scan(&size_bytes)

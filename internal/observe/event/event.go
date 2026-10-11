@@ -65,6 +65,8 @@ const (
 	ConfigReloadFailed         = "config.reload_failed"
 	BackendDrainCompleted      = "backend.drain.completed"
 	BackendRemoved             = "backend.removed"
+	BackendCordoned            = "backend.cordoned"
+	BackendUncordoned          = "backend.uncordoned"
 	RebalanceCompleted         = "rebalance.completed"
 	ReplicationCompleted       = "replication.completed"
 	LifecycleCompleted         = "lifecycle.completed"

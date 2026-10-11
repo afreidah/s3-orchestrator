@@ -15,6 +15,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -117,7 +118,7 @@ func TestPgDrainRecord_StartRefusesAdmission(t *testing.T) {
 	backend := drainBackend(t, s)
 	pgStartDrain(t, s, backend)
 
-	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDraining || d.FinishedAt != nil {
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDraining || d.FinishedAt != nil {
 		t.Errorf("after start: %+v, want draining and unfinished", d)
 	}
 	if again, err := s.StartDrain(context.Background(), backend); err != nil || again {
@@ -158,7 +159,7 @@ func TestPgDrainRecord_FailureKeepsRefusing(t *testing.T) {
 	pgStartDrain(t, s, backend)
 	pgFailDrain(t, s, backend, "list failed")
 
-	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDrainFailed || d.LastError != "list failed" || d.FinishedAt == nil {
 		t.Errorf("after failure: %+v, want failed with its reason and finished", d)
 	}
 	if pgAdmits(t, s, backend, "while-failed") {
@@ -178,7 +179,7 @@ func TestPgDrainRecord_RestartAfterFailure(t *testing.T) {
 	pgFailDrain(t, s, backend, "list failed")
 	pgStartDrain(t, s, backend)
 
-	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
 		t.Errorf("after restart: %+v, want a fresh draining record", d)
 	}
 }
@@ -245,7 +246,7 @@ func TestPgCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if !pgCompletes(t, s, backend) {
 		t.Fatal("did not complete once the backend was empty")
 	}
-	if d := pgDrainFor(t, s, backend); d.State != core.BackendStateDrained || d.FinishedAt == nil {
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDrained || d.FinishedAt == nil {
 		t.Errorf("after completion: %+v, want drained and finished", d)
 	}
 }
@@ -320,5 +321,57 @@ func TestPgCompleteDrain_OnlyADrainInProgress(t *testing.T) {
 	pgFailDrain(t, s, backend, "stopped")
 	if pgCompletes(t, s, backend) {
 		t.Fatal("completed a drain that had failed")
+	}
+}
+
+// TestPgBackendFlags_EachRefusesAdmission sets every flag in turn and verifies
+// admission refuses the backend while it is set and accepts it once cleared,
+// so the mask admission passes to SQL matches what writes accept in Go.
+func TestPgBackendFlags_EachRefusesAdmission(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	backend := drainBackend(t, s)
+	for i, flag := range []core.BackendFlags{core.FlagCordoned, core.FlagDraining, core.FlagDrained, core.FlagDrainFailed} {
+		if set, err := s.SetBackendFlag(ctx, backend, flag); err != nil || !set {
+			t.Fatalf("SetBackendFlag(%s) = %v, %v", flag, set, err)
+		}
+		if pgAdmits(t, s, backend, fmt.Sprintf("flagged-%d", i)) != flag.AcceptedBy(core.AcceptForWrite) {
+			t.Errorf("admission with %s disagrees with AcceptForWrite", flag)
+		}
+		if cleared, err := s.ClearBackendFlags(ctx, backend, flag); err != nil || !cleared {
+			t.Fatalf("ClearBackendFlags(%s) = %v, %v", flag, cleared, err)
+		}
+		if !pgAdmits(t, s, backend, fmt.Sprintf("cleared-%d", i)) {
+			t.Errorf("admission refused the backend after %s was cleared", flag)
+		}
+	}
+}
+
+// TestPgBackendFlags_CordonAndDrainAreIndependent verifies a drain keeps a
+// cordon, cancelling the drain leaves the cordon, and uncordoning leaves a
+// drain.
+func TestPgBackendFlags_CordonAndDrainAreIndependent(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	backend := drainBackend(t, s)
+	if set, err := s.SetBackendFlag(ctx, backend, core.FlagCordoned); err != nil || !set {
+		t.Fatalf("cordon = %v, %v", set, err)
+	}
+	pgStartDrain(t, s, backend)
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagCordoned|core.FlagDraining {
+		t.Fatalf("after drain on a cordon: %s, want cordoned and draining", d.Flags)
+	}
+	if _, err := s.ClearBackendFlags(ctx, backend, core.DrainFlags); err != nil {
+		t.Fatalf("cancel drain: %v", err)
+	}
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagCordoned {
+		t.Errorf("after cancelling the drain: %s, want cordoned only", d.Flags)
+	}
+	pgStartDrain(t, s, backend)
+	if _, err := s.ClearBackendFlags(ctx, backend, core.FlagCordoned); err != nil {
+		t.Fatalf("uncordon: %v", err)
+	}
+	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDraining {
+		t.Errorf("after uncordoning: %s, want draining only", d.Flags)
 	}
 }

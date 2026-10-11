@@ -197,18 +197,24 @@ type ExpiredObjectsLister interface {
 	ListExpiredObjects(ctx context.Context, q ExpiredObjectsQuery) ([]ObjectLocation, error)
 }
 
-// BackendStateStore persists each backend's state record, shared across
-// instances and restarts, and the backend-wide operations that act on it.
-// Admission refuses a backend with a record in any state.
+// BackendStateStore persists each backend's state flags and drain progress,
+// shared across instances and restarts, and the backend-wide operations that
+// act on them. Admission refuses a backend carrying a flag writes do not
+// accept.
 //
-// StartDrain reports false when the backend is already draining or drained; a
-// failed drain is restarted. AddDrainedObjects and MarkDrainFailed act only on a
-// drain in progress. CompleteDrain reports false while managed rows, intents or
-// multipart uploads remain on the backend. ClearBackendState deletes the
-// record, making the backend writable again. BackendObjectStats counts the
-// backend's objects and bytes, and DeleteBackendData drops every row it holds.
+// SetBackendFlag reports false when the flag was already set, and
+// ClearBackendFlags when none of the given flags was. StartDrain reports false
+// when the backend is already draining or drained; a failed drain is
+// restarted, and other flags such as a cordon are kept. AddDrainedObjects and
+// MarkDrainFailed act only on a drain in progress. CompleteDrain reports false
+// while managed rows, intents or multipart uploads remain on the backend.
+// ClearBackendState deletes the record when the backend is removed.
+// BackendObjectStats counts the backend's objects and bytes, and
+// DeleteBackendData drops every row it holds.
 type BackendStateStore interface {
 	ListBackendStates(ctx context.Context) ([]BackendStateRecord, error)
+	SetBackendFlag(ctx context.Context, backendName string, flag BackendFlags) (bool, error)
+	ClearBackendFlags(ctx context.Context, backendName string, flags BackendFlags) (bool, error)
 	ClearBackendState(ctx context.Context, backendName string) (bool, error)
 	StartDrain(ctx context.Context, backendName string) (bool, error)
 	AddDrainedObjects(ctx context.Context, backendName string, moved int64) error

@@ -45,6 +45,20 @@ func (m *MockFleetView) EXPECT() *MockFleetViewMockRecorder {
 	return m.recorder
 }
 
+// BackendFlags mocks base method.
+func (m *MockFleetView) BackendFlags(name string) core.BackendFlags {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BackendFlags", name)
+	ret0, _ := ret[0].(core.BackendFlags)
+	return ret0
+}
+
+// BackendFlags indicates an expected call of BackendFlags.
+func (mr *MockFleetViewMockRecorder) BackendFlags(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendFlags", reflect.TypeOf((*MockFleetView)(nil).BackendFlags), name)
+}
+
 // BackendOrder mocks base method.
 func (m *MockFleetView) BackendOrder() []string {
 	m.ctrl.T.Helper()
@@ -86,20 +100,6 @@ func (m *MockFleetView) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapsh
 func (mr *MockFleetViewMockRecorder) FleetSnapshot(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FleetSnapshot", reflect.TypeOf((*MockFleetView)(nil).FleetSnapshot), ctx)
-}
-
-// IsDraining mocks base method.
-func (m *MockFleetView) IsDraining(name string) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsDraining", name)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsDraining indicates an expected call of IsDraining.
-func (mr *MockFleetViewMockRecorder) IsDraining(name any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockFleetView)(nil).IsDraining), name)
 }
 
 // MockDrainProgressReader is a mock of DrainProgressReader interface.

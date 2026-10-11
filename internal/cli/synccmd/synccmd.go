@@ -232,17 +232,18 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 	return objects, adminDB, 0
 }
 
-// refuseDrained returns an error when the backend's state belongs to a drain.
-// Importing onto a backend being drained re-adds rows the drain has to move
-// off, and onto a drained one resurrects what it already moved.
+// refuseDrained returns an error when the backend carries a flag reconcile does
+// not accept, which is any drain flag. Importing onto a backend being drained
+// re-adds rows the drain has to move off, and onto a drained one resurrects
+// what it already moved.
 func refuseDrained(ctx context.Context, store adminStore, backendName string) error {
 	records, err := store.ListBackendStates(ctx)
 	if err != nil {
 		return fmt.Errorf("list backend states: %w", err)
 	}
 	for i := range records {
-		if records[i].BackendName == backendName && records[i].State.IsDrain() {
-			return fmt.Errorf("backend %q is %s; clear its drain before syncing it", backendName, records[i].State)
+		if records[i].BackendName == backendName && !records[i].Flags.AcceptedBy(core.AcceptForReconcile) {
+			return fmt.Errorf("backend %q is %s; clear its drain before syncing it", backendName, records[i].Flags)
 		}
 	}
 	return nil

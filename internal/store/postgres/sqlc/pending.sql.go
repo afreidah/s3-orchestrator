@@ -169,7 +169,7 @@ SELECT $1, $2, $3, $4::text, $5::bigint,
        $15, $16, $17, $18
 FROM backend_capacity c
 WHERE c.backend_name = $4::text
-  AND c.accepting_writes
+  AND (c.flags & ~($19::bigint)) = 0
   AND (c.available_bytes IS NULL OR c.available_bytes >= $5::bigint)
 `
 
@@ -192,6 +192,7 @@ type InsertPendingObjectIfFitsParams struct {
 	ContentType              *string
 	UserMetadata             []byte
 	Role                     string
+	Accepts                  int64
 }
 
 // -----------------------------------------------------------------------------
@@ -239,6 +240,7 @@ func (q *Queries) InsertPendingObjectIfFits(ctx context.Context, arg InsertPendi
 		arg.ContentType,
 		arg.UserMetadata,
 		arg.Role,
+		arg.Accepts,
 	)
 	if err != nil {
 		return 0, err

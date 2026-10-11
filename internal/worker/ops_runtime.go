@@ -36,7 +36,7 @@ var (
 type Ops interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
-	AcceptsWrites(name string) bool
+	BackendFlags(name string) core.BackendFlags
 	AcquireAdmission(ctx context.Context) bool
 	ReleaseAdmission()
 	GetBackend(name string) (backend.ObjectBackend, error)

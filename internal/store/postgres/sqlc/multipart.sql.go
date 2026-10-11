@@ -31,7 +31,7 @@ SELECT $1::text, $2::text, $3::text,
        $6::bytea, $7::text,
        $8::text, NOW()
 FROM backend_capacity c
-WHERE c.backend_name = $3::text AND c.accepting_writes
+WHERE c.backend_name = $3::text AND (c.flags & ~($9::bigint)) = 0
 `
 
 type CreateMultipartUploadParams struct {
@@ -43,6 +43,7 @@ type CreateMultipartUploadParams struct {
 	EncryptionKey []byte
 	KeyID         *string
 	Tagging       *string
+	Accepts       int64
 }
 
 // -----------------------------------------------------------------------------
@@ -72,6 +73,7 @@ func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipart
 		arg.EncryptionKey,
 		arg.KeyID,
 		arg.Tagging,
+		arg.Accepts,
 	)
 	if err != nil {
 		return 0, err

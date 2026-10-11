@@ -386,7 +386,7 @@ func TestDrain_MovesEverythingOffAndCompletes(t *testing.T) {
 			t.Errorf("%s: on b1 = %v, on b2 = %v; want moved to b2", key, b1.HasCopyOf(key), b2.HasCopyOf(key))
 		}
 	}
-	if rec := drainRecord(t, store, "b1"); rec.State != core.BackendStateDrained || rec.ObjectsMoved != 3 {
+	if rec := drainRecord(t, store, "b1"); rec.Flags != core.FlagDrained || rec.ObjectsMoved != 3 {
 		t.Errorf("record = %+v, want drained with 3 objects moved", rec)
 	}
 	if len(aborted) != 1 || aborted[0] != "b1" {
@@ -413,7 +413,7 @@ func TestDrain_WaitsForAnUploadAdmittedBeforeTheDrain(t *testing.T) {
 	if sum, err := d.Drain(ctx, nil); err != nil || sum.Completed != 0 {
 		t.Fatalf("Drain = %+v, %v; want the drain left in progress", sum, err)
 	}
-	if rec := drainRecord(t, store, "b1"); rec.State != core.BackendStateDraining {
+	if rec := drainRecord(t, store, "b1"); rec.Flags != core.FlagDraining {
 		t.Fatalf("record = %+v, want still draining", rec)
 	}
 
@@ -445,7 +445,7 @@ func TestDrain_PageThatMovesNothingEndsThePass(t *testing.T) {
 	if sum.Failed != 1 || sum.Completed != 0 {
 		t.Errorf("summary = %+v, want the one object failed and nothing completed", sum)
 	}
-	if rec := drainRecord(t, store, "b1"); rec.State != core.BackendStateDraining {
+	if rec := drainRecord(t, store, "b1"); rec.Flags != core.FlagDraining {
 		t.Errorf("record = %+v, want still draining for the next tick", rec)
 	}
 }
@@ -484,7 +484,7 @@ func TestDrain_UnconfiguredBackendFailsTheDrain(t *testing.T) {
 	if _, err := d.Drain(ctx, nil); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	if rec := drainRecord(t, store, "gone"); rec.State != core.BackendStateFailed || rec.LastError == "" {
+	if rec := drainRecord(t, store, "gone"); rec.Flags != core.FlagDrainFailed || rec.LastError == "" {
 		t.Errorf("record = %+v, want failed with a reason", rec)
 	}
 }
@@ -507,7 +507,7 @@ func TestDrain_ListFailures(t *testing.T) {
 			t.Parallel()
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
 			store.EXPECT().ListBackendStates(gomock.Any()).
-				Return([]core.BackendStateRecord{{BackendName: "b1", State: core.BackendStateDraining}}, nil).AnyTimes()
+				Return([]core.BackendStateRecord{{BackendName: "b1", Flags: core.FlagDraining}}, nil).AnyTimes()
 			store.EXPECT().ListObjectsByBackend(gomock.Any(), "b1", gomock.Any(), gomock.Any()).Return(nil, tc.listErr).AnyTimes()
 			failed := false
 			store.EXPECT().MarkDrainFailed(gomock.Any(), "b1", gomock.Any()).

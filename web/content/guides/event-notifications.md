@@ -99,6 +99,8 @@ These notify about infrastructure state changes. The subject field typically con
 | `backend.drain.completed` | Backend drain finished |
 | `backend.drain.failed` | Backend drain encountered an error |
 | `backend.removed` | Backend removed after drain |
+| `backend.cordoned` | Backend cordoned: no new copies land on it |
+| `backend.uncordoned` | Backend cordon cleared |
 | `integrity.corruption_detected` | Scrubber found a hash mismatch |
 | `cleanup.exhausted` | Cleanup queue item hit max retry attempts |
 | `replication.target_exhausted` | No backend has space for a replica |

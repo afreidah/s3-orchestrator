@@ -26,8 +26,8 @@ import (
 // -------------------------------------------------------------------------
 
 // CreateMultipartUpload records a new multipart upload in the database, unless
-// its backend is being drained, which reports false. The check reads the same
-// backend_capacity view every other admission test uses.
+// its backend carries a flag writes do not accept, which reports false. The
+// check reads the same backend_capacity view every other admission test uses.
 func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
 	var metaJSON []byte
 	if len(params.Metadata) > 0 {
@@ -51,9 +51,9 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity
-		 WHERE backend_name = ? AND accepting_writes`,
+		 WHERE backend_name = ? AND (flags & ~?) = 0`,
 		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID,
-		core.EncodeTags(params.Tags), now, params.BackendName,
+		core.EncodeTags(params.Tags), now, params.BackendName, core.AcceptForWrite,
 	)
 }
 

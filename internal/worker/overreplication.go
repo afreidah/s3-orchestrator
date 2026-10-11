@@ -244,7 +244,7 @@ type scoredCopy struct {
 // Among healthy backends the most utilized scores lowest, so its copy is
 // removed first.
 func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
-	if !c.ops.AcceptsWrites(loc.BackendName) {
+	if !c.ops.BackendFlags(loc.BackendName).AcceptedBy(core.AcceptForWrite) {
 		return 0
 	}
 

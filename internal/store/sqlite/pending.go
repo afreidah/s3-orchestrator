@@ -54,7 +54,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity c
 		 WHERE c.backend_name = ?
-		   AND c.accepting_writes
+		   AND (c.flags & ~?) = 0
 		   AND (c.available_bytes IS NULL OR c.available_bytes >= ?)`,
 		p.IntentID, p.ObjectKey, core.StoragePath(p.ObjectKey, p.StorageKey), p.BackendName, p.SizeBytes,
 		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash,
@@ -62,7 +62,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
 		now(), string(p.RoleOrDefault()),
-		p.BackendName, p.SizeBytes,
+		p.BackendName, core.AcceptForWrite, p.SizeBytes,
 	)
 }
 

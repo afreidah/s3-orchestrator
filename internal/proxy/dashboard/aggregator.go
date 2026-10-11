@@ -80,7 +80,7 @@ type Data struct {
 type FleetView interface {
 	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 	BackendOrder() []string
-	IsDraining(name string) bool
+	BackendFlags(name string) core.BackendFlags
 	Backends() map[string]backend.ObjectBackend
 }
 
@@ -147,7 +147,7 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 
 	if da.drain != nil {
 		for _, name := range da.fleet.BackendOrder() {
-			if !da.fleet.IsDraining(name) {
+			if !da.fleet.BackendFlags(name).Any(core.DrainFlags) {
 				continue
 			}
 			if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {

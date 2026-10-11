@@ -321,7 +321,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 		"b4": backendtest.NewMockObjectBackend(ctrl),
 	}
 	f.ops.EXPECT().Backends().Return(fleet).AnyTimes()
-	f.ops.EXPECT().AcceptsWrites(gomock.Any()).Return(true).AnyTimes()
+	f.ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	f.ops.EXPECT().GetBackend(gomock.Any()).DoAndReturn(func(name string) (backend.ObjectBackend, error) {
 		be, ok := fleet[name]
 		if !ok {

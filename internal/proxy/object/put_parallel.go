@@ -178,16 +178,16 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 		o.core.Acct().APICall(s3op.PutObject, p.BackendName)
 		return err
 	}
-	if !o.core.AcceptsWrites(p.BackendName) {
-		telemetry.DrainRaceAbortedTotal.Inc()
+	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
+		telemetry.WriteTargetRefusedTotal.Inc()
 		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
 			BackendName: p.BackendName,
 			ObjectKey:   req.Key,
 			StorageKey:  p.StorageKey,
-			Reason:      "drain_race_aborted",
+			Reason:      reasonWriteTargetRefused,
 			SizeBytes:   plan.uploadSize,
 		})
-		return errDrainRaceAborted
+		return errWriteTargetRefused
 	}
 	return nil
 }

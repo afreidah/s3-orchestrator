@@ -113,7 +113,7 @@ func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-	fleet.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": cb}).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
@@ -139,7 +139,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-	fleet.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": healthy}).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
@@ -162,8 +162,8 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"draining", "idle"}).AnyTimes()
-	fleet.EXPECT().IsDraining("draining").Return(true).AnyTimes()
-	fleet.EXPECT().IsDraining("idle").Return(false).AnyTimes()
+	fleet.EXPECT().BackendFlags("draining").Return(core.FlagDraining).AnyTimes()
+	fleet.EXPECT().BackendFlags("idle").Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
@@ -198,7 +198,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-	fleet.EXPECT().IsDraining(gomock.Any()).Return(true).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
@@ -224,7 +224,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-	fleet.EXPECT().IsDraining(gomock.Any()).Return(true).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)

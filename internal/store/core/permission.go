@@ -23,6 +23,8 @@ package core
 import (
 	"fmt"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/bitset"
 )
 
 // -------------------------------------------------------------------------
@@ -88,26 +90,23 @@ const (
 
 // permissionNames pairs each bit with its stored name, in the order a rendered
 // set lists them, so two equal sets always render identically.
-var permissionNames = []struct {
-	bit  PermissionSet
-	name string
-}{
-	{PermListBuckets, "list-buckets"},
-	{PermList, "list"},
-	{PermRead, "read"},
-	{PermWrite, "write"},
-	{PermDelete, "delete"},
-	{PermTags, "tags"},
-	{PermAdminRead, "admin-read"},
-	{PermAdminLogs, "admin-logs"},
-	{PermAdminMaintain, "admin-maintain"},
-	{PermAdminConvert, "admin-convert"},
-	{PermAdminKeys, "admin-keys"},
-	{PermAdminCache, "admin-cache"},
-	{PermAdminDrain, "admin-drain"},
-	{PermAdminDecommission, "admin-decommission"},
-	{PermAdminConfig, "admin-config"},
-	{PermAdminProvision, "admin-provision"},
+var permissionNames = bitset.Vocabulary[PermissionSet]{
+	{Bit: PermListBuckets, Name: "list-buckets"},
+	{Bit: PermList, Name: "list"},
+	{Bit: PermRead, Name: "read"},
+	{Bit: PermWrite, Name: "write"},
+	{Bit: PermDelete, Name: "delete"},
+	{Bit: PermTags, Name: "tags"},
+	{Bit: PermAdminRead, Name: "admin-read"},
+	{Bit: PermAdminLogs, Name: "admin-logs"},
+	{Bit: PermAdminMaintain, Name: "admin-maintain"},
+	{Bit: PermAdminConvert, Name: "admin-convert"},
+	{Bit: PermAdminKeys, Name: "admin-keys"},
+	{Bit: PermAdminCache, Name: "admin-cache"},
+	{Bit: PermAdminDrain, Name: "admin-drain"},
+	{Bit: PermAdminDecommission, Name: "admin-decommission"},
+	{Bit: PermAdminConfig, Name: "admin-config"},
+	{Bit: PermAdminProvision, Name: "admin-provision"},
 }
 
 // -------------------------------------------------------------------------
@@ -130,25 +129,13 @@ func (p PermissionSet) String() string {
 	case PermAdminAll:
 		return permAdminAllName
 	}
-	var out []string
-	for _, entry := range permissionNames {
-		if p&entry.bit != 0 {
-			out = append(out, entry.name)
-		}
-	}
-	return strings.Join(out, ",")
+	return permissionNames.Join(p)
 }
 
 // Names lists the permissions in the set individually, which is what an API
 // response renders rather than the joined string a column holds.
 func (p PermissionSet) Names() []string {
-	out := make([]string, 0, len(permissionNames))
-	for _, entry := range permissionNames {
-		if p&entry.bit != 0 {
-			out = append(out, entry.name)
-		}
-	}
-	return out
+	return permissionNames.Names(p)
 }
 
 // ParsePermissions reads the stored form for a grant on the given resource. An
@@ -198,8 +185,8 @@ func emptyPermissions(kind ResourceKind) PermissionSet {
 // permissionBit looks up the bit a stored name selects.
 func permissionBit(name string) (PermissionSet, bool) {
 	for _, entry := range permissionNames {
-		if entry.name == name {
-			return entry.bit, true
+		if entry.Name == name {
+			return entry.Bit, true
 		}
 	}
 	return 0, false
@@ -210,7 +197,7 @@ func permissionBit(name string) (PermissionSet, bool) {
 func allPermissionNames() []string {
 	out := make([]string, 0, len(permissionNames))
 	for _, entry := range permissionNames {
-		out = append(out, entry.name)
+		out = append(out, entry.Name)
 	}
 	return out
 }

@@ -319,7 +319,7 @@ The gray background workers run only when the process starts in `worker` or `all
     DRAIN: {
       title: 'Drainer',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Works backend drains. A drain is a <code>backend_states</code> row, the durable record of the backend\'s state, created through the admin API (<code>POST /admin/api/backends/{name}/drain</code>). Cancelling the drain clears the row.</p><p>Runs every 10s under advisory lock <code>LockDrain</code> (1006). Each pass moves a draining backend\'s objects to other backends until the drain finishes or stalls. A backend with a state record accepts no new writes, because <code>backend_capacity</code> marks it as not accepting writes.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Works backend drains. A drain is a flag on the backend\'s <code>backend_states</code> row, set through the admin API (<code>POST /admin/api/backends/{name}/drain</code>). Cancelling the drain clears the drain flags and leaves any cordon in place.</p><p>Runs every 10s under advisory lock <code>LockDrain</code> (1006). Each pass moves a draining backend\'s objects to other backends until the drain finishes or stalls. A backend carrying a drain or cordon flag accepts no new writes, because admission tests its flags through <code>backend_capacity</code>.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     SCRUB: {
       title: 'Scrubber',

@@ -58,11 +58,13 @@ type fleetOpts struct {
 // backendstate.Manager's infra.StateChecker surface.
 type drainingSet map[string]bool
 
-// AcceptsWrites implements infra.StateChecker.
-func (d drainingSet) AcceptsWrites(name string) bool { return !d[name] }
-
-// IsDraining implements infra.StateChecker.
-func (d drainingSet) IsDraining(name string) bool { return d[name] }
+// Flags implements infra.StateChecker.
+func (d drainingSet) Flags(name string) core.BackendFlags {
+	if d[name] {
+		return core.FlagDraining
+	}
+	return 0
+}
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR

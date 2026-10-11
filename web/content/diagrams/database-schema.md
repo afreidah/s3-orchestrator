@@ -230,11 +230,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '',
     '    backend_states {',
     '        TEXT backend_name PK',
-    '        TEXT state',
     '        BIGINT objects_moved',
     '        TEXT last_error',
     '        TIMESTAMPTZ started_at',
     '        TIMESTAMPTZ finished_at',
+    '        BIGINT flags',
     '    }',
     '',
     '    backend_quotas ||--o{ backend_quota_stripes : "striped byte total"',
@@ -548,18 +548,18 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     backend_states: {
       title: 'backend_states',
       badge: 'core', badgeText: 'backend state',
-      body: '<p>One row per backend in a state other than normal service, such as a drain from the moment it starts until it is cancelled or the backend is removed. Admission refuses a backend that has a row, in any state, and the drain worker moves the objects off while a drain is in progress, so a restart resumes a drain rather than forgetting it.</p>' +
+      body: '<p>A backend\'s state flags and its most recent drain\'s progress. A backend with no row, or a row with no flags set, is in normal service. A cordon and a drain are separate flags, so cancelling a drain leaves a cordon in place. The drain worker moves the objects off while a drain is in progress, so a restart resumes a drain rather than forgetting it.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY. No foreign key to backend_quotas, so the record outlives that row</td></tr>' +
-        '<tr><td>state</td><td>TEXT</td><td>draining, drained, or failed, enforced by the backend_states_state_check CHECK constraint</td></tr>' +
-        '<tr><td>objects_moved</td><td>BIGINT</td><td>Objects moved off so far</td></tr>' +
+        '<tr><td>flags</td><td>BIGINT</td><td>cordoned (1), draining (2), drained (4), drain failed (8). Bits are only ever added, never renumbered</td></tr>' +
+        '<tr><td>objects_moved</td><td>BIGINT</td><td>Objects the most recent drain moved off</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Why a failed drain stopped</td></tr>' +
         '<tr><td>started_at</td><td>TIMESTAMPTZ</td><td>When the drain started, or last restarted</td></tr>' +
-        '<tr><td>finished_at</td><td>TIMESTAMPTZ</td><td>NULL while in progress</td></tr></table>' +
-        '<p>The <code>backend_capacity</code> view joins it: per backend, the limit, stored, orphan and in-flight bytes, the bytes still available, and <code>accepting_writes</code>, false while the backend has a state record. Every admission test reads that view.</p>' +
-        '<p>Used by: <a href="../../godoc/backendstate/">backendstate.Manager</a> (start, cancel, progress) &bull; the drain worker (progress, completion, failure) &bull; admission through <code>backend_capacity</code></p>' +
-        '<p class="ac-metric">Key queries: StartDrain, ListBackendStates, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearBackendState</p>' +
-        '<p class="ac-metric">Metrics: s3o_drain_active, s3o_drain_objects_moved_total, s3o_drain_bytes_moved_total &bull; Audit events: storage.DrainStart, storage.DrainCancel, storage.DrainMove, storage.DrainRemoveReplica, storage.DrainComplete &bull; Events: backend.drain.completed, backend.drain.failed</p>'
+        '<tr><td>finished_at</td><td>TIMESTAMPTZ</td><td>NULL while a drain is in progress</td></tr></table>' +
+        '<p>The <code>backend_capacity</code> view joins it: per backend, the limit, stored, orphan and in-flight bytes, the bytes still available, and <code>flags</code> (0 when the backend has no row). Every admission test reads that view and refuses a backend carrying a flag writes do not accept, against a mask the store passes in from Go.</p>' +
+        '<p>Used by: <a href="../../godoc/backendstate/">backendstate.Manager</a> (cordon, uncordon, drain start, cancel, progress) &bull; the drain worker (progress, completion, failure) &bull; admission through <code>backend_capacity</code></p>' +
+        '<p class="ac-metric">Key queries: SetBackendFlag, ClearBackendFlags, StartDrain, ListBackendStates, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearBackendState</p>' +
+        '<p class="ac-metric">Metrics: s3o_backend_state, s3o_drain_active, s3o_drain_objects_moved_total, s3o_drain_bytes_moved_total &bull; Audit events: storage.Cordon, storage.Uncordon, storage.DrainStart, storage.DrainCancel, storage.DrainMove, storage.DrainRemoveReplica, storage.DrainComplete &bull; Events: backend.cordoned, backend.uncordoned, backend.drain.completed, backend.drain.failed</p>'
     }
   };
 
@@ -676,7 +676,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | **users** | The identity a credential proves, which grants are held by | `id` |
 | **credentials** | One keypair proving one user; several may name the same user | `access_key_id` |
 | **grants** | Pairs a user with a bucket, a backend, or the orchestrator, and the permissions it carries there | `(user_id, resource_kind, resource_name)` |
-| **backend_states** | A backend's state record, such as a drain; admission refuses a backend that has one | `backend_name` |
+| **backend_states** | A backend's state flags (cordoned, draining, drained, drain failed) and drain progress; admission refuses a backend carrying a flag writes do not accept | `backend_name` |
 
 ### Schema Migrations
 
@@ -718,3 +718,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00034_unreadable_rows_unmanaged` | Mark rows that are encrypted with no key as unmanaged, so they keep their quota without being replicated, listed or served. Import marks such rows itself; this brings rows imported earlier into line |
 | `00035_worker_scan_indexes` | Add `idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed` for the drain's smallest-first walk, and `idx_cleanup_queue_backend_storage_key` and `idx_cleanup_dlq_backend_storage_key (backend_name, storage_key)` for reconcile's per-page classification. Drop `idx_object_locations_managed`, `idx_object_locations_backend` and `idx_cleanup_dlq_backend`, each a prefix of an index that remains. Built `CONCURRENTLY` outside a transaction |
 | `00036_backend_states` | Rename `backend_drains` to `backend_states`, with its CHECK constraint and primary key, so states other than a drain can live in it. `backend_capacity` follows the rename |
+| `00037_backend_state_flags` | Replace `backend_states.state` with an integer `flags` column (cordoned 1, draining 2, drained 4, drain failed 8), so a cordon and a drain can be held at once. `backend_capacity` exposes `flags` in place of `accepting_writes`, and admission tests it against a mask passed in from Go |

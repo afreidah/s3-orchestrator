@@ -683,10 +683,10 @@ func drainToCompletion(t *testing.T, ctx context.Context, st *proxytest.Stack, b
 		if err != nil {
 			t.Fatalf("GetDrainProgress(%s): %v", backend, err)
 		}
-		switch core.BackendState(progress.State) {
-		case core.BackendStateDrained:
+		switch progress.State {
+		case core.FlagDrained.DrainState():
 			return
-		case core.BackendStateFailed:
+		case core.FlagDrainFailed.DrainState():
 			t.Fatalf("drain of %s failed: %s", backend, progress.Error)
 		}
 	}

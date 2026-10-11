@@ -395,23 +395,23 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	// A drain that started after the claim would have to move the object
-	// straight back off, so abort the commit and let the write try another
-	// backend. The intent stays for the reaper, which finds no bytes and drops
-	// it. The check reads cached backend state, so a drain started on another
-	// instance is caught late, but it cannot finish while this intent exists.
-	if !o.core.AcceptsWrites(backendName) {
-		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
+	// A backend cordoned or put into a drain after the claim should not get the
+	// object, so abort the commit and let the write try another backend. The
+	// intent stays for the reaper, which finds no bytes and drops it. The check
+	// reads cached backend state, so a change made on another instance is
+	// caught late, but a drain cannot finish while this intent exists.
+	if !o.core.BackendFlags(backendName).AcceptedBy(core.AcceptForWrite) {
+		o.log.WarnContext(ctx, "backend stopped accepting writes mid-write; aborting commit",
 			"key", key, "backend", backendName)
-		telemetry.DrainRaceAbortedTotal.Inc()
+		telemetry.WriteTargetRefusedTotal.Inc()
 		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
 			BackendName: backendName,
 			ObjectKey:   key,
 			StorageKey:  intent.StorageKey,
-			Reason:      "drain_race_aborted",
+			Reason:      reasonWriteTargetRefused,
 			SizeBytes:   uploadSize,
 		})
-		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
+		return putAttemptResult{backend: backendName, putErr: errWriteTargetRefused}
 	}
 
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
@@ -446,11 +446,14 @@ func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
 	}
 }
 
-// errDrainRaceAborted is the sentinel putErr the attemptPutOnBackend
-// drain-race close returns so the outer failover loop drops the
-// draining backend from the eligible set and retries elsewhere
-// instead of treating the abort as a generic backend failure.
-var errDrainRaceAborted = errors.New("aborted: drain started mid-write")
+// reasonWriteTargetRefused is the cleanup-queue reason for bytes a write left
+// on a backend that stopped accepting writes before the commit.
+const reasonWriteTargetRefused = "write_target_refused"
+
+// errWriteTargetRefused is the sentinel putErr the post-PUT re-check returns
+// so the outer failover loop drops the backend from the eligible set and
+// retries elsewhere instead of treating the abort as a generic backend failure.
+var errWriteTargetRefused = errors.New("aborted: backend stopped accepting writes mid-write")
 
 // applyCompressionMeta records how the stored bytes were encoded. LogicalSize
 // is the only place the client-visible size survives, since the row's

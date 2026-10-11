@@ -7,28 +7,52 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addDrainedObjects = `-- name: AddDrainedObjects :exec
 UPDATE backend_states
 SET objects_moved = objects_moved + $1
-WHERE backend_name = $2 AND state = 'draining'
+WHERE backend_name = $2 AND (flags & $3::bigint) <> 0
 `
 
 type AddDrainedObjectsParams struct {
 	Moved       int64
 	BackendName string
+	Draining    int64
 }
 
 func (q *Queries) AddDrainedObjects(ctx context.Context, arg AddDrainedObjectsParams) error {
-	_, err := q.db.Exec(ctx, addDrainedObjects, arg.Moved, arg.BackendName)
+	_, err := q.db.Exec(ctx, addDrainedObjects, arg.Moved, arg.BackendName, arg.Draining)
 	return err
+}
+
+const clearBackendFlags = `-- name: ClearBackendFlags :execrows
+UPDATE backend_states
+SET flags = flags & ~($1::bigint)
+WHERE backend_name = $2 AND (flags & $1::bigint) <> 0
+`
+
+type ClearBackendFlagsParams struct {
+	ClearFlags  int64
+	BackendName string
+}
+
+// Clears the given flags. Zero rows affected means none of them was set.
+func (q *Queries) ClearBackendFlags(ctx context.Context, arg ClearBackendFlagsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearBackendFlags, arg.ClearFlags, arg.BackendName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const clearBackendState = `-- name: ClearBackendState :execrows
 DELETE FROM backend_states WHERE backend_name = $1
 `
 
+// Deletes the backend's row, which removing the backend does.
 func (q *Queries) ClearBackendState(ctx context.Context, backendName string) (int64, error) {
 	result, err := q.db.Exec(ctx, clearBackendState, backendName)
 	if err != nil {
@@ -39,13 +63,20 @@ func (q *Queries) ClearBackendState(ctx context.Context, backendName string) (in
 
 const completeDrain = `-- name: CompleteDrain :execrows
 UPDATE backend_states
-SET state = 'drained', finished_at = NOW()
-WHERE backend_states.backend_name = $1
-  AND state = 'draining'
-  AND NOT EXISTS (SELECT 1 FROM object_locations ol WHERE ol.backend_name = $1 AND ol.managed)
-  AND NOT EXISTS (SELECT 1 FROM pending_objects po WHERE po.backend_name = $1)
-  AND NOT EXISTS (SELECT 1 FROM multipart_uploads mu WHERE mu.backend_name = $1)
+SET flags = (flags & ~($1::bigint)) | $2::bigint, finished_at = NOW()
+WHERE backend_states.backend_name = $3
+  AND (flags & $4::bigint) <> 0
+  AND NOT EXISTS (SELECT 1 FROM object_locations ol WHERE ol.backend_name = $3 AND ol.managed)
+  AND NOT EXISTS (SELECT 1 FROM pending_objects po WHERE po.backend_name = $3)
+  AND NOT EXISTS (SELECT 1 FROM multipart_uploads mu WHERE mu.backend_name = $3)
 `
+
+type CompleteDrainParams struct {
+	DrainFlags  int64
+	Drained     int64
+	BackendName string
+	Draining    int64
+}
 
 // Marks a drain finished only when nothing it moves is left on the backend: no
 // managed object rows, no intents of writes still uploading, and no multipart
@@ -55,8 +86,13 @@ WHERE backend_states.backend_name = $1
 // its row, never as neither. Admission already refuses the backend, so the
 // three can only shrink. Zero rows affected means something remains and the
 // drain carries on.
-func (q *Queries) CompleteDrain(ctx context.Context, backendName string) (int64, error) {
-	result, err := q.db.Exec(ctx, completeDrain, backendName)
+func (q *Queries) CompleteDrain(ctx context.Context, arg CompleteDrainParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeDrain,
+		arg.DrainFlags,
+		arg.Drained,
+		arg.BackendName,
+		arg.Draining,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -64,23 +100,43 @@ func (q *Queries) CompleteDrain(ctx context.Context, backendName string) (int64,
 }
 
 const listBackendStates = `-- name: ListBackendStates :many
-SELECT backend_name, state, objects_moved, last_error, started_at, finished_at
+
+SELECT backend_name, flags, objects_moved, last_error, started_at, finished_at
 FROM backend_states
 ORDER BY backend_name
 `
 
-func (q *Queries) ListBackendStates(ctx context.Context) ([]BackendState, error) {
+type ListBackendStatesRow struct {
+	BackendName  string
+	Flags        int64
+	ObjectsMoved int64
+	LastError    *string
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+}
+
+// -----------------------------------------------------------------------------
+// Backend State Queries
+//
+// Author: Alex Freidah
+//
+// sqlc-input definitions for backend_states: each backend's state flags and
+// its most recent drain's progress. Admission reads the flags through
+// backend_capacity. Every flag value is a parameter, so which bit means what is
+// defined once, in Go.
+// -----------------------------------------------------------------------------
+func (q *Queries) ListBackendStates(ctx context.Context) ([]ListBackendStatesRow, error) {
 	rows, err := q.db.Query(ctx, listBackendStates)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []BackendState{}
+	items := []ListBackendStatesRow{}
 	for rows.Next() {
-		var i BackendState
+		var i ListBackendStatesRow
 		if err := rows.Scan(
 			&i.BackendName,
-			&i.State,
+			&i.Flags,
 			&i.ObjectsMoved,
 			&i.LastError,
 			&i.StartedAt,
@@ -98,43 +154,79 @@ func (q *Queries) ListBackendStates(ctx context.Context) ([]BackendState, error)
 
 const markDrainFailed = `-- name: MarkDrainFailed :exec
 UPDATE backend_states
-SET state = 'failed', last_error = $1::text, finished_at = NOW()
-WHERE backend_name = $2 AND state = 'draining'
+SET flags = (flags & ~($1::bigint)) | $2::bigint,
+    last_error = $3::text, finished_at = NOW()
+WHERE backend_name = $4 AND (flags & $5::bigint) <> 0
 `
 
 type MarkDrainFailedParams struct {
+	DrainFlags  int64
+	Failed      int64
 	Reason      string
 	BackendName string
+	Draining    int64
 }
 
 func (q *Queries) MarkDrainFailed(ctx context.Context, arg MarkDrainFailedParams) error {
-	_, err := q.db.Exec(ctx, markDrainFailed, arg.Reason, arg.BackendName)
+	_, err := q.db.Exec(ctx, markDrainFailed,
+		arg.DrainFlags,
+		arg.Failed,
+		arg.Reason,
+		arg.BackendName,
+		arg.Draining,
+	)
 	return err
 }
 
-const startDrain = `-- name: StartDrain :execrows
-
-INSERT INTO backend_states (backend_name, state)
-VALUES ($1, 'draining')
+const setBackendFlag = `-- name: SetBackendFlag :execrows
+INSERT INTO backend_states (backend_name, flags)
+VALUES ($1, $2::bigint)
 ON CONFLICT (backend_name) DO UPDATE
-SET state = 'draining', objects_moved = 0, last_error = NULL,
-    started_at = NOW(), finished_at = NULL
-WHERE backend_states.state = 'failed'
+SET flags = backend_states.flags | $2::bigint
+WHERE (backend_states.flags & $2::bigint) = 0
 `
 
-// -----------------------------------------------------------------------------
-// Backend State Queries
-//
-// Author: Alex Freidah
-//
-// sqlc-input definitions for backend_states, the durable record of each
-// backend's state, such as a drain. Admission reads the table through
-// backend_capacity; these queries move a backend between states.
-// -----------------------------------------------------------------------------
-// Inserts a draining record, or restarts a failed one. Zero rows affected means
-// the backend is already draining or drained.
-func (q *Queries) StartDrain(ctx context.Context, backendName string) (int64, error) {
-	result, err := q.db.Exec(ctx, startDrain, backendName)
+type SetBackendFlagParams struct {
+	BackendName string
+	Flag        int64
+}
+
+// Sets one flag, creating the row when the backend has none. Zero rows
+// affected means the flag was already set.
+func (q *Queries) SetBackendFlag(ctx context.Context, arg SetBackendFlagParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setBackendFlag, arg.BackendName, arg.Flag)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startDrain = `-- name: StartDrain :execrows
+INSERT INTO backend_states (backend_name, flags)
+VALUES ($1, $2::bigint)
+ON CONFLICT (backend_name) DO UPDATE
+SET flags = (backend_states.flags & ~($3::bigint)) | $2::bigint,
+    objects_moved = 0, last_error = NULL, started_at = NOW(), finished_at = NULL
+WHERE (backend_states.flags & $4::bigint) = 0
+`
+
+type StartDrainParams struct {
+	BackendName string
+	Draining    int64
+	DrainFlags  int64
+	Busy        int64
+}
+
+// Starts a drain, replacing a failed one, and resets its progress. Other flags,
+// such as a cordon, are kept. Zero rows affected means the backend is already
+// draining or drained.
+func (q *Queries) StartDrain(ctx context.Context, arg StartDrainParams) (int64, error) {
+	result, err := q.db.Exec(ctx, startDrain,
+		arg.BackendName,
+		arg.Draining,
+		arg.DrainFlags,
+		arg.Busy,
+	)
 	if err != nil {
 		return 0, err
 	}

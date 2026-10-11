@@ -23,7 +23,7 @@ SELECT @upload_id::text, @object_key::text, @backend_name::text,
        sqlc.narg('encryption_key')::bytea, sqlc.narg('key_id')::text,
        sqlc.narg('tagging')::text, NOW()
 FROM backend_capacity c
-WHERE c.backend_name = @backend_name::text AND c.accepting_writes;
+WHERE c.backend_name = @backend_name::text AND (c.flags & ~(@accepts::bigint)) = 0;
 
 -- name: GetMultipartUpload :one
 -- tagging rides along because CompleteMultipartUpload applies the set the

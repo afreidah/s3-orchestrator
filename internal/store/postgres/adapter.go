@@ -313,6 +313,7 @@ func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.Repl
 		TargetBackend: r.TargetBackend,
 		SourceBackend: r.SourceBackend,
 		StorageKey:    r.StorageKey,
+		Accepts:       int64(core.AcceptForWrite),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil

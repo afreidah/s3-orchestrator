@@ -294,35 +294,13 @@ type BackendQuotaUsage struct {
 	InflightBytes int64
 }
 
-// BackendState is the state a backend's record holds. A backend in any state
-// is refused new writes; a backend with no record takes them.
-type BackendState string
-
-// Backend states. Draining is a drain in progress, drained has moved every
-// object off, and failed stopped on an error and waits for an operator to
-// retry or clear it.
-const (
-	BackendStateDraining BackendState = "draining"
-	BackendStateDrained  BackendState = "drained"
-	BackendStateFailed   BackendState = "failed"
-)
-
-// IsDrain reports whether the state belongs to a drain: in progress, finished
-// or failed.
-func (s BackendState) IsDrain() bool {
-	switch s {
-	case BackendStateDraining, BackendStateDrained, BackendStateFailed:
-		return true
-	}
-	return false
-}
-
-// BackendStateRecord is one backend's state record. ObjectsMoved, LastError and
-// FinishedAt describe a drain: FinishedAt is nil while it is in progress, and
-// LastError is set only when it failed.
+// BackendStateRecord is one backend's state record. ObjectsMoved, LastError,
+// StartedAt and FinishedAt describe the backend's most recent drain:
+// FinishedAt is nil while it is in progress, and LastError is set only when it
+// failed.
 type BackendStateRecord struct {
 	BackendName  string
-	State        BackendState
+	Flags        BackendFlags
 	ObjectsMoved int64
 	LastError    string
 	StartedAt    time.Time

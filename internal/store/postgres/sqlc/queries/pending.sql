@@ -37,7 +37,7 @@ SELECT @intent_id, @object_key, @storage_key, @backend_name::text, @size_bytes::
        @etag, @content_type, @user_metadata, @role
 FROM backend_capacity c
 WHERE c.backend_name = @backend_name::text
-  AND c.accepting_writes
+  AND (c.flags & ~(@accepts::bigint)) = 0
   AND (c.available_bytes IS NULL OR c.available_bytes >= @size_bytes::bigint);
 
 -- name: ClearPendingForKey :many

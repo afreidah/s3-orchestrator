@@ -240,13 +240,12 @@ func TestPutObject_Success(t *testing.T) {
 	}
 }
 
-// flippingDrainChecker reports a backend as accepting writes on the first
-// AcceptsWrites call and as draining on every subsequent call. Simulates
-// the exact race the attemptPutOnBackend re-check closes: the upstream
-// EligibleForWrite filter sees the backend accepting (call 1 -> true), a
-// drain starts mid-PUT, and the post-PutObject re-check fires
-// (call 2 -> false) so the orchestrator aborts the commit on the now-
-// draining backend.
+// flippingDrainChecker reports a backend with no flags on the first Flags call
+// and as draining on every subsequent call. Simulates the exact race the
+// attemptPutOnBackend re-check closes: the upstream EligibleForWrite filter
+// sees the backend in service (call 1), a drain starts mid-PUT, and the
+// post-PutObject re-check fires (call 2) so the orchestrator aborts the commit
+// on the now-draining backend.
 type flippingDrainChecker struct {
 	mu      sync.Mutex
 	backend string
@@ -257,29 +256,26 @@ type flippingDrainChecker struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func (f *flippingDrainChecker) AcceptsWrites(name string) bool {
+func (f *flippingDrainChecker) Flags(name string) core.BackendFlags {
 	if name != f.backend {
-		return true
+		return 0
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	return f.calls <= 1
-}
-
-func (f *flippingDrainChecker) IsDraining(name string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return name == f.backend && f.calls > 1
+	if f.calls > 1 {
+		return core.FlagDraining
+	}
+	return 0
 }
 
 // TestPutObject_DrainRace_AbortsAndFailsOver triggers a drain that starts
-// mid-write. The flipping checker reports b1 accepting on the first
-// AcceptsWrites call (eligibility) and draining on later ones (the post-PUT re-check), so the
+// mid-write. The flipping checker reports b1 in service on the first
+// Flags call (eligibility) and draining on later ones (the post-PUT re-check), so the
 // commit on b1 aborts, its bytes are cleaned up, and the write fails over to b2.
 func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	// Not parallel: asserts an exact +1 delta on the global
-	// telemetry.DrainRaceAbortedTotal counter, which is also bumped by
+	// telemetry.WriteTargetRefusedTotal counter, which is also bumped by
 	// TestPutObject_DrainRace_AllBackendsDraining.
 	drained := backendtest.NewInMemory()
 	healthy := backendtest.NewInMemory()
@@ -287,7 +283,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": drained, "b2": healthy}, &fleetOpts{Order: []string{"b1", "b2"}})
 	mgr.Runtime.SetStateChecker(&flippingDrainChecker{backend: "b1"})
 
-	before := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal)
+	before := testutil.ToFloat64(telemetry.WriteTargetRefusedTotal)
 	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
@@ -301,8 +297,8 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	if !healthy.HasCopyOf("mykey") {
 		t.Error("healthy backend did not receive the failed-over write")
 	}
-	if got := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal); got != before+1 {
-		t.Errorf("DrainRaceAbortedTotal incremented by %v, want 1 (proves the re-check fired)", got-before)
+	if got := testutil.ToFloat64(telemetry.WriteTargetRefusedTotal); got != before+1 {
+		t.Errorf("WriteTargetRefusedTotal incremented by %v, want 1 (proves the re-check fired)", got-before)
 	}
 }
 
@@ -310,7 +306,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 // path: when every eligible backend flips to draining mid-write, the
 // retry loop exhausts without committing anywhere.
 func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
-	// Not parallel: bumps the shared telemetry.DrainRaceAbortedTotal
+	// Not parallel: bumps the shared telemetry.WriteTargetRefusedTotal
 	// counter that TestPutObject_DrainRace_AbortsAndFailsOver asserts an
 	// exact delta against.
 	drainedA := backendtest.NewInMemory()
@@ -330,28 +326,25 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	}
 }
 
-// allFlippingDrainChecker reports every backend as accepting writes on its
-// first AcceptsWrites call and as draining on every subsequent call.
-// Drives the all-backends-flip-mid-write scenario.
+// allFlippingDrainChecker reports every backend with no flags on its first
+// Flags call and as draining on every subsequent call. Drives the
+// all-backends-flip-mid-write scenario.
 type allFlippingDrainChecker struct {
 	mu    sync.Mutex
 	calls map[string]int
 }
 
-func (a *allFlippingDrainChecker) AcceptsWrites(name string) bool {
+func (a *allFlippingDrainChecker) Flags(name string) core.BackendFlags {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.calls == nil {
 		a.calls = make(map[string]int)
 	}
 	a.calls[name]++
-	return a.calls[name] <= 1
-}
-
-func (a *allFlippingDrainChecker) IsDraining(name string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.calls[name] > 1
+	if a.calls[name] > 1 {
+		return core.FlagDraining
+	}
+	return 0
 }
 
 // TestPutObject_PackStrategy_FillsTheFirstBackend pins pack routing: the

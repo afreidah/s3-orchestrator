@@ -336,24 +336,26 @@ CREATE TABLE IF NOT EXISTS grants (
     PRIMARY KEY (user_id, resource_kind, resource_name)
 );
 
--- A backend's state record, such as a drain from the moment it starts until it
--- is cancelled or the backend is removed. Admission refuses a backend that has
--- a row here. No foreign key to backend_quotas: the drained state has to
--- outlive that row when a backend is removed.
+-- A backend's state flags (cordoned 1, draining 2, drained 4, drain failed 8)
+-- and its most recent drain's progress. A row with no flags set is a backend in
+-- normal service. Bits are only ever added, never renumbered. No foreign key to
+-- backend_quotas: the drained state has to outlive that row when a backend is
+-- removed.
 CREATE TABLE IF NOT EXISTS backend_states (
     backend_name  TEXT PRIMARY KEY,
-    state         TEXT NOT NULL CHECK (state IN ('draining', 'drained', 'failed')),
     objects_moved INTEGER NOT NULL DEFAULT 0,
     last_error    TEXT,
     started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    finished_at   TEXT
+    finished_at   TEXT,
+    flags         INTEGER NOT NULL DEFAULT 0
 );
 
--- What occupies each backend and whether it takes new writes, defined once for
+-- What occupies each backend and the state flags it carries, defined once for
 -- every admission test and the quota tracker's baseline refresh. In-flight is
 -- incomplete multipart parts plus the intents of writes still uploading.
--- available_bytes is NULL for a backend with no ceiling (bytes_limit = 0), and a
--- backend with a state record of any state does not accept writes.
+-- available_bytes is NULL for a backend with no ceiling (bytes_limit = 0), and
+-- flags is 0 for a backend with no state row. Admission tests flags against an
+-- accept mask the store passes in.
 CREATE VIEW IF NOT EXISTS backend_capacity AS
 SELECT q.backend_name,
        q.bytes_limit,
@@ -367,7 +369,7 @@ SELECT q.backend_name,
                  - COALESCE(m.inflight, 0)
                  - COALESCE(p.inflight, 0)
        END AS available_bytes,
-       st.backend_name IS NULL AS accepting_writes
+       COALESCE(st.flags, 0) AS flags
 FROM backend_quotas q
 LEFT JOIN (
     SELECT backend_name, SUM(bytes_used) AS bytes_used
@@ -388,4 +390,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (23);
+INSERT INTO schema_version (version) VALUES (24);

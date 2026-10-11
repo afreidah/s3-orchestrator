@@ -11,6 +11,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -81,7 +82,7 @@ func TestDrainRecord_StartRefusesAdmission(t *testing.T) {
 	s := newTestStore(t)
 	mustStartDrain(t, s, drainBackendName)
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDraining || d.FinishedAt != nil {
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagDraining || d.FinishedAt != nil {
 		t.Errorf("after start: %+v, want draining and unfinished", d)
 	}
 	if again, err := s.StartDrain(context.Background(), drainBackendName); err != nil || again {
@@ -120,7 +121,7 @@ func TestDrainRecord_FailureKeepsRefusing(t *testing.T) {
 	mustStartDrain(t, s, drainBackendName)
 	mustFailDrain(t, s, drainBackendName, "list failed")
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateFailed || d.LastError != "list failed" || d.FinishedAt == nil {
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagDrainFailed || d.LastError != "list failed" || d.FinishedAt == nil {
 		t.Errorf("after failure: %+v, want failed with its reason and finished", d)
 	}
 	if admits(t, s, drainBackendName, "while-failed") {
@@ -139,7 +140,7 @@ func TestDrainRecord_RestartAfterFailure(t *testing.T) {
 	mustFailDrain(t, s, drainBackendName, "list failed")
 	mustStartDrain(t, s, drainBackendName)
 
-	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagDraining || d.ObjectsMoved != 0 || d.LastError != "" || d.FinishedAt != nil {
 		t.Errorf("after restart: %+v, want a fresh draining record", d)
 	}
 }
@@ -224,7 +225,7 @@ func TestCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if !completes(t, s, drainBackendName) {
 		t.Fatal("did not complete once the backend was empty")
 	}
-	if d := drainFor(t, s, drainBackendName); d.State != core.BackendStateDrained || d.FinishedAt == nil {
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagDrained || d.FinishedAt == nil {
 		t.Errorf("after completion: %+v, want drained and finished", d)
 	}
 }
@@ -291,5 +292,72 @@ func TestCompleteDrain_OnlyADrainInProgress(t *testing.T) {
 	mustFailDrain(t, s, drainBackendName, "stopped")
 	if completes(t, s, drainBackendName) {
 		t.Fatal("completed a drain that had failed")
+	}
+}
+
+// TestBackendFlags_EachRefusesAdmission sets every flag in turn and verifies
+// admission refuses the backend while it is set and accepts it once cleared,
+// so the mask admission passes to SQL matches what writes accept in Go.
+func TestBackendFlags_EachRefusesAdmission(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for i, flag := range []core.BackendFlags{core.FlagCordoned, core.FlagDraining, core.FlagDrained, core.FlagDrainFailed} {
+		if set, err := s.SetBackendFlag(ctx, drainBackendName, flag); err != nil || !set {
+			t.Fatalf("SetBackendFlag(%s) = %v, %v", flag, set, err)
+		}
+		if admits(t, s, drainBackendName, fmt.Sprintf("flagged-%d", i)) != flag.AcceptedBy(core.AcceptForWrite) {
+			t.Errorf("admission with %s disagrees with AcceptForWrite", flag)
+		}
+		if cleared, err := s.ClearBackendFlags(ctx, drainBackendName, flag); err != nil || !cleared {
+			t.Fatalf("ClearBackendFlags(%s) = %v, %v", flag, cleared, err)
+		}
+		if !admits(t, s, drainBackendName, fmt.Sprintf("cleared-%d", i)) {
+			t.Errorf("admission refused the backend after %s was cleared", flag)
+		}
+	}
+}
+
+// TestBackendFlags_SetAndClearReportChange verifies setting a flag already set,
+// and clearing one not set, both report nothing changed.
+func TestBackendFlags_SetAndClearReportChange(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if cleared, err := s.ClearBackendFlags(ctx, drainBackendName, core.FlagCordoned); err != nil || cleared {
+		t.Errorf("clearing an unset cordon = %v, %v; want nothing changed", cleared, err)
+	}
+	if set, err := s.SetBackendFlag(ctx, drainBackendName, core.FlagCordoned); err != nil || !set {
+		t.Fatalf("first cordon = %v, %v", set, err)
+	}
+	if set, err := s.SetBackendFlag(ctx, drainBackendName, core.FlagCordoned); err != nil || set {
+		t.Errorf("second cordon = %v, %v; want nothing changed", set, err)
+	}
+}
+
+// TestBackendFlags_CordonAndDrainAreIndependent verifies a drain keeps a cordon,
+// cancelling the drain leaves the cordon, and uncordoning leaves a drain.
+func TestBackendFlags_CordonAndDrainAreIndependent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.SetBackendFlag(ctx, drainBackendName, core.FlagCordoned); err != nil {
+		t.Fatalf("cordon: %v", err)
+	}
+	mustStartDrain(t, s, drainBackendName)
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagCordoned|core.FlagDraining {
+		t.Fatalf("after drain on a cordon: %s, want cordoned and draining", d.Flags)
+	}
+
+	if _, err := s.ClearBackendFlags(ctx, drainBackendName, core.DrainFlags); err != nil {
+		t.Fatalf("cancel drain: %v", err)
+	}
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagCordoned {
+		t.Errorf("after cancelling the drain: %s, want cordoned only", d.Flags)
+	}
+
+	mustStartDrain(t, s, drainBackendName)
+	if _, err := s.ClearBackendFlags(ctx, drainBackendName, core.FlagCordoned); err != nil {
+		t.Fatalf("uncordon: %v", err)
+	}
+	if d := drainFor(t, s, drainBackendName); d.Flags != core.FlagDraining {
+		t.Errorf("after uncordoning: %s, want draining only", d.Flags)
 	}
 }

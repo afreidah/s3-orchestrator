@@ -135,7 +135,7 @@ SELECT @object_key::text, @target_backend::text, @storage_key::text, ol.size_byt
 FROM object_locations ol
 JOIN backend_capacity c ON c.backend_name = @target_backend::text
 WHERE ol.object_key = @object_key::text AND ol.backend_name = @source_backend
-  AND c.accepting_writes
+  AND (c.flags & ~(@accepts::bigint)) = 0
   AND (c.available_bytes IS NULL OR c.available_bytes >= ol.size_bytes)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING size_bytes;

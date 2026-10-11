@@ -18,30 +18,12 @@ import "testing"
 func TestPermissionSet_BitsAreDistinct(t *testing.T) {
 	t.Parallel()
 
-	seen := map[PermissionSet]string{}
-	for _, p := range []struct {
-		bit  PermissionSet
-		name string
-	}{
-		{PermListBuckets, "list-buckets"},
-		{PermList, "list"},
-		{PermRead, "read"},
-		{PermWrite, "write"},
-		{PermDelete, "delete"},
-		{PermTags, "tags"},
-	} {
-		if p.bit == 0 {
-			t.Errorf("%s has no bit", p.name)
-		}
-		if p.bit&(p.bit-1) != 0 {
-			t.Errorf("%s = %d, which is not a single bit", p.name, p.bit)
-		}
-		if prior, ok := seen[p.bit]; ok {
-			t.Errorf("%s shares a bit with %s", p.name, prior)
-		}
-		seen[p.bit] = p.name
-		if !PermAll.Has(p.bit) {
-			t.Errorf("PermAll does not carry %s", p.name)
+	if err := permissionNames.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []PermissionSet{PermListBuckets, PermList, PermRead, PermWrite, PermDelete, PermTags} {
+		if !PermAll.Has(p) {
+			t.Errorf("PermAll does not carry %s", p)
 		}
 	}
 }

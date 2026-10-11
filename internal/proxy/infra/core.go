@@ -25,15 +25,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// StateChecker reports a named backend's state: whether it takes new writes and
-// whether it is being drained. *BackendRuntime consumes this so state ownership
-// can live in the backendstate subpackage while *BackendRuntime filters write
-// eligibility.
+// StateChecker reports a named backend's state flags. *BackendRuntime consumes
+// this so state ownership can live in the backendstate subpackage while
+// *BackendRuntime filters eligibility.
 type StateChecker interface {
-	AcceptsWrites(name string) bool
-	IsDraining(name string) bool
+	Flags(name string) core.BackendFlags
 }
 
 // Config bundles every input *BackendRuntime needs at construction. Exposed so

@@ -121,6 +121,7 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectIfFitsPara
 		CompressionFormatVersion: int16Ptr(p.CompressionFormatVersion),
 		LogicalSize:              int64Ptr(p.LogicalSize),
 		Role:                     string(p.RoleOrDefault()),
+		Accepts:                  int64(core.AcceptForWrite),
 	}
 }
 

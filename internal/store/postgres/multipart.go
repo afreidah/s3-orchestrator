@@ -61,6 +61,7 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		EncryptionKey: nilIfEmptyBytes(params.EncryptionKey),
 		KeyID:         keyIDPtr,
 		Tagging:       strPtr(core.EncodeTags(params.Tags)),
+		Accepts:       int64(core.AcceptForWrite),
 	})
 	if err != nil {
 		return false, fmt.Errorf("failed to create multipart upload: %w", err)

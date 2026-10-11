@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.155.x (current)
+### v0.156.x (current)
+
+**Backend state flags ([#1666](https://github.com/afreidah/s3-orchestrator/issues/1666), v0.156.0)**
+
+A backend's state was one value, so a cordon and a drain could not be held at once. It is now a set of flags: cordoned, draining, drained and drain failed. A cordon keeps new copies off a backend while it keeps serving reads, and it is independent of a drain: cancelling a drain leaves a cordon in place. Cordon and uncordon reach the admin API and CLI in a later release.
+
+**Operator action items after upgrade:**
+
+- **One migration applies automatically** (Postgres `00037`, SQLite `0024`). `backend_states.state` is replaced by an integer `flags` column, and `backend_capacity` exposes `flags` in place of `accepting_writes`. Queries or dashboards that read either column directly need updating.
+- **`s3o_drain_race_aborted_total` is renamed `s3o_write_target_refused_total`**, since a cordon set mid-write aborts the same way a drain does. The bundled Grafana panel is updated; alerts on the old name need the new one. The cleanup reason `drain_race_aborted` is renamed `write_target_refused`.
+- **New gauge `s3o_backend_state{backend, state}`**, 1 for each flag a backend carries.
+- **New events `backend.cordoned` and `backend.uncordoned`** for webhook subscribers.
+
+### v0.155.x
 
 **Drain records renamed to backend states ([#1665](https://github.com/afreidah/s3-orchestrator/issues/1665), v0.155.2)**
 

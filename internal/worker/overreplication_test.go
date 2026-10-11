@@ -70,7 +70,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().AcceptsWrites("b1").Return(false)
+	ops.EXPECT().BackendFlags("b1").Return(core.FlagDraining)
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil)
@@ -90,7 +90,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 
 	be := backendtest.NewMockObjectBackend(ctrl)
 
-	ops.EXPECT().AcceptsWrites("b1").Return(true)
+	ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
@@ -113,7 +113,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().AcceptsWrites("gone").Return(true)
+	ops.EXPECT().BackendFlags("gone").Return(core.BackendFlags(0))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{})
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
@@ -137,7 +137,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 
-	ops.EXPECT().AcceptsWrites(gomock.Any()).Return(true).AnyTimes()
+	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// b1 is more utilized (lower score -> removed first)
@@ -180,7 +180,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 
-	ops.EXPECT().AcceptsWrites(gomock.Any()).Return(true).AnyTimes()
+	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 	ops.EXPECT().Acct().Times(0)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
@@ -215,7 +215,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
-	ops.EXPECT().AcceptsWrites(gomock.Any()).Return(true).AnyTimes()
+	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
@@ -286,7 +286,7 @@ func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
-	ops.EXPECT().AcceptsWrites(gomock.Any()).Return(true).AnyTimes()
+	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 
 	c := NewOverReplicationCleaner(ops, pl, ms)

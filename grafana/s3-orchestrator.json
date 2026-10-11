@@ -4726,7 +4726,7 @@
     {
       "type": "timeseries",
       "id": 101,
-      "title": "Drain race aborts",
+      "title": "Write target refused mid-write",
       "gridPos": {
         "x": 0,
         "y": 279,
@@ -4739,7 +4739,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(s3o_drain_race_aborted_total[5m]))",
+          "expr": "sum(rate(s3o_write_target_refused_total[5m]))",
           "legendFormat": "aborted"
         }
       ]

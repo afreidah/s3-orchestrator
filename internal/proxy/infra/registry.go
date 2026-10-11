@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // The backend map, its configured iteration order, and the filters that
-// drop backends refusing writes, draining or circuit-broken from a candidate
-// list.
+// drop backends whose state flags a purpose does not accept, or whose circuit
+// breaker is open, from a candidate list.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -16,10 +16,11 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // SetStateChecker points the eligibility filters at the backend state manager
-// so AcceptsWrites and IsDraining reflect live state. Called once the manager
+// so BackendFlags reflects live state. Called once the manager
 // exists, since it is built after the runtime.
 func (c *BackendRuntime) SetStateChecker(s StateChecker) {
 	c.states = s
@@ -44,26 +45,20 @@ func (c *BackendRuntime) BackendOrder() []string {
 	return c.order
 }
 
-// AcceptsWrites reports whether the named backend takes new writes. Returns
-// true when no state manager is wired.
-func (c *BackendRuntime) AcceptsWrites(name string) bool {
-	return c.states == nil || c.states.AcceptsWrites(name)
+// BackendFlags returns the named backend's state flags. Returns none when no
+// state manager is wired.
+func (c *BackendRuntime) BackendFlags(name string) core.BackendFlags {
+	if c.states == nil {
+		return 0
+	}
+	return c.states.Flags(name)
 }
 
-// IsDraining reports whether the named backend's state belongs to a drain.
-// Returns false when no state manager is wired.
-func (c *BackendRuntime) IsDraining(name string) bool {
-	return c.states != nil && c.states.IsDraining(name)
-}
-
-// AcceptingWrites keeps only the backends that take new writes.
-func (c *BackendRuntime) AcceptingWrites(eligible []string) []string {
-	return slices.DeleteFunc(slices.Clone(eligible), func(name string) bool { return !c.AcceptsWrites(name) })
-}
-
-// ExcludeDraining filters out backends whose state belongs to a drain.
-func (c *BackendRuntime) ExcludeDraining(eligible []string) []string {
-	return slices.DeleteFunc(slices.Clone(eligible), c.IsDraining)
+// Accepted keeps only the backends whose flags are all ones accept allows.
+func (c *BackendRuntime) Accepted(eligible []string, accept core.BackendFlags) []string {
+	return slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
+		return !c.BackendFlags(name).AcceptedBy(accept)
+	})
 }
 
 // ExcludeUnhealthy filters out backends whose circuit breaker is open.

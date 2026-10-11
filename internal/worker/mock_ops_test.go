@@ -46,20 +46,6 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
-// AcceptsWrites mocks base method.
-func (m *MockOps) AcceptsWrites(name string) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AcceptsWrites", name)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// AcceptsWrites indicates an expected call of AcceptsWrites.
-func (mr *MockOpsMockRecorder) AcceptsWrites(name any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptsWrites", reflect.TypeOf((*MockOps)(nil).AcceptsWrites), name)
-}
-
 // Acct mocks base method.
 func (m *MockOps) Acct() *accounting.Recorder {
 	m.ctrl.T.Helper()
@@ -86,6 +72,20 @@ func (m *MockOps) AcquireAdmission(ctx context.Context) bool {
 func (mr *MockOpsMockRecorder) AcquireAdmission(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireAdmission", reflect.TypeOf((*MockOps)(nil).AcquireAdmission), ctx)
+}
+
+// BackendFlags mocks base method.
+func (m *MockOps) BackendFlags(name string) core.BackendFlags {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BackendFlags", name)
+	ret0, _ := ret[0].(core.BackendFlags)
+	return ret0
+}
+
+// BackendFlags indicates an expected call of BackendFlags.
+func (mr *MockOpsMockRecorder) BackendFlags(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendFlags", reflect.TypeOf((*MockOps)(nil).BackendFlags), name)
 }
 
 // BackendOrder mocks base method.
@@ -402,6 +402,20 @@ func (m *MockFleetOps) EXPECT() *MockFleetOpsMockRecorder {
 	return m.recorder
 }
 
+// Accepted mocks base method.
+func (m *MockFleetOps) Accepted(eligible []string, accept core.BackendFlags) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Accepted", eligible, accept)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// Accepted indicates an expected call of Accepted.
+func (mr *MockFleetOpsMockRecorder) Accepted(eligible, accept any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Accepted", reflect.TypeOf((*MockFleetOps)(nil).Accepted), eligible, accept)
+}
+
 // BackendOrder mocks base method.
 func (m *MockFleetOps) BackendOrder() []string {
 	m.ctrl.T.Helper()
@@ -414,20 +428,6 @@ func (m *MockFleetOps) BackendOrder() []string {
 func (mr *MockFleetOpsMockRecorder) BackendOrder() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockFleetOps)(nil).BackendOrder))
-}
-
-// ExcludeDraining mocks base method.
-func (m *MockFleetOps) ExcludeDraining(eligible []string) []string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExcludeDraining", eligible)
-	ret0, _ := ret[0].([]string)
-	return ret0
-}
-
-// ExcludeDraining indicates an expected call of ExcludeDraining.
-func (mr *MockFleetOpsMockRecorder) ExcludeDraining(eligible any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExcludeDraining", reflect.TypeOf((*MockFleetOps)(nil).ExcludeDraining), eligible)
 }
 
 // UpdateQuotaMetrics mocks base method.

@@ -30,12 +30,11 @@ import (
 // backendRegistry
 // -------------------------------------------------------------------------
 
-// staticDrainChecker is a fixed set of draining backends the registry tests use
-// to drive the state filters without standing up backendstate.Manager.
-type staticDrainChecker map[string]bool
+// staticFlags is a fixed set of backend flags the registry tests use to drive
+// the state filters without standing up backendstate.Manager.
+type staticFlags map[string]core.BackendFlags
 
-func (s staticDrainChecker) AcceptsWrites(name string) bool { return !s[name] }
-func (s staticDrainChecker) IsDraining(name string) bool    { return s[name] }
+func (s staticFlags) Flags(name string) core.BackendFlags { return s[name] }
 
 // stubBackend satisfies backend.ObjectBackend at the interface level
 // so registry.All() / Get() have something to return. None of its
@@ -62,25 +61,27 @@ func TestBackendRegistry_GetAndAllAndOrder(t *testing.T) {
 	}
 }
 
-func TestBackendRegistry_ExcludeDraining_NoCheckerWiredKeepsAll(t *testing.T) {
+func TestBackendRegistry_Accepted_NoCheckerWiredKeepsAll(t *testing.T) {
 	t.Parallel()
 	r := &BackendRuntime{order: []string{"a", "b"}}
-	got := r.ExcludeDraining([]string{"a", "b"})
+	got := r.Accepted([]string{"a", "b"}, core.AcceptForWrite)
 	if len(got) != 2 {
-		t.Errorf("ExcludeDraining = %v, want both (no checker wired)", got)
+		t.Errorf("Accepted = %v, want both (no checker wired)", got)
 	}
 }
 
-func TestBackendRegistry_ExcludeDraining_DropsActiveDrains(t *testing.T) {
+// TestBackendRegistry_Accepted_AppliesTheMask verifies a cordoned backend is
+// dropped for writes but kept for reconcile, and a draining one is dropped for
+// both.
+func TestBackendRegistry_Accepted_AppliesTheMask(t *testing.T) {
 	t.Parallel()
 	r := &BackendRuntime{order: []string{"a", "b", "c"}}
-	r.SetStateChecker(staticDrainChecker{"b": true})
-	got := r.ExcludeDraining([]string{"a", "b", "c"})
-	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
-		t.Errorf("ExcludeDraining = %v, want [a c]", got)
+	r.SetStateChecker(staticFlags{"b": core.FlagCordoned, "c": core.FlagDraining})
+	if got := r.Accepted([]string{"a", "b", "c"}, core.AcceptForWrite); len(got) != 1 || got[0] != "a" {
+		t.Errorf("Accepted for write = %v, want [a]", got)
 	}
-	if got := r.AcceptingWrites([]string{"a", "b", "c"}); len(got) != 2 || got[0] != "a" || got[1] != "c" {
-		t.Errorf("AcceptingWrites = %v, want [a c]", got)
+	if got := r.Accepted([]string{"a", "b", "c"}, core.AcceptForReconcile); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("Accepted for reconcile = %v, want [a b]", got)
 	}
 }
 

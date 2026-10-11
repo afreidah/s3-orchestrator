@@ -107,6 +107,12 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// The view reads the flags column, so it goes first; 0024 recreates it.
+		{24, func() {
+			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			exec("restore the state column", `ALTER TABLE backend_states ADD COLUMN state TEXT`)
+			exec("drop the flags column", `ALTER TABLE backend_states DROP COLUMN flags`)
+		}},
 		// The view reads the table, so it goes first; 0023 recreates it.
 		{23, func() {
 			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)

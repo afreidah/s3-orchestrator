@@ -632,6 +632,21 @@ func (mr *MockBackendStateStoreMockRecorder) BackendObjectStats(ctx, backendName
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendObjectStats", reflect.TypeOf((*MockBackendStateStore)(nil).BackendObjectStats), ctx, backendName)
 }
 
+// ClearBackendFlags mocks base method.
+func (m *MockBackendStateStore) ClearBackendFlags(ctx context.Context, backendName string, flags core.BackendFlags) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearBackendFlags", ctx, backendName, flags)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClearBackendFlags indicates an expected call of ClearBackendFlags.
+func (mr *MockBackendStateStoreMockRecorder) ClearBackendFlags(ctx, backendName, flags any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearBackendFlags", reflect.TypeOf((*MockBackendStateStore)(nil).ClearBackendFlags), ctx, backendName, flags)
+}
+
 // ClearBackendState mocks base method.
 func (m *MockBackendStateStore) ClearBackendState(ctx context.Context, backendName string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -703,6 +718,21 @@ func (m *MockBackendStateStore) MarkDrainFailed(ctx context.Context, backendName
 func (mr *MockBackendStateStoreMockRecorder) MarkDrainFailed(ctx, backendName, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkDrainFailed", reflect.TypeOf((*MockBackendStateStore)(nil).MarkDrainFailed), ctx, backendName, reason)
+}
+
+// SetBackendFlag mocks base method.
+func (m *MockBackendStateStore) SetBackendFlag(ctx context.Context, backendName string, flag core.BackendFlags) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetBackendFlag", ctx, backendName, flag)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SetBackendFlag indicates an expected call of SetBackendFlag.
+func (mr *MockBackendStateStoreMockRecorder) SetBackendFlag(ctx, backendName, flag any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetBackendFlag", reflect.TypeOf((*MockBackendStateStore)(nil).SetBackendFlag), ctx, backendName, flag)
 }
 
 // StartDrain mocks base method.

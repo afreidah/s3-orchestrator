@@ -9,13 +9,13 @@ import (
 )
 
 type BackendCapacity struct {
-	BackendName     string
-	BytesLimit      int64
-	BytesUsed       int64
-	OrphanBytes     int64
-	InflightBytes   int64
-	AvailableBytes  int64
-	AcceptingWrites bool
+	BackendName    string
+	BytesLimit     int64
+	BytesUsed      int64
+	OrphanBytes    int64
+	InflightBytes  int64
+	AvailableBytes int64
+	Flags          int64
 }
 
 type BackendQuota struct {
@@ -41,11 +41,11 @@ type BackendRequestUsage struct {
 
 type BackendState struct {
 	BackendName  string
-	State        string
 	ObjectsMoved int64
 	LastError    *string
 	StartedAt    pgtype.Timestamptz
 	FinishedAt   pgtype.Timestamptz
+	Flags        int64
 }
 
 type BackendUsage struct {

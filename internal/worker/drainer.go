@@ -140,7 +140,7 @@ func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainS
 func inProgress(records []core.BackendStateRecord) []core.BackendStateRecord {
 	var active []core.BackendStateRecord
 	for i := range records {
-		if records[i].State == core.BackendStateDraining {
+		if records[i].Flags.Any(core.FlagDraining) {
 			active = append(active, records[i])
 		}
 	}
@@ -249,7 +249,7 @@ func (d *Drainer) stillDraining(ctx context.Context, name string) (bool, error) 
 	}
 	for i := range records {
 		if records[i].BackendName == name {
-			return records[i].State == core.BackendStateDraining, nil
+			return records[i].Flags.Any(core.FlagDraining), nil
 		}
 	}
 	return false, nil
@@ -391,7 +391,7 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 func (d *Drainer) pickDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, backend.ObjectBackend, bool) {
 	candidates := make([]string, 0, len(d.ops.BackendOrder()))
 	for _, name := range d.ops.BackendOrder() {
-		if name != srcName && d.ops.AcceptsWrites(name) {
+		if name != srcName && d.ops.BackendFlags(name).AcceptedBy(core.AcceptForWrite) {
 			candidates = append(candidates, name)
 		}
 	}

@@ -174,16 +174,26 @@ var (
 		},
 	)
 
-	// DrainRaceAbortedTotal counts PutObject attempts that landed bytes
-	// on a backend whose drain started mid-write. The orchestrator
-	// detects the race after the backend PUT completes, deletes the
-	// orphaned bytes, and fails the attempt over to the next eligible
-	// backend; this counter pins how often the race fires in production
-	// so the drain timing assumptions can be revisited if it climbs.
-	DrainRaceAbortedTotal = promauto.NewCounter(
+	// WriteTargetRefusedTotal counts PutObject attempts that landed bytes on a
+	// backend which stopped accepting writes mid-write, because it was
+	// cordoned or a drain started. The orchestrator detects it after the
+	// backend PUT completes, deletes the orphaned bytes, and fails the attempt
+	// over to the next eligible backend.
+	WriteTargetRefusedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3o_drain_race_aborted_total",
-			Help: "Number of PutObject attempts aborted after drain started mid-write",
+			Name: "s3o_write_target_refused_total",
+			Help: "Number of PutObject attempts aborted because the backend stopped accepting writes mid-write",
 		},
+	)
+
+	// BackendState is 1 for each state flag a backend carries, labeled by
+	// backend and flag name, and absent for a backend in normal service. It is
+	// republished from the records on every state cache refresh.
+	BackendState = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_backend_state",
+			Help: "1 for each state flag a backend carries (cordoned, draining, drained, drain-failed)",
+		},
+		[]string{"backend", "state"},
 	)
 )

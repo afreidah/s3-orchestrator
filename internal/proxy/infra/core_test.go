@@ -105,18 +105,18 @@ func TestCore_BackendForwarders(t *testing.T) {
 	}
 }
 
-func TestCore_DrainForwarders_NoCheckerThenWired(t *testing.T) {
+func TestCore_StateForwarders_NoCheckerThenWired(t *testing.T) {
 	t.Parallel()
 	c := newTestCore(t)
-	if c.IsDraining("b1") || !c.AcceptsWrites("b1") {
-		t.Error("b1 held back before any checker wired")
+	if c.BackendFlags("b1") != 0 {
+		t.Error("b1 has flags before any checker wired")
 	}
-	c.SetStateChecker(staticDrainChecker{"b1": true})
-	if !c.IsDraining("b1") || c.AcceptsWrites("b1") {
-		t.Error("b1 not held back after wiring the state checker")
+	c.SetStateChecker(staticFlags{"b1": core.FlagDraining})
+	if c.BackendFlags("b1") != core.FlagDraining {
+		t.Errorf("BackendFlags(b1) = %s, want draining", c.BackendFlags("b1"))
 	}
-	if got := c.ExcludeDraining([]string{"b1", "b2"}); len(got) != 1 || got[0] != "b2" {
-		t.Errorf("ExcludeDraining = %v, want [b2]", got)
+	if got := c.Accepted([]string{"b1", "b2"}, core.AcceptForWrite); len(got) != 1 || got[0] != "b2" {
+		t.Errorf("Accepted = %v, want [b2]", got)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestCore_UsageForwarders(t *testing.T) {
 func TestCore_EligibleForWrite_AppliesAllFilters(t *testing.T) {
 	t.Parallel()
 	c := newTestCore(t)
-	c.SetStateChecker(staticDrainChecker{"b1": true})
+	c.SetStateChecker(staticFlags{"b1": core.FlagDraining})
 
 	// b1 is draining -> excluded. b2 has max 1024; ingress 2048 -> excluded.
 	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 2048); len(got) != 0 {

@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -51,10 +52,10 @@ type DrainProgress struct {
 	Error            string `json:"error,omitempty"`
 }
 
-// Manager handles a backend's state record: draining and removing backends.
+// Manager handles a backend's state: cordoning, draining and removing backends.
 //
-// states caches every backend's state from the records, so AcceptsWrites
-// answers on the write path without a query. It is refreshed whenever this
+// states caches every backend's flags from the records, so eligibility filters
+// answer on the write path without a query. It is refreshed whenever this
 // manager changes a record, on every usage-flush tick, and whenever the drainer
 // reads the records. A stale entry only costs a ranking: admission reads the
 // records itself.
@@ -63,7 +64,19 @@ type Manager struct {
 	infra   Runtime
 	objects core.ObjectStore
 	store   core.BackendStateStore
-	states  atomic.Pointer[map[string]core.BackendState]
+	states  atomic.Pointer[map[string]core.BackendFlags]
+}
+
+// transition is one operator change to a backend's state: the store call that
+// makes it, the error when it changes nothing, and what is recorded once it
+// has. refused is a format taking the backend name, and event is empty when the
+// change publishes none.
+type transition struct {
+	apply   func(ctx context.Context, name string) (bool, error)
+	refused string
+	audit   string
+	event   string
+	logMsg  string
 }
 
 // New creates a Manager.
@@ -79,19 +92,14 @@ func New(infra Runtime, objects core.ObjectStore, store core.BackendStateStore) 
 	}
 }
 
-// AcceptsWrites reports whether the named backend takes new writes: it has no
-// state record. A backend in any state, a drain that finished or failed
-// included, is refused.
-func (d *Manager) AcceptsWrites(name string) bool {
-	_, ok := d.stateOf(name)
-	return !ok
-}
-
-// IsDraining reports whether the named backend's state belongs to a drain:
-// in progress, finished or failed.
-func (d *Manager) IsDraining(name string) bool {
-	state, ok := d.stateOf(name)
-	return ok && state.IsDrain()
+// Flags returns the named backend's cached state flags, which are empty for a
+// backend in normal service.
+func (d *Manager) Flags(name string) core.BackendFlags {
+	states := d.states.Load()
+	if states == nil {
+		return 0
+	}
+	return (*states)[name]
 }
 
 // Refresh reloads the cached states from the records.
@@ -104,25 +112,81 @@ func (d *Manager) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// SetStates replaces the cached states with the given records. The drainer
-// hands it the records each pass reads.
+// SetStates replaces the cached states with the given records and republishes
+// the state gauge from them. The drainer hands it the records each pass reads.
 func (d *Manager) SetStates(records []core.BackendStateRecord) {
-	states := make(map[string]core.BackendState, len(records))
+	states := make(map[string]core.BackendFlags, len(records))
+	telemetry.BackendState.Reset()
 	for i := range records {
-		states[records[i].BackendName] = records[i].State
+		states[records[i].BackendName] = records[i].Flags
+		for _, name := range records[i].Flags.Names() {
+			telemetry.BackendState.WithLabelValues(records[i].BackendName, name).Set(1)
+		}
 	}
 	d.states.Store(&states)
 }
 
-// stateOf returns the cached state of the named backend, and false when it has
-// no record.
-func (d *Manager) stateOf(name string) (core.BackendState, bool) {
-	states := d.states.Load()
-	if states == nil {
-		return "", false
+// change applies one transition and, when it changed the record, refreshes
+// the cache and records the change.
+func (d *Manager) change(ctx context.Context, name string, t *transition) error {
+	changed, err := t.apply(ctx, name)
+	if err != nil {
+		return err
 	}
-	state, ok := (*states)[name]
-	return state, ok
+	if !changed {
+		return fmt.Errorf(t.refused, name)
+	}
+	d.refreshAfterChange(ctx)
+	audit.Log(ctx, t.audit, slog.String("backend", name))
+	if t.event != "" {
+		event.Publish(t.event, name, map[string]any{"backend": name})
+	}
+	d.log.InfoContext(ctx, t.logMsg, "backend", name)
+	return nil
+}
+
+// requireBackend refuses a backend the runtime does not know, so a typo never
+// leaves a state record for a backend that does not exist.
+func (d *Manager) requireBackend(name string) error {
+	if _, ok := d.infra.Backends()[name]; !ok {
+		return fmt.Errorf("backend %q not found", name)
+	}
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// CORDON
+// -------------------------------------------------------------------------
+
+// Cordon stops new copies landing on the backend. It keeps serving reads, and
+// deletes and cleanup still reach it. A cordon is independent of a drain.
+func (d *Manager) Cordon(ctx context.Context, name string) error {
+	if err := d.requireBackend(name); err != nil {
+		return err
+	}
+	return d.change(ctx, name, &transition{
+		apply: func(ctx context.Context, name string) (bool, error) {
+			return d.store.SetBackendFlag(ctx, name, core.FlagCordoned)
+		},
+		refused: "backend %q is already cordoned",
+		audit:   "storage.Cordon",
+		event:   event.BackendCordoned,
+		logMsg:  "backend cordoned",
+	})
+}
+
+// Uncordon lets new copies land on the backend again. A drain in progress
+// carries on.
+func (d *Manager) Uncordon(ctx context.Context, name string) error {
+	return d.change(ctx, name, &transition{
+		apply: func(ctx context.Context, name string) (bool, error) {
+			return d.store.ClearBackendFlags(ctx, name, core.FlagCordoned)
+		},
+		refused: "backend %q is not cordoned",
+		audit:   "storage.Uncordon",
+		event:   event.BackendUncordoned,
+		logMsg:  "backend uncordoned",
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -131,22 +195,17 @@ func (d *Manager) stateOf(name string) (core.BackendState, bool) {
 
 // StartDrain records a drain for the backend, or restarts a failed one. From
 // that moment admission refuses the backend, and the drainer moves its objects
-// off on its next tick.
+// off on its next tick. A cordon on the backend is kept.
 func (d *Manager) StartDrain(ctx context.Context, name string) error {
-	if _, ok := d.infra.Backends()[name]; !ok {
-		return fmt.Errorf("backend %q not found", name)
-	}
-	started, err := d.store.StartDrain(ctx, name)
-	if err != nil {
+	if err := d.requireBackend(name); err != nil {
 		return err
 	}
-	if !started {
-		return fmt.Errorf("backend %q is already draining or drained", name)
-	}
-	d.refreshAfterChange(ctx)
-	audit.Log(ctx, "storage.DrainStart", slog.String("backend", name))
-	d.log.InfoContext(ctx, "backend drain started", "backend", name)
-	return nil
+	return d.change(ctx, name, &transition{
+		apply:   d.store.StartDrain,
+		refused: "backend %q is already draining or drained",
+		audit:   "storage.DrainStart",
+		logMsg:  "backend drain started",
+	})
 }
 
 // GetDrainProgress returns the state of the backend's drain. Objects and bytes
@@ -160,8 +219,8 @@ func (d *Manager) GetDrainProgress(ctx context.Context, name string) (*DrainProg
 		return &DrainProgress{}, nil
 	}
 	p := &DrainProgress{
-		Active:       rec.State == core.BackendStateDraining,
-		State:        string(rec.State),
+		Active:       rec.Flags.Any(core.FlagDraining),
+		State:        rec.Flags.DrainState(),
 		ObjectsMoved: rec.ObjectsMoved,
 		Error:        rec.LastError,
 	}
@@ -191,21 +250,18 @@ func (d *Manager) record(ctx context.Context, name string) (*core.BackendStateRe
 	return nil, nil
 }
 
-// CancelDrain clears the backend's state record, which makes it writable again.
-// A drain in progress stops before its next page; objects already moved are
-// not moved back.
+// CancelDrain clears the backend's drain flags, in progress, finished or
+// failed. A drain in progress stops before its next page; objects already
+// moved are not moved back. A cordon on the backend is kept.
 func (d *Manager) CancelDrain(ctx context.Context, name string) error {
-	cleared, err := d.store.ClearBackendState(ctx, name)
-	if err != nil {
-		return err
-	}
-	if !cleared {
-		return fmt.Errorf("backend %q is not draining", name)
-	}
-	d.refreshAfterChange(ctx)
-	audit.Log(ctx, "storage.DrainCancel", slog.String("backend", name))
-	d.log.InfoContext(ctx, "backend drain cleared", "backend", name)
-	return nil
+	return d.change(ctx, name, &transition{
+		apply: func(ctx context.Context, name string) (bool, error) {
+			return d.store.ClearBackendFlags(ctx, name, core.DrainFlags)
+		},
+		refused: "backend %q is not draining",
+		audit:   "storage.DrainCancel",
+		logMsg:  "backend drain cleared",
+	})
 }
 
 // refreshAfterChange reloads the cached states after this manager changed a
@@ -233,7 +289,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 	if err != nil {
 		return err
 	}
-	if rec != nil && rec.State == core.BackendStateDraining {
+	if rec != nil && rec.Flags.Any(core.FlagDraining) {
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
 

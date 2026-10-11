@@ -118,6 +118,21 @@ func (mr *MockMetadataStoreMockRecorder) CleanupQueueDepth(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockMetadataStore)(nil).CleanupQueueDepth), ctx)
 }
 
+// ClearBackendFlags mocks base method.
+func (m *MockMetadataStore) ClearBackendFlags(ctx context.Context, backendName string, flags core.BackendFlags) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearBackendFlags", ctx, backendName, flags)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClearBackendFlags indicates an expected call of ClearBackendFlags.
+func (mr *MockMetadataStoreMockRecorder) ClearBackendFlags(ctx, backendName, flags any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearBackendFlags", reflect.TypeOf((*MockMetadataStore)(nil).ClearBackendFlags), ctx, backendName, flags)
+}
+
 // ClearBackendState mocks base method.
 func (m *MockMetadataStore) ClearBackendState(ctx context.Context, backendName string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -1573,6 +1588,21 @@ func (m *MockMetadataStore) ScanMultipartUploads(ctx context.Context, filter cor
 func (mr *MockMetadataStoreMockRecorder) ScanMultipartUploads(ctx, filter, limit, afterUploadID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanMultipartUploads", reflect.TypeOf((*MockMetadataStore)(nil).ScanMultipartUploads), ctx, filter, limit, afterUploadID)
+}
+
+// SetBackendFlag mocks base method.
+func (m *MockMetadataStore) SetBackendFlag(ctx context.Context, backendName string, flag core.BackendFlags) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetBackendFlag", ctx, backendName, flag)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SetBackendFlag indicates an expected call of SetBackendFlag.
+func (mr *MockMetadataStoreMockRecorder) SetBackendFlag(ctx, backendName, flag any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetBackendFlag", reflect.TypeOf((*MockMetadataStore)(nil).SetBackendFlag), ctx, backendName, flag)
 }
 
 // SetGrant mocks base method.
