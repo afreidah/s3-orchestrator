@@ -315,6 +315,8 @@ func TestManagerRouteOutcomes(t *testing.T) {
 		{"drain an unknown backend", http.MethodPost, "/admin/api/backends/nope/drain", http.StatusBadRequest},
 		{"progress for an unknown backend", http.MethodGet, "/admin/api/backends/nope/drain", 0},
 		{"cancel a drain that never started", http.MethodDelete, "/admin/api/backends/nope/drain", http.StatusBadRequest},
+		{"cordon an unknown backend", http.MethodPost, "/admin/api/backends/nope/cordon", http.StatusBadRequest},
+		{"uncordon a backend that is not cordoned", http.MethodDelete, "/admin/api/backends/nope/cordon", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -804,13 +806,15 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 	}
 }
 
-// TestHandleStartDrain_AcknowledgementShape covers the accepted branch, which
-// needs a manager that actually knows the backend -- the shared fixture
-// registers none, so StartDrain there always rejects. Cancels the drain on the
-// way out so the background pass does not outlive the test.
-func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
-	t.Parallel()
+// newKnownBackendHandler builds a handler whose backend state manager knows
+// backend b1 - the shared fixture registers none, so state changes there always
+// reject. opts register store expectations ahead of the permissive defaults.
+func newKnownBackendHandler(t *testing.T, opts ...func(*storetest.MockMetadataStore)) *Handler {
+	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	for _, opt := range opts {
+		opt(mock)
+	}
 	storetest.Permissive(mock)
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
@@ -822,7 +826,7 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	})
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	h := &Handler{
+	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   st.Usage,
 		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
@@ -831,13 +835,26 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 		logLevel:     &lv,
 		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
-	t.Cleanup(func() { _ = h.states.CancelDrain(context.Background(), "b1") })
+}
 
+// serveOn sends one authenticated request through a handler's routes.
+func serveOn(t *testing.T, h *Handler, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
 	mux := http.NewServeMux()
 	h.Register(mux)
-
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/backends/b1/drain", ""))
+	mux.ServeHTTP(w, doAuth(t, method, path, ""))
+	return w
+}
+
+// TestHandleStartDrain_AcknowledgementShape covers the accepted branch. Cancels
+// the drain on the way out so the background pass does not outlive the test.
+func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
+	t.Parallel()
+	h := newKnownBackendHandler(t)
+	t.Cleanup(func() { _ = h.states.CancelDrain(context.Background(), "b1") })
+
+	w := serveOn(t, h, http.MethodPost, "/admin/api/backends/b1/drain")
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
@@ -848,5 +865,33 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	}
 	if resp.Status != "drain started" || resp.Backend != "b1" {
 		t.Errorf("got status=%q backend=%q, want {drain started b1}", resp.Status, resp.Backend)
+	}
+}
+
+// TestHandleCordon_RoundTrip covers the success branches: cordoning a known
+// backend and uncordoning it again each answer 200 with what they did.
+func TestHandleCordon_RoundTrip(t *testing.T) {
+	t.Parallel()
+	h := newKnownBackendHandler(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ClearBackendFlags(gomock.Any(), "b1", core.FlagCordoned).Return(true, nil)
+	})
+
+	for _, step := range []struct {
+		method, status string
+	}{
+		{http.MethodPost, "backend cordoned"},
+		{http.MethodDelete, "backend uncordoned"},
+	} {
+		w := serveOn(t, h, step.method, "/admin/api/backends/b1/cordon")
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%s", step.method, w.Code, w.Body.String())
+		}
+		var resp adminapi.BackendOperationResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Status != step.status || resp.Backend != "b1" {
+			t.Errorf("%s: got status=%q backend=%q, want {%s b1}", step.method, resp.Status, resp.Backend, step.status)
+		}
 	}
 }

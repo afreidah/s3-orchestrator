@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
@@ -378,12 +379,12 @@ func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd
 
 // backendColumns declares the backends table's columns. The name is capped so
 // short backend names don't sprawl on a wide terminal. A narrow terminal keeps
-// whether each backend is up, how full it is, and whether it is draining, and
-// drops the period counters first.
+// whether each backend is up, how full it is, and which state flags it carries,
+// and drops the period counters first.
 var backendColumns = []columnSpec{
 	{title: "BACKEND", min: 8, max: 24, priority: 11},
 	{title: "HEALTH", min: 9, max: 9, priority: 10},
-	{title: "DRAIN", min: 8, max: 8, priority: 8},
+	{title: "STATE", min: 8, max: 21, priority: 8},
 	{title: "USED", min: 12, max: 12, priority: 7},
 	{title: "LIMIT", min: 12, max: 12, priority: 5},
 	{title: "USE%", min: 6, max: 6, priority: 9},
@@ -400,7 +401,7 @@ var backendColumns = []columnSpec{
 var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"BACKEND": by(func(b *adminapi.BackendStatus) string { return b.Name }),
 	"HEALTH":  by(func(b *adminapi.BackendStatus) int { return rank(b.Healthy) }),
-	"DRAIN":   by(func(b *adminapi.BackendStatus) string { return b.DrainState }),
+	"STATE":   by(func(b *adminapi.BackendStatus) string { return backendState(b.Flags) }),
 	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
 	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
 	"USE%":    by(func(b *adminapi.BackendStatus) int { return usagePercent(b.BytesUsed, b.BytesLimit) }),
@@ -425,7 +426,7 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		rows = append(rows, table.Row{
 			b.Name,
 			backendHealth(b.Healthy),
-			backendDrain(b.DrainState),
+			backendState(b.Flags),
 			humanize.Bytes(b.BytesUsed),
 			limit,
 			usePct,
@@ -457,13 +458,13 @@ func backendHealth(healthy bool) string {
 	return "unhealthy"
 }
 
-// backendDrain renders a backend's drain state: draining, drained, or failed,
-// and a dash when it has no drain.
-func backendDrain(state string) string {
-	if state == "" {
+// backendState renders a backend's state flags joined by commas, and a dash
+// for a backend in normal service.
+func backendState(flags []string) string {
+	if len(flags) == 0 {
 		return "-"
 	}
-	return state
+	return strings.Join(flags, ",")
 }
 
 // backendsView composes the pane's full-screen layout.

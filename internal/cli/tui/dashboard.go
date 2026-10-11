@@ -211,17 +211,17 @@ func usageBar(pct, width int) string {
 	return "[" + usageStyle(pct).Render(strings.Repeat("#", filled)) + strings.Repeat("-", width-filled) + "]"
 }
 
-// backendMarkers renders a backend's breaker health and, when it has one, its
-// drain state, since either one means the backend is taking no new writes.
+// backendMarkers renders a backend's breaker health and, when it carries any,
+// its state flags, since either one means the backend is taking no new writes.
 func backendMarkers(b *adminapi.BackendStatus) string {
 	health := statusOKStyle.Render("healthy")
 	if !b.Healthy {
 		health = statusErrStyle.Render("UNHEALTHY")
 	}
-	if b.DrainState == "" {
+	if len(b.Flags) == 0 {
 		return health
 	}
-	return health + "  " + logLevelWarn.Render(b.DrainState)
+	return health + "  " + logLevelWarn.Render(backendState(b.Flags))
 }
 
 // dashboardSummary renders the fleet's backlogs and coverage as an aligned

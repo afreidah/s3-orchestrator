@@ -11,6 +11,7 @@
 package admin
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
@@ -26,6 +27,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 		BackendOrder:      []string{"b1", "b2"},
 		UnhealthyBackends: map[string]bool{"b2": true},
 		DrainingBackends:  map[string]backendstate.DrainProgress{"b1": {Active: true, State: "draining"}},
+		BackendFlags:      map[string]core.BackendFlags{"b1": core.FlagCordoned | core.FlagDraining},
 		QuotaStats: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -40,10 +42,10 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 		t.Fatalf("rows out of order: %+v", got)
 	}
 
-	// b1: healthy (absent from unhealthy), draining (present), counters mapped.
+	// b1: healthy (absent from unhealthy), cordoned and draining, counters mapped.
 	b1 := got[0]
-	if !b1.Healthy || !b1.Draining || b1.DrainState != "draining" {
-		t.Errorf("b1 health/drain/state = %v/%v/%q, want true/true/draining", b1.Healthy, b1.Draining, b1.DrainState)
+	if !b1.Healthy || !b1.Draining || !slices.Equal(b1.Flags, []string{"cordoned", "draining"}) {
+		t.Errorf("b1 health/drain/flags = %v/%v/%v, want true/true/[cordoned draining]", b1.Healthy, b1.Draining, b1.Flags)
 	}
 	if b1.BytesUsed != 100 || b1.BytesLimit != 1000 || b1.ObjectCount != 7 {
 		t.Errorf("b1 quota/count = %+v", b1)
@@ -56,6 +58,11 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	b2 := got[1]
 	if b2.Healthy || b2.Draining {
 		t.Errorf("b2 health/drain = %v/%v, want false/false", b2.Healthy, b2.Draining)
+	}
+	// A backend in service reports an empty list, which renders as [] rather
+	// than being omitted.
+	if b2.Flags == nil || len(b2.Flags) != 0 {
+		t.Errorf("b2 flags = %#v, want an empty non-nil list", b2.Flags)
 	}
 	if b2.BytesUsed != 0 || b2.ObjectCount != 0 || b2.APIRequests != 0 {
 		t.Errorf("b2 should have zero counters: %+v", b2)

@@ -13,6 +13,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,25 +30,61 @@ import (
 
 // removeConfirmTTL is how long a purge confirmation token is valid.
 const (
-	removeConfirmTTL        = 60 * time.Second
-	errDrainOperationFailed = "drain operation failed"
+	removeConfirmTTL         = 60 * time.Second
+	errDrainOperationFailed  = "drain operation failed"
+	errCordonOperationFailed = "cordon operation failed"
 )
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// handleStartDrain begins draining a backend.
-func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
+// backendChange is one operator change to a backend's state: the manager call
+// that makes it, what is logged and returned when it fails, and the status the
+// response reports when it succeeds.
+type backendChange struct {
+	apply    func(ctx context.Context, name string) error
+	failLog  string
+	failMsg  string
+	code     int
+	okStatus string
+}
+
+// serveBackendChange applies one state change to the backend the path names.
+// A refused change, such as cordoning a backend that is already cordoned, is a
+// 400 with the generic failure message; the reason is logged.
+func (h *Handler) serveBackendChange(w http.ResponseWriter, r *http.Request, c *backendChange) {
 	name := r.PathValue("name")
-	if err := h.states.StartDrain(r.Context(), name); err != nil {
-		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), "error", err)
-		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
+	if err := c.apply(r.Context(), name); err != nil {
+		h.log.ErrorContext(r.Context(), c.failLog, slog.String("backend", name), "error", err)
+		httputil.WriteJSONError(w, http.StatusBadRequest, c.failMsg)
 		return
 	}
-	httputil.WriteJSON(w, http.StatusAccepted, adminapi.BackendOperationResponse{
-		Status:  "drain started",
-		Backend: name,
+	httputil.WriteJSON(w, c.code, adminapi.BackendOperationResponse{Status: c.okStatus, Backend: name})
+}
+
+// handleStartDrain begins draining a backend.
+func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
+	h.serveBackendChange(w, r, &backendChange{
+		apply: h.states.StartDrain, failLog: "drain start failed", failMsg: errDrainOperationFailed,
+		code: http.StatusAccepted, okStatus: "drain started",
+	})
+}
+
+// handleCordon stops new copies landing on a backend. It takes effect at once.
+func (h *Handler) handleCordon(w http.ResponseWriter, r *http.Request) {
+	h.serveBackendChange(w, r, &backendChange{
+		apply: h.states.Cordon, failLog: "cordon failed", failMsg: errCordonOperationFailed,
+		code: http.StatusOK, okStatus: "backend cordoned",
+	})
+}
+
+// handleUncordon lets new copies land on a backend again. A drain in progress
+// carries on.
+func (h *Handler) handleUncordon(w http.ResponseWriter, r *http.Request) {
+	h.serveBackendChange(w, r, &backendChange{
+		apply: h.states.Uncordon, failLog: "uncordon failed", failMsg: errCordonOperationFailed,
+		code: http.StatusOK, okStatus: "backend uncordoned",
 	})
 }
 
@@ -70,18 +107,13 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCancelDrain clears a backend's drain record, stopping a drain in
-// progress and making a drained or failed backend writable again.
+// handleCancelDrain clears a backend's drain flags, stopping a drain in
+// progress and making a drained or failed backend writable again unless it is
+// cordoned.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if err := h.states.CancelDrain(r.Context(), name); err != nil {
-		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
-		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
-		return
-	}
-	httputil.WriteJSON(w, http.StatusOK, adminapi.BackendOperationResponse{
-		Status:  "drain cancelled",
-		Backend: name,
+	h.serveBackendChange(w, r, &backendChange{
+		apply: h.states.CancelDrain, failLog: "drain cancel failed", failMsg: errDrainOperationFailed,
+		code: http.StatusOK, okStatus: "drain cancelled",
 	})
 }
 

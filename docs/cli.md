@@ -146,7 +146,8 @@ status: reconciled
 **Commands:**
 
 ```bash
-# Show backend health, usage, and circuit breaker state
+# Show backend health, state flags (cordoned, draining, drained, drain-failed),
+# usage, and circuit breaker state
 s3-orchestrator admin status
 
 # List all copies of an object across backends
@@ -216,9 +217,16 @@ s3-orchestrator admin drain <backend-name>
 # Check drain state (draining, drained, or failed) and progress
 s3-orchestrator admin drain-status <backend-name>
 
-# Clear a drain, whatever its state, and return the backend to service
-# (objects already moved are not moved back)
+# Clear a drain, whatever its state, and return the backend to service unless
+# it is cordoned (objects already moved are not moved back)
 s3-orchestrator admin drain-cancel <backend-name>
+
+# Stop new copies landing on a backend without moving anything; it keeps
+# serving reads, and deletes and cleanup still reach it
+s3-orchestrator admin cordon <backend-name>
+
+# Let new copies land on a cordoned backend again (a drain in progress carries on)
+s3-orchestrator admin uncordon <backend-name>
 
 # Remove a backend's database records (S3 objects preserved, reversible via sync)
 s3-orchestrator admin remove-backend <backend-name>
@@ -510,7 +518,7 @@ A copy reading `never` under `VERIFIED` has a recorded hash that nothing has eve
 
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
-The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). The pane polls every 10 seconds; press `r` to poll now. Quota and object counts come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; the usage counters are current.
+The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, state flags (cordoned, draining, drained, drain-failed), quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). The pane polls every 10 seconds; press `r` to poll now. Quota and object counts come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; the usage counters are current.
 
 Three admin actions act on the highlighted row, each behind a confirmation naming that backend so a keystroke on the wrong row cannot start work on it: `d` drains every copy off it, `R` reconciles metadata against its storage, and `Q` requeues its dead-lettered cleanups. Backend removal is deliberately not here - it is irreversible with `purge=true` and stays an `admin remove-backend` operation, behind its two-phase confirmation.
 

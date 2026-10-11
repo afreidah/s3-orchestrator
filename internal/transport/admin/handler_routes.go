@@ -33,6 +33,7 @@ import (
 // between the methods that share a route.
 const (
 	pathBackendDrain    = "/admin/api/backends/{name}/drain"
+	pathBackendCordon   = "/admin/api/backends/{name}/cordon"
 	pathOverReplication = "/admin/api/over-replication"
 	pathUnreadable      = "/admin/api/unreadable"
 	pathLogLevel        = "/admin/api/log-level"
@@ -384,6 +385,24 @@ func (h *Handler) routes() []route {
 				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
 			},
 			Kind: core.ResourceBackend, Perm: core.PermAdminDrain, Resource: paramName,
+		},
+		{
+			Method: http.MethodPost, Pattern: pathBackendCordon, Handler: h.handleCordon,
+			Summary:  "Cordon a backend: stop new copies landing on it",
+			Response: adminapi.BackendOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+			},
+			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: paramName,
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathBackendCordon, Handler: h.handleUncordon,
+			Summary:  "Uncordon a backend: let new copies land on it again",
+			Response: adminapi.BackendOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+			},
+			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: paramName,
 		},
 		{
 			Method: http.MethodDelete, Pattern: "/admin/api/backends/{name}", Handler: h.handleRemoveBackend,

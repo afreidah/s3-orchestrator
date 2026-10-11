@@ -44,6 +44,7 @@ const (
 
 	errBackendNameRequired = "error: backend name is required"
 	drainSubpath           = "/drain"
+	cordonSubpath          = "/cordon"
 )
 
 // Run is the CLI entry point for `s3-orchestrator admin`. It parses the
@@ -74,6 +75,8 @@ Commands:
   drain               Start draining a backend (requires backend name arg)
   drain-status        Check drain progress (requires backend name arg)
   drain-cancel        Cancel an active drain (requires backend name arg)
+  cordon              Stop new copies landing on a backend; reads continue (requires backend name arg)
+  uncordon            Let new copies land on a cordoned backend again (requires backend name arg)
   remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
   scrub               Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now, -backend to scope)
   backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run, -backend to scope)
@@ -172,6 +175,8 @@ var handlers = map[string]handler{
 	"drain":                   cmdDrain,
 	"drain-status":            cmdDrainStatus,
 	"drain-cancel":            cmdDrainCancel,
+	"cordon":                  cmdCordon,
+	"uncordon":                cmdUncordon,
 	"scrub":                   cmdScrub,
 	"backfill-checksums":      cmdBackfillChecksums,
 	"remove-backend":          cmdRemoveBackend,

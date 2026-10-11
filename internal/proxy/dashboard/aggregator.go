@@ -69,6 +69,7 @@ type Data struct {
 	UsagePeriod            string
 	TopLevelEntries        *core.DirectoryListResult
 	DrainingBackends       map[string]backendstate.DrainProgress
+	BackendFlags           map[string]core.BackendFlags
 	UnhealthyBackends      map[string]bool
 }
 
@@ -137,22 +138,26 @@ func (da *Aggregator) scrubbableBackends() []string {
 }
 
 // decorateLiveState fills in the fields that come from the running fleet
-// rather than the store: which backends are draining and how far along, and
-// which are failing their circuit breaker. Both are best-effort - a backend
-// whose drain progress cannot be read is simply omitted rather than failing
-// the whole dashboard.
+// rather than the store: each backend's state flags, which backends are
+// draining and how far along, and which are failing their circuit breaker.
+// Drain progress is best-effort - a backend whose progress cannot be read is
+// simply omitted rather than failing the whole dashboard.
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.DrainingBackends = make(map[string]backendstate.DrainProgress)
+	data.BackendFlags = make(map[string]core.BackendFlags)
 	data.UnhealthyBackends = make(map[string]bool)
 
-	if da.drain != nil {
-		for _, name := range da.fleet.BackendOrder() {
-			if !da.fleet.BackendFlags(name).Any(core.DrainFlags) {
-				continue
-			}
-			if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {
-				data.DrainingBackends[name] = *progress
-			}
+	for _, name := range da.fleet.BackendOrder() {
+		flags := da.fleet.BackendFlags(name)
+		if flags == 0 {
+			continue
+		}
+		data.BackendFlags[name] = flags
+		if da.drain == nil || !flags.Any(core.DrainFlags) {
+			continue
+		}
+		if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {
+			data.DrainingBackends[name] = *progress
 		}
 	}
 

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -34,13 +35,13 @@ func renderStatus(w io.Writer, body []byte) error {
 		return err
 	}
 
-	headers := []string{"Backend", "Health", "Drain", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
+	headers := []string{"Backend", "Health", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
 	rows := make([][]string, len(s.Backends))
 	for i, b := range s.Backends {
 		rows[i] = []string{
 			b.Name,
 			health(b.Healthy),
-			drainState(b.Draining),
+			backendState(b.Flags),
 			output.FormatBytes(b.BytesUsed),
 			output.FormatBytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
@@ -64,10 +65,11 @@ func health(healthy bool) string {
 	return "unhealthy"
 }
 
-// drainState renders whether a backend is draining for the status table.
-func drainState(draining bool) string {
-	if draining {
-		return "draining"
+// backendState renders a backend's state flags for the status table, joined by
+// commas, and a dash for a backend in normal service.
+func backendState(flags []string) string {
+	if len(flags) == 0 {
+		return "-"
 	}
-	return "-"
+	return strings.Join(flags, ",")
 }

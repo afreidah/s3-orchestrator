@@ -62,7 +62,19 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.156.x (current)
+### v0.157.x (current)
+
+**Cordon over the admin API and CLI ([#1667](https://github.com/afreidah/s3-orchestrator/issues/1667), v0.157.0)**
+
+`POST /admin/api/backends/{name}/cordon` stops new copies landing on a backend, and `DELETE` on the same path lets them land again; `admin cordon` and `admin uncordon` call them. A cordoned backend keeps serving reads, and deletes and cleanup still reach it.
+
+**Operator action items after upgrade:**
+
+- **`/admin/api/status` replaces `drain_state` with `flags`**, the list of state flags a backend carries (`cordoned`, `draining`, `drained`, `drain-failed`), empty for a backend in normal service. Scripts reading `drain_state` need the new field. `draining` is unchanged.
+- **New permission `admin-cordon`** guards cordon and uncordon. Grant it alongside `admin-drain` to operators who should be able to take a backend out of the write path.
+- **`admin status`'s Drain column is now State**, showing the same flag names.
+
+### v0.156.x
 
 **Backend state flags ([#1666](https://github.com/afreidah/s3-orchestrator/issues/1666), v0.156.0)**
 

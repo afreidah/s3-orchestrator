@@ -33,7 +33,7 @@ func dashboardModel(t *testing.T) *model {
 		DBHealthy:   true,
 		UsagePeriod: "2026-10",
 		Backends: []adminapi.BackendStatus{
-			{Name: "minio-a", Healthy: true, DrainState: "draining", BytesUsed: 9 << 30, BytesLimit: 10 << 30,
+			{Name: "minio-a", Healthy: true, Flags: []string{"draining"}, BytesUsed: 9 << 30, BytesLimit: 10 << 30,
 				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30},
 			{Name: "minio-b", Healthy: false, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
 		},

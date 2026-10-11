@@ -64,6 +64,7 @@ const (
 	PermAdminKeys
 	PermAdminCache
 	PermAdminDrain
+	PermAdminCordon
 	PermAdminDecommission
 	PermAdminConfig
 	PermAdminProvision
@@ -79,7 +80,7 @@ const PermAll = PermListBuckets | PermList | PermRead | PermWrite | PermDelete |
 // nothing rather than everything: no row predates this vocabulary, so there is
 // no existing meaning to preserve.
 const PermAdminAll = PermAdminRead | PermAdminLogs | PermAdminMaintain | PermAdminConvert |
-	PermAdminKeys | PermAdminCache | PermAdminDrain | PermAdminDecommission |
+	PermAdminKeys | PermAdminCache | PermAdminDrain | PermAdminCordon | PermAdminDecommission |
 	PermAdminConfig | PermAdminProvision
 
 // The shorthands a caller writes instead of naming every permission in a set.
@@ -104,6 +105,7 @@ var permissionNames = bitset.Vocabulary[PermissionSet]{
 	{Bit: PermAdminKeys, Name: "admin-keys"},
 	{Bit: PermAdminCache, Name: "admin-cache"},
 	{Bit: PermAdminDrain, Name: "admin-drain"},
+	{Bit: PermAdminCordon, Name: "admin-cordon"},
 	{Bit: PermAdminDecommission, Name: "admin-decommission"},
 	{Bit: PermAdminConfig, Name: "admin-config"},
 	{Bit: PermAdminProvision, Name: "admin-provision"},

@@ -25,8 +25,8 @@ func TestBackendHealthAndDrain(t *testing.T) {
 	if backendHealth(true) != "healthy" || backendHealth(false) != "unhealthy" {
 		t.Error("backendHealth mapping wrong")
 	}
-	if backendDrain("draining") != "draining" || backendDrain("failed") != "failed" || backendDrain("") != "-" {
-		t.Error("backendDrain mapping wrong")
+	if backendState([]string{"draining"}) != "draining" || backendState([]string{"cordoned", "draining"}) != "cordoned,draining" || backendState(nil) != "-" {
+		t.Error("backendState mapping wrong")
 	}
 }
 
@@ -47,7 +47,7 @@ func TestRowsFromBackends(t *testing.T) {
 	t.Parallel()
 	rows := rowsFromBackends([]adminapi.BackendStatus{
 		{Name: "b1", Healthy: true, BytesUsed: 2048, BytesLimit: 4096, ObjectCount: 3, APIRequests: 9, IngressBytes: 1024, EgressBytes: 512},
-		{Name: "b2", Healthy: false, Draining: true, DrainState: "draining", BytesUsed: 0, BytesLimit: 0},
+		{Name: "b2", Healthy: false, Draining: true, Flags: []string{"draining"}, BytesUsed: 0, BytesLimit: 0},
 	})
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))

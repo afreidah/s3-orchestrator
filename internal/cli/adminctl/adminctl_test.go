@@ -221,6 +221,37 @@ func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 	}
 }
 
+// TestCommand_Cordon_SendsMethodAndPath verifies cordon posts and uncordon
+// deletes the backend's cordon route, and that both refuse a missing backend.
+func TestCommand_Cordon_SendsMethodAndPath(t *testing.T) {
+	t.Parallel()
+	for cmd, wantMethod := range map[string]string{"cordon": http.MethodPost, "uncordon": http.MethodDelete} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod, gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				gotPath = r.URL.Path
+				_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+			}))
+			defer srv.Close()
+
+			var stdout, stderr bytes.Buffer
+			if code := Command(cmd, []string{"oci"}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+			}
+			if gotMethod != wantMethod || gotPath != "/admin/api/backends/oci/cordon" {
+				t.Errorf("request = %s %s, want %s /admin/api/backends/oci/cordon", gotMethod, gotPath, wantMethod)
+			}
+
+			stderr.Reset()
+			if code := Command(cmd, nil, "http://unused", testCreds, &stdout, &stderr); code != 1 {
+				t.Errorf("no backend: exit code = %d, want 1", code)
+			}
+		})
+	}
+}
+
 // TestCommand_RemoveBackend_SendsDelete verifies the command remove backend sends delete contract.
 // Asserts that exit code = , want 0.
 func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {

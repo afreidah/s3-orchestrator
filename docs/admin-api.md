@@ -57,11 +57,12 @@ Every other endpoint declares a permission over a **backend** or over the **inst
 | `admin-keys` | Encryption key rotation |
 | `admin-cache` | Cache flush and per-key or per-prefix invalidation |
 | `admin-drain` | Starting and cancelling a backend drain |
+| `admin-cordon` | Cordoning and uncordoning a backend: stopping new copies landing on it, and letting them land again |
 | `admin-decommission` | Removing a backend, with or without a purge |
 | `admin-config` | Setting the runtime log level |
 | `admin-provision` | Reading and writing buckets, users, credentials and grants |
 
-The permissions over a backend are the ones that name one: drain, decommission, and the maintenance and conversion passes. A pass naming no backend runs against every one, so it is authorized as `backend:*` -- an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. Grant `backend:*` to an operator who runs fleet-wide passes.
+The permissions over a backend are the ones that name one: drain, cordon, decommission, and the maintenance and conversion passes. A pass naming no backend runs against every one, so it is authorized as `backend:*` -- an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. Grant `backend:*` to an operator who runs fleet-wide passes.
 
 `admin-provision` is deliberately its own permission rather than part of `admin-config`: a grant carrying it can mint a grant carrying anything.
 

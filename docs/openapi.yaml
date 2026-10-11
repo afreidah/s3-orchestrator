@@ -44,6 +44,45 @@ paths:
                                 $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/backends/{name}/cordon:
+        delete:
+            summary: 'Uncordon a backend: let new copies land on it again'
+            operationId: deleteBackendsNameCordon
+            parameters:
+                - name: name
+                  in: path
+                  description: Backend name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BackendOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+        post:
+            summary: 'Cordon a backend: stop new copies landing on it'
+            operationId: postBackendsNameCordon
+            parameters:
+                - name: name
+                  in: path
+                  description: Backend name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BackendOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/backends/{name}/drain:
         delete:
             summary: Cancel an active drain
@@ -1287,13 +1326,15 @@ components:
                 compression_saved_bytes:
                     format: int64
                     type: integer
-                drain_state:
-                    type: string
                 draining:
                     type: boolean
                 egress_bytes:
                     format: int64
                     type: integer
+                flags:
+                    items:
+                        type: string
+                    type: array
                 healthy:
                     type: boolean
                 ingress_bytes:
@@ -1308,6 +1349,7 @@ components:
                 - name
                 - healthy
                 - draining
+                - flags
                 - bytes_used
                 - bytes_limit
                 - object_count
