@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -72,7 +73,7 @@ func (c *BackendRuntime) deleteBatch(ctx context.Context, name string, be backen
 	failed, err := deleter.DeleteObjects(dctx, storageKeys)
 	if errors.Is(err, backend.ErrBatchDeleteNotSupported) {
 		c.batchDeclined.Store(name, struct{}{})
-		c.Log().InfoContext(ctx, "backend declined batch delete, deleting keys singly", "backend", name)
+		c.Log().InfoContext(ctx, "backend declined batch delete, deleting keys singly", "backend", name, logfmt.Err(err))
 		return nil, false
 	}
 	for range (len(storageKeys) + batchDeleteRequestKeys - 1) / batchDeleteRequestKeys {

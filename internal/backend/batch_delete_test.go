@@ -21,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
 )
 
 // -------------------------------------------------------------------------
@@ -61,8 +63,15 @@ func (s *batchDeleteServer) handle(w http.ResponseWriter, r *http.Request) {
 
 	if status != 0 {
 		code := "InternalError"
-		if status == http.StatusNotImplemented {
+		switch status {
+		case http.StatusNotImplemented:
 			code = "NotImplemented"
+		case http.StatusMethodNotAllowed:
+			code = "MethodNotAllowed"
+		case http.StatusBadRequest:
+			code = "InvalidRequest"
+		case http.StatusForbidden:
+			code = "AccessDenied"
 		}
 		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, `<Error><Code>%s</Code><Message>no</Message></Error>`, code)
@@ -118,30 +127,72 @@ func TestDeleteObjects_ChunksAndReportsPerKeyFailures(t *testing.T) {
 	}
 }
 
-// TestDeleteObjects_NotImplementedIsUnsupported verifies a provider without
-// multi-object delete is reported as ErrBatchDeleteNotSupported, so the caller
-// deletes singly instead of treating every key as failed.
-func TestDeleteObjects_NotImplementedIsUnsupported(t *testing.T) {
+// TestDeleteObjects_RejectedRequestIsUnsupported verifies a provider that
+// refuses the batch request itself - no multi-object delete, the method not
+// allowed, or a header it requires missing - is reported as
+// ErrBatchDeleteNotSupported, so the caller deletes singly instead of treating
+// every key as failed.
+func TestDeleteObjects_RejectedRequestIsUnsupported(t *testing.T) {
 	t.Parallel()
-	be := newTestBackend(t, (&batchDeleteServer{status: http.StatusNotImplemented}).handle)
+	for _, status := range []int{http.StatusNotImplemented, http.StatusMethodNotAllowed, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			be := newTestBackend(t, (&batchDeleteServer{status: status}).handle)
 
-	if _, err := be.DeleteObjects(t.Context(), keys(3)); !errors.Is(err, ErrBatchDeleteNotSupported) {
-		t.Errorf("err = %v, want ErrBatchDeleteNotSupported", err)
+			if _, err := be.DeleteObjects(t.Context(), keys(3)); !errors.Is(err, ErrBatchDeleteNotSupported) {
+				t.Errorf("err = %v, want ErrBatchDeleteNotSupported", err)
+			}
+		})
+	}
+}
+
+// TestIsBatchRejected verifies a rejection is recognized by HTTP status or by
+// S3 error code alone, and that failures single deletes would share are not.
+func TestIsBatchRejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"status not implemented", &httpError{code: http.StatusNotImplemented}, true},
+		{"status method not allowed", &httpError{code: http.StatusMethodNotAllowed}, true},
+		{"status bad request", &httpError{code: http.StatusBadRequest}, true},
+		{"status forbidden", &httpError{code: http.StatusForbidden}, false},
+		{"status server error", &httpError{code: http.StatusInternalServerError}, false},
+		{"code not implemented", &smithy.GenericAPIError{Code: "NotImplemented"}, true},
+		{"code method not allowed", &smithy.GenericAPIError{Code: "MethodNotAllowed"}, true},
+		{"code internal error", &smithy.GenericAPIError{Code: "InternalError"}, false},
+		{"plain error", errors.New("connection reset"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isBatchRejected(tc.err); got != tc.want {
+				t.Errorf("isBatchRejected(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
 // TestDeleteObjects_FailedRequestFailsItsKeys verifies a request that fails as
-// a whole reports every key in it failed, since none can be assumed deleted.
+// a whole for a reason single deletes would share reports every key in it
+// failed, since none can be assumed deleted.
 func TestDeleteObjects_FailedRequestFailsItsKeys(t *testing.T) {
 	t.Parallel()
-	be := newTestBackend(t, (&batchDeleteServer{status: http.StatusInternalServerError}).handle)
+	for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			be := newTestBackend(t, (&batchDeleteServer{status: status}).handle)
 
-	failed, err := be.DeleteObjects(t.Context(), keys(3))
-	if err != nil {
-		t.Fatalf("DeleteObjects: %v", err)
-	}
-	if len(failed) != 3 {
-		t.Errorf("failed = %v, want all 3 keys", failed)
+			failed, err := be.DeleteObjects(t.Context(), keys(3))
+			if err != nil {
+				t.Fatalf("DeleteObjects: %v", err)
+			}
+			if len(failed) != 3 {
+				t.Errorf("failed = %v, want all 3 keys", failed)
+			}
+		})
 	}
 }
 

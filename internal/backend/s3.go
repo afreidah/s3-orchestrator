@@ -412,8 +412,9 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 }
 
 // DeleteObjects removes keys in requests of up to maxBatchDeleteKeys, in quiet
-// mode so the response lists only the keys that failed. A provider without
-// multi-object delete is reported as ErrBatchDeleteNotSupported. When a chunk
+// mode so the response lists only the keys that failed. A provider that rejects
+// the batch request is reported as ErrBatchDeleteNotSupported, wrapping the
+// provider's error. When a chunk
 // fails as a whole, every key in it is reported failed, because none of it can
 // be assumed deleted.
 func (b *S3Backend) DeleteObjects(ctx context.Context, keys []string) (map[string]error, error) {
@@ -450,8 +451,8 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 				Delete: &types.Delete{Objects: ids, Quiet: aws.Bool(true)},
 			})
 			if err != nil {
-				if isNotImplemented(err) {
-					return ErrBatchDeleteNotSupported
+				if isBatchRejected(err) {
+					return fmt.Errorf("%w: %w", ErrBatchDeleteNotSupported, err)
 				}
 				return fmt.Errorf("delete objects failed: %w", err)
 			}

@@ -6,8 +6,9 @@
 // Optional capability for backends that can remove many keys in one request.
 // The orchestrator type-asserts to BatchDeleter to detect support, so a backend
 // without it is unaffected and its keys are deleted one at a time. Not every
-// S3-compatible provider implements multi-object delete, so a provider that
-// answers NotImplemented is reported as ErrBatchDeleteNotSupported and the
+// S3-compatible provider accepts multi-object delete: some answer
+// NotImplemented, some refuse the method, and some require a checksum the SDK
+// does not send. Any of those is reported as ErrBatchDeleteNotSupported and the
 // caller falls back the same way.
 // -------------------------------------------------------------------------------
 
@@ -62,12 +63,24 @@ func (e *batchKeyError) HTTPStatusCode() int {
 	return http.StatusInternalServerError
 }
 
-// isNotImplemented reports whether err is a provider refusing the operation
-// outright, by status or by S3 error code.
-func isNotImplemented(err error) bool {
-	if respErr, ok := errors.AsType[httpStatusError](err); ok && respErr.HTTPStatusCode() == http.StatusNotImplemented {
-		return true
+// isBatchRejected reports whether err is a provider refusing the batch request
+// itself rather than failing to carry it out: not implemented, method not
+// allowed, or a malformed request. Sending the same request again would be
+// refused the same way, while single deletes can still succeed.
+func isBatchRejected(err error) bool {
+	if respErr, ok := errors.AsType[httpStatusError](err); ok {
+		switch respErr.HTTPStatusCode() {
+		case http.StatusNotImplemented, http.StatusMethodNotAllowed, http.StatusBadRequest:
+			return true
+		}
 	}
 	apiErr, ok := errors.AsType[smithy.APIError](err)
-	return ok && apiErr.ErrorCode() == "NotImplemented"
+	if !ok {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "NotImplemented", "MethodNotAllowed":
+		return true
+	}
+	return false
 }
