@@ -92,29 +92,36 @@ Returns children of a directory prefix for the lazy-loaded file browser.
 
 ### GET /ui/api/logs
 
-Returns buffered log entries from the in-memory ring buffer (last 5,000 entries).
+Returns buffered log entries from the in-memory ring buffer (last 5,000 entries), oldest first. This route serves the same handler as `GET /admin/api/logs`, behind the dashboard session instead of the admin token.
 
 **Query parameters:**
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `level` | No | Minimum severity: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: all levels) |
-| `since` | No | RFC3339 timestamp -- only return entries after this time |
+| `level` | No | Minimum severity: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
+| `since` | No | RFC3339 timestamp -- only return entries at or after this time |
+| `before` | No | RFC3339 timestamp -- only return entries before this time |
 | `component` | No | Filter by `component` attribute value |
-| `limit` | No | Maximum entries to return (default: all). When applied, returns the most recent N matching entries. |
+| `limit` | No | Maximum entries to return, keeping the most recent (default 200, max 1000) |
 
 **Response:**
 
 ```json
-[
-  {
-    "time": "2026-03-02T14:30:00Z",
-    "level": "INFO",
-    "message": "Connected to PostgreSQL",
-    "attrs": {"host": "db.example.com", "port": 5432, "component": "main"}
-  }
-]
+{
+  "entries": [
+    {
+      "time": "2026-03-02T14:30:00Z",
+      "level": "INFO",
+      "message": "Connected to PostgreSQL",
+      "component": "main",
+      "attrs": {"host": "db.example.com", "port": 5432}
+    }
+  ],
+  "hasMore": false
+}
 ```
+
+`hasMore` is true when the limit cut older matching entries; pass the oldest returned `time` as `before` to page back.
 
 ### POST /ui/api/delete
 

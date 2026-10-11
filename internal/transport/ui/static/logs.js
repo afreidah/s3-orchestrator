@@ -54,6 +54,12 @@
     }
   }
 
+  // entryAttrs returns the entry's attributes with its component, which the
+  // API sends as its own field, shown first among them.
+  function entryAttrs(e) {
+    return e.component ? { component: e.component, ...e.attrs } : e.attrs;
+  }
+
   function formatAttrs(attrs) {
     if (!attrs) return '';
     let parts = [];
@@ -101,7 +107,7 @@
       msgSpan.textContent = e.message;
       row.appendChild(msgSpan);
 
-      let attrStr = formatAttrs(e.attrs);
+      let attrStr = formatAttrs(entryAttrs(e));
       if (attrStr) {
         let attrSpan = document.createElement('span');
         attrSpan.className = 'log-attrs';
@@ -153,7 +159,8 @@
   function entryMatches(e, term) {
     if (e.message.toLowerCase().includes(term)) return true;
     if (e.level.toLowerCase().includes(term)) return true;
-    return !!e.attrs && attrsMatch(e.attrs, term);
+    let attrs = entryAttrs(e);
+    return !!attrs && attrsMatch(attrs, term);
   }
 
   function applySearch() {

@@ -61,7 +61,7 @@ The dashboard requires authentication. Users log in at `{path}/login` with a cre
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion - directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` and `before` (RFC3339 timestamps), `component`, and `limit` (default 200, max 1000). Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
 
 ### Health endpoints
 
