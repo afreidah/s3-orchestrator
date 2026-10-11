@@ -188,7 +188,7 @@ func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
 			if err != nil {
 				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Checked, Failed: res.Failed}, nil
+			return adminActionCounts{Count: res.Attempted, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) scrubStatus {
 			return scrubStatus{adminActionState: s, Checked: c.Count, Failed: c.Failed}
@@ -228,7 +228,7 @@ func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
 			if err != nil {
 				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Processed}, nil
+			return adminActionCounts{Count: res.Succeeded}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) backfillStatus {
 			return backfillStatus{adminActionState: s, Processed: c.Count}
@@ -404,7 +404,7 @@ func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
 			if err != nil {
 				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Deleted, Failed: res.Failed}, nil
+			return adminActionCounts{Count: res.Succeeded, Failed: res.Failed}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) lifecycleStatus {
 			return lifecycleStatus{adminActionState: s, Deleted: c.Count, Failed: c.Failed}

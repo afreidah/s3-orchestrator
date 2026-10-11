@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -41,21 +42,6 @@ const maxCleanBatchSize = 10000
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
-
-// ReplicateResult reports one replication cycle. Failed counts the objects the
-// cycle could not bring up to factor, so a pass that created nothing because
-// everything failed does not read the same as one with nothing to do.
-type ReplicateResult struct {
-	CopiesCreated int
-	Failed        int
-}
-
-// CleanExcessResult reports one surplus-copy cleanup cycle. Failed counts the
-// objects whose surplus could not be removed.
-type CleanExcessResult struct {
-	CopiesRemoved int
-	Failed        int
-}
 
 // SurplusCount reports how many objects currently hold more copies than the
 // running factor calls for.
@@ -101,17 +87,18 @@ func NewReplication(d ReplicationDeps) *Replication {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Replicate runs one replication cycle and returns the copies it created.
-// observer, when non-nil, receives a start and end step per object replicated.
-func (r *Replication) Replicate(ctx context.Context, observer progress.Observer) (ReplicateResult, error) {
+// Replicate runs one replication cycle and reports its tally and the copies it
+// created. observer, when non-nil, receives a start and end step per object
+// replicated.
+func (r *Replication) Replicate(ctx context.Context, observer progress.Observer) (worker.ReplicationSummary, error) {
 	runCfg, err := r.runConfig(r.replicator.Config())
 	if err != nil {
-		return ReplicateResult{}, err
+		return worker.ReplicationSummary{}, err
 	}
 
 	sum, err := r.replicator.Replicate(ctx, runCfg, observer)
 	if err != nil {
-		return ReplicateResult{}, err
+		return worker.ReplicationSummary{}, err
 	}
 
 	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
@@ -124,7 +111,7 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 	})
 	r.log.InfoContext(ctx, "replication cycle completed",
 		"copies_created", sum.CopiesCreated, "objects_failed", sum.Failed)
-	return ReplicateResult{CopiesCreated: sum.CopiesCreated, Failed: sum.Failed}, nil
+	return sum, nil
 }
 
 // CountSurplus reports the current over-replication backlog at the running
@@ -145,10 +132,10 @@ func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 // CleanExcess removes copies beyond the configured factor. batchSize <= 0 uses
 // the resolved config; a larger request is capped. observer, when non-nil,
 // receives an end step per copy removed.
-func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer progress.Observer) (CleanExcessResult, error) {
+func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer progress.Observer) (worker.OverReplicationSummary, error) {
 	runCfg, err := r.runConfig(r.overRep.Config())
 	if err != nil {
-		return CleanExcessResult{}, err
+		return worker.OverReplicationSummary{}, err
 	}
 	if batchSize > 0 {
 		runCfg.BatchSize = min(batchSize, maxCleanBatchSize)
@@ -156,7 +143,7 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 
 	sum, err := r.overRep.Clean(ctx, runCfg, observer)
 	if err != nil {
-		return CleanExcessResult{}, err
+		return worker.OverReplicationSummary{}, err
 	}
 
 	if mErr := r.runtime.UpdateQuotaMetrics(ctx); mErr != nil {
@@ -165,7 +152,7 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 
 	r.log.InfoContext(ctx, "surplus cleanup completed",
 		"copies_removed", sum.CopiesRemoved, "objects_failed", sum.Failed)
-	return CleanExcessResult{CopiesRemoved: sum.CopiesRemoved, Failed: sum.Failed}, nil
+	return sum, nil
 }
 
 // runConfig resolves the settings for one manual cycle: whatever the worker

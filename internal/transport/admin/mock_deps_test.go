@@ -136,31 +136,16 @@ func (m *MockReconciler) EXPECT() *MockReconcilerMockRecorder {
 }
 
 // Reconcile mocks base method.
-func (m *MockReconciler) Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error) {
+func (m *MockReconciler) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Reconcile", ctx, backendName)
+	ret := m.ctrl.Call(m, "Reconcile", ctx, backendName, observer)
 	ret0, _ := ret[0].(*worker.ReconcileResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Reconcile indicates an expected call of Reconcile.
-func (mr *MockReconcilerMockRecorder) Reconcile(ctx, backendName any) *gomock.Call {
+func (mr *MockReconcilerMockRecorder) Reconcile(ctx, backendName, observer any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reconcile", reflect.TypeOf((*MockReconciler)(nil).Reconcile), ctx, backendName)
-}
-
-// ReconcileStreaming mocks base method.
-func (m *MockReconciler) ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReconcileStreaming", ctx, backendName, observer)
-	ret0, _ := ret[0].(*worker.ReconcileResult)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ReconcileStreaming indicates an expected call of ReconcileStreaming.
-func (mr *MockReconcilerMockRecorder) ReconcileStreaming(ctx, backendName, observer any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileStreaming", reflect.TypeOf((*MockReconciler)(nil).ReconcileStreaming), ctx, backendName, observer)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reconcile", reflect.TypeOf((*MockReconciler)(nil).Reconcile), ctx, backendName, observer)
 }

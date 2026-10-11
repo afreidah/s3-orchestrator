@@ -137,7 +137,7 @@ func TestReconcile_AllBackends(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	result, err := r.Reconcile(context.Background(), "")
+	result, err := r.Reconcile(context.Background(), "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestReconcile_RefusesANamedDrainingBackend(t *testing.T) {
 		Syncer: NewMockBackendSyncer(ctrl), Fleet: fleet, Usage: NewMockUsageReconciler(ctrl),
 		Buckets: declaredBuckets("unified"),
 	})
-	if _, err := r.Reconcile(context.Background(), "b1"); err == nil {
+	if _, err := r.Reconcile(context.Background(), "b1", nil); err == nil {
 		t.Fatal("Reconcile of a draining backend returned no error")
 	}
 }
@@ -203,7 +203,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
-	result, err := r.Reconcile(context.Background(), "b1")
+	result, err := r.Reconcile(context.Background(), "b1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestReconcile_NoBuckets(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})
-	_, err := r.Reconcile(context.Background(), "")
+	_, err := r.Reconcile(context.Background(), "", nil)
 	if err == nil {
 		t.Fatal("expected error for no buckets")
 	}

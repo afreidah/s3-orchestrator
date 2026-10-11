@@ -336,13 +336,12 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	return m
 }
 
-// newReconciler builds a Reconciler mock returning result or err from both the
-// buffered and the streaming entry point.
+// newReconciler builds a Reconciler mock returning result or err, reporting one
+// backend step to an observer when the caller streams.
 func newReconciler(t *testing.T, result *worker.ReconcileResult, err error) *MockReconciler {
 	t.Helper()
 	m := NewMockReconciler(gomock.NewController(t))
-	m.EXPECT().Reconcile(gomock.Any(), gomock.Any()).Return(result, err).AnyTimes()
-	m.EXPECT().ReconcileStreaming(gomock.Any(), gomock.Any(), gomock.Any()).
+	m.EXPECT().Reconcile(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, observer progress.Observer) (*worker.ReconcileResult, error) {
 			if err != nil {
 				return nil, err

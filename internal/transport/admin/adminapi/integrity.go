@@ -13,15 +13,6 @@ package adminapi
 
 import "time"
 
-// IntegrityOutcome is the part every integrity pass reports the same way: the
-// terminal status, and why the pass did nothing when it was skipped. Status is
-// "ok" when the pass ran and "skipped" when integrity verification is
-// disabled; Reason accompanies "skipped" only.
-type IntegrityOutcome struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
-
 // ScrubKeyResponse reports an on-demand verification of one key, one entry per
 // copy, so a corrupt copy is attributed to its backend.
 type ScrubKeyResponse struct {
@@ -53,7 +44,7 @@ const (
 // they are not counted as checked. Deferred copies were not attempted because
 // their backend is over its usage limit.
 type ScrubResponse struct {
-	IntegrityOutcome
+	Outcome
 	Checked    int `json:"checked"`
 	Failed     int `json:"failed"`
 	Unreadable int `json:"unreadable"`
@@ -64,7 +55,7 @@ type ScrubResponse struct {
 // when no unhashed objects remained after the pass, so a caller draining the
 // backlog in batches knows when to stop.
 type BackfillChecksumsResponse struct {
-	IntegrityOutcome
+	Outcome
 	Processed  int  `json:"processed"`
 	Unreadable int  `json:"unreadable"`
 	Done       bool `json:"done"`
@@ -87,7 +78,7 @@ type UnreadableListResponse struct {
 
 // UnreadablePurgeResponse reports a purge of unreadable copies.
 type UnreadablePurgeResponse struct {
-	IntegrityOutcome
+	Outcome
 	Purged int `json:"purged"`
 	Failed int `json:"failed,omitempty"`
 }
@@ -96,7 +87,7 @@ type UnreadablePurgeResponse struct {
 // storage into the ledger, ledger rows dropped for objects no longer present,
 // and how many backends were walked.
 type ReconcileResponse struct {
-	IntegrityOutcome
+	Outcome
 	Imported        int `json:"imported"`
 	Removed         int `json:"removed"`
 	BackendsScanned int `json:"backends_scanned"`

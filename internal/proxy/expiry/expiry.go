@@ -85,13 +85,11 @@ func (m *Manager) logger() *slog.Logger {
 }
 
 // ProcessRules evaluates every rule and deletes the objects each one expires,
-// returning the total deleted and failed counts across all rules. obs receives
-// one bracketed step per object and is nil on the scheduled tick.
-func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) (deleted, failed int) {
+// returning the tally across all rules: Succeeded counts the objects deleted.
+// obs receives one bracketed step per object and is nil on the scheduled tick.
+func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	batchSize := batchSizeFor(m.Config())
 
-	// Left hand-written: Run and its variants carry one result, and folding two
-	// counts into one to satisfy that reads worse than the four lines it saves.
 	ctx, span := telemetry.StartSpan(ctx, "ProcessLifecycleRules",
 		telemetry.AttrOperation.String("lifecycle"),
 	)
@@ -101,7 +99,7 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 	for _, rule := range rules {
 		total = total.Plus(m.applyRule(ctx, rule, batchSize, obs))
 	}
-	return total.Succeeded, total.Failed
+	return total
 }
 
 // -------------------------------------------------------------------------

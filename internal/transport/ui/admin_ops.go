@@ -50,7 +50,7 @@ func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
 			if err != nil {
 				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Moved}, nil
+			return adminActionCounts{Count: res.Succeeded}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) rebalanceStatus {
 			return rebalanceStatus{adminActionState: s, Moved: c.Count}

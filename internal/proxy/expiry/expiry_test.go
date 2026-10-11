@@ -121,10 +121,10 @@ func TestProcessRules_DeletesExpiredObjects(t *testing.T) {
 		DoAndReturn(pages(objectsNamed("tmp/old-file"))).AnyTimes()
 	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/old-file").Return(nil).Times(1)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
 	}, nil)
-	if deleted != 1 || failed != 0 {
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 1 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 1/0", deleted, failed)
 	}
 }
@@ -149,10 +149,10 @@ func TestProcessRules_PassesTagFilter(t *testing.T) {
 		DoAndReturn(pages(objectsNamed("logs/a"))).AnyTimes()
 	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/a").Return(nil).Times(1)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "logs/", Tags: tags, ExpirationDays: 1},
 	}, nil)
-	if deleted != 1 || failed != 0 {
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 1 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 1/0", deleted, failed)
 	}
 }
@@ -169,10 +169,10 @@ func TestProcessRules_NoExpiredObjects(t *testing.T) {
 	// Any delete at all would be a bug.
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 7},
 	}, nil)
-	if deleted != 0 || failed != 0 {
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 0 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 0/0", deleted, failed)
 	}
 }
@@ -190,11 +190,11 @@ func TestProcessRules_MultipleRules(t *testing.T) {
 	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/a").Return(nil).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/b").Return(nil).Times(1)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
 		{Prefix: "logs/", ExpirationDays: 1},
 	}, nil)
-	if deleted != 2 || failed != 0 {
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 2 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 2/0", deleted, failed)
 	}
 }
@@ -212,8 +212,8 @@ func TestProcessRules_BatchPagination(t *testing.T) {
 		DoAndReturn(pages(objectsNamed("a", "b"), objectsNamed("c"))).Times(2)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil).Times(3)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
-	if deleted != 3 || failed != 0 {
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 3 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 3/0", deleted, failed)
 	}
 }
@@ -230,8 +230,8 @@ func TestProcessRules_DeleteFailureContinues(t *testing.T) {
 	deleter.EXPECT().DeleteObject(gomock.Any(), "good").Return(nil).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), "bad").Return(errors.New("backend down")).Times(1)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
-	if deleted != 1 || failed != 1 {
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 1 || failed != 1 {
 		t.Errorf("deleted=%d failed=%d, want 1/1", deleted, failed)
 	}
 }
@@ -247,8 +247,8 @@ func TestProcessRules_ListError(t *testing.T) {
 		Return(nil, errors.New("db down")).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
-	if deleted != 0 || failed != 1 {
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 0 || failed != 1 {
 		t.Errorf("deleted=%d failed=%d, want 0/1", deleted, failed)
 	}
 }
@@ -276,8 +276,8 @@ func TestProcessRules_FailedObjectsArePassedOver(t *testing.T) {
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 		Return(errors.New("backend down")).Times(2)
 
-	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
-	if deleted != 0 || failed != 2 {
+	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
+	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 0 || failed != 2 {
 		t.Errorf("deleted=%d failed=%d, want 0/2", deleted, failed)
 	}
 }
@@ -290,8 +290,8 @@ func TestProcessRules_EmptyRules(t *testing.T) {
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).Times(0)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
 
-	if deleted, failed := m.ProcessRules(t.Context(), nil, nil); deleted != 0 || failed != 0 {
-		t.Errorf("deleted=%d failed=%d, want 0/0", deleted, failed)
+	if sum := m.ProcessRules(t.Context(), nil, nil); sum.Succeeded != 0 || sum.Failed != 0 {
+		t.Errorf("deleted=%d failed=%d, want 0/0", sum.Succeeded, sum.Failed)
 	}
 }
 

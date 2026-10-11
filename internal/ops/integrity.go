@@ -40,23 +40,13 @@ const defaultUnreadableBatchSize = 100
 // TYPES
 // -------------------------------------------------------------------------
 
-// ScrubResult reports one verification pass. Checked counts the copies read;
-// the remaining counts partition the ones that did not verify.
-type ScrubResult struct {
-	Checked    int
-	Failed     int
-	Unreadable int
-	Deferred   int
-}
-
-// BackfillResult reports one backfill run. Done is true only when the backlog
-// drained; a run stopped by the object cap or a cancelled context reports
-// false so the caller knows more work remains. Unreadable counts copies that
-// could not be decoded and were skipped.
+// BackfillResult reports one backfill run: Succeeded counts the copies hashed
+// and Skipped the ones that could not be decoded. Done is true only when the
+// backlog drained; a run stopped by the object cap or a cancelled context
+// reports false so the caller knows more work remains.
 type BackfillResult struct {
-	Processed  int
-	Unreadable int
-	Done       bool
+	batch.Summary
+	Done bool
 }
 
 // UnreadableList reports copies that are encrypted with no key: up to the
@@ -64,12 +54,6 @@ type BackfillResult struct {
 type UnreadableList struct {
 	Total  int64
 	Copies []core.ObjectLocation
-}
-
-// PurgeResult reports one purge of unreadable copies.
-type PurgeResult struct {
-	Purged int
-	Failed int
 }
 
 // IntegrityDeps holds the collaborators Integrity requires.
@@ -109,18 +93,20 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Scrub runs one verification pass and returns the per-pass counts. batchSize
-// <= 0 uses the configured ScrubberBatchSize. An empty backend verifies copies
+// Scrub runs one verification pass and returns its tally: Attempted counts the
+// copies read, Skipped the ones that could not be decoded, and Deferred the
+// ones on backends over their read budget. batchSize <= 0 uses the configured
+// ScrubberBatchSize. An empty backend verifies copies
 // on every backend the read budget allows. observer, when non-nil, receives a
 // start and end step per copy verified.
 //
 // It holds the same advisory lock as the scheduled sweep, so a manual run and
 // a tick cannot overlap. If the lock is held it returns ErrScrubInProgress
 // instead of waiting.
-func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (ScrubResult, error) {
+func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
 	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
-		return ScrubResult{}, ErrIntegrityDisabled
+		return batch.Summary{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {
 		batchSize = icfg.ScrubberBatchSize
@@ -132,18 +118,12 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 		return nil
 	})
 	if err != nil {
-		return ScrubResult{}, err
+		return batch.Summary{}, err
 	}
 	if !acquired {
-		return ScrubResult{}, ErrScrubInProgress
+		return batch.Summary{}, ErrScrubInProgress
 	}
-
-	return ScrubResult{
-		Checked:    sum.Attempted,
-		Failed:     sum.Failed,
-		Unreadable: sum.Skipped,
-		Deferred:   sum.Deferred,
-	}, nil
+	return sum, nil
 }
 
 // VerifyKey verifies every recorded copy of one key immediately. Reports
@@ -211,9 +191,8 @@ func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int
 	// page that was just hashed complete.
 	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
 		sum := i.scrubber.HashCopies(ctx, locs, observer)
-		res.Processed += sum.Succeeded
-		res.Unreadable += sum.Skipped
-		if maxObjects > 0 && res.Processed >= maxObjects {
+		res.Summary = res.Plus(sum)
+		if maxObjects > 0 && res.Succeeded >= maxObjects {
 			return batch.Step{Stop: true}, nil
 		}
 		if len(locs) < batchSize {
@@ -242,13 +221,13 @@ func (i *Integrity) ListUnreadable(ctx context.Context, limit int) (UnreadableLi
 }
 
 // PurgeUnreadable discards every copy that is encrypted with no key, batchSize
-// at a time. batchSize <= 0 uses the default.
-func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) PurgeResult {
+// at a time, and reports its tally; Succeeded counts the copies purged.
+// batchSize <= 0 uses the default.
+func (i *Integrity) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary {
 	if batchSize <= 0 {
 		batchSize = defaultUnreadableBatchSize
 	}
-	sum := i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
-	return PurgeResult{Purged: sum.Succeeded, Failed: sum.Failed}
+	return i.scrubber.PurgeUnreadable(ctx, batchSize, observer)
 }
 
 // sleepOrCancel waits for d or for ctx to be cancelled, returning false when

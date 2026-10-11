@@ -14,6 +14,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -31,9 +33,9 @@ import (
 // SCRUB
 // -------------------------------------------------------------------------
 
-// handleScrub triggers an on-demand scrub cycle. Accepts an optional batch_size
-// query parameter. Streams per-object NDJSON progress when the client accepts
-// the stream content type; otherwise returns a single JSON result.
+// handleScrub triggers an on-demand scrub cycle. Accepts optional batch_size
+// and backend query parameters. A pass counts the copies it read as checked and
+// the ones it could not decode as unreadable.
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
 	backend, ok := h.backendParam(w, r)
@@ -41,35 +43,28 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if acceptsStream(r) {
-		h.streamScrub(w, r, batchSize, backend)
-		return
-	}
-
-	res, err := h.integrity.Scrub(r.Context(), batchSize, backend, nil)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.ScrubResponse{
-			Status: statusSkipped, Reason: reason,
-		})
-		return
-	}
-	if err != nil {
-		h.internalError(r.Context(), w, "scrub failed", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, wireScrubResponse(res))
-}
-
-// wireScrubResponse renders one completed pass for the wire.
-func wireScrubResponse(res ops.ScrubResult) adminapi.ScrubResponse {
-	return adminapi.ScrubResponse{
-		Status:     statusOK,
-		Checked:    res.Checked,
-		Failed:     res.Failed,
-		Unreadable: res.Unreadable,
-		Deferred:   res.Deferred,
-	}
+	h.servePass(w, r, passEndpoint[batch.Summary]{
+		op:         "scrub",
+		verb:       "verifying",
+		sequential: true,
+		failMsg:    "scrub failed",
+		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
+			return h.integrity.Scrub(ctx, batchSize, backend, obs)
+		},
+		body: func(o adminapi.Outcome, res batch.Summary) any {
+			return adminapi.ScrubResponse{
+				Outcome:    o,
+				Checked:    res.Attempted,
+				Failed:     res.Failed,
+				Unreadable: res.Skipped,
+				Deferred:   res.Deferred,
+			}
+		},
+		summary: func(res batch.Summary) (int, string) {
+			return res.Attempted, fmt.Sprintf("checked %d, failed %d, unreadable %d, deferred %d",
+				res.Attempted, res.Failed, res.Skipped, res.Deferred)
+		},
+	})
 }
 
 // handleScrubKey verifies every copy of one object immediately.
@@ -129,37 +124,14 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 	return res
 }
 
-// streamScrub runs a scrub as an NDJSON step stream, one "verifying <key>" line
-// per object plus a terminal summary of checked/failed counts.
-func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize int, backend string) {
-	h.streamSteps(w, "scrub", "verifying", true, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.integrity.Scrub(r.Context(), batchSize, backend, obs)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: res.Checked,
-			Summary: fmt.Sprintf("checked %d, failed %d, unreadable %d, deferred %d",
-				res.Checked, res.Failed, res.Unreadable, res.Deferred),
-			Fields: map[string]any{
-				"checked":    res.Checked,
-				"failed":     res.Failed,
-				"unreadable": res.Unreadable,
-				"deferred":   res.Deferred,
-			},
-		}, nil
-	})
-}
-
 // -------------------------------------------------------------------------
 // CHECKSUM BACKFILL
 // -------------------------------------------------------------------------
 
 // handleBackfillChecksums triggers a checksum backfill pass. Optional query
 // parameters: batch_size (objects per pass), max (cap objects this request,
-// 0 = drain all), delay_ms (pause between passes to rate-limit backend reads).
-// When the client accepts the NDJSON stream content type, progress is streamed
-// line by line; otherwise a single JSON result is returned.
+// 0 = drain all), delay_ms (pause between passes to rate-limit backend reads),
+// and backend.
 func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	batchSize := httputil.QueryPositiveInt(q.Get("batch_size"))
@@ -170,40 +142,25 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if acceptsStream(r) {
-		h.streamBackfillChecksums(w, r, batchSize, maxObjects, pause, backend)
-		return
-	}
-
-	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, nil)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
-			Status: statusSkipped, Reason: reason,
-		})
-		return
-	}
-	if err != nil {
-		h.internalError(r.Context(), w, "backfill failed", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
-		Status:     statusOK,
-		Processed:  res.Processed,
-		Unreadable: res.Unreadable,
-		Done:       res.Done,
-	})
-}
-
-// streamBackfillChecksums runs a backfill as an NDJSON step stream, one
-// "hashing <key>" line per object plus a terminal result.
-func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request, batchSize, maxObjects int, pause time.Duration, backend string) {
-	h.streamSteps(w, "backfill-checksums", "hashing", true, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, obs)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done, "unreadable": res.Unreadable}}, nil
+	h.servePass(w, r, passEndpoint[ops.BackfillResult]{
+		op:         "backfill-checksums",
+		verb:       "hashing",
+		sequential: true,
+		failMsg:    "backfill failed",
+		run: func(ctx context.Context, obs progress.Observer) (ops.BackfillResult, error) {
+			return h.integrity.BackfillChecksums(ctx, batchSize, maxObjects, pause, backend, obs)
+		},
+		body: func(o adminapi.Outcome, res ops.BackfillResult) any {
+			return adminapi.BackfillChecksumsResponse{
+				Outcome:    o,
+				Processed:  res.Succeeded,
+				Unreadable: res.Skipped,
+				Done:       res.Done,
+			}
+		},
+		summary: func(res ops.BackfillResult) (int, string) {
+			return res.Succeeded, fmt.Sprintf("hashed %d, unreadable %d", res.Succeeded, res.Skipped)
+		},
 	})
 }
 
@@ -235,22 +192,19 @@ func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) {
 	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
 
-	if acceptsStream(r) {
-		h.streamSteps(w, "purge-unreadable", "purging", true, func(obs progress.Observer) (stepResult, error) {
-			res := h.integrity.PurgeUnreadable(r.Context(), batchSize, obs)
-			return stepResult{
-				Processed: res.Purged,
-				Fields:    map[string]any{"purged": res.Purged, "failed": res.Failed},
-			}, nil
-		})
-		return
-	}
-
-	res := h.integrity.PurgeUnreadable(r.Context(), batchSize, nil)
-	httputil.WriteJSON(w, http.StatusOK, adminapi.UnreadablePurgeResponse{
-		Status: statusOK,
-		Purged: res.Purged,
-		Failed: res.Failed,
+	h.servePass(w, r, passEndpoint[batch.Summary]{
+		op:         "purge-unreadable",
+		verb:       "purging",
+		sequential: true,
+		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
+			return h.integrity.PurgeUnreadable(ctx, batchSize, obs), nil
+		},
+		body: func(o adminapi.Outcome, res batch.Summary) any {
+			return adminapi.UnreadablePurgeResponse{Outcome: o, Purged: res.Succeeded, Failed: res.Failed}
+		},
+		summary: func(res batch.Summary) (int, string) {
+			return res.Succeeded, fmt.Sprintf("purged %d, failed %d", res.Succeeded, res.Failed)
+		},
 	})
 }
 
@@ -271,47 +225,24 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 
 	h.log.InfoContext(r.Context(), "reconcile triggered", "backend", backendName)
 
-	if acceptsStream(r) {
-		h.streamReconcile(w, r, backendName)
-		return
-	}
-
-	result, err := h.reconciler.Reconcile(r.Context(), backendName)
-	if err != nil {
-		h.log.ErrorContext(r.Context(), "reconcile failed", "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	h.log.InfoContext(r.Context(), "reconcile complete",
-		"imported", result.Imported, "removed", result.Removed,
-		"backends_scanned", result.BackendsScanned)
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ReconcileResponse{
-		Status:          "ok",
-		Imported:        result.Imported,
-		Removed:         result.Removed,
-		BackendsScanned: result.BackendsScanned,
-	})
-}
-
-// streamReconcile runs a reconcile as an NDJSON step stream, one
-// "reconciling <backend>" line per backend plus a terminal summary.
-func (h *Handler) streamReconcile(w http.ResponseWriter, r *http.Request, backendName string) {
-	h.streamSteps(w, "reconcile", "reconciling", true, func(obs progress.Observer) (stepResult, error) {
-		result, err := h.reconciler.ReconcileStreaming(r.Context(), backendName, obs)
-		if err != nil {
-			h.log.ErrorContext(r.Context(), "reconcile failed", "error", err)
-			return stepResult{}, err
-		}
-		return stepResult{
-			Summary: fmt.Sprintf("imported %d, removed %d across %d backend(s)",
-				result.Imported, result.Removed, result.BackendsScanned),
-			Fields: map[string]any{
-				"imported":         result.Imported,
-				"removed":          result.Removed,
-				"backends_scanned": result.BackendsScanned,
-			},
-		}, nil
+	h.servePass(w, r, passEndpoint[*worker.ReconcileResult]{
+		op:         "reconcile",
+		verb:       "reconciling",
+		sequential: true,
+		failMsg:    "reconcile failed",
+		run: func(ctx context.Context, obs progress.Observer) (*worker.ReconcileResult, error) {
+			return h.reconciler.Reconcile(ctx, backendName, obs)
+		},
+		body: func(o adminapi.Outcome, res *worker.ReconcileResult) any {
+			resp := adminapi.ReconcileResponse{Outcome: o}
+			if res != nil {
+				resp.Imported, resp.Removed, resp.BackendsScanned = res.Imported, res.Removed, res.BackendsScanned
+			}
+			return resp
+		},
+		summary: func(res *worker.ReconcileResult) (int, string) {
+			return res.Imported, fmt.Sprintf("imported %d, removed %d across %d backend(s)",
+				res.Imported, res.Removed, res.BackendsScanned)
+		},
 	})
 }

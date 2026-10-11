@@ -22,55 +22,28 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
 // REPLICATION
 // -------------------------------------------------------------------------
 
-// handleReplicate triggers one replication cycle. Streams per-object NDJSON
-// progress when the client accepts the stream content type; otherwise returns a
-// single JSON result.
+// handleReplicate triggers one replication cycle. Replication fans objects out
+// across a worker pool, so streamed steps render as complete labeled lines
+// rather than live prefixes, which would interleave.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	if acceptsStream(r) {
-		h.streamReplicate(w, r)
-		return
-	}
-
-	res, err := h.replication.Replicate(r.Context(), nil)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicateResponse{
-			Status: statusSkipped, Reason: reason,
-		})
-		return
-	}
-	if err != nil {
-		h.internalError(r.Context(), w, "replication failed", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicateResponse{
-		Status:        statusOK,
-		CopiesCreated: res.CopiesCreated,
-		Failed:        res.Failed,
-	})
-}
-
-// streamReplicate runs a replication cycle as an NDJSON step stream, one
-// "replicating <key>" line per object plus a terminal summary. Replication fans
-// objects out across a worker pool, so steps render as complete labeled lines
-// (sequential=false) to avoid interleaved output.
-func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
-	h.streamSteps(w, "replicate", "replicating", false, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.replication.Replicate(r.Context(), obs)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: res.CopiesCreated,
-			Summary:   fmt.Sprintf("created %d copies", res.CopiesCreated),
-			Fields:    map[string]any{"copies_created": res.CopiesCreated, "failed": res.Failed},
-		}, nil
+	h.servePass(w, r, passEndpoint[worker.ReplicationSummary]{
+		op:      "replicate",
+		verb:    "replicating",
+		failMsg: "replication failed",
+		run:     h.replication.Replicate,
+		body: func(o adminapi.Outcome, res worker.ReplicationSummary) any {
+			return adminapi.ReplicateResponse{Outcome: o, CopiesCreated: res.CopiesCreated, Failed: res.Failed}
+		},
+		summary: func(res worker.ReplicationSummary) (int, string) {
+			return res.CopiesCreated, fmt.Sprintf("created %d copies", res.CopiesCreated)
+		},
 	})
 }
 
@@ -83,7 +56,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	res, err := h.replication.CountSurplus(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-			Status: statusSkipped, Reason: reason,
+			Outcome: adminapi.Outcome{Status: statusSkipped, Reason: reason},
 		})
 		return
 	}
@@ -93,56 +66,32 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-		Status:  statusOK,
+		Outcome: adminapi.Outcome{Status: statusOK},
 		Factor:  res.Factor,
 		Pending: res.Pending,
 	})
 }
 
 // handleOverReplicationClean triggers an immediate over-replication cleanup
-// pass. Accepts an optional batch_size query parameter.
+// pass. Accepts an optional batch_size query parameter. The cleaner fans
+// objects out across a worker pool, so streamed steps render as complete
+// labeled lines.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
 	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
 
-	if acceptsStream(r) {
-		h.streamOverReplication(w, r, batchSize)
-		return
-	}
-
-	res, err := h.replication.CleanExcess(r.Context(), batchSize, nil)
-	if reason, skipped := ops.SkipReason(err); skipped {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
-			Status: statusSkipped, Reason: reason,
-		})
-		return
-	}
-	if err != nil {
-		h.internalError(r.Context(), w, "over-replication cleanup failed", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
-		Status:        statusOK,
-		CopiesRemoved: res.CopiesRemoved,
-		Failed:        res.Failed,
-	})
-}
-
-// streamOverReplication runs an over-replication cleanup as an NDJSON step
-// stream, one "removing <key>" line per object plus a terminal summary. The
-// cleaner fans objects out across a worker pool, so steps render as complete
-// labeled lines (sequential=false) to avoid interleaved output.
-func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, batchSize int) {
-	h.streamSteps(w, "over-replication", "removing", false, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.replication.CleanExcess(r.Context(), batchSize, obs)
-		if err != nil {
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: res.CopiesRemoved,
-			Summary:   fmt.Sprintf("removed %d copies", res.CopiesRemoved),
-			Fields:    map[string]any{"copies_removed": res.CopiesRemoved, "failed": res.Failed},
-		}, nil
+	h.servePass(w, r, passEndpoint[worker.OverReplicationSummary]{
+		op:      "over-replication",
+		verb:    "removing",
+		failMsg: "over-replication cleanup failed",
+		run: func(ctx context.Context, obs progress.Observer) (worker.OverReplicationSummary, error) {
+			return h.replication.CleanExcess(ctx, batchSize, obs)
+		},
+		body: func(o adminapi.Outcome, res worker.OverReplicationSummary) any {
+			return adminapi.OverReplicationCleanResponse{Outcome: o, CopiesRemoved: res.CopiesRemoved, Failed: res.Failed}
+		},
+		summary: func(res worker.OverReplicationSummary) (int, string) {
+			return res.CopiesRemoved, fmt.Sprintf("removed %d copies", res.CopiesRemoved)
+		},
 	})
 }
 

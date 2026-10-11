@@ -12,6 +12,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -20,7 +21,9 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -40,6 +43,78 @@ type stepResult struct {
 	Processed int
 	Summary   string
 	Fields    map[string]any
+}
+
+// passEndpoint is one on-demand pass as the transport sees it: the pass to run,
+// how to word its stream, and how to render what it reported. Every pass
+// endpoint is one of these, so the JSON and stream modes, the skip handling and
+// the failure path are written once.
+//
+// body renders the endpoint's own response type and is also the stream's
+// result fields, so the two modes cannot report different keys. It receives
+// the outcome so a skipped pass renders the same shape with zero counts.
+// skipIsError answers a skip with 400 instead, for passes whose skip means the
+// request cannot be served as asked.
+type passEndpoint[R any] struct {
+	op          string
+	verb        string
+	sequential  bool
+	failMsg     string
+	skipIsError bool
+	run         func(context.Context, progress.Observer) (R, error)
+	body        func(adminapi.Outcome, R) any
+	summary     func(R) (processed int, line string)
+}
+
+// servePass runs one pass. Streams per-item NDJSON progress when the client
+// accepts the stream content type; otherwise returns a single JSON result. The
+// pass runs under the request context, so a disconnecting caller stops it.
+func (h *Handler) servePass[R any](w http.ResponseWriter, r *http.Request, ep passEndpoint[R]) {
+	if acceptsStream(r) {
+		h.streamSteps(w, ep.op, ep.verb, ep.sequential, func(obs progress.Observer) (stepResult, error) {
+			res, err := ep.run(r.Context(), obs)
+			if err != nil {
+				return stepResult{}, err
+			}
+			processed, line := ep.summary(res)
+			return stepResult{
+				Processed: processed,
+				Summary:   line,
+				Fields:    resultFields(ep.body(adminapi.Outcome{Status: statusOK}, res)),
+			}, nil
+		})
+		return
+	}
+
+	res, err := ep.run(r.Context(), nil)
+	reason, skipped := ops.SkipReason(err)
+	switch {
+	case skipped && ep.skipIsError:
+		httputil.WriteJSONError(w, http.StatusBadRequest, reason)
+	case skipped:
+		var zero R
+		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusSkipped, Reason: reason}, zero))
+	case err != nil:
+		h.internalError(r.Context(), w, ep.failMsg, err)
+	default:
+		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusOK}, res))
+	}
+}
+
+// resultFields flattens a response body into the stream result's fields,
+// leaving out the outcome, which the result event reports itself.
+func resultFields(body any) map[string]any {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil
+	}
+	var fields map[string]any
+	if json.Unmarshal(data, &fields) != nil {
+		return nil
+	}
+	delete(fields, "status")
+	delete(fields, "reason")
+	return fields
 }
 
 // streamSteps runs a long-running operation as an NDJSON step stream: a start

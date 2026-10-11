@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
@@ -44,11 +45,11 @@ type lifecycleStub struct {
 func (s *lifecycleStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules records the call and reports the fixed outcome.
-func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.LifecycleRule, obs progress.Observer) (int, int) {
+func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	s.gotObserver = obs
 	s.calls++
 	s.gotRules = rules
-	return s.deleted, s.failed
+	return batch.Summary{Succeeded: s.deleted, Failed: s.failed}
 }
 
 // -------------------------------------------------------------------------
@@ -91,7 +92,7 @@ func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 	if stub.gotObserver == nil {
 		t.Error("the caller's observer did not reach ProcessRules")
 	}
-	if res.Deleted != 12 || res.Failed != 2 {
+	if res.Succeeded != 12 || res.Failed != 2 {
 		t.Errorf("res = %+v, want 12 deleted / 2 failed", res)
 	}
 	if stub.calls != 1 {
@@ -119,7 +120,7 @@ func TestLifecycleRun_MatchedNothingIsNotASkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a sweep that matched nothing is not a skip, got %v", err)
 	}
-	if res.Deleted != 0 || res.Failed != 0 {
+	if res.Succeeded != 0 || res.Failed != 0 {
 		t.Errorf("res = %+v, want a completed sweep of zero", res)
 	}
 }

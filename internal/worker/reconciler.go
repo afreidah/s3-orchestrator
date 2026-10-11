@@ -209,14 +209,9 @@ func (r *Reconciler) backendsFor(backendName string) ([]string, error) {
 // Reconcile performs a full reconciliation for the given backend (or all
 // backends if backendName is empty). Lists objects on each backend, diffs
 // against DB entries, imports untracked objects, and removes stale entries.
-func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*ReconcileResult, error) {
-	return r.ReconcileStreaming(ctx, backendName, nil)
-}
-
-// ReconcileStreaming is Reconcile with a per-backend observer. onBackend, when
-// non-nil, is called after each backend is reconciled so a streaming caller can
-// report incremental progress; pass nil for the non-streaming path.
-func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
+// observer, when non-nil, receives a step per backend so a streaming caller can
+// report incremental progress.
+func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
 	bucketNames := r.buckets.Names()

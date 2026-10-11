@@ -375,8 +375,8 @@ func TestRebalance_QuotaMetricsFailureStillReports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.Moved != 2 {
-		t.Errorf("Moved = %d, want 2", res.Moved)
+	if res.Succeeded != 2 {
+		t.Errorf("moved = %d, want 2", res.Succeeded)
 	}
 }
 
@@ -388,8 +388,8 @@ func TestScrub_SkippedWhenIntegrityDisabled(t *testing.T) {
 
 	res, err := svc.Integrity.Scrub(context.Background(), 0, "", nil)
 	assertSkipped(t, err)
-	if res.Checked != 0 || res.Failed != 0 {
-		t.Errorf("Checked=%d Failed=%d, want both 0", res.Checked, res.Failed)
+	if res.Attempted != 0 || res.Failed != 0 {
+		t.Errorf("Checked=%d Failed=%d, want both 0", res.Attempted, res.Failed)
 	}
 }
 
@@ -404,8 +404,8 @@ func TestScrub_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}
-	if res.Checked != 0 || res.Failed != 0 {
-		t.Errorf("Checked=%d Failed=%d, want both 0", res.Checked, res.Failed)
+	if res.Attempted != 0 || res.Failed != 0 {
+		t.Errorf("Checked=%d Failed=%d, want both 0", res.Attempted, res.Failed)
 	}
 }
 
@@ -433,8 +433,8 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 		t.Fatalf("Scrub error = %v, want ErrScrubInProgress", err)
 	}
 	assertSkipped(t, err)
-	if res.Checked != 0 {
-		t.Errorf("Checked = %d, want 0 when the pass never ran", res.Checked)
+	if res.Attempted != 0 {
+		t.Errorf("Checked = %d, want 0 when the pass never ran", res.Attempted)
 	}
 }
 
@@ -496,8 +496,8 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}
-	if res.Checked != 3 {
-		t.Errorf("Checked = %d, want 3", res.Checked)
+	if res.Attempted != 3 {
+		t.Errorf("Checked = %d, want 3", res.Attempted)
 	}
 }
 
@@ -531,8 +531,8 @@ func TestBackfillChecksums_SkippedWhenIntegrityDisabled(t *testing.T) {
 
 	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, "", nil)
 	assertSkipped(t, err)
-	if res.Processed != 0 {
-		t.Errorf("Processed = %d, want 0", res.Processed)
+	if res.Succeeded != 0 {
+		t.Errorf("Processed = %d, want 0", res.Succeeded)
 	}
 }
 
@@ -547,8 +547,8 @@ func TestBackfillChecksums_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
-	if res.Processed != 0 {
-		t.Errorf("Processed = %d, want 0", res.Processed)
+	if res.Succeeded != 0 {
+		t.Errorf("Processed = %d, want 0", res.Succeeded)
 	}
 	if !res.Done {
 		t.Error("Done = false, want true for an empty backlog")
@@ -927,8 +927,8 @@ func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
 	// The cap is checked between pages, so the page that crossed it completes.
-	if res.Processed != 30 || len(b.keys) != 10 {
-		t.Errorf("Processed = %d with %d left, want 30 processed and 10 left", res.Processed, len(b.keys))
+	if res.Succeeded != 30 || len(b.keys) != 10 {
+		t.Errorf("Processed = %d with %d left, want 30 processed and 10 left", res.Succeeded, len(b.keys))
 	}
 	if res.Done {
 		t.Error("Done = true, want false when the cap stopped the run short of the backlog")
@@ -948,7 +948,7 @@ func TestBackfillChecksums_ReportsUnreadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
-	if res.Unreadable != 5 || res.Processed != 8 || !res.Done {
+	if res.Skipped != 5 || res.Succeeded != 8 || !res.Done {
 		t.Errorf("res = %+v, want 5 unreadable, 8 processed and the backlog drained", res)
 	}
 }
@@ -961,7 +961,7 @@ func TestPurgeUnreadable_DefaultsTheBatchAndReportsTheTally(t *testing.T) {
 	scrubber.EXPECT().PurgeUnreadable(gomock.Any(), 100, gomock.Any()).Return(batch.Summary{Succeeded: 103, Failed: 2})
 
 	res := integrityOver(t, scrubber).PurgeUnreadable(context.Background(), 0, nil)
-	if res.Purged != 103 || res.Failed != 2 {
+	if res.Succeeded != 103 || res.Failed != 2 {
 		t.Errorf("res = %+v, want 103 purged and 2 failed", res)
 	}
 }
