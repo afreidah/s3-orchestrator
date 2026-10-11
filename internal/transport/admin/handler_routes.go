@@ -168,12 +168,15 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/logs", Handler: h.handleLogs,
+			Method: http.MethodGet, Pattern: "/admin/api/logs", Handler: LogsHandler(h.logs),
 			Summary:  "Recent records from the in-memory log buffer",
 			Response: adminapi.LogsResponse{},
 			Params: []param{
 				{Name: "level", In: inQuery, Type: typeString, Description: "Minimum level to return: debug, info, warn or error"},
-				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum records to return"},
+				{Name: "since", In: inQuery, Type: typeString, Description: "RFC3339 timestamp; only records at or after it"},
+				{Name: "before", In: inQuery, Type: typeString, Description: "RFC3339 timestamp; only records before it"},
+				{Name: "component", In: inQuery, Type: typeString, Description: "Only records from this component"},
+				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum records to return, newest kept (default 200, max 1000)"},
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminLogs,
 		},

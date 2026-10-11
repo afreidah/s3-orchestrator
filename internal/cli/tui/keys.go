@@ -80,6 +80,7 @@ func (m *model) paneKeys() []keyHint {
 		return []keyHint{hintScroll,
 			{key: "/", desc: "filter by text in the component or message", label: "filter"},
 			{key: "L", desc: "cycle the minimum level", label: "level"},
+			{key: "F", desc: "follow new entries as they arrive", label: "follow"},
 			{key: "esc", desc: "clear the filter, then back to the nav"}, hintReload}
 	case sectionWorkers:
 		return []keyHint{hintMove, {key: "R", desc: "run the matching Ops action", label: "run"},

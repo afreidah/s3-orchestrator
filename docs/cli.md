@@ -473,6 +473,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `l` | Jump to the Logs section |
 | `o` | Jump to the Ops section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
+| `F` | In Logs, follow new entries as they arrive |
 | `t` | In Cleanup, switch between the pending and dead-letter listings |
 | `R` | In Cleanup's dead-letter listing, requeue the selected row's backend; in Backends, reconcile the selected backend (asks to confirm) |
 | `d` | In Backends, drain the selected backend (asks to confirm) |
@@ -527,7 +528,7 @@ The **Cache** section shows the object data cache, sourced from `GET /admin/api/
 
 The **Config** section shows the configuration the server is running, sourced from `GET /admin/api/config`: the YAML a config file would hold, with defaults filled in and secrets shown as `(redacted)`. The title carries the log level in effect, which `PUT /admin/api/log-level` can change until the next restart. Fields edited in the file and reloaded with `SIGHUP` that only apply on a restart are listed above the YAML. Press `r` to refresh.
 
-The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `/` and type to narrow the loaded entries to those whose component or message, attributes included, contains the text; the title shows how many match, `enter` keeps the filter, and `esc` clears it.
+The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh. Press `F` to follow: the pane re-fetches every 2 seconds and stays on the newest entries unless you have scrolled up to read older ones; press `F` again to stop. Behind a load balancer each fetch may reach a different instance's buffer. Press `/` and type to narrow the loaded entries to those whose component or message, attributes included, contains the text; the title shows how many match, `enter` keeps the filter, and `esc` clears it.
 
 Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation before it runs, and its result (or error) is reported afterwards. Instance-wide actions live on the Ops menu; an action that targets one row, such as the Cleanup pane's requeue, lives on the pane that shows the row.
 

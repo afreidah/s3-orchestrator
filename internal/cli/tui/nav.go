@@ -141,7 +141,7 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	case sectionLogs:
 		m.logs = newLogsView()
 		m.logs.loading = true
-		cmd := m.loadLogs()
+		cmd := m.fetch(pollLogs)
 		return m, cmd
 	}
 	return m, nil

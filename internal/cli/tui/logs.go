@@ -8,8 +8,10 @@
 // logs pane reads). Renders recent entries oldest-first as time / level /
 // component / message, colouring the level by severity. The minimum-level
 // filter cycles with "L" and re-fetches; "/" narrows the loaded entries to
-// those whose component or message contains the typed text; "r" refreshes. Lines are rendered by hand into a
-// scrolling viewport rather than a table because the table truncates cells by
+// those whose component or message contains the typed text; "r" refreshes;
+// "F" follows, re-fetching on the shared poller and holding the view on the
+// newest entries unless the operator has scrolled up. Lines are rendered by
+// hand into a scrolling viewport rather than a table because the table truncates cells by
 // counting ANSI colour codes toward the column width.
 // -------------------------------------------------------------------------------
 
@@ -21,6 +23,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
@@ -44,6 +47,7 @@ type logsView struct {
 	minLevel  string              // minimum severity filter ("" = all levels)
 	filter    textinput.Model     // substring filter over the component and message
 	filtering bool                // the filter input has focus and is capturing keys
+	following bool                // the poller re-fetches the entries while the pane shows
 	loading   bool                // a logs fetch is in flight
 	err       error               // last fetch error, if any
 }
@@ -71,8 +75,12 @@ func nextLogLevel(current string) string {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// logsLoadedMsg carries a successfully loaded log page.
-type logsLoadedMsg struct{ resp *adminapi.LogsResponse }
+// logsLoadedMsg carries a successfully loaded log page and the level floor it
+// was fetched at.
+type logsLoadedMsg struct {
+	resp  *adminapi.LogsResponse
+	level string
+}
 
 // logsErrMsg carries a failed logs fetch.
 type logsErrMsg struct{ err error }
@@ -87,7 +95,7 @@ func (m *model) loadLogs() tea.Cmd {
 		if err != nil {
 			return logsErrMsg{err}
 		}
-		return logsLoadedMsg{resp}
+		return logsLoadedMsg{resp: resp, level: level}
 	}
 }
 
@@ -95,11 +103,19 @@ func (m *model) loadLogs() tea.Cmd {
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
-// applyLogs folds a loaded page into the logs state and scrolls to the bottom
-// so the freshest activity is in view.
-func (m *model) applyLogs(resp *adminapi.LogsResponse) {
-	m.logs.entries = resp.Entries
-	m.refreshLogLines()
+// applyLogs folds a loaded page into the logs state. A page fetched at a level
+// floor the operator has since moved off is dropped. The view stays on the
+// newest entries unless the operator has scrolled up to read older ones.
+func (m *model) applyLogs(msg logsLoadedMsg) {
+	if msg.level != m.logs.minLevel {
+		return
+	}
+	atBottom := m.logs.vp.AtBottom()
+	m.logs.entries = msg.resp.Entries
+	m.logs.vp.SetContent(m.renderLogLines())
+	if atBottom {
+		m.logs.vp.GotoBottom()
+	}
 	m.logs.loading = false
 	m.logs.err = nil
 }
@@ -129,14 +145,17 @@ func (m *model) handleLogsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left", "h":
 		return m.navBack()
 	case "r":
-		m.logs.loading = true
-		cmd := m.loadLogs()
+		cmd := m.fetch(pollLogs)
 		return m, cmd
+	case "F":
+		m.logs.following = !m.logs.following
+		return m, nil
 	case "L":
-		// cycle the minimum-level filter and re-fetch at the new floor.
+		// cycle the minimum-level filter and re-fetch at the new floor, even
+		// past a request in flight, whose page applyLogs will now drop.
 		m.logs.minLevel = nextLogLevel(m.logs.minLevel)
 		m.logs.loading = true
-		cmd := m.loadLogs()
+		cmd := m.fetchAt(pollLogs, time.Now())
 		return m, cmd
 	}
 
@@ -256,22 +275,26 @@ func (m *model) logsPaneView() string {
 	return m.frame(m.logsHeaderView(), m.hintFooter(), m.logsBody()...)
 }
 
-// logsHeaderView renders the title bar (entry count, level filter, and the
-// text filter while one is being typed or applied) plus the column header row
-// beneath it.
+// logsHeaderView renders the title bar (entry count, level filter, whether the
+// pane is following, and the text filter while one is being typed or applied)
+// plus the column header row beneath it.
 func (m *model) logsHeaderView() string {
 	level := "all"
 	if m.logs.minLevel != "" {
 		level = m.logs.minLevel + "+"
 	}
-	title := fmt.Sprintf("logs   %d entries   level: %s", len(m.logs.entries), level)
+	name := "logs"
+	if m.logs.following {
+		name = "logs (following)"
+	}
+	title := fmt.Sprintf("%s   %d entries   level: %s", name, len(m.logs.entries), level)
 	switch {
 	case m.logs.filtering:
-		title = fmt.Sprintf("logs   %d of %d entries   level: %s   filter: %s",
-			len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.View())
+		title = fmt.Sprintf("%s   %d of %d entries   level: %s   filter: %s",
+			name, len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.View())
 	case m.logs.filter.Value() != "":
-		title = fmt.Sprintf("logs   %d of %d entries   level: %s   filter: %s",
-			len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.Value())
+		title = fmt.Sprintf("%s   %d of %d entries   level: %s   filter: %s",
+			name, len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.Value())
 	}
 	cols := fmt.Sprintf("%-*s %-*s %-*s %s",
 		logTimeWidth, "TIME", logLevelWidth, "LEVEL", logComponentWidth, "COMPONENT", "MESSAGE")

@@ -13,10 +13,11 @@
 // a drain being followed) are polled on every pane, so a pane is current the
 // moment it is opened and a drain keeps being followed while the operator
 // looks elsewhere. Targets whose data belongs to the instance that answered
-// (workers, cache) are polled only while their pane is showing: behind a load
-// balancer, background polls would mix readings from different instances.
-// Logs are refreshed only on request, and the file listing is never polled,
-// because both are being navigated.
+// (workers, cache, logs) are polled only while their pane is showing: behind a
+// load balancer, background polls would mix readings from different instances.
+// Logs are polled only while the operator follows them, since each poll
+// replaces what is being read. The file listing is never polled, because it is
+// being navigated.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -39,6 +40,7 @@ const (
 	pollWorkers
 	pollCache
 	pollDrain
+	pollLogs
 	pollTargetCount
 )
 
@@ -55,6 +57,7 @@ var pollIntervals = [pollTargetCount]time.Duration{
 	pollWorkers:     5 * time.Second,
 	pollCache:       5 * time.Second,
 	pollDrain:       2 * time.Second,
+	pollLogs:        2 * time.Second,
 }
 
 // poller records, per target, when it was last requested and whether that
@@ -96,6 +99,8 @@ func (m *model) pollWanted(t pollTarget) bool {
 		return m.section == sectionCache
 	case pollDrain:
 		return m.backends.drain.following
+	case pollLogs:
+		return m.section == sectionLogs && m.logs.following
 	default:
 		return true
 	}
@@ -142,6 +147,8 @@ func (m *model) loadCmd(t pollTarget) tea.Cmd {
 			return nil
 		}
 		return m.pollDrain(m.backends.drain.backend)
+	case pollLogs:
+		return m.loadLogs()
 	}
 	return nil
 }
@@ -164,6 +171,8 @@ func pollTargetOf(msg tea.Msg) (pollTarget, bool) {
 		return pollCache, true
 	case drainProgressMsg:
 		return pollDrain, true
+	case logsLoadedMsg, logsErrMsg:
+		return pollLogs, true
 	}
 	return 0, false
 }

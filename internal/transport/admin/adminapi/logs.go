@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Wire types for the admin logs endpoint shared by the handler and the TUI logs
-// pane. Kept in the leaf adminapi package so the server and its client depend on
+// Wire types for the logs endpoint shared by the handler, the TUI logs pane and
+// the web dashboard's logs pane. Kept in the leaf adminapi package so the server and its client depend on
 // one definition and the JSON shape cannot drift.
 // -------------------------------------------------------------------------------
 
@@ -13,8 +13,10 @@ package adminapi
 import "time"
 
 // LogsResponse is a page of recent structured log entries, oldest first.
+// HasMore reports that older matching entries were cut by the page limit.
 type LogsResponse struct {
 	Entries []LogEntry `json:"entries"`
+	HasMore bool       `json:"hasMore"`
 }
 
 // LogEntry is one structured log record: the timestamp, severity, message, the

@@ -246,7 +246,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backends.err = msg.err
 		return m, nil
 	case logsLoadedMsg:
-		m.applyLogs(msg.resp)
+		m.applyLogs(msg)
 		return m, nil
 	case logsErrMsg:
 		m.logs.loading = false

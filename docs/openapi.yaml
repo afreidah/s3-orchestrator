@@ -461,9 +461,27 @@ paths:
                   required: false
                   schema:
                     type: string
+                - name: since
+                  in: query
+                  description: RFC3339 timestamp; only records at or after it
+                  required: false
+                  schema:
+                    type: string
+                - name: before
+                  in: query
+                  description: RFC3339 timestamp; only records before it
+                  required: false
+                  schema:
+                    type: string
+                - name: component
+                  in: query
+                  description: Only records from this component
+                  required: false
+                  schema:
+                    type: string
                 - name: limit
                   in: query
-                  description: Maximum records to return
+                  description: Maximum records to return, newest kept (default 200, max 1000)
                   required: false
                   schema:
                     type: integer
@@ -1848,8 +1866,11 @@ components:
                     items:
                         $ref: '#/components/schemas/LogEntry'
                     type: array
+                hasMore:
+                    type: boolean
             required:
                 - entries
+                - hasMore
             type: object
         Notice:
             properties:

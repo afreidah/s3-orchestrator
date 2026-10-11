@@ -15,7 +15,7 @@
 //   - objects.go        upload/download/delete/tree
 //   - admin_ops.go      rebalance/clean-excess/sync (async ops + status)
 //   - admin_actions.go  replicate/scrub/backfill/encrypt (async-action helpers)
-//   - logs.go           log-API handler and query parsers
+//   - logs.go           log-API route over the admin logs handler
 //   - responses.go      shared JSON read/write helpers
 //   - async.go          asyncOpTracker (shared by admin_ops and admin_actions)
 //   - templates.go      template loading + embedded static FS
@@ -35,10 +35,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -104,7 +104,7 @@ type Deps struct {
 	DBHealthy     func() bool
 	Buckets       DeclaredBuckets
 	Cfg           *config.Config
-	LogBuffer     *telemetry.LogBuffer
+	LogBuffer     admin.LogReader
 	LoginThrottle *httputil.LoginThrottle
 	Registry      func() *auth.BucketRegistry
 }
@@ -125,7 +125,7 @@ type Handler struct {
 	buckets        DeclaredBuckets
 	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
-	logBuffer      *telemetry.LogBuffer
+	logs           http.HandlerFunc
 	loginThrottle  *httputil.LoginThrottle
 	prefix         string
 	sessionKey     []byte
@@ -166,7 +166,7 @@ func New(d *Deps) *Handler {
 		dbHealthy:      d.DBHealthy,
 		buckets:        d.Buckets,
 		templates:      loadTemplates(),
-		logBuffer:      d.LogBuffer,
+		logs:           admin.LogsHandler(d.LogBuffer),
 		loginThrottle:  d.LoginThrottle,
 		sessionKey:     deriveSessionKey(&d.Cfg.UI),
 		forceSecure:    d.Cfg.UI.ForceSecureCookies,

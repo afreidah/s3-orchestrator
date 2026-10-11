@@ -59,7 +59,7 @@ type Handler struct {
 	reconciler   Reconciler
 	dbHealthy    func() bool
 	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
-	logs         logReader                      // nil when the log buffer is not wired
+	logs         LogReader                      // nil when the log buffer is not wired
 	replMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
 	cleanup      core.CleanupStore
 	objectCache  cache.ObjectCache
@@ -91,7 +91,7 @@ type Deps struct {
 	Lifecycle    core.BackendLifecycleStore
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
-	LogBuffer    logReader                      // nil when the log buffer is not wired
+	LogBuffer    LogReader                      // nil when the log buffer is not wired
 	ReplMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
 	Cleanup      core.CleanupStore
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled

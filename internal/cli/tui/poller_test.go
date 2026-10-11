@@ -33,7 +33,7 @@ func TestPoller_FirstTickFetchesFleetWideTargets(t *testing.T) {
 			t.Errorf("target %d should be fetched on every pane", target)
 		}
 	}
-	for _, target := range []pollTarget{pollWorkers, pollCache, pollDrain} {
+	for _, target := range []pollTarget{pollWorkers, pollCache, pollDrain, pollLogs} {
 		if m.poll.inFlight[target] {
 			t.Errorf("target %d should not be fetched while its pane is hidden or idle", target)
 		}
@@ -148,6 +148,7 @@ func TestPollTargetOf_MapsEveryResult(t *testing.T) {
 		pollWorkers:     {workersLoadedMsg{}, workersErrMsg{}},
 		pollCache:       {cacheLoadedMsg{}, cacheErrMsg{}},
 		pollDrain:       {drainProgressMsg{}},
+		pollLogs:        {logsLoadedMsg{}, logsErrMsg{}},
 	}
 	for want, msgs := range cases {
 		for _, msg := range msgs {
@@ -156,8 +157,27 @@ func TestPollTargetOf_MapsEveryResult(t *testing.T) {
 			}
 		}
 	}
-	if _, ok := pollTargetOf(logsLoadedMsg{}); ok {
-		t.Error("logs are not polled, so their result should map to no target")
+	if _, ok := pollTargetOf(configLoadedMsg{}); ok {
+		t.Error("config is not polled, so its result should map to no target")
+	}
+}
+
+// TestPoller_LogsOnlyWhileFollowed verifies logs are polled only while the
+// Logs pane is showing and the operator is following it.
+func TestPoller_LogsOnlyWhileFollowed(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.section = sectionLogs
+	if m.pollWanted(pollLogs) {
+		t.Error("logs should not be polled until the operator follows them")
+	}
+	m.handleLogsKey(key("F"))
+	if !m.pollWanted(pollLogs) {
+		t.Error("followed logs should be polled while their pane shows")
+	}
+	m.section = sectionFiles
+	if m.pollWanted(pollLogs) {
+		t.Error("followed logs should not be polled while another pane shows")
 	}
 }
 

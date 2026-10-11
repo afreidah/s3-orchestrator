@@ -44,11 +44,11 @@ func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	m.section = sectionLogs
 	m.logs = logsView{loading: true}
 
-	m.applyLogs(&adminapi.LogsResponse{Entries: []adminapi.LogEntry{
+	m.applyLogs(logsLoadedMsg{resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
 		{Level: "INFO", Message: "one"},
 		{Level: "WARN", Message: "two"},
 		{Level: "ERROR", Message: "three"},
-	}})
+	}}})
 	if m.logs.loading || m.logs.err != nil {
 		t.Errorf("state = %+v", m.logs)
 	}
@@ -78,11 +78,11 @@ func TestHandleLogsKey_BackAndReload(t *testing.T) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
-	// "r" reloads: sets loading and returns a fetch command.
+	// "r" reloads in place: the loaded entries stay up while the fetch runs.
 	m.navFocus = false
 	_, cmd := m.handleLogsKey(key("r"))
-	if !m.logs.loading || cmd == nil {
-		t.Errorf("reload: loading=%v cmd=%v", m.logs.loading, cmd)
+	if cmd == nil || !m.poll.inFlight[pollLogs] {
+		t.Fatalf("reload: cmd=%v inFlight=%v", cmd, m.poll.inFlight[pollLogs])
 	}
 	if _, ok := cmd().(logsLoadedMsg); !ok {
 		t.Errorf("reload result = %#v, want logsLoadedMsg", cmd())
@@ -123,6 +123,65 @@ func TestLogsBody_States(t *testing.T) {
 	m.logs = logsView{}
 	if got := bodyText(m.logsBody()); !strings.Contains(got, "no log entries") {
 		t.Errorf("empty body = %q", got)
+	}
+}
+
+func TestLogsHeaderView_ShowsFollowing(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 20
+	m.section = sectionLogs
+
+	m.handleLogsKey(key("F"))
+	if got := m.logsHeaderView(); !strings.Contains(got, "logs (following)") {
+		t.Errorf("following header = %q", got)
+	}
+	m.handleLogsKey(key("F"))
+	if got := m.logsHeaderView(); strings.Contains(got, "following") {
+		t.Errorf("header after unfollow = %q", got)
+	}
+}
+
+// TestApplyLogs_KeepsScrolledUpPosition verifies a refresh holds the view on
+// the newest entries only when the operator was already there.
+func TestApplyLogs_KeepsScrolledUpPosition(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 20
+	m.section = sectionLogs
+	m.logs.vp.Height = 5
+	page := func(n int) logsLoadedMsg {
+		entries := make([]adminapi.LogEntry, n)
+		for i := range entries {
+			entries[i] = adminapi.LogEntry{Level: "INFO", Message: "line"}
+		}
+		return logsLoadedMsg{resp: &adminapi.LogsResponse{Entries: entries}}
+	}
+
+	m.applyLogs(page(20))
+	if !m.logs.vp.AtBottom() {
+		t.Fatal("first page should open on the newest entries")
+	}
+	m.applyLogs(page(25))
+	if !m.logs.vp.AtBottom() {
+		t.Error("a view at the bottom should follow new entries")
+	}
+	m.logs.vp.GotoTop()
+	m.applyLogs(page(30))
+	if m.logs.vp.YOffset != 0 {
+		t.Errorf("scrolled-up view moved to offset %d", m.logs.vp.YOffset)
+	}
+}
+
+// TestApplyLogs_DropsStaleLevel verifies a page fetched at a level floor the
+// operator has since cycled off does not replace the entries.
+func TestApplyLogs_DropsStaleLevel(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.logs.minLevel = "WARN"
+	m.applyLogs(logsLoadedMsg{level: "INFO", resp: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{{Message: "stale"}}}})
+	if len(m.logs.entries) != 0 {
+		t.Errorf("entries = %v, want the stale page dropped", m.logs.entries)
 	}
 }
 
