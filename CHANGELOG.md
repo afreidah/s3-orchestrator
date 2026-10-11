@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.158.3] - 2026-10-11
+
+### Fixed
+- fix(backend): fall back to single deletes when a backend rejects batch delete (#1678) (#1680)
+
+### Improved
+- update CHANGELOG.md for v0.158.2
+
 ## [0.158.2] - 2026-10-11
 
 ### Fixed
