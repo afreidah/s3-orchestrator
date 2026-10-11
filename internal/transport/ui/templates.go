@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
@@ -52,10 +53,17 @@ func loadTemplates() *template.Template {
 		"joinStrings":    strings.Join,
 		"sub":            sub,
 		"ratio":          ratio,
+		"cordoned":       cordoned,
 	}
 	return template.Must(
 		template.New("").Funcs(funcMap).ParseFS(embeddedFS, "templates/*.html"),
 	)
+}
+
+// cordoned reports whether a backend's flags carry a cordon, so the template
+// can badge it without knowing which bit that is.
+func cordoned(flags core.BackendFlags) bool {
+	return flags.Any(core.FlagCordoned)
 }
 
 // sub subtracts b from a. Templates cannot do arithmetic, and the alternative

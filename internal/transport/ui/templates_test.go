@@ -10,10 +10,57 @@
 package ui
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// TestDashboard_BadgesCordonedBackends renders the backends table and verifies
+// a cordoned backend carries the Cordoned badge, a cordoned and draining one
+// carries both badges, and a backend in service carries neither.
+func TestDashboard_BadgesCordonedBackends(t *testing.T) {
+	t.Parallel()
+	page := dashboardPage{Data: &dashboard.Data{
+		BackendOrder: []string{"held", "both", "plain"},
+		BackendFlags: map[string]core.BackendFlags{
+			"held": core.FlagCordoned,
+			"both": core.FlagCordoned | core.FlagDraining,
+		},
+		DrainingBackends: map[string]backendstate.DrainProgress{"both": {Active: true, State: "draining"}},
+		TopLevelEntries:  &core.DirectoryListResult{},
+	}}
+	var buf bytes.Buffer
+	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := buf.String()
+
+	rowFor := func(name string) string {
+		start := strings.Index(out, "<td>"+name)
+		if start < 0 {
+			t.Fatalf("no row for %s", name)
+		}
+		return out[start : start+strings.Index(out[start:], "</td>")]
+	}
+	if row := rowFor("held"); !strings.Contains(row, "badge-cordoned") || strings.Contains(row, "badge-draining") {
+		t.Errorf("held row = %s, want only the cordoned badge", row)
+	}
+	if row := rowFor("both"); !strings.Contains(row, "badge-cordoned") || !strings.Contains(row, "badge-draining") {
+		t.Errorf("both row = %s, want the cordoned and draining badges", row)
+	}
+	if row := rowFor("plain"); strings.Contains(row, "badge-") {
+		t.Errorf("plain row = %s, want no badge", row)
+	}
+	if !strings.Contains(out, `class="row-cordoned"`) {
+		t.Error("the cordoned-only backend's row is not highlighted")
+	}
+}
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR

@@ -15,10 +15,10 @@ A ready-to-import Grafana dashboard covering every metric ships at `grafana/s3-o
 
 ### Web dashboard
 
-When `ui.enabled` is `true`, the dashboard at `{path}/` shows the following. Quota, object counts, multipart uploads, integrity coverage, plaintext copies and compression come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; monthly usage, drain progress and backend health are read live:
+When `ui.enabled` is `true`, the dashboard at `{path}/` shows the following. Quota, object counts, multipart uploads, integrity coverage, plaintext copies and compression come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; monthly usage, drain progress, backend state and backend health are read live:
 
 - **Storage summary** - total bytes used/capacity across all backends
-- **Backend quota** - bytes used/limit with progress bars per backend, object counts, active multipart uploads
+- **Backend quota** - bytes used/limit with progress bars per backend, object counts, active multipart uploads, and each backend's state: a **Cordoned** badge when no new copies may land on it, and **Draining**, **Drained** or **Drain failed** for a drain. A cordon and a drain show together. The dashboard shows the state read-only; cordon and uncordon through the admin API, `admin cordon` / `admin uncordon`, or `C` in the TUI
 - **Integrity coverage** - how long ago the least recently verified copy was checked, and how many copies have never been checked. Shown when `integrity.enabled` is true. Distinct from the backend table's **No Hash** column, which counts copies with no stored hash at all: a fully hashed fleet can still be entirely unverified
 - **Monthly usage** - API requests, egress, and ingress per backend with limits
 - **Object tree** - interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
@@ -61,7 +61,7 @@ The dashboard requires authentication. Users log in at `{path}/login` with a cre
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion - directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` and `before` (RFC3339 timestamps), `component`, and `limit` (default 200, max 1000). Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The dashboard endpoint's `BackendFlags` maps each backend carrying a state flag to its flag names, such as `["cordoned"]`. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` and `before` (RFC3339 timestamps), `component`, and `limit` (default 200, max 1000). Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
 
 ### Health endpoints
 

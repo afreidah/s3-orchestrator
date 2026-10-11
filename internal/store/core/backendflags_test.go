@@ -12,6 +12,7 @@
 package core
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -42,6 +43,21 @@ func TestBackendFlags_AcceptMasks(t *testing.T) {
 	}
 	if !BackendFlags(0).AcceptedBy(AcceptForWrite) {
 		t.Error("a backend with no flags is held back")
+	}
+}
+
+// TestBackendFlags_MarshalJSON pins the JSON form to the flag names.
+func TestBackendFlags_MarshalJSON(t *testing.T) {
+	t.Parallel()
+	for flags, want := range map[BackendFlags]string{
+		0:                           `[]`,
+		FlagCordoned:                `["cordoned"]`,
+		FlagCordoned | FlagDraining: `["cordoned","draining"]`,
+	} {
+		got, err := json.Marshal(flags)
+		if err != nil || string(got) != want {
+			t.Errorf("json.Marshal(%d) = %s, %v; want %s", int64(flags), got, err, want)
+		}
 	}
 }
 

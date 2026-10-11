@@ -18,7 +18,11 @@
 
 package core
 
-import "github.com/afreidah/s3-orchestrator/internal/util/bitset"
+import (
+	"encoding/json"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/bitset"
+)
 
 // BackendFlags is a backend's operator-set state. Flags are combined with OR
 // when set, and tested against an accept mask. It is signed to match the
@@ -84,6 +88,12 @@ func (f BackendFlags) Names() []string {
 // String renders the set as its flag names joined by commas.
 func (f BackendFlags) String() string {
 	return backendFlagNames.Join(f)
+}
+
+// MarshalJSON renders the set as its flag names, so an API carrying it reads
+// ["cordoned"] rather than a bit number.
+func (f BackendFlags) MarshalJSON() ([]byte, error) {
+	return json.Marshal(f.Names())
 }
 
 // DrainState names where the backend's drain stands: draining, drained or

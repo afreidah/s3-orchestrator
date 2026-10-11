@@ -152,10 +152,12 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: var(--text); }
 }
 
 .badge-drained { background: var(--border); color: var(--text); }
+.badge-cordoned { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
 
 .row-draining { background: color-mix(in srgb, var(--info) 8%, transparent); }
 .row-drained { opacity: 0.6; }
 .row-degraded { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.row-cordoned { background: color-mix(in srgb, var(--warn) 5%, transparent); }
 
 .meta { font-size: 0.8rem; color: var(--text-dim); }
 
