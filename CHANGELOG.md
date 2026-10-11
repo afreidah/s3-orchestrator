@@ -3,6 +3,53 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.158.2] - 2026-10-11
+
+### Fixed
+- fix(compression): bound Decompress frame reads; upgrade Go to 1.27.2 (#1647)
+- fix(ops): page backfill and key rotation by cursor, flush pool deltas atomically, escape CLI keys (#1641)
+- fix(integrity): backfill skips copies it can never decode (#1624)
+- fix(replication): stop unreadable imports resurrecting deleted keys (#1623)
+
+### Refactored
+- rename the drain record to backend state (#1671)
+- refactor(proxy): one worker Ops, and BackendRuntime without its wrapper structs (#1632)
+- refactor(object): flatten the manager's runtime and coordinator dependencies (#1631)
+
+### Improved
+- update CHANGELOG.md for v0.151.4
+
+### Documentation
+- document backend cordon and bring the style guide in line with the code (#1670) (#1676)
+- document .version bump, nolint, and fork SonarQube in CONTRIBUTING (#1622)
+
+### Dependencies
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 from 1.113.4 to 1.114.0 in the aws-sdk group (#1643)
+- chore(deps): bump the otel group with 4 updates (#1644)
+- chore(deps): bump the minor-and-patch group with 2 updates (#1645)
+- chore(deps): bump anchore/sbom-action/download-syft from 0.24.2 to 0.24.3 in the actions group (#1646)
+
+### Other
+- reconcile: treat pending_objects paths as tracked during sync (#1656)
+- show cordoned backends on the web dashboard (#1675)
+- cordon and uncordon a backend from the TUI (#1674)
+- cordon and uncordon a backend over the admin API and CLI (#1673)
+- hold backend state as flags and add the cordon flag (#1672)
+- skip the workerpool concurrency warning on an empty batch (#1664)
+- share one logs endpoint and follow logs in the TUI (#1662)
+- serve admin pass endpoints from one descriptor (#1661)
+- perf: trim SigV4 key derivation and header whitespace allocations (#1659)
+- perf: compute fleet figures on their own cadence and cut worker scans (#1657)
+- consolidate duplicated store, admin client, and token logic (#1653)
+- perf: return the tag count from the read-path location query (#1652)
+- perf: batch backend deletes and answer failed conditional GETs from metadata (#1651)
+- ci(fuzz): anchor fuzz target names and run every fuzz target (#1642)
+- trim bloated comments across the codebase (#1635)
+- perf(counter): charge request pools without allocating, and alert on allocation regressions (#1634)
+- report the running configuration (#1629)
+- list and purge copies encrypted with no key (#1625)
+- the metadata database backup is the encryption key backup (#1621)
+
 ## [0.151.4] - 2026-10-05
 
 ### Fixed
