@@ -11,7 +11,7 @@ This guide walks through running the S3 Orchestrator demo environment on your lo
 
 Both demos require:
 
-- [Docker](https://docs.docker.com/get-docker/) with Compose v2
+- [Docker](https://docs.docker.com/get-docker/)
 - [Go](https://go.dev/dl/) (to build from source)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html) (or any S3-compatible client)
 
@@ -39,7 +39,7 @@ make nomad-demo
 make kubernetes-demo
 ```
 
-The script builds the container image from source, starts the backing services via Docker Compose, deploys s3-orchestrator into the chosen orchestrator, and waits for the health check to pass. When everything is ready you will see a summary like this:
+The script builds the container image from source, runs the backing services in the chosen orchestrator - as Nomad jobs, or as workloads in the k3d cluster - deploys s3-orchestrator alongside them, and waits for the health check to pass. When everything is ready you will see a summary like this:
 
 ```
 ========================================
@@ -72,7 +72,7 @@ The demo starts several services behind the scenes:
 | **Loki** | 3100 | Log aggregation |
 | **Alloy** | - | Log collector (ships container logs to Loki) |
 
-The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes demo creates a **k3d cluster** with a single node.
+The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes demo creates a **k3d cluster** with a single node; there, MinIO, PostgreSQL, Redis and Loki are only reachable inside the cluster, and the orchestrator, Grafana, Prometheus and Tempo are published on the ports above.
 
 ### Demo Configuration
 
@@ -239,10 +239,12 @@ To see it in action with the Nomad demo:
 
 ### Test circuit breaker behavior
 
-1. Stop one of the MinIO containers: `docker stop s3-orchestrator-minio-1-1`
+1. Stop one of the MinIO backends:
+   - Nomad: `docker stop $(docker ps -qf name=minio-1-)`
+   - Kubernetes: `kubectl --context k3d-s3-orchestrator-demo -n demo scale deployment/minio-1 --replicas=0`
 2. Upload a file - the orchestrator routes to the healthy backend
 3. Check the **Circuit Breaker** panel in Grafana to see the state transition
-4. Restart MinIO: `docker start s3-orchestrator-minio-1-1`
+4. Bring MinIO back. Nomad restarts the task on its own after its restart delay, usually at a new container address, so about 30 seconds later the orchestrator instances restart once to pick it up; on Kubernetes, scale it back with `--replicas=1`. The backend keeps its data either way.
 5. The circuit breaker resets after 15 seconds and the backend rejoins the pool
 
 ### Explore encryption
@@ -250,7 +252,7 @@ To see it in action with the Nomad demo:
 Objects are encrypted transparently. To verify:
 
 1. Upload a file through the orchestrator
-2. Try reading it directly from MinIO at `http://localhost:19000` - the content is encrypted ciphertext
+2. Try reading it directly from MinIO at `http://localhost:19000` - the content is encrypted ciphertext (on Kubernetes, first run `kubectl --context k3d-s3-orchestrator-demo -n demo port-forward svc/minio-1 19000:9000`)
 3. Read it back through the orchestrator at `http://localhost:9000` - it is decrypted automatically
 
 ## Tearing Down
@@ -263,4 +265,4 @@ Objects are encrypted transparently. To verify:
 ./deploy/kubernetes/local/demo.sh down
 ```
 
-This stops the orchestrator, deletes the Nomad job or k3d cluster, and tears down all Docker Compose services.
+This stops the orchestrator and every backing service, and stops the Nomad dev agent or deletes the k3d cluster.

@@ -1,0 +1,55 @@
+# -------------------------------------------------------------------------------
+# Demo MinIO Bucket Setup - Local Dev Kubernetes Job
+#
+# Author: Alex Freidah
+#
+# Creates the bucket each MinIO backend in services.yaml serves, the job the
+# minio-setup service does in docker-compose.test.yml. A Job's pod template
+# cannot be changed once created, so demo.sh deletes any earlier run before
+# applying this, which also runs it again against the current backends.
+# -------------------------------------------------------------------------------
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-setup
+  namespace: demo
+spec:
+  # The script already waits for every backend to answer, so a failure past
+  # that is worth surfacing rather than retrying indefinitely.
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mc
+          image: ghcr.io/afreidah/mc:RELEASE.2025-04-16T18-13-26Z
+          command: ["/bin/sh", "-c"]
+          # make_bucket waits for one backend to answer, then creates its
+          # bucket.
+          args:
+            - |
+              set -eu
+
+              make_bucket() {
+                alias="$1" addr="$2" bucket="$3" tries=0
+                until mc alias set "$alias" "http://$addr" minioadmin minioadmin >/dev/null 2>&1; do
+                  tries=$((tries + 1))
+                  if [ "$tries" -ge 60 ]; then
+                    echo "$alias at $addr did not answer" >&2
+                    exit 1
+                  fi
+                  sleep 2
+                done
+                mc mb --ignore-existing "$alias/$bucket"
+              }
+
+              make_bucket minio1 minio-1:9000 backend1
+              make_bucket minio2 minio-2:9000 backend2
+              make_bucket minio3 minio-3:9000 backend3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

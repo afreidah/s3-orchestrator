@@ -11,8 +11,8 @@ weight: 35
 Production-ready manifests for both platforms are in [`deploy/`](../deploy/). Each includes a local demo script that stands up a complete environment in one command:
 
 ```bash
-make kubernetes-demo   # k3d cluster with docker-compose backing services
-make nomad-demo        # Nomad dev agent with docker-compose backing services
+make kubernetes-demo   # k3d cluster, backing services running in the cluster
+make nomad-demo        # Nomad dev agent, backing services running as Nomad jobs
 ```
 
 See [`deploy/README.md`](../deploy/README.md) for production deployment instructions, Vault integration, TLS/mTLS configuration, and Ingress setup.

@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------------
-# S3 Orchestrator - Local Dev Helm Values (k3d + docker-compose)
+# S3 Orchestrator - Local Dev Helm Values (k3d)
 #
 # Author: Alex Freidah
 #
@@ -33,7 +33,7 @@ networkPolicy:
   enabled: false
 
 # Matches telemetry.metrics.listen and pprof in the shared config. Alloy scrapes
-# each pod's metrics port and remote-writes to the host Prometheus.
+# each pod's metrics port and remote-writes to the demo's Prometheus.
 metrics:
   enabled: true
   path: /metrics

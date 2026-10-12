@@ -331,9 +331,9 @@ job "s3-orchestrator" {
               # would leak runtime internals and offer a DoS amplifier
               # (/debug/pprof/profile?seconds=300). Bind to an
               # internal-only interface; the demo uses 0.0.0.0:9001
-              # so the docker-compose Prometheus can scrape via the
-              # bridge gateway. Tighten this to 127.0.0.1:9001 or a
-              # private network address for non-local deployments.
+              # so its Prometheus can scrape each instance's published
+              # port. Tighten this to 127.0.0.1:9001 or a private
+              # network address for non-local deployments.
               listen: "127.0.0.1:9001"
               # Pprof endpoints are opt-in and OFF by default. The
               # debug surface (CPU profiles, stack traces, command

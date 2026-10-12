@@ -4,10 +4,10 @@
 # Author: Alex Freidah
 #
 # The one config both local demos run, so the Nomad and Kubernetes demos
-# differ only in the scheduler underneath. Points at docker-compose.test.yml
-# services on the host. The __HOST_IP__, __ROOT_ACCESS_KEY__ and
-# __ROOT_SECRET_KEY__ placeholders are substituted by render_config in
-# lib.sh. Not for production use.
+# differ only in the scheduler underneath. Each demo runs its own backing
+# services and fills the placeholders below through render_config in
+# lib.sh: the Nomad demo with service-registry lookups, the Kubernetes demo
+# with cluster DNS names. Not for production use.
 # -------------------------------------------------------------------------------
 
 server:
@@ -20,20 +20,20 @@ server:
 
 database:
   driver: postgres
-  host: "__HOST_IP__"
-  port: 15432
+  host: "__POSTGRES_HOST__"
+  port: __POSTGRES_PORT__
   database: "s3proxy_test"
   user: "s3proxy"
   password: "s3proxy"
   ssl_mode: "disable"
-  # Per instance. The default three instances stay under the compose
+  # Per instance. The default three instances stay under the demo
   # Postgres max_connections of 300.
   max_conns: 90
 
 # Shared usage counters: every instance sees the fleet's spend, and one
 # instance at a time flushes them to Postgres.
 redis:
-  address: "__HOST_IP__:16379"
+  address: "__REDIS_ADDR__"
 
 buckets:
   - name: "photos"
@@ -43,7 +43,7 @@ buckets:
 
 backends:
   - name: "minio-1"
-    endpoint: "http://__HOST_IP__:19000"
+    endpoint: "http://__MINIO_1_ADDR__"
     region: "us-east-1"
     bucket: "backend1"
     access_key_id: "minioadmin"
@@ -53,7 +53,7 @@ backends:
     quota_bytes: 10737418240
 
   - name: "minio-2"
-    endpoint: "http://__HOST_IP__:19002"
+    endpoint: "http://__MINIO_2_ADDR__"
     region: "us-east-1"
     bucket: "backend2"
     access_key_id: "minioadmin"
@@ -63,7 +63,7 @@ backends:
     quota_bytes: 10737418240
 
   - name: "minio-3"
-    endpoint: "http://__HOST_IP__:19004"
+    endpoint: "http://__MINIO_3_ADDR__"
     region: "us-east-1"
     bucket: "backend3"
     access_key_id: "minioadmin"
@@ -148,7 +148,7 @@ telemetry:
     pprof: true
   tracing:
     enabled: true
-    endpoint: "__HOST_IP__:4317"
+    endpoint: "__OTLP_ADDR__"
     insecure: true
 
 # Per instance, so the fleet admits the rate times the instance count.

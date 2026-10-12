@@ -4,7 +4,9 @@
 # Author: Alex Freidah
 #
 # Provides MinIO (x3), PostgreSQL, Redis, and observability stack for local
-# development and demos. Integration tests use testcontainers instead - see
+# development ("make run" and "make dev-deps"). The Nomad and Kubernetes
+# demos run their own copies of these services in the scheduler they
+# target, and integration tests use testcontainers - see
 # internal/integration/helpers_test.go.
 #
 # The MinIO images are project-owned GHCR mirrors of pinned upstream releases,
@@ -96,7 +98,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Shared usage counters for the multi-instance Nomad demo.
+  # Shared usage counters, for running more than one instance against it.
   redis:
     image: redis:7.4-alpine
     ports:
@@ -131,7 +133,7 @@ services:
     network_mode: host
     volumes:
       - ./deploy/monitoring/tempo.yml:/etc/tempo.yml:ro
-    command: ["-config.file=/etc/tempo.yml"]
+    command: ["-config.file=/etc/tempo.yml", "-config.expand-env=true"]
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3200/ready"]
       interval: 5s
@@ -185,6 +187,9 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      PROMETHEUS_URL: http://host.docker.internal:19090
+      LOKI_URL: http://host.docker.internal:3100
+      TEMPO_URL: http://host.docker.internal:3200
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

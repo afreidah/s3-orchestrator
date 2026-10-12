@@ -4,9 +4,9 @@
 # Author: Alex Freidah
 #
 # Runs Alloy on every node to ship pod logs from /var/log/pods to Loki and
-# pod metrics to Prometheus. Positions are stored on a hostPath so Alloy
-# survives restarts without re-reading old logs. The Role lets it discover
-# the orchestrator pods it scrapes.
+# pod metrics to Prometheus, both in the "demo" namespace. Positions are
+# stored on a hostPath so Alloy survives restarts without re-reading old
+# logs. The Role lets it discover the orchestrator pods it scrapes.
 # -------------------------------------------------------------------------------
 
 apiVersion: v1

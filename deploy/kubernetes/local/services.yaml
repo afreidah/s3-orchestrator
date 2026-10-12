@@ -1,0 +1,406 @@
+# -------------------------------------------------------------------------------
+# Demo Backing Services - Local Dev Kubernetes Manifests
+#
+# Author: Alex Freidah
+#
+# PostgreSQL, Redis and the three MinIO backends the local Kubernetes demo's
+# pods run against, in their own "demo" namespace. The orchestrator pods
+# reach them by cluster DNS name (<service>.demo.svc.cluster.local), which
+# demo.sh writes into the shared config. PostgreSQL and MinIO keep their data
+# on volumes from k3s's local-path provisioner, so a backend scaled to zero
+# and back keeps its objects, the way compose's volumes outlive a stopped
+# container; "demo.sh down" deletes them with the cluster.
+#
+# Resource requests are kept small so the stack schedules beside the
+# orchestrator pods, which request most of a laptop's CPU; the limits leave
+# room for a perf run.
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: demo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          # Debian rather than alpine: musl has no locale data, so text sorts
+          # by byte regardless of collation and the stack under test stops
+          # resembling a real deployment.
+          image: postgres:16
+          # The stock buffer and checkpoint settings stall commits under a
+          # perf run; the same settings as docker-compose.test.yml. The
+          # connection limit covers three pods at the shared config's
+          # max_conns of 90.
+          args:
+            - postgres
+            - -c
+            - max_connections=300
+            - -c
+            - shared_buffers=512MB
+            - -c
+            - checkpoint_timeout=15min
+            - -c
+            - max_wal_size=4GB
+          # Demo-only credentials, matching deploy/local/config.yaml.
+          env:
+            - name: POSTGRES_DB
+              value: s3proxy_test
+            - name: POSTGRES_USER
+              value: s3proxy
+            - name: POSTGRES_PASSWORD
+              value: s3proxy
+          ports:
+            - name: postgres
+              containerPort: 5432
+          # Over TCP rather than the socket: during initdb the server only
+          # listens on the socket, then restarts, so the socket would report
+          # ready once too early.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "s3proxy", "-d", "s3proxy_test"]
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 512Mi
+            limits:
+              memory: 4Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: demo
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# Shared usage counters: every pod sees the fleet's spend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: demo
+spec:
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+# -------------------------------------------------------------------------
+# MINIO BACKENDS
+# -------------------------------------------------------------------------
+#
+# One Deployment and Service per backend, so each is scheduled and restarted
+# on its own the way three independent storage providers would be. The image
+# is the project-owned GHCR mirror of a pinned upstream release, because
+# neither Docker Hub nor quay.io serves MinIO to anonymous pulls. Buckets are
+# created afterwards by minio-setup.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-1-data
+  namespace: demo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-1
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: minio-1
+    app.kubernetes.io/component: storage-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio-1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-1
+        app.kubernetes.io/component: storage-backend
+    spec:
+      containers:
+        - name: minio
+          image: ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          # Demo-only credentials, matching deploy/local/config.yaml.
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-1-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-1
+  namespace: demo
+spec:
+  selector:
+    app.kubernetes.io/name: minio-1
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-2-data
+  namespace: demo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-2
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: minio-2
+    app.kubernetes.io/component: storage-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio-2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-2
+        app.kubernetes.io/component: storage-backend
+    spec:
+      containers:
+        - name: minio
+          image: ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          # Demo-only credentials, matching deploy/local/config.yaml.
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-2-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-2
+  namespace: demo
+spec:
+  selector:
+    app.kubernetes.io/name: minio-2
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-3-data
+  namespace: demo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-3
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: minio-3
+    app.kubernetes.io/component: storage-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio-3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-3
+        app.kubernetes.io/component: storage-backend
+    spec:
+      containers:
+        - name: minio
+          image: ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          # Demo-only credentials, matching deploy/local/config.yaml.
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-3-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-3
+  namespace: demo
+spec:
+  selector:
+    app.kubernetes.io/name: minio-3
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3

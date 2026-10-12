@@ -3,10 +3,11 @@
 #
 # Author: Alex Freidah
 #
-# Scrape config for the local demos. The Nomad demo's instances are scraped
-# directly, found through Nomad's service registry. The Kubernetes demo's pods
-# are not reachable from the host, so Alloy scrapes them in the cluster and
-# remote-writes here. Either way every series carries job="s3-orchestrator".
+# Scrape config for the Nomad demo's Prometheus and the docker-compose dev
+# stack. The Nomad demo's instances are scraped directly, found through
+# Nomad's service registry. The Kubernetes demo runs its own Prometheus in
+# the cluster (deploy/kubernetes/local/observability.yaml), which Alloy
+# remote-writes to. Either way every series carries job="s3-orchestrator".
 # -------------------------------------------------------------------------------
 
 global:

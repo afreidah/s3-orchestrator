@@ -1,13 +1,13 @@
 # -------------------------------------------------------------------------------
-# S3 Orchestrator - Local Dev Nomad Job (nomad agent -dev + docker-compose)
+# S3 Orchestrator - Local Dev Nomad Job (nomad agent -dev)
 #
 # Author: Alex Freidah
 #
-# Simplified job for local testing against docker-compose backing services.
-# No Vault dependency: demo.sh inlines the shared deploy/local/config.yaml with
-# hardcoded dev credentials in place of __CONFIG__, and replaces __INSTANCES__
-# with the instance count. The production example is
-# deploy/nomad/s3-orchestrator.nomad.hcl.
+# Simplified job for local testing against the backing services in
+# services.nomad.hcl. No Vault dependency: demo.sh inlines the shared
+# deploy/local/config.yaml with hardcoded dev credentials in place of
+# __CONFIG__, and replaces __INSTANCES__ with the instance count. The
+# production example is deploy/nomad/s3-orchestrator.nomad.hcl.
 #
 # Runs several instances sharing Postgres and Redis behind the Traefik job in
 # traefik.nomad.hcl, which is how a production fleet is deployed.
@@ -101,12 +101,26 @@ job "s3-orchestrator" {
       }
 
       # The shared deploy/local/config.yaml, rendered by demo.sh and inlined
-      # in place of __CONFIG__.
+      # in place of __CONFIG__. Its backing-service addresses are nomadService
+      # lookups, resolved here; if a backing service moves, the template
+      # re-renders and the default change_mode restarts the instance against
+      # its new address, since backend and database addresses do not reload.
+      #
+      # A restarting task is deregistered while it is down, which for the
+      # 15s restart delay leaves its lookup empty. The wait renders only once
+      # the registry has been unchanged for 30s, so that gap never reaches
+      # the config: the fleet restarts once, onto the new address, rather
+      # than first onto an empty one.
       template {
         destination = "local/config.yaml"
         data        = <<-YAML
           __CONFIG__
         YAML
+
+        wait {
+          min = "30s"
+          max = "2m"
+        }
       }
 
       resources {

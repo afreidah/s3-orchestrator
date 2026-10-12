@@ -5,10 +5,10 @@
 #
 # Scrapes s3-orchestrator pod logs from the node filesystem, parses JSON,
 # extracts trace_id as structured metadata for Grafana trace-to-log
-# correlation, and ships to Loki on the host. Also scrapes each pod's
-# dedicated metrics listener and remote-writes to the host Prometheus, which
-# cannot reach pod IPs itself. The __HOST_IP__ placeholder is replaced by
-# demo.sh at apply time.
+# correlation, and ships to Loki. Also scrapes each pod's dedicated metrics
+# listener and remote-writes to Prometheus, which scrapes nothing itself.
+# Loki and Prometheus run in the "demo" namespace (observability.yaml) and
+# are reached by cluster DNS name.
 # -------------------------------------------------------------------------------
 
 apiVersion: v1
@@ -65,7 +65,7 @@ data:
 
     loki.write "loki" {
       endpoint {
-        url = "http://__HOST_IP__:3100/loki/api/v1/push"
+        url = "http://loki.demo.svc.cluster.local:3100/loki/api/v1/push"
       }
     }
 
@@ -115,11 +115,11 @@ data:
       targets         = discovery.relabel.metrics.output
       job_name        = "s3-orchestrator"
       scrape_interval = "10s"
-      forward_to      = [prometheus.remote_write.host.receiver]
+      forward_to      = [prometheus.remote_write.demo.receiver]
     }
 
-    prometheus.remote_write "host" {
+    prometheus.remote_write "demo" {
       endpoint {
-        url = "http://__HOST_IP__:19090/api/v1/write"
+        url = "http://prometheus.demo.svc.cluster.local:19090/api/v1/write"
       }
     }

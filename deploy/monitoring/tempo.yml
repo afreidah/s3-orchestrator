@@ -3,10 +3,14 @@
 #
 # Author: Alex Freidah
 #
-# Single-binary Tempo trace store for the docker-compose / kubernetes local
-# demo. Receives OTLP gRPC traces from the orchestrator on port 4317 and
-# stores them on local disk. Production deployments wire to a managed Tempo
-# or alternative OTel-compatible trace store.
+# Single-binary Tempo trace store for docker-compose and the local demos.
+# Receives OTLP gRPC traces from the orchestrator on port 4317 and stores
+# them on local disk. Production deployments wire to a managed Tempo or
+# alternative OTel-compatible trace store.
+#
+# Run with -config.expand-env=true. PROMETHEUS_REMOTE_WRITE_URL points the
+# metrics generator at Prometheus; unset, it is the host-network address
+# docker-compose and the Nomad demo use.
 # -------------------------------------------------------------------------------
 
 stream_over_http_enabled: true
@@ -40,7 +44,7 @@ metrics_generator:
   storage:
     path: /var/tempo/generator/wal
     remote_write:
-      - url: http://localhost:19090/api/v1/write
+      - url: ${PROMETHEUS_REMOTE_WRITE_URL:-http://localhost:19090/api/v1/write}
   traces_storage:
     path: /var/tempo/traces
 

@@ -7,7 +7,9 @@
 # Sourced by the Nomad and Kubernetes demo scripts so both stand up the same
 # environment: the same backing services, the same rendered config, the same
 # minted root keypair and perf identity, and the same fleet of instances behind
-# Traefik on :9000. Each demo supplies only what its scheduler does differently.
+# Traefik on :9000. Each scheduler runs the backing services itself, so a demo
+# supplies only what its scheduler does differently: how those services are
+# deployed and the addresses the instances reach them at.
 # -------------------------------------------------------------------------------
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +19,6 @@ IMAGE="s3-orchestrator:local"
 PORT=9000
 TRAEFIK_DASHBOARD_PORT=8081
 INSTANCES="${INSTANCES:-3}"
-COMPOSE_FILE="$REPO_ROOT/docker-compose.test.yml"
 CONFIG_TEMPLATE="$LIB_DIR/config.yaml"
 
 BUCKET="photos"
@@ -63,17 +64,16 @@ require_commands() {
     done
 }
 
-# start_backing_services brings up Postgres, Redis and the MinIO backends, and
-# creates the backend buckets.
-start_backing_services() {
-    echo "Starting PostgreSQL, Redis and MinIO via docker-compose..."
-    docker compose -f "$COMPOSE_FILE" up -d --wait postgres redis minio-1 minio-2 minio-3
-    docker compose -f "$COMPOSE_FILE" up -d minio-setup
-}
-
-# stop_backing_services removes every compose service and its volumes.
-stop_backing_services() {
-    docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+# refuse_running_dev_deps exits if the docker-compose stack from "make
+# dev-deps" or "make run" is up. It publishes the same host ports the demo's
+# own services take, so the demo would fail to place them; the stack is the
+# user's to stop, not the demo's.
+refuse_running_dev_deps() {
+    if [[ -n "$(docker compose -f "$REPO_ROOT/docker-compose.test.yml" ps -q 2>/dev/null)" ]]; then
+        echo "Error: the docker-compose dev stack is running and holds the ports this"
+        echo "       demo uses. Stop it with 'make dev-clean' and run the demo again."
+        exit 1
+    fi
 }
 
 # build_image builds the orchestrator image from the working tree.
@@ -82,14 +82,32 @@ build_image() {
     docker build -t "$IMAGE" "$REPO_ROOT"
 }
 
-# render_config writes the shared config to dest with the placeholders filled:
-# host_ip is the address the instances reach the compose services at.
+# render_config writes the shared config to dest with every placeholder filled.
+# The caller passes one NAME=value pair for each __NAME__ its scheduler
+# resolves - the backing-service addresses - and the root keypair is filled
+# here. A placeholder left unfilled stops the demo here, rather than handing
+# the instances a config that fails to load once they are scheduled.
+#
+# Spliced in by prefix and suffix rather than with sed or ${var//}: the Nomad
+# demo's values are template expressions whose quotes, braces and slashes sed
+# would need escaped, and ${var//} treats a quoted replacement differently
+# before bash 4.3 (macOS ships 3.2) and an "&" in it specially from 5.2.
 render_config() {
-    local host_ip="$1" dest="$2"
-    sed -e "s/__HOST_IP__/$host_ip/g" \
-        -e "s|__ROOT_ACCESS_KEY__|$ROOT_ACCESS_KEY|g" \
-        -e "s|__ROOT_SECRET_KEY__|$ROOT_SECRET_KEY|g" \
-        "$CONFIG_TEMPLATE" > "$dest"
+    local dest="$1" pair placeholder value content
+    shift
+    content="$(<"$CONFIG_TEMPLATE")"
+    for pair in "$@" "ROOT_ACCESS_KEY=$ROOT_ACCESS_KEY" "ROOT_SECRET_KEY=$ROOT_SECRET_KEY"; do
+        placeholder="__${pair%%=*}__"
+        value="${pair#*=}"
+        while [[ "$content" == *"$placeholder"* ]]; do
+            content="${content%%"$placeholder"*}${value}${content#*"$placeholder"}"
+        done
+    done
+    if [[ "$content" =~ __[A-Z0-9_]+__ ]]; then
+        echo "Error: placeholder ${BASH_REMATCH[0]} in $CONFIG_TEMPLATE was not filled."
+        exit 1
+    fi
+    printf '%s\n' "$content" > "$dest"
 }
 
 # wait_for_health polls /health through Traefik until it reports ok or the

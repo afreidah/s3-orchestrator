@@ -4,9 +4,12 @@
 # Author: Alex Freidah
 #
 # Read at Grafana startup to declare the datasources backing the demo
-# dashboards. Service discovery names ("prometheus", "loki", "tempo") match
-# the docker-compose / kubernetes service names so the demo stack works
-# without per-environment overrides.
+# dashboards. Each URL comes from the environment Grafana runs in, because
+# docker-compose, the Nomad demo and the Kubernetes demo each reach
+# Prometheus, Loki and Tempo at a different address: PROMETHEUS_URL,
+# LOKI_URL and TEMPO_URL are set wherever Grafana is deployed. Grafana
+# expands environment variables throughout provisioning files, which is why
+# the literal dollar sign in the TraceID link below is doubled.
 # -------------------------------------------------------------------------------
 
 apiVersion: 1
@@ -16,7 +19,7 @@ datasources:
     type: prometheus
     uid: prometheus
     access: proxy
-    url: http://host.docker.internal:19090
+    url: ${PROMETHEUS_URL}
     isDefault: true
     editable: true
 
@@ -24,7 +27,7 @@ datasources:
     type: loki
     uid: loki
     access: proxy
-    url: http://host.docker.internal:3100
+    url: ${LOKI_URL}
     editable: true
     jsonData:
       derivedFields:
@@ -38,7 +41,7 @@ datasources:
     type: tempo
     uid: tempo
     access: proxy
-    url: http://host.docker.internal:3200
+    url: ${TEMPO_URL}
     editable: true
     jsonData:
       httpMethod: GET
