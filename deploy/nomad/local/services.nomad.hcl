@@ -18,11 +18,17 @@
 #
 # The host ports match the ones docker-compose.test.yml publishes, so psql,
 # redis-cli and mc on the host reach either the same way. PostgreSQL and
-# MinIO keep their data in the task directory, which outlives a task restart
-# the way compose's volumes outlive a container restart; "demo.sh down"
-# purges it with the jobs. Every task reserves little memory and may burst to
-# memory_max, which agent.hcl enables, so the stack fits beside the
-# orchestrator fleet on a laptop.
+# MinIO keep their data on Docker named volumes, as compose does. The task
+# directory would be the obvious place, but the dev agent keeps it under
+# /tmp, which is tmpfs on most Linux systems: data written there is held in
+# RAM and charged to the task's memory limit, so a perf run's objects would
+# get MinIO OOM-killed. The volumes outlive task restarts and allocation
+# replacements alike; "demo.sh down" removes them. Mounting them needs the
+# Docker volumes agent.hcl enables.
+#
+# Every task reserves little memory and may burst to memory_max, which
+# agent.hcl also enables, so the stack fits beside the orchestrator fleet on
+# a laptop.
 # -------------------------------------------------------------------------------
 
 job "demo-services" {
@@ -50,8 +56,12 @@ job "demo-services" {
         # resembling a real deployment.
         image   = "postgres:16"
         ports   = ["db"]
-        volumes = ["local/pgdata:/var/lib/postgresql/data"]
         command = "postgres"
+        mount {
+          type   = "volume"
+          target = "/var/lib/postgresql/data"
+          source = "demo-postgres-data"
+        }
         # The stock buffer and checkpoint settings checkpoint every 5
         # minutes, and the full-page writes after each one stall commits
         # for long enough to show up as multi-second write latency in a
@@ -162,10 +172,14 @@ job "demo-services" {
       driver = "docker"
 
       config {
-        image   = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
-        ports   = ["api"]
-        volumes = ["local/data:/data"]
-        args    = ["server", "/data", "--console-address", ":9001"]
+        image = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
+        ports = ["api"]
+        mount {
+          type   = "volume"
+          target = "/data"
+          source = "demo-minio-1-data"
+        }
+        args = ["server", "/data", "--console-address", ":9001"]
       }
 
       env {
@@ -207,10 +221,14 @@ job "demo-services" {
       driver = "docker"
 
       config {
-        image   = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
-        ports   = ["api"]
-        volumes = ["local/data:/data"]
-        args    = ["server", "/data", "--console-address", ":9001"]
+        image = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
+        ports = ["api"]
+        mount {
+          type   = "volume"
+          target = "/data"
+          source = "demo-minio-2-data"
+        }
+        args = ["server", "/data", "--console-address", ":9001"]
       }
 
       env {
@@ -252,10 +270,14 @@ job "demo-services" {
       driver = "docker"
 
       config {
-        image   = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
-        ports   = ["api"]
-        volumes = ["local/data:/data"]
-        args    = ["server", "/data", "--console-address", ":9001"]
+        image = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
+        ports = ["api"]
+        mount {
+          type   = "volume"
+          target = "/data"
+          source = "demo-minio-3-data"
+        }
+        args = ["server", "/data", "--console-address", ":9001"]
       }
 
       env {

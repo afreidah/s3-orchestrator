@@ -296,12 +296,14 @@ spec:
               path: /api/health
               port: http
             periodSeconds: 5
+          # Grafana idles near 600 MB, and with the dashboard open during a
+          # perf run its query load pushes it past 1 GB.
           resources:
             requests:
               cpu: 10m
               memory: 128Mi
             limits:
-              memory: 1Gi
+              memory: 2Gi
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources

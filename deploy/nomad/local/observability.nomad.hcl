@@ -6,8 +6,8 @@
 # Prometheus, Grafana, Tempo, Loki and Alloy for the local Nomad demo, run
 # with the same images and the same deploy/monitoring configs as
 # docker-compose.test.yml. The configs are bind-mounted from the repository,
-# which the dev agent allows, so editing one and re-running the demo is
-# enough to pick it up.
+# which needs the Docker volumes agent.hcl enables, so editing one and
+# re-running the demo is enough to pick it up.
 #
 # Prometheus, Tempo and Loki run on the host network, as they do in compose:
 # Prometheus discovers the orchestrator instances from the Nomad API and
@@ -233,10 +233,12 @@ job "demo-observability" {
         }
       }
 
+      # Grafana idles near 600 MB, and with the dashboard open during a perf
+      # run its query load pushes it past 1 GB.
       resources {
         cpu        = 50
         memory     = 256
-        memory_max = 1024
+        memory_max = 2048
       }
     }
   }

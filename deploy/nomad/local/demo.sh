@@ -17,6 +17,10 @@
 #   ./demo.sh                # stand up the full environment
 #   INSTANCES=1 ./demo.sh    # a single instance, still behind Traefik
 #   ./demo.sh down           # tear everything down
+#
+# The dev agent runs under "demo.sh _supervise" (internal; see
+# supervise_agent), so its containers and data volumes are removed however
+# the agent is stopped, "make clean" included.
 # -------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -41,6 +45,18 @@ cd "$REPO_ROOT"
 
 # Every job the demo submits, in the order teardown stops them.
 DEMO_JOBS=(s3-orchestrator traefik demo-minio-setup demo-observability demo-services)
+
+# The named volumes services.nomad.hcl keeps PostgreSQL and MinIO data on.
+# Nomad never removes a named volume, so teardown does.
+DEMO_VOLUMES=(demo-minio-1-data demo-minio-2-data demo-minio-3-data demo-postgres-data)
+
+# Nomad's Docker driver labels every container it starts with this, which is
+# how teardown finds the ones still running.
+NOMAD_CONTAINER_LABEL="com.hashicorp.nomad.alloc_id"
+
+# Holds the agent supervisor's PID while it tears a run down, so the next run
+# waits rather than reusing an agent that is shutting down.
+TEARDOWN_MARKER="/tmp/nomad-demo.teardown"
 
 # render_job prints the orchestrator job with the rendered config inlined at
 # the __CONFIG__ line, indented to match it, and the instance count filled in.
@@ -134,18 +150,19 @@ run_minio_setup() {
 # check_reused_agent stops the demo when an agent it did not start cannot run
 # its jobs, and warns about what will merely behave differently. The
 # observability tasks bind-mount their configs and Alloy the Docker socket,
-# which dev mode allows and a non-dev client usually does not; and without
-# the memory oversubscription agent.hcl enables, every task is capped at its
-# reservation rather than its memory_max.
+# and PostgreSQL and MinIO mount named volumes, all of which need the Docker
+# volumes agent.hcl enables; and without the memory oversubscription it also
+# enables, every task is capped at its reservation rather than its
+# memory_max.
 check_reused_agent() {
     local node_id volumes oversubscription
     node_id=$(curl -s "$NOMAD_ADDR/v1/nodes" 2>/dev/null | jq -r '.[0].ID // ""' 2>/dev/null || echo "")
     volumes=$(curl -s "$NOMAD_ADDR/v1/node/$node_id" 2>/dev/null \
         | jq -r '.Attributes["driver.docker.volumes.enabled"] // "false"' 2>/dev/null || echo false)
     if [[ "$volumes" != "true" ]]; then
-        echo "Error: the running Nomad agent does not allow Docker bind mounts, which"
-        echo "       the observability job needs. Stop it and re-run the demo, which"
-        echo "       starts its own dev agent."
+        echo "Error: the running Nomad agent does not enable Docker volumes, which the"
+        echo "       demo's jobs need. Stop it ('$SCRIPT_DIR/demo.sh down') and re-run"
+        echo "       the demo, which starts its own dev agent with agent.hcl."
         exit 1
     fi
     oversubscription=$(curl -s "$NOMAD_ADDR/v1/operator/scheduler/configuration" 2>/dev/null \
@@ -157,6 +174,74 @@ check_reused_agent() {
     fi
 }
 
+# remove_leftovers removes what outlives the agent: containers it did not get
+# to stop, its log shipper processes, and the data volumes, which Nomad never
+# removes. Run once the agent has exited; every step tolerates failure.
+remove_leftovers() {
+    { docker ps -aq --filter "label=$NOMAD_CONTAINER_LABEL" 2>/dev/null || true; } \
+        | while read -r container; do
+            docker rm -f "$container" >/dev/null 2>&1 || true
+        done
+    pkill -f '[n]omad (logmon|docker_logger)' 2>/dev/null || true
+    docker volume rm -f "${DEMO_VOLUMES[@]}" >/dev/null 2>&1 || true
+    rm -f /tmp/nomad-demo.pid "$CREDENTIALS_FILE"
+}
+
+# supervise_agent runs the dev agent (the command it is given) and cleans up
+# after it exits, so a teardown completes however the agent is stopped.
+#
+# "make clean" stops the demo with pkill -f 'nomad agent -dev' and moves on,
+# and nothing else then removes the data volumes or keeps the next run off
+# the dying agent. This process is started as "demo.sh _supervise nomad agent
+# -dev ...", so that same pkill signals it alongside the agent. The agent
+# shuts down by itself: in dev mode, stopping the client destroys every
+# allocation and waits for their containers to stop. This process neither
+# forwards the signal nor kills the agent, because a second signal during
+# that shutdown would kill the agent outright and orphan the containers.
+# It marks the teardown as under way, waits for the agent to exit, then
+# removes the leftovers. An agent that exits for any other reason takes its
+# in-memory jobs with it, so the same cleanup is right then too.
+#
+# SIGHUP is ignored, as the agent treats it as a reload, so closing the
+# terminal that started the demo stops neither.
+supervise_agent() {
+    command "$@" &
+    local agent="$!"
+    trap '' HUP
+    trap 'echo "$$" > "$TEARDOWN_MARKER"' TERM INT
+    while kill -0 "$agent" 2>/dev/null; do
+        wait "$agent" || true
+    done
+    echo "$$" > "$TEARDOWN_MARKER"
+    echo "supervise_agent: agent exited; removing leftover containers and volumes"
+    remove_leftovers
+    rm -f "$TEARDOWN_MARKER"
+}
+
+# wait_for_previous_teardown waits while an earlier run's supervisor is still
+# tearing that run down - "make clean" and pkill return before it finishes -
+# so this run neither reuses the agent nor has its volumes removed under it.
+# A marker left by a supervisor that no longer exists is stale and dropped.
+wait_for_previous_teardown() {
+    local supervisor i
+    for i in $(seq 1 120); do
+        if [[ ! -f "$TEARDOWN_MARKER" ]]; then
+            return 0
+        fi
+        supervisor=$(cat "$TEARDOWN_MARKER" 2>/dev/null || echo "")
+        if [[ -z "$supervisor" ]] || ! kill -0 "$supervisor" 2>/dev/null; then
+            rm -f "$TEARDOWN_MARKER"
+            return 0
+        fi
+        if [[ "$i" -eq 1 ]]; then
+            echo "Waiting for the previous demo's teardown to finish..."
+        fi
+        sleep 1
+    done
+    echo "Error: the previous demo's teardown has not finished. Check /tmp/nomad-demo.log"
+    exit 1
+}
+
 # print_platform_endpoints lists what only Nomad can report: the dev agent UI
 # and each instance's dynamic metrics port.
 print_platform_endpoints() {
@@ -166,20 +251,49 @@ print_platform_endpoints() {
         | jq -r '.[] | "    http://\(.Address):\(.Port)/metrics  (alloc \(.AllocID[0:8]))"' 2>/dev/null || true
 }
 
+# --- Agent supervisor (internal) ---
+if [[ "${1:-}" == "_supervise" ]]; then
+    shift
+    supervise_agent "$@"
+    exit 0
+fi
+
 # --- Teardown ---
+# "job stop" returns once the stop is scheduled, not once the containers are
+# gone. So teardown waits for Nomad's containers to exit before stopping the
+# agent, then waits for the agent and its supervisor to exit, so the
+# supervisor's cleanup has finished and an immediate re-run cannot find the
+# dying agent and reuse it. remove_leftovers then runs again here, for an
+# agent the demo did not start and so no supervisor watches. Every step
+# tolerates failure, so teardown always runs to the end, including with
+# nothing running.
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
     for job in "${DEMO_JOBS[@]}"; do
         nomad job stop -purge "$job" 2>/dev/null || true
     done
+    for _ in $(seq 1 30); do
+        if [[ -z "$(docker ps -q --filter "label=$NOMAD_CONTAINER_LABEL" 2>/dev/null)" ]]; then
+            break
+        fi
+        sleep 1
+    done
+    # Signals the supervisor and the agent together, as "make clean" does.
     pkill -f '[n]omad agent -dev' 2>/dev/null || true
-    rm -f /tmp/nomad-demo.pid "$CREDENTIALS_FILE"
+    for _ in $(seq 1 60); do
+        if ! pgrep -f '[n]omad agent -dev' >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    remove_leftovers
     echo "Done."
     exit 0
 fi
 
 require_commands docker nomad jq curl
 refuse_running_dev_deps
+wait_for_previous_teardown
 
 # --- Start Nomad dev agent ---
 if nomad status &>/dev/null; then
@@ -187,7 +301,8 @@ if nomad status &>/dev/null; then
     check_reused_agent
 else
     echo "Starting Nomad dev agent..."
-    nomad agent -dev -config="$SCRIPT_DIR/agent.hcl" -log-level=WARN &>/tmp/nomad-demo.log &
+    bash "$SCRIPT_DIR/demo.sh" _supervise \
+        nomad agent -dev -config="$SCRIPT_DIR/agent.hcl" -log-level=WARN &>/tmp/nomad-demo.log &
     echo $! > /tmp/nomad-demo.pid
     echo "Waiting for Nomad to be ready..."
     for _ in $(seq 1 30); do
