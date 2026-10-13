@@ -82,9 +82,9 @@ job "demo-services" {
         # accept a connection before Postgres listens, so this only says the
         # task is up. demo.sh waits for pg_isready before the fleet starts.
         check {
-          type         = "tcp"
-          interval     = "5s"
-          timeout      = "2s"
+          type     = "tcp"
+          interval = "5s"
+          timeout  = "2s"
         }
       }
 
@@ -126,9 +126,9 @@ job "demo-services" {
         address_mode = "driver"
 
         check {
-          type         = "tcp"
-          interval     = "5s"
-          timeout      = "2s"
+          type     = "tcp"
+          interval = "5s"
+          timeout  = "2s"
         }
       }
 
@@ -180,10 +180,10 @@ job "demo-services" {
         address_mode = "driver"
 
         check {
-          type         = "http"
-          path         = "/minio/health/ready"
-          interval     = "5s"
-          timeout      = "2s"
+          type     = "http"
+          path     = "/minio/health/ready"
+          interval = "5s"
+          timeout  = "2s"
         }
       }
 
@@ -225,10 +225,10 @@ job "demo-services" {
         address_mode = "driver"
 
         check {
-          type         = "http"
-          path         = "/minio/health/ready"
-          interval     = "5s"
-          timeout      = "2s"
+          type     = "http"
+          path     = "/minio/health/ready"
+          interval = "5s"
+          timeout  = "2s"
         }
       }
 
@@ -270,10 +270,10 @@ job "demo-services" {
         address_mode = "driver"
 
         check {
-          type         = "http"
-          path         = "/minio/health/ready"
-          interval     = "5s"
-          timeout      = "2s"
+          type     = "http"
+          path     = "/minio/health/ready"
+          interval = "5s"
+          timeout  = "2s"
         }
       }
 
