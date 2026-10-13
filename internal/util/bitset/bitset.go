@@ -5,8 +5,10 @@
 //
 // The part of a bit-flag type that does not depend on what the bits mean: the
 // table pairing each bit with its name, in the order a rendered set lists them,
-// rendering a set as names, and checking that every name has a bit of its own.
-// A flag type declares its bits and one Vocabulary, and renders through it.
+// rendering a set as names, looking a name up, checking that every name has a
+// bit of its own, and the tests a set is compared to a mask with. A flag type
+// declares its bits and one Vocabulary, renders through it, and tests through
+// Has, Any and Within.
 // -------------------------------------------------------------------------------
 
 package bitset
@@ -32,6 +34,42 @@ type Bit[T Flags] struct {
 // Vocabulary is every named bit of a flag type, in the order a rendered set
 // lists them, so two equal sets always render identically.
 type Vocabulary[T Flags] []Bit[T]
+
+// Has reports whether set carries every bit in want. An empty want is
+// satisfied by any set.
+func Has[T Flags](set, want T) bool {
+	return (set & want) == want
+}
+
+// Any reports whether set carries at least one bit in mask.
+func Any[T Flags](set, mask T) bool {
+	return (set & mask) != 0
+}
+
+// Within reports whether every bit set carries is one allowed permits. An
+// empty set is within any mask.
+func Within[T Flags](set, allowed T) bool {
+	return (set &^ allowed) == 0
+}
+
+// Lookup returns the bit name selects, and false when no entry carries it.
+func (v Vocabulary[T]) Lookup(name string) (T, bool) {
+	for _, b := range v {
+		if b.Name == name {
+			return b.Bit, true
+		}
+	}
+	return 0, false
+}
+
+// AllNames lists every name in the vocabulary, in vocabulary order.
+func (v Vocabulary[T]) AllNames() []string {
+	out := make([]string, 0, len(v))
+	for _, b := range v {
+		out = append(out, b.Name)
+	}
+	return out
+}
 
 // Names lists the names of the bits set carries, in vocabulary order.
 func (v Vocabulary[T]) Names(set T) []string {

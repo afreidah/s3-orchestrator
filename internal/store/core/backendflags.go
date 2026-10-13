@@ -72,12 +72,12 @@ const (
 // AcceptedBy reports whether every flag in the set is one accept allows. A
 // backend with no flags is accepted by any mask.
 func (f BackendFlags) AcceptedBy(accept BackendFlags) bool {
-	return (f &^ accept) == 0
+	return bitset.Within(f, accept)
 }
 
 // Any reports whether the set carries at least one flag in mask.
 func (f BackendFlags) Any(mask BackendFlags) bool {
-	return (f & mask) != 0
+	return bitset.Any(f, mask)
 }
 
 // Names lists the flags in the set by name.
