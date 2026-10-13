@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // fakeUsage admits health checks unless refuse is set and counts charges.
@@ -72,7 +73,7 @@ func newProberFixture(t *testing.T, timeout time.Duration) *proberFixture {
 		t.Fatalf("fixture breaker state = %v, want open", cb.State())
 	}
 	f := &proberFixture{mock: mock, cb: cb, usage: &fakeUsage{}, now: time.Unix(0, 0)}
-	f.prober = NewRecoveryProber(cb, f.usage)
+	f.prober = NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.HeadBucket), f.usage)
 	f.prober.now = func() time.Time { return f.now }
 	return f
 }
@@ -95,12 +96,41 @@ func (f *proberFixture) setHealthy() {
 func TestRecoveryProber_ClosedDoesNothing(t *testing.T) {
 	t.Parallel()
 	usage := &fakeUsage{}
-	p := NewRecoveryProber(newTestCBBackend(newMockBackend(), 3, time.Minute), usage)
+	cb := newTestCBBackend(newMockBackend(), 3, time.Minute)
+	p := NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.HeadBucket), usage)
 	for range 5 {
 		p.Probe(context.Background())
 	}
 	if usage.charges() != 0 {
 		t.Errorf("charged %d health checks on a closed circuit, want 0", usage.charges())
+	}
+}
+
+// TestRecoveryProber_CallProbe verifies a call breaker's prober runs that
+// call's check, charges it as that call, and recovers only that call.
+func TestRecoveryProber_CallProbe(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	_, _ = cb.GetObject(context.Background(), "key", "")
+
+	usage := &fakeUsage{}
+	now := time.Unix(0, 0)
+	p := NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.GetObject), usage)
+	p.now = func() time.Time { return now }
+	p.Probe(context.Background())
+	mock.mu.Lock()
+	mock.getErr = &httpError{code: 404}
+	mock.mu.Unlock()
+	now = now.Add(time.Minute)
+	p.Probe(context.Background())
+
+	if cb.Served() != core.AllCalls {
+		t.Errorf("Served = %s, want every call once GET recovers", cb.Served())
+	}
+	if usage.charges() != 1 || usage.charged[0] != s3op.GetObject {
+		t.Errorf("charged %v, want one GetObject", usage.charged)
 	}
 }
 

@@ -404,7 +404,14 @@ The other defaults are sensible for most deployments. Increase `cache_ttl` if yo
 
 ### backend_circuit_breaker
 
-Per-backend circuit breakers isolate failures at the individual backend level. When a backend's credentials expire or the provider becomes unreachable, the circuit opens after consecutive failures and the backend is excluded from request routing. After the timeout elapses, a `HeadBucket` health check tests recovery, backing off up to 5 minutes between checks while it fails. Disabled by default.
+Per-backend circuit breakers isolate failures at the individual backend level, and within a backend at the level of each call. Each backend has a backend breaker and one breaker per call (`PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`):
+
+- **Backend breaker.** Counts failures that say the whole backend is broken: no HTTP response at all (connection refused, DNS, TLS, timeout at the transport) or a `401`. Once it opens, no call reaches the backend. A `HeadBucket` check tests recovery, and every call comes back with it.
+- **Call breakers.** Each counts the backend's refusals of its own call: a `403`, a `429` or a `5xx`. A provider that refuses only some calls - downloads over a monthly download quota, for example - loses only those, and keeps taking writes, deletes and listings. Each call breaker tests recovery by repeating its own call.
+
+A breaker opens after `failure_threshold` consecutive failures. After the timeout elapses its check runs, backing off up to 5 minutes between checks while it fails. Disabled by default.
+
+The checks for GET and HEAD retry the last key the backend refused; a `404` there counts as recovered, since the key may have been deleted meanwhile. The checks for listing, the deletes, PUT and copy use one reserved key, `.s3o-probe`, at the root of the backend's bucket: they list it, delete it, and write it as an empty object, overwriting it in place. No client object can have that key, since every object is stored under its bucket's name and a bucket name cannot start with a dot. The orchestrator never lists it back, so reconcile and sync neither import it nor charge it to quota. It appears only in a backend whose write or copy breaker has opened, and it can be deleted at any time.
 
 ```yaml
 backend_circuit_breaker:
@@ -413,9 +420,9 @@ backend_circuit_breaker:
   open_timeout: "5m"               # delay before probing recovery (default: 5m)
 ```
 
-Unlike the database circuit breaker, which triggers degraded mode for the entire system, backend circuit breakers affect only the individual backend. Reads fall back to other replicas, and writes route to other backends with available quota. The breaker trips purely on organic traffic failures; the only extra API calls are the health checks while it is open, charged as `HeadBucket` against the backend's usage limits.
+Unlike the database circuit breaker, which triggers degraded mode for the entire system, backend circuit breakers affect only the individual backend. Reads fall back to other replicas, and writes route to other backends with available quota. The breakers trip purely on organic traffic failures; the only extra API calls are the checks while a breaker is open, each charged as the operation it makes against the backend's usage limits.
 
-The `s3o_circuit_breaker_state{name="<backend>"}` metric tracks each backend's circuit state (0=closed, 1=open, 2=half-open). Alert on `> 0` for individual backends to detect credential or provider issues. Requires a restart to change (not hot-reloadable).
+The `s3o_circuit_breaker_state{name="<backend>"}` metric reports a backend as open (1) while any of its calls is not served and closed (0) once every call is. Alert on `> 0` for individual backends to detect credential or provider issues; the breaker log lines name which call opened (`breaker_name` is `<backend>/<call>` for a call breaker). Requires a restart to change (not hot-reloadable).
 
 ### rebalance
 

@@ -332,7 +332,7 @@ backend_circuit_breaker:
   open_timeout: "5m"     # delay before probing recovery (default: 5m)
 ```
 
-Per-backend circuit breakers stop sending traffic to a backend after `failure_threshold` consecutive errors: network failures, 5xx, 429, and 401/403 (expired credentials). Other 4xx responses, such as a missing key or an unsatisfiable range, come from a working backend and do not count. The circuit opens immediately - no timeout waiting - and all subsequent requests route around the failed backend. After `open_timeout`, a `HeadBucket` health check tests recovery; while it keeps failing, the interval between checks doubles up to 5 minutes (or `open_timeout`, if longer). Client requests are never used as probes.
+Per-backend circuit breakers stop sending traffic after `failure_threshold` consecutive errors. Network failures and 401s count against the whole backend and stop every call to it; 5xx, 429 and 403 count against the call that got them and stop only that call, so a backend refusing downloads keeps taking writes. Other 4xx responses, such as a missing key or an unsatisfiable range, come from a working backend and do not count. A breaker opens immediately - no timeout waiting - and the requests it stops route around the backend. After `open_timeout`, the breaker's check tests recovery (`HeadBucket` for the whole backend, a repeat of the call for a single call; see [backend_circuit_breaker](configuration.md#backend_circuit_breaker)); while it keeps failing, the interval between checks doubles up to 5 minutes (or `open_timeout`, if longer). Client requests are never used as probes.
 
 ### Tuning Guidelines
 
@@ -354,7 +354,7 @@ Per-backend circuit breakers stop sending traffic to a backend after `failure_th
 
 - **Multi-backend with replication** - highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends, and the replication worker creates replacement copies after a sustained outage (`replication.unhealthy_threshold`). A single backend failure becomes invisible to clients.
 - **Single backend** - less useful. The circuit opens but there's nowhere to fail over to. Requests return `ErrBackendUnavailable` instead of timing out, which is still an improvement (faster failure).
-- **Cost-sensitive environments** - each health check is a real `HeadBucket` call, admitted and charged against the backend's usage limits like any other operation. With a 5-minute timeout, that's at most 12 checks/hour to a down backend, and none once the request limit is reached. Health-aware replication also creates additional copies during sustained outages, which consume backend I/O and storage.
+- **Cost-sensitive environments** - each check is a real call, admitted and charged against the backend's usage limits like any other operation. With a 5-minute timeout, that's at most 12 checks/hour for each open breaker, and none once the request limit is reached. A backend that is down entirely opens only its backend breaker, so it costs one `HeadBucket` check per interval. Health-aware replication also creates additional copies during sustained outages, which consume backend I/O and storage.
 
 ### Monitoring
 

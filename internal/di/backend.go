@@ -141,9 +141,9 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 }
 
 // ProvideBreakerRegistry assembles the watchdog's breaker registry from the
-// database circuit breaker and a recovery prober for each per-backend breaker
-// produced during backend initialization. The probers charge their health
-// checks through the usage tracker.
+// database circuit breaker and a recovery prober for each breaker of every
+// backend produced during backend initialization: the backend breaker and one
+// per call. The probers charge their checks through the usage tracker.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
@@ -154,7 +154,9 @@ func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	}
 	reg := breaker.NewRegistry(dbCB)
 	for _, b := range br.Breakers {
-		reg.Register(backend.NewRecoveryProber(b, usage))
+		for _, p := range b.Probes() {
+			reg.Register(backend.NewRecoveryProber(b.Name(), p, usage))
+		}
 	}
 	return reg, nil
 }

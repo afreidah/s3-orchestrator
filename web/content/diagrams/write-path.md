@@ -193,7 +193,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     HEALTH: {
       title: 'Exclude Unhealthy',
       badge: 'filter', badgeText: 'health filter',
-      body: '<p>Removes backends whose circuit breaker is <b>open</b>. Backends without a circuit breaker always pass; unknown backends are skipped.</p><p>Client requests are never used to test an open backend. Recovery runs out of band: the breaker watchdog has the backend\'s recovery prober run a <code>HeadBucket</code> health check once the open timeout has passed, then on a doubling backoff, and the breaker closes when a check passes. See the <a href="../circuit-breaker/">circuit breaker</a>.</p>'
+      body: '<p>Removes backends with any circuit breaker <b>open</b>: the backend breaker or the breaker of any one call. Backends without circuit breakers always pass; unknown backends are skipped.</p><p>Client requests are never used to test an open breaker. Recovery runs out of band: the breaker watchdog has each open breaker\'s recovery prober run its check - <code>HeadBucket</code> for the backend breaker, a repeat of the call for a call breaker - once the open timeout has passed, then on a doubling backoff, and the breaker closes when a check passes. See the <a href="../circuit-breaker/">circuit breaker</a>.</p>'
     },
     R507B: {
       title: '507 Insufficient Storage',
@@ -285,7 +285,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     CB: {
       title: 'Circuit Breaker',
       badge: 'decision', badgeText: 'circuit breaker',
-      body: '<p><code>CircuitBreakerBackend.PutObject()</code> runs the real S3 call through <code>cb.Call</code>:</p><p><b>PreCheck</b>: if the circuit is open, return <code>ErrBackendUnavailable</code> immediately without I/O.<br><b>On failure</b>: only failures that say something about the backend\'s health count (network errors, 5xx, 429, 401/403); at the threshold the circuit opens.<br><b>Recovery</b>: the breaker closes only when the recovery prober\'s out-of-band health check passes, never on a client request.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p><code>CircuitBreakerBackend.PutObject()</code> runs the real S3 call through the backend breaker and then the PUT breaker:</p><p><b>PreCheck</b>: if either is open, return <code>ErrBackendUnavailable</code> immediately without I/O.<br><b>On failure</b>: network errors and 401 count toward the backend breaker, which stops every call; 5xx, 429 and 403 count toward the PUT breaker alone. At the threshold the breaker opens.<br><b>Recovery</b>: a breaker closes only when its recovery prober\'s out-of-band check passes, never on a client request. The PUT breaker\'s check writes the reserved empty object <code>.s3o-probe</code>.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     S3: {
       title: 'S3 Backend PutObject',

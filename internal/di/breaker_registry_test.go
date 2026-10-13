@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // ProvideBreakerRegistry is where every breaker the watchdog probes is
-// enrolled: the database breaker, and a recovery prober per backend breaker,
-// charging its health checks through the shared usage tracker.
+// enrolled: the database breaker, and a recovery prober for each of every
+// backend's breakers, charging its checks through the shared usage tracker.
 // -------------------------------------------------------------------------------
 
 package di
@@ -24,7 +24,7 @@ import (
 )
 
 // TestProvideBreakerRegistry_EnrollsEveryBreaker verifies the registry holds
-// the database breaker plus one prober per backend breaker.
+// the database breaker plus one prober per breaker of each backend.
 func TestProvideBreakerRegistry_EnrollsEveryBreaker(t *testing.T) {
 	t.Parallel()
 	b1 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
@@ -48,8 +48,8 @@ func TestProvideBreakerRegistry_EnrollsEveryBreaker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProvideBreakerRegistry: %v", err)
 	}
-	if reg.Len() != 3 {
-		t.Errorf("registry holds %d breakers, want 3 (database + two backends)", reg.Len())
+	if want := 1 + len(b1.Probes()) + len(b2.Probes()); reg.Len() != want {
+		t.Errorf("registry holds %d breakers, want %d (database + every breaker of two backends)", reg.Len(), want)
 	}
 	reg.ProbeAll(t.Context())
 }

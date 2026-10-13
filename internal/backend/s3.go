@@ -569,13 +569,17 @@ func (b *S3Backend) nextListPage(ctx context.Context, paginator *s3.ListObjectsV
 }
 
 // convertListPage maps SDK pointer-nullable Content objects to the flat
-// ListedObject shape callers expect.
+// ListedObject shape callers expect, leaving out probeKey, which is the
+// breakers' own and not an object anything above this package manages.
 func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
-	objects := make([]ListedObject, len(page.Contents))
-	for i, obj := range page.Contents {
+	objects := make([]ListedObject, 0, len(page.Contents))
+	for _, obj := range page.Contents {
 		key := ""
 		if obj.Key != nil {
 			key = *obj.Key
+		}
+		if key == probeKey {
+			continue
 		}
 		size := int64(0)
 		if obj.Size != nil {
@@ -585,7 +589,7 @@ func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
 		if obj.LastModified != nil {
 			lastModified = *obj.LastModified
 		}
-		objects[i] = ListedObject{Key: key, SizeBytes: size, LastModified: lastModified}
+		objects = append(objects, ListedObject{Key: key, SizeBytes: size, LastModified: lastModified})
 	}
 	return objects
 }

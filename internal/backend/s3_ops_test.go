@@ -167,15 +167,17 @@ func TestHeadBucket(t *testing.T) {
 	}
 }
 
-// TestListObjects covers the ListObjectsV2 walk and convertListPage.
+// TestListObjects covers the ListObjectsV2 walk and convertListPage, which
+// leaves the breakers' probe key out.
 func TestListObjects(t *testing.T) {
 	t.Parallel()
 	const body = `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Name>test-bucket</Name>
-  <KeyCount>2</KeyCount>
+  <KeyCount>3</KeyCount>
   <MaxKeys>1000</MaxKeys>
   <IsTruncated>false</IsTruncated>
+  <Contents><Key>.s3o-probe</Key><Size>0</Size><ETag>&quot;e0&quot;</ETag><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents>
   <Contents><Key>a.txt</Key><Size>3</Size><ETag>&quot;e1&quot;</ETag><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents>
   <Contents><Key>b.txt</Key><Size>5</Size><ETag>&quot;e2&quot;</ETag><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents>
 </ListBucketResult>`

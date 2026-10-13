@@ -75,7 +75,7 @@ When the orchestrator removes several of its own copies from one backend - multi
 
 `api_request_limit` remains valid and desugars to a single pool named `all` over `["*"]`, so existing configs are unchanged. Setting both it and `request_limits` on one backend is rejected.
 
-Valid operation names: `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `GetParts`, `HeadBucket`. `HeadBucket` is the circuit breaker's health check, issued only while a backend's breaker is open.
+Valid operation names: `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `GetParts`, `HeadBucket`. `HeadBucket` is the backend circuit breaker's health check, issued only while that breaker is open; a call breaker's check is charged as its own call.
 
 Per-pool usage is published as `s3o_usage_pool_requests{backend,pool}` against `s3o_usage_pool_limit{backend,pool}`. Watch those rather than `s3o_usage_api_requests` when a backend stops accepting work: the total counts every call, including ones no budget charges.
 

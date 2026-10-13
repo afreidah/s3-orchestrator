@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Tests for the per-backend circuit breaker wrapper: all 4 backend.ObjectBackend methods
-// forward correctly when closed, return breaker.ErrBackendUnavailable when open, only
-// backend-health failures open the circuit, client requests never probe it, and
-// Unwrap() returns the inner backend for type assertions.
+// Tests for the circuit breaker wrapper: calls forward while closed and return
+// breaker.ErrBackendUnavailable while open, a failure to reach the backend
+// takes out every call while a refusal takes out only its own, the served set
+// and the backend-level transitions follow the breakers, each breaker's probe
+// passes or fails on the right answers, and client requests never probe.
 // -------------------------------------------------------------------------------
 
 package backend
@@ -15,17 +16,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // newTestCBBackend constructs a new test cbbackend.
 func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *CircuitBreakerBackend {
 	return NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "test-backend", Threshold: threshold, Timeout: timeout})
+}
+
+// probeFor returns cb's probe charged as op.
+func probeFor(t *testing.T, cb *CircuitBreakerBackend, op s3op.Operation) Probe {
+	t.Helper()
+	for _, p := range cb.Probes() {
+		if p.Op == op {
+			return p
+		}
+	}
+	t.Fatalf("no probe for %s", op)
+	return Probe{}
 }
 
 // -------------------------------------------------------------------------
@@ -207,7 +223,7 @@ func TestCBBackend_ClientRequestsNeverProbe(t *testing.T) {
 			t.Errorf("state = %v, want open: client requests are never probes", cb.State())
 		}
 
-		cb.Recover()
+		probeFor(t, cb, s3op.HeadBucket).Breaker.Recover()
 		if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); err != nil {
 			t.Fatalf("PutObject after Recover: %v", err)
 		}
@@ -277,23 +293,235 @@ func TestCBBackend_ListObjectsRespectsTheCircuit(t *testing.T) {
 	}
 }
 
-// TestCBBackend_CheckHealthBypassesOpenCircuit verifies the health check
-// reaches the backend while the circuit is open.
-func TestCBBackend_CheckHealthBypassesOpenCircuit(t *testing.T) {
+// TestCBBackend_BackendProbeBypassesOpenCircuit verifies the backend
+// breaker's check reaches the bucket while the circuit is open.
+func TestCBBackend_BackendProbeBypassesOpenCircuit(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
 	mock.getErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, time.Minute)
 	_, _ = cb.GetObject(context.Background(), "key", "")
+	check := probeFor(t, cb, s3op.HeadBucket).Check
 
-	if err := cb.CheckHealth(context.Background()); err != nil {
-		t.Errorf("CheckHealth on an open circuit = %v, want the backend's nil", err)
+	if err := check(context.Background()); err != nil {
+		t.Errorf("check on an open circuit = %v, want the backend's nil", err)
 	}
 	mock.mu.Lock()
 	mock.bucketErr = errors.New("still down")
 	mock.mu.Unlock()
-	if err := cb.CheckHealth(context.Background()); err == nil {
-		t.Error("CheckHealth = nil, want the backend's failure")
+	if err := check(context.Background()); err == nil {
+		t.Error("check = nil, want the backend's failure")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Served calls
+// -------------------------------------------------------------------------
+
+// TestCBBackend_RefusalTakesOutOnlyItsCall verifies a 403 on GET, as a
+// download quota answers, opens GET alone: uploads and deletes keep reaching
+// the backend.
+func TestCBBackend_RefusalTakesOutOnlyItsCall(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403, msg: "DownloadTrafficExceeded"}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	if got, want := cb.Served(), core.AllCalls&^core.CallGetObject; got != want {
+		t.Fatalf("Served = %s, want %s", got, want)
+	}
+	if _, err := cb.GetObject(context.Background(), "key", ""); !errors.Is(err, breaker.ErrBackendUnavailable) {
+		t.Errorf("GetObject = %v, want ErrBackendUnavailable", err)
+	}
+	if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); err != nil {
+		t.Errorf("PutObject = %v, want it to reach the backend", err)
+	}
+	if err := cb.DeleteObject(context.Background(), "key"); err != nil {
+		t.Errorf("DeleteObject = %v, want it to reach the backend", err)
+	}
+}
+
+// TestCBBackend_UnreachableTakesOutEveryCall verifies a failure with no HTTP
+// status opens the backend breaker, serving nothing, and its recovery brings
+// every call back at once.
+func TestCBBackend_UnreachableTakesOutEveryCall(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = errors.New("connection refused")
+	cb := newTestCBBackend(mock, 1, time.Minute)
+
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	if got := cb.Served(); got != 0 {
+		t.Fatalf("Served = %s, want nothing", got)
+	}
+	if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); !errors.Is(err, breaker.ErrBackendUnavailable) {
+		t.Errorf("PutObject = %v, want ErrBackendUnavailable", err)
+	}
+
+	probeFor(t, cb, s3op.HeadBucket).Breaker.Recover()
+	if got := cb.Served(); got != core.AllCalls {
+		t.Errorf("Served after recovery = %s, want every call", got)
+	}
+}
+
+// TestCBBackend_401TakesOutEveryCall verifies a credential rejection counts
+// against the whole backend.
+func TestCBBackend_401TakesOutEveryCall(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.headErr = &httpError{code: 401, msg: "Unauthorized"}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+
+	_, _ = cb.HeadObject(context.Background(), "key")
+	if got := cb.Served(); got != 0 {
+		t.Errorf("Served = %s, want nothing", got)
+	}
+}
+
+// TestCBBackend_BackendLevelTransitions verifies the backend-level hook
+// reports open when the first call stops being served and closed only when
+// the last one comes back.
+func TestCBBackend_BackendLevelTransitions(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403}
+	mock.putErr = &httpError{code: 503}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	var seen []breaker.State
+	cb.onStateChange = func(info breaker.StateChangeInfo) {
+		if info.Name != "test-backend" {
+			t.Errorf("transition named %q, want the backend", info.Name)
+		}
+		seen = append(seen, info.To)
+	}
+
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
+	probeFor(t, cb, s3op.GetObject).Breaker.Recover()
+	if cb.OpenDuration() == 0 {
+		t.Error("OpenDuration = 0 while PUT is not served")
+	}
+	probeFor(t, cb, s3op.PutObject).Breaker.Recover()
+
+	if want := []breaker.State{breaker.StateOpen, breaker.StateClosed}; !slices.Equal(seen, want) {
+		t.Errorf("transitions = %v, want %v", seen, want)
+	}
+	if cb.OpenDuration() != 0 {
+		t.Error("OpenDuration != 0 with every call served")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Call probes
+// -------------------------------------------------------------------------
+
+// TestCBBackend_EveryBreakerHasAProbe verifies Probes covers the backend
+// breaker and each call, each with its own breaker and a check.
+func TestCBBackend_EveryBreakerHasAProbe(t *testing.T) {
+	t.Parallel()
+	cb := newTestCBBackend(newMockBackend(), 1, time.Minute)
+	probes := cb.Probes()
+	if want := len(core.AllCalls.Names()) + 1; len(probes) != want {
+		t.Fatalf("probes = %d, want %d", len(probes), want)
+	}
+	breakers := make(map[*breaker.CircuitBreaker]bool)
+	for _, p := range probes {
+		if p.Check == nil {
+			t.Errorf("%s has no check", p.Op)
+		}
+		breakers[p.Breaker] = true
+	}
+	if len(breakers) != len(probes) {
+		t.Errorf("probes share breakers: %d breakers for %d probes", len(breakers), len(probes))
+	}
+}
+
+// TestCBBackend_GetProbeRetriesTheRefusedKey verifies the GET probe asks for
+// the key the backend refused, fails while it is still refused, and passes on
+// a 404 once the key is gone.
+func TestCBBackend_GetProbeRetriesTheRefusedKey(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	_, _ = cb.GetObject(context.Background(), "refused", "")
+	check := probeFor(t, cb, s3op.GetObject).Check
+
+	if err := check(context.Background()); err == nil {
+		t.Error("probe passed while GET is still refused")
+	}
+	if got := cb.calls[core.CallGetObject].probeTarget(); got != "refused" {
+		t.Errorf("probe target = %q, want the refused key", got)
+	}
+	mock.mu.Lock()
+	mock.getErr = &httpError{code: 404}
+	mock.mu.Unlock()
+	if err := check(context.Background()); err != nil {
+		t.Errorf("probe on a 404 = %v, want it to pass", err)
+	}
+}
+
+// TestCBBackend_PutProbeWritesTheProbeKey verifies the PUT probe writes
+// probeKey and fails while uploads are refused.
+func TestCBBackend_PutProbeWritesTheProbeKey(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	check := probeFor(t, cb, s3op.PutObject).Check
+
+	if err := check(context.Background()); err != nil {
+		t.Fatalf("probe = %v", err)
+	}
+	mock.mu.Lock()
+	_, wrote := mock.objects[probeKey]
+	mock.putErr = &httpError{code: 403}
+	mock.mu.Unlock()
+	if !wrote {
+		t.Error("probe did not write probeKey")
+	}
+	if err := check(context.Background()); err == nil {
+		t.Error("probe passed while uploads are refused")
+	}
+}
+
+// TestCBBackend_CallProbesPassOnAHealthyBackend verifies every call probe
+// passes against a backend that answers, with GET and HEAD asking for probeKey
+// before any key was refused. The mock has no batch delete, so that probe
+// reports it unsupported.
+func TestCBBackend_CallProbesPassOnAHealthyBackend(t *testing.T) {
+	t.Parallel()
+	cb := newTestCBBackend(newMockBackend(), 1, time.Minute)
+	for _, op := range []s3op.Operation{s3op.PutObject, s3op.GetObject, s3op.HeadObject, s3op.ListObjects, s3op.CopyObject, s3op.DeleteObject} {
+		if err := probeFor(t, cb, op).Check(context.Background()); err != nil {
+			t.Errorf("%s probe = %v, want it to pass", op, err)
+		}
+	}
+	if err := probeFor(t, cb, s3op.DeleteObjects).Check(context.Background()); !errors.Is(err, ErrBatchDeleteNotSupported) {
+		t.Errorf("DeleteObjects probe = %v, want ErrBatchDeleteNotSupported", err)
+	}
+}
+
+// TestProbeResult verifies a probe passes on any answer its breaker would not
+// count and fails on a refusal, an unreachable backend or a timeout.
+func TestProbeResult(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		pass bool
+	}{
+		{"success", nil, true},
+		{"404", &httpError{code: 404}, true},
+		{"416", &httpError{code: 416}, true},
+		{"403", &httpError{code: 403}, false},
+		{"503", &httpError{code: 503}, false},
+		{"unreachable", errors.New("connection refused"), false},
+		{"deadline", context.DeadlineExceeded, false},
+	} {
+		if got := probeResult(tc.err) == nil; got != tc.pass {
+			t.Errorf("%s: passed = %t, want %t", tc.name, got, tc.pass)
+		}
 	}
 }
 
@@ -362,44 +590,46 @@ func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 	}
 }
 
-// TestIsBackendError_Classification verifies which failures count against a
-// backend: no status, 5xx, 429, and credential rejections do; any other
-// status is a request-specific answer from a working backend and does not.
-func TestIsBackendError_Classification(t *testing.T) {
+// TestClassifyFailure verifies which breaker a failure counts against: no
+// status and 401 against the backend; 5xx, 429 and 403 against the call; any
+// other status is a request-specific answer from a working backend and counts
+// nowhere, and neither does a refusal from the wrapper's own breakers.
+func TestClassifyFailure(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
-		want bool
+		want failureScope
 	}{
-		{"nil", nil, false},
-		{"no status", errors.New("connection refused"), true},
-		{"500", &httpError{code: 500}, true},
-		{"503 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 503}), true},
-		{"429", &httpError{code: 429}, true},
-		{"401", &httpError{code: 401}, true},
-		{"403", &httpError{code: 403}, true},
-		{"400", &httpError{code: 400}, false},
-		{"404", &httpError{code: 404}, false},
-		{"409", &httpError{code: 409}, false},
-		{"412", &httpError{code: 412}, false},
-		{"416 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 416}), false},
+		{"nil", nil, scopeNone},
+		{"no status", errors.New("connection refused"), scopeBackend},
+		{"401", &httpError{code: 401}, scopeBackend},
+		{"500", &httpError{code: 500}, scopeCall},
+		{"503 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 503}), scopeCall},
+		{"429", &httpError{code: 429}, scopeCall},
+		{"403", &httpError{code: 403}, scopeCall},
+		{"400", &httpError{code: 400}, scopeNone},
+		{"404", &httpError{code: 404}, scopeNone},
+		{"409", &httpError{code: 409}, scopeNone},
+		{"412", &httpError{code: 412}, scopeNone},
+		{"416 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 416}), scopeNone},
+		{"breaker refusal", fmt.Errorf("%w: %w", breaker.ErrBackendUnavailable, &httpError{code: 403}), scopeNone},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isBackendError(tc.err); got != tc.want {
-				t.Errorf("isBackendError(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := classifyFailure(tc.err); got != tc.want {
+				t.Errorf("classifyFailure(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestIsBackendError_ContextErrors verifies caller-side cancellation and
-// deadline (including wrapped) never count toward a backend's failure
-// threshold: they signal a timeout/shutdown, not the backend's health, and
-// counting them is what let a slow source cascade-trip healthy backends.
-func TestIsBackendError_ContextErrors(t *testing.T) {
+// TestClassifyFailure_ContextErrors verifies caller-side cancellation and
+// deadline (including wrapped) never count toward a breaker: they signal a
+// timeout/shutdown, not the backend's health, and counting them is what let a
+// slow source cascade-trip healthy backends.
+func TestClassifyFailure_ContextErrors(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -413,8 +643,8 @@ func TestIsBackendError_ContextErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if isBackendError(tc.err) {
-				t.Errorf("%v should not count as a backend error", tc.err)
+			if got := classifyFailure(tc.err); got != scopeNone {
+				t.Errorf("%v counts as %v, want none", tc.err, got)
 			}
 		})
 	}

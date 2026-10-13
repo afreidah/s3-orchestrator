@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.157.x (current)
+### v0.159.x (current)
+
+**Per-call backend circuit breakers ([#1688](https://github.com/afreidah/s3-orchestrator/issues/1688), v0.159.0)**
+
+A backend had one circuit breaker, so a provider refusing one call - downloads over a monthly quota - took every call out with it. Each backend now has a backend breaker, opened by network failures and 401s, and a breaker per call, opened by that call's 403s, 429s and 5xx. Each recovers through its own check. See [backend_circuit_breaker](configuration.md#backend_circuit_breaker).
+
+**Operator action items after upgrade:**
+
+- **A reserved object `.s3o-probe` can appear at the root of a backend's bucket** once that backend's write or copy breaker has opened: the recovery checks write, list and delete it. The orchestrator never imports it or charges it to quota, and it is safe to delete.
+- **Recovery checks are charged as the call they make** (`GetObject`, `PutObject` and so on) rather than always as `HeadBucket`.
+- **`s3o_circuit_breaker_state{name="<backend>"}` is open while any call is refused**, not only while the whole backend is down. Breaker log lines name the call (`breaker_name` `<backend>/<call>`).
+- **Callers still routed by overall health.** Placement, replication and the dashboard treat a backend with any call refused as unhealthy until a later release lets each ask only for the calls it makes.
+
+### v0.157.x
 
 **Cordon over the admin API and CLI ([#1667](https://github.com/afreidah/s3-orchestrator/issues/1667), v0.157.0)**
 
