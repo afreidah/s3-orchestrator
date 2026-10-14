@@ -5,7 +5,7 @@ linkTitle: "Circuit Breaker"
 weight: 4
 ---
 
-State machine of `breaker.CircuitBreaker`, the one breaker type used in three places. The database breaker wraps every SQL call in the store driver (SQLite or PostgreSQL) and recovers through half-open probing: after the open timeout, one real query is let through as a probe. Backend breakers (`CircuitBreakerBackend`, enabled with `backend_circuit_breaker.enabled`) and the Redis counter breaker use external recovery instead: while open no call reaches the backend or Redis, and only a separate health check closes them, going straight from open to closed. **Hover over any component** for implementation details.
+State machine of `breaker.CircuitBreaker`, the one breaker type used in three places. The database breaker wraps every SQL call in the store driver (SQLite or PostgreSQL) and recovers through half-open probing: after the open timeout, one real query is let through as a probe. Backend breakers (`CircuitBreakerBackend`, enabled with `backend_circuit_breaker.enabled`) and the Redis counter breaker use external recovery instead: while open no call reaches the backend or Redis, and only a separate check closes them, going straight from open to closed. Each backend runs this state machine in two layers: a backend breaker for failures that say the whole backend is broken, and one breaker per call (`PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`) for the backend refusing that call. A call reaches the backend only while both its own breaker and the backend breaker are closed. **Hover over any component** for implementation details.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -123,7 +123,7 @@ State machine of `breaker.CircuitBreaker`, the one breaker type used in three pl
     CALL: {
       title: 'cb.Call / cb.CallNoResult',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Methods on <code>breaker.CircuitBreaker</code> that guard one operation. <code>cb.Call(fn)</code> handles functions returning <code>(T, error)</code>; <code>cb.CallNoResult(fn)</code> handles <code>error</code>-only functions.</p><p><code>CircuitBreakerBackend</code> guards PutObject, GetObject, HeadObject, DeleteObject and CopyObject this way. The database breaker runs the same PreCheck and PostCheck around every SQL Exec, Query and QueryRow in the store driver (SQLite or PostgreSQL).</p><p>The Redis counter backend never calls PreCheck. It only feeds call results to PostCheck to count failures.</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
+      body: '<p>Methods on <code>breaker.CircuitBreaker</code> that guard one operation. <code>cb.Call(fn)</code> handles functions returning <code>(T, error)</code>; <code>cb.CallNoResult(fn)</code> handles <code>error</code>-only functions.</p><p><code>CircuitBreakerBackend</code> guards PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects, CopyObject and ListObjects this way, running each call through the backend breaker and then that call\'s own breaker. The database breaker runs the same PreCheck and PostCheck around every SQL Exec, Query and QueryRow in the store driver (SQLite or PostgreSQL).</p><p>The Redis counter backend never calls PreCheck. It only feeds call results to PostCheck to count failures.</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
     },
     PRE: {
       title: 'PreCheck',
@@ -143,7 +143,7 @@ State machine of `breaker.CircuitBreaker`, the one breaker type used in three pl
     SENTINEL: {
       title: 'Return Sentinel Error',
       badge: 'reject', badgeText: 'fast rejection',
-      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; a write fails over to the next eligible backend, and a read fails over to the next replica.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: an internal <code>redis unavailable</code> error &mdash; the counter backend switches to local in-memory counters.</p><p>The registry\'s <code>ExcludeUnhealthy</code> drops every backend whose breaker is open before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
+      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; a write fails over to the next eligible backend, and a read fails over to the next replica.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: an internal <code>redis unavailable</code> error &mdash; the counter backend switches to local in-memory counters.</p><p>The registry\'s <code>ExcludeUnhealthy</code> drops every backend with any breaker open before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
     },
     PROBE: {
       title: 'Probe Slot Available? (database only)',
@@ -158,7 +158,7 @@ State machine of `breaker.CircuitBreaker`, the one breaker type used in three pl
     POST: {
       title: 'PostCheck / Error Filter',
       badge: 'decision', badgeText: 'result evaluation',
-      body: '<p><code>cb.PostCheck(err)</code> passes the operation result through the pluggable error filter (<code>cb.isError(err)</code>) to decide whether it counts as a circuit-breaker failure.</p><p><b>Backend filter</b> (<code>isBackendError</code>): counts only errors with no HTTP status (connection refused, DNS, TLS, reset), 5xx, 429, 401 and 403. Other statuses, such as a missing key or a failed precondition, do not count. Context cancellation and deadline errors do not count either.</p><p><b>Database filter</b> (<code>isDBError</code>): exempts application-level errors (<code>S3Error</code>, <code>ErrNoSpaceAvailable</code>) and the no-rows sentinels (<code>sql.ErrNoRows</code>, <code>pgx.ErrNoRows</code>). Every other error trips the breaker.</p><p>If the error passes the filter, flows to failure handling. If not (or nil), flows to success.</p>'
+      body: '<p><code>cb.PostCheck(err)</code> passes the operation result through the pluggable error filter (<code>cb.isError(err)</code>) to decide whether it counts as a circuit-breaker failure.</p><p><b>Backend filters</b> (<code>classifyFailure</code>): an error with no HTTP status (connection refused, DNS, TLS, reset) or a 401 counts against the backend breaker. A 5xx, 429 or 403 counts against the breaker of the call that got it, so a provider refusing one call - downloads over a quota - opens only that call. Other statuses, such as a missing key or a failed precondition, count against neither. Context cancellation and deadline errors do not count either.</p><p><b>Database filter</b> (<code>isDBError</code>): exempts application-level errors (<code>S3Error</code>, <code>ErrNoSpaceAvailable</code>) and the no-rows sentinels (<code>sql.ErrNoRows</code>, <code>pgx.ErrNoRows</code>). Every other error trips the breaker.</p><p>If the error passes the filter, flows to failure handling. If not (or nil), flows to success.</p>'
     },
     SUCCESS: {
       title: 'Return Result',
@@ -213,17 +213,17 @@ State machine of `breaker.CircuitBreaker`, the one breaker type used in three pl
     WATCHDOG: {
       title: 'Backend and Redis Health Check Loop',
       badge: 'entry', badgeText: 'external recovery',
-      body: '<p>Backend and Redis breakers never let a real call through as a probe. A separate loop checks the dependency while the breaker is open.</p><p><b>Backend</b>: the breaker watchdog ticks every 5s and calls <code>RecoveryProber.Probe</code> for each backend. The first health check runs <code>max(open_timeout, 5s)</code> after the circuit opens.</p><p><b>Redis</b>: a background goroutine PINGs Redis every 5s while the counter backend is in fallback.</p>'
+      body: '<p>Backend and Redis breakers never let a real call through as a probe. A separate loop checks the dependency while the breaker is open.</p><p><b>Backend</b>: the breaker watchdog ticks every 5s and calls <code>RecoveryProber.Probe</code> for each of every backend\'s breakers, each prober given that breaker\'s own check. The first check runs <code>max(open_timeout, 5s)</code> after the circuit opens.</p><p><b>Redis</b>: a background goroutine PINGs Redis every 5s while the counter backend is in fallback.</p>'
     },
     HEALTH: {
       title: 'Health Check Passes?',
       badge: 'decision', badgeText: 'out-of-band check',
-      body: '<p><b>Backend</b>: a <code>HeadBucket</code> call on the wrapped backend, bypassing the breaker, with a 10s timeout. Each check is admitted and charged against the backend\'s usage budget as <code>HeadBucket</code>. A check the budget would refuse is skipped until there is room.</p><p><b>Redis</b>: a <code>PING</code>. On success, the local counter deltas collected during the outage are replayed to Redis in one pipeline before the breaker closes.</p>'
+      body: '<p><b>Backend breaker</b>: a <code>HeadBucket</code> call on the wrapped backend, bypassing the breakers. Every call comes back when it passes.<br><b>Call breakers</b>: a repeat of the call itself. GET and HEAD retry the last key the backend refused, and a 404 there counts as recovered. Listing, the deletes, PUT and copy use the reserved key <code>.s3o-probe</code>: they list it, delete it, and write it as an empty object. A call check passes on any answer its breaker would not count.</p><p>Each check has a 10s timeout and is admitted and charged against the backend\'s usage budget as the operation it makes. A check the budget would refuse is skipped until there is room.</p><p><b>Redis</b>: a <code>PING</code>. On success, the local counter deltas collected during the outage are replayed to Redis in one pipeline before the breaker closes.</p>'
     },
     BACKOFF: {
       title: 'Stay Open, Check Again Later',
       badge: 'reject', badgeText: 'still down',
-      body: '<p>The circuit stays open and every call keeps getting the sentinel error.</p><p><b>Backend</b>: the wait before the next check doubles after each failure, capped at <code>max(5m, open_timeout)</code>. Logs: <code>"health check failed; circuit stays open"</code> with <code>next_check_in</code>.</p><p><b>Redis</b>: the next PING runs on the next 5s tick.</p>'
+      body: '<p>The circuit stays open and every call keeps getting the sentinel error.</p><p><b>Backend</b>: the wait before the next check doubles after each failure, capped at <code>max(5m, open_timeout)</code>. Logs: <code>"recovery check failed; circuit stays open"</code> with <code>operation</code> and <code>next_check_in</code>.</p><p><b>Redis</b>: the next PING runs on the next 5s tick.</p>'
     },
     EXTRECOVER: {
       title: 'Recover: Open to Closed',

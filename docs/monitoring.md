@@ -189,7 +189,7 @@ Key metrics to alert on:
 | `s3o_quota_claims_declined_total{backend="..."}` | Sustained non-zero means that backend is full and refusing writes; when every candidate refuses, the request fails with 507 |
 | `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
 | `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open, 2=half-open) |
-| `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable or credentials expired |
+| `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable, its credentials are rejected, or it is refusing at least one call |
 | `s3o_replication_pending` | Alert when consistently > 0 - replicas are falling behind |
 | `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor - should return to 0 after cleanup runs |

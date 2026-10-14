@@ -473,10 +473,12 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 }
 
 // newTrippedCBBackend wraps a mock backend in a CircuitBreakerBackend
-// and immediately trips the circuit.
+// and immediately trips the circuit with a failure that reaches no backend.
 func newTrippedCBBackend(b *backendtest.InMemory, name string) *backend.CircuitBreakerBackend {
 	cbb := backend.NewCircuitBreakerBackend(b, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
-	_ = cbb.PostCheck(errors.New("forced failure"))
+	b.HeadErr = errors.New("forced failure")
+	_, _ = cbb.HeadObject(context.Background(), "tripwire")
+	b.HeadErr = nil
 	return cbb
 }
 

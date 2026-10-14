@@ -218,7 +218,7 @@ func TestCBBackend_DeleteObjects(t *testing.T) {
 	if _, err := unsupported.DeleteObjects(t.Context(), keys(2)); !errors.Is(err, ErrBatchDeleteNotSupported) {
 		t.Errorf("unsupported: err = %v, want ErrBatchDeleteNotSupported", err)
 	}
-	if isBackendError(ErrBatchDeleteNotSupported) {
+	if classifyFailure(ErrBatchDeleteNotSupported) != scopeNone {
 		t.Error("a declined batch delete counts against the breaker")
 	}
 }
