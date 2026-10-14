@@ -42,6 +42,10 @@ import (
 // so nothing above this package ever lists it.
 const probeKey = ".s3o-probe"
 
+// backendBreakerCall is the call a backend breaker's events name, since it
+// stops every call at once.
+const backendBreakerCall = "all"
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -101,20 +105,22 @@ const (
 // NewCircuitBreakerBackend wraps a backend with a backend breaker and one
 // breaker per guarded call, each recovered only through Recover by the
 // RecoveryProber running its Probe. Transitions of the served set surface on
-// the standard CircuitBreaker* metrics and the BackendCircuit* events: the
-// backend counts as open while any call is not served.
+// the standard CircuitBreaker* metrics, where the backend counts as open while
+// any call is not served, and on BackendCallRefused per call. Each breaker
+// publishes its own BackendCircuit* event, naming its call.
 func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
 	cb := &CircuitBreakerBackend{
 		inner:         inner,
 		name:          cfg.Name,
 		calls:         make(map[core.BackendCalls]*callBreaker),
-		onStateChange: telemetry.NewCircuitBreakerHook(cfg.Name),
+		onStateChange: telemetry.NewBackendCircuitHook(cfg.Name),
 	}
 	cb.callsClosed.Store(uint64(core.AllCalls))
 
 	cb.backend = newBreaker(cfg, cfg.Name, scopeBackend)
 	cb.backend.SetOnStateChange(func(info breaker.StateChangeInfo) {
 		cb.apply(info, func() { cb.backendOpen.Store(info.To != breaker.StateClosed) })
+		telemetry.BackendCircuitEvent(cb.name, backendBreakerCall, info)
 	})
 
 	// Each single bit of AllCalls, lowest first.
@@ -129,9 +135,11 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 					cb.callsClosed.And(^uint64(call))
 				}
 			})
+			telemetry.BackendCircuitEvent(cb.name, call.String(), info)
 		})
 		cb.calls[call] = &callBreaker{breaker: br}
 	}
+	cb.publishRefused()
 	return cb
 }
 
@@ -235,6 +243,7 @@ func (cb *CircuitBreakerBackend) apply(info breaker.StateChangeInfo, update func
 	defer cb.mu.Unlock()
 	wasHealthy := cb.Served() == core.AllCalls
 	update()
+	cb.publishRefused()
 	isHealthy := cb.Served() == core.AllCalls
 	if wasHealthy == isHealthy {
 		return
@@ -251,6 +260,19 @@ func (cb *CircuitBreakerBackend) apply(info breaker.StateChangeInfo, update func
 	}
 	if cb.onStateChange != nil {
 		cb.onStateChange(info)
+	}
+}
+
+// publishRefused sets BackendCallRefused from the served set: 1 for each call
+// refused and 0 for each served, so every call has a series from startup.
+func (cb *CircuitBreakerBackend) publishRefused() {
+	served := cb.Served()
+	for call := range cb.calls {
+		refused := 0.0
+		if !served.Has(call) {
+			refused = 1
+		}
+		telemetry.BackendCallRefused.WithLabelValues(cb.name, call.String()).Set(refused)
 	}
 }
 

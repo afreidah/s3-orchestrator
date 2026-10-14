@@ -109,6 +109,49 @@ func TestNewCircuitBreakerHook_QuietForInternalTransitions(t *testing.T) {
 	}
 }
 
+// TestNewBackendCircuitHook_PublishesNoEvent confirms a backend's aggregate
+// hook drives the gauge but leaves events to the backend's own breakers.
+func TestNewBackendCircuitHook_PublishesNoEvent(t *testing.T) {
+	var emitted []event.Event
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	defer event.SetEmitter(nil)
+
+	hook := NewBackendCircuitHook("test-aggregate")
+	hook(breaker.StateChangeInfo{Name: "test-aggregate", From: breaker.StateClosed, To: breaker.StateOpen})
+
+	if len(emitted) != 0 {
+		t.Errorf("expected no events from the aggregate hook, got %d", len(emitted))
+	}
+	var m dto.Metric
+	if err := CircuitBreakerState.WithLabelValues("test-aggregate").Write(&m); err != nil {
+		t.Fatalf("write gauge: %v", err)
+	}
+	if got := m.GetGauge().GetValue(); got != float64(breaker.StateOpen) {
+		t.Errorf("state gauge = %v, want open", got)
+	}
+}
+
+// TestBackendCircuitEvent_CarriesTheCall confirms a breaker's open and close
+// events name the backend as subject and carry the call it guards.
+func TestBackendCircuitEvent_CarriesTheCall(t *testing.T) {
+	var emitted []event.Event
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	defer event.SetEmitter(nil)
+
+	BackendCircuitEvent("c2", "GetObject", breaker.StateChangeInfo{From: breaker.StateClosed, To: breaker.StateOpen, Failures: 3})
+	BackendCircuitEvent("c2", "GetObject", breaker.StateChangeInfo{From: breaker.StateOpen, To: breaker.StateClosed})
+
+	if len(emitted) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(emitted))
+	}
+	for i, want := range []string{event.BackendCircuitOpened, event.BackendCircuitClosed} {
+		ev := emitted[i]
+		if ev.Type != want || ev.Subject != "c2" || ev.Data["call"] != "GetObject" || ev.Data["backend"] != "c2" {
+			t.Errorf("event %d = %s %s %v, want %s for c2 GetObject", i, ev.Type, ev.Subject, ev.Data, want)
+		}
+	}
+}
+
 // TestNewCircuitBreakerHook_NilEmitIsSafe confirms the hook does not
 // panic when no event bus has been wired up.
 func TestNewCircuitBreakerHook_NilEmitIsSafe(t *testing.T) {

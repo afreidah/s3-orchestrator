@@ -22,7 +22,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -438,6 +442,55 @@ func TestServedCalls_ReadsTheBreaker(t *testing.T) {
 	}
 	if RefusedFor(cb, core.RequiredForRead) == 0 {
 		t.Error("RefusedFor(wrapped, read) = 0 while GET is refused")
+	}
+}
+
+// TestCBBackend_RefusedGaugeFollowsServed verifies BackendCallRefused reports
+// 0 for every call at startup, 1 for GET alone while GET is refused, and 0
+// again once it recovers.
+func TestCBBackend_RefusedGaugeFollowsServed(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403}
+	cb := NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "gauge-backend", Threshold: 1, Timeout: time.Minute})
+	refused := func(call core.BackendCalls) float64 {
+		return promtest.ToFloat64(telemetry.BackendCallRefused.WithLabelValues("gauge-backend", call.String()))
+	}
+
+	if refused(core.CallGetObject) != 0 || refused(core.CallPutObject) != 0 {
+		t.Fatal("calls reported refused before any failure")
+	}
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	if refused(core.CallGetObject) != 1 || refused(core.CallPutObject) != 0 {
+		t.Errorf("after a GET refusal: GET = %v, PUT = %v; want 1 and 0", refused(core.CallGetObject), refused(core.CallPutObject))
+	}
+	probeFor(t, cb, s3op.GetObject).Breaker.Recover()
+	if refused(core.CallGetObject) != 0 {
+		t.Errorf("GET = %v after recovery, want 0", refused(core.CallGetObject))
+	}
+}
+
+// TestCBBackend_EventsNameTheCall verifies each breaker publishes its own
+// event: a GET refusal names GetObject, and an unreachable backend names all.
+// Not parallel, since the event emitter is process-wide.
+func TestCBBackend_EventsNameTheCall(t *testing.T) {
+	var calls []any
+	event.SetEmitter(func(ev event.Event) {
+		if ev.Subject == "event-backend" && ev.Type == event.BackendCircuitOpened {
+			calls = append(calls, ev.Data["call"])
+		}
+	})
+	defer event.SetEmitter(nil)
+
+	mock := newMockBackend()
+	mock.getErr = &httpError{code: 403}
+	mock.headErr = errors.New("connection refused")
+	cb := NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "event-backend", Threshold: 1, Timeout: time.Minute})
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	_, _ = cb.HeadObject(context.Background(), "key")
+
+	if want := []any{"GetObject", backendBreakerCall}; !slices.Equal(calls, want) {
+		t.Errorf("opened events named %v, want %v", calls, want)
 	}
 }
 

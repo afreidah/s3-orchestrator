@@ -93,8 +93,8 @@ These notify about infrastructure state changes. The subject field typically con
 
 | Event Type | Trigger |
 |-----------|---------|
-| `backend.circuit.opened` | Backend circuit breaker tripped open |
-| `backend.circuit.closed` | Backend circuit breaker recovered |
+| `backend.circuit.opened` | One of a backend's circuit breakers tripped open; `call` names the call it refuses, or `all` for the whole backend |
+| `backend.circuit.closed` | One of a backend's circuit breakers recovered; `call` as above |
 | `backend.capacity.warning` | Backend approaching quota limit (dampened to 1/hour) |
 | `backend.drain.completed` | Backend drain finished |
 | `backend.drain.failed` | Backend drain encountered an error |
@@ -159,7 +159,9 @@ Operational events include context-specific fields in the `data` object:
   "datacontenttype": "application/json",
   "data": {
     "backend": "oci",
-    "reason": "5 consecutive failures"
+    "call": "GetObject",
+    "failures": 5,
+    "threshold": 5
   }
 }
 ```
