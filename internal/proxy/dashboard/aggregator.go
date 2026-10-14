@@ -16,7 +16,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -82,7 +81,7 @@ type FleetView interface {
 	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 	BackendOrder() []string
 	BackendFlags(name string) core.BackendFlags
-	Backends() map[string]backend.ObjectBackend
+	ServedCalls(name string) core.BackendCalls
 }
 
 // UsageReader is the usage surface the aggregator reads: the configured
@@ -161,8 +160,8 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 		}
 	}
 
-	for name, be := range da.fleet.Backends() {
-		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && !cb.IsHealthy() {
+	for _, name := range da.fleet.BackendOrder() {
+		if da.fleet.ServedCalls(name) != core.AllCalls {
 			data.UnhealthyBackends[name] = true
 		}
 	}

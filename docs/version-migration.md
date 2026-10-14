@@ -62,7 +62,19 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.159.x (current)
+### v0.160.x (current)
+
+**Routing by the calls a backend serves ([#1689](https://github.com/afreidah/s3-orchestrator/issues/1689), v0.160.0)**
+
+Each background worker and the write path now ask whether a backend serves the calls they make, rather than whether every call is served. A backend refusing only downloads keeps taking writes, deletes and listings.
+
+**Operator action items after upgrade:**
+
+- **Placement skips a backend only while it refuses uploads.** A backend refusing other calls stays eligible for new objects and replicas.
+- **`replication.unhealthy_threshold` counts time refusing reads.** Copies stop counting toward the factor once their backend has refused GET past the threshold, whether it is unreachable or over a download quota, and the replicator makes replacements elsewhere.
+- **The pending reaper waits only while HEAD is refused**, and over-replication removes copies on backends refusing reads before copies on backends serving them.
+
+### v0.159.x
 
 **Per-call backend circuit breakers ([#1688](https://github.com/afreidah/s3-orchestrator/issues/1688), v0.159.0)**
 

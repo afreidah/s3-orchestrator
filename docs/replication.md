@@ -16,7 +16,7 @@ replication:
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
   concurrency: 5                 # parallel object replications per cycle (default: 10)
-  unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
+  unhealthy_threshold: "10m"     # grace period before replacing copies on backends refusing reads (default: 10m)
 ```
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
@@ -37,7 +37,7 @@ What follows from that is the whole of the overwrite contract:
 
 The second property is what keeps racing writes safe. With `write_path.parallel_copies` on, two overwrites of one key can each leave a copy going up to the same slow backend. The copy that loses the race is discarded, and its cleanup deletes only its own path, so the winner's committed copy on that backend is untouched.
 
-**Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
+**Health-aware replication:** When backend circuit breakers are enabled, the replicator watches which backends serve reads. If a backend has refused reads for longer than `unhealthy_threshold` - because it is unreachable, or because its GET breaker is open, as when a provider's download quota runs out - copies on that backend are treated as unavailable and replacement copies are created on backends serving reads. This prevents sustained outages from silently reducing redundancy. A backend refusing only other calls, such as uploads, keeps its copies counted. The threshold prevents churn during brief transient failures.
 
 **Verifying new copies:** Copies are streamed backend-to-backend and recorded without being read back, so a copy that lands corrupt still counts toward the replication factor until the scrubber reaches it. Setting `integrity.verify_on_replicate` closes that window by hash-checking each new copy before recording it, at the cost of reading every replica back. It is off by default; see [configuration.md#integrity](../configuration/#integrity).
 
@@ -72,7 +72,7 @@ When a backend recovers after the replicator has already created replacement cop
 The cleaner scores each copy by its backend's health and storage utilization, then removes the lowest-scoring copies until the object reaches the target factor:
 
 - **Draining backend**: score 0 (always removed first)
-- **Circuit-broken backend**: score 1 (removed next)
+- **Backend refusing reads**: score 1 (removed next)
 - **Healthy backend**: score 2 + (1 - utilization ratio), range [2..3]
 
 Among healthy backends, the most utilized backend gets the lowest score - freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.

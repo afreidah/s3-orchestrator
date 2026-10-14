@@ -88,7 +88,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	score := w.ScoreCopy(&loc, nil)
 
 	if score != 1 {
-		t.Errorf("expected score 1 for circuit-broken backend, got %f", score)
+		t.Errorf("expected score 1 for a backend refusing reads, got %f", score)
 	}
 }
 

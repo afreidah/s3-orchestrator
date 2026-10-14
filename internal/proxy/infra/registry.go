@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // The backend map, its configured iteration order, and the filters that
-// drop backends whose state flags a purpose does not accept, or whose circuit
-// breaker is open, from a candidate list.
+// drop backends whose state flags a purpose does not accept, or that are not
+// serving the calls a purpose makes, from a candidate list.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -13,9 +13,9 @@ package infra
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -61,15 +61,29 @@ func (c *BackendRuntime) Accepted(eligible []string, accept core.BackendFlags) [
 	})
 }
 
-// ExcludeUnhealthy filters out backends whose circuit breaker is open.
-// Backends that are not breaker-wrapped pass through unconditionally.
-func (c *BackendRuntime) ExcludeUnhealthy(eligible []string) []string {
+// ServedCalls returns the calls the named backend is serving. A backend with
+// no circuit breaker serves every call, and an unknown one serves none.
+func (c *BackendRuntime) ServedCalls(name string) core.BackendCalls {
+	b, ok := c.backends[name]
+	if !ok {
+		return 0
+	}
+	return backend.ServedCalls(b)
+}
+
+// RefusedFor returns how long the named backend has refused any call in
+// required, or zero while it serves them all or has no circuit breaker.
+func (c *BackendRuntime) RefusedFor(name string, required core.BackendCalls) time.Duration {
+	b, ok := c.backends[name]
+	if !ok {
+		return 0
+	}
+	return backend.RefusedFor(b, required)
+}
+
+// Serving keeps only the backends serving every call in required.
+func (c *BackendRuntime) Serving(eligible []string, required core.BackendCalls) []string {
 	return slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
-		b, ok := c.backends[name]
-		if !ok {
-			return true
-		}
-		cb, ok := b.(*backend.CircuitBreakerBackend)
-		return ok && cb.State() == breaker.StateOpen
+		return !c.ServedCalls(name).Has(required)
 	})
 }

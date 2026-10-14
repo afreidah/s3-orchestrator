@@ -53,15 +53,16 @@ func (f *fakeUsage) charges() int {
 // proberFixture is an open breaker over a backend whose health check fails,
 // with a prober on a fake clock starting at t0.
 type proberFixture struct {
-	mock   *mockBackend
-	cb     *CircuitBreakerBackend
-	usage  *fakeUsage
-	prober *RecoveryProber
-	now    time.Time
+	mock    *mockBackend
+	cb      *CircuitBreakerBackend
+	breaker *breaker.CircuitBreaker
+	usage   *fakeUsage
+	prober  *RecoveryProber
+	now     time.Time
 }
 
-// newProberFixture opens a breaker with the given open timeout and builds its
-// prober.
+// newProberFixture opens the backend breaker with the given open timeout and
+// builds its prober.
 func newProberFixture(t *testing.T, timeout time.Duration) *proberFixture {
 	t.Helper()
 	mock := newMockBackend()
@@ -69,11 +70,12 @@ func newProberFixture(t *testing.T, timeout time.Duration) *proberFixture {
 	mock.bucketErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, timeout)
 	_, _ = cb.GetObject(context.Background(), "key", "")
-	if cb.State() != breaker.StateOpen {
-		t.Fatalf("fixture breaker state = %v, want open", cb.State())
+	probe := probeFor(t, cb, s3op.HeadBucket)
+	if probe.Breaker.State() != breaker.StateOpen {
+		t.Fatalf("fixture breaker state = %v, want open", probe.Breaker.State())
 	}
-	f := &proberFixture{mock: mock, cb: cb, usage: &fakeUsage{}, now: time.Unix(0, 0)}
-	f.prober = NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.HeadBucket), f.usage)
+	f := &proberFixture{mock: mock, cb: cb, breaker: probe.Breaker, usage: &fakeUsage{}, now: time.Unix(0, 0)}
+	f.prober = NewRecoveryProber(cb.Name(), probe, f.usage)
 	f.prober.now = func() time.Time { return f.now }
 	return f
 }
@@ -148,8 +150,8 @@ func TestRecoveryProber_RecoversAfterOpenTimeout(t *testing.T) {
 	}
 
 	f.probeAt(time.Second)
-	if f.cb.State() != breaker.StateClosed {
-		t.Fatalf("state after a passing check = %v, want closed", f.cb.State())
+	if f.breaker.State() != breaker.StateClosed {
+		t.Fatalf("state after a passing check = %v, want closed", f.breaker.State())
 	}
 	if f.usage.charges() != 1 || f.usage.charged[0] != s3op.HeadBucket {
 		t.Errorf("charged %v, want one HeadBucket", f.usage.charged)
@@ -173,8 +175,8 @@ func TestRecoveryProber_BacksOffToCap(t *testing.T) {
 			t.Fatalf("check %d did not run after %v", i+1, wait)
 		}
 	}
-	if f.cb.State() != breaker.StateOpen {
-		t.Errorf("state while the backend is down = %v, want open", f.cb.State())
+	if f.breaker.State() != breaker.StateOpen {
+		t.Errorf("state while the backend is down = %v, want open", f.breaker.State())
 	}
 }
 
@@ -205,16 +207,16 @@ func TestRecoveryProber_OverLimitSkips(t *testing.T) {
 
 	f.probeAt(0)
 	f.probeAt(time.Hour)
-	if f.usage.charges() != 0 || f.cb.State() != breaker.StateOpen {
-		t.Fatalf("over limit: charges = %d, state = %v; want 0 and open", f.usage.charges(), f.cb.State())
+	if f.usage.charges() != 0 || f.breaker.State() != breaker.StateOpen {
+		t.Fatalf("over limit: charges = %d, state = %v; want 0 and open", f.usage.charges(), f.breaker.State())
 	}
 
 	f.usage.mu.Lock()
 	f.usage.refuse = false
 	f.usage.mu.Unlock()
 	f.probeAt(breaker.DefaultWatchdogInterval)
-	if f.cb.State() != breaker.StateClosed {
-		t.Errorf("state once the budget allows = %v, want closed", f.cb.State())
+	if f.breaker.State() != breaker.StateClosed {
+		t.Errorf("state once the budget allows = %v, want closed", f.breaker.State())
 	}
 }
 
@@ -229,14 +231,14 @@ func TestRecoveryProber_ScheduleResetsAfterRecovery(t *testing.T) {
 	f.probeAt(2 * time.Minute)
 	f.setHealthy()
 	f.probeAt(4 * time.Minute)
-	if f.cb.State() != breaker.StateClosed {
-		t.Fatalf("state = %v, want closed", f.cb.State())
+	if f.breaker.State() != breaker.StateClosed {
+		t.Fatalf("state = %v, want closed", f.breaker.State())
 	}
 
 	_, _ = f.cb.GetObject(context.Background(), "key", "")
 	f.probeAt(0)
 	f.probeAt(time.Minute)
-	if f.cb.State() != breaker.StateClosed {
-		t.Errorf("state one open timeout after reopening = %v, want closed", f.cb.State())
+	if f.breaker.State() != breaker.StateClosed {
+		t.Errorf("state one open timeout after reopening = %v, want closed", f.breaker.State())
 	}
 }

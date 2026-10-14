@@ -46,7 +46,7 @@ type ReplicationConfig struct {
 	WorkerInterval     time.Duration `yaml:"worker_interval"`
 	BatchSize          int           `yaml:"batch_size"`
 	Concurrency        int           `yaml:"concurrency"`         // Parallel object replications (default: 5)
-	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"` // Grace period before replacing copies on circuit-broken backends (default: 10m)
+	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"` // Grace period before replacing copies on backends refusing reads (default: 10m)
 }
 
 // CleanupQueueConfig holds settings for the background orphan cleanup worker

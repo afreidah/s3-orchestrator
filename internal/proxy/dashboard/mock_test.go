@@ -13,7 +13,6 @@ import (
 	context "context"
 	reflect "reflect"
 
-	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	backendstate "github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	metrics "github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -73,20 +72,6 @@ func (mr *MockFleetViewMockRecorder) BackendOrder() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockFleetView)(nil).BackendOrder))
 }
 
-// Backends mocks base method.
-func (m *MockFleetView) Backends() map[string]backend.ObjectBackend {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Backends")
-	ret0, _ := ret[0].(map[string]backend.ObjectBackend)
-	return ret0
-}
-
-// Backends indicates an expected call of Backends.
-func (mr *MockFleetViewMockRecorder) Backends() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockFleetView)(nil).Backends))
-}
-
 // FleetSnapshot mocks base method.
 func (m *MockFleetView) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error) {
 	m.ctrl.T.Helper()
@@ -100,6 +85,20 @@ func (m *MockFleetView) FleetSnapshot(ctx context.Context) (*metrics.FleetSnapsh
 func (mr *MockFleetViewMockRecorder) FleetSnapshot(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FleetSnapshot", reflect.TypeOf((*MockFleetView)(nil).FleetSnapshot), ctx)
+}
+
+// ServedCalls mocks base method.
+func (m *MockFleetView) ServedCalls(name string) core.BackendCalls {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ServedCalls", name)
+	ret0, _ := ret[0].(core.BackendCalls)
+	return ret0
+}
+
+// ServedCalls indicates an expected call of ServedCalls.
+func (mr *MockFleetViewMockRecorder) ServedCalls(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ServedCalls", reflect.TypeOf((*MockFleetView)(nil).ServedCalls), name)
 }
 
 // MockDrainProgressReader is a mock of DrainProgressReader interface.

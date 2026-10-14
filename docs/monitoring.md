@@ -191,7 +191,7 @@ Key metrics to alert on:
 | `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open, 2=half-open) |
 | `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable, its credentials are rejected, or it is refusing at least one call |
 | `s3o_replication_pending` | Alert when consistently > 0 - replicas are falling behind |
-| `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
+| `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for backends refusing reads |
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor - should return to 0 after cleanup runs |
 | `s3o_over_replication_errors_total` | Cleanup errors - indicates backends or metadata issues preventing excess copy removal |
 | `s3o_over_replication_key_preserved_total` | Any non-zero value means a copy set disagrees about encryption and the cleaner kept the only copy that can still be decrypted. Repair the diverged rows; until then the object stays over-replicated |
@@ -277,7 +277,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_replication_errors_total` | Counter | - | Replication errors |
 | `s3o_replication_duration_seconds` | Histogram | - | Replication cycle time |
 | `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |
-| `s3o_replication_health_copies_total` | Counter | - | Copies created to replace copies on circuit-broken backends |
+| `s3o_replication_health_copies_total` | Counter | - | Copies created to replace copies on backends refusing reads |
 | `s3o_over_replication_pending` | Gauge | - | Objects exceeding the replication factor (exact, refreshed every `fleet_interval`) |
 | `s3o_over_replication_removed_total` | Counter | - | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | - | Over-replication cleanup errors |

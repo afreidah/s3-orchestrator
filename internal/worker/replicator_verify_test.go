@@ -354,7 +354,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 
 	srcBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, target: dstBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, target: dstBe})
 	ops.EXPECT().GetBackend(target).Return(dstBe, nil).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
 		Return(int64(0), nil)
@@ -397,7 +397,7 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 
 	srcBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
 	// The replica's path is minted per attempt, so the expectations take it as
 	// it comes and pin only that the read-back addresses the path the copy was
@@ -448,7 +448,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 
 	srcBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
 	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
 		Return(int64(0), nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()

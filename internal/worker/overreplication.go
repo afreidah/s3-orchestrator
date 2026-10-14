@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -238,7 +237,7 @@ type scoredCopy struct {
 
 // ScoreCopy assigns a retention score to a copy based on its backend's state:
 //   - backend refusing writes, such as a draining one: 0 (always remove first)
-//   - circuit-broken backend: 1 (remove next)
+//   - backend refusing reads: 1 (remove next)
 //   - healthy backend: 2 + (1 - utilization_ratio), range [2..3]
 //
 // Among healthy backends the most utilized scores lowest, so its copy is
@@ -248,12 +247,10 @@ func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[s
 		return 0
 	}
 
-	be, ok := c.ops.Backends()[loc.BackendName]
-	if !ok {
+	if _, ok := c.ops.Backends()[loc.BackendName]; !ok {
 		return 0
 	}
-
-	if cbb, ok := be.(*backend.CircuitBreakerBackend); ok && !cbb.IsHealthy() {
+	if !c.ops.ServedCalls(loc.BackendName).Has(core.RequiredForRead) {
 		return 1
 	}
 

@@ -453,7 +453,7 @@ replication:
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
   concurrency: 5                 # parallel object replications per cycle (default: 5)
-  unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
+  unhealthy_threshold: "10m"     # grace period before replacing copies on backends refusing reads (default: 10m)
 ```
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
@@ -462,7 +462,7 @@ Replication is **asynchronous by default** - writes go to a single backend and t
 
 [`write_path.parallel_copies`](#write_pathparallel_copies) changes that: the write places its own copies and the replicator is left with repair, which narrows the window from a worker interval to the length of one upload.
 
-**Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
+**Health-aware replication:** When backend circuit breakers are enabled, the replicator watches which backends serve reads. If a backend has refused reads for longer than `unhealthy_threshold` - because it is unreachable, or because its GET breaker is open - copies on that backend are treated as unavailable and replacement copies are created on backends serving reads. This prevents sustained outages from silently reducing redundancy. A backend refusing only other calls keeps its copies counted. The threshold prevents churn during brief transient failures.
 
 ### write_path.parallel_copies
 

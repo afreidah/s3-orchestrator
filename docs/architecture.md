@@ -106,7 +106,7 @@ See [docs/backends.md](backends.md) for the enforcement semantics and [docs/moni
 
 ## Replication
 
-Set a per-bucket `replication.factor` and every object ends up with N copies across distinct backends - placed by the background replicator, or by the write itself when [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) is on. Replication is health-aware: a backend whose circuit breaker is open is excluded from the replica count, and the replicator creates a substitute copy on a healthy backend to maintain the factor. When the unhealthy backend returns, the over-replication cleaner removes the excess copy according to a scoring policy (draining < circuit-broken < healthy-by-utilization).
+Set a per-bucket `replication.factor` and every object ends up with N copies across distinct backends - placed by the background replicator, or by the write itself when [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) is on. Replication is health-aware: copies on a backend that has refused reads past a grace period are excluded from the replica count, and the replicator creates a substitute copy on a backend serving reads to maintain the factor. When the backend serves reads again, the over-replication cleaner removes the excess copy according to a scoring policy (draining < refusing reads < healthy-by-utilization).
 
 See [docs/replication.md](replication.md) for the full lifecycle, including orphan reconciliation.
 

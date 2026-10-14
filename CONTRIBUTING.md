@@ -275,7 +275,7 @@ internal/
   worker/                    Background services
     rebalancer.go            Moves objects between backends per strategy
     replicator.go            Creates copies of under-replicated objects (health-aware)
-    overreplication.go       Removes excess copies (scored: draining < circuit-broken < healthy-by-util)
+    overreplication.go       Removes excess copies (scored: draining < refusing reads < healthy-by-util)
     cleanup.go               Cleanup queue worker with DLQ graduation
     pending.go               PUT-before-COMMIT pending intent reaper
     scrubber.go              Random-sample integrity verification + content-hash backfill
