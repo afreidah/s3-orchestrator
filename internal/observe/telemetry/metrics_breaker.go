@@ -26,6 +26,17 @@ var (
 		[]string{"name"},
 	)
 
+	// BackendCallRefused is 1 for each call a backend's circuit breakers are
+	// refusing and 0 for each it serves, labeled by backend and call, so every
+	// call of every backend has a series to chart.
+	BackendCallRefused = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_backend_call_refused",
+			Help: "1 while a backend's circuit breakers refuse the call, 0 while it is served",
+		},
+		[]string{"backend", "call"},
+	)
+
 	// CircuitBreakerTransitionsTotal counts state transitions per component.
 	CircuitBreakerTransitionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

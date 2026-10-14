@@ -1156,7 +1156,7 @@
       "type": "table",
       "id": 24,
       "title": "Circuit Breaker State",
-      "description": "Each breaker's worst state across the fleet. Every instance keeps its own breakers, so one instance can be open while the others are closed; the Fleet row has the per-instance table.",
+      "description": "Each breaker's worst state across the fleet. A backend reads Open while any of its calls is refused; Refused Calls Now shows which. Every instance keeps its own breakers, so one instance can be open while the others are closed; the Fleet row has the per-instance table.",
       "gridPos": {
         "x": 0,
         "y": 62,
@@ -1333,12 +1333,145 @@
       }
     },
     {
+      "type": "state-timeline",
+      "id": 155,
+      "title": "Backend Call State",
+      "description": "Each backend over time: Served while it serves every call, Degraded while a circuit breaker refuses some of its calls, Down while it refuses all of them. Refused Calls Now names the calls. A backend refusing only GetObject, as when a provider's download quota runs out, keeps taking writes, deletes and listings.",
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend) (max by (backend, call) (s3o_backend_call_refused)) / count by (backend) (max by (backend, call) (s3o_backend_call_refused))",
+          "legendFormat": "{{backend}}"
+        }
+      ],
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "alignValue": "left",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.001
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Served",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Down",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 0.001,
+                "to": 0.999,
+                "result": {
+                  "text": "Degraded",
+                  "color": "orange"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 156,
+      "title": "Refused Calls Now",
+      "description": "Calls a circuit breaker refuses right now, per backend, on any instance.",
+      "gridPos": {
+        "x": 12,
+        "y": 70,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend, call) (s3o_backend_call_refused) == 1",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "backend",
+            "desc": false
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "None"
+        },
+        "overrides": []
+      }
+    },
+    {
       "type": "row",
       "id": 27,
       "title": "Replication",
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 78,
         "w": 24,
         "h": 1
       },
@@ -1351,7 +1484,7 @@
       "description": "Objects with fewer copies than the replication factor, counting writes still uploading a copy. An exact count over the whole ledger, recomputed every telemetry.metrics.fleet_interval (default 60s) and after each replication pass.",
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 79,
         "w": 5,
         "h": 6
       },
@@ -1405,7 +1538,7 @@
       "title": "Copies Created",
       "gridPos": {
         "x": 5,
-        "y": 71,
+        "y": 79,
         "w": 5,
         "h": 6
       },
@@ -1445,7 +1578,7 @@
       "title": "Replication Errors",
       "gridPos": {
         "x": 10,
-        "y": 71,
+        "y": 79,
         "w": 5,
         "h": 6
       },
@@ -1484,7 +1617,7 @@
       "title": "Replication Duration (p95)",
       "gridPos": {
         "x": 15,
-        "y": 71,
+        "y": 79,
         "w": 5,
         "h": 6
       },
@@ -1524,7 +1657,7 @@
       "title": "Replication Runs",
       "gridPos": {
         "x": 20,
-        "y": 71,
+        "y": 79,
         "w": 4,
         "h": 6
       },
@@ -1563,7 +1696,7 @@
       "title": "Health-Triggered Replica Copies",
       "gridPos": {
         "x": 0,
-        "y": 77,
+        "y": 85,
         "w": 8,
         "h": 6
       },
@@ -1604,7 +1737,7 @@
       "description": "Further copies a write placed itself rather than leaving to the replicator, by what became of each. committed is the copy landing and being recorded. untrusted is a newer write taking the key while the copy was still uploading, so it was discarded and replication rebuilds it - each one costs a rebuild. failed is the backend refusing it. Zero across all three with the fan-out on means no write is placing extra copies at all.",
       "gridPos": {
         "x": 8,
-        "y": 77,
+        "y": 85,
         "w": 8,
         "h": 6
       },
@@ -1645,7 +1778,7 @@
       "description": "Mean copies a fan-out write ended up committing, counting the one that answered the client. This is the number that says whether the feature is working: sitting at replication.factor means writes reach it unaided, and drifting toward 1 means they are degrading to a single copy while the replicator quietly picks the difference back up. The panels either side say why.",
       "gridPos": {
         "x": 16,
-        "y": 77,
+        "y": 85,
         "w": 8,
         "h": 6
       },
@@ -1685,7 +1818,7 @@
       "description": "Writes whose further copies are still uploading after their client was answered. A healthy fleet sits at roughly the write rate times how long one copy takes - a handful. A rising floor is the signal a backend is slow rather than broken: nothing fails and nothing retries, the work just accumulates until the ceiling (write_path.parallel_copies.max_in_flight) turns the fan-out off.",
       "gridPos": {
         "x": 0,
-        "y": 83,
+        "y": 91,
         "w": 8,
         "h": 6
       },
@@ -1725,7 +1858,7 @@
       "description": "Writes that placed a single copy because the in-flight ceiling was full, leaving the rest to the replicator. Every one costs exactly what the fan-out exists to avoid - a read of the object plus the source backend's egress - so a sustained rate means either max_in_flight is too low for the write rate or a backend is falling behind. The depth panel to the left says which.",
       "gridPos": {
         "x": 8,
-        "y": 83,
+        "y": 91,
         "w": 8,
         "h": 6
       },
@@ -1765,7 +1898,7 @@
       "title": "Usage Tracking",
       "gridPos": {
         "x": 0,
-        "y": 89,
+        "y": 97,
         "w": 24,
         "h": 1
       },
@@ -1777,7 +1910,7 @@
       "title": "Monthly API Requests",
       "gridPos": {
         "x": 0,
-        "y": 90,
+        "y": 98,
         "w": 6,
         "h": 6
       },
@@ -1861,7 +1994,7 @@
       "title": "Monthly Egress",
       "gridPos": {
         "x": 6,
-        "y": 90,
+        "y": 98,
         "w": 6,
         "h": 6
       },
@@ -1945,7 +2078,7 @@
       "title": "Monthly Ingress",
       "gridPos": {
         "x": 12,
-        "y": 90,
+        "y": 98,
         "w": 6,
         "h": 6
       },
@@ -2030,7 +2163,7 @@
       "description": "Per-pool share of the monthly request budget. Providers meter operations in classes with separate allowances, so this is the figure a backend is refused on - Monthly API Requests counts every call, including ones no budget charges. Unlimited pools are omitted.",
       "gridPos": {
         "x": 18,
-        "y": 90,
+        "y": 98,
         "w": 6,
         "h": 6
       },
@@ -2126,7 +2259,7 @@
       "title": "Rate Limiting & Rejections",
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 104,
         "w": 24,
         "h": 1
       },
@@ -2138,7 +2271,7 @@
       "title": "Usage Limit Rejections",
       "gridPos": {
         "x": 0,
-        "y": 97,
+        "y": 105,
         "w": 8,
         "h": 8
       },
@@ -2181,7 +2314,7 @@
       "title": "Rate Limit Rejections",
       "gridPos": {
         "x": 8,
-        "y": 97,
+        "y": 105,
         "w": 8,
         "h": 8
       },
@@ -2220,7 +2353,7 @@
       "title": "Admission Rejections",
       "gridPos": {
         "x": 16,
-        "y": 97,
+        "y": 105,
         "w": 8,
         "h": 8
       },
@@ -2259,7 +2392,7 @@
       "title": "Load Shedding",
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 113,
         "w": 6,
         "h": 8
       },
@@ -2298,7 +2431,7 @@
       "title": "Early Upload Rejections",
       "gridPos": {
         "x": 6,
-        "y": 105,
+        "y": 113,
         "w": 6,
         "h": 8
       },
@@ -2337,7 +2470,7 @@
       "title": "Write Failovers",
       "gridPos": {
         "x": 12,
-        "y": 105,
+        "y": 113,
         "w": 6,
         "h": 8
       },
@@ -2377,7 +2510,7 @@
       "description": "Browser preflights by outcome. Rejections climbing with no allowed series means the bucket's CORS rules do not cover the origin the application is served from, and every browser upload from it is failing.",
       "gridPos": {
         "x": 18,
-        "y": 105,
+        "y": 113,
         "w": 6,
         "h": 8
       },
@@ -2416,7 +2549,7 @@
       "title": "Rebalancer",
       "gridPos": {
         "x": 0,
-        "y": 113,
+        "y": 121,
         "w": 24,
         "h": 1
       },
@@ -2428,7 +2561,7 @@
       "title": "Rebalance Pending",
       "gridPos": {
         "x": 0,
-        "y": 114,
+        "y": 122,
         "w": 4,
         "h": 8
       },
@@ -2481,7 +2614,7 @@
       "title": "Rebalance Runs",
       "gridPos": {
         "x": 4,
-        "y": 114,
+        "y": 122,
         "w": 5,
         "h": 8
       },
@@ -2524,7 +2657,7 @@
       "title": "Objects / Bytes Moved",
       "gridPos": {
         "x": 9,
-        "y": 114,
+        "y": 122,
         "w": 5,
         "h": 8
       },
@@ -2586,7 +2719,7 @@
       "title": "Rebalance Duration (p95)",
       "gridPos": {
         "x": 14,
-        "y": 114,
+        "y": 122,
         "w": 5,
         "h": 8
       },
@@ -2626,7 +2759,7 @@
       "title": "Rebalance Skipped",
       "gridPos": {
         "x": 19,
-        "y": 114,
+        "y": 122,
         "w": 5,
         "h": 8
       },
@@ -2665,7 +2798,7 @@
       "title": "Drain & Lifecycle",
       "gridPos": {
         "x": 0,
-        "y": 122,
+        "y": 130,
         "w": 24,
         "h": 1
       },
@@ -2677,7 +2810,7 @@
       "title": "Drain Active",
       "gridPos": {
         "x": 0,
-        "y": 123,
+        "y": 131,
         "w": 6,
         "h": 6
       },
@@ -2747,7 +2880,7 @@
       "title": "Drain Objects / Bytes",
       "gridPos": {
         "x": 6,
-        "y": 123,
+        "y": 131,
         "w": 6,
         "h": 6
       },
@@ -2791,7 +2924,7 @@
       "title": "Lifecycle Deleted / Failed",
       "gridPos": {
         "x": 12,
-        "y": 123,
+        "y": 131,
         "w": 6,
         "h": 6
       },
@@ -2834,7 +2967,7 @@
       "title": "Lifecycle Runs",
       "gridPos": {
         "x": 18,
-        "y": 123,
+        "y": 131,
         "w": 6,
         "h": 6
       },
@@ -2873,7 +3006,7 @@
       "title": "Cleanup Queue & Audit",
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 137,
         "w": 24,
         "h": 1
       },
@@ -2885,7 +3018,7 @@
       "title": "Cleanup Queue Depth",
       "gridPos": {
         "x": 0,
-        "y": 130,
+        "y": 138,
         "w": 6,
         "h": 8
       },
@@ -2938,7 +3071,7 @@
       "title": "Cleanup Throughput",
       "gridPos": {
         "x": 6,
-        "y": 130,
+        "y": 138,
         "w": 6,
         "h": 8
       },
@@ -2989,7 +3122,7 @@
       "title": "Orphan Bytes per Backend",
       "gridPos": {
         "x": 12,
-        "y": 130,
+        "y": 138,
         "w": 6,
         "h": 8
       },
@@ -3050,7 +3183,7 @@
       "title": "Audit Events",
       "gridPos": {
         "x": 18,
-        "y": 130,
+        "y": 138,
         "w": 6,
         "h": 8
       },
@@ -3093,7 +3226,7 @@
       "title": "Encryption",
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 146,
         "w": 24,
         "h": 1
       },
@@ -3105,7 +3238,7 @@
       "title": "Encryption Operations",
       "gridPos": {
         "x": 0,
-        "y": 139,
+        "y": 147,
         "w": 8,
         "h": 8
       },
@@ -3148,7 +3281,7 @@
       "title": "Encryption Errors",
       "gridPos": {
         "x": 8,
-        "y": 139,
+        "y": 147,
         "w": 8,
         "h": 8
       },
@@ -3191,7 +3324,7 @@
       "title": "Encrypt Existing / Key Rotation",
       "gridPos": {
         "x": 16,
-        "y": 139,
+        "y": 147,
         "w": 8,
         "h": 8
       },
@@ -3238,7 +3371,7 @@
       "title": "Unknown KeyID Fallbacks",
       "gridPos": {
         "x": 0,
-        "y": 147,
+        "y": 155,
         "w": 8,
         "h": 6
       },
@@ -3287,7 +3420,7 @@
       "title": "Encryption Flag Mismatches",
       "gridPos": {
         "x": 0,
-        "y": 153,
+        "y": 161,
         "w": 24,
         "h": 8
       },
@@ -3344,7 +3477,7 @@
       "title": "Object Data Cache",
       "gridPos": {
         "x": 0,
-        "y": 161,
+        "y": 169,
         "w": 24,
         "h": 1
       },
@@ -3356,7 +3489,7 @@
       "title": "Cache Hit / Miss Rate",
       "gridPos": {
         "x": 0,
-        "y": 162,
+        "y": 170,
         "w": 8,
         "h": 8
       },
@@ -3403,7 +3536,7 @@
       "title": "Cache Hit Ratio",
       "gridPos": {
         "x": 8,
-        "y": 162,
+        "y": 170,
         "w": 4,
         "h": 8
       },
@@ -3447,7 +3580,7 @@
       "title": "Cache Size",
       "gridPos": {
         "x": 12,
-        "y": 162,
+        "y": 170,
         "w": 6,
         "h": 8
       },
@@ -3513,7 +3646,7 @@
       "title": "Cache Evictions",
       "gridPos": {
         "x": 18,
-        "y": 162,
+        "y": 170,
         "w": 6,
         "h": 8
       },
@@ -3556,7 +3689,7 @@
       "title": "Integrity Verification",
       "gridPos": {
         "x": 0,
-        "y": 170,
+        "y": 178,
         "w": 24,
         "h": 1
       },
@@ -3568,7 +3701,7 @@
       "title": "Integrity Checks",
       "gridPos": {
         "x": 0,
-        "y": 171,
+        "y": 179,
         "w": 12,
         "h": 8
       },
@@ -3611,7 +3744,7 @@
       "title": "Integrity Errors",
       "gridPos": {
         "x": 12,
-        "y": 171,
+        "y": 179,
         "w": 12,
         "h": 8
       },
@@ -3667,7 +3800,7 @@
       "title": "Verification Coverage (oldest unverified)",
       "gridPos": {
         "x": 0,
-        "y": 179,
+        "y": 187,
         "w": 12,
         "h": 8
       },
@@ -3725,7 +3858,7 @@
       "title": "Copies Never Verified",
       "gridPos": {
         "x": 12,
-        "y": 179,
+        "y": 187,
         "w": 12,
         "h": 8
       },
@@ -3782,7 +3915,7 @@
       "title": "Unreadable Imports",
       "gridPos": {
         "x": 0,
-        "y": 187,
+        "y": 195,
         "w": 24,
         "h": 8
       },
@@ -3839,7 +3972,7 @@
       "title": "Redis",
       "gridPos": {
         "x": 0,
-        "y": 195,
+        "y": 203,
         "w": 24,
         "h": 1
       },
@@ -3851,7 +3984,7 @@
       "title": "Redis Fallback Active",
       "gridPos": {
         "x": 0,
-        "y": 196,
+        "y": 204,
         "w": 4,
         "h": 6
       },
@@ -3916,7 +4049,7 @@
       "title": "Redis Operations",
       "gridPos": {
         "x": 4,
-        "y": 196,
+        "y": 204,
         "w": 20,
         "h": 6
       },
@@ -3960,7 +4093,7 @@
       "title": "Over-Replication Cleanup",
       "gridPos": {
         "x": 0,
-        "y": 202,
+        "y": 210,
         "w": 24,
         "h": 1
       },
@@ -3973,7 +4106,7 @@
       "description": "Objects with more recorded copies than the replication factor. An exact count over the whole ledger, recomputed every telemetry.metrics.fleet_interval (default 60s) and after each over-replication pass.",
       "gridPos": {
         "x": 0,
-        "y": 203,
+        "y": 211,
         "w": 4,
         "h": 6
       },
@@ -4035,7 +4168,7 @@
       "title": "Excess Copies Removed",
       "gridPos": {
         "x": 4,
-        "y": 203,
+        "y": 211,
         "w": 7,
         "h": 6
       },
@@ -4083,7 +4216,7 @@
       "title": "Cleanup Errors",
       "gridPos": {
         "x": 11,
-        "y": 203,
+        "y": 211,
         "w": 7,
         "h": 6
       },
@@ -4131,7 +4264,7 @@
       "title": "Cleanup Duration (p95)",
       "gridPos": {
         "x": 18,
-        "y": 203,
+        "y": 211,
         "w": 6,
         "h": 6
       },
@@ -4179,7 +4312,7 @@
       "title": "Pending PUT Intents",
       "gridPos": {
         "x": 0,
-        "y": 209,
+        "y": 217,
         "w": 24,
         "h": 1
       },
@@ -4192,7 +4325,7 @@
       "description": "Unresolved PUT intents. An intent holds its bytes against the backend's headroom for as long as it lives, so a stuck one is space no write can use, not just a commit awaiting repair. Steady-state should be 0; persistent non-zero indicates the reaper is not draining (DB outage, backend HEAD failures, or operator-review-required ambiguous rows).",
       "gridPos": {
         "x": 0,
-        "y": 210,
+        "y": 218,
         "w": 6,
         "h": 8
       },
@@ -4246,7 +4379,7 @@
       "description": "Rate of intents enqueued by the write path versus resolved by status. Steady state has enqueued and committed close to equal; promoted/dropped events indicate the reaper is repairing failed commits.",
       "gridPos": {
         "x": 6,
-        "y": 210,
+        "y": 218,
         "w": 12,
         "h": 8
       },
@@ -4294,7 +4427,7 @@
       "description": "Lifetime count of pending intents the reaper refused to promote because the destination already held a row for the same key. These rows stay in the database for operator review; any non-zero value warrants investigation.",
       "gridPos": {
         "x": 18,
-        "y": 210,
+        "y": 218,
         "w": 6,
         "h": 8
       },
@@ -4343,7 +4476,7 @@
       "title": "Authentication",
       "gridPos": {
         "x": 0,
-        "y": 218,
+        "y": 226,
         "w": 24,
         "h": 1
       },
@@ -4356,7 +4489,7 @@
       "description": "Rate of streaming-SigV4 PUTs received, by AWS streaming variant.",
       "gridPos": {
         "x": 0,
-        "y": 219,
+        "y": 227,
         "w": 12,
         "h": 8
       },
@@ -4400,7 +4533,7 @@
       "description": "Rate of streaming-SigV4 PUTs rejected mid-stream, by reason. Any non-zero rate is either a misconfigured client or a tampered request.",
       "gridPos": {
         "x": 12,
-        "y": 219,
+        "y": 227,
         "w": 12,
         "h": 8
       },
@@ -4444,7 +4577,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 227,
+        "y": 235,
         "w": 24,
         "h": 1
       }
@@ -4455,7 +4588,7 @@
       "title": "Worker tick rate by service & result",
       "gridPos": {
         "x": 0,
-        "y": 228,
+        "y": 236,
         "w": 12,
         "h": 8
       },
@@ -4476,7 +4609,7 @@
       "title": "Consecutive failures per worker (gauge)",
       "gridPos": {
         "x": 12,
-        "y": 228,
+        "y": 236,
         "w": 12,
         "h": 8
       },
@@ -4498,7 +4631,7 @@
       "description": "Age of the most recent successful tick anywhere in the fleet. Lock-gated workers tick on whichever instance holds the lock, so a per-instance age grows on every instance that is not holding it.",
       "gridPos": {
         "x": 0,
-        "y": 236,
+        "y": 244,
         "w": 12,
         "h": 8
       },
@@ -4519,7 +4652,7 @@
       "title": "Worker admission rejections",
       "gridPos": {
         "x": 12,
-        "y": 236,
+        "y": 244,
         "w": 12,
         "h": 8
       },
@@ -4541,7 +4674,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 244,
+        "y": 252,
         "w": 24,
         "h": 1
       }
@@ -4552,7 +4685,7 @@
       "title": "Notification queue depth",
       "gridPos": {
         "x": 0,
-        "y": 245,
+        "y": 253,
         "w": 6,
         "h": 4
       },
@@ -4572,7 +4705,7 @@
       "title": "Notifications sent / failed / dropped",
       "gridPos": {
         "x": 6,
-        "y": 245,
+        "y": 253,
         "w": 18,
         "h": 8
       },
@@ -4601,7 +4734,7 @@
       "title": "Notification delivery duration (p95)",
       "gridPos": {
         "x": 0,
-        "y": 253,
+        "y": 261,
         "w": 12,
         "h": 8
       },
@@ -4622,7 +4755,7 @@
       "title": "Notification store errors",
       "gridPos": {
         "x": 12,
-        "y": 253,
+        "y": 261,
         "w": 12,
         "h": 8
       },
@@ -4644,7 +4777,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 261,
+        "y": 269,
         "w": 24,
         "h": 1
       }
@@ -4655,7 +4788,7 @@
       "title": "Cleanup DLQ depth",
       "gridPos": {
         "x": 0,
-        "y": 262,
+        "y": 270,
         "w": 6,
         "h": 4
       },
@@ -4675,7 +4808,7 @@
       "title": "Rows graduated to DLQ by backend",
       "gridPos": {
         "x": 6,
-        "y": 262,
+        "y": 270,
         "w": 18,
         "h": 8
       },
@@ -4696,7 +4829,7 @@
       "title": "Cleanup enqueue failures (untracked-orphan risk)",
       "gridPos": {
         "x": 0,
-        "y": 270,
+        "y": 278,
         "w": 24,
         "h": 8
       },
@@ -4718,7 +4851,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 278,
+        "y": 286,
         "w": 24,
         "h": 1
       }
@@ -4729,7 +4862,7 @@
       "title": "Write target refused mid-write",
       "gridPos": {
         "x": 0,
-        "y": 279,
+        "y": 287,
         "w": 12,
         "h": 8
       },
@@ -4750,7 +4883,7 @@
       "title": "Circuit breaker internal errors",
       "gridPos": {
         "x": 12,
-        "y": 279,
+        "y": 287,
         "w": 12,
         "h": 8
       },
@@ -4771,7 +4904,7 @@
       "title": "Admission client cancellations",
       "gridPos": {
         "x": 0,
-        "y": 287,
+        "y": 295,
         "w": 12,
         "h": 8
       },
@@ -4792,7 +4925,7 @@
       "title": "Decrypt-existing admin op",
       "gridPos": {
         "x": 12,
-        "y": 287,
+        "y": 295,
         "w": 12,
         "h": 8
       },
@@ -4813,7 +4946,7 @@
       "title": "Cache admin invalidations & flushes",
       "gridPos": {
         "x": 0,
-        "y": 295,
+        "y": 303,
         "w": 12,
         "h": 8
       },
@@ -4838,7 +4971,7 @@
       "title": "Over-replication cleaner runs",
       "gridPos": {
         "x": 12,
-        "y": 295,
+        "y": 303,
         "w": 12,
         "h": 8
       },
@@ -4859,7 +4992,7 @@
       "title": "Degraded-Mode Hardening",
       "gridPos": {
         "x": 0,
-        "y": 303,
+        "y": 311,
         "w": 24,
         "h": 1
       },
@@ -4872,7 +5005,7 @@
       "description": "1 when any instance's DB circuit breaker is open or half-open; that instance broadcasts reads across backends.",
       "gridPos": {
         "x": 0,
-        "y": 304,
+        "y": 312,
         "w": 6,
         "h": 4
       },
@@ -4934,7 +5067,7 @@
       "description": "Wall-clock p50/p95/p99 of degraded-mode broadcast reads, by terminal outcome.",
       "gridPos": {
         "x": 6,
-        "y": 304,
+        "y": 312,
         "w": 18,
         "h": 8
       },
@@ -4974,7 +5107,7 @@
       "description": "Rate of broadcasts where backends disagreed: some returned 404 while others failed with non-404 errors. Persistent non-zero values suggest provider divergence or a transient backend storm hidden under not_found.",
       "gridPos": {
         "x": 0,
-        "y": 312,
+        "y": 320,
         "w": 24,
         "h": 6
       },
@@ -5004,7 +5137,7 @@
       "title": "Broadcast Drain Timeouts",
       "gridPos": {
         "x": 0,
-        "y": 318,
+        "y": 326,
         "w": 24,
         "h": 8
       },
@@ -5061,7 +5194,7 @@
       "title": "Compression",
       "gridPos": {
         "x": 0,
-        "y": 326,
+        "y": 334,
         "w": 24,
         "h": 1
       },
@@ -5074,7 +5207,7 @@
       "title": "Compression ratio (stored/logical)",
       "gridPos": {
         "x": 0,
-        "y": 327,
+        "y": 335,
         "w": 6,
         "h": 4
       },
@@ -5099,7 +5232,7 @@
       "title": "Bytes saved (30m)",
       "gridPos": {
         "x": 6,
-        "y": 327,
+        "y": 335,
         "w": 6,
         "h": 4
       },
@@ -5124,7 +5257,7 @@
       "title": "Read amplification (fetched/served)",
       "gridPos": {
         "x": 12,
-        "y": 327,
+        "y": 335,
         "w": 6,
         "h": 4
       },
@@ -5149,7 +5282,7 @@
       "title": "Codec errors (30m)",
       "gridPos": {
         "x": 18,
-        "y": 327,
+        "y": 335,
         "w": 6,
         "h": 4
       },
@@ -5172,7 +5305,7 @@
       "title": "Compressed write volume",
       "gridPos": {
         "x": 0,
-        "y": 331,
+        "y": 339,
         "w": 12,
         "h": 8
       },
@@ -5220,7 +5353,7 @@
       "title": "Per-object compression ratio",
       "gridPos": {
         "x": 12,
-        "y": 331,
+        "y": 339,
         "w": 12,
         "h": 8
       },
@@ -5271,7 +5404,7 @@
       "title": "Objects stored verbatim, by reason",
       "gridPos": {
         "x": 0,
-        "y": 339,
+        "y": 347,
         "w": 12,
         "h": 8
       },
@@ -5314,7 +5447,7 @@
       "title": "Codec errors by operation",
       "gridPos": {
         "x": 12,
-        "y": 339,
+        "y": 347,
         "w": 12,
         "h": 8
       },
@@ -5357,7 +5490,7 @@
       "title": "Bulk pass progress",
       "gridPos": {
         "x": 0,
-        "y": 347,
+        "y": 355,
         "w": 24,
         "h": 8
       },
@@ -5404,7 +5537,7 @@
       "title": "Fleet",
       "gridPos": {
         "x": 0,
-        "y": 355,
+        "y": 363,
         "w": 24,
         "h": 1
       },
@@ -5418,7 +5551,7 @@
       "description": "Scrape targets answering. Every background pass is advisory-locked, so a second instance duplicates no work; what it buys is surviving the loss of the first.",
       "gridPos": {
         "x": 0,
-        "y": 356,
+        "y": 364,
         "w": 4,
         "h": 4
       },
@@ -5472,7 +5605,7 @@
       "description": "Whether the load balancer is spreading requests. Two instances taking an even share is the point; one taking all of them is redundancy that has never been exercised.",
       "gridPos": {
         "x": 4,
-        "y": 356,
+        "y": 364,
         "w": 10,
         "h": 8
       },
@@ -5514,7 +5647,7 @@
       "description": "A tick another instance was already inside. Steady skips are the advisory locks doing their job; zero across every service while two instances run means one is not ticking at all.",
       "gridPos": {
         "x": 14,
-        "y": 356,
+        "y": 364,
         "w": 10,
         "h": 8
       },
@@ -5553,10 +5686,10 @@
       "type": "table",
       "id": 145,
       "title": "Circuit Breaker State by Instance",
-      "description": "Every instance keeps its own breakers. A backend open on one instance and closed on the others points at that instance's path to the backend, not the backend.",
+      "description": "Every instance keeps its own breakers. A backend open on one instance and closed on the others points at that instance's path to the backend, not the backend. A backend reads Open while any of its calls is refused; Refused Calls Now shows which.",
       "gridPos": {
         "x": 0,
-        "y": 364,
+        "y": 372,
         "w": 12,
         "h": 8
       },
@@ -5651,7 +5784,7 @@
       "description": "Requests each instance is holding right now. One instance well above the others while request rates match is an instance whose backend or database calls are slower.",
       "gridPos": {
         "x": 12,
-        "y": 364,
+        "y": 372,
         "w": 12,
         "h": 8
       },
@@ -5693,7 +5826,7 @@
       "description": "Which instance ran each lock-gated worker. The lock moves between instances from tick to tick; a worker that only ever succeeds on one instance is fine, one that succeeds nowhere is stuck.",
       "gridPos": {
         "x": 0,
-        "y": 372,
+        "y": 380,
         "w": 24,
         "h": 8
       },
@@ -5733,7 +5866,7 @@
       "title": "Data Path Details",
       "gridPos": {
         "x": 0,
-        "y": 380,
+        "y": 388,
         "w": 24,
         "h": 1
       },
@@ -5747,7 +5880,7 @@
       "description": "Object copies still stored unencrypted. Nonzero after encryption is turned on means the encrypt-existing pass has not reached them yet.",
       "gridPos": {
         "x": 0,
-        "y": 381,
+        "y": 389,
         "w": 3,
         "h": 8
       },
@@ -5784,7 +5917,7 @@
       "description": "Object copies encrypted with no key to decrypt them. Clients cannot see them and nothing can recover them; they hold quota until purged with admin unreadable --execute.",
       "gridPos": {
         "x": 3,
-        "y": 381,
+        "y": 389,
         "w": 3,
         "h": 8
       },
@@ -5834,7 +5967,7 @@
       "description": "HEAD responses answered from stored metadata without a backend request.",
       "gridPos": {
         "x": 6,
-        "y": 381,
+        "y": 389,
         "w": 9,
         "h": 8
       },
@@ -5866,7 +5999,7 @@
       "description": "Copies skipped because the backend had no usage headroom left. A skipped scrub is not stamped, so the copy stays first in line for the next sweep; a replica left unverified or an object a bulk rewrite skipped is only revisited when that pass runs again.",
       "gridPos": {
         "x": 15,
-        "y": 381,
+        "y": 389,
         "w": 9,
         "h": 8
       },
@@ -5902,7 +6035,7 @@
       "description": "Copies a bulk rewrite pass converted while a client wrote the same key. The pass's bytes reached the backend before its commit was refused, so the stored copy is the pass's output over the newer write. Each one is audited as storage.ConversionRaced; any nonzero value is worth checking.",
       "gridPos": {
         "x": 0,
-        "y": 389,
+        "y": 397,
         "w": 12,
         "h": 8
       },
@@ -5934,7 +6067,7 @@
       "description": "Over-replicated copies the cleaner kept because they held the only usable encryption key for the object.",
       "gridPos": {
         "x": 12,
-        "y": 389,
+        "y": 397,
         "w": 12,
         "h": 8
       },

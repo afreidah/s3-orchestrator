@@ -62,7 +62,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.161.x (current)
+### v0.162.x (current)
+
+**Per-call breaker metrics and events ([#1690](https://github.com/afreidah/s3-orchestrator/issues/1690), v0.162.0)**
+
+A new gauge names the calls each backend refuses, and circuit events name the call that opened or closed.
+
+**Operator action items after upgrade:**
+
+- **New gauge `s3o_backend_call_refused{backend, call}`**, 1 while a call is refused and 0 while it is served. `s3o_circuit_breaker_state` is unchanged: a backend still reads open while any call is refused. The bundled Grafana dashboard adds a Backend Call State timeline (served, degraded or down per backend) and a Refused Calls Now table.
+- **`backend.circuit.opened` and `backend.circuit.closed` fire per breaker and carry `call`**: the call name, or `all` when the whole backend is unreachable. A backend refusing two calls now sends two events where it used to send one, and the closed event follows each breaker's own recovery. Webhook rules that count these events per backend need updating.
+
+### v0.161.x
 
 **Refused calls in backend status ([#1691](https://github.com/afreidah/s3-orchestrator/issues/1691), v0.161.0)**
 

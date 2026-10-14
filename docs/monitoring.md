@@ -190,6 +190,7 @@ Key metrics to alert on:
 | `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
 | `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open, 2=half-open) |
 | `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable, its credentials are rejected, or it is refusing at least one call |
+| `s3o_backend_call_refused{backend="<backend>"}` | Which calls are refused: 1 for each, so `s3o_backend_call_refused{call="GetObject"} == 1` alone points at a download quota rather than an outage |
 | `s3o_replication_pending` | Alert when consistently > 0 - replicas are falling behind |
 | `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for backends refusing reads |
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor - should return to 0 after cleanup runs |
@@ -285,6 +286,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions, by cycle outcome (see below) |
 | `s3o_over_replication_duration_seconds` | Histogram | - | Over-replication cleanup cycle time |
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
+| `s3o_backend_call_refused` | Gauge | backend, call | 1 while the backend's circuit breakers refuse the call, 0 while it is served |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
 | `s3o_circuit_breaker_internal_errors_total` | Counter | - | Errors returned by breaker post-check or state transitions |
 | `s3o_degraded_mode_active` | Gauge | - | 1 while the read path is in degraded mode (database unavailable), 0 otherwise |

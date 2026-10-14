@@ -38,6 +38,7 @@ func TestMetricsRegistration_KeyFamiliesPresent(t *testing.T) {
 		{"s3o_rebalance_runs_total", func() { RebalanceRunsTotal.WithLabelValues("pack", "ok").Inc() }},
 		{"s3o_replication_runs_total", func() { ReplicationRunsTotal.WithLabelValues("ok").Inc() }},
 		{"s3o_circuit_breaker_state", func() { CircuitBreakerState.WithLabelValues("test-reg").Set(0) }},
+		{"s3o_backend_call_refused", func() { BackendCallRefused.WithLabelValues("test-reg", "GetObject").Set(0) }},
 		{"s3o_cleanup_queue_depth", func() { CleanupQueueDepth.Set(0) }},
 		{"s3o_pending_intents_depth", func() { PendingIntentsDepth.Set(0) }},
 		{"s3o_pending_intents_enqueued_total", func() { PendingIntentsEnqueuedTotal.Inc() }},
