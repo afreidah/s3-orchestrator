@@ -118,7 +118,7 @@ var permissionNames = bitset.Vocabulary[PermissionSet]{
 // Has reports whether this set carries every permission in want. An empty want
 // is satisfied by any set.
 func (p PermissionSet) Has(want PermissionSet) bool {
-	return p&want == want
+	return bitset.Has(p, want)
 }
 
 // String renders the set as the stored form: a comma-separated list in a fixed
@@ -163,10 +163,10 @@ func ParsePermissions(kind ResourceKind, s string) (PermissionSet, error) {
 			out |= PermAdminAll
 			continue
 		}
-		bit, ok := permissionBit(name)
+		bit, ok := permissionNames.Lookup(name)
 		if !ok {
 			return 0, fmt.Errorf("unknown permission %q, want one of %s, %q or %q",
-				name, strings.Join(allPermissionNames(), ", "), permAllName, permAdminAllName)
+				name, strings.Join(permissionNames.AllNames(), ", "), permAllName, permAdminAllName)
 		}
 		out |= bit
 	}
@@ -184,26 +184,6 @@ func emptyPermissions(kind ResourceKind) PermissionSet {
 	return 0
 }
 
-// permissionBit looks up the bit a stored name selects.
-func permissionBit(name string) (PermissionSet, bool) {
-	for _, entry := range permissionNames {
-		if entry.Name == name {
-			return entry.Bit, true
-		}
-	}
-	return 0, false
-}
-
-// allPermissionNames lists every name a grant may carry, for the error a bad
-// one produces.
-func allPermissionNames() []string {
-	out := make([]string, 0, len(permissionNames))
-	for _, entry := range permissionNames {
-		out = append(out, entry.Name)
-	}
-	return out
-}
-
 // ValidOn reports the permissions a grant on the given resource may carry:
 // the data-plane set for buckets and the admin set for everything else.
 func ValidOn(kind ResourceKind) PermissionSet {
@@ -217,10 +197,10 @@ func ValidOn(kind ResourceKind) PermissionSet {
 // grant names, so an operator is told at once rather than finding the grant
 // authorizes nothing later.
 func ValidatePermissions(kind ResourceKind, p PermissionSet) error {
-	stray := p &^ ValidOn(kind)
-	if stray == 0 {
+	valid := ValidOn(kind)
+	if bitset.Within(p, valid) {
 		return nil
 	}
 	return fmt.Errorf("permissions %s are not valid on a %s grant, want one of %s",
-		stray, kind, strings.Join(ValidOn(kind).Names(), ", "))
+		p&^valid, kind, strings.Join(valid.Names(), ", "))
 }
