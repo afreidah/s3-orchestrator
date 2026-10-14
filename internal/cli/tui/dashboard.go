@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
@@ -211,17 +212,22 @@ func usageBar(pct, width int) string {
 	return "[" + usageStyle(pct).Render(strings.Repeat("#", filled)) + strings.Repeat("-", width-filled) + "]"
 }
 
-// backendMarkers renders a backend's breaker health and, when it carries any,
-// its state flags, since either one means the backend is taking no new writes.
+// backendMarkers renders a backend's breaker health - naming the refused calls
+// when only some are refused - and, when it carries any, its state flags.
 func backendMarkers(b *adminapi.BackendStatus) string {
-	health := statusOKStyle.Render("healthy")
-	if !b.Healthy {
-		health = statusErrStyle.Render("UNHEALTHY")
+	var health string
+	switch output.BackendHealth(b.RefusedCalls) {
+	case output.HealthDown:
+		health = statusErrStyle.Render("DOWN")
+	case output.HealthDegraded:
+		health = logLevelWarn.Render("DEGRADED " + output.NameList(b.RefusedCalls))
+	default:
+		health = statusOKStyle.Render(output.HealthHealthy)
 	}
 	if len(b.Flags) == 0 {
 		return health
 	}
-	return health + "  " + logLevelWarn.Render(backendState(b.Flags))
+	return health + "  " + logLevelWarn.Render(output.NameList(b.Flags))
 }
 
 // dashboardSummary renders the fleet's backlogs and coverage as an aligned

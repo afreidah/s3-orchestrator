@@ -15,10 +15,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -43,9 +41,9 @@ func renderStatus(w io.Writer, body []byte) error {
 		b := &s.Backends[i]
 		rows[i] = []string{
 			b.Name,
-			health(b.RefusedCalls),
-			nameList(b.RefusedCalls),
-			nameList(b.Flags),
+			output.BackendHealth(b.RefusedCalls),
+			output.NameList(b.RefusedCalls),
+			output.NameList(b.Flags),
 			output.FormatBytes(b.BytesUsed),
 			output.FormatBytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
@@ -59,27 +57,4 @@ func renderStatus(w io.Writer, body []byte) error {
 	}
 	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\nUsage period:  %s\n", s.DBHealthy, s.UsagePeriod)
 	return err
-}
-
-// health renders a backend's circuit-breaker state for the status table:
-// healthy while it refuses nothing, down while it refuses every call, and
-// degraded in between.
-func health(refused []string) string {
-	switch len(refused) {
-	case 0:
-		return "healthy"
-	case len(core.AllCalls.Names()):
-		return "down"
-	default:
-		return "degraded"
-	}
-}
-
-// nameList renders a list of names for the status table, joined by commas,
-// and a dash when it is empty.
-func nameList(names []string) string {
-	if len(names) == 0 {
-		return "-"
-	}
-	return strings.Join(names, ",")
 }

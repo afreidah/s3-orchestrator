@@ -60,14 +60,6 @@ func by[T any, K cmp.Ordered](field func(*T) K) func(a, b *T) int {
 	return func(a, b *T) int { return cmp.Compare(field(a), field(b)) }
 }
 
-// rank orders a flag for sorting: false before true.
-func rank(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // loaded reports whether items have been handed to the table yet.
 func (s *sortTable[T]) loaded() bool {
 	return s.received != nil

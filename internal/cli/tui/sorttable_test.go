@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,16 +140,17 @@ func TestSortTable_MarksTheSortedColumn(t *testing.T) {
 	if specs := list.specs(); specs[0].title != "BACKEND" {
 		t.Errorf("unsorted title = %q, want it unmarked", specs[0].title)
 	}
+	use := slices.IndexFunc(backendColumns, func(c columnSpec) bool { return c.title == "USE%" })
 	list.sort = tableSort{column: "USE%"}
-	spec := list.specs()[5]
+	spec := list.specs()[use]
 	if spec.title != "USE%"+sortAscMarker || spec.min != 6+len(sortAscMarker) {
 		t.Errorf("ascending spec = %+v, want a marked, widened USE%%", spec)
 	}
 	list.sort.desc = true
-	if got := list.specs()[5].title; got != "USE%"+sortDescMarker {
+	if got := list.specs()[use].title; got != "USE%"+sortDescMarker {
 		t.Errorf("descending title = %q", got)
 	}
-	if backendColumns[5].title != "USE%" {
+	if backendColumns[use].title != "USE%" {
 		t.Error("marking a column changed the shared column specs")
 	}
 }
