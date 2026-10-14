@@ -24,7 +24,7 @@ import (
 
 // dashboardModel returns a sized model on the dashboard with a status,
 // replication and cleanup snapshot applied: one backend near full and
-// draining, one unhealthy with no limit.
+// draining, one refusing GET with no limit, and one refusing every call.
 func dashboardModel(t *testing.T) *model {
 	t.Helper()
 	m := initialModel(&fakeLister{})
@@ -35,7 +35,8 @@ func dashboardModel(t *testing.T) *model {
 		Backends: []adminapi.BackendStatus{
 			{Name: "minio-a", Healthy: true, Flags: []string{"draining"}, BytesUsed: 9 << 30, BytesLimit: 10 << 30,
 				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30},
-			{Name: "minio-b", Healthy: false, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
+			{Name: "minio-b", RefusedCalls: []string{"GetObject"}, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
+			{Name: "minio-c", RefusedCalls: []string{"PutObject", "GetObject", "HeadObject", "DeleteObject", "DeleteObjects", "CopyObject", "ListObjects"}},
 		},
 		Integrity: adminapi.IntegrityStatus{OldestUnverifiedSeconds: 3600, DeferredCopies: 3, PlaintextCopies: 1500},
 	})
@@ -77,7 +78,8 @@ func TestDashboard_Capacity(t *testing.T) {
 	got := dashboardModel(t).dashboardCapacity()
 	assertContains(t, got,
 		"minio-a", "9.0 GiB / 10.0 GiB", "90%", "draining",
-		"minio-b", "no limit", "UNHEALTHY",
+		"minio-b", "no limit", "DEGRADED GetObject",
+		"minio-c", "DOWN",
 		"fleet", "10.0 GiB / 10.0 GiB", "100%",
 		"[", "#", "-]")
 }

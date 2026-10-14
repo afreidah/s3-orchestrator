@@ -24,10 +24,10 @@ import (
 func TestBackendStatuses_Mapping(t *testing.T) {
 	t.Parallel()
 	data := &dashboard.Data{
-		BackendOrder:      []string{"b1", "b2"},
-		UnhealthyBackends: map[string]bool{"b2": true},
-		DrainingBackends:  map[string]backendstate.DrainProgress{"b1": {Active: true, State: "draining"}},
-		BackendFlags:      map[string]core.BackendFlags{"b1": core.FlagCordoned | core.FlagDraining},
+		BackendOrder:     []string{"b1", "b2"},
+		RefusedCalls:     map[string]core.BackendCalls{"b2": core.CallGetObject | core.CallHeadObject},
+		DrainingBackends: map[string]backendstate.DrainProgress{"b1": {Active: true, State: "draining"}},
+		BackendFlags:     map[string]core.BackendFlags{"b1": core.FlagCordoned | core.FlagDraining},
 		QuotaStats: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -42,7 +42,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 		t.Fatalf("rows out of order: %+v", got)
 	}
 
-	// b1: healthy (absent from unhealthy), cordoned and draining, counters mapped.
+	// b1: healthy (absent from refused calls), cordoned and draining, counters mapped.
 	b1 := got[0]
 	if !b1.Healthy || !b1.Draining || !slices.Equal(b1.Flags, []string{"cordoned", "draining"}) {
 		t.Errorf("b1 health/drain/flags = %v/%v/%v, want true/true/[cordoned draining]", b1.Healthy, b1.Draining, b1.Flags)
@@ -54,7 +54,7 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 		t.Errorf("b1 usage = %+v", b1)
 	}
 
-	// b2: unhealthy (present), not draining, and no stats seeded => zero counters.
+	// b2: refusing GET and HEAD, not draining, and no stats seeded => zero counters.
 	b2 := got[1]
 	if b2.Healthy || b2.Draining {
 		t.Errorf("b2 health/drain = %v/%v, want false/false", b2.Healthy, b2.Draining)
@@ -66,5 +66,22 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	}
 	if b2.BytesUsed != 0 || b2.ObjectCount != 0 || b2.APIRequests != 0 {
 		t.Errorf("b2 should have zero counters: %+v", b2)
+	}
+}
+
+// TestBackendStatuses_RefusedCalls covers the refused-call names: listed in
+// call order for a backend refusing some, and an empty list for one serving all.
+func TestBackendStatuses_RefusedCalls(t *testing.T) {
+	t.Parallel()
+	got := backendStatuses(&dashboard.Data{
+		BackendOrder: []string{"b1", "b2"},
+		RefusedCalls: map[string]core.BackendCalls{"b2": core.CallGetObject | core.CallHeadObject},
+	})
+
+	if got[0].RefusedCalls == nil || len(got[0].RefusedCalls) != 0 {
+		t.Errorf("b1 refused calls = %#v, want an empty non-nil list", got[0].RefusedCalls)
+	}
+	if want := []string{"GetObject", "HeadObject"}; !slices.Equal(got[1].RefusedCalls, want) {
+		t.Errorf("b2 refused calls = %v, want %v", got[1].RefusedCalls, want)
 	}
 }

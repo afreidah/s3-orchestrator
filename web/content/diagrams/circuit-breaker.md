@@ -143,7 +143,7 @@ State machine of `breaker.CircuitBreaker`, the one breaker type used in three pl
     SENTINEL: {
       title: 'Return Sentinel Error',
       badge: 'reject', badgeText: 'fast rejection',
-      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; a write fails over to the next eligible backend, and a read fails over to the next replica.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: an internal <code>redis unavailable</code> error &mdash; the counter backend switches to local in-memory counters.</p><p>The registry\'s <code>ExcludeUnhealthy</code> drops every backend with any breaker open before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
+      body: '<p>Returns the circuit-specific sentinel error immediately, with no I/O to the underlying system.</p><p><b>Backend</b>: <code>ErrBackendUnavailable</code> &mdash; a write fails over to the next eligible backend, and a read fails over to the next replica.<br><b>Database</b>: <code>ErrDBUnavailable</code> &mdash; triggers degraded mode: writes return 503, reads fan out to all backends.<br><b>Redis</b>: an internal <code>redis unavailable</code> error &mdash; the counter backend switches to local in-memory counters.</p><p>The registry\'s <code>Serving</code> drops every backend not serving the calls a purpose makes before routing, so most open-circuit rejections happen at the routing layer rather than here.</p>'
     },
     PROBE: {
       title: 'Probe Slot Available? (database only)',

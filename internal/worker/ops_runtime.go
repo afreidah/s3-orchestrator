@@ -15,6 +15,7 @@ package worker
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -37,6 +38,8 @@ type Ops interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
 	BackendFlags(name string) core.BackendFlags
+	ServedCalls(name string) core.BackendCalls
+	RefusedFor(name string, required core.BackendCalls) time.Duration
 	AcquireAdmission(ctx context.Context) bool
 	ReleaseAdmission()
 	GetBackend(name string) (backend.ObjectBackend, error)

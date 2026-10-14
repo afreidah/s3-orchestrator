@@ -32,6 +32,9 @@ func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *
 	return NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "test-backend", Threshold: threshold, Timeout: timeout})
 }
 
+// servesAll reports whether cb serves every call.
+func servesAll(cb *CircuitBreakerBackend) bool { return cb.Served() == core.AllCalls }
+
 // probeFor returns cb's probe charged as op.
 func probeFor(t *testing.T, cb *CircuitBreakerBackend, op s3op.Operation) Probe {
 	t.Helper()
@@ -219,8 +222,8 @@ func TestCBBackend_ClientRequestsNeverProbe(t *testing.T) {
 		if !errors.Is(err, breaker.ErrBackendUnavailable) {
 			t.Fatalf("PutObject after the open timeout = %v, want ErrBackendUnavailable", err)
 		}
-		if cb.State() != breaker.StateOpen {
-			t.Errorf("state = %v, want open: client requests are never probes", cb.State())
+		if servesAll(cb) {
+			t.Error("every call served after a client request: client requests are never probes")
 		}
 
 		probeFor(t, cb, s3op.HeadBucket).Breaker.Recover()
@@ -264,8 +267,8 @@ func TestCBBackend_RequestErrorsDoNotOpen(t *testing.T) {
 			for range 10 {
 				_, _ = cb.GetObject(context.Background(), "key", "bytes=0-31")
 			}
-			if cb.State() != breaker.StateClosed {
-				t.Errorf("state after ten %d responses = %v, want closed", code, cb.State())
+			if !servesAll(cb) {
+				t.Errorf("served after ten %d responses = %s, want every call", code, cb.Served())
 			}
 		})
 	}
@@ -399,16 +402,56 @@ func TestCBBackend_BackendLevelTransitions(t *testing.T) {
 	_, _ = cb.GetObject(context.Background(), "key", "")
 	_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
 	probeFor(t, cb, s3op.GetObject).Breaker.Recover()
-	if cb.OpenDuration() == 0 {
-		t.Error("OpenDuration = 0 while PUT is not served")
+	if cb.RefusedFor(core.RequiredForWrite) == 0 {
+		t.Error("RefusedFor(write) = 0 while PUT is not served")
+	}
+	if d := cb.RefusedFor(core.RequiredForRead); d != 0 {
+		t.Errorf("RefusedFor(read) = %v once GET is served again, want 0", d)
 	}
 	probeFor(t, cb, s3op.PutObject).Breaker.Recover()
 
 	if want := []breaker.State{breaker.StateOpen, breaker.StateClosed}; !slices.Equal(seen, want) {
 		t.Errorf("transitions = %v, want %v", seen, want)
 	}
-	if cb.OpenDuration() != 0 {
-		t.Error("OpenDuration != 0 with every call served")
+	if d := cb.RefusedFor(core.AllCalls); d != 0 {
+		t.Errorf("RefusedFor(all) = %v with every call served, want 0", d)
+	}
+}
+
+// TestServedCalls_ReadsTheBreaker verifies the package-level helpers read a
+// wrapped backend's breakers and treat an unwrapped one as serving every call.
+func TestServedCalls_ReadsTheBreaker(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	if got := ServedCalls(mock); got != core.AllCalls {
+		t.Errorf("ServedCalls(unwrapped) = %s, want every call", got)
+	}
+	if d := RefusedFor(mock, core.AllCalls); d != 0 {
+		t.Errorf("RefusedFor(unwrapped) = %v, want 0", d)
+	}
+
+	mock.getErr = &httpError{code: 403}
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	if got, want := ServedCalls(cb), core.AllCalls&^core.CallGetObject; got != want {
+		t.Errorf("ServedCalls(wrapped) = %s, want %s", got, want)
+	}
+	if RefusedFor(cb, core.RequiredForRead) == 0 {
+		t.Error("RefusedFor(wrapped, read) = 0 while GET is refused")
+	}
+}
+
+// TestCBBackend_RefusedForCountsTheBackendBreaker verifies an unreachable
+// backend refuses every mask, however narrow.
+func TestCBBackend_RefusedForCountsTheBackendBreaker(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	mock.headErr = errors.New("connection refused")
+	cb := newTestCBBackend(mock, 1, time.Minute)
+
+	_, _ = cb.HeadObject(context.Background(), "key")
+	if cb.RefusedFor(core.RequiredForRead) == 0 {
+		t.Error("RefusedFor(read) = 0 while the backend breaker is open")
 	}
 }
 
@@ -561,8 +604,8 @@ func TestCBBackend_404DoesNotTripBreaker(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected result, got nil")
 	}
-	if cb.State() != breaker.StateClosed {
-		t.Errorf("expected circuit closed, got %v", cb.State())
+	if !servesAll(cb) {
+		t.Errorf("served = %s, want every call", cb.Served())
 	}
 }
 
@@ -579,8 +622,8 @@ func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 		_, _ = cb.GetObject(context.Background(), "key", "")
 	}
 
-	if cb.State() != breaker.StateOpen {
-		t.Errorf("expected circuit open after 500s, got %v", cb.State())
+	if cb.Served().Has(core.CallGetObject) {
+		t.Errorf("served after 500s = %s, want GET refused", cb.Served())
 	}
 
 	// Next call should return ErrBackendUnavailable without reaching backend

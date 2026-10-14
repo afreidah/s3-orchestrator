@@ -13,7 +13,7 @@ A persistent left navigation bar switches between sections; the content area to 
 
 - **Dashboard** - where the TUI opens: a usage bar per backend with its health and state flags, the fleet total, the replication and verification backlogs, how many copies are still plaintext, what compression saves, request and transfer totals for the usage period, and the cleanup and dead-letter depths. Every figure on it is fleet-wide, so it reads the same whichever instance answers.
 - **Files** - a hierarchical listing of the object namespace, one prefix at a time (directories collapse into common prefixes, just like `aws s3 ls`). Large prefixes page in as you scroll. Opening an object swaps the content area for the **Inspector**, which lists every backend copy of that object with its size, age, encryption status, key id, and content-hash prefix - the replica-placement view that makes multi-backend storage legible.
-- **Backends** - one row per configured backend with its circuit-breaker health, state flags (cordoned, draining), quota usage, object count, and per-period request and transfer counters.
+- **Backends** - one row per configured backend with its circuit-breaker health (healthy, degraded or down) and the calls it is refusing, state flags (cordoned, draining), quota usage, object count, and per-period request and transfer counters.
 - **Buckets** - every virtual bucket the deployment declares, whether the config file or the store declares it (config-declared buckets are read-only to the provisioning API), its multipart upload cap, and which identities reach it with what permissions.
 - **Replication** - the configured replication factor and the current under- and over-replicated object counts, refreshing on its own while the section is active.
 - **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
@@ -142,10 +142,10 @@ Press `b` (or select **Backends** in the sidebar) to switch to the status view. 
 ```
 backends   3 configured   usage period: 2026-09
 db: healthy   total: 11.3 GiB / 20.0 GiB (56%)   verified: oldest 9h   compression saved: 3.4 GiB
-BACKEND    HEALTH     STATE     USED      LIMIT      USE%   OBJECTS   API    INGRESS   EGRESS    SAVED
-minio-a    healthy    -         2.4 GiB   10.0 GiB   24%    1284      9021   4.7 GiB   2.8 GiB   612.0 MiB
-minio-b    healthy    draining  8.9 GiB   10.0 GiB   89%    4102      512    1.0 GiB   3.1 GiB   2.8 GiB
-minio-c    unhealthy  cordoned  0 B       -          -      0         0      0 B       0 B       0 B
+BACKEND    HEALTH     REFUSED    STATE     USED      LIMIT      USE%   OBJECTS   API    INGRESS   EGRESS    SAVED
+minio-a    healthy    -          -         2.4 GiB   10.0 GiB   24%    1284      9021   4.7 GiB   2.8 GiB   612.0 MiB
+minio-b    degraded   GetObject  draining  8.9 GiB   10.0 GiB   89%    4102      512    1.0 GiB   3.1 GiB   2.8 GiB
+minio-c    down       PutObje... cordoned  0 B       -          -      0         0      0 B       0 B       0 B
 ```
 
 The second line carries fleet-wide state. `verified:` is how far behind
@@ -156,7 +156,8 @@ or a count of never-checked copies while the first sweep is still running.
 
 Reading the columns:
 
-- **HEALTH** - the backend's circuit-breaker state; `unhealthy` means the breaker has tripped and the backend is being skipped.
+- **HEALTH** - the backend's circuit-breaker state: `healthy` while it serves every call, `degraded` while an open breaker refuses some calls, and `down` while it refuses every call. Sorting by it puts down backends first, then degraded.
+- **REFUSED** - the calls an open breaker is refusing, such as `GetObject` while a provider's download quota is exhausted; `-` when none. A degraded backend keeps serving the rest, so one refusing only downloads still takes writes. The column is the first to drop on a narrow terminal.
 - **STATE** - the backend's state flags: `cordoned` when no new copies may land on it, and `draining` while a drain is evacuating it, `drained` once that has finished, or `drain-failed` when it stopped on an error. A cordon and a drain can show together. `-` means normal service; a backend carrying any flag takes no new writes.
 - **USED** / **LIMIT** / **USE%** - quota bytes used against the configured limit (`-` when no limit is set), and the fill percentage that follows from them.
 - **OBJECTS** - object copies the backend holds.

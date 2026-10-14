@@ -72,7 +72,8 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
-// handleStatus returns backend health and circuit breaker state.
+// handleStatus returns each backend's quota, usage, state flags and refused
+// calls, plus database health and integrity figures, from the fleet snapshot.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.dashboardOps.GetStatus(r.Context())
 	if err != nil {
@@ -94,16 +95,18 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // backendStatuses maps a dashboard snapshot onto the shared status wire type,
-// one entry per backend in display order. A backend absent from UnhealthyBackends
-// is healthy, and one absent from BackendFlags carries no flags.
+// one entry per backend in display order. A backend absent from RefusedCalls
+// serves every call, and one absent from BackendFlags carries no flags.
 func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 	backends := make([]adminapi.BackendStatus, 0, len(data.BackendOrder))
 	for _, name := range data.BackendOrder {
+		refused := data.RefusedCalls[name]
 		bs := adminapi.BackendStatus{
-			Name:     name,
-			Healthy:  !data.UnhealthyBackends[name],
-			Draining: data.DrainingBackends[name].Active,
-			Flags:    data.BackendFlags[name].Names(),
+			Name:         name,
+			Healthy:      refused == 0,
+			RefusedCalls: refused.Names(),
+			Draining:     data.DrainingBackends[name].Active,
+			Flags:        data.BackendFlags[name].Names(),
 		}
 		if qs, ok := data.QuotaStats[name]; ok {
 			bs.BytesUsed = qs.BytesUsed
@@ -123,7 +126,8 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 	return backends
 }
 
-// handleObjectLocations returns all copies of an object across backends.
+// handleObjectLocations returns every recorded copy of the object named by
+// the key query parameter, answering 400 when the key is missing.
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 
@@ -163,7 +167,8 @@ func objectLocationsResponse(key string, locations []core.ObjectLocation) admina
 	return resp
 }
 
-// handleCleanupQueue returns cleanup queue depth and pending items.
+// handleCleanupQueue returns the cleanup queue's depth and its first 50
+// pending items.
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 	depth, err := h.cleanup.CleanupQueueDepth(r.Context())
 	if err != nil {
@@ -205,7 +210,8 @@ func cleanupQueueItems(items []core.CleanupItem) []adminapi.CleanupQueueItem {
 	return out
 }
 
-// handleUsageFlush forces a flush of usage counters to the database.
+// handleUsageFlush writes the in-memory usage counters to the database now,
+// rather than waiting for the next flush interval.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	if err := h.backendOps.FlushUsage(r.Context()); err != nil {
 		h.internalError(r.Context(), w, "flush failed", err)
@@ -232,7 +238,8 @@ func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLogLevel gets or sets the runtime log level.
+// handleLogLevel reports the runtime log level on GET and sets it from the
+// request body otherwise, answering with the level now in effect.
 func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{

@@ -12,6 +12,7 @@ package worker
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	counter "github.com/afreidah/s3-orchestrator/internal/counter"
@@ -190,6 +191,20 @@ func (mr *MockOpsMockRecorder) Quota() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Quota", reflect.TypeOf((*MockOps)(nil).Quota))
 }
 
+// RefusedFor mocks base method.
+func (m *MockOps) RefusedFor(name string, required core.BackendCalls) time.Duration {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RefusedFor", name, required)
+	ret0, _ := ret[0].(time.Duration)
+	return ret0
+}
+
+// RefusedFor indicates an expected call of RefusedFor.
+func (mr *MockOpsMockRecorder) RefusedFor(name, required any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefusedFor", reflect.TypeOf((*MockOps)(nil).RefusedFor), name, required)
+}
+
 // ReleaseAdmission mocks base method.
 func (m *MockOps) ReleaseAdmission() {
 	m.ctrl.T.Helper()
@@ -200,6 +215,20 @@ func (m *MockOps) ReleaseAdmission() {
 func (mr *MockOpsMockRecorder) ReleaseAdmission() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseAdmission", reflect.TypeOf((*MockOps)(nil).ReleaseAdmission))
+}
+
+// ServedCalls mocks base method.
+func (m *MockOps) ServedCalls(name string) core.BackendCalls {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ServedCalls", name)
+	ret0, _ := ret[0].(core.BackendCalls)
+	return ret0
+}
+
+// ServedCalls indicates an expected call of ServedCalls.
+func (mr *MockOpsMockRecorder) ServedCalls(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ServedCalls", reflect.TypeOf((*MockOps)(nil).ServedCalls), name)
 }
 
 // StreamCopy mocks base method.

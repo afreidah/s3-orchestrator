@@ -15,13 +15,13 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// cmdStatus implements `s3-orchestrator admin status`.
+// cmdStatus implements `s3-orchestrator admin status`, fetching the status
+// payload and rendering it as a table.
 func cmdStatus(_ []string, c *client) int {
 	return c.get("/admin/api/status", renderStatus)
 }
@@ -35,13 +35,15 @@ func renderStatus(w io.Writer, body []byte) error {
 		return err
 	}
 
-	headers := []string{"Backend", "Health", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
+	headers := []string{"Backend", "Health", "Refused", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
 	rows := make([][]string, len(s.Backends))
-	for i, b := range s.Backends {
+	for i := range s.Backends {
+		b := &s.Backends[i]
 		rows[i] = []string{
 			b.Name,
-			health(b.Healthy),
-			backendState(b.Flags),
+			output.BackendHealth(b.RefusedCalls),
+			output.NameList(b.RefusedCalls),
+			output.NameList(b.Flags),
 			output.FormatBytes(b.BytesUsed),
 			output.FormatBytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
@@ -55,21 +57,4 @@ func renderStatus(w io.Writer, body []byte) error {
 	}
 	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\nUsage period:  %s\n", s.DBHealthy, s.UsagePeriod)
 	return err
-}
-
-// health renders a backend's circuit-breaker state for the status table.
-func health(healthy bool) string {
-	if healthy {
-		return "healthy"
-	}
-	return "unhealthy"
-}
-
-// backendState renders a backend's state flags for the status table, joined by
-// commas, and a dash for a backend in normal service.
-func backendState(flags []string) string {
-	if len(flags) == 0 {
-		return "-"
-	}
-	return strings.Join(flags, ",")
 }

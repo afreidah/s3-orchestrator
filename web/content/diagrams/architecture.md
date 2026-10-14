@@ -229,7 +229,7 @@ The gray background workers run only when the process starts in `worker` or `all
     SELECT: {
       title: 'Backend Selection & Failover',
       badge: 'storage', badgeText: 'routing',
-      body: '<p>Selects target backend using configured strategy:</p><p><b>spread:</b> picks least-utilized backend (equalizes storage across backends).<br><b>pack:</b> fills backends in order (consolidates storage, frees later backends).</p><p><b>Write failover:</b> on backend failure, removes from eligible list and retries next backend. <b>Read failover:</b> tries all replicas until one succeeds.</p><p><code>ExcludeUnhealthy</code> removes every backend whose circuit breaker is open, and <code>ExcludeDraining</code> removes draining ones. A client request is never sent to an open backend as a probe.</p>'
+      body: '<p>Selects target backend using configured strategy:</p><p><b>spread:</b> picks least-utilized backend (equalizes storage across backends).<br><b>pack:</b> fills backends in order (consolidates storage, frees later backends).</p><p><b>Write failover:</b> on backend failure, removes from eligible list and retries next backend. <b>Read failover:</b> tries all replicas until one succeeds.</p><p><code>Serving</code> removes every backend refusing uploads behind an open circuit breaker, and <code>Accepted</code> removes draining ones. A client request is never sent to an open backend as a probe.</p>'
     },
     CB1: {
       title: 'Backend Circuit Breakers',
@@ -274,7 +274,7 @@ The gray background workers run only when the process starts in `worker` or `all
     USAGE: {
       title: 'Usage Tracker & Quota Enforcement',
       badge: 'background', badgeText: 'quota',
-      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes, and one count per configured request pool. Effective usage = DB baseline + unflushed in-memory deltas.</p><p>Requests are budgeted per pool because providers meter operation classes separately: an upload and a read draw on different allowances, and some operations are not billed at all. Every call is still counted against the request total, whether or not a budget charges it.</p><p>Writes pick from <code>EligibleForWrite</code>, which drops draining and circuit-broken backends and then applies the usage filter (<code>UsageTracker.WithinLimits</code> plus the per-backend max object size). Flushes deltas to DB every <code>usage_flush.interval</code> (default 30s). With <code>usage_flush.adaptive_enabled: true</code>, the interval drops to <code>usage_flush.fast_interval</code> (default 5s) when a backend nears a limit.</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
+      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes, and one count per configured request pool. Effective usage = DB baseline + unflushed in-memory deltas.</p><p>Requests are budgeted per pool because providers meter operation classes separately: an upload and a read draw on different allowances, and some operations are not billed at all. Every call is still counted against the request total, whether or not a budget charges it.</p><p>Writes pick from <code>EligibleForWrite</code>, which drops draining backends and backends refusing uploads and then applies the usage filter (<code>UsageTracker.WithinLimits</code> plus the per-backend max object size). Flushes deltas to DB every <code>usage_flush.interval</code> (default 30s). With <code>usage_flush.adaptive_enabled: true</code>, the interval drops to <code>usage_flush.fast_interval</code> (default 5s) when a backend nears a limit.</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
     },
     COUNTER: {
       title: 'Counter Backend',
@@ -284,7 +284,7 @@ The gray background workers run only when the process starts in `worker` or `all
     REPL: {
       title: 'Replicator',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Stream-copies to backends with available quota (binary copy, no re-encryption).</p><p>A copy on a backend whose breaker has been open longer than <code>replication.unhealthy_threshold</code> (default 10m) stops counting toward the factor, so a replacement is made elsewhere.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Stream-copies to backends with available quota (binary copy, no re-encryption).</p><p>A copy on a backend that has refused reads for longer than <code>replication.unhealthy_threshold</code> (default 10m) stops counting toward the factor, so a replacement is made elsewhere.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     REBAL: {
       title: 'Rebalancer',
@@ -309,7 +309,7 @@ The gray background workers run only when the process starts in `worker` or `all
     OVERREP: {
       title: 'Over-Replication Cleaner',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every <code>replication.worker_interval</code> (default 5 minutes) under advisory lock <code>LockOverReplication</code> (1008).</p><p>Copies are scored by backend state: copies on draining backends go first, then copies on circuit-broken backends, then copies on the most utilized healthy backends. Frees up quota where it is scarcest.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every <code>replication.worker_interval</code> (default 5 minutes) under advisory lock <code>LockOverReplication</code> (1008).</p><p>Copies are scored by backend state: copies on draining backends go first, then copies on backends refusing reads, then copies on the most utilized healthy backends. Frees up quota where it is scarcest.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     PENDREAP: {
       title: 'Pending Reaper',

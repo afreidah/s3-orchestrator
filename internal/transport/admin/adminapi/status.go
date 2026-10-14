@@ -43,11 +43,16 @@ type IntegrityStatus struct {
 // empty for a backend in normal service; a backend carrying any of them is
 // refused new writes.
 //
+// RefusedCalls names the backend calls an open circuit breaker is refusing,
+// such as GetObject while a provider's download quota is exhausted, and is
+// empty while every call is served. Healthy is true exactly when it is empty.
+//
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
 type BackendStatus struct {
 	Name         string   `json:"name"`
 	Healthy      bool     `json:"healthy"`
+	RefusedCalls []string `json:"refused_calls"`
 	Draining     bool     `json:"draining"`
 	Flags        []string `json:"flags"`
 	BytesUsed    int64    `json:"bytes_used"`

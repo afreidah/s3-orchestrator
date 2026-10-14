@@ -5,7 +5,7 @@
 //
 // Covers the fields the aggregator fills from the running fleet rather than
 // the store: which backends are draining and how far along, and which are
-// failing their circuit breaker. Both are best-effort, so the interesting
+// refusing any call. Both are best-effort, so the interesting
 // cases are the ones where a dependency is absent or errors.
 //
 // These exercise the aggregator directly against the DashboardStore and
@@ -17,12 +17,9 @@ package dashboard
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -45,7 +42,8 @@ func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 	return store
 }
 
-// emptySnapshot is a complete fleet snapshot of an empty fleet.
+// emptySnapshot is a complete fleet snapshot of an empty fleet: every map
+// present and empty, so the aggregator does not treat it as incomplete.
 func emptySnapshot() *metrics.FleetSnapshot {
 	return &metrics.FleetSnapshot{
 		Quota:     map[string]core.QuotaStat{},
@@ -54,7 +52,8 @@ func emptySnapshot() *metrics.FleetSnapshot {
 	}
 }
 
-// expectSnapshot has fleet serve snap as the fleet snapshot.
+// expectSnapshot has fleet serve snap as the fleet snapshot, however many
+// times the aggregator asks.
 func expectSnapshot(fleet *MockFleetView, snap *metrics.FleetSnapshot) {
 	fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(snap, nil).AnyTimes()
 }
@@ -65,7 +64,6 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFle
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, snap)
 	fleet.EXPECT().BackendOrder().Return(nil).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 	return fleet
 }
 
@@ -83,38 +81,21 @@ func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 	return usage
 }
 
-// trippedBackend returns a circuit-breaker backend whose breaker is already
-// open, which is how the aggregator recognises an unhealthy backend.
-func trippedBackend(t *testing.T, ctrl *gomock.Controller) backend.ObjectBackend {
-	t.Helper()
-	inner := backendtest.NewMockCheckedBackend(ctrl)
-	inner.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", errors.New("down")).AnyTimes()
-	cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{
-		Name: "b1", Threshold: 1, Timeout: time.Minute,
-	})
-	if _, err := cb.PutObject(t.Context(), "k", nil, 0, "", nil); err == nil {
-		t.Fatal("expected the seed PutObject to fail and trip the breaker")
-	}
-	return cb
-}
-
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestDecorateLiveState_MarksUnhealthyBackends asserts a backend whose breaker
-// is open is reported unhealthy.
-func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
+// TestDecorateLiveState_RecordsRefusedCalls asserts a backend refusing only GET
+// is recorded with exactly that call refused.
+func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	cb := trippedBackend(t, ctrl)
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": cb}).AnyTimes()
+	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
 
@@ -122,8 +103,8 @@ func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if !data.UnhealthyBackends["b1"] {
-		t.Error("b1 has an open breaker but was not marked unhealthy")
+	if got := data.RefusedCalls["b1"]; got != core.CallGetObject {
+		t.Errorf("b1 refused calls = %s, want GetObject", got)
 	}
 }
 
@@ -133,14 +114,11 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	healthy := backend.NewCircuitBreakerBackend(backendtest.NewMockCheckedBackend(ctrl), backend.CircuitBreakerConfig{
-		Name: "b1", Threshold: 5, Timeout: time.Minute,
-	})
 	fleet := NewMockFleetView(ctrl)
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": healthy}).AnyTimes()
+	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
 
@@ -148,8 +126,8 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if _, present := data.UnhealthyBackends["b1"]; present {
-		t.Error("a healthy backend should be absent from UnhealthyBackends, not present-and-false")
+	if _, present := data.RefusedCalls["b1"]; present {
+		t.Error("a backend serving every call should be absent from RefusedCalls, not present-and-empty")
 	}
 }
 
@@ -164,7 +142,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	fleet.EXPECT().BackendOrder().Return([]string{"draining", "idle"}).AnyTimes()
 	fleet.EXPECT().BackendFlags("draining").Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().BackendFlags("idle").Return(core.BackendFlags(0)).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
+	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
 	// Only the draining backend is asked; querying the idle one would be a bug.
@@ -199,7 +177,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
+	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), gomock.Any()).
@@ -225,14 +203,14 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	expectSnapshot(fleet, emptySnapshot())
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
-	fleet.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
+	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
 	data, err := agg.GetData(t.Context())
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if data.DrainingBackends == nil || data.UnhealthyBackends == nil {
+	if data.DrainingBackends == nil || data.RefusedCalls == nil {
 		t.Error("live-state maps must be initialised even with no drain manager")
 	}
 }

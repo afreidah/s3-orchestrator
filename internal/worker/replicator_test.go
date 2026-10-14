@@ -268,7 +268,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe})
 	// Read at the source copy's path and written at the replica's own, which
 	// the caller minted before the transfer started.
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe},
@@ -290,7 +290,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 }
 
 // newOpenBreakerBackend wraps a mock whose calls fail and trips its breaker
-// open (threshold 1), so IsBackendHealthy reports it unhealthy. Used to prove
+// open (threshold 1), so it serves no reads. Used to prove
 // CopyToReplica excludes dead sources from selection.
 func newOpenBreakerBackend(t *testing.T, ctrl *gomock.Controller, name string) *backend.CircuitBreakerBackend {
 	t.Helper()
@@ -301,8 +301,8 @@ func newOpenBreakerBackend(t *testing.T, ctrl *gomock.Controller, name string) *
 	if _, err := cb.GetObject(context.Background(), "trip", ""); err == nil {
 		t.Fatal("expected the priming call to fail")
 	}
-	if cb.IsHealthy() {
-		t.Fatal("expected breaker to be open after a failure")
+	if cb.Served().Has(core.RequiredForRead) {
+		t.Fatal("expected reads refused after a failure")
 	}
 	return cb
 }
@@ -322,8 +322,7 @@ func TestCopyToReplica_SkipsOpenBreakerSource(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
-	ops.EXPECT().Backends().
-		Return(map[string]backend.ObjectBackend{"b0": deadSrc, "b1": healthySrc}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b0": deadSrc, "b1": healthySrc})
 	// Only the healthy source may be streamed; an unexpected StreamCopy against
 	// deadSrc fails the test (no expectation registered for it).
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{healthySrc}, endpointOf{dstBe},
@@ -359,7 +358,7 @@ func TestCopyToReplica_FallsBackWhenAllSourcesUnhealthy(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b0": deadSrc}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b0": deadSrc})
 	// With no healthy source, the fallback must still attempt the dead one.
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{deadSrc}, endpointOf{dstBe}, gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil)
 
@@ -388,7 +387,7 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe})
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe}, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"}))
 
@@ -416,7 +415,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe})
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe}, gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), &backend.CopyError{Phase: backend.CopyPhaseRead, Err: errors.New("timeout")})
 
 	r := newTestReplicator(ops, pl, ms)
@@ -443,10 +442,10 @@ func TestCopyToReplica_WriteErrorShortCircuits(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("dst").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src1": src1,
 		"src2": src2,
-	}).AnyTimes()
+	})
 
 	// First source triggers a typed write error. No expectation is set
 	// for src2's StreamCopy, so the test fails (unexpected call) if
@@ -480,10 +479,10 @@ func TestCopyToReplica_UntypedErrorRetriesNextSource(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().GetBackend("dst").Return(dstBe, nil)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src1": src1,
 		"src2": src2,
-	}).AnyTimes()
+	})
 
 	// Untyped error from src1 must NOT terminate; the loop must call
 	// StreamCopy on src2 next. Sentinel success on src2 proves the
@@ -552,7 +551,7 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{})
 
 	r := newTestReplicator(ops, pl, ms)
 	cfg := config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1, UnhealthyThreshold: time.Hour}
@@ -582,7 +581,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
 	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"b2"})
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe},
 		"key1!on-b1", gomock.Any(), gomock.Any()).Return(int64(0), nil)
@@ -618,9 +617,9 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe, "ok": okBe,
-	}).AnyTimes()
+	})
 
 	// First call selects "fail", second (with "fail" excluded) selects "ok",
 	// third finds no remaining targets and returns "" to end the loop.
@@ -685,9 +684,9 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	ms := &mockMetadataStore{recordReplicaErr: errors.New("db down")}
 
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe,
-	}).AnyTimes()
+	})
 
 	gomock.InOrder(
 		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"fail"}),
@@ -732,9 +731,9 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	ms := &mockMetadataStore{recordReplicaOK: false}
 
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src": srcBe, "stale": staleBe,
-	}).AnyTimes()
+	})
 
 	gomock.InOrder(
 		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"stale"}),

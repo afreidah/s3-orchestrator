@@ -24,7 +24,6 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -121,10 +120,13 @@ func TestCore_StateForwarders_NoCheckerThenWired(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// CIRCUIT BREAKER (registry.ExcludeUnhealthy)
+// CIRCUIT BREAKER (registry.Serving)
 // -------------------------------------------------------------------------
 
-func TestCore_ExcludeUnhealthy_DropsOpenBreakers(t *testing.T) {
+// TestCore_Serving_DropsRefusingBackends verifies a backend whose breaker is
+// open is dropped and reports how long it has refused, while an unwrapped
+// backend serves every call and an unknown one serves none.
+func TestCore_Serving_DropsRefusingBackends(t *testing.T) {
 	t.Parallel()
 	// Build a CB-wrapped backend whose underlying call fails repeatedly
 	// so the breaker trips.
@@ -138,12 +140,21 @@ func TestCore_ExcludeUnhealthy_DropsOpenBreakers(t *testing.T) {
 	for range 3 {
 		_, _ = cb.GetObject(context.Background(), "k", "")
 	}
-	if cb.State() != breaker.StateOpen {
-		t.Fatalf("breaker state = %v, want Open", cb.State())
-	}
-	got := c.ExcludeUnhealthy([]string{"healthy", "flaky"})
+	got := c.Serving([]string{"healthy", "flaky"}, core.RequiredForWrite)
 	if len(got) != 1 || got[0] != "healthy" {
-		t.Errorf("ExcludeUnhealthy = %v, want [healthy]", got)
+		t.Errorf("Serving = %v, want [healthy]", got)
+	}
+	if served := c.ServedCalls("healthy"); served != core.AllCalls {
+		t.Errorf("ServedCalls(healthy) = %s, want every call", served)
+	}
+	if served := c.ServedCalls("missing"); served != 0 {
+		t.Errorf("ServedCalls(missing) = %s, want none", served)
+	}
+	if c.RefusedFor("flaky", core.RequiredForRead) == 0 {
+		t.Error("RefusedFor(flaky) = 0 with its breaker open")
+	}
+	if d := c.RefusedFor("healthy", core.RequiredForRead); d != 0 {
+		t.Errorf("RefusedFor(healthy) = %v, want 0", d)
 	}
 }
 

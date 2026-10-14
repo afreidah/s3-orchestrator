@@ -449,19 +449,19 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey st
 		return nil, err
 	}
 
-	// Prefer healthy sources. Sort a clone, since ReplicateObject reuses the
-	// caller's slice across attempts.
+	// Prefer sources serving reads. Sort a clone, since ReplicateObject reuses
+	// the caller's slice across attempts.
 	ordered := slices.Clone(copies)
 	slices.SortStableFunc(ordered, func(a, b core.ObjectLocation) int {
-		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
+		return cmpHealthFirst(r.servesReads(a.BackendName), r.servesReads(b.BackendName))
 	})
 
-	// Drop sources whose breaker is open so a copy never starts against a
-	// known-down backend. Fall back to the full set when no source is
-	// healthy, so the object still gets an attempt.
+	// Drop sources refusing reads so a copy never starts against a backend
+	// known to refuse it. Fall back to the full set when none serves reads,
+	// so the object still gets an attempt.
 	candidates := make([]core.ObjectLocation, 0, len(ordered))
 	for i := range ordered {
-		if r.IsBackendHealthy(ordered[i].BackendName) {
+		if r.servesReads(ordered[i].BackendName) {
 			candidates = append(candidates, ordered[i])
 		}
 	}
@@ -558,36 +558,23 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storag
 	})
 }
 
-// UnhealthyBackends returns backend names whose circuit breakers have been
-// open longer than the given threshold. Returns nil when all backends are
-// healthy or circuit breakers are not enabled.
+// UnhealthyBackends returns the backends that have refused reads for at least
+// threshold, whose copies no longer count toward the replica count. Returns
+// nil when every backend is serving reads.
 func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 	var names []string
-	for name, be := range r.ops.Backends() {
-		cbb, ok := be.(*backend.CircuitBreakerBackend)
-		if !ok {
-			continue
-		}
-		if d := cbb.OpenDuration(); d >= threshold {
+	for name := range r.ops.Backends() {
+		if d := r.ops.RefusedFor(name, core.RequiredForRead); d > 0 && d >= threshold {
 			names = append(names, name)
-			r.log.InfoContext(context.Background(), "backend unhealthy, excluding from replica count",
+			r.log.InfoContext(context.Background(), "backend refusing reads, excluding from replica count",
 				"backend", name,
-				"open_duration", d.Round(time.Second))
+				"refused_for", d.Round(time.Second))
 		}
 	}
 	return names
 }
 
-// IsBackendHealthy returns true if the backend has a closed circuit breaker
-// or has no circuit breaker wrapper.
-func (r *Replicator) IsBackendHealthy(name string) bool {
-	be, ok := r.ops.Backends()[name]
-	if !ok {
-		return false
-	}
-	cbb, ok := be.(*backend.CircuitBreakerBackend)
-	if !ok {
-		return true
-	}
-	return cbb.IsHealthy()
+// servesReads reports whether a copy on the backend can be read.
+func (r *Replicator) servesReads(name string) bool {
+	return r.ops.ServedCalls(name).Has(core.RequiredForRead)
 }

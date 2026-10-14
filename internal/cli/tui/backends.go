@@ -16,11 +16,11 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -441,10 +441,11 @@ func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd
 // backendColumns declares the backends table's columns. The name is capped so
 // short backend names don't sprawl on a wide terminal. A narrow terminal keeps
 // whether each backend is up, how full it is, and which state flags it carries,
-// and drops the period counters first.
+// and drops the period counters and the refused-call names first.
 var backendColumns = []columnSpec{
 	{title: "BACKEND", min: 8, max: 24, priority: 11},
 	{title: "HEALTH", min: 9, max: 9, priority: 10},
+	{title: "REFUSED", min: 9, max: 30, priority: 1},
 	{title: "STATE", min: 8, max: 21, priority: 8},
 	{title: "USED", min: 12, max: 12, priority: 7},
 	{title: "LIMIT", min: 12, max: 12, priority: 5},
@@ -457,12 +458,13 @@ var backendColumns = []columnSpec{
 }
 
 // backendSorts orders the backends table by every column. A backend with no
-// limit sorts as 0% used, and a healthy backend after an unhealthy one, so an
+// limit sorts as 0% used, and a healthy backend after a degraded or down one, so an
 // ascending sort puts the backends needing attention first.
 var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"BACKEND": by(func(b *adminapi.BackendStatus) string { return b.Name }),
-	"HEALTH":  by(func(b *adminapi.BackendStatus) int { return rank(b.Healthy) }),
-	"STATE":   by(func(b *adminapi.BackendStatus) string { return backendState(b.Flags) }),
+	"HEALTH":  by(func(b *adminapi.BackendStatus) int { return healthRank(b.RefusedCalls) }),
+	"REFUSED": by(func(b *adminapi.BackendStatus) string { return output.NameList(b.RefusedCalls) }),
+	"STATE":   by(func(b *adminapi.BackendStatus) string { return output.NameList(b.Flags) }),
 	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
 	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
 	"USE%":    by(func(b *adminapi.BackendStatus) int { return usagePercent(b.BytesUsed, b.BytesLimit) }),
@@ -486,8 +488,9 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		}
 		rows = append(rows, table.Row{
 			b.Name,
-			backendHealth(b.Healthy),
-			backendState(b.Flags),
+			output.BackendHealth(b.RefusedCalls),
+			output.NameList(b.RefusedCalls),
+			output.NameList(b.Flags),
 			humanize.Bytes(b.BytesUsed),
 			limit,
 			usePct,
@@ -511,21 +514,17 @@ func savedBytes(saved int64) string {
 	return humanize.Bytes(saved)
 }
 
-// backendHealth renders a backend's circuit-breaker state.
-func backendHealth(healthy bool) string {
-	if healthy {
-		return "healthy"
+// healthRank orders backends by health for sorting: down first, then
+// degraded, then healthy, so an ascending sort leads with the worst.
+func healthRank(refused []string) int {
+	switch output.BackendHealth(refused) {
+	case output.HealthDown:
+		return 0
+	case output.HealthDegraded:
+		return 1
+	default:
+		return 2
 	}
-	return "unhealthy"
-}
-
-// backendState renders a backend's state flags joined by commas, and a dash
-// for a backend in normal service.
-func backendState(flags []string) string {
-	if len(flags) == 0 {
-		return "-"
-	}
-	return strings.Join(flags, ",")
 }
 
 // backendsView composes the pane's full-screen layout.

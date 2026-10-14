@@ -195,29 +195,35 @@ func (cb *CircuitBreakerBackend) Served() core.BackendCalls {
 	return core.BackendCalls(cb.callsClosed.Load())
 }
 
-// IsHealthy reports whether the backend serves every call.
-func (cb *CircuitBreakerBackend) IsHealthy() bool {
-	return cb.Served() == core.AllCalls
+// ServedCalls returns the calls b is serving. A backend with no circuit
+// breaker serves every call.
+func ServedCalls(b ObjectBackend) core.BackendCalls {
+	if cb, ok := b.(*CircuitBreakerBackend); ok {
+		return cb.Served()
+	}
+	return core.AllCalls
 }
 
-// State reports the backend as closed while it serves every call and open
-// otherwise.
-func (cb *CircuitBreakerBackend) State() breaker.State {
-	if cb.IsHealthy() {
-		return breaker.StateClosed
+// RefusedFor returns how long b has refused any call in required, or zero
+// while it serves them all or has no circuit breaker.
+func RefusedFor(b ObjectBackend, required core.BackendCalls) time.Duration {
+	if cb, ok := b.(*CircuitBreakerBackend); ok {
+		return cb.RefusedFor(required)
 	}
-	return breaker.StateOpen
+	return 0
 }
 
-// OpenDuration returns how long the backend has not served every call, or
-// zero while it does.
-func (cb *CircuitBreakerBackend) OpenDuration() time.Duration {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	if cb.IsHealthy() {
-		return 0
+// RefusedFor returns how long the backend has refused any call in required:
+// the longest any of their breakers, or the backend breaker, has been open.
+// It is zero while every call in required is served.
+func (cb *CircuitBreakerBackend) RefusedFor(required core.BackendCalls) time.Duration {
+	longest := cb.backend.OpenDuration()
+	for call, c := range cb.calls {
+		if required.Has(call) {
+			longest = max(longest, c.breaker.OpenDuration())
+		}
 	}
-	return time.Since(cb.openedAt)
+	return longest
 }
 
 // apply runs one breaker's transition against the served set and, when that
@@ -227,9 +233,9 @@ func (cb *CircuitBreakerBackend) OpenDuration() time.Duration {
 func (cb *CircuitBreakerBackend) apply(info breaker.StateChangeInfo, update func()) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	wasHealthy := cb.IsHealthy()
+	wasHealthy := cb.Served() == core.AllCalls
 	update()
-	isHealthy := cb.IsHealthy()
+	isHealthy := cb.Served() == core.AllCalls
 	if wasHealthy == isHealthy {
 		return
 	}

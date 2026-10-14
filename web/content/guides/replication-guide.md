@@ -44,7 +44,7 @@ replication:
 | `worker_interval` | `5m` | How often the replication worker scans for under-replicated objects. |
 | `batch_size` | `50` | Maximum number of under-replicated objects processed per scan. |
 | `concurrency` | `5` | Number of objects replicated in parallel within a single scan. |
-| `unhealthy_threshold` | `10m` | How long a backend's circuit breaker must be open before the replicator treats it as truly unavailable and creates replacement copies elsewhere. |
+| `unhealthy_threshold` | `10m` | How long a backend must refuse reads before the replicator treats its copies as unavailable and creates replacement copies elsewhere. |
 
 All defaults except `factor` are applied automatically when `factor` is set above 1. You only need to specify the fields you want to override.
 
@@ -75,8 +75,8 @@ The replicator is a background worker that runs on a fixed interval. It uses a P
 1. **Startup pass** — on first boot, the worker runs immediately before entering the ticker loop. This lets it catch up on any replication backlog from downtime or deployment.
 
 2. **Periodic scans** — every `worker_interval` (default 5 minutes), the worker:
-   - Identifies backends whose circuit breakers have been open longer than `unhealthy_threshold`
-   - Queries the database for up to `batch_size` objects with fewer copies than the target factor (excluding copies on unhealthy backends)
+   - Identifies backends that have refused reads for longer than `unhealthy_threshold`
+   - Queries the database for up to `batch_size` objects with fewer copies than the target factor (excluding copies on those backends)
    - Groups results by object key and calculates how many additional copies each object needs
    - Submits copy tasks to a worker pool with the configured `concurrency`
 
@@ -95,7 +95,7 @@ A backend is eligible if it meets all of these conditions:
 
 - It carries **no state flag**: it is not cordoned and not draining
 - It **does not already hold** a copy of the object
-- Its **circuit breaker is not open** (the backend is healthy)
+- It is **serving uploads**: neither its backend breaker nor its PUT breaker is open
 - It has **enough free space**: `quota - used_bytes - orphan_bytes >= object_size`
 
 If no backend qualifies, the object remains under-replicated until the next scan.
@@ -146,7 +146,7 @@ Several features work together to keep replication healthy:
 
 - **`unhealthy_threshold`** prevents premature replacement copies. If a backend has a brief network hiccup, the replicator waits for the threshold to pass before assuming the backend is truly down and creating copies elsewhere. This avoids unnecessary over-replication when the backend recovers moments later.
 
-- **Circuit breakers** prevent the replicator from wasting API requests attempting to copy to a backend that is currently failing. Broken backends are excluded from target selection entirely.
+- **Circuit breakers** prevent the replicator from wasting API requests attempting to copy to a backend that is currently failing. Backends refusing uploads are excluded from target selection entirely; a backend refusing only downloads can still receive copies.
 
 - **Monitor metrics** to catch imbalances early. See [Monitoring](#monitoring) for the full list.
 
@@ -165,7 +165,7 @@ Each copy receives a retention score. Lower scores are removed first:
 | Backend State | Score | Rationale |
 |---|---|---|
 | Cordoned or draining | 0 | Takes no new copies, or data is being migrated off - remove first |
-| Circuit-broken | 1 | Backend is unreliable — prefer removing from here |
+| Refusing reads | 1 | Copy cannot be read - prefer removing from here |
 | Healthy | 2.0 – 3.0 | `2 + (1 - utilization_ratio)` — fuller backends score lower, keeping copies on backends with more headroom |
 
 For example, a healthy backend at 90% utilization scores 2.1, while one at 50% scores 2.5. The copy on the 90% backend is removed first, freeing space where it is most needed.

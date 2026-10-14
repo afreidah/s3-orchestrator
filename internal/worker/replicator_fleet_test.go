@@ -522,7 +522,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 }
 
 // TestReplicate_HealthAware_PrefersHealthySource asserts the source
-// preference picks a healthy copy when one source is circuit-broken.
+// preference picks a copy it can read when one source is refusing reads.
 func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
@@ -650,48 +650,63 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 	}
 }
 
-// TestIsBackendHealthy_NoCB asserts a non-CB-wrapped backend is treated
-// as healthy.
-func TestIsBackendHealthy_NoCB(t *testing.T) {
+// TestServesReads_NoCB asserts a non-CB-wrapped backend serves reads.
+func TestServesReads_NoCB(t *testing.T) {
 	t.Parallel()
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	if !w.IsBackendHealthy("b1") {
-		t.Error("backend without CB wrapper should be healthy")
+	if !w.servesReads("b1") {
+		t.Error("backend without CB wrapper should serve reads")
 	}
 }
 
-// TestIsBackendHealthy_UnknownBackend asserts an unknown backend is not
-// healthy.
-func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
+// TestServesReads_UnknownBackend asserts an unknown backend serves nothing.
+func TestServesReads_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	if w.IsBackendHealthy("nonexistent") {
-		t.Error("unknown backend should not be healthy")
+	if w.servesReads("nonexistent") {
+		t.Error("unknown backend should not serve reads")
 	}
 }
 
-// TestIsBackendHealthy_CBHealthy asserts a closed-circuit backend
-// reports healthy.
-func TestIsBackendHealthy_CBHealthy(t *testing.T) {
+// TestServesReads_CBClosed asserts a closed-circuit backend serves reads.
+func TestServesReads_CBClosed(t *testing.T) {
 	t.Parallel()
 	cbb := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: time.Minute})
 	store := newPermissiveStore(t)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})
-	if !w.IsBackendHealthy("b1") {
-		t.Error("healthy CB backend should report healthy")
+	if !w.servesReads("b1") {
+		t.Error("closed CB backend should serve reads")
 	}
 }
 
-// TestIsBackendHealthy_CBUnhealthy asserts a tripped CB reports
-// unhealthy.
-func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
+// TestServesReads_CBTripped asserts a backend with its breaker tripped does
+// not serve reads.
+func TestServesReads_CBTripped(t *testing.T) {
 	t.Parallel()
 	cbb := newTrippedCBBackend(backendtest.NewInMemory(), "b1")
 	store := newPermissiveStore(t)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})
-	if w.IsBackendHealthy("b1") {
-		t.Error("tripped CB backend should report unhealthy")
+	if w.servesReads("b1") {
+		t.Error("tripped CB backend should not serve reads")
+	}
+}
+
+// TestServesReads_OnlyWritesRefused asserts a backend refusing uploads alone
+// still serves reads, and its copies keep counting toward the replica count.
+func TestServesReads_OnlyWritesRefused(t *testing.T) {
+	t.Parallel()
+	inner := backendtest.NewInMemory()
+	inner.PutErr = &httpError{code: 403}
+	cbb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
+	_, _ = cbb.PutObject(context.Background(), "k", bytes.NewReader([]byte("x")), 1, "", nil)
+	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})
+
+	if !w.servesReads("b1") {
+		t.Error("backend refusing only uploads should serve reads")
+	}
+	if names := w.UnhealthyBackends(time.Nanosecond); len(names) != 0 {
+		t.Errorf("UnhealthyBackends = %v, want none while reads are served", names)
 	}
 }

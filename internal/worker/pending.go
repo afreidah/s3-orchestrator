@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -114,16 +113,16 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 	}
 
 	// skipped accumulates the per-backend count of intents short-circuited
-	// because their destination backend's circuit breaker is currently open.
-	// One INFO log line is emitted per skipped backend at the end of the
-	// tick instead of per-intent WARN spam from the probe path.
+	// because their destination backend is refusing HEAD. One INFO log line
+	// is emitted per skipped backend at the end of the tick instead of
+	// per-intent WARN spam from the probe path.
 	var skipped sync.Map
 	runner := batch.Runner[core.PendingObject]{Name: "pending-reaper", Log: r.log, Concurrency: r.concurrency}
 	sum := runner.Run(ctx, intents, func(ctx context.Context, p core.PendingObject) batch.ItemResult {
 		return r.resolveOneIntent(ctx, &p, &skipped)
 	})
 	skipped.Range(func(k, v any) bool {
-		r.log.InfoContext(ctx, "backend circuit open, skipping pending intents",
+		r.log.InfoContext(ctx, "backend refusing HEAD, skipping pending intents",
 			"backend", k.(string), "intents_skipped", v.(*atomic.Int32).Load())
 		return true
 	})
@@ -139,8 +138,8 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 // pending row: admission gating, backend lookup, HEAD probe, and
 // promotion or drop depending on what the backend and store report.
 //
-// When the destination's circuit breaker is open the intent counts as failed,
-// so it stays queued, and is tallied in skipped so the caller logs once per
+// When the destination is refusing HEAD the intent counts as failed, so it
+// stays queued, and is tallied in skipped so the caller logs once per
 // backend instead of once per intent.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) batch.ItemResult {
 	var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
@@ -151,7 +150,7 @@ func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObj
 			return
 		}
 
-		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && cb.State() == breaker.StateOpen {
+		if !backend.ServedCalls(be).Has(core.RequiredForProbe) {
 			cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
 			cnt.(*atomic.Int32).Add(1)
 			res = batch.ItemResult{Outcome: batch.ItemFailed}

@@ -5,7 +5,7 @@
 //
 // Verifies the over-replication scoring and selection logic: the cleaner
 // removes excess copies preferentially from draining backends and
-// circuit-broken backends, and degrades gracefully when the backend
+// backends refusing reads, and degrades gracefully when the backend
 // health table contains an unknown name. Also covers config round-trip
 // and the pending-count surface used by the dashboard gauge.
 // -------------------------------------------------------------------------------
@@ -13,8 +13,10 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
@@ -91,7 +93,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	be := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be})
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	stats := map[string]core.QuotaStat{
@@ -101,6 +103,43 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	// Score should be 2 + (1 - 0.2) = 2.8
 	if score < 2.7 || score > 2.9 {
 		t.Errorf("healthy backend at 20%% should score ~2.8, got %f", score)
+	}
+}
+
+// TestScoreCopy_RefusedCalls verifies a copy on a backend refusing reads
+// scores 1, while one on a backend refusing only uploads still scores as
+// healthy, since the copy can still be read.
+func TestScoreCopy_RefusedCalls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		refuse  func(*backendtest.InMemory, *backend.CircuitBreakerBackend)
+		minimum float64
+	}{
+		{"reads refused", func(m *backendtest.InMemory, cb *backend.CircuitBreakerBackend) {
+			m.GetErr = &httpError{code: 403}
+			_, _ = cb.GetObject(context.Background(), "k", "")
+		}, 1},
+		{"uploads refused", func(m *backendtest.InMemory, cb *backend.CircuitBreakerBackend) {
+			m.PutErr = &httpError{code: 403}
+			_, _ = cb.PutObject(context.Background(), "k", bytes.NewReader(nil), 0, "", nil)
+		}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ops := newMockOps(ctrl)
+			inner := backendtest.NewInMemory()
+			cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Hour})
+			tc.refuse(inner, cb)
+			ops.EXPECT().BackendFlags("b1").Return(core.BackendFlags(0))
+			expectFleet(ops, map[string]backend.ObjectBackend{"b1": cb})
+
+			c := NewOverReplicationCleaner(ops, NewMockPlacement(ctrl), &mockMetadataStore{})
+			if score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil); score < tc.minimum || score >= tc.minimum+1 {
+				t.Errorf("score = %f, want in [%v, %v)", score, tc.minimum, tc.minimum+1)
+			}
+		})
 	}
 }
 
@@ -138,7 +177,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// b1 is more utilized (lower score -> removed first)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
@@ -181,7 +220,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 	ops.EXPECT().Acct().Times(0)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, cleanupOf("b1", "key1", "over_replication", int64(100)))
@@ -216,7 +255,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{
@@ -287,7 +326,7 @@ func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{

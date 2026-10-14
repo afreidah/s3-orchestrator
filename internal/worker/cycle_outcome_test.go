@@ -92,7 +92,7 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 	for _, name := range targets {
 		fleet[name] = backendtest.NewMockObjectBackend(ctrl)
 	}
-	f.ops.EXPECT().Backends().Return(fleet).AnyTimes()
+	expectFleet(f.ops, fleet)
 	f.ops.EXPECT().GetBackend(gomock.Any()).DoAndReturn(func(name string) (backend.ObjectBackend, error) {
 		be, ok := fleet[name]
 		if !ok {
@@ -227,9 +227,9 @@ func TestReplicate_QueryFailureReportsError(t *testing.T) {
 func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),
-	}).AnyTimes()
+	})
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false).AnyTimes()
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
@@ -320,7 +320,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 		"b3": backendtest.NewMockObjectBackend(ctrl),
 		"b4": backendtest.NewMockObjectBackend(ctrl),
 	}
-	f.ops.EXPECT().Backends().Return(fleet).AnyTimes()
+	expectFleet(f.ops, fleet)
 	f.ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	f.ops.EXPECT().GetBackend(gomock.Any()).DoAndReturn(func(name string) (backend.ObjectBackend, error) {
 		be, ok := fleet[name]
@@ -505,10 +505,10 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 	}
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+	expectFleet(ops, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),
 		"b2": backendtest.NewMockObjectBackend(ctrl),
-	}).AnyTimes()
+	})
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	ops.EXPECT().ReleaseAdmission().AnyTimes()
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), moveErr).AnyTimes()

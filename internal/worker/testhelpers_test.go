@@ -21,6 +21,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -97,6 +98,27 @@ func newMockOps(ctrl *gomock.Controller) *MockOps {
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().Quota().Return(counter.NewQuotaTracker(nil)).AnyTimes()
 	return ops
+}
+
+// expectFleet has ops serve fleet as its backends, and answer which calls each
+// one serves from the backend itself, so a tripped breaker in a fixture reads
+// as refusing. A name missing from fleet serves nothing.
+func expectFleet(ops *MockOps, fleet map[string]backend.ObjectBackend) {
+	ops.EXPECT().Backends().Return(fleet).AnyTimes()
+	ops.EXPECT().ServedCalls(gomock.Any()).DoAndReturn(func(name string) core.BackendCalls {
+		b, ok := fleet[name]
+		if !ok {
+			return 0
+		}
+		return backend.ServedCalls(b)
+	}).AnyTimes()
+	ops.EXPECT().RefusedFor(gomock.Any(), gomock.Any()).DoAndReturn(func(name string, required core.BackendCalls) time.Duration {
+		b, ok := fleet[name]
+		if !ok {
+			return 0
+		}
+		return backend.RefusedFor(b, required)
+	}).AnyTimes()
 }
 
 // newTestReplicator builds a Replicator with no stored-form decoders and no

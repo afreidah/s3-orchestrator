@@ -21,13 +21,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-func TestBackendHealthAndDrain(t *testing.T) {
+// TestHealthRank verifies the HEALTH sort leads with the worst backend: down,
+// then degraded, then healthy.
+func TestHealthRank(t *testing.T) {
 	t.Parallel()
-	if backendHealth(true) != "healthy" || backendHealth(false) != "unhealthy" {
-		t.Error("backendHealth mapping wrong")
-	}
-	if backendState([]string{"draining"}) != "draining" || backendState([]string{"cordoned", "draining"}) != "cordoned,draining" || backendState(nil) != "-" {
-		t.Error("backendState mapping wrong")
+	down := healthRank([]string{"PutObject", "GetObject", "HeadObject", "DeleteObject", "DeleteObjects", "CopyObject", "ListObjects"})
+	degraded := healthRank([]string{"GetObject"})
+	healthy := healthRank(nil)
+	if down >= degraded || degraded >= healthy {
+		t.Errorf("ranks down/degraded/healthy = %d/%d/%d, want strictly increasing", down, degraded, healthy)
 	}
 }
 
@@ -48,17 +50,17 @@ func TestRowsFromBackends(t *testing.T) {
 	t.Parallel()
 	rows := rowsFromBackends([]adminapi.BackendStatus{
 		{Name: "b1", Healthy: true, BytesUsed: 2048, BytesLimit: 4096, ObjectCount: 3, APIRequests: 9, IngressBytes: 1024, EgressBytes: 512},
-		{Name: "b2", Healthy: false, Draining: true, Flags: []string{"draining"}, BytesUsed: 0, BytesLimit: 0},
+		{Name: "b2", RefusedCalls: []string{"GetObject"}, Draining: true, Flags: []string{"draining"}, BytesUsed: 0, BytesLimit: 0},
 	})
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	// b1: healthy, human sizes, real limit, use% = 2048/4096 = 50%.
-	if r := rows[0]; r[0] != "b1" || r[1] != "healthy" || r[2] != "-" || r[3] != "2.0 KiB" || r[4] != "4.0 KiB" || r[5] != "50%" {
+	// b1: healthy, nothing refused, human sizes, real limit, use% = 2048/4096 = 50%.
+	if r := rows[0]; r[0] != "b1" || r[1] != "healthy" || r[2] != "-" || r[3] != "-" || r[4] != "2.0 KiB" || r[5] != "4.0 KiB" || r[6] != "50%" {
 		t.Errorf("b1 row = %v", r)
 	}
-	// b2: unhealthy, draining, and a zero limit renders limit and use% as a dash.
-	if r := rows[1]; r[1] != "unhealthy" || r[2] != "draining" || r[4] != "-" || r[5] != "-" {
+	// b2: degraded refusing GET, draining, and a zero limit renders limit and use% as a dash.
+	if r := rows[1]; r[1] != "degraded" || r[2] != "GetObject" || r[3] != "draining" || r[5] != "-" || r[6] != "-" {
 		t.Errorf("b2 row = %v", r)
 	}
 }
