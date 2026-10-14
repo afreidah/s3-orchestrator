@@ -18,10 +18,12 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// cmdStatus implements `s3-orchestrator admin status`.
+// cmdStatus implements `s3-orchestrator admin status`, fetching the status
+// payload and rendering it as a table.
 func cmdStatus(_ []string, c *client) int {
 	return c.get("/admin/api/status", renderStatus)
 }
@@ -35,13 +37,15 @@ func renderStatus(w io.Writer, body []byte) error {
 		return err
 	}
 
-	headers := []string{"Backend", "Health", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
+	headers := []string{"Backend", "Health", "Refused", "State", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
 	rows := make([][]string, len(s.Backends))
-	for i, b := range s.Backends {
+	for i := range s.Backends {
+		b := &s.Backends[i]
 		rows[i] = []string{
 			b.Name,
-			health(b.Healthy),
-			backendState(b.Flags),
+			health(b.RefusedCalls),
+			nameList(b.RefusedCalls),
+			nameList(b.Flags),
 			output.FormatBytes(b.BytesUsed),
 			output.FormatBytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
@@ -57,19 +61,25 @@ func renderStatus(w io.Writer, body []byte) error {
 	return err
 }
 
-// health renders a backend's circuit-breaker state for the status table.
-func health(healthy bool) string {
-	if healthy {
+// health renders a backend's circuit-breaker state for the status table:
+// healthy while it refuses nothing, down while it refuses every call, and
+// degraded in between.
+func health(refused []string) string {
+	switch len(refused) {
+	case 0:
 		return "healthy"
+	case len(core.AllCalls.Names()):
+		return "down"
+	default:
+		return "degraded"
 	}
-	return "unhealthy"
 }
 
-// backendState renders a backend's state flags for the status table, joined by
-// commas, and a dash for a backend in normal service.
-func backendState(flags []string) string {
-	if len(flags) == 0 {
+// nameList renders a list of names for the status table, joined by commas,
+// and a dash when it is empty.
+func nameList(names []string) string {
+	if len(names) == 0 {
 		return "-"
 	}
-	return strings.Join(flags, ",")
+	return strings.Join(names, ",")
 }

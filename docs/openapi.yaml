@@ -1345,9 +1345,14 @@ components:
                 object_count:
                     format: int64
                     type: integer
+                refused_calls:
+                    items:
+                        type: string
+                    type: array
             required:
                 - name
                 - healthy
+                - refused_calls
                 - draining
                 - flags
                 - bytes_used

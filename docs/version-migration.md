@@ -62,7 +62,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.160.x (current)
+### v0.161.x (current)
+
+**Refused calls in backend status ([#1691](https://github.com/afreidah/s3-orchestrator/issues/1691), v0.161.0)**
+
+`GET /admin/api/status` names the calls each backend's circuit breakers are refusing, and `admin status` shows them.
+
+**Operator action items after upgrade:**
+
+- **New field `refused_calls`** on each backend in `/admin/api/status`, listing call names such as `GetObject`, empty while every call is served. `healthy` is unchanged and is false exactly when the list is non-empty.
+- **`admin status`'s Health column reads `healthy`, `degraded` or `down`** instead of `healthy` or `unhealthy`: degraded while some calls are refused, down while all are. A new Refused column lists the calls. Scripts matching `unhealthy` in the text output need updating, or can read `refused_calls` from `admin -json status`.
+
+### v0.160.x
 
 **Routing by the calls a backend serves ([#1689](https://github.com/afreidah/s3-orchestrator/issues/1689), v0.160.0)**
 

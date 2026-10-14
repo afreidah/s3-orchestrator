@@ -52,6 +52,8 @@ var errIncompleteSnapshot = errors.New("fleet snapshot is missing figures; the s
 //
 // CompressionStats holds only backends that hold an encoded copy, so a missing
 // entry means nothing there is compressed rather than compressed to nothing.
+// RefusedCalls holds only backends refusing at least one call, so a missing
+// entry means the backend serves every call.
 type Data struct {
 	BackendOrder           []string
 	QuotaStats             map[string]core.QuotaStat
@@ -69,7 +71,7 @@ type Data struct {
 	TopLevelEntries        *core.DirectoryListResult
 	DrainingBackends       map[string]backendstate.DrainProgress
 	BackendFlags           map[string]core.BackendFlags
-	UnhealthyBackends      map[string]bool
+	RefusedCalls           map[string]core.BackendCalls
 }
 
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
@@ -111,7 +113,8 @@ type Aggregator struct {
 	drain DrainProgressReader
 }
 
-// New creates an Aggregator.
+// New creates an Aggregator over the given backend order. drainReader may be
+// nil when the deployment runs no backend state manager.
 func New(store core.DashboardStore, usage UsageReader, order []string, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
 	return &Aggregator{
 		store: store,
@@ -138,15 +141,18 @@ func (da *Aggregator) scrubbableBackends() []string {
 
 // decorateLiveState fills in the fields that come from the running fleet
 // rather than the store: each backend's state flags, which backends are
-// draining and how far along, and which are failing their circuit breaker.
-// Drain progress is best-effort - a backend whose progress cannot be read is
-// simply omitted rather than failing the whole dashboard.
+// draining and how far along, and which calls each is refusing. Drain progress
+// is best-effort - a backend whose progress cannot be read is simply omitted
+// rather than failing the whole dashboard.
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.DrainingBackends = make(map[string]backendstate.DrainProgress)
 	data.BackendFlags = make(map[string]core.BackendFlags)
-	data.UnhealthyBackends = make(map[string]bool)
+	data.RefusedCalls = make(map[string]core.BackendCalls)
 
 	for _, name := range da.fleet.BackendOrder() {
+		if refused := core.AllCalls &^ da.fleet.ServedCalls(name); refused != 0 {
+			data.RefusedCalls[name] = refused
+		}
 		flags := da.fleet.BackendFlags(name)
 		if flags == 0 {
 			continue
@@ -157,12 +163,6 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 		}
 		if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {
 			data.DrainingBackends[name] = *progress
-		}
-	}
-
-	for _, name := range da.fleet.BackendOrder() {
-		if da.fleet.ServedCalls(name) != core.AllCalls {
-			data.UnhealthyBackends[name] = true
 		}
 	}
 }

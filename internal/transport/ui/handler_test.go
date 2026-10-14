@@ -621,7 +621,11 @@ func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var data dashboard.Data
+	// Decode only what is checked: name-rendered sets such as RefusedCalls
+	// marshal one way and do not decode back into dashboard.Data.
+	var data struct {
+		QuotaStats map[string]core.QuotaStat
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}

@@ -42,7 +42,8 @@ func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 	return store
 }
 
-// emptySnapshot is a complete fleet snapshot of an empty fleet.
+// emptySnapshot is a complete fleet snapshot of an empty fleet: every map
+// present and empty, so the aggregator does not treat it as incomplete.
 func emptySnapshot() *metrics.FleetSnapshot {
 	return &metrics.FleetSnapshot{
 		Quota:     map[string]core.QuotaStat{},
@@ -51,7 +52,8 @@ func emptySnapshot() *metrics.FleetSnapshot {
 	}
 }
 
-// expectSnapshot has fleet serve snap as the fleet snapshot.
+// expectSnapshot has fleet serve snap as the fleet snapshot, however many
+// times the aggregator asks.
 func expectSnapshot(fleet *MockFleetView, snap *metrics.FleetSnapshot) {
 	fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(snap, nil).AnyTimes()
 }
@@ -83,9 +85,9 @@ func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestDecorateLiveState_MarksUnhealthyBackends asserts a backend refusing any
-// call, here only GET, is reported unhealthy.
-func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
+// TestDecorateLiveState_RecordsRefusedCalls asserts a backend refusing only GET
+// is recorded with exactly that call refused.
+func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
@@ -101,8 +103,8 @@ func TestDecorateLiveState_MarksUnhealthyBackends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if !data.UnhealthyBackends["b1"] {
-		t.Error("b1 refuses GET but was not marked unhealthy")
+	if got := data.RefusedCalls["b1"]; got != core.CallGetObject {
+		t.Errorf("b1 refused calls = %s, want GetObject", got)
 	}
 }
 
@@ -124,8 +126,8 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if _, present := data.UnhealthyBackends["b1"]; present {
-		t.Error("a healthy backend should be absent from UnhealthyBackends, not present-and-false")
+	if _, present := data.RefusedCalls["b1"]; present {
+		t.Error("a backend serving every call should be absent from RefusedCalls, not present-and-empty")
 	}
 }
 
@@ -208,7 +210,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData: %v", err)
 	}
-	if data.DrainingBackends == nil || data.UnhealthyBackends == nil {
+	if data.DrainingBackends == nil || data.RefusedCalls == nil {
 		t.Error("live-state maps must be initialised even with no drain manager")
 	}
 }

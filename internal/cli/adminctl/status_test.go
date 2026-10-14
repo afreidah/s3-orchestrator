@@ -22,8 +22,9 @@ import (
 
 const statusBody = `{
   "backends": [
-    {"name":"minio-1","healthy":true,"draining":false,"flags":[],"bytes_used":0,"bytes_limit":10737418240,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0},
-    {"name":"minio-2","healthy":false,"draining":true,"flags":["cordoned","draining"],"bytes_used":1048576,"bytes_limit":10737418240,"object_count":7,"api_requests":3,"ingress_bytes":2048,"egress_bytes":512}
+    {"name":"minio-1","healthy":true,"refused_calls":[],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":10737418240,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0},
+    {"name":"minio-2","healthy":false,"refused_calls":["GetObject"],"draining":true,"flags":["cordoned","draining"],"bytes_used":1048576,"bytes_limit":10737418240,"object_count":7,"api_requests":3,"ingress_bytes":2048,"egress_bytes":512},
+    {"name":"minio-3","healthy":false,"refused_calls":["PutObject","GetObject","HeadObject","DeleteObject","DeleteObjects","CopyObject","ListObjects"],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":0,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0}
   ],
   "db_healthy": true,
   "usage_period": "2026-06"
@@ -53,7 +54,7 @@ func TestStatus_TextTable(t *testing.T) {
 	}
 	for _, want := range []string{
 		"minio-1", "minio-2", "10.0 GiB", "1.0 MiB",
-		"Health", "State", "healthy", "unhealthy", "cordoned,draining",
+		"Health", "Refused", "State", "healthy", "degraded", "down", "GetObject", "cordoned,draining",
 		"DB healthy:    true", "Usage period:  2026-06",
 	} {
 		if !strings.Contains(out, want) {

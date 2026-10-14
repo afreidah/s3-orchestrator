@@ -97,7 +97,7 @@
           {{$multipart := index $.Data.ActiveMultipartCounts .}}
           {{$unverified := index $.Data.UnverifiedObjectCounts .}}
           {{$drain := index $.Data.DrainingBackends .}}
-          {{$unhealthy := index $.Data.UnhealthyBackends .}}
+          {{$unhealthy := index $.Data.RefusedCalls .}}
           {{$cordoned := cordoned (index $.Data.BackendFlags .)}}
           <tr{{if eq $drain.State "draining"}} class="row-draining"{{else if eq $drain.State "drained"}} class="row-drained"{{else if or (eq $drain.State "failed") $unhealthy}} class="row-degraded"{{else if $cordoned}} class="row-cordoned"{{end}}>
             <td>{{.}}{{if $cordoned}} <span class="badge badge-cordoned" title="No new copies land on this backend; reads continue">Cordoned</span>{{end}}{{if eq $drain.State "draining"}} <span class="badge badge-draining">Draining</span>{{else if eq $drain.State "drained"}} <span class="badge badge-drained">Drained</span>{{else if eq $drain.State "failed"}} <span class="badge badge-degraded" title="{{$drain.Error}}">Drain failed</span>{{else if $unhealthy}} <span class="badge badge-degraded">Degraded</span>{{end}}</td>

@@ -146,8 +146,9 @@ status: reconciled
 **Commands:**
 
 ```bash
-# Show backend health, state flags (cordoned, draining, drained, drain-failed),
-# usage, and circuit breaker state
+# Show backend health (healthy, degraded or down), the calls an open circuit
+# breaker is refusing, state flags (cordoned, draining, drained, drain-failed)
+# and usage
 s3-orchestrator admin status
 
 # List all copies of an object across backends
