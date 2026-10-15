@@ -84,7 +84,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     'flowchart TD',
     '    PUT([PutObject or<br>Multipart Complete]):::entry --> MINSIZE{size at least<br>min_size?}:::filter',
     '',
-    '    MINSIZE -->|no| VERBATIM[Store Verbatim]:::process',
+    '    MINSIZE -->|no: admitted on enveloped<br>size before buffering| VERBATIM[Store Verbatim]:::process',
     '    MINSIZE -->|yes| ENCODE[Encode: one zstd frame<br>per chunk_size]:::process',
     '    ENCODE --> SEEKTBL[Append Seek Table<br>skippable frame]:::process',
     '    SEEKTBL --> RATIO{encoded within min_ratio<br>of original?}:::filter',
@@ -189,7 +189,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     ADMIT: {
       title: 'Admit on Upload Size',
       badge: 'filter', badgeText: 'quota check',
-      body: '<p>Usage admission (<code>EligibleForWrite</code>) runs against <code>plan.uploadSize</code>, the bytes that will actually be uploaded: the encoding, enveloped when encryption is on.</p><p>This is the one asymmetry with encryption. An envelope is a header plus a tag per chunk, a fixed function of the size, so a write below <code>min_size</code> is admitted on its enveloped size before its body is buffered. An encoder only reports its output size once it has run, so a write that reaches the encoder cannot be - and admitting it on the logical size would turn away a write that fits.</p><p>That is why buffering, encoding, the ratio check and encryption all run before this point. The per-backend capacity claim happens later, on each upload attempt, in <code>ClaimWriteTarget</code>.</p>'
+      body: '<p>Usage admission (<code>EligibleForWrite</code>) runs against <code>plan.uploadSize</code>, the bytes that will actually be uploaded: the encoding, enveloped when encryption is on. The same call also drops backends that are not write targets (cordoned, drain-flagged, or not serving <code>PutObject</code> and <code>GetObject</code>) and those whose <code>max_object_size</code> is below the upload.</p><p>This is the one asymmetry with encryption. An envelope is a header plus a tag per chunk, a fixed function of the size, so a write below <code>min_size</code> is admitted on its enveloped size before its body is buffered. An encoder only reports its output size once it has run, so a write that reaches the encoder cannot be - and admitting it on the logical size would turn away a write that fits.</p><p>That is why buffering, encoding, the ratio check and encryption all run before this point. The per-backend capacity claim happens later, on each upload attempt, in <code>ClaimWriteTarget</code>.</p>'
     },
     ENCRYPT: {
       title: 'Encryption Enabled?',
@@ -199,7 +199,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     ENVELOPE: {
       title: 'Encrypt the Prepared Body',
       badge: 'process', badgeText: 'envelope',
-      body: '<p>The prepared body, encoded or verbatim, is wrapped in an AES-256-GCM envelope once, before the failover loop. An encoded stream is treated exactly as an unencoded body would be: a fresh data key per object, a 32-byte header, and a nonce plus auth tag per encryption chunk.</p><p>The two chunk sizes are independent. Compression frames are <code>compression.chunk_size</code> of logical input; encryption chunks are <code>encryption.chunk_size</code> of the compressed stream.</p>'
+      body: '<p>The prepared body, encoded or verbatim, is wrapped in an AES-256-GCM envelope once, before the failover loop. An encoded stream is treated exactly as an unencoded body would be: a fresh data key per object, a 32-byte header, and a nonce plus auth tag per encryption chunk. A multipart object reuses the data key wrapped at <code>CreateMultipartUpload</code>, which its parts share.</p><p>The two chunk sizes are independent. Compression frames are <code>compression.chunk_size</code> of logical input; encryption chunks are <code>encryption.chunk_size</code> of the compressed stream.</p>'
     },
     VERBATIM: {
       title: 'Store Verbatim',

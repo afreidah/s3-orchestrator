@@ -132,9 +132,32 @@ s3-orchestrator admin remove-backend <backend-name>
 
 Then remove the backend from the config file and restart.
 
+### Backend refusing some calls
+
+Some providers refuse one kind of call while still serving the others. The usual case is a monthly download allowance: once it runs out, every `GetObject` gets a `403` while uploads, deletes and listings keep working.
+
+The per-call circuit breakers handle this without any action from you:
+
+- **The GET breaker opens** after `failure_threshold` consecutive refusals. Only `GetObject` stops reaching the backend; deletes, listings and `HeadObject` carry on.
+- **New objects go elsewhere.** A backend has to serve both `PutObject` and `GetObject` to be given new bytes, so client writes, replicas, rebalance moves and drain destinations all skip it. Without this, a new object's only copy could land where nobody can read it back.
+- **Reads fail over** to another copy where one exists. An object whose only copy is on this backend can't be read until the refusal clears.
+- **Replication fills the gap.** Once the backend has refused reads for longer than `replication.unhealthy_threshold` (default 10 minutes), its copies stop counting toward the factor. The replicator then copies those objects from their other copies to other backends. Objects with no other copy wait.
+- **Recovery is automatic.** The GET breaker re-checks with a 1-byte read of the last key it refused. It waits `open_timeout` before the first check, then backs off up to 5 minutes between checks. When the provider serves downloads again, the breaker closes and the backend takes writes again.
+
+How to see it:
+
+- **`admin status`** shows the backend's health as `degraded` and lists `GetObject` under Refused.
+- **The TUI and the web dashboard** show it as Degraded, with the refused calls named.
+- **`s3o_backend_call_refused{backend="<name>",call="GetObject"}`** is `1`.
+- **A `backend.circuit.opened` event** is published with `call: GetObject`.
+
+What to do: usually nothing but wait for the provider's allowance to reset. A drain started now only drops the backend's copies of objects that have another copy; objects only it holds cannot be moved until downloads recover, since moving one means reading it. If you want the backend to stay out of placement after it recovers, [cordon](operations.md#cordoning-a-backend) it.
+
 ### Writes failing, reads working
 
-If a backend's writes are failing but it still serves reads, [cordon](operations.md#cordoning-a-backend) it. New copies go elsewhere at once, and reads of what it holds carry on while you decide whether to wait out the provider or drain it:
+If a backend refuses uploads but still serves reads, its PUT breaker opens and new copies go elsewhere on their own, while reads of what it holds carry on. The breaker closes and writes resume as soon as the backend accepts uploads again.
+
+To keep it out of placement until you decide whether to wait out the provider or drain it, [cordon](operations.md#cordoning-a-backend) it. A cordon holds until you lift it, whatever the breaker does:
 
 ```bash
 s3-orchestrator admin cordon <backend-name>

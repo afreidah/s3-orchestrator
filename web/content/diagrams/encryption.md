@@ -40,7 +40,7 @@ When encryption is enabled, every object stored through the S3 Orchestrator is e
 
 The plaintext DEK is never stored anywhere - it exists only in memory during the encryption operation.
 
-"Plaintext" here means whatever the encryptor was handed, which is not always the object the client wrote. With [compression](../../docs/compression/) also enabled, the object is encoded first - ciphertext does not compress - so the encryptor's input is the compressed stream and `plaintext_size` records that. The client's own size lives in `logical_size`. With compression off the two are the same and `logical_size` is unset.
+"Plaintext" here means whatever the encryptor was handed, which is not always the object the client wrote. With [compression](../../docs/compression/) also enabled, the object is encoded first - ciphertext does not compress - so the encryptor's input is the compressed stream and `plaintext_size` records that. The client's own size lives in `logical_size`. When an object is stored unencoded - compression off, or the object skipped by `min_size` or `min_ratio` - the two are the same and `logical_size` is unset.
 
 #### Decrypting an object (read path)
 
@@ -194,12 +194,12 @@ The base nonce is stored in the database specifically so range decryption can de
     PROVIDER: {
       title: 'Key Provider Type',
       badge: 'decision', badgeText: 'provider selection',
-      body: '<p>Resolved at startup by <code>NewKeyProviderFromConfig()</code>. Three provider types:</p><p><b>Vault Transit</b>: master key never leaves Vault; DEK wrapped via HTTP API<br><b>ConfigKeyProvider</b>: base64-encoded 256-bit key in config file<br><b>FileKeyProvider</b>: raw 32-byte key read from disk</p><p><code>MultiKeyProvider</code> wraps any primary with fallback keys for rotation: <code>WrapDEK</code> always uses primary; <code>UnwrapDEK</code> resolves by <code>keyID</code>.</p>'
+      body: '<p>Resolved at startup by <code>NewKeyProviderFromConfig()</code>. Three provider types:</p><p><b>Vault Transit</b>: master key never leaves Vault; DEK wrapped via HTTP API<br><b>ConfigKeyProvider</b>: base64-encoded 256-bit key in config file<br><b>FileKeyProvider</b>: raw 32-byte key read from disk</p><p><code>MultiKeyProvider</code> wraps any primary with fallback inline keys from <code>previous_keys</code> (IDs <code>config-1</code>, <code>config-2</code>, ...) for rotation: <code>WrapDEK</code> always uses primary; <code>UnwrapDEK</code> resolves by <code>keyID</code>.</p>'
     },
     VAULT: {
       title: 'Vault Transit Encrypt API',
       badge: 'storage', badgeText: 'external KMS',
-      body: '<p>POST to <code>{vault}/v1/{mount}/encrypt/{keyName}</code> with base64-encoded DEK as plaintext payload. <code>X-Vault-Token</code> header for auth.</p><p>Returns a Vault ciphertext blob (e.g., <code>vault:v1:...</code>) stored as the wrapped DEK. The master key <b>never leaves Vault</b>.</p><p>KeyID format: <code>vault:{mountPath}/{keyName}</code>. HTTP client has 10s timeout and optional custom CA cert for TLS.</p>'
+      body: '<p>PUT (a Vault write) to <code>{vault}/v1/{mount}/encrypt/{keyName}</code> with base64-encoded DEK as plaintext payload. <code>X-Vault-Token</code> header for auth.</p><p>Returns a Vault ciphertext blob (e.g., <code>vault:v1:...</code>) stored as the wrapped DEK. The master key <b>never leaves Vault</b>.</p><p>KeyID format: <code>vault:{mountPath}/{keyName}</code>. HTTP client has 10s timeout and optional custom CA cert for TLS.</p>'
     },
     LOCAL: {
       title: 'AES-GCM Local Key Wrap',
@@ -239,12 +239,12 @@ The base nonce is stored in the database specifically so range decryption can de
     CTIN: {
       title: 'Ciphertext (Full Object)',
       badge: 'entry', badgeText: 'decrypt entry',
-      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. The <code>Encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code> method handles the complete decryption flow.</p><p>The wrapped DEK and keyID are retrieved from the metadata store along with the object location metadata.</p>'
+      body: '<p>Full ciphertext stream fetched from the S3 backend via <code>GetObject</code>. The <code>Encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code> method handles the complete decryption flow.</p><p>The wrapped DEK and keyID are retrieved from the metadata store along with the object location metadata.</p><p>Before decrypting a read that starts at byte 0, the GET path peeks at the first bytes for the envelope signature. If the row\'s <code>encrypted</code> flag disagrees with what is stored, that copy is skipped and the read fails over to the next one, rather than serving ciphertext or failing to decrypt plaintext.</p><p class="ac-metric">Metric: s3o_encryption_flag_mismatch_total{op="get"}</p>'
     },
     UNWRAP: {
       title: 'UnwrapDEK via KeyProvider',
       badge: 'storage', badgeText: 'key unwrapping',
-      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. An unknown keyID has no fallback: it increments the counter below, logs an error and returns "unknown encryption key ID". The object stays unreadable until its key is added to <code>previous_keys</code>.</p><p>Vault Transit: POST to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metrics: s3o_encryption_unknown_key_id_total; s3o_encryption_operations_total{op="decrypt"} or {op="decrypt_range"}, counted in <code>DecryptStored</code> once per completed decrypt setup, not per unwrap call</p>'
+      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. An unknown keyID has no fallback: it increments the counter below, logs an error and returns "unknown encryption key ID". The object stays unreadable until its key is added to <code>previous_keys</code>.</p><p>Vault Transit: PUT (a Vault write) to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metrics: s3o_encryption_unknown_key_id_total; s3o_encryption_operations_total{op="decrypt"} or {op="decrypt_range"}, counted in <code>DecryptStored</code> once per completed decrypt setup, not per unwrap call</p>'
     },
     PARSE: {
       title: 'Parse 32-Byte Header',

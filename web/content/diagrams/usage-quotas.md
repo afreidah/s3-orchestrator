@@ -36,7 +36,7 @@ request_limits:
 2. **`"*"` covers everything not listed as `unmetered`.** A bare `api_request_limit` desugars to exactly one such pool, named `all`, so configs written before pools existed keep their old meaning.
 3. **`limit: 0` counts without refusing.** Same convention the byte limits use.
 4. **Unmetered means uncharged, not unrecorded.** A free operation still increments the backend's request total; it simply charges no pool. Not being billed for a call is not a reason to stop reporting that it happened.
-5. **Deletes are never refused**, on any budget. Refusing one would leave an operator over a limit with no way back under it, and a client `DELETE` that returns without deleting is simply wrong.
+5. **Deletes are never refused**, on any budget. Refusing one would leave an operator over a limit with no way back under it, and a client `DELETE` that returns without deleting is simply wrong. The one gated delete is the recovery check of a delete call's circuit breaker, which is admitted like any other check.
 
 Because pools overlap, their counts do not sum to the request total and are not a decomposition of it.
 
@@ -160,12 +160,12 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     CALL: {
       title: 'Backend Call',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Every call that reaches a provider passes through here, whatever asked for it: a client GET or PUT, a replication copy, a rebalance move, a scrub read, a reconcile listing page, one of the bulk rewrite passes, or a circuit breaker health check, which is admitted and charged as <code>HeadBucket</code>.</p><p>Client traffic and background work draw on the same budgets deliberately. A fleet-wide pass is the largest consumer of a metered backend, and one that spent freely while client reads were refused on the counter it ran up would be the wrong way round.</p><p><a href="../write-path/">Write path &rarr;</a> &middot; <a href="../read-path/">Read path &rarr;</a></p>'
+      body: '<p>Every call that reaches a provider passes through here, whatever asked for it: a client GET or PUT, a replication copy, a rebalance move, a scrub read, a reconcile listing page, one of the bulk rewrite passes, or a circuit breaker recovery check, which is admitted and charged as <code>HeadBucket</code> for the backend breaker and as the guarded call itself for a call breaker.</p><p>Client traffic and background work draw on the same budgets deliberately. A fleet-wide pass is the largest consumer of a metered backend, and one that spent freely while client reads were refused on the counter it ran up would be the wrong way round.</p><p><a href="../write-path/">Write path &rarr;</a> &middot; <a href="../read-path/">Read path &rarr;</a></p>'
     },
     OPNAME: {
       title: 'Name the Operation',
       badge: 'process', badgeText: 'classification',
-      body: '<p>The charge carries which operation it is - <code>s3op.Operation</code>, a closed set of fourteen - rather than a count of calls.</p><p>A count cannot be priced. Providers bill an upload and a read from different allowances and some operations not at all, so "one API call" is not enough information to settle the charge. The same vocabulary is what config validates operation names against and what the per-operation metric labels use, so the three cannot drift apart.</p><p>Operations: <code>PutObject</code>, <code>GetObject</code>, <code>HeadObject</code>, <code>DeleteObject</code>, <code>DeleteObjects</code>, <code>CopyObject</code>, <code>ListObjects</code>, <code>ListObjectsV2</code>, <code>CreateMultipartUpload</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, <code>GetParts</code>, <code>HeadBucket</code>. Backend circuit breaker health checks are admitted and charged as <code>HeadBucket</code>.</p>'
+      body: '<p>The charge carries which operation it is - <code>s3op.Operation</code>, a closed set of fourteen - rather than a count of calls.</p><p>A count cannot be priced. Providers bill an upload and a read from different allowances and some operations not at all, so "one API call" is not enough information to settle the charge. The same vocabulary is what config validates operation names against and what the per-operation metric labels use, so the three cannot drift apart.</p><p>Operations: <code>PutObject</code>, <code>GetObject</code>, <code>HeadObject</code>, <code>DeleteObject</code>, <code>DeleteObjects</code>, <code>CopyObject</code>, <code>ListObjects</code>, <code>ListObjectsV2</code>, <code>CreateMultipartUpload</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, <code>GetParts</code>, <code>HeadBucket</code>. A backend breaker\'s recovery check is admitted and charged as <code>HeadBucket</code>; a call breaker\'s check as the call it guards, such as <code>GetObject</code> for a one-byte read.</p>'
     },
     ISDEL: {
       title: 'Delete?',
@@ -210,7 +210,7 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     WRITEOUT: {
       title: 'Write: Overflow or 507',
       badge: 'reject', badgeText: 'write path',
-      body: '<p>Over-budget backends are filtered out of placement before a target is picked, so a write simply lands somewhere else.</p><p>When no backend is eligible the client gets <code>507 Insufficient Storage</code>, and the pre-flight <code>CanAcceptWrite</code> check makes that answer arrive before the body is transmitted rather than after.</p><p><a href="../admission-control/">Admission control &rarr;</a></p>'
+      body: '<p>Placement starts from the write targets: backends that accept writes and serve both <code>PutObject</code> and <code>GetObject</code>. Over-budget ones are then filtered out before a target is picked, so a write simply lands somewhere else.</p><p>When no backend is eligible the client gets <code>507 Insufficient Storage</code>, which can therefore mean no budget left or no healthy write target, and the pre-flight <code>CanAcceptWrite</code> check makes that answer arrive before the body is transmitted rather than after.</p><p><a href="../admission-control/">Admission control &rarr;</a></p>'
     },
     READOUT: {
       title: 'Read: Failover or 429',

@@ -102,8 +102,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    INTEG -->|disabled, ranged or no hash| METRICS',
     '    VERIFY --> METRICS',
     '',
-    '    METRICS[Charge Egress,<br>Metrics & Audit]:::process --> TAGCOUNT[Count Tags:<br>x-amz-tagging-count]:::storage',
-    '    TAGCOUNT --> CACHEFILL{Cache<br>Fill?}:::decision',
+    '    METRICS[Charge Egress,<br>Metrics & Audit]:::process --> CACHEFILL{Cache<br>Fill?}:::decision',
     '    CACHEFILL -->|admitted| CACHEPUT[Attach<br>Cache Tee]:::process',
     '    CACHEFILL -->|range, unknown size or too large| OK',
     '    CACHEPUT --> OK',
@@ -167,7 +166,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     DBLOOKUP: {
       title: 'DB Lookup: GetAllObjectLocations',
       badge: 'storage', badgeText: 'metadata store',
-      body: '<p><code>store.GetAllObjectLocations(ctx, key)</code> queries the metadata store (SQLite or PostgreSQL) for all copies of the object across backends, oldest first.</p><p>Returns a slice of <code>ObjectLocation</code> structs containing: backend name, size, encryption metadata (encrypted flag, wrapped DEK, key ID, plaintext size), and timestamps.</p><p>The query goes through a circuit breaker. If the DB circuit breaker is open, it returns <code>ErrDBUnavailable</code>. With <code>circuit_breaker.degraded_reads_enabled</code> on (the default) that starts the broadcast read path; with it off the request fails with 503 and nothing is broadcast.</p>'
+      body: '<p><code>store.GetAllObjectLocations(ctx, key)</code> queries the metadata store (SQLite or PostgreSQL) for all copies of the object across backends, oldest first.</p><p>Returns a slice of <code>ObjectLocation</code> structs containing: backend name, storage path, size, encryption metadata (encrypted flag, wrapped DEK, key ID, plaintext size), compression fields, the stored ETag, content type and user metadata, timestamps, and the key\'s tag count. Unmanaged rows are dropped, and a key with only unmanaged rows is a 404.</p><p>The same query counts the key\'s <code>object_tags</code> rows, an index-only scan, which fills <code>x-amz-tagging-count</code> when the object carries at least one tag. A degraded read has no rows and leaves the header off.</p><p>The query goes through a circuit breaker. If the DB circuit breaker is open, it returns <code>ErrDBUnavailable</code>. With <code>circuit_breaker.degraded_reads_enabled</code> on (the default) that starts the broadcast read path; with it off the request fails with 503 and nothing is broadcast.</p>'
     },
     R404: {
       title: '404 Not Found',
@@ -192,7 +191,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     R503: {
       title: '503 Service Unavailable',
       badge: 'reject', badgeText: 'encrypted copy',
-      body: '<p>The newest copy is encrypted. Decrypting it needs the wrapped data key and key ID, which only the database holds, so the read is refused rather than serving ciphertext.</p>'
+      body: '<p>The newest copy on this backend is encrypted. Decrypting it needs the wrapped data key and key ID, which only the database holds, so this backend\'s probe fails with 503 rather than serving ciphertext, and the broadcast tries the next backend. The client gets 503 only when every backend fails and this refusal is the last error recorded.</p>'
     },
     BFAIL: {
       title: 'Return Last Error (Broadcast)',
@@ -252,12 +251,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     FETCH: {
       title: 'Backend GetObject',
       badge: 'process', badgeText: 'fetch',
-      body: '<p>Calls <code>backend.GetObject(ctx, key, actualRange)</code> through the circuit breaker wrapper.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The call is made through <code>o.core.GetWithTimeout(ctx, backend, key, actualRange)</code>, which applies a per-backend deadline from <code>backend_timeout</code> config.</p>'
+      body: '<p>Calls the backend\'s <code>GetObject</code> through the circuit breaker wrapper, on the copy\'s own storage path.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The call is made through <code>o.core.GetWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey), actualRange)</code>, which applies a per-backend deadline from <code>backend_timeout</code> config.</p>'
     },
     CB: {
       title: 'Circuit Breaker',
       badge: 'decision', badgeText: 'circuit breaker',
-      body: '<p><code>CircuitBreakerBackend.GetObject()</code> runs the real S3 call through the backend breaker and then the GET breaker. Backend breakers use external recovery.</p><p><b>Open</b>: the call is refused with <code>ErrBackendUnavailable</code>. Client requests never probe the backend.<br><b>On failure</b>: network errors and 401 count toward the backend breaker, which stops every call; 5xx, 429 and 403 count toward the GET breaker alone, so a backend refusing downloads keeps serving deletes and listings, though it takes no new writes. 404, 416 and context cancellation count toward neither. Reaching the threshold opens that breaker.<br><b>Recovery</b>: out of band only. The watchdog ticks every 5s and runs the breaker\'s check when one is due - <code>HeadBucket</code> for the backend breaker, a 1-byte GET of the last refused key for the GET breaker - doubling the wait after each failure. The breaker closes once a check passes.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p><code>CircuitBreakerBackend.GetObject()</code> runs the real S3 call through the backend breaker and then the GET breaker. Backend breakers use external recovery.</p><p><b>Open</b>: the call is refused with <code>ErrBackendUnavailable</code>. Client requests never probe the backend.<br><b>On failure</b>: network errors and 401 count toward the backend breaker, which stops every call; 5xx, 429 and 403 count toward the GET breaker alone, so a backend refusing downloads keeps serving deletes and listings, though it takes no new writes. 404, 416 and context cancellation count toward neither. Reaching the threshold opens that breaker.<br><b>Recovery</b>: out of band only. The watchdog ticks every 5s and runs the breaker\'s check when one is due - <code>HeadBucket</code> for the backend breaker, a 1-byte GET of the last refused key for the GET breaker - doubling the wait after each failure. The breaker closes once a check passes.</p><p class="ac-metric">Metric: s3o_backend_call_refused{backend, call} (1 while that call is refused)</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     S3: {
       title: 'S3 Backend GetObject',
@@ -308,11 +307,6 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       title: 'Handler: Conditionals, Stream to Client',
       badge: 'success', badgeText: 'streaming',
       body: '<p>The HTTP handler sets the validator headers and evaluates the conditional headers against the returned ETag and Last-Modified. This check is the authority: it catches an object replaced after the HEAD check passed. A failed precondition answers 304 or 412 without a body. If <code>If-Range</code> does not match, the partial body is discarded and the object is fetched again in full.</p><p>Otherwise the (possibly decrypted) body streams to the client. The body is an <code>io.ReadCloser</code>; the handler closes it when done.</p><p>With parallel broadcast, the first successful result read from the scheduler\'s channel wins. Losing probes are cancelled and their bodies closed in the background.</p>'
-    },
-    TAGCOUNT: {
-      title: 'Count Tags',
-      badge: 'storage', badgeText: 'metadata store',
-      body: '<p><code>count(*)</code> on <code>object_tags</code> for the key, an index-only scan over the primary key prefix. Fills <code>x-amz-tagging-count</code>, which is sent only when the object carries at least one tag.</p><p>Counted here rather than folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count does not belong on the per-copy rows they read.</p><p>Advisory. A count the store cannot serve is reported as none and the header left off, because the bytes are already correct and one header is not worth failing a read over. A degraded read, having reached the object by broadcast with the store unreachable, omits it for the same reason.</p><p><a href="../tagging/">Object tagging &rarr;</a></p>'
     },
     CACHEFILL: {
       title: 'Cache Fill Decision',
