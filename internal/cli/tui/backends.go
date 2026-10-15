@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -488,7 +489,7 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		}
 		rows = append(rows, table.Row{
 			b.Name,
-			output.BackendHealth(b.RefusedCalls),
+			core.CallsNamed(b.RefusedCalls).Health(),
 			output.NameList(b.RefusedCalls),
 			output.NameList(b.Flags),
 			humanize.Bytes(b.BytesUsed),
@@ -517,10 +518,10 @@ func savedBytes(saved int64) string {
 // healthRank orders backends by health for sorting: down first, then
 // degraded, then healthy, so an ascending sort leads with the worst.
 func healthRank(refused []string) int {
-	switch output.BackendHealth(refused) {
-	case output.HealthDown:
+	switch core.CallsNamed(refused).Health() {
+	case core.HealthDown:
 		return 0
-	case output.HealthDegraded:
+	case core.HealthDegraded:
 		return 1
 	default:
 		return 2

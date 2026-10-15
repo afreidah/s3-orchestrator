@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
@@ -216,13 +217,13 @@ func usageBar(pct, width int) string {
 // when only some are refused - and, when it carries any, its state flags.
 func backendMarkers(b *adminapi.BackendStatus) string {
 	var health string
-	switch output.BackendHealth(b.RefusedCalls) {
-	case output.HealthDown:
+	switch core.CallsNamed(b.RefusedCalls).Health() {
+	case core.HealthDown:
 		health = statusErrStyle.Render("DOWN")
-	case output.HealthDegraded:
+	case core.HealthDegraded:
 		health = logLevelWarn.Render("DEGRADED " + output.NameList(b.RefusedCalls))
 	default:
-		health = statusOKStyle.Render(output.HealthHealthy)
+		health = statusOKStyle.Render(core.HealthHealthy)
 	}
 	if len(b.Flags) == 0 {
 		return health

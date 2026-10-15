@@ -64,6 +64,26 @@ func TestBackendCalls_RequiredMasks(t *testing.T) {
 	}
 }
 
+// TestBackendCalls_Health covers healthy for nothing refused, degraded for
+// some calls and down for every call, read from call names as a client does.
+func TestBackendCalls_Health(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		refused []string
+		want    string
+	}{
+		{nil, HealthHealthy},
+		{[]string{"NoSuchCall"}, HealthHealthy},
+		{[]string{"GetObject"}, HealthDegraded},
+		{[]string{"GetObject", "PutObject"}, HealthDegraded},
+		{AllCalls.Names(), HealthDown},
+	} {
+		if got := CallsNamed(tc.refused).Health(); got != tc.want {
+			t.Errorf("CallsNamed(%v).Health() = %q, want %q", tc.refused, got, tc.want)
+		}
+	}
+}
+
 // TestCallFor maps each guarded operation to its bit and refuses one no
 // breaker guards.
 func TestCallFor(t *testing.T) {

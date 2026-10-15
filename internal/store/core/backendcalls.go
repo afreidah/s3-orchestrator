@@ -92,6 +92,40 @@ func (c BackendCalls) MarshalJSON() ([]byte, error) {
 	return json.Marshal(c.Names())
 }
 
+// The backend health words. Healthy refuses no call, degraded refuses some,
+// and down refuses every call.
+const (
+	HealthHealthy  = "healthy"
+	HealthDegraded = "degraded"
+	HealthDown     = "down"
+)
+
+// Health names a backend's circuit-breaker health from the calls it is
+// refusing, which is what c holds here: healthy, degraded or down.
+func (c BackendCalls) Health() string {
+	switch {
+	case c&AllCalls == 0:
+		return HealthHealthy
+	case c.Has(AllCalls):
+		return HealthDown
+	default:
+		return HealthDegraded
+	}
+}
+
+// CallsNamed returns the set of calls the names list, which is how a client
+// reading call names off the admin API gets the set back. A name no call has
+// is skipped.
+func CallsNamed(names []string) BackendCalls {
+	var calls BackendCalls
+	for _, name := range names {
+		if call, ok := backendCallNames.Lookup(name); ok {
+			calls |= call
+		}
+	}
+	return calls
+}
+
 // CallFor returns the bit for the backend call op names, and false for an
 // operation no breaker guards.
 func CallFor(op s3op.Operation) (BackendCalls, bool) {

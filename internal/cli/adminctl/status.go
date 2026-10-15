@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -41,7 +42,7 @@ func renderStatus(w io.Writer, body []byte) error {
 		b := &s.Backends[i]
 		rows[i] = []string{
 			b.Name,
-			output.BackendHealth(b.RefusedCalls),
+			core.CallsNamed(b.RefusedCalls).Health(),
 			output.NameList(b.RefusedCalls),
 			output.NameList(b.Flags),
 			output.FormatBytes(b.BytesUsed),

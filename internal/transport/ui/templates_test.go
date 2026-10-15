@@ -26,28 +26,14 @@ import (
 // carries both badges, and a backend in service carries neither.
 func TestDashboard_BadgesCordonedBackends(t *testing.T) {
 	t.Parallel()
-	page := dashboardPage{Data: &dashboard.Data{
+	rowFor := renderBackendRows(t, &dashboard.Data{
 		BackendOrder: []string{"held", "both", "plain"},
 		BackendFlags: map[string]core.BackendFlags{
 			"held": core.FlagCordoned,
 			"both": core.FlagCordoned | core.FlagDraining,
 		},
 		DrainingBackends: map[string]backendstate.DrainProgress{"both": {Active: true, State: "draining"}},
-		TopLevelEntries:  &core.DirectoryListResult{},
-	}}
-	var buf bytes.Buffer
-	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	out := buf.String()
-
-	rowFor := func(name string) string {
-		start := strings.Index(out, "<td>"+name)
-		if start < 0 {
-			t.Fatalf("no row for %s", name)
-		}
-		return out[start : start+strings.Index(out[start:], "</td>")]
-	}
+	})
 	if row := rowFor("held"); !strings.Contains(row, "badge-cordoned") || strings.Contains(row, "badge-draining") {
 		t.Errorf("held row = %s, want only the cordoned badge", row)
 	}
@@ -57,8 +43,52 @@ func TestDashboard_BadgesCordonedBackends(t *testing.T) {
 	if row := rowFor("plain"); strings.Contains(row, "badge-") {
 		t.Errorf("plain row = %s, want no badge", row)
 	}
-	if !strings.Contains(out, `class="row-cordoned"`) {
-		t.Error("the cordoned-only backend's row is not highlighted")
+	if row := rowFor("held"); !strings.Contains(row, `class="row-cordoned"`) {
+		t.Errorf("held row = %s, want it highlighted as cordoned", row)
+	}
+}
+
+// TestDashboard_BadgesRefusingBackends verifies a backend refusing some calls
+// is badged Degraded with the calls named, one refusing every call is badged
+// Down, and one refusing nothing carries no badge.
+func TestDashboard_BadgesRefusingBackends(t *testing.T) {
+	t.Parallel()
+	rowFor := renderBackendRows(t, &dashboard.Data{
+		BackendOrder: []string{"partial", "down", "fine"},
+		RefusedCalls: map[string]core.BackendCalls{
+			"partial": core.CallGetObject | core.CallListObjects,
+			"down":    core.AllCalls,
+		},
+	})
+	if row := rowFor("partial"); !strings.Contains(row, `class="row-degraded"`) || !strings.Contains(row, "Degraded: GetObject,ListObjects") {
+		t.Errorf("partial row = %s, want it degraded and naming GetObject and ListObjects", row)
+	}
+	if row := rowFor("down"); !strings.Contains(row, `class="row-down"`) || !strings.Contains(row, "badge-down") || strings.Contains(row, "Degraded") {
+		t.Errorf("down row = %s, want it down and not degraded", row)
+	}
+	if row := rowFor("fine"); strings.Contains(row, "badge-") || strings.Contains(row, "class=") {
+		t.Errorf("fine row = %s, want no badge or highlight", row)
+	}
+}
+
+// renderBackendRows renders the dashboard over data and returns a lookup from
+// a backend's name to its table row, from the row's opening tag through the
+// name cell, which is where the row highlight and every badge are.
+func renderBackendRows(t *testing.T, data *dashboard.Data) func(name string) string {
+	t.Helper()
+	data.TopLevelEntries = &core.DirectoryListResult{}
+	var buf bytes.Buffer
+	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", dashboardPage{Data: data}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := buf.String()
+	return func(name string) string {
+		cell := strings.Index(out, "<td>"+name)
+		if cell < 0 {
+			t.Fatalf("no row for %s", name)
+		}
+		start := strings.LastIndex(out[:cell], "<tr")
+		return out[start : cell+strings.Index(out[cell:], "</td>")]
 	}
 }
 

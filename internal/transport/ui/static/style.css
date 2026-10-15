@@ -144,6 +144,7 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: var(--text); }
 
 .badge-healthy { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
 .badge-degraded { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.badge-down { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
 .badge-draining { background: color-mix(in srgb, var(--info) 20%, transparent); color: var(--info); animation: pulse-badge 2s ease-in-out infinite; }
 
 @keyframes pulse-badge {
@@ -157,6 +158,7 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: var(--text); }
 .row-draining { background: color-mix(in srgb, var(--info) 8%, transparent); }
 .row-drained { opacity: 0.6; }
 .row-degraded { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.row-down { background: color-mix(in srgb, var(--error) 8%, transparent); }
 .row-cordoned { background: color-mix(in srgb, var(--warn) 5%, transparent); }
 
 .meta { font-size: 0.8rem; color: var(--text-dim); }
