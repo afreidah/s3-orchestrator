@@ -389,7 +389,7 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe})
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe}, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(0), fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"}))
+		Return(int64(0), fmt.Errorf("read: %w", &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"}))
 
 	r := newTestReplicator(ops, pl, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
@@ -762,15 +762,3 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 		t.Errorf("Superseded = %d, want 1", outcome.Superseded)
 	}
 }
-
-// httpError is a worker-package test helper that satisfies the smithy
-// HTTPStatusCode() interface used by backend.IsNotFound. Worker tests
-// (replicator, pending) construct typed 404s through this fake instead
-// of pulling in the real AWS SDK error hierarchy.
-type httpError struct {
-	code int
-	msg  string
-}
-
-func (e *httpError) Error() string       { return e.msg }
-func (e *httpError) HTTPStatusCode() int { return e.code }

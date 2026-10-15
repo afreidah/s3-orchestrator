@@ -40,6 +40,7 @@ type Ops interface {
 	BackendFlags(name string) core.BackendFlags
 	ServedCalls(name string) core.BackendCalls
 	RefusedFor(name string, required core.BackendCalls) time.Duration
+	WriteTargets() []string
 	AcquireAdmission(ctx context.Context) bool
 	ReleaseAdmission()
 	GetBackend(name string) (backend.ObjectBackend, error)

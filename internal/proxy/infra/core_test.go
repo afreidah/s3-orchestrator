@@ -18,12 +18,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -155,6 +157,33 @@ func TestCore_Serving_DropsRefusingBackends(t *testing.T) {
 	}
 	if d := c.RefusedFor("healthy", core.RequiredForRead); d != 0 {
 		t.Errorf("RefusedFor(healthy) = %v, want 0", d)
+	}
+}
+
+// TestCore_WriteTargets verifies a backend takes new bytes only while its flags
+// accept writes and it serves both uploads and downloads: one refusing reads
+// is left out, as is a cordoned one, and the rest keep their configured order.
+func TestCore_WriteTargets(t *testing.T) {
+	t.Parallel()
+	names := []string{"cordoned", "healthy", "no-reads", "also-healthy"}
+	c := New(&Config{
+		Backends: map[string]backend.ObjectBackend{
+			"cordoned":     fakeBackend{},
+			"healthy":      fakeBackend{},
+			"no-reads":     backendtest.RefusingReads("no-reads"),
+			"also-healthy": fakeBackend{},
+		},
+		Order: names,
+		Usage: counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil),
+	})
+	c.SetStateChecker(staticFlags{"cordoned": core.FlagCordoned})
+
+	got := c.WriteTargets()
+	if want := []string{"healthy", "also-healthy"}; !slices.Equal(got, want) {
+		t.Errorf("WriteTargets = %v, want %v", got, want)
+	}
+	if eligible := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 1); !slices.Equal(eligible, got) {
+		t.Errorf("EligibleForWrite = %v, want the write targets %v", eligible, got)
 	}
 }
 

@@ -117,11 +117,11 @@ func TestScoreCopy_RefusedCalls(t *testing.T) {
 		minimum float64
 	}{
 		{"reads refused", func(m *backendtest.InMemory, cb *backend.CircuitBreakerBackend) {
-			m.GetErr = &httpError{code: 403}
+			m.GetErr = &backendtest.StatusError{Code: 403}
 			_, _ = cb.GetObject(context.Background(), "k", "")
 		}, 1},
 		{"uploads refused", func(m *backendtest.InMemory, cb *backend.CircuitBreakerBackend) {
-			m.PutErr = &httpError{code: 403}
+			m.PutErr = &backendtest.StatusError{Code: 403}
 			_, _ = cb.PutObject(context.Background(), "k", bytes.NewReader(nil), 0, "", nil)
 		}, 2},
 	} {

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -384,17 +385,12 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 	return true
 }
 
-// pickDestination chooses the emptiest backend, other than the source and any
-// backend refusing writes, with room for the object. It reads the same
-// in-memory view a client write is ranked against, so a drain and a write do
-// not disagree about where there is room.
+// pickDestination chooses the emptiest write target other than the source with
+// room for the object. It reads the same in-memory view a client write is
+// ranked against, so a drain and a write do not disagree about where there is
+// room or which backends may take new bytes.
 func (d *Drainer) pickDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, backend.ObjectBackend, bool) {
-	candidates := make([]string, 0, len(d.ops.BackendOrder()))
-	for _, name := range d.ops.BackendOrder() {
-		if name != srcName && d.ops.BackendFlags(name).AcceptedBy(core.AcceptForWrite) {
-			candidates = append(candidates, name)
-		}
-	}
+	candidates := slices.DeleteFunc(d.ops.WriteTargets(), func(name string) bool { return name == srcName })
 	quota := d.ops.Quota()
 	for _, name := range quota.RankByUtilization(candidates) {
 		if quota.Available(name) < obj.SizeBytes {

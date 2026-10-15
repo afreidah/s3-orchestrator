@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// rebalanceFleet is the two-backend fleet most rebalance tests plan across,
+// every backend in it a write target.
+var rebalanceFleet = []string{"b1", "b2"}
+
 // TestRebalancer_SetConfig_RoundTrip verifies the rebalancer set config round trip contract.
 // Asserts that Config().Strategy = , want spread.
 func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
@@ -98,7 +102,7 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
@@ -129,7 +133,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 		},
 	}
 
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
@@ -149,6 +153,57 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 		if mv.FromBackend != "b1" || mv.ToBackend != "b2" {
 			t.Errorf("move should be b1->b2, got %s->%s", mv.FromBackend, mv.ToBackend)
 		}
+	}
+}
+
+// TestRebalance_PlansNoMovesOntoANonWriteTarget verifies both strategies leave
+// out a destination that is not a write target, such as one refusing reads:
+// moving a copy there would leave it unreadable.
+func TestRebalance_PlansNoMovesOntoANonWriteTarget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		plan  func(*Rebalancer, map[string]core.QuotaStat) ([]RebalanceMove, error)
+		stats map[string]core.QuotaStat
+		src   string
+	}{
+		{
+			name: "spread",
+			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]RebalanceMove, error) {
+				return r.PlanSpreadEven(context.Background(), s, 10)
+			},
+			stats: map[string]core.QuotaStat{"b1": {BytesUsed: 800, BytesLimit: 1000}, "b2": {BytesUsed: 200, BytesLimit: 1000}},
+			src:   "b1",
+		},
+		{
+			name: "pack",
+			plan: func(r *Rebalancer, s map[string]core.QuotaStat) ([]RebalanceMove, error) {
+				return r.PlanPackTight(context.Background(), s, 10)
+			},
+			stats: map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}, "b2": {BytesUsed: 800, BytesLimit: 1000}},
+			src:   "b1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ops := newMockOps(ctrl)
+			ms := &mockMetadataStore{
+				objectsByBackend: map[string][]core.ObjectLocation{
+					tc.src: {{ObjectKey: "key1", BackendName: tc.src, SizeBytes: 100}},
+				},
+			}
+			expectBackendOrder(ops, rebalanceFleet, []string{tc.src})
+			ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
+
+			plan, err := tc.plan(NewRebalancer(ops, NewMockPlacement(ctrl), ms), tc.stats)
+			if err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+			if len(plan) != 0 {
+				t.Errorf("planned %+v onto b2, which takes no writes", plan)
+			}
+		})
 	}
 }
 
@@ -180,7 +235,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 			"k5": {"b1"},
 		},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
@@ -225,7 +280,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 			"k3": {"b2"},
 		},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
@@ -363,7 +418,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
@@ -395,7 +450,7 @@ func TestRebalance_SkipsWithinThreshold(t *testing.T) {
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, NewMockPlacement(ctrl), ms)
@@ -531,7 +586,7 @@ func TestPlanPackTight_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 		}},
 		getBackendsForKeysResp: map[string][]string{"k1": {"b2"}, "k2": {"b2"}},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(exhaustedIngress("b1", "b1", "b2")).AnyTimes()
 
 	r := NewRebalancer(ops, NewMockPlacement(ctrl), ms)
@@ -564,7 +619,7 @@ func TestPlanSpreadEven_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 		}},
 		getBackendsForKeysResp: map[string][]string{"k1": {"b1"}, "k2": {"b1"}},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(exhaustedIngress("b2", "b1", "b2")).AnyTimes()
 
 	r := NewRebalancer(ops, NewMockPlacement(ctrl), ms)
@@ -598,7 +653,7 @@ func TestPlanSpreadEven_StillPlansWhenBudgetAllows(t *testing.T) {
 		}},
 		getBackendsForKeysResp: map[string][]string{"k1": {"b1"}, "k2": {"b1"}},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 
 	r := NewRebalancer(ops, NewMockPlacement(ctrl), ms)

@@ -34,24 +34,6 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
-
-// httpError is a writepath-package test helper that satisfies the
-// HTTPStatusCode() interface backend.IsNotFound classifies against.
-type httpError struct {
-	code int
-	msg  string
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-func (e *httpError) Error() string       { return e.msg }
-func (e *httpError) HTTPStatusCode() int { return e.code }
-
-// -------------------------------------------------------------------------
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
@@ -378,7 +360,7 @@ func TestDeleteOrEnqueue_NotFound_SkipsEnqueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
-		Return(&httpError{code: 404, msg: "NoSuchKey"})
+		Return(&backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
 
 	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.
@@ -422,7 +404,7 @@ func TestDeleteAllOrEnqueue_GroupsAndSettlesPerKey(t *testing.T) {
 	b1.BatchDeleteEnabled = true
 	b1.BatchDeleteKeyErrs = map[string]error{
 		"b": errors.New("denied"),
-		"c": &httpError{code: 404, msg: "NoSuchKey"},
+		"c": &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"},
 	}
 	for _, k := range []string{"a", "b", "c"} {
 		b1.Objects[k] = backendtest.Object{}
@@ -459,7 +441,7 @@ func TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
-		Return(&httpError{code: 404, msg: "NoSuchKey"})
+		Return(&backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
 
 	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.

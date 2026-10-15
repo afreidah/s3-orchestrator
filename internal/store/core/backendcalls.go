@@ -47,11 +47,13 @@ const AllCalls = CallPutObject | CallGetObject | CallHeadObject | CallDeleteObje
 
 // The required masks. RequiredForWrite is what a backend must serve to be
 // given new bytes - client writes, multipart parts, replicas, rebalance moves
-// and drain destinations. RequiredForRead is what makes a copy on it readable,
-// for reads and replication sources. RequiredForProbe is what checking whether
-// a key landed on it needs.
+// and drain destinations. It includes GetObject because a copy nobody can read
+// back is not worth writing: it would leave the object unreadable and give the
+// replicator no source to copy from. RequiredForRead is what makes a copy on it
+// readable, for reads and replication sources. RequiredForProbe is what
+// checking whether a key landed on it needs.
 const (
-	RequiredForWrite = CallPutObject
+	RequiredForWrite = CallPutObject | CallGetObject
 	RequiredForRead  = CallGetObject
 	RequiredForProbe = CallHeadObject
 )

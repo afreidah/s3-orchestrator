@@ -241,7 +241,7 @@ type backendUtil struct {
 func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
 	simUsed := make(map[string]int64)
 	backends := sortedBackendsByUtilDesc(r.ops.BackendOrder(), stats, simUsed)
-	state := newPlanState(r.ops.Usage(), simUsed, batchSize)
+	state := r.newPlanState(simUsed, batchSize)
 
 	var plan []RebalanceMove
 	candidates := r.newCandidateCache(batchSize)
@@ -294,7 +294,7 @@ func (r *Rebalancer) packMovesIntoDestination(
 ) ([]RebalanceMove, error) {
 	dest := backends[di]
 	destFree := dest.Limit - state.simUsed[dest.Name]
-	if destFree <= 0 {
+	if destFree <= 0 || !state.takes(dest.Name) {
 		return nil, nil
 	}
 
@@ -400,7 +400,8 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.Q
 	if !ok {
 		return nil, nil
 	}
-	state := newPlanState(r.ops.Usage(), simUsed, batchSize)
+	state := r.newPlanState(simUsed, batchSize)
+	destinations = slices.DeleteFunc(destinations, func(d backendBalance) bool { return !state.takes(d.Name) })
 
 	var plan []RebalanceMove
 
@@ -630,15 +631,29 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 
 // planState is the running state of one rebalance cycle: the simulated stored
 // bytes, the committed transfer, and how many moves the batch has left. Every
-// accepted move must update all three together.
+// accepted move must update all three together. targets is fixed for the
+// cycle: the backends that may receive a move.
 type planState struct {
 	simUsed   map[string]int64
 	budget    *usageBudget
+	targets   map[string]bool
 	remaining int
 }
 
-func newPlanState(usage *counter.UsageTracker, simUsed map[string]int64, batchSize int) *planState {
-	return &planState{simUsed: simUsed, budget: newUsageBudget(usage), remaining: batchSize}
+// newPlanState starts a cycle from the fleet as it stands, taking the write
+// targets once so every move in the plan is judged against the same set.
+func (r *Rebalancer) newPlanState(simUsed map[string]int64, batchSize int) *planState {
+	targets := make(map[string]bool)
+	for _, name := range r.ops.WriteTargets() {
+		targets[name] = true
+	}
+	return &planState{simUsed: simUsed, budget: newUsageBudget(r.ops.Usage()), targets: targets, remaining: batchSize}
+}
+
+// takes reports whether dest may receive moves, which is whether it is a
+// write target: a move gives it new bytes the same way a client write does.
+func (p *planState) takes(dest string) bool {
+	return p.targets[dest]
 }
 
 // allows reports whether the plan may still move size bytes from src to dest.

@@ -503,7 +503,7 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 			"b1": {{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100}},
 		},
 	}
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	expectBackendOrder(ops, rebalanceFleet, rebalanceFleet)
 	ops.EXPECT().Usage().Return(unlimitedUsage()).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),

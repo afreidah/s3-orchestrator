@@ -64,6 +64,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Writes need a backend that serves reads ([#1701](https://github.com/afreidah/s3-orchestrator/issues/1701), v0.162.1)**
+
+A backend refusing GetObject no longer takes new objects, replicas, rebalance moves or drain destinations. A copy written there could not be read back, and when it was an object's only copy the replicator had no source to copy it from.
+
+**Operator action items after upgrade:**
+
+- **A backend over a provider's download quota stops receiving writes** until its GET breaker closes. Writes shift to the remaining backends meanwhile.
+- **Objects already stranded on such a backend** stay under their replication factor until it serves GETs again; the replicator then copies them out.
+
 **Per-call breaker metrics and events ([#1690](https://github.com/afreidah/s3-orchestrator/issues/1690), v0.162.0)**
 
 A new gauge names the calls each backend refuses, and circuit events name the call that opened or closed.

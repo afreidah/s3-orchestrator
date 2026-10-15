@@ -178,7 +178,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     FILTER: {
       title: 'Filter Eligible Backends',
       badge: 'filter', badgeText: 'three-stage filter',
-      body: '<p><code>EligibleForWrite</code> starts from the configured backend order and narrows it in three steps: <code>Accepted</code>, then <code>Serving</code>, then the usage-limit and <code>max_object_size</code> filter.</p><p>An uncompressed write runs this before its body is buffered, against the size the object will occupy once encrypted, which is known from the plaintext size alone. A compressed write runs the same chain after encoding instead; see <i>Filter Eligible on Encoded Size</i>.</p>'
+      body: '<p><code>EligibleForWrite</code> starts from <code>WriteTargets</code> - the configured backend order narrowed by <code>Accepted</code>, then <code>Serving</code> - and drops the backends failing the usage-limit and <code>max_object_size</code> filter.</p><p>An uncompressed write runs this before its body is buffered, against the size the object will occupy once encrypted, which is known from the plaintext size alone. A compressed write runs the same chain after encoding instead; see <i>Filter Eligible on Encoded Size</i>.</p>'
     },
     USAGE: {
       title: 'Usage Limits Check',
@@ -193,7 +193,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     HEALTH: {
       title: 'Exclude Refusing Uploads',
       badge: 'filter', badgeText: 'health filter',
-      body: '<p><code>Serving</code> with <code>RequiredForWrite</code> removes backends not serving <code>PutObject</code>: the backend breaker or the PUT breaker is <b>open</b>. A backend refusing only other calls, such as downloads over a provider quota, still takes writes. Backends without circuit breakers always pass; unknown backends are skipped.</p><p>Client requests are never used to test an open breaker. Recovery runs out of band: the breaker watchdog has each open breaker\'s recovery prober run its check - <code>HeadBucket</code> for the backend breaker, a repeat of the call for a call breaker - once the open timeout has passed, then on a doubling backoff, and the breaker closes when a check passes. See the <a href="../circuit-breaker/">circuit breaker</a>.</p>'
+      body: '<p><code>WriteTargets</code> applies <code>RequiredForWrite</code>, removing backends not serving both <code>PutObject</code> and <code>GetObject</code>: the backend breaker, the PUT breaker or the GET breaker is <b>open</b>. A copy on a backend refusing downloads, such as one over a provider quota, could not be read back or replicated, so it gets no new objects. Drains and rebalance moves pick their destinations from the same list. Backends without circuit breakers always pass; unknown backends are skipped.</p><p>Client requests are never used to test an open breaker. Recovery runs out of band: the breaker watchdog has each open breaker\'s recovery prober run its check - <code>HeadBucket</code> for the backend breaker, a repeat of the call for a call breaker - once the open timeout has passed, then on a doubling backoff, and the breaker closes when a check passes. See the <a href="../circuit-breaker/">circuit breaker</a>.</p>'
     },
     R507B: {
       title: '507 Insufficient Storage',

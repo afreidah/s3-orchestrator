@@ -275,6 +275,20 @@ func (mr *MockOpsMockRecorder) WithTimeout(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithTimeout", reflect.TypeOf((*MockOps)(nil).WithTimeout), ctx)
 }
 
+// WriteTargets mocks base method.
+func (m *MockOps) WriteTargets() []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WriteTargets")
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// WriteTargets indicates an expected call of WriteTargets.
+func (mr *MockOpsMockRecorder) WriteTargets() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteTargets", reflect.TypeOf((*MockOps)(nil).WriteTargets))
+}
+
 // MockPlacement is a mock of Placement interface.
 type MockPlacement struct {
 	ctrl     *gomock.Controller
