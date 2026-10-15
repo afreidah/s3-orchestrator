@@ -698,7 +698,7 @@ func TestServesReads_CBTripped(t *testing.T) {
 func TestServesReads_OnlyWritesRefused(t *testing.T) {
 	t.Parallel()
 	inner := backendtest.NewInMemory()
-	inner.PutErr = &httpError{code: 403}
+	inner.PutErr = &backendtest.StatusError{Code: 403}
 	cbb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
 	_, _ = cbb.PutObject(context.Background(), "k", bytes.NewReader([]byte("x")), 1, "", nil)
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": cbb}, &fleetOpts{Order: []string{"b1"}})

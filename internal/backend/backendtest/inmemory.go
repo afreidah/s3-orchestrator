@@ -111,19 +111,31 @@ var (
 	_ backend.BatchDeleter   = (*InMemory)(nil)
 )
 
-// notFoundError is a status-code-bearing error, so backend.IsNotFound
-// classifies an absent key the same way it classifies a real 404.
-type notFoundError struct{ key string }
+// StatusError is a provider response carrying an HTTP status, which is what
+// backend.IsNotFound and the circuit breaker classify an error by. A test
+// returns one in place of the AWS SDK's error types.
+type StatusError struct {
+	Code int
+	Msg  string
+}
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Error implements error.
-func (e *notFoundError) Error() string { return fmt.Sprintf("object %q not found", e.key) }
+// Error implements error, returning the message the test gave rather than
+// anything derived from the status.
+func (e *StatusError) Error() string { return e.Msg }
 
-// HTTPStatusCode satisfies the interface backend.IsNotFound checks for.
-func (e *notFoundError) HTTPStatusCode() int { return notFoundStatus }
+// HTTPStatusCode satisfies the interface the backend package classifies
+// provider responses by.
+func (e *StatusError) HTTPStatusCode() int { return e.Code }
+
+// notFound is the error an absent key reports, a 404 so callers classify it
+// the way they would a real S3 miss.
+func notFound(key string) error {
+	return &StatusError{Code: notFoundStatus, Msg: fmt.Sprintf("object %q not found", key)}
+}
 
 // errReader fails every read with a fixed error, standing in for a body that
 // dies partway through transfer.
@@ -224,7 +236,7 @@ func (m *InMemory) GetObject(_ context.Context, key, rangeHeader string) (*backe
 	}
 	obj, ok := m.Objects[key]
 	if !ok {
-		return nil, &notFoundError{key: key}
+		return nil, notFound(key)
 	}
 
 	data := bytes.Clone(obj.Data)
@@ -258,7 +270,7 @@ func (m *InMemory) HeadObject(_ context.Context, key string) (*backend.HeadObjec
 	}
 	obj, ok := m.Objects[key]
 	if !ok {
-		return nil, &notFoundError{key: key}
+		return nil, notFound(key)
 	}
 	return &backend.HeadObjectResult{
 		Size:         int64(len(obj.Data)),
@@ -369,7 +381,7 @@ func (m *InMemory) CopyObject(_ context.Context, srcKey, dstKey, _ string, _ map
 	m.CopyCalls++
 	src, ok := m.Objects[srcKey]
 	if !ok {
-		return "", &notFoundError{key: srcKey}
+		return "", notFound(srcKey)
 	}
 	if m.CopyErr != nil {
 		// The ambiguous failure the HEAD probe exists for: the backend

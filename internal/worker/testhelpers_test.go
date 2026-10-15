@@ -100,6 +100,14 @@ func newMockOps(ctrl *gomock.Controller) *MockOps {
 	return ops
 }
 
+// expectBackendOrder has ops list order as its backends and name targets as
+// the ones that may take new bytes. A test of a healthy fleet passes order for
+// both. WriteTargets returns a fresh slice each call, as the runtime does.
+func expectBackendOrder(ops *MockOps, order, targets []string) {
+	ops.EXPECT().BackendOrder().Return(order).AnyTimes()
+	ops.EXPECT().WriteTargets().DoAndReturn(func() []string { return slices.Clone(targets) }).AnyTimes()
+}
+
 // expectFleet has ops serve fleet as its backends, and answer which calls each
 // one serves from the backend itself, so a tripped breaker in a fixture reads
 // as refusing. A name missing from fleet serves nothing.

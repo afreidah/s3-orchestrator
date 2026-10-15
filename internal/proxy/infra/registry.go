@@ -87,3 +87,10 @@ func (c *BackendRuntime) Serving(eligible []string, required core.BackendCalls) 
 		return !c.ServedCalls(name).Has(required)
 	})
 }
+
+// WriteTargets returns the backends, in configured order, that may be given
+// new bytes: their state flags accept writes and they serve every call a write
+// needs. Client writes, replicas, drains and rebalance moves all start here.
+func (c *BackendRuntime) WriteTargets() []string {
+	return c.Serving(c.Accepted(c.order, core.AcceptForWrite), core.RequiredForWrite)
+}

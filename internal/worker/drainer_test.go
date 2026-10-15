@@ -277,6 +277,9 @@ func TestDrainOne_Failures(t *testing.T) {
 		{"no destination", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
 			return map[string]backend.ObjectBackend{"b1": src}
 		}},
+		{"the only other backend refuses reads", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
+			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.RefusingReads("b2")}
+		}},
 		{"source read fails", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
 			src.GetErr = errors.New("read failure")
 			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}

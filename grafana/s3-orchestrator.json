@@ -1336,7 +1336,7 @@
       "type": "state-timeline",
       "id": 155,
       "title": "Backend Call State",
-      "description": "Each backend over time: Served while it serves every call, Degraded while a circuit breaker refuses some of its calls, Down while it refuses all of them. Refused Calls Now names the calls. A backend refusing only GetObject, as when a provider's download quota runs out, keeps taking writes, deletes and listings.",
+      "description": "Each backend over time: Served while it serves every call, Degraded while a circuit breaker refuses some of its calls, Down while it refuses all of them. Refused Calls Now names the calls. A backend refusing only GetObject, as when a provider's download quota runs out, keeps serving deletes and listings but takes no new writes until downloads recover.",
       "gridPos": {
         "x": 0,
         "y": 70,

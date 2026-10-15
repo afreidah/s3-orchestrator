@@ -37,28 +37,30 @@ func TestBackendCalls_BitsAreDistinct(t *testing.T) {
 }
 
 // TestBackendCalls_RequiredMasks pins what each purpose requires: a backend is
-// refused for a purpose exactly when the call it makes is missing, and a
-// backend serving every call is accepted everywhere.
+// refused for a purpose when any call it makes is missing, and a backend
+// serving every call is accepted everywhere.
 func TestBackendCalls_RequiredMasks(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		required BackendCalls
-		call     BackendCalls
+		calls    []BackendCalls
 	}{
-		{"write", RequiredForWrite, CallPutObject},
-		{"read", RequiredForRead, CallGetObject},
-		{"probe", RequiredForProbe, CallHeadObject},
+		{"write", RequiredForWrite, []BackendCalls{CallPutObject, CallGetObject}},
+		{"read", RequiredForRead, []BackendCalls{CallGetObject}},
+		{"probe", RequiredForProbe, []BackendCalls{CallHeadObject}},
 	} {
 		if !AllCalls.Has(tc.required) {
 			t.Errorf("%s: a backend serving every call is refused", tc.name)
 		}
-		if (AllCalls &^ tc.call).Has(tc.required) {
-			t.Errorf("%s: a backend without %s is accepted", tc.name, tc.call)
+		for _, call := range tc.calls {
+			if (AllCalls &^ call).Has(tc.required) {
+				t.Errorf("%s: a backend without %s is accepted", tc.name, call)
+			}
 		}
 	}
-	if !(AllCalls &^ CallGetObject).Has(RequiredForWrite) {
-		t.Error("a backend refusing downloads is refused for writes")
+	if !(AllCalls &^ CallListObjects).Has(RequiredForWrite) {
+		t.Error("a backend refusing listings is refused for writes")
 	}
 }
 

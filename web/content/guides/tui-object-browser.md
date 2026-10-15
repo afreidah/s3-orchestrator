@@ -157,7 +157,7 @@ or a count of never-checked copies while the first sweep is still running.
 Reading the columns:
 
 - **HEALTH** - the backend's circuit-breaker state: `healthy` while it serves every call, `degraded` while an open breaker refuses some calls, and `down` while it refuses every call. Sorting by it puts down backends first, then degraded.
-- **REFUSED** - the calls an open breaker is refusing, such as `GetObject` while a provider's download quota is exhausted; `-` when none. A degraded backend keeps serving the rest, so one refusing only downloads still takes writes. The column is the first to drop on a narrow terminal.
+- **REFUSED** - the calls an open breaker is refusing, such as `GetObject` while a provider's download quota is exhausted; `-` when none. A degraded backend keeps serving the rest, though one refusing downloads takes no new writes, since nothing written there could be read back. The column is the first to drop on a narrow terminal.
 - **STATE** - the backend's state flags: `cordoned` when no new copies may land on it, and `draining` while a drain is evacuating it, `drained` once that has finished, or `drain-failed` when it stopped on an error. A cordon and a drain can show together. `-` means normal service; a backend carrying any flag takes no new writes.
 - **USED** / **LIMIT** / **USE%** - quota bytes used against the configured limit (`-` when no limit is set), and the fill percentage that follows from them.
 - **OBJECTS** - object copies the backend holds.

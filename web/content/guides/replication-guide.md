@@ -146,7 +146,7 @@ Several features work together to keep replication healthy:
 
 - **`unhealthy_threshold`** prevents premature replacement copies. If a backend has a brief network hiccup, the replicator waits for the threshold to pass before assuming the backend is truly down and creating copies elsewhere. This avoids unnecessary over-replication when the backend recovers moments later.
 
-- **Circuit breakers** prevent the replicator from wasting API requests attempting to copy to a backend that is currently failing. Backends refusing uploads are excluded from target selection entirely; a backend refusing only downloads can still receive copies.
+- **Circuit breakers** prevent the replicator from wasting API requests attempting to copy to a backend that is currently failing. Backends refusing uploads or downloads are excluded from target selection entirely, since a copy that cannot be read back is no use as a replica.
 
 - **Monitor metrics** to catch imbalances early. See [Monitoring](#monitoring) for the full list.
 

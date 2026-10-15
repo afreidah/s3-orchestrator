@@ -25,6 +25,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -103,7 +104,7 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().DeleteMany(gomock.Any(), "b1", gomock.Any(), []string{"phantom.txt"}).
-		Return(map[string]error{"phantom.txt": &httpError{code: 404, msg: "NoSuchKey"}})
+		Return(map[string]error{"phantom.txt": &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"}})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))

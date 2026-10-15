@@ -14,7 +14,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // Usage returns the usage tracker.
@@ -28,12 +27,10 @@ func (c *BackendRuntime) MaxObjectSize(name string) int64 {
 	return c.maxObjectSizes[name]
 }
 
-// EligibleForWrite returns backends, in configured order, whose state flags
-// writes accept, that are serving uploads, and that are within usage limits
-// and max object size for the given operation.
+// EligibleForWrite returns the write targets, in configured order, that are
+// within usage limits and max object size for the given operation.
 func (c *BackendRuntime) EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string {
-	eligible := c.Serving(c.Accepted(c.order, core.AcceptForWrite), core.RequiredForWrite)
-	return slices.DeleteFunc(eligible, func(name string) bool {
+	return slices.DeleteFunc(c.WriteTargets(), func(name string) bool {
 		return !c.withinLimits(name, ops, egress, ingress)
 	})
 }

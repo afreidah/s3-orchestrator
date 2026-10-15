@@ -407,7 +407,7 @@ The other defaults are sensible for most deployments. Increase `cache_ttl` if yo
 Per-backend circuit breakers isolate failures at the individual backend level, and within a backend at the level of each call. Each backend has a backend breaker and one breaker per call (`PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`):
 
 - **Backend breaker.** Counts failures that say the whole backend is broken: no HTTP response at all (connection refused, DNS, TLS, timeout at the transport) or a `401`. Once it opens, no call reaches the backend. A `HeadBucket` check tests recovery, and every call comes back with it.
-- **Call breakers.** Each counts the backend's refusals of its own call: a `403`, a `429` or a `5xx`. A provider that refuses only some calls - downloads over a monthly download quota, for example - loses only those, and keeps taking writes, deletes and listings. Each call breaker tests recovery by repeating its own call.
+- **Call breakers.** Each counts the backend's refusals of its own call: a `403`, a `429` or a `5xx`. A provider that refuses only some calls - downloads over a monthly download quota, for example - loses only those, and keeps serving deletes and listings. A backend refusing either uploads or downloads gets no new objects, replicas or moves: a copy that cannot be read back would leave the object unreadable. Each call breaker tests recovery by repeating its own call.
 
 A breaker opens after `failure_threshold` consecutive failures. After the timeout elapses its check runs, backing off up to 5 minutes between checks while it fails. Disabled by default.
 

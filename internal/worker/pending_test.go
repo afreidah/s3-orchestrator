@@ -118,7 +118,7 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -443,7 +443,7 @@ func TestProbeBackend_NotFound(t *testing.T) {
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().Acct().Return(newTestRecorder())
-	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeNotFound {
 		t.Errorf("got %v, want probeNotFound", got)
