@@ -17,10 +17,6 @@
 #   ./demo.sh                # stand up the full environment
 #   INSTANCES=1 ./demo.sh    # a single instance, still behind Traefik
 #   ./demo.sh down           # tear everything down
-#
-# The dev agent runs under "demo.sh _supervise" (internal; see
-# supervise_agent), so its containers and data volumes are removed however
-# the agent is stopped, "make clean" included.
 # -------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -53,10 +49,6 @@ DEMO_VOLUMES=(demo-minio-1-data demo-minio-2-data demo-minio-3-data demo-postgre
 # Nomad's Docker driver labels every container it starts with this, which is
 # how teardown finds the ones still running.
 NOMAD_CONTAINER_LABEL="com.hashicorp.nomad.alloc_id"
-
-# Holds the agent supervisor's PID while it tears a run down, so the next run
-# waits rather than reusing an agent that is shutting down.
-TEARDOWN_MARKER="/tmp/nomad-demo.teardown"
 
 # render_job prints the orchestrator job with the rendered config inlined at
 # the __CONFIG__ line, indented to match it, and the instance count filled in.
@@ -187,61 +179,6 @@ remove_leftovers() {
     rm -f /tmp/nomad-demo.pid "$CREDENTIALS_FILE"
 }
 
-# supervise_agent runs the dev agent (the command it is given) and cleans up
-# after it exits, so a teardown completes however the agent is stopped.
-#
-# "make clean" stops the demo with pkill -f 'nomad agent -dev' and moves on,
-# and nothing else then removes the data volumes or keeps the next run off
-# the dying agent. This process is started as "demo.sh _supervise nomad agent
-# -dev ...", so that same pkill signals it alongside the agent. The agent
-# shuts down by itself: in dev mode, stopping the client destroys every
-# allocation and waits for their containers to stop. This process neither
-# forwards the signal nor kills the agent, because a second signal during
-# that shutdown would kill the agent outright and orphan the containers.
-# It marks the teardown as under way, waits for the agent to exit, then
-# removes the leftovers. An agent that exits for any other reason takes its
-# in-memory jobs with it, so the same cleanup is right then too.
-#
-# SIGHUP is ignored, as the agent treats it as a reload, so closing the
-# terminal that started the demo stops neither.
-supervise_agent() {
-    command "$@" &
-    local agent="$!"
-    trap '' HUP
-    trap 'echo "$$" > "$TEARDOWN_MARKER"' TERM INT
-    while kill -0 "$agent" 2>/dev/null; do
-        wait "$agent" || true
-    done
-    echo "$$" > "$TEARDOWN_MARKER"
-    echo "supervise_agent: agent exited; removing leftover containers and volumes"
-    remove_leftovers
-    rm -f "$TEARDOWN_MARKER"
-}
-
-# wait_for_previous_teardown waits while an earlier run's supervisor is still
-# tearing that run down - "make clean" and pkill return before it finishes -
-# so this run neither reuses the agent nor has its volumes removed under it.
-# A marker left by a supervisor that no longer exists is stale and dropped.
-wait_for_previous_teardown() {
-    local supervisor i
-    for i in $(seq 1 120); do
-        if [[ ! -f "$TEARDOWN_MARKER" ]]; then
-            return 0
-        fi
-        supervisor=$(cat "$TEARDOWN_MARKER" 2>/dev/null || echo "")
-        if [[ -z "$supervisor" ]] || ! kill -0 "$supervisor" 2>/dev/null; then
-            rm -f "$TEARDOWN_MARKER"
-            return 0
-        fi
-        if [[ "$i" -eq 1 ]]; then
-            echo "Waiting for the previous demo's teardown to finish..."
-        fi
-        sleep 1
-    done
-    echo "Error: the previous demo's teardown has not finished. Check /tmp/nomad-demo.log"
-    exit 1
-}
-
 # print_platform_endpoints lists what only Nomad can report: the dev agent UI
 # and each instance's dynamic metrics port.
 print_platform_endpoints() {
@@ -251,22 +188,13 @@ print_platform_endpoints() {
         | jq -r '.[] | "    http://\(.Address):\(.Port)/metrics  (alloc \(.AllocID[0:8]))"' 2>/dev/null || true
 }
 
-# --- Agent supervisor (internal) ---
-if [[ "${1:-}" == "_supervise" ]]; then
-    shift
-    supervise_agent "$@"
-    exit 0
-fi
-
 # --- Teardown ---
 # "job stop" returns once the stop is scheduled, not once the containers are
 # gone. So teardown waits for Nomad's containers to exit before stopping the
-# agent, then waits for the agent and its supervisor to exit, so the
-# supervisor's cleanup has finished and an immediate re-run cannot find the
-# dying agent and reuse it. remove_leftovers then runs again here, for an
-# agent the demo did not start and so no supervisor watches. Every step
+# agent, then waits for the agent to exit, so an immediate re-run cannot find
+# the dying agent and reuse it, and then removes the leftovers. Every step
 # tolerates failure, so teardown always runs to the end, including with
-# nothing running.
+# nothing running. "make clean" runs this too.
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
     for job in "${DEMO_JOBS[@]}"; do
@@ -278,7 +206,6 @@ if [[ "${1:-}" == "down" ]]; then
         fi
         sleep 1
     done
-    # Signals the supervisor and the agent together, as "make clean" does.
     pkill -f '[n]omad agent -dev' 2>/dev/null || true
     for _ in $(seq 1 60); do
         if ! pgrep -f '[n]omad agent -dev' >/dev/null 2>&1; then
@@ -293,7 +220,6 @@ fi
 
 require_commands docker nomad jq curl
 refuse_running_dev_deps
-wait_for_previous_teardown
 
 # --- Start Nomad dev agent ---
 if nomad status &>/dev/null; then
@@ -301,8 +227,7 @@ if nomad status &>/dev/null; then
     check_reused_agent
 else
     echo "Starting Nomad dev agent..."
-    bash "$SCRIPT_DIR/demo.sh" _supervise \
-        nomad agent -dev -config="$SCRIPT_DIR/agent.hcl" -log-level=WARN &>/tmp/nomad-demo.log &
+    nomad agent -dev -config="$SCRIPT_DIR/agent.hcl" -log-level=WARN &>/tmp/nomad-demo.log &
     echo $! > /tmp/nomad-demo.pid
     echo "Waiting for Nomad to be ready..."
     for _ in $(seq 1 30); do

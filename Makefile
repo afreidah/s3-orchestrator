@@ -781,14 +781,9 @@ artifacts-publish: worker-publish grafana-publish ## Publish every artifact a de
 # -------------------------------------------------------------------------
 
 clean: ## Remove build artifacts, demo environments, containers, and volumes
-	# --- Stop Nomad job and agent (localhost dev agent only; clear any prod
-	#     NOMAD_*/CONSUL_* from the shell so this can never hit a real cluster) ---
-	env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION \
-		-u CONSUL_HTTP_TOKEN -u CONSUL_CACERT -u CONSUL_CLIENT_CERT -u CONSUL_CLIENT_KEY -u CONSUL_TLS_SERVER_NAME \
-		NOMAD_ADDR=http://127.0.0.1:4646 CONSUL_HTTP_ADDR=http://127.0.0.1:8500 \
-		nomad job stop -purge s3-orchestrator 2>/dev/null || true
-	pkill -f '[n]omad agent -dev' 2>/dev/null || true
-	rm -f /tmp/nomad-demo.pid
+	# --- Stop the Nomad demo: its jobs, the dev agent, and its volumes (the
+	#     script pins NOMAD_*/CONSUL_* to localhost, so it never hits a real cluster) ---
+	./deploy/nomad/local/demo.sh down
 	# --- Delete k3d cluster ---
 	k3d cluster delete s3-orchestrator-demo 2>/dev/null || true
 	# --- Tear down compose services and volumes ---
