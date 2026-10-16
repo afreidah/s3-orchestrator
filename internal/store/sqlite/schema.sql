@@ -324,7 +324,8 @@ CREATE INDEX IF NOT EXISTS idx_credentials_user
     ON credentials(user_id);
 
 -- A grant names a resource: a kind and a name. The kinds are bucket, backend and
--- fleet, and fleet carries the empty name because there is only one of it. The
+-- orchestrator, and orchestrator carries the empty name because there is only
+-- one of it. The
 -- kind is in the key so one user can hold a grant on a bucket and on a backend
 -- that happen to share a name.
 CREATE TABLE IF NOT EXISTS grants (

@@ -116,6 +116,16 @@ s3-orchestrator admin bucket delete -name app3-files
 
 Each refusal names what is in the way and returns a non-zero exit code, so a script that runs these out of order stops rather than half-completing.
 
+### Backend health
+
+With [backend circuit breakers](configuration.md#backend_circuit_breaker) enabled, each backend's health is one of three words, shown in the Health column of `admin status` and the TUI, and as a badge on the web dashboard:
+
+- **healthy**: every call is served.
+- **degraded**: some calls are refused, and the refused calls are listed beside it. A provider over its download allowance, for example, shows `GetObject`.
+- **down**: every call is refused, because the backend is unreachable or rejects its credentials.
+
+Breakers open and close by themselves, so a degraded or down backend needs no action to recover. While a backend refuses `PutObject` or `GetObject` it is given no new objects, replicas or moves, and reads fail over to other copies. See [Backend refusing some calls](disaster-recovery.md#backend-refusing-some-calls) for what to expect while it lasts.
+
 ### Cordoning a backend
 
 Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads already in progress on it can complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled.
@@ -141,7 +151,7 @@ The same change is `POST` and `DELETE` on `/admin/api/backends/{name}/cordon`, u
 
 Draining migrates all objects off a backend to other backends without data loss. Use this when decommissioning a backend but preserving all stored objects.
 
-A drain is a record in the metadata database. Starting one writes the record, and from that moment every instance refuses new writes to the backend: PUTs, copies, new replicas and new multipart uploads all go elsewhere. The drain worker moves the objects off on its next tick, under an advisory lock, so one instance does the moving. Because the record is in the database, a restart resumes a drain in progress and keeps a finished drain's backend out of placement.
+A drain is a record in the metadata database. Starting one writes the record, and from that moment every instance refuses new writes to the backend: PUTs, copies, new replicas and new multipart uploads all go elsewhere. The drain worker moves the objects off on its next tick, under an advisory lock, so one instance does the moving. Because the record is in the database, a restart resumes a drain in progress and keeps a finished drain's backend out of placement. While the backend refuses `GetObject`, a drain still drops its copies of objects that have another copy, but it cannot move the objects only it holds, since moving one means reading it; those wait until downloads recover.
 
 1. **Start the drain:**
 

@@ -5,7 +5,7 @@ linkTitle: "Database Schema"
 weight: 8
 ---
 
-Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (`internal/store/sqlite`) implements the same tables and the `backend_capacity` view. **Hover over any table** for column details and usage context.
+Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (`internal/store/sqlite`) implements the same tables and the `backend_capacity` view, without the PostgreSQL-only collation and covering indexes and some CHECK constraints. **Hover over any table** for column details and usage context.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -326,7 +326,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>logical_size</td><td>BIGINT</td><td>Size of the object the client wrote. Distinct from plaintext_size: with both features on the stored bytes are ciphertext of compressed data, so plaintext_size is the pre-encryption (compressed) size and this is the original (nullable)</td></tr>' +
         '<tr><td>compression_probe_size</td><td>BIGINT</td><td>What the encoder produced for a copy stored verbatim anyway, so a later pass reaches the same verdict without re-encoding it. Stored as the measurement rather than a declined flag, because min_ratio is applied at query time (nullable)</td></tr>' +
         '<tr><td>compression_probe_level</td><td>TEXT</td><td>Level that probe was measured at, so a measurement taken under different settings is not reused as though it were current (nullable)</td></tr>' +
-        '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
+        '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix, and for imported encrypted copies no key opens &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
         '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
         '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent. What a HEAD reports stops depending on which copy answers: with compression or encryption on, the backend\'s own ETag describes the stored bytes rather than the object that was written (nullable)</td></tr>' +
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, served from the row rather than from whichever backend replies (nullable)</td></tr>' +
@@ -348,7 +348,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, tag_key) &bull; idx_object_tags_lookup (tag_key, tag_value)</p>' +
         '<p>No foreign key, because there is no table to point at: <code>object_locations</code> is keyed <code>(object_key, backend_name)</code> and nothing is keyed on object key alone, so <code>ON DELETE CASCADE</code> cannot express this. Core clears these rows instead, at every path that puts a new object at a key or removes the last copy of one. The PK already serves lookup and delete by object key; idx_object_tags_lookup is for the reverse direction.</p>' +
         '<p>Used by: <a href="../tagging/">tagging</a> (PutObjectTagging, GetObjectTagging, DeleteObjectTagging), inline <code>x-amz-tagging</code> on the <a href="../write-path/">write path</a>, CopyObject tagging directive, the <a href="../read-path/">read path</a> for the tagging count on GetObject and HeadObject, lifecycle expiration rules that filter on a tag, admin API and TUI object inspector.</p>' +
-        '<p class="ac-metric">Key queries: ReplaceObjectTags, GetObjectTags, CountObjectTags, DeleteObjectTags, ClearTagsForKeys</p>'
+        '<p class="ac-metric">Key queries: GetObjectTags, InsertObjectTag, DeleteObjectTags, DeleteObjectTagsForKeys; the count is a tag_count subquery inside GetAllObjectLocations</p>'
     },
     multipart_uploads: {
       title: 'multipart_uploads',
@@ -450,7 +450,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     pending_objects: {
       title: 'pending_objects',
       badge: 'cleanup', badgeText: 'in-flight intents',
-      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>Store.InsertPendingIfFits</code> (SQL <code>InsertPendingObjectIfFits</code>) immediately before the backend PUT. That one statement claims the space against the <code>backend_capacity</code> view and records the intent, and inserts nothing when the backend has no room or is draining. The row is deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
+      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>Store.InsertPendingIfFits</code> (SQL <code>InsertPendingObjectIfFits</code>) immediately before the backend PUT. That one statement claims the space against the <code>backend_capacity</code> view and records the intent, and inserts nothing when the backend has no room or carries any state flag writes refuse (cordoned, draining, drained, drain failed). The row is deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
         '<p>The row is also what admission counts: a backend\'s headroom is its committed rows minus the intents it is holding, so bytes in flight occupy the backend for every instance rather than only the one writing them. That is why the pattern cannot be turned off.</p>' +
         '<p>A write placing several copies at once inserts one intent per copy, and clears every intent for its key on commit apart from the ones its own uploads are still running under. Those surviving rows are what each late copy reads as proof that nothing newer has taken the key. See the <a href="../write-path/">write path</a>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
@@ -526,9 +526,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td class="fk">user_id</td><td>TEXT</td><td>REFERENCES users(id) ON DELETE RESTRICT</td></tr>' +
         '<tr><td>secret</td><td>TEXT</td><td>The signing secret. Returned once at creation and never read back into any listing</td></tr>' +
         '<tr><td>label</td><td>TEXT</td><td>Free text recording what holds the keypair</td></tr>' +
-        '<tr><td>disabled</td><td>BOOLEAN</td><td>A disabled row never reaches the registry, so it authenticates nothing while the record of what it did survives</td></tr>' +
+        '<tr><td>disabled</td><td>BOOLEAN</td><td>A disabled row never reaches the registry, so it authenticates nothing while the record of what it did survives. No API or CLI call sets it today; new credentials are written enabled</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Issue time</td></tr>' +
-        '<tr><td>last_used_at</td><td>TIMESTAMPTZ</td><td>NULL for a keypair that has never authenticated</td></tr></table>' +
+        '<tr><td>last_used_at</td><td>TIMESTAMPTZ</td><td>Reserved; nothing writes it today, so it is always NULL</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on access_key_id &bull; idx_credentials_user (user_id)</p>' +
         '<p>Used by: <a href="../../godoc/auth/">auth.BucketRegistry</a> (read into the request-time lookup on every assembly) &bull; <code>ops.Provisioning</code> issue and revoke. A revoke rebuilds and swaps the registry before it returns, so the keypair stops authenticating on the next request rather than the next restart.</p>'
     },
@@ -540,7 +540,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td class="pk fk">user_id</td><td>TEXT</td><td>PRIMARY KEY part; REFERENCES users(id) ON DELETE RESTRICT</td></tr>' +
         '<tr><td class="pk">resource_kind</td><td>TEXT</td><td>PRIMARY KEY part: bucket, backend, or orchestrator. Defaults to bucket</td></tr>' +
         '<tr><td class="pk">resource_name</td><td>TEXT</td><td>PRIMARY KEY part; empty for orchestrator. Deliberately no foreign key: a config-declared bucket has no row here to reference</td></tr>' +
-        '<tr><td>permissions</td><td>TEXT</td><td>Comma-separated permission names; empty means every permission</td></tr>' +
+        '<tr><td>permissions</td><td>TEXT</td><td>Comma-separated permission names, or the shorthand all or admin-all. Empty means all six data-plane permissions on a bucket grant (rows written before permissions existed) and nothing on a backend or orchestrator grant; a new grant cannot be written empty</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Grant time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on (user_id, resource_kind, resource_name)</p>' +
         '<p>Used by: <a href="../../godoc/provisioning/">provisioning.Merge</a> (joins each user onto the buckets it reaches). Backend and orchestrator grants authorize the admin routes (<code>transport/admin/handler_routes.go</code>). A grant naming a bucket neither source declares is reported as a notice and skipped rather than failing startup, since a bucket can leave the config file while the grant stays behind.</p>'

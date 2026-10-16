@@ -213,8 +213,8 @@ type InsertPendingObjectIfFitsParams struct {
 // is what makes the limit hold across a fleet: every instance's committed
 // bytes, orphans, and writes in progress are rows here, so two instances
 // admitting at once are judged against the same totals. Zero rows affected
-// means the backend had no room or is being drained, and the caller should try
-// the next candidate.
+// means the backend had no room or carries a state flag writes refuse, such as
+// a cordon or a drain, and the caller should try the next candidate.
 // backend_name and size_bytes are cast explicitly because they appear both
 // here and in the headroom test below. A bare parameter in a SELECT list takes
 // no type from the INSERT target the way one in VALUES does, so Postgres would

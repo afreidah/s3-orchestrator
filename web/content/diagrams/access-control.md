@@ -153,7 +153,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     FORM: {
       title: 'Dashboard login',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>The login form takes an access key and secret rather than a password of its own. Any credential the deployment holds can be presented - the root keypair, or one the provisioning API issued - but only a user holding <code>admin-read</code> on the orchestrator signs in. A valid credential without it gets <code>403</code> and the message "This credential cannot use the dashboard."; a wrong keypair gets <code>401</code>.</p><p>The keypair is presented whole rather than as a signature, so this is the one path that compares the secret directly. Both halves are always compared, so a wrong access key costs the same work as a wrong secret and the response cannot be used to learn which was which.</p>'
+      body: '<p>The login form takes an access key and secret rather than a password of its own. Any credential the deployment holds can be presented - the root keypair, or one the provisioning API issued - but only a user holding <code>admin-read</code> on the orchestrator signs in. A valid credential without it gets <code>403</code> and the message "This credential cannot use the dashboard."; a wrong keypair gets <code>401</code>.</p><p>The keypair is presented whole rather than as a signature, so this is the one path that compares the secret directly. Both halves are always compared, so a wrong access key costs the same work as a wrong secret and the response cannot be used to learn which was which.</p><p>Repeated failures from one client address lock it out for a while: the form answers <code>429</code> "Too many attempts. Try again later." without checking the keypair.</p>'
     },
     KEY: {
       title: 'Take the access key',
@@ -188,12 +188,12 @@ An access key the registry does not hold still computes a full HMAC, against a f
     VERIFY: {
       title: 'Verify the secret',
       badge: 'filter', badgeText: 'signature',
-      body: '<p>For a signed request: reconstruct the canonical request and the string-to-sign, derive the signing key through the HMAC-SHA256 chain <code>secret &rarr; date &rarr; region &rarr; service &rarr; signing key</code>, and compare with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>The signing key is derived per request rather than cached, so a cache hit cannot make a known key faster than an unknown one. Header auth tolerates &plusmn;15 minutes of clock skew; a presigned URL is checked against its own <code>X-Amz-Expires</code>.</p><p>For a dashboard login: the submitted secret is compared against the stored one, in constant time, with the same dummy-secret equalisation.</p>'
+      body: '<p>For a signed request: reconstruct the canonical request and the string-to-sign, derive the signing key through the HMAC-SHA256 chain <code>secret &rarr; date &rarr; region &rarr; service &rarr; signing key</code>, and compare with <code>hmac.Equal</code>, in constant time.</p><p>The signing key is derived per request rather than cached, so a cache hit cannot make a known key faster than an unknown one. Header auth tolerates &plusmn;15 minutes of clock skew; a presigned URL is checked against its own <code>X-Amz-Expires</code>.</p><p>For a dashboard login: the submitted secret is compared against the stored one, in constant time, with the same dummy-secret equalisation.</p>'
     },
     UNAUTH: {
       title: 'Not authenticated',
       badge: 'reject', badgeText: 'rejected',
-      body: '<p>The caller proved nothing: no signature, an access key the registry does not hold, or a signature that does not verify. All three answer identically, so a refusal does not say whether the key exists.</p><p>The S3 API answers <code>403 AccessDenied</code>, as AWS does, so on that surface a failed authentication and a refused grant carry the same status. The admin API answers <code>401</code>, as do a failed dashboard login and a dashboard API call without a valid session.</p><p>The log line and the <code>s3.AuthFailure</code> audit entry carry the reason. The audit entry names no user, because none was proved.</p>'
+      body: '<p>The caller proved nothing: no signature, an access key the registry does not hold, or a signature that does not verify. All three answer identically, so a refusal does not say whether the key exists.</p><p>The S3 API answers <code>403 AccessDenied</code>, as AWS does, so on that surface a failed authentication and a refused grant carry the same status. The admin API answers <code>401</code>, as do a failed dashboard login and a dashboard API call without a valid session.</p><p>The log line and the <code>s3.AuthFailure</code> audit entry record whether credentials were missing or failed to verify, but not which check failed, so not even the log reveals whether the key exists. The audit entry names no user, because none was proved.</p>'
     },
     WHO: {
       title: 'The authenticated user',
@@ -243,12 +243,12 @@ An access key the registry does not hold still computes a full HMAC, against a f
     FORBID: {
       title: '403 Forbidden',
       badge: 'reject', badgeText: 'rejected',
-      body: '<p>The caller proved an identity, and that identity holds too little: no grant on the resource, or a grant that does not carry the permission the operation needs.</p><p>Refused before the operation runs, so a request the store never sees is a request that was refused rather than one that failed.</p><p>On the S3 API this is <code>403 AccessDenied</code>, the same status a failed authentication gets; the log line and audit entry carry the reason. On the admin API and the dashboard a failed authentication is <code>401</code>, so there the status alone tells a bad key from an ungranted one.</p>'
+      body: '<p>The caller proved an identity, and that identity holds too little: no grant on the resource, or a grant that does not carry the permission the operation needs.</p><p>Refused before the operation runs, so a request the store never sees is a request that was refused rather than one that failed.</p><p>On the S3 API this is <code>403 AccessDenied</code>, the same status a failed authentication gets; the audit entry, <code>s3.BucketDenied</code> or <code>s3.ActionDenied</code>, records the permission required and the permissions held. The admin API records <code>admin.ActionDenied</code> or <code>admin.ControlPlaneDenied</code>. On the admin API and the dashboard a failed authentication is <code>401</code>, so there the status alone tells a bad key from an ungranted one.</p>'
     },
     ALLOW: {
       title: 'The request proceeds',
       badge: 'success', badgeText: 'authorized',
-      body: '<p>The operation runs, and the audit entry names the user that took it.</p><p>Admission control and the rate limiter have already run by this point; they wrap the S3 handler and act before authentication. Everything past this point - routing, replication, the storage layer - treats the request as authorized and never re-derives who the caller is.</p><p><a href="../../docs/authentication/">Authentication reference &rarr;</a></p>'
+      body: '<p>The operation runs, and the audit entry names the user that took it.</p><p>When configured, admission control and the rate limiter have already run by this point; they wrap the S3 handler and act before authentication. Everything past this point - routing, replication, the storage layer - treats the request as authorized and never re-derives who the caller is.</p><p><a href="../../docs/authentication/">Authentication reference &rarr;</a></p>'
     }
   };
 
@@ -408,9 +408,9 @@ Carried by a grant on a **backend** or on the **orchestrator**.
 
 <table class="bittab">
   <tr><th>Bit</th><th>Mask</th><th>Value</th><th>Name</th><th>Allows</th></tr>
-  <tr><td class="c-bit">6</td><td class="c-mask">0x0040</td><td class="c-dec">64</td><td class="c-name n-admin">admin-read</td><td class="c-what">Status, reload status, worker health, replication and over-replication status, the cleanup queue and DLQ, cache stats, the log level, drain progress</td></tr>
+  <tr><td class="c-bit">6</td><td class="c-mask">0x0040</td><td class="c-dec">64</td><td class="c-name n-admin">admin-read</td><td class="c-what">Status, reload status, worker health, replication and over-replication status, the cleanup queue and DLQ, cache stats, the log level, drain progress, the running config, the unreadable-copy listing</td></tr>
   <tr><td class="c-bit">7</td><td class="c-mask">0x0080</td><td class="c-dec">128</td><td class="c-name n-admin">admin-logs</td><td class="c-what">Reading buffered log entries, capturing a trace snapshot</td></tr>
-  <tr><td class="c-bit">8</td><td class="c-mask">0x0100</td><td class="c-dec">256</td><td class="c-name n-admin">admin-maintain</td><td class="c-what">Repair and upkeep passes: scrub, checksum backfill, reconcile, replicate, rebalance, lifecycle, usage flush, usage reconcile, over-replication cleanup, cleanup-DLQ requeue</td></tr>
+  <tr><td class="c-bit">8</td><td class="c-mask">0x0100</td><td class="c-dec">256</td><td class="c-name n-admin">admin-maintain</td><td class="c-what">Repair and upkeep passes: scrub, checksum backfill, reconcile, replicate, rebalance, lifecycle, usage flush, usage reconcile, over-replication cleanup, cleanup-DLQ requeue, purging unreadable copies</td></tr>
   <tr><td class="c-bit">9</td><td class="c-mask">0x0200</td><td class="c-dec">512</td><td class="c-name n-admin">admin-convert</td><td class="c-what">Rewrite passes: encrypt, decrypt, compress and decompress existing objects</td></tr>
   <tr><td class="c-bit">10</td><td class="c-mask">0x0400</td><td class="c-dec">1024</td><td class="c-name n-admin">admin-keys</td><td class="c-what">Rotating the encryption master key</td></tr>
   <tr><td class="c-bit">11</td><td class="c-mask">0x0800</td><td class="c-dec">2048</td><td class="c-name n-admin">admin-cache</td><td class="c-what">Flushing and invalidating the object data cache</td></tr>

@@ -53,8 +53,8 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '',
     '    PLAN -->|no| FILTER[Filter Eligible<br>Backends]:::filter',
     '    PLAN -->|yes| BUFFER',
-    '    FILTER --> DRAIN[Exclude<br>Draining]:::filter',
-    '    DRAIN --> HEALTH[Exclude Refusing<br>Uploads]:::filter',
+    '    FILTER --> DRAIN[Exclude Cordoned<br>or Draining]:::filter',
+    '    DRAIN --> HEALTH[Exclude Refusing<br>PUT or GET]:::filter',
     '    HEALTH --> USAGE[Usage Limits<br>Check]:::filter',
     '    USAGE -->|none eligible| R507B[507 Insufficient<br>Storage]:::reject',
     '    USAGE -->|eligible > 0| BUFFER[Buffer Body<br>+ Hashes]:::process',
@@ -80,6 +80,8 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '    FANOUT -->|no| RANK',
     '    PARALLEL -->|first copy commits| METRICS',
     '    PARALLEL -->|no slot to track it| RANK',
+    '    PARALLEL -->|claim fails| FATAL',
+    '    PARALLEL -->|every upload fails| RETERR',
     '',
     '    RANK{Routing<br>Strategy}:::decision',
     '    RANK -->|spread| LEAST[Least Utilized<br>First]:::process',
@@ -88,7 +90,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '    FIRST --> INTENT',
     '    INTENT[Claim Write Target<br>intent insert]:::storage',
     '    INTENT -->|declined, next candidate| INTENT',
-    '    INTENT -->|none accept / DB down| FATAL[507 or 503<br>no failover]:::reject',
+    '    INTENT -->|none accept / store error| FATAL[507, 503 or 502<br>no failover]:::reject',
     '    INTENT -->|claimed| UPLOAD',
     '',
     '    UPLOAD[Upload to<br>Backend]:::process --> CB{Circuit<br>Breaker}:::decision',
@@ -96,8 +98,8 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '    CB -->|closed| S3[S3 Backend<br>PutObject]:::storage',
     '    S3 -->|error, intent left for reaper| FAIL{Backends<br>Remain?}:::decision',
     '    S3 -->|success| DRAINRACE{Write target<br>re-check?}:::decision',
-    '    DRAINRACE -->|drain seen| DRAINABORT[Drain Race Abort<br>delete bytes + failover]:::cleanup',
-    '    DRAINRACE -->|not draining| RECORD',
+    '    DRAINRACE -->|cordoned or draining| DRAINABORT[Write Target Refused<br>delete bytes + failover]:::cleanup',
+    '    DRAINRACE -->|still accepts writes| RECORD',
     '    DRAINABORT --> FAIL',
     '',
     '    FAIL -->|yes| RETRY[Remove Backend<br>from Eligible]:::process',
@@ -158,7 +160,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     PUT: {
       title: 'PutObject Request',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Incoming PUT request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>At this point <code>Content-Length</code> and <code>MaxObjectSize</code> have already been validated by the HTTP handler. User metadata (<code>x-amz-meta-*</code>) has been extracted and validated (max 2KB total).</p><p>Any <code>x-amz-tagging</code> header is parsed and validated right after the capacity pre-flight, still before the body is read. The header is query-string encoded (<code>k1=v1&amp;k2=v2</code>), and an unusable set is refused up front so a rejected write spends no ingress and leaves no orphan to collect. See <a href="../tagging/">tagging</a>.</p>'
+      body: '<p>Incoming PUT request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>At this point <code>Content-Length</code> and <code>MaxObjectSize</code> have already been validated by the HTTP handler. User metadata (<code>x-amz-meta-*</code>) has been extracted and validated (max 2KB total). A request carrying <code>If-None-Match: *</code> is checked against the key\'s existing copies next, before the capacity pre-flight, so a write that would be refused for clobbering a key transmits nothing.</p><p>Any <code>x-amz-tagging</code> header is parsed and validated right after the capacity pre-flight, still before the body is read. The header is query-string encoded (<code>k1=v1&amp;k2=v2</code>), and an unusable set is refused up front so a rejected write spends no ingress and leaves no orphan to collect. See <a href="../tagging/">tagging</a>.</p>'
     },
     PREFLIGHT: {
       title: 'CanAcceptWrite Pre-flight',
@@ -168,7 +170,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     R507: {
       title: '507 Insufficient Storage',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>No backend can accept this upload. Every backend is either draining, refusing uploads behind an open circuit breaker, or past its usage limits.</p><p>Returned before body transmission, saving bandwidth for both client and server.</p>'
+      body: '<p>No backend can accept this upload. Every backend is cordoned or carries a drain flag, is refusing PUT or GET behind an open circuit breaker, or is past its usage limits or <code>max_object_size</code>.</p><p>Returned before body transmission, saving bandwidth for both client and server.</p>'
     },
     PLAN: {
       title: 'Compress This Write?',
@@ -183,15 +185,15 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     USAGE: {
       title: 'Usage Limits Check',
       badge: 'filter', badgeText: 'usage filter',
-      body: '<p>The usage policy\'s <code>FilterEligible</code>, which asks <code>UsageTracker.WithinLimits</code> about each backend:</p><p>1. <b>Request pools</b>: for every pool containing <code>PutObject</code>, baseline + current + 1 &le; that pool&#39;s limit. Providers meter operation classes separately, so a backend out of upload budget is filtered out here while its read allowance stays untouched<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + the stored size &le; limit</p><p>The size admitted is what will occupy the backend, not what the client announced. Encryption grows an object by a header plus a tag per chunk, which is a fixed function of the size and so is known before a byte moves. Compression is not: an encoder only reports its output size once it has run, which is why a compressed write is admitted after encoding rather than before.</p><p>Also skips backends where the object size exceeds <code>max_object_size</code> (0 = unlimited). Prevents repeated 413 errors from providers with per-object size restrictions.</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Byte quota is not part of this check: it is decided at admission, by the intent insert.</p>'
+      body: '<p><code>EligibleForWrite</code>\'s usage filter, which asks <code>UsageTracker.WithinLimits</code> about each backend:</p><p>1. <b>Request pools</b>: for every pool containing <code>PutObject</code>, baseline + current + 1 &le; that pool&#39;s limit. Providers meter operation classes separately, so a backend out of upload budget is filtered out here while its read allowance stays untouched<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + the stored size &le; limit</p><p>The size admitted is what will occupy the backend, not what the client announced. Encryption grows an object by a header plus a tag per chunk, which is a fixed function of the size and so is known before a byte moves. Compression is not: an encoder only reports its output size once it has run, which is why a compressed write is admitted after encoding rather than before.</p><p>Also skips backends where the object size exceeds <code>max_object_size</code> (0 = unlimited). Prevents repeated 413 errors from providers with per-object size restrictions.</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Byte quota is not part of this check: it is decided at admission, by the intent insert.</p>'
     },
     DRAIN: {
-      title: 'Exclude Draining',
+      title: 'Exclude Cordoned or Draining',
       badge: 'filter', badgeText: 'drain filter',
-      body: '<p>Removes backends carrying a state flag writes do not accept: cordoned, or a drain that is draining, drained, or failed.</p><p>Reads this instance\'s cached copy of the <code>backend_states</code> flags. It is loaded at startup, refreshed when this instance cordons, uncordons, starts, cancels, or removes a drain, and reloaded on every usage-flush tick (default 30s), which runs on every instance; the instance running the drain worker also refreshes it on each pass. The cache only shapes the candidate list; the intent insert decides, reading the records through the <code>backend_capacity</code> view, so a write ranked against a stale cache is refused rather than admitted.</p>'
+      body: '<p>Removes backends carrying a state flag writes do not accept: cordoned, or a drain that is draining, drained, or failed.</p><p>Reads this instance\'s cached copy of the <code>backend_states</code> flags. It is loaded at startup, refreshed when this instance cordons, uncordons, starts, cancels, or removes a drain, and reloaded on every usage-flush tick (default 30s, shortening to <code>usage_flush.fast_interval</code> near a limit), which runs on every instance; the instance running the drain worker also refreshes it on each pass. The cache only shapes the candidate list; the intent insert decides, reading the records through the <code>backend_capacity</code> view, so a write ranked against a stale cache is refused rather than admitted.</p>'
     },
     HEALTH: {
-      title: 'Exclude Refusing Uploads',
+      title: 'Exclude Refusing PUT or GET',
       badge: 'filter', badgeText: 'health filter',
       body: '<p><code>WriteTargets</code> applies <code>RequiredForWrite</code>, removing backends not serving both <code>PutObject</code> and <code>GetObject</code>: the backend breaker, the PUT breaker or the GET breaker is <b>open</b>. A copy on a backend refusing downloads, such as one over a provider quota, could not be read back or replicated, so it gets no new objects. Drains and rebalance moves pick their destinations from the same list. Backends without circuit breakers always pass; unknown backends are skipped.</p><p>Client requests are never used to test an open breaker. Recovery runs out of band: the breaker watchdog has each open breaker\'s recovery prober run its check - <code>HeadBucket</code> for the backend breaker, a repeat of the call for a call breaker - once the open timeout has passed, then on a doubling backoff, and the breaker closes when a check passes. See the <a href="../circuit-breaker/">circuit breaker</a>.</p>'
     },
@@ -270,12 +272,12 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     INTENT: {
       title: 'Claim Write Target',
       badge: 'storage', badgeText: 'conditional insert',
-      body: '<p><code>ClaimWriteTarget</code> tries the ranked candidates in order, and for each runs the insert that writes the <code>pending_objects</code> row (<code>InsertPendingIfFits</code>, SQL <code>InsertPendingObjectIfFits</code>). It is one statement that inserts only if the backend has no drain record and still has room for the payload, both read through the <code>backend_capacity</code> view. Because it reads rows rather than memory, every instance is judged against the same totals.</p><p>A candidate that declines is skipped and the next one tried. When none accept, the write fails with 507; a database error fails it with 503. Neither is retried on another backend.</p><p>The row is written <b>before</b> the backend PUT. It holds the payload\'s bytes against the backend while the upload runs, and it records what recovery needs: key, backend, the path the bytes go to (the object key, <code>!</code>, and the intent\'s id), size, the stored form (encryption and compression fields), the object\'s identity (ETag, content type, user metadata), and its role.</p><p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_quota_claims_declined_total{backend}</p>'
+      body: '<p><code>ClaimWriteTarget</code> tries the ranked candidates in order, and for each runs the insert that writes the <code>pending_objects</code> row (<code>InsertPendingIfFits</code>, SQL <code>InsertPendingObjectIfFits</code>). It is one statement that inserts only if the backend carries no state flag writes refuse (cordoned, or any drain flag) and still has room for the payload, both read through the <code>backend_capacity</code> view. Because it reads rows rather than memory, every instance is judged against the same totals.</p><p>A candidate that declines is skipped and the next one tried. When none accept, the write fails with 507; a database outage (its circuit open) fails it with 503, and any other store error with 502. None is retried on another backend.</p><p>The row is written <b>before</b> the backend PUT. It holds the payload\'s bytes against the backend while the upload runs, and it records what recovery needs: key, backend, the path the bytes go to (the object key, <code>!</code>, and the intent\'s id), size, the stored form (encryption and compression fields), the object\'s identity (ETag, content type, user metadata), and its role.</p><p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_quota_claims_declined_total{backend}</p>'
     },
     FATAL: {
-      title: '507 or 503, No Failover',
+      title: '507, 503 or 502, No Failover',
       badge: 'reject', badgeText: 'failure',
-      body: '<p>Ends the request without trying another backend. Reached when no candidate accepts the intent insert (507 Insufficient Storage), or when the database fails during the claim or the commit (503 Service Unavailable).</p><p>A commit that fails leaves the intent and the uploaded bytes in place for the pending reaper to resolve.</p>'
+      body: '<p>Ends the request without trying another backend. Reached when no candidate accepts the intent insert (507 Insufficient Storage), or when the store fails during the claim or the commit: 503 Service Unavailable while the database circuit is open, 502 for any other store error. The parallel path ends here too when its claim fails.</p><p>A commit that fails leaves the intent and the uploaded bytes in place for the pending reaper to resolve.</p>'
     },
     UPLOAD: {
       title: 'Upload to Backend',
@@ -318,9 +320,9 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
       body: '<p>Post-PUT guard. A backend can be cordoned or start draining <em>while</em> the backend PUT is in flight, after this write claimed its target. Committing would put a new copy on a backend the operator took out of service, or leave a drain an object to move straight back off.</p><p>This re-check fires after the PUT succeeds but before the metadata commit. If the backend\'s flags are no longer ones writes accept, the attempt is aborted and fails over to the next eligible backend.</p><p>It reads this instance\'s cached backend state flags, so a change made on another instance is caught only once this one has seen it. A write that slips past a drain is still safe: the drain cannot finish while the write\'s intent exists, and once the object commits the drain moves it.</p><p class="ac-metric">Metric: s3o_write_target_refused_total</p>'
     },
     DRAINABORT: {
-      title: 'Drain Race Abort + Failover',
+      title: 'Write Target Refused + Failover',
       badge: 'cleanup', badgeText: 'cleanup + failover',
-      body: '<p>The bytes landed on a backend that started draining mid-write. <code>RecoverFromRecordFailure</code> issues a best-effort DELETE for them, enqueueing a cleanup row if the DELETE fails with anything other than 404. The pending intent is left for the reaper, which finds no object and drops it. The attempt then fails over to the next eligible backend.</p>'
+      body: '<p>The bytes landed on a backend that was cordoned or started draining mid-write. <code>RecoverFromRecordFailure</code> charges the PUT that landed and issues a best-effort DELETE for the bytes, enqueueing a cleanup row if the DELETE fails with anything other than 404. The pending intent is left for the reaper, which finds no object and drops it. The attempt then fails over to the next eligible backend.</p>'
     },
     DISPLACED: {
       title: 'Displaced Copies?',
@@ -330,7 +332,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     CLEANUP: {
       title: 'Delete Old Copies or Enqueue Cleanup',
       badge: 'cleanup', badgeText: 'cleanup',
-      body: '<p>The displaced copies are deleted together through <code>DeleteAllOrEnqueue</code>, one batched delete per backend. For each copy:</p><p>1. Delete it at the copy\'s storage key<br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3o_cleanup_queue_enqueued_total{reason="overwrite_displaced"}</p>'
+      body: '<p>The displaced copies are deleted together through <code>DeleteAllOrEnqueue</code>, one delete per backend, batched when a backend holds several paths. For each copy:</p><p>1. Delete it at the copy\'s storage key<br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3o_cleanup_queue_enqueued_total{reason="overwrite_displaced"}, or reason="superseded_intent" for the bytes of an in-flight write this commit cleared</p>'
     },
     CACHE: {
       title: 'Invalidate Caches',
@@ -451,7 +453,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
 
 ## Pending-Intent Pattern
 
-The `ClaimWriteTarget` then `RecordObjectAndPromoteIntent` two-phase pattern exists so a failure between the backend PUT and the metadata commit cannot leak orphan bytes. The intent row captures everything the recovery path needs (key, backend, storage path, size, stored form, identity), and the `PendingReaper` worker resolves intents older than its `min_age` on every tick (default 1 minute), under an advisory lock: it HEADs the backend and decides *commit* (HEAD 200: promote the intent, unless a newer write has already taken the key) or *drop* (HEAD 404: delete the intent; there are no bytes to clean up). Any other HEAD error leaves the intent for the next tick.
+The `ClaimWriteTarget` then `RecordObjectAndPromoteIntent` two-phase pattern exists so a failure between the backend PUT and the metadata commit cannot leak orphan bytes. The intent row captures everything the recovery path needs (key, backend, storage path, size, stored form, identity), and the `PendingReaper` worker runs every `reaper_tick` (default 1 minute), under an advisory lock, on intents older than `min_age` (default 5 minutes): it HEADs the backend and decides *commit* (HEAD 200: promote the intent, unless a newer write has already taken the key) or *drop* (HEAD 404: delete the intent; there are no bytes to clean up). Any other HEAD error leaves the intent for the next tick, and an intent on a backend refusing `HeadObject` is skipped until it serves HEADs again.
 
 The intent row is also what admission counts as bytes in flight on its backend, so writes on every instance are judged against the same totals while uploads are still running. That is why the pattern cannot be turned off.
 

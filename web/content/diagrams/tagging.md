@@ -148,7 +148,7 @@ An inline header is parsed and checked before the request body is read. Refusing
     SUB: {
       title: 'PutObjectTagging',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>The <code>?tagging</code> subresource, carrying a <code>Tagging</code> XML document. Replaces the whole set rather than merging into it, so adding one tag to an object that has three means sending all four.</p><p>An empty <code>TagSet</code> removes every tag, which the spec defines as the same outcome as <code>DeleteObjectTagging</code>.</p><p>The root element is pinned, so a document rooted at anything else is refused rather than silently decoding into an empty set. Bodies are capped at 64 KiB.</p>'
+      body: '<p>The <code>?tagging</code> subresource, carrying a <code>Tagging</code> XML document. Replaces the whole set rather than merging into it, so adding one tag to an object that has three means sending all four.</p><p>An empty <code>TagSet</code> removes every tag, which the spec defines as the same outcome as <code>DeleteObjectTagging</code>.</p><p>The root element is pinned, so a document rooted at anything else is refused rather than silently decoding into an empty set. Bodies are capped at 64 KiB.</p><p>The admin API writes the same way: <code>PUT /admin/api/objects/tags/{key}</code> with a JSON set goes through the same validation, key lock and existence check.</p>'
     },
     COPY: {
       title: 'CopyObject and x-amz-tagging-directive',
@@ -183,7 +183,7 @@ An inline header is parsed and checked before the request body is read. Refusing
     DELT: {
       title: 'DeleteObjectTagging',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Removes the whole tag set. There is no set to validate, so it goes straight to the key lock and the existence check.</p><p>A key holding no copies answers <code>404 NoSuchKey</code>. Deleting a set that is already empty answers <code>204</code>.</p>'
+      body: '<p>Removes the whole tag set. There is no set to validate, so it goes straight to the key lock and the existence check.</p><p>A key holding no copies answers <code>404 NoSuchKey</code>. Deleting a set that is already empty answers <code>204</code>.</p><p>The admin API\'s <code>DELETE /admin/api/objects/tags/{key}</code> takes the same path.</p>'
     },
     LOCK: {
       title: 'Per-key advisory lock',
@@ -223,7 +223,7 @@ An inline header is parsed and checked before the request body is read. Refusing
     GETT: {
       title: 'GetObjectTagging',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Reads the stored set. Never reaches a backend, because the set lives in the metadata store rather than on any provider.</p><p>Runs an existence check and then reads the set, both without the key lock. A key holding no copies answers <code>404 NoSuchKey</code>.</p><p>The admin API exposes the same set as JSON at <code>/admin/api/objects/tags/{key}</code> through the same path, for <code>adminctl</code>, the dashboard and the TUI. There a key holding no copies answers a JSON <code>404</code>.</p>'
+      body: '<p>Reads the stored set. Never reaches a backend, because the set lives in the metadata store rather than on any provider.</p><p>Runs an existence check and then reads the set, both without the key lock. A key holding no copies answers <code>404 NoSuchKey</code>.</p><p>The admin API reads the same set as JSON with <code>GET /admin/api/objects/tags/{key}</code> through the same path, for <code>adminctl</code>, the dashboard and the TUI, and writes it with <code>PUT</code> and <code>DELETE</code> on the same route. There a key holding no copies answers a JSON <code>404</code>.</p>'
     },
     READ: {
       title: 'Read the set',
@@ -243,17 +243,17 @@ An inline header is parsed and checked before the request body is read. Refusing
     GETO: {
       title: 'GetObject and HeadObject',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Every read reports how many tags the object carries, so a client can tell an object worth calling <code>GetObjectTagging</code> on from one that would answer with an empty set.</p><p>A <code>GET</code> served from the object data cache never reaches the metadata store, so its entry carries the count it was filled with, and a tag write drops the entry. <code>HEAD</code> does not use that cache and counts on every request.</p><p><a href="../read-path/">Read path &rarr;</a></p>'
+      body: '<p>Every read reports how many tags the object carries, so a client can tell an object worth calling <code>GetObjectTagging</code> on from one that would answer with an empty set.</p><p>A <code>GET</code> served from the object data cache never reaches the metadata store, so its entry carries the count it was filled with, and a tag write drops the entry. <code>HEAD</code> does not use that cache; it takes the count from the location rows it reads, including when it answers from metadata.</p><p><a href="../read-path/">Read path &rarr;</a></p>'
     },
     COUNT: {
       title: 'Count the set',
       badge: 'storage', badgeText: 'metadata store',
-      body: '<p>A <code>count(*)</code> on the primary key prefix, which is an index-only scan over the one key\'s rows. The read path needs the size of the set, not its contents. The count takes no key lock.</p><p>A separate query rather than a subquery folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count has no business on a per-copy row those callers read.</p>'
+      body: '<p>A <code>count(*)</code> on the primary key prefix, which is an index-only scan over the one key\'s rows. The read path needs the size of the set, not its contents. The count takes no key lock.</p><p>It comes with the location lookup: <code>GetAllObjectLocations</code> carries it as a <code>tag_count</code> subquery, so the read path makes no second query for it.</p>'
     },
     HDR: {
       title: 'x-amz-tagging-count',
       badge: 'success', badgeText: 'response header',
-      body: '<p>Sent only when the object carries at least one tag. An untagged object omits the header rather than sending a zero, matching S3, so its presence reads as "there is a set here worth fetching".</p><p>Advisory, never authoritative. A count the store cannot serve is reported as none and the header left off, because the object\'s bytes are already correct and one header is not worth failing a read over. That is also what a degraded read does, having reached the object by broadcast with the store unreachable.</p><p><a href="../../docs/tagging/">Tagging reference &rarr;</a></p>'
+      body: '<p>Sent only when the object carries at least one tag. An untagged object omits the header rather than sending a zero, matching S3, so its presence reads as "there is a set here worth fetching".</p><p>Advisory, never authoritative. The count comes with the location rows, so a degraded read, having reached the object by broadcast with the store unreachable, has no rows, reports zero and leaves the header off rather than failing the read over one header.</p><p><a href="../../docs/tagging/">Tagging reference &rarr;</a></p>'
     }
   };
 

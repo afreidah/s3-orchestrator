@@ -49,7 +49,7 @@ weight: 35
     <i class="fas fa-bolt landing-card-icon" style="color: #f85149;"></i>
     <div>
       <strong>Circuit Breaker</strong>
-      <p>Breaker states for backends and the database: the database breaker probes through half-open, and backend breakers recover through an out-of-band health check.</p>
+      <p>Breaker states for the database, Redis counters, each backend and each backend call: the database breaker probes through half-open, and the others recover through an out-of-band check.</p>
     </div>
   </a>
   <a class="landing-card" href="encryption/">
@@ -91,7 +91,7 @@ weight: 35
     <i class="fas fa-database landing-card-icon" style="color: #4aaa8a;"></i>
     <div>
       <strong>Database Schema</strong>
-      <p>Entity-relationship diagram of the metadata store (PostgreSQL or SQLite): tables, columns, indexes, and relationships.</p>
+      <p>Entity-relationship diagram of the PostgreSQL metadata store, which SQLite mirrors: tables, columns, indexes, and relationships.</p>
     </div>
   </a>
 </div>

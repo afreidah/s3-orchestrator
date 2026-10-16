@@ -29,7 +29,7 @@ Every table fits the terminal's width. In a narrow terminal the less important c
 
 Browsing is read-only: the listing, inspector, and every status pane issue `GET` requests to the admin API and never mutate state. The Ops menu and the Cleanup pane's requeue are the exceptions, and both ask before they act.
 
-![The Dashboard: a usage bar per backend with its health, the fleet total, and the fleet-wide backlogs and coverage](/docs/images/tui-dashboard.png?classes=lightbox)
+![The Dashboard: a usage bar per backend with its health, here one backend degraded and refusing GetObject, the fleet total, and the fleet-wide backlogs and coverage](/docs/images/tui-dashboard.png?classes=lightbox)
 
 ![The Files section listing a prefix of objects and sub-directories, with the navigation sidebar](/docs/images/tui-files.png?classes=lightbox)
 

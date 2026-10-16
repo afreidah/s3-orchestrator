@@ -18,8 +18,8 @@
 -- is what makes the limit hold across a fleet: every instance's committed
 -- bytes, orphans, and writes in progress are rows here, so two instances
 -- admitting at once are judged against the same totals. Zero rows affected
--- means the backend had no room or is being drained, and the caller should try
--- the next candidate.
+-- means the backend had no room or carries a state flag writes refuse, such as
+-- a cordon or a drain, and the caller should try the next candidate.
 INSERT INTO pending_objects (
     intent_id, object_key, storage_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,

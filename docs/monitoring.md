@@ -141,6 +141,10 @@ few per-instance panels (cache size, detached uploads) keep one series
 per instance, labelled with the Prometheus `instance` label. The `Job`
 and `Instance` variables at the top narrow those per-instance panels.
 
+The circuit breaker row shows each backend's call state over time - served, degraded or down - beside a table of the calls refused right now:
+
+![Backend Call State and Refused Calls Now, with minio-3 refusing GetObject](/docs/images/grafana-refused-calls.png)
+
 ### Key Prometheus metrics
 
 If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Two listener modes:
@@ -190,7 +194,7 @@ Key metrics to alert on:
 | `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
 | `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open, 2=half-open) |
 | `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable, its credentials are rejected, or it is refusing at least one call |
-| `s3o_backend_call_refused{backend="<backend>"}` | Which calls are refused: 1 for each, so `s3o_backend_call_refused{call="GetObject"} == 1` alone points at a download quota rather than an outage. A backend refusing GetObject takes no new writes until it recovers |
+| `s3o_backend_call_refused{backend="<backend>"}` | Which calls are refused: 1 for each, so `s3o_backend_call_refused{call="GetObject"} == 1` alone points at a download quota rather than an outage. A backend refusing GetObject takes no new writes until it recovers. `min by (backend) (...) == 1` means down (every call refused); `max by (backend) (...) == 1` with a `min` of 0 means degraded |
 | `s3o_replication_pending` | Alert when consistently > 0 - replicas are falling behind |
 | `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for backends refusing reads |
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor - should return to 0 after cleanup runs |
