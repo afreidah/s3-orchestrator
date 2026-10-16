@@ -156,8 +156,9 @@ func TestHeadBucket(t *testing.T) {
 	if err := be.HeadBucket(t.Context()); err != nil {
 		t.Fatalf("HeadBucket: %v", err)
 	}
-	if gotMethod != http.MethodHead || gotPath != "/test-bucket/" {
-		t.Errorf("request = %s %s, want HEAD /test-bucket/", gotMethod, gotPath)
+	// SDK releases differ on whether a path-style bucket URL ends in a slash.
+	if gotMethod != http.MethodHead || (gotPath != "/test-bucket" && gotPath != "/test-bucket/") {
+		t.Errorf("request = %s %s, want HEAD /test-bucket", gotMethod, gotPath)
 	}
 
 	status.Store(http.StatusForbidden)
