@@ -121,9 +121,15 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "RecordObjectAndClearPending",
 			write: func(t *testing.T, key string) {
+				intentID := uniqueKey(t, "intent")
+				if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+					IntentID: intentID, ObjectKey: key, BackendName: "backend-a", SizeBytes: 1024,
+				}); err != nil {
+					t.Fatalf("InsertPendingIfFits: %v", err)
+				}
 				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 					Key: key, Size: 1024, Form: form,
-					Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-absent"}},
+					Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: intentID}},
 				}); err != nil {
 					t.Fatalf("RecordObject with intent: %v", err)
 				}

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -88,22 +89,6 @@ func assertCarried(t *testing.T, got *core.ObjectLocation, wantSize int64) {
 	}
 }
 
-// locationOn returns the copy of key held on backendName.
-func locationOn(t *testing.T, s *Store, key, backendName string) *core.ObjectLocation {
-	t.Helper()
-	locs, err := s.GetAllObjectLocations(context.Background(), key)
-	if err != nil {
-		t.Fatalf("GetAllObjectLocations: %v", err)
-	}
-	for i := range locs {
-		if locs[i].BackendName == backendName {
-			return &locs[i]
-		}
-	}
-	t.Fatalf("no copy of %q on %q; have %+v", key, backendName, locs)
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
@@ -124,7 +109,7 @@ func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
 
-	assertCarried(t, locationOn(t, s, "bucket/moved", "backend-b"), 4096)
+	assertCarried(t, storetest.LocationOn(t, s, "bucket/moved", "backend-b"), 4096)
 }
 
 // TestPromotePending_CarriesRepresentation covers crash recovery. A PUT that
@@ -156,7 +141,7 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("PromotePending: %v", err)
 	}
 
-	assertCarried(t, locationOn(t, s, "bucket/recovered", "backend-a"), 4096)
+	assertCarried(t, storetest.LocationOn(t, s, "bucket/recovered", "backend-a"), 4096)
 }
 
 // TestPromotePending_ChargesStoredSize pins the sizing half: quota counts what
@@ -209,7 +194,7 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
-	assertCarried(t, locationOn(t, s, "bucket/replicated", "backend-b"), 4096)
+	assertCarried(t, storetest.LocationOn(t, s, "bucket/replicated", "backend-b"), 4096)
 }
 
 // -------------------------------------------------------------------------
@@ -453,7 +438,7 @@ func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
 		t.Fatalf("MarkObjectCompressed: %v", err)
 	}
 
-	loc := locationOn(t, s, "bucket/shrinking", "backend-a")
+	loc := storetest.LocationOn(t, s, "bucket/shrinking", "backend-a")
 	if loc.SizeBytes != 250 {
 		t.Errorf("SizeBytes = %d, want the 250 now stored", loc.SizeBytes)
 	}
@@ -491,7 +476,7 @@ func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
 		t.Fatalf("MarkObjectCompressed: %v", err)
 	}
 
-	loc := locationOn(t, s, "bucket/expanding", "backend-a")
+	loc := storetest.LocationOn(t, s, "bucket/expanding", "backend-a")
 	if loc.CompressionAlgorithm != "" {
 		t.Errorf("CompressionAlgorithm = %q, want empty", loc.CompressionAlgorithm)
 	}

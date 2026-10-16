@@ -482,14 +482,13 @@ func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
 }
 
 // TestPurgeUnreadable_RowDeleteFailureFails verifies a copy whose row cannot
-// be removed is counted as failed.
+// be removed is counted as failed, and keeps its bytes: the row still names
+// them, so deleting them would leave a row pointing at nothing.
 func TestPurgeUnreadable_RowDeleteFailureFails(t *testing.T) {
 	t.Parallel()
-	s, ops, pl, be, ms := setupScrubber(t)
+	s, _, _, _, ms := setupScrubber(t)
 	ms.unreadable = []core.ObjectLocation{{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true}}
 	ms.deleteLocationErr = errors.New("db down")
-	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, gomock.Any())
 
 	sum := s.PurgeUnreadable(context.Background(), 10, nil)
 	if sum.Failed != 1 || sum.Succeeded != 0 {
@@ -503,15 +502,13 @@ func TestPurgeUnreadable_RowDeleteFailureFails(t *testing.T) {
 // head would retry the same copy on every page.
 func TestPurgeUnreadable_FailingCopiesTriedOncePerPurge(t *testing.T) {
 	t.Parallel()
-	s, ops, pl, be, ms := setupScrubber(t)
+	s, _, _, _, ms := setupScrubber(t)
 	ms.unreadable = []core.ObjectLocation{
 		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 1, Encrypted: true},
 		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 1, Encrypted: true},
 		{ObjectKey: "bucket/c", BackendName: "b1", SizeBytes: 1, Encrypted: true},
 	}
 	ms.deleteLocationErr = errors.New("db down")
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(3)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, gomock.Any()).Times(3)
 
 	sum := s.PurgeUnreadable(context.Background(), 1, nil)
 	if sum.Failed != 3 || sum.Succeeded != 0 {
@@ -642,7 +639,7 @@ func TestScrub_ReportsCoverage(t *testing.T) {
 // rather than aborting the batch.
 func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 	t.Parallel()
-	s, ops, pl, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "expected-hash"},
@@ -651,9 +648,8 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 	ms.deleteLocationErr = errors.New("row removal failed")
 	ms.ledgerErr = errors.New("coverage query failed")
 
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,

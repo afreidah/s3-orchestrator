@@ -45,6 +45,7 @@ import (
 type OverReplicationCleanerStore interface {
 	core.ReplicationStore
 	core.QuotaStore
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
 }
 
 // OverReplicationCleaner removes excess copies of objects that exceed the
@@ -263,9 +264,9 @@ func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[s
 }
 
 // cleanObject removes the lowest-scoring copies of one object until it is
-// down to factor. RemoveExcessCopy re-reads the copy set under lock with
-// factor, so a removal racing a client delete is skipped. It returns copies
-// removed and removals failed.
+// down to factor. DeleteObjectLocation re-reads the copy set under lock with
+// factor, so a removal racing a client delete or overwrite is skipped. It
+// returns copies removed and removals failed.
 func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []core.ObjectLocation, excess, factor int, stats map[string]core.QuotaStat) (removed, failures int) {
 	// Score each copy
 	scored := make([]scoredCopy, len(copies))
@@ -285,10 +286,13 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		victim := scored[i].loc
 
 		// Remove metadata first so the replicator never sees a ghost copy; a
-		// failed backend delete goes to the cleanup queue. dropped=false means
-		// a concurrent delete or earlier tick already absorbed the excess.
-		dropped, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
+		// failed backend delete goes to the cleanup queue. A concurrent delete
+		// or earlier tick may have absorbed the excess, or a client overwrite
+		// replaced the victim; either is skipped.
+		dropped, err := c.store.DeleteObjectLocation(ctx, &victim, factor)
 		switch {
+		case errors.Is(err, core.ErrCopyNotExcess), errors.Is(err, core.ErrCopyChanged):
+			continue
 		case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
 			// This victim is the only copy that can still decrypt the object,
 			// so keep it over-replicated. A mixed copy set means a row lost its
@@ -308,9 +312,6 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			failures++
 			continue
 		}
-		if !dropped.Removed {
-			continue
-		}
 		be, err := c.ops.GetBackend(victim.BackendName)
 		if err != nil {
 			c.log.WarnContext(ctx, "backend not found",
@@ -320,17 +321,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			continue
 		}
 
-		// The path comes from the transaction that dropped the row, not from
-		// the scan: a copy the cleaner selected minutes ago may have been
-		// replaced by a newer write since, and deleting the scan's path would
-		// then take that write's bytes.
-		c.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
-			BackendName: victim.BackendName,
-			ObjectKey:   key,
-			StorageKey:  core.StoragePath(key, dropped.StorageKey),
-			Reason:      "over_replication",
-			SizeBytes:   dropped.SizeBytes,
-		})
+		c.placement.DeleteOrEnqueue(ctx, be, dropped.Cleanup(key, "over_replication"))
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

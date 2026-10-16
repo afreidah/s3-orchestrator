@@ -54,7 +54,7 @@ type ObjectStore interface {
 	MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
+	DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
 }
 
@@ -120,7 +120,6 @@ type ReplicationStore interface {
 	RecordReplica(ctx context.Context, r *ReplicaInsert) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
-	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (RemovedCopy, error)
 }
 
 // CleanupStore defines cleanup queue and orphan byte tracking operations.

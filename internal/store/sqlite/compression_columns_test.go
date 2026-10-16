@@ -122,6 +122,10 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "RecordObjectAndClearPending",
 			key:  "bucket/record-clear",
 			write: func(t *testing.T, s *Store, key string) {
+				intent := pendingFixture("intent-x", key)
+				if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+					t.Fatalf("InsertPendingIfFits: %v", err)
+				}
 				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 					Key: key, Size: 1024, Form: form,
 					Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-x"}},

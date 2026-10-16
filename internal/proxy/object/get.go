@@ -16,6 +16,7 @@ package object
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -290,30 +291,29 @@ func (o *Manager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.coord.DeleteOrEnqueue(ctx, backend, &core.CleanupRequest{
-			BackendName: beName,
-			ObjectKey:   key,
-			StorageKey:  core.StoragePath(key, loc.StorageKey),
-			Reason:      "integrity_failed",
-			SizeBytes:   r.Size,
-		})
-		o.dropCorruptedLocation(ctx, key, beName)
+		o.dropCorruptedLocation(ctx, loc, backend)
 	})
 	r.Body = vr
 }
 
-// dropCorruptedLocation removes the ledger row for a copy discarded on read.
-// Without it the replicator still counts the copy and never rebuilds the
-// object, leaving it below its replication factor until a reconcile sweeps
-// the stale row.
-func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string) {
-	_, err := o.stores.DeleteObjectLocation(ctx, key, beName)
-	if err != nil {
+// dropCorruptedLocation removes the ledger row for a copy discarded on read,
+// then deletes its bytes or queues them for cleanup. Without the row removal
+// the replicator still counts the copy and never rebuilds the object, leaving
+// it below its replication factor until a reconcile sweeps the stale row. A
+// copy a client overwrite or delete replaced mid-read is left alone: that
+// write already queued the discarded bytes.
+func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation, backend s3be.ObjectBackend) {
+	removed, err := o.stores.DeleteObjectLocation(ctx, loc, 0)
+	switch {
+	case errors.Is(err, core.ErrCopyChanged):
+		return
+	case err != nil:
 		o.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
-			"key", key, "backend", beName, "error", err)
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return
 	}
-	o.cache.Delete(key)
+	o.coord.DeleteOrEnqueue(ctx, backend, removed.Cleanup(loc.ObjectKey, "integrity_failed"))
+	o.cache.Delete(loc.ObjectKey)
 }
 
 // applyStoredIdentity replaces the serving copy's ETag and content type with

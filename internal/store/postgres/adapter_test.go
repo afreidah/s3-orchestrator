@@ -7,7 +7,7 @@
 // reader paths. Per-method runtime behavior of the adapter is exercised
 // against a real PostgreSQL container in internal/integration/ via the
 // existing PromotePending, RecordObject, DeleteObject, MoveObjectLocation,
-// ImportObject, RecordReplica, RemoveExcessCopy, and
+// ImportObject, RecordReplica, DeleteObjectLocation, and
 // SweepStaleCleanupQueueRows tests.
 // -------------------------------------------------------------------------------
 

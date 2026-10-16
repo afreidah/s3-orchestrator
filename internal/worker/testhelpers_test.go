@@ -210,7 +210,6 @@ type mockMetadataStore struct {
 	objectsByBackend    map[string][]core.ObjectLocation
 	moveSize            int64
 	staleDeleted        int
-	deletedLocationSize int64
 
 	getBackendsForKeysCalls int
 	getBackendsForKeysResp  map[string][]string
@@ -427,21 +426,6 @@ func (m *mockMetadataStore) CountReplicationBacklog(_ context.Context, _ int) (c
 	return core.ReplicationBacklog{Over: m.overReplicatedCount}, nil
 }
 
-// RemoveExcessCopy is a stub on mockMetadataStore; reports a successful
-// removal so the cleaner counts it, a benign no-op (removed=false) when
-// removeExcessNoOp is set, mimicking a race that already absorbed the excess,
-// or the seeded removeExcessErr when the test drives a refusal.
-func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, key, _ string, _ int) (core.RemovedCopy, error) {
-	if m.removeExcessErr != nil {
-		return core.RemovedCopy{}, m.removeExcessErr
-	}
-	if m.removeExcessNoOp {
-		return core.RemovedCopy{}, nil
-	}
-	m.removedCopies++
-	return core.RemovedCopy{StorageKey: key, SizeBytes: m.removedCopySize, Removed: true}, nil
-}
-
 // ListObjectsByBackend returns up to limit of the backend's fixture objects
 // after the cursor, in (size_bytes, object_key) order as the stores do.
 func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, limit int, after core.SizeCursor) ([]core.ObjectLocation, error) {
@@ -490,15 +474,30 @@ func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, 
 	return nil
 }
 
-// DeleteObjectLocation is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, key, backendName string) (int64, error) {
+// DeleteObjectLocation is a stub on mockMetadataStore. A surplus-copy removal
+// (keepAtLeast > 0) reports success so the cleaner counts it,
+// ErrCopyNotExcess when removeExcessNoOp is set, mimicking a race that already
+// absorbed the excess, or the seeded removeExcessErr when the test drives a
+// refusal. Any other removal records the copy and reports it removed at its
+// own size, as the store does when the copy is unchanged, or returns
+// deleteLocationErr.
+func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+	if keepAtLeast > 0 {
+		switch {
+		case m.removeExcessErr != nil:
+			return core.DeletedCopy{}, m.removeExcessErr
+		case m.removeExcessNoOp:
+			return core.DeletedCopy{}, core.ErrCopyNotExcess
+		}
+		m.removedCopies++
+		return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: m.removedCopySize}, nil
+	}
 	if m.deleteLocationErr != nil {
-		return 0, m.deleteLocationErr
+		return core.DeletedCopy{}, m.deleteLocationErr
 	}
 	m.staleDeleted++
-	m.deletedLocations = append(m.deletedLocations, key+"@"+backendName)
-	return m.deletedLocationSize, nil
+	m.deletedLocations = append(m.deletedLocations, loc.ObjectKey+"@"+loc.BackendName)
+	return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: loc.SizeBytes}, nil
 }
 
 // --- PendingStore stubs ---

@@ -129,19 +129,63 @@ func TestDropCorruptedLocation_RemovesRowAndCachedLocation(t *testing.T) {
 	t.Parallel()
 
 	const key, beName = "bucket/corrupt.txt", "b1"
+	loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, StorageKey: key}
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(int64(0), nil).Times(1)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0).
+		Return(core.DeletedCopy{BackendName: beName, StorageKey: key}, nil).Times(1)
 	storetest.Permissive(store)
 
-	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: backendtest.NewInMemory()}, nil)
+	be := seededBackend(t, key)
+	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
 	f.cache.Set(key, beName)
 
-	f.dropCorruptedLocation(context.Background(), key, beName)
+	f.dropCorruptedLocation(context.Background(), loc, be)
 
 	if cached, ok := f.cache.Get(key); ok {
 		t.Errorf("location cache still resolves %q to %q after the copy was discarded", key, cached)
 	}
+	if be.HasCopyOf(key) {
+		t.Error("the discarded copy's bytes are still on the backend")
+	}
+}
+
+// TestDropCorruptedLocation_LeavesReplacedCopy covers a client overwrite that
+// lands while the corrupted copy is being read: the row now names the newer
+// write, so the delete is refused and neither the row, the cache entry nor any
+// bytes are touched. The overwrite already queued the old bytes itself.
+func TestDropCorruptedLocation_LeavesReplacedCopy(t *testing.T) {
+	t.Parallel()
+
+	const key, beName = "bucket/corrupt.txt", "b1"
+	loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, StorageKey: key}
+
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0).Return(core.DeletedCopy{}, core.ErrCopyChanged).Times(1)
+	storetest.Permissive(store)
+
+	be := seededBackend(t, key)
+	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
+	f.cache.Set(key, beName)
+
+	f.dropCorruptedLocation(context.Background(), loc, be)
+
+	if _, ok := f.cache.Get(key); !ok {
+		t.Errorf("location cache dropped %q for a copy that was not removed", key)
+	}
+	if !be.HasCopyOf(key) {
+		t.Error("bytes deleted although the copy was never removed")
+	}
+}
+
+// seededBackend returns an in-memory backend already holding bytes at key.
+func seededBackend(t *testing.T, key string) *backendtest.InMemory {
+	t.Helper()
+	be := backendtest.NewInMemory()
+	if _, err := be.PutObject(context.Background(), key, strings.NewReader("rot"), 3, "text/plain", nil); err != nil {
+		t.Fatalf("seed backend: %v", err)
+	}
+	return be
 }
 
 // TestDropCorruptedLocation_KeepsCacheWhenDeleteFails asserts the cache entry
@@ -154,14 +198,15 @@ func TestDropCorruptedLocation_KeepsCacheWhenDeleteFails(t *testing.T) {
 	const key, beName = "bucket/corrupt.txt", "b1"
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).
-		Return(int64(0), errors.New("ledger unavailable")).Times(1)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), 0).
+		Return(core.DeletedCopy{}, errors.New("ledger unavailable")).Times(1)
 	storetest.Permissive(store)
 
-	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: backendtest.NewInMemory()}, nil)
+	be := backendtest.NewInMemory()
+	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
 	f.cache.Set(key, beName)
 
-	f.dropCorruptedLocation(context.Background(), key, beName)
+	f.dropCorruptedLocation(context.Background(), &core.ObjectLocation{ObjectKey: key, BackendName: beName}, be)
 
 	if _, ok := f.cache.Get(key); !ok {
 		t.Errorf("location cache dropped %q even though the ledger delete failed", key)
@@ -178,7 +223,7 @@ func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 	stored := "these are not the bytes that were written"
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(int64(0), nil).Times(1)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), 0).Return(core.DeletedCopy{}, nil).Times(1)
 	storetest.Permissive(store)
 
 	be := backendtest.NewInMemory()
@@ -307,10 +352,10 @@ func TestGet_FullReadStillVerifies(t *testing.T) {
 
 	deleted := make(chan struct{}, 1)
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).
-		DoAndReturn(func(context.Context, string, string) (int64, error) {
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), 0).
+		DoAndReturn(func(context.Context, *core.ObjectLocation, int) (core.DeletedCopy, error) {
 			deleted <- struct{}{}
-			return 0, nil
+			return core.DeletedCopy{}, nil
 		}).Times(1)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), key).Return([]core.ObjectLocation{{
 		ObjectKey:   key,

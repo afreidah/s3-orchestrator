@@ -6,7 +6,6 @@
 //	mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 //
 
-// Package storetest is a generated GoMock package.
 package storetest
 
 import (
@@ -453,18 +452,18 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
+func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
+	ret0, _ := ret[0].(core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, key, backendName any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, key, backendName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
 }
 
 // DeleteObjectTags mocks base method.
@@ -1473,21 +1472,6 @@ func (m *MockMetadataStore) RecordReplica(ctx context.Context, r *core.ReplicaIn
 func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, r any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordReplica", reflect.TypeOf((*MockMetadataStore)(nil).RecordReplica), ctx, r)
-}
-
-// RemoveExcessCopy mocks base method.
-func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RemoveExcessCopy", ctx, key, backendName, factor)
-	ret0, _ := ret[0].(core.RemovedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// RemoveExcessCopy indicates an expected call of RemoveExcessCopy.
-func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName, factor any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, factor)
 }
 
 // RenameUser mocks base method.

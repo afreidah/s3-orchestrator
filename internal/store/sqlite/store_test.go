@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -1596,8 +1597,8 @@ func TestRecordReplica_Duplicate(t *testing.T) {
 	}
 }
 
-// TestRemoveExcessCopy verifies the remove excess copy contract.
-// Asserts that RemoveExcessCopy:.
+// TestRemoveExcessCopy verifies a surplus copy is removed while the object
+// holds more copies than keepAtLeast.
 func TestRemoveExcessCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1606,12 +1607,8 @@ func TestRemoveExcessCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
-	dropped, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
-	if err != nil {
-		t.Fatalf("RemoveExcessCopy: %v", err)
-	}
-	if !dropped.Removed {
-		t.Fatalf("expected Removed=true with 2 copies and factor=1")
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/key1", "backend-b"), 1); err != nil {
+		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
@@ -1631,12 +1628,9 @@ func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k-atfactor", "backend-a", 1024)
 
-	dropped, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
-	if err != nil {
-		t.Fatalf("RemoveExcessCopy: %v", err)
-	}
-	if dropped.Removed {
-		t.Fatalf("expected Removed=false when count==factor; would under-replicate")
+	_, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/k-atfactor", "backend-a"), 1)
+	if !errors.Is(err, core.ErrCopyNotExcess) {
+		t.Fatalf("expected ErrCopyNotExcess when count==factor, got %v", err)
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-atfactor")
@@ -1657,19 +1651,16 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k-vgone", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/k-vgone", "backend-b", "backend-a", 1024)
+	victim := storetest.LocationOn(t, s, "bucket/k-vgone", "backend-b")
 
 	// Simulate a parallel client landing the delete on backend-b
 	// before the cleaner's per-victim tx executes.
-	if _, err := s.DeleteObjectLocation(ctx, "bucket/k-vgone", "backend-b"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, victim, 0); err != nil {
 		t.Fatalf("setup DeleteObjectLocation: %v", err)
 	}
 
-	dropped, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
-	if err != nil {
-		t.Fatalf("RemoveExcessCopy: %v", err)
-	}
-	if dropped.Removed {
-		t.Fatalf("expected Removed=false when victim already gone")
+	if _, err := s.DeleteObjectLocation(ctx, victim, 1); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("expected ErrCopyChanged when victim already gone, got %v", err)
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-vgone")
@@ -2934,13 +2925,14 @@ func TestDeleteObjectLocation(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 100)
+	replica := storetest.LocationOn(t, s, "bucket/key1", "backend-b")
 
-	removed, err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b")
+	removed, err := s.DeleteObjectLocation(ctx, replica, 0)
 	if err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
-	if removed != 100 {
-		t.Errorf("removed = %d, want the copy's 100 bytes reported for the debit", removed)
+	if removed.SizeBytes != 100 || removed.StorageKey != replica.StorageKey {
+		t.Errorf("removed = %+v, want the replica's 100 bytes at %q", removed, replica.StorageKey)
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
@@ -2965,13 +2957,42 @@ func TestDeleteObjectLocation(t *testing.T) {
 		t.Errorf("backend-a bytes_used = %d, want the 100 bytes it still holds", stats["backend-a"].BytesUsed)
 	}
 
-	// Deleting a copy that is already gone is a benign no-op: no error and no
+	// Deleting a copy that is already gone reports ErrCopyChanged and makes no
 	// spurious debit against the backend that still holds the object.
-	if _, err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
-		t.Fatalf("DeleteObjectLocation (already gone): %v", err)
+	if _, err := s.DeleteObjectLocation(ctx, replica, 0); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("DeleteObjectLocation (already gone) = %v, want ErrCopyChanged", err)
 	}
 	if stats, _ := s.GetQuotaStats(ctx); stats["backend-a"].BytesUsed != 100 {
-		t.Errorf("backend-a bytes_used after no-op delete = %d, want 100", stats["backend-a"].BytesUsed)
+		t.Errorf("backend-a bytes_used after refused delete = %d, want 100", stats["backend-a"].BytesUsed)
+	}
+}
+
+// TestDeleteObjectLocation_KeepsOverwrittenCopy verifies a caller holding a
+// copy it read before a client overwrote the key on the same backend cannot
+// remove the newer write's row: the storage keys differ, so the delete is
+// refused and the newer copy and its quota are untouched.
+func TestDeleteObjectLocation_KeepsOverwrittenCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := "bucket/overwritten"
+
+	record := func(storageKey string) {
+		t.Helper()
+		req := &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: storageKey}}, Size: 100}
+		if _, _, err := s.RecordObject(ctx, req); err != nil {
+			t.Fatalf("RecordObject(%s): %v", storageKey, err)
+		}
+	}
+	record(key + "!old")
+	stale := storetest.LocationOn(t, s, key, "backend-a")
+	record(key + "!new")
+
+	if _, err := s.DeleteObjectLocation(ctx, stale, 0); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("DeleteObjectLocation(stale) = %v, want ErrCopyChanged", err)
+	}
+	if got := storetest.LocationOn(t, s, key, "backend-a"); got.StorageKey != key+"!new" {
+		t.Errorf("surviving copy at %q, want the newer write at %q", got.StorageKey, key+"!new")
 	}
 }
 

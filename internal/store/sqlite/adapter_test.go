@@ -1054,7 +1054,7 @@ func TestAdapter_SatisfiesCoreInterfaces(t *testing.T) {
 
 // TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
 // locked re-read reports each copy's encryption flag and whether its key
-// survived. RemoveExcessCopy decides what to delete from these two fields, so
+// survived. A surplus-copy removal decides what to delete from these two fields, so
 // an adapter that dropped them would silently re-enable destroying the only
 // readable copy of a mixed set.
 func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {

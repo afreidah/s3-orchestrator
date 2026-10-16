@@ -1,13 +1,13 @@
 // -------------------------------------------------------------------------------
-// Core RemoveExcessCopy - Lock-and-Revalidate Branch Tests
+// Core DeleteObjectLocation - Surplus-Copy Branch Tests
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic coverage for the no-op and error branches of
-// RemoveExcessCopy that the SQLite/Postgres happy-path tests do not reach:
-// the lock and re-read failures, the victim-no-longer-in-locked-set no-op,
-// and the delete/quota mutation failures. excessTxStub embeds quotaTxStub so
-// only the four methods RemoveExcessCopy touches carry real fixtures.
+// Engine-agnostic coverage for DeleteObjectLocation with keepAtLeast set, the
+// path over-replication cleanup and drain take: the lock and re-read failures,
+// the victim-no-longer-in-locked-set and back-at-target refusals, the
+// delete/quota mutation failures, and the last-DEK guard. excessTxStub embeds
+// quotaTxStub so only the methods the removal touches carry real fixtures.
 // -------------------------------------------------------------------------------
 
 package core
@@ -22,7 +22,7 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// excessTxStub drives RemoveExcessCopy: it overrides the lock, re-read,
+// excessTxStub drives DeleteObjectLocation: it overrides the lock, re-read,
 // and delete methods, and inherits DecrementBackendQuota (with its
 // failOn/failErr hooks) from the embedded quotaTxStub.
 type excessTxStub struct {
@@ -63,11 +63,13 @@ func newExcessStub(s *excessTxStub) *excessTxStub {
 	return s
 }
 
-// runRemoveExcess invokes RemoveExcessCopy against the stub, reporting only
-// whether a copy went; the byte count has its own assertions.
-func runRemoveExcess(stub *excessTxStub, key, backend string, factor int) (bool, error) {
-	dropped, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, key, backend, factor)
-	return dropped.Removed, err
+// runRemoveExcess removes key's copy on backend while more than keepAtLeast
+// copies remain, reporting only whether a copy went; the byte count and path
+// have their own assertions.
+func runRemoveExcess(stub *excessTxStub, key, backend string, keepAtLeast int) (bool, error) {
+	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
+	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, keepAtLeast)
+	return err == nil, err
 }
 
 // TestRemoveExcessCopy_LockError verifies a failure to take the key lock
@@ -100,7 +102,7 @@ func TestRemoveExcessCopy_ReadError(t *testing.T) {
 	}
 }
 
-// TestRemoveExcessCopy_VictimNotInLockedSet pins the no-op where the
+// TestRemoveExcessCopy_VictimNotInLockedSet pins the refusal where the
 // object is still over-replicated but the scheduled victim's copy is no
 // longer present in the locked set (a parallel path removed exactly that
 // copy). We must not delete a different backend's copy.
@@ -110,12 +112,27 @@ func TestRemoveExcessCopy_VictimNotInLockedSet(t *testing.T) {
 		{BackendName: "b1", SizeBytes: 100},
 		{BackendName: "b2", SizeBytes: 100},
 	}})
-	removed, err := runRemoveExcess(stub, "k", "b3", 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := runRemoveExcess(stub, "k", "b3", 1)
+	if !errors.Is(err, ErrCopyChanged) {
+		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
-	if removed {
-		t.Error("removed must be false when the victim copy is gone")
+	if len(stub.deleted) != 0 {
+		t.Errorf("no copy should be deleted, got %v", stub.deleted)
+	}
+}
+
+// TestRemoveExcessCopy_BackAtTarget verifies a concurrent removal that already
+// brought the object down to keepAtLeast copies stops this one: the victim is
+// present, but removing it would leave the object under its target.
+func TestRemoveExcessCopy_BackAtTarget(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		{BackendName: "b1", SizeBytes: 100},
+		{BackendName: "b2", SizeBytes: 100},
+	}})
+	_, err := runRemoveExcess(stub, "k", "b1", 2)
+	if !errors.Is(err, ErrCopyNotExcess) {
+		t.Fatalf("expected ErrCopyNotExcess, got %v", err)
 	}
 	if len(stub.deleted) != 0 {
 		t.Errorf("no copy should be deleted, got %v", stub.deleted)
@@ -123,7 +140,7 @@ func TestRemoveExcessCopy_VictimNotInLockedSet(t *testing.T) {
 }
 
 // TestRemoveExcessCopy_DeleteError verifies a failure to delete the
-// metadata row surfaces verbatim and reports removed=false.
+// metadata row surfaces verbatim and reports nothing removed.
 func TestRemoveExcessCopy_DeleteError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("delete failed")
@@ -141,10 +158,9 @@ func TestRemoveExcessCopy_DeleteError(t *testing.T) {
 }
 
 // TestRemoveExcessCopy_RemovesVictimWithLockedSize verifies the success
-// path: the victim row is deleted, and the bytes and the path reported are the
-// ones on the locked row rather than caller-supplied values - so the caller
-// debits the backend by what actually went and deletes the bytes the
-// transaction actually dropped.
+// path: the victim row is deleted, and the bytes reported are the ones on the
+// locked row rather than caller-supplied values - so the caller debits the
+// backend by what actually went.
 func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
@@ -152,12 +168,10 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
 		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}})
-	dropped, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, "k", "b1", 2)
+	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 1}
+	dropped, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !dropped.Removed {
-		t.Fatal("expected Removed=true when over factor and victim present")
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
 		t.Errorf("expected b1 deleted, got %v", stub.deleted)
@@ -165,8 +179,8 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 	if dropped.SizeBytes != 100 {
 		t.Errorf("SizeBytes = %d, want 100 (the locked row's size)", dropped.SizeBytes)
 	}
-	if dropped.StorageKey != "k!a" {
-		t.Errorf("StorageKey = %q, want %q (the locked row's path)", dropped.StorageKey, "k!a")
+	if dropped.StorageKey != "k!a" || dropped.BackendName != "b1" {
+		t.Errorf("dropped = %+v, want b1 at %q", dropped, "k!a")
 	}
 }
 

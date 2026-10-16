@@ -5,8 +5,9 @@
 //
 // Engine-agnostic coverage for DeleteObjectLocation: the row is deleted and the
 // backend quota debited by the size read from the locked copy set, a copy that
-// is no longer present is a benign no-op, and a quota-debit failure surfaces so
-// the transaction rolls back. Reuses excessTxStub from the RemoveExcessCopy tests.
+// is gone or was replaced since the caller read it is ErrCopyChanged, and a
+// quota-debit failure surfaces so the transaction rolls back. Reuses
+// excessTxStub from the surplus-copy tests.
 // -------------------------------------------------------------------------------
 
 package core
@@ -103,6 +104,47 @@ func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	}
 	if got := byBackend["b2"]; got.StorageKey != "k!stale" || got.SizeBytes != 70 {
 		t.Errorf("b2 displaced as %+v, want the stale intent's path and size", got)
+	}
+}
+
+// overtakenTxStub is a key whose intents a newer write already cleared, so no
+// claim succeeds. It records every row insert and intent deletion it sees.
+type overtakenTxStub struct {
+	*multiCopyTxStub
+
+	deletedIntents []string
+}
+
+func (*overtakenTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
+
+func (s *overtakenTxStub) DeletePending(_ context.Context, intentID string) error {
+	s.deletedIntents = append(s.deletedIntents, intentID)
+	return nil
+}
+
+// TestRecordObject_OvertakenWriteRecordsNothing verifies a write whose intent
+// a newer write cleared leaves the newer object in place: no row, no charge,
+// no intent clearing, and only its own bytes handed back for cleanup.
+func TestRecordObject_OvertakenWriteRecordsNothing(t *testing.T) {
+	t.Parallel()
+	stub := &overtakenTxStub{multiCopyTxStub: newMultiCopyStub([]ExistingCopy{
+		{BackendName: "b1", StorageKey: "k!newer", SizeBytes: 50},
+	})}
+	displaced, deltas, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if len(stub.inserted) != 0 || len(stub.ops) != 0 || len(deltas) != 0 || len(stub.cleared) != 0 {
+		t.Errorf("overtaken write changed the key: rows=%v ops=%+v deltas=%v cleared=%v", stub.inserted, stub.ops, deltas, stub.cleared)
+	}
+	want := []DeletedCopy{{BackendName: "b1", StorageKey: "k!mine", SizeBytes: 100, Reason: CleanupReasonSupersededIntent}}
+	if !slices.Equal(displaced, want) {
+		t.Errorf("displaced = %+v, want %+v", displaced, want)
+	}
+	if !slices.Equal(stub.deletedIntents, []string{"mine"}) {
+		t.Errorf("deleted intents = %v, want [mine]", stub.deletedIntents)
 	}
 }
 
@@ -267,10 +309,12 @@ func TestRecordObject_NoCopies(t *testing.T) {
 	}
 }
 
-// runDeleteLocation invokes DeleteObjectLocation against the stub, discarding
-// the removed byte count the callers under test do not assert on.
+// runDeleteLocation invokes DeleteObjectLocation against the stub for key's
+// copy on backend, discarding the removed copy the callers under test do not
+// assert on.
 func runDeleteLocation(stub *excessTxStub, key, backend string) error {
-	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, key, backend)
+	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
+	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
 	return err
 }
 
@@ -435,27 +479,28 @@ func TestDeleteObjectLocation_ReportsLockedSize(t *testing.T) {
 		{BackendName: "b1", SizeBytes: 100},
 		{BackendName: "b2", SizeBytes: 200},
 	}})
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, "k", "b1")
+	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 1}
+	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
 		t.Errorf("expected b1 deleted, got %v", stub.deleted)
 	}
-	if removed != 100 {
-		t.Errorf("removed = %d, want 100 (the locked row's size)", removed)
+	if removed.SizeBytes != 100 {
+		t.Errorf("removed = %d, want 100 (the locked row's size)", removed.SizeBytes)
 	}
 }
 
-// TestDeleteObjectLocation_NoOpWhenCopyGone pins the benign no-op where the
+// TestDeleteObjectLocation_ChangedWhenCopyGone pins the refusal where the
 // target backend no longer holds a copy: nothing is deleted and no quota moves.
-func TestDeleteObjectLocation_NoOpWhenCopyGone(t *testing.T) {
+func TestDeleteObjectLocation_ChangedWhenCopyGone(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
 		{BackendName: "b2", SizeBytes: 200},
 	}})
-	if err := runDeleteLocation(stub, "k", "b1"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := runDeleteLocation(stub, "k", "b1"); !errors.Is(err, ErrCopyChanged) {
+		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
 	if len(stub.deleted) != 0 || len(stub.ops) != 0 {
 		t.Errorf("expected no delete or debit, got deleted=%v ops=%v", stub.deleted, stub.ops)
@@ -510,16 +555,16 @@ func TestDeleteObjectLocation_ClearsTagsOnLastCopy(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectLocation_NoTagClearWhenCopyGone verifies the benign no-op
-// path leaves tags alone too: the copy was already absent, so this call
-// removed nothing and has no business clearing the object's tags.
+// TestDeleteObjectLocation_NoTagClearWhenCopyGone verifies the refusal path
+// leaves tags alone too: the copy was already absent, so this call removed
+// nothing and has no business clearing the object's tags.
 func TestDeleteObjectLocation_NoTagClearWhenCopyGone(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
 		{BackendName: "b2", SizeBytes: 200},
 	}})
-	if err := runDeleteLocation(stub, "k", "b1"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := runDeleteLocation(stub, "k", "b1"); !errors.Is(err, ErrCopyChanged) {
+		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
 	if len(stub.tagsCleared) != 0 {
 		t.Errorf("tags cleared on a no-op delete: %v", stub.tagsCleared)
@@ -545,20 +590,25 @@ func TestDeleteObjectLocation_TagClearError(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectLocation_ReportsNothingWhenCopyGone pins the pairing the
-// caller depends on: a call that deleted nothing reports zero bytes, so a
-// benign no-op cannot debit a backend for a copy it still holds.
-func TestDeleteObjectLocation_ReportsNothingWhenCopyGone(t *testing.T) {
+// TestDeleteObjectLocation_KeepsOverwrittenCopy pins the race the storage key
+// guards: the caller read the copy at one path, and a client overwrite has
+// since put a newer write on the same backend. That newer row must survive,
+// with no quota moved and no path handed back for deletion.
+func TestDeleteObjectLocation_KeepsOverwrittenCopy(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
-		{BackendName: "b2", SizeBytes: 200},
+		{BackendName: "b1", StorageKey: "k!new", SizeBytes: 200},
 	}})
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, "k", "b1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old"}
+	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
+	if !errors.Is(err, ErrCopyChanged) {
+		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0 when the copy was already gone", removed)
+	if removed != (DeletedCopy{}) {
+		t.Errorf("removed = %+v, want nothing reported", removed)
+	}
+	if len(stub.deleted) != 0 || len(stub.ops) != 0 || len(stub.tagsCleared) != 0 {
+		t.Errorf("newer copy touched: deleted=%v ops=%v tags=%v", stub.deleted, stub.ops, stub.tagsCleared)
 	}
 }
 

@@ -47,10 +47,10 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) (map[strin
 	return DeleteObjectsBatch(ctx, o.runner, keys)
 }
 
-// DeleteObjectLocation removes a single copy and returns the bytes it removed
-// so the caller can debit that backend.
-func (o TxOps) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
-	return DeleteObjectLocation(ctx, o.runner, key, backendName)
+// DeleteObjectLocation removes the copy loc names while it is still the copy
+// the caller read, and returns it for the caller to delete its bytes.
+func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error) {
+	return DeleteObjectLocation(ctx, o.runner, loc, keepAtLeast)
 }
 
 // ReplaceObjectTags swaps an object's whole tag set for the supplied one.
@@ -91,13 +91,6 @@ func (o TxOps) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string)
 // it wrote so the caller can charge them.
 func (o TxOps) RecordReplica(ctx context.Context, r *ReplicaInsert) (int64, bool, error) {
 	return RecordReplica(ctx, o.runner, r)
-}
-
-// RemoveExcessCopy drops one copy of an over-replicated object, refusing the
-// copy that would leave the object unreadable. Reports the bytes removed and
-// the path they occupy.
-func (o TxOps) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (RemovedCopy, error) {
-	return RemoveExcessCopy(ctx, o.runner, key, backendName, factor)
 }
 
 // ReconcileUsage recomputes bytes_used per backend from the location rows,

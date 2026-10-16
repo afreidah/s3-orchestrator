@@ -38,7 +38,8 @@ import (
 //
 // objectKey is set on ledger entries only, and addresses the row when the
 // merge deletes it. Importing a backend entry records its path as the object
-// key too.
+// key too. lastModified is the listed time on backend entries and the row's
+// created_at on ledger entries.
 type Entry struct {
 	key          string
 	objectKey    string
@@ -348,6 +349,10 @@ func (s *S3KeyStream) Stop() {
 // Memory: O(dbCursorPageSize * row size).
 const dbCursorPageSize = 1000
 
+// ledgerClockGrace widens the window of rows a pass leaves alone, since
+// created_at comes from the database clock and the listing time from this one.
+const ledgerClockGrace = time.Minute
+
 // DBKeyLister is the narrow contract the cursor needs from the store.
 type DBKeyLister interface {
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
@@ -397,7 +402,7 @@ func (d *DBCursorStream) Next(ctx context.Context) (Entry, bool, error) {
 	if err != nil {
 		return Entry{}, false, fmt.Errorf("page DB objects: %w", err)
 	}
-	return Entry{key: row.StorageKey, objectKey: row.ObjectKey, size: row.SizeBytes}, true, nil
+	return Entry{key: row.StorageKey, objectKey: row.ObjectKey, size: row.SizeBytes, lastModified: row.CreatedAt}, true, nil
 }
 
 // Stop ends the walk if one was started.
@@ -440,11 +445,25 @@ func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, re
 }
 
 // DeleteHandler returns the onDelete callback used by the merge. Failures
-// are logged but do not abort the pass. The row is deleted by the entry's
-// object key, and the queued cleanups swept with it by its storage key.
-func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result) func(context.Context, Entry) error {
+// are logged but do not abort the pass. The row is deleted only while it still
+// names the entry's storage key, and the queued cleanups swept with it by that
+// key.
+//
+// A row written after listedAt, less ledgerClockGrace for the gap between this
+// clock and the database's, is kept: its bytes can land on the backend after
+// the listing passed their position, so their absence proves nothing.
+func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result, listedAt time.Time) func(context.Context, Entry) error {
+	cutoff := listedAt.Add(-ledgerClockGrace)
 	return func(ctx context.Context, e Entry) error {
-		if err := deleter(ctx, e.objectKey, e.key, backendName); err != nil {
+		if e.lastModified.After(cutoff) {
+			return nil
+		}
+		loc := &core.ObjectLocation{ObjectKey: e.objectKey, BackendName: backendName, StorageKey: e.key}
+		err := deleter(ctx, loc)
+		if errors.Is(err, core.ErrCopyChanged) {
+			return nil
+		}
+		if err != nil {
 			log.WarnContext(ctx, "stale entry removal failed",
 				"key", e.objectKey, "storage_key", e.key, "backend", backendName, "error", err)
 			return nil
@@ -472,7 +491,7 @@ type Result struct {
 type ImporterFn func(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 
 // DeleterFn removes a metadata row whose backend confirmed it does not hold
-// the copy's bytes, and sweeps any deletion still queued against them. The key
-// addresses the row and the storage key addresses the bytes. Carrier type so
-// tests can substitute a fake deleter.
-type DeleterFn func(ctx context.Context, key, storageKey, backendName string) error
+// the copy's bytes, and sweeps any deletion still queued against them. It
+// returns core.ErrCopyChanged when the row no longer names loc's storage key.
+// Carrier type so tests can substitute a fake deleter.
+type DeleterFn func(ctx context.Context, loc *core.ObjectLocation) error

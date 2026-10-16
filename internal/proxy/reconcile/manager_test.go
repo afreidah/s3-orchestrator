@@ -135,13 +135,17 @@ func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "bucket/k1", "b1").Return(int64(512), nil).Times(1)
+	loc := &core.ObjectLocation{ObjectKey: "bucket/k1", BackendName: "b1", StorageKey: "bucket/k1!w1"}
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0).Return(core.DeletedCopy{SizeBytes: 512}, nil).Times(1)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "bucket/k1!w1", "b1").Return(int64(0), nil).Times(1)
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); err != nil {
+	if err := m.deleter()(t.Context(), loc); err != nil {
 		t.Fatalf("deleter: %v", err)
 	}
 }
+
+// staleLoc is the ledger copy the deleter tests hand the deleter.
+var staleLoc = &core.ObjectLocation{ObjectKey: "bucket/k1", BackendName: "b1", StorageKey: "bucket/k1!w1"}
 
 // TestDeleter_SweepFailureNotPropagated asserts a failed sweep is logged and
 // swallowed: the row is already gone, so the next pass can retry the sweep.
@@ -150,11 +154,11 @@ func TestDeleter_SweepFailureNotPropagated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(core.DeletedCopy{}, nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("sweep boom"))
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); err != nil {
+	if err := m.deleter()(t.Context(), staleLoc); err != nil {
 		t.Errorf("sweep failure must not propagate, got %v", err)
 	}
 }
@@ -167,10 +171,10 @@ func TestDeleter_DeleteFailurePropagates(t *testing.T) {
 	m, stores, _, _ := newTestManager(t, ctrl)
 
 	want := errors.New("delete boom")
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), want)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(core.DeletedCopy{}, want)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); !errors.Is(err, want) {
+	if err := m.deleter()(t.Context(), staleLoc); !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
 }
@@ -217,7 +221,8 @@ func TestReconcileBackend_ImportsAndDeletes(t *testing.T) {
 	// a and c are backend-only; b matches; x is ledger-only.
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).Return(core.ImportInserted, nil)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/c", "b1", 3, false)).Return(core.ImportInserted, nil)
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), &core.ObjectLocation{ObjectKey: "vb/x", BackendName: "b1", StorageKey: "vb/x"}, 0).
+		Return(core.DeletedCopy{}, nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
 	usage.EXPECT().APICalls(s3op.ListObjects, "b1", gomock.Any()).Times(1)
 

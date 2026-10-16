@@ -1204,13 +1204,13 @@ func (f *FailableStore) CountReplicationBacklog(ctx context.Context, factor int)
 	return f.inner.CountReplicationBacklog(ctx, factor)
 }
 
-// RemoveExcessCopy is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error) {
+// DeleteObjectLocation is an integration-test fixture helper; see file header
+// for the surrounding lifecycle the helpers participate in.
+func (f *FailableStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
 	if f.isFailing() {
-		return core.RemovedCopy{}, errSimulatedDBOutage
+		return core.DeletedCopy{}, errSimulatedDBOutage
 	}
-	return f.inner.RemoveExcessCopy(ctx, key, backendName, factor)
+	return f.inner.DeleteObjectLocation(ctx, loc, keepAtLeast)
 }
 
 // tripCircuitBreaker drives the test breaker through enough simulated

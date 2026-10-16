@@ -733,7 +733,7 @@ func TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero(t *testing.T) {
 
 // TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
 // Postgres locked re-read reports the same encryption state the SQLite adapter
-// does. RemoveExcessCopy's guard reads these two fields, so the engines must
+// does. The surplus-copy removal's guard reads these two fields, so the engines must
 // agree or the guard protects objects on one backend and not the other.
 func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {
 	s := adapterPgStore(t)

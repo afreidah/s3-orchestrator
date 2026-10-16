@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -328,17 +329,14 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	key := uniqueKey(t, "tags-replicated")
 
 	seedTaggedObject(t, s, key, "backend-a", nil)
-	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: key, FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: key + "!m"}); err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024}); err != nil {
-		t.Fatalf("RecordObject (second copy): %v", err)
+	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r"}); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
 	}
 	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{{Key: "keep", Value: "me"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, key, "backend-b"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-b"), 0); err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
 	got, err := s.GetObjectTags(ctx, key)
@@ -349,7 +347,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 		t.Errorf("removing one replica cleared the object's tags: %v", names)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, key, "backend-a"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-a"), 0); err != nil {
 		t.Fatalf("DeleteObjectLocation (last): %v", err)
 	}
 	assertNoTags(t, s, key, "tags survived the last copy")

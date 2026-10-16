@@ -165,18 +165,18 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObject(ctx, key any) *gomock.
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
+func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
+	ret0, _ := ret[0].(core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectLocation(ctx, key, backendName any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectLocation), ctx, key, backendName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
 }
 
 // DeleteObjectsBatch mocks base method.

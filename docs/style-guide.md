@@ -372,7 +372,7 @@ Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/tr
   type ScrubberStore interface {
       core.IntegrityStore
       LedgerStats(ctx context.Context) (core.LedgerStats, error)
-      DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
+      DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
       // ...
   }
 

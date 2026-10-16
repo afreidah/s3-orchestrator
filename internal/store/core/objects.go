@@ -96,7 +96,8 @@ type batchDeleteResult struct {
 // key, and returns the displaced copies for cleanup plus the backend byte
 // deltas. The caller applies the deltas to the in-memory counter; nothing here
 // touches backend_quotas. The key's pending intents, except those in Placing,
-// are cleared in the same transaction.
+// are cleared in the same transaction. A write whose own intent a newer write
+// already cleared records nothing and returns only its own copies for cleanup.
 func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
 	// A request with no copies would clear the key and put nothing back.
 	if len(req.Copies) == 0 {
@@ -118,6 +119,13 @@ func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) 
 func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) (mutationResult, error) {
 	if err := tx.AcquireKeyLock(ctx, req.Key); err != nil {
 		return mutationResult{}, err
+	}
+	held, err := intentsHeld(ctx, tx, req.committedIntents())
+	if err != nil {
+		return mutationResult{}, err
+	}
+	if !held {
+		return discardOvertakenWrite(ctx, tx, req)
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, req.Key)
 	if err != nil {
@@ -148,6 +156,44 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, err
 	}
 	return mutationResult{displaced: append(displaced, superseded...), deltas: deltas}, nil
+}
+
+// intentsHeld reports whether every intent the write is committing still
+// exists. A newer write clears the key's other intents when it commits, so a
+// missing one means this write was overtaken while it uploaded.
+func intentsHeld(ctx context.Context, tx TxAdapter, intentIDs []string) (bool, error) {
+	for _, id := range intentIDs {
+		if id == "" {
+			continue
+		}
+		claimed, err := tx.ClaimPending(ctx, id)
+		if err != nil || !claimed {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// discardOvertakenWrite resolves a write a newer one overtook: nothing is
+// recorded, its remaining intents are dropped, and its own bytes are handed
+// back for cleanup. The newer write already queued those bytes when it
+// cleared the intent, but the upload may have landed after that delete ran.
+func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) (mutationResult, error) {
+	displaced := make([]DeletedCopy, 0, len(req.Copies))
+	for _, c := range req.Copies {
+		if c.IntentID != "" {
+			if err := tx.DeletePending(ctx, c.IntentID); err != nil {
+				return mutationResult{}, fmt.Errorf("delete overtaken intent: %w", err)
+			}
+		}
+		displaced = append(displaced, DeletedCopy{
+			BackendName: c.Backend,
+			StorageKey:  c.StorageKey,
+			SizeBytes:   req.Size,
+			Reason:      CleanupReasonSupersededIntent,
+		})
+	}
+	return mutationResult{displaced: displaced}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -289,37 +335,64 @@ func lockKeysInOrder(ctx context.Context, tx TxAdapter, keys []string) error {
 // DELETE OBJECT LOCATION
 // -------------------------------------------------------------------------
 
-// DeleteObjectLocation removes the (key, backend) copy and returns the bytes it
-// removed, for the caller to debit; a missing row removes nothing. The size
-// comes from the locked re-read, so a concurrent overwrite cannot make the
-// debit disagree with the removed row.
-func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName string) (int64, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
+// DeleteObjectLocation removes the copy loc names and returns it, for the
+// caller to delete its bytes. The copy must still be the one the caller read:
+// a copy gone from loc's backend, or replaced there by a newer write, is
+// ErrCopyChanged, so a late caller never removes a newer write's row.
+//
+// keepAtLeast > 0 removes the copy only while the object holds more copies
+// than that, returning ErrCopyNotExcess otherwise, and refuses with
+// ErrCopyHoldsOnlyDEK the copy that would leave the object unreadable.
+func DeleteObjectLocation(ctx context.Context, runner Runner, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (DeletedCopy, error) {
+		key := loc.ObjectKey
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
-			return 0, err
+			return DeletedCopy{}, err
 		}
 		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
-			return 0, err
+			return DeletedCopy{}, err
 		}
-		held, found := copyOnBackend(existing, backendName)
-		if !found {
-			return 0, nil
+		held, err := removableCopy(existing, loc, keepAtLeast)
+		if err != nil {
+			return DeletedCopy{}, err
 		}
-		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
-			return 0, err
+		if err := tx.DeleteObjectFromBackend(ctx, key, loc.BackendName); err != nil {
+			return DeletedCopy{}, err
 		}
 		// Only removing the last copy drops the object's tags.
 		if len(existing) == 1 {
 			if err := clearTagsForKey(ctx, tx, key); err != nil {
-				return 0, err
+				return DeletedCopy{}, err
 			}
 		}
-		if err := chargeStripes(ctx, tx, key, QuotaDeltas{backendName: -held.SizeBytes}); err != nil {
-			return 0, err
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{loc.BackendName: -held.SizeBytes}); err != nil {
+			return DeletedCopy{}, err
 		}
-		return held.SizeBytes, nil
+		return DeletedCopy{BackendName: loc.BackendName, StorageKey: held.StorageKey, SizeBytes: held.SizeBytes}, nil
 	})
+}
+
+// removableCopy returns the copy in the locked re-read that loc names, or the
+// reason DeleteObjectLocation must leave it: ErrCopyChanged when it is gone or
+// replaced, and with keepAtLeast set, ErrCopyNotExcess or ErrCopyHoldsOnlyDEK.
+func removableCopy(existing []ExistingCopy, loc *ObjectLocation, keepAtLeast int) (ExistingCopy, error) {
+	held, found := copyOnBackend(existing, loc.BackendName)
+	if !found || held.StorageKey != loc.StorageKey {
+		return ExistingCopy{}, ErrCopyChanged
+	}
+	if keepAtLeast <= 0 {
+		return held, nil
+	}
+	if len(existing) <= keepAtLeast {
+		return ExistingCopy{}, ErrCopyNotExcess
+	}
+	// Never drop the copy that carries the DEK when a sibling does not; copies
+	// share one ciphertext, so the sibling is the damaged row.
+	if isLastDecryptableCopy(existing, loc.BackendName) {
+		return ExistingCopy{}, ErrCopyHoldsOnlyDEK
+	}
+	return held, nil
 }
 
 // -------------------------------------------------------------------------

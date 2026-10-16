@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -174,9 +175,9 @@ func runReconcile(t *testing.T, s *Store, backendName string, keys []string) rec
 	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportInserted, nil
 	}
-	deleter := func(_ context.Context, _, _, _ string) error { return nil }
+	deleter := func(context.Context, *core.ObjectLocation) error { return nil }
 	onImp := reconcile.ImportHandler(slog.Default(), backendName, importer, &res)
-	onDel := reconcile.DeleteHandler(slog.Default(), backendName, deleter, &res)
+	onDel := reconcile.DeleteHandler(slog.Default(), backendName, deleter, &res, time.Now().Add(time.Hour))
 
 	if err := reconcile.Sorted(ctx, s3, db, onImp, onDel); err != nil {
 		t.Fatalf("reconcile.Sorted: %v", err)

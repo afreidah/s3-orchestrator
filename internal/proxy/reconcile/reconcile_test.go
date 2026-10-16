@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -669,14 +670,14 @@ func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	res := &Result{}
 	var calls int
-	deleter := func(_ context.Context, _, _, _ string) error {
+	deleter := func(context.Context, *core.ObjectLocation) error {
 		calls++
 		if calls == 1 {
 			return errors.New("transient")
 		}
 		return nil
 	}
-	h := DeleteHandler(slog.Default(), "b1", deleter, res)
+	h := DeleteHandler(slog.Default(), "b1", deleter, res, time.Now())
 
 	// First call: error swallowed, counter not bumped.
 	_ = h(context.Background(), Entry{objectKey: "vb/x", key: "vb/x!w1"})
@@ -688,6 +689,47 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	_ = h(context.Background(), Entry{objectKey: "vb/y", key: "vb/y!w1"})
 	if res.Removed != 1 {
 		t.Errorf("removed = %d after success, want 1", res.Removed)
+	}
+}
+
+// TestDeleteHandler_SkipsRowsWrittenDuringListing verifies a row written after
+// the backend listing started is left alone: its bytes may have landed behind
+// the listing, so their absence from it proves nothing. Rows within the clock
+// grace of the start are left too, and only older ones reach the deleter.
+func TestDeleteHandler_SkipsRowsWrittenDuringListing(t *testing.T) {
+	res := &Result{}
+	var deleted []string
+	deleter := func(_ context.Context, loc *core.ObjectLocation) error {
+		deleted = append(deleted, loc.StorageKey)
+		return nil
+	}
+	listedAt := time.Now()
+	h := DeleteHandler(slog.Default(), "b1", deleter, res, listedAt)
+
+	_ = h(context.Background(), Entry{objectKey: "vb/new", key: "vb/new!w", lastModified: listedAt.Add(time.Second)})
+	_ = h(context.Background(), Entry{objectKey: "vb/edge", key: "vb/edge!w", lastModified: listedAt.Add(-ledgerClockGrace / 2)})
+	_ = h(context.Background(), Entry{objectKey: "vb/old", key: "vb/old!w", lastModified: listedAt.Add(-time.Hour)})
+
+	if !slices.Equal(deleted, []string{"vb/old!w"}) {
+		t.Errorf("deleted = %v, want only the row older than the listing", deleted)
+	}
+	if res.Removed != 1 {
+		t.Errorf("removed = %d, want 1", res.Removed)
+	}
+}
+
+// TestDeleteHandler_ChangedCopyIsNotAFailure verifies a row a client overwrite
+// replaced since the ledger page was read is skipped quietly and not counted.
+func TestDeleteHandler_ChangedCopyIsNotAFailure(t *testing.T) {
+	res := &Result{}
+	deleter := func(context.Context, *core.ObjectLocation) error { return core.ErrCopyChanged }
+	h := DeleteHandler(slog.Default(), "b1", deleter, res, time.Now())
+
+	if err := h(context.Background(), Entry{objectKey: "vb/x", key: "vb/x!w1"}); err != nil {
+		t.Errorf("handler err = %v, want nil", err)
+	}
+	if res.Removed != 0 {
+		t.Errorf("removed = %d, want 0 for a changed copy", res.Removed)
 	}
 }
 

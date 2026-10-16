@@ -240,8 +240,8 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	}
 }
 
-// TestCleanObject_SkipsBackendDeleteOnRaceNoOp verifies that when
-// RemoveExcessCopy reports removed=false (a concurrent path already
+// TestCleanObject_SkipsBackendDeleteOnRaceNoOp verifies that when the
+// removal reports ErrCopyNotExcess (a concurrent path already
 // absorbed the excess), the cleaner counts nothing and never touches the
 // backend -- no GetBackend, no DeleteOrEnqueue. The unset gomock
 // expectations assert the latter.

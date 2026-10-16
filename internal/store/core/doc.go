@@ -5,7 +5,7 @@
 // sqlc/driver rows into the canonical domain types defined here. Business
 // logic in this package operates exclusively on those interfaces and never
 // touches a driver-typed value, so both engines share one implementation of
-// RecordObject, DeleteObject, MoveObjectLocation, RemoveExcessCopy,
+// RecordObject, DeleteObject, MoveObjectLocation, DeleteObjectLocation,
 // ReconcileUsage, and the object/replica orchestration around them.
 //
 // The central invariant these operations maintain is that each backend's

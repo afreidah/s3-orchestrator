@@ -16,6 +16,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -521,23 +522,28 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 	r.log.WarnContext(ctx, "source read failed, trying next copy",
 		"key", key, "source", loc.BackendName, "error", err)
 	if backend.IsNotFound(err) {
-		r.pruneStaleSource(ctx, key, loc.BackendName)
+		r.pruneStaleSource(ctx, loc)
 	}
 	return nil, false, nil
 }
 
 // pruneStaleSource removes a source-side ObjectLocation row when the
-// backend reported the object missing. Logging-only on DB failure: a
-// stuck stale row is preferable to aborting the replication pass.
-func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName string) {
-	_, delErr := r.store.DeleteObjectLocation(ctx, key, backendName)
-	if delErr != nil {
+// backend reported its bytes missing. A row a client overwrite replaced since
+// the scan is left alone, since the missing bytes were never its own.
+// Logging-only on DB failure: a stuck stale row is preferable to aborting the
+// replication pass.
+func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocation) {
+	_, delErr := r.store.DeleteObjectLocation(ctx, loc, 0)
+	switch {
+	case errors.Is(delErr, core.ErrCopyChanged):
+		return
+	case delErr != nil:
 		r.log.WarnContext(ctx, "failed to remove stale metadata",
-			"key", key, "backend", backendName, "error", delErr)
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", delErr)
 		return
 	}
 	r.log.InfoContext(ctx, "removed stale metadata entry",
-		"key", key, "backend", backendName)
+		"key", loc.ObjectKey, "backend", loc.BackendName)
 }
 
 // CleanupOrphan deletes the bytes this replication attempt wrote when the DB

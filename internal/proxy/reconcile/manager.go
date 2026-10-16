@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -42,7 +43,7 @@ type Stores interface {
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backendName string) (int64, error)
 }
@@ -261,6 +262,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		return nil, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
 
+	listedAt := time.Now()
 	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), m.usage, backendName)
 	defer s3.Stop()
 
@@ -271,7 +273,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 	mergeErr := Sorted(
 		ctx, s3, dbIter,
 		ImportHandler(m.logger(), backendName, m.importDiscovered, res),
-		DeleteHandler(m.logger(), backendName, m.deleter(), res),
+		DeleteHandler(m.logger(), backendName, m.deleter(), res, listedAt),
 	)
 
 	if errors.Is(mergeErr, errBudgetExhausted) {
@@ -289,20 +291,20 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 // failed sweep leaves queue rows that the next pass will retry rather than a
 // reason to fail the reconcile.
 func (m *Manager) deleter() DeleterFn {
-	return func(ctx context.Context, key, storageKey, backendName string) error {
+	return func(ctx context.Context, loc *core.ObjectLocation) error {
 		// The delete credits the backend's stripes in its own transaction, so
 		// there is nothing to tell the routing snapshot; it reloads on its tick.
-		if _, err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
+		if _, err := m.stores.DeleteObjectLocation(ctx, loc, 0); err != nil {
 			return err
 		}
 		// Swept by path: what this pass established is that these particular
 		// bytes are absent, so only the deletions queued against them are moot.
 		// Any queued against the key's other writes name bytes still on the
 		// backend.
-		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, storageKey, backendName); err != nil {
+		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, loc.StorageKey, loc.BackendName); err != nil {
 			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale copy",
-				slog.String("key", key), slog.String("storage_key", storageKey),
-				slog.String("backend", backendName), "error", err)
+				slog.String("key", loc.ObjectKey), slog.String("storage_key", loc.StorageKey),
+				slog.String("backend", loc.BackendName), "error", err)
 		}
 		return nil
 	}

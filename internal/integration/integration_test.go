@@ -821,6 +821,7 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 	if got := queryOrphanBytes(t, backend); got != sizeBytes {
 		t.Fatalf("seed: orphan_bytes = %d, want %d", got, sizeBytes)
 	}
+	backdateObjectLocations(t, testDB, strings.TrimPrefix(staleKey, virtualBucket+"/"))
 
 	// Run reconcile. Backend has no objects, DB has one stale row, so
 	// the delete path fires for our seeded key.

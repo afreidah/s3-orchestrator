@@ -45,13 +45,12 @@ var errListDrainObjects = errors.New("list objects")
 // -------------------------------------------------------------------------
 
 // DrainerStore is the persistence surface the drainer needs: the backend's
-// objects and their copies, the backend state records it advances, and the
-// conditional removal that drops a drained copy only while another copy
-// remains.
+// objects and their copies, including the conditional removal that drops a
+// drained copy only while another copy remains, and the backend state records
+// it advances.
 type DrainerStore interface {
 	core.ObjectStore
 	core.BackendStateStore
-	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error)
 }
 
 // Drainer moves objects off backends being drained.
@@ -320,10 +319,15 @@ func otherCopyBackend(backends []string, srcName string) string {
 // bytes. The removal re-reads the copies under the key lock and removes this
 // one only while another remains, so a lookup that went stale during the page
 // cannot cost the last copy. If the other copy is gone, the object is moved
-// off instead. A copy that holds the only usable encryption key is kept.
+// off instead. A copy that holds the only usable encryption key is kept, and
+// one a client overwrote since the page was read is left for the next pass.
 func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
-	removed, err := d.store.RemoveExcessCopy(ctx, obj.ObjectKey, srcName, 1)
+	removed, err := d.store.DeleteObjectLocation(ctx, obj, 1)
 	switch {
+	case errors.Is(err, core.ErrCopyNotExcess):
+		return d.moveOff(ctx, src, srcName, obj)
+	case errors.Is(err, core.ErrCopyChanged):
+		return false
 	case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
 		d.log.WarnContext(ctx, "not dropping drained copy: it holds the only usable encryption key",
 			"key", obj.ObjectKey, "backend", srcName)
@@ -332,16 +336,8 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend
 		d.log.WarnContext(ctx, "failed to delete source location",
 			"key", obj.ObjectKey, "backend", srcName, logfmt.Err(err))
 		return false
-	case !removed.Removed:
-		return d.moveOff(ctx, src, srcName, obj)
 	}
-	d.placement.DeleteOrEnqueue(ctx, src, &core.CleanupRequest{
-		BackendName: srcName,
-		ObjectKey:   obj.ObjectKey,
-		StorageKey:  removed.StorageKey,
-		Reason:      "drain_source_delete",
-		SizeBytes:   removed.SizeBytes,
-	})
+	d.placement.DeleteOrEnqueue(ctx, src, removed.Cleanup(obj.ObjectKey, "drain_source_delete"))
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
 		slog.String("removed_from", srcName),

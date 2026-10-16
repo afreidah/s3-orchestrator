@@ -48,7 +48,7 @@ import (
 type ScrubberStore interface {
 	core.IntegrityStore
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error
 }
@@ -401,21 +401,21 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 	return true, nil
 }
 
-// discardCopy deletes a copy's bytes, or queues them for cleanup, and removes
-// its ledger row and quota. Without the row removal the replicator still counts
-// the copy and never rebuilds the object.
+// discardCopy removes a copy's ledger row and quota, then deletes its bytes or
+// queues them for cleanup. Without the row removal the replicator still counts
+// the copy and never rebuilds the object. A copy a client overwrite or delete
+// replaced since it was read is left alone: that write already queued the
+// discarded bytes.
 func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, reason string) error {
-	if be, err := s.deps.GetBackend(loc.BackendName); err == nil {
-		s.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
-			BackendName: loc.BackendName,
-			ObjectKey:   loc.ObjectKey,
-			StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
-			Reason:      reason,
-			SizeBytes:   loc.SizeBytes,
-		})
-	}
-	if _, err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+	removed, err := s.store.DeleteObjectLocation(ctx, loc, 0)
+	switch {
+	case errors.Is(err, core.ErrCopyChanged):
+		return nil
+	case err != nil:
 		return err
+	}
+	if be, err := s.deps.GetBackend(loc.BackendName); err == nil {
+		s.placement.DeleteOrEnqueue(ctx, be, removed.Cleanup(loc.ObjectKey, reason))
 	}
 	audit.Log(ctx, "integrity.copy_discarded",
 		slog.String("key", loc.ObjectKey),

@@ -47,8 +47,8 @@ var (
 // removesDrainedCopy has the conditional removal drop the drained copy and
 // report its path and size.
 func removesDrainedCopy(store *storetest.MockMetadataStore) {
-	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).
-		Return(core.RemovedCopy{StorageKey: "key1", SizeBytes: 4, Removed: true}, nil).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).
+		Return(core.DeletedCopy{BackendName: "b1", StorageKey: "key1", SizeBytes: 4}, nil).AnyTimes()
 }
 
 // captureEnqueue records the reason of every cleanup row enqueued.
@@ -156,7 +156,7 @@ func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
 	dst := backendtest.NewInMemory()
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).Return(core.RemovedCopy{}, nil)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).Return(core.DeletedCopy{}, core.ErrCopyNotExcess)
 	moves := 0
 	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, *core.MoveLocation) (int64, error) {
@@ -183,7 +183,7 @@ func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
 	src.Objects["key1"] = backendtest.Object{Data: []byte("data")}
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().RemoveExcessCopy(gomock.Any(), "key1", "b1", 1).Return(core.RemovedCopy{}, core.ErrCopyHoldsOnlyDEK)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).Return(core.DeletedCopy{}, core.ErrCopyHoldsOnlyDEK)
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
@@ -270,8 +270,8 @@ func TestDrainOne_Failures(t *testing.T) {
 		setup  func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend
 	}{
 		{"dropping the drained row fails", alsoOnB2, func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			store.EXPECT().RemoveExcessCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(core.RemovedCopy{}, errors.New("db error")).AnyTimes()
+			store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(core.DeletedCopy{}, errors.New("db error")).AnyTimes()
 			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}
 		}},
 		{"no destination", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {

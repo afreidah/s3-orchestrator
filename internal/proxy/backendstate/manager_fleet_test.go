@@ -66,12 +66,12 @@ func pagedLister(pages [][]core.ObjectLocation) func(context.Context, string, in
 
 // stubDeleteObjectLocation captures DeleteObjectLocation calls, reporting size
 // as the bytes the removed row freed.
-func stubDeleteObjectLocation(c *purgeCalls, size int64, err error) func(context.Context, string, string) (int64, error) {
-	return func(_ context.Context, key, backend string) (int64, error) {
+func stubDeleteObjectLocation(c *purgeCalls, size int64, err error) func(context.Context, *core.ObjectLocation, int) (core.DeletedCopy, error) {
+	return func(_ context.Context, loc *core.ObjectLocation, _ int) (core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{key: key, backend: backend})
-		return size, err
+		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{key: loc.ObjectKey, backend: loc.BackendName})
+		return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: size}, err
 	}
 }
 
@@ -237,7 +237,7 @@ func TestPurgeBackendObjects_PassesOverRowsItCannotDrop(t *testing.T) {
 			return nil, nil
 		}).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(0), errors.New("simulated persistent DB failure")).Times(purgePageSize)
+		Return(core.DeletedCopy{}, errors.New("simulated persistent DB failure")).Times(purgePageSize)
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -364,7 +364,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 			{},
 		})).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(0), errors.New("db error")).AnyTimes()
+		Return(core.DeletedCopy{}, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})

@@ -44,7 +44,9 @@ func (e *S3Error) Error() string {
 // ErrEncryptionFlagMismatch mean an object's copies disagree about how they
 // are stored; callers skip the object and surface it for repair rather than
 // guessing. ErrCleanupItemNotFound and ErrCopyChanged are benign no-ops: another
-// worker resolved the row, or a client rewrote the key mid-pass. ErrInvalidRange
+// worker resolved the row, or a client rewrote the key mid-pass. ErrCopyNotExcess
+// refuses a surplus-copy removal once the object is back at its target count.
+// ErrInvalidRange
 // covers a range that addresses no byte, such as a suffix range on an empty
 // object.
 var (
@@ -55,6 +57,7 @@ var (
 	ErrCleanupItemNotFound    = errors.New("cleanup queue row not found")
 	ErrNoCopiesToRecord       = errors.New("record object request names no copies")
 	ErrCopyChanged            = errors.New("copy changed since the pass read it")
+	ErrCopyNotExcess          = errors.New("object holds no surplus copy to remove")
 
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,

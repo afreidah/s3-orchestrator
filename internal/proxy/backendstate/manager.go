@@ -14,6 +14,7 @@ package backendstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -363,7 +364,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 
 // purgeOneObject drops one purged object's metadata row, logging deleteErr when
 // its bytes could not be deleted from the backend. The item fails only when
-// the row could not be dropped.
+// the row could not be dropped; a row already gone or replaced counts as done.
 func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.ObjectLocation, deleteErr error) batch.ItemResult {
 	key := obj.ObjectKey
 	if deleteErr != nil {
@@ -371,8 +372,8 @@ func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.Obj
 			slog.String("backend", name), slog.String("key", key), "error", deleteErr)
 	}
 
-	_, err := d.objects.DeleteObjectLocation(ctx, key, name)
-	if err != nil {
+	_, err := d.objects.DeleteObjectLocation(ctx, obj, 0)
+	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
 		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}

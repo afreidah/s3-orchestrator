@@ -70,6 +70,7 @@ func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, 
 		cleared[i] = core.SupersededIntent{
 			IntentID:    row.IntentID,
 			BackendName: row.BackendName,
+			StorageKey:  row.StorageKey,
 			SizeBytes:   row.SizeBytes,
 		}
 	}
