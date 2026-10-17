@@ -41,8 +41,6 @@ type MetadataStore interface {
 	core.AdvisoryLocker
 	core.DashboardStore
 	core.LifecycleAdmin
-	core.EncryptionAdmin
-	core.CompressionAdmin
 	core.NotificationOutbox
 	core.TagStore
 	core.ProvisioningStore

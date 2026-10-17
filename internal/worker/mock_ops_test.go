@@ -232,18 +232,18 @@ func (mr *MockOpsMockRecorder) ServedCalls(name any) *gomock.Call {
 }
 
 // StreamCopy mocks base method.
-func (m *MockOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
+func (m *MockOps) StreamCopy(ctx context.Context, req *backend.CopyRequest) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, srcKey, dstKey, sizeEstimate)
+	ret := m.ctrl.Call(m, "StreamCopy", ctx, req)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StreamCopy indicates an expected call of StreamCopy.
-func (mr *MockOpsMockRecorder) StreamCopy(ctx, src, dst, srcKey, dstKey, sizeEstimate any) *gomock.Call {
+func (mr *MockOpsMockRecorder) StreamCopy(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockOps)(nil).StreamCopy), ctx, src, dst, srcKey, dstKey, sizeEstimate)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockOps)(nil).StreamCopy), ctx, req)
 }
 
 // Usage mocks base method.
@@ -350,6 +350,21 @@ func (m *MockPlacement) MoveObject(ctx context.Context, req *writepath.MoveReque
 func (mr *MockPlacementMockRecorder) MoveObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockPlacement)(nil).MoveObject), ctx, req)
+}
+
+// PlaceOrCleanup mocks base method.
+func (m *MockPlacement) PlaceOrCleanup(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons writepath.OrphanReasons) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PlaceOrCleanup", ctx, p, dest, written, reasons)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PlaceOrCleanup indicates an expected call of PlaceOrCleanup.
+func (mr *MockPlacementMockRecorder) PlaceOrCleanup(ctx, p, dest, written, reasons any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlaceOrCleanup", reflect.TypeOf((*MockPlacement)(nil).PlaceOrCleanup), ctx, p, dest, written, reasons)
 }
 
 // RankReplicaTargets mocks base method.

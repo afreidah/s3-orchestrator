@@ -71,14 +71,12 @@ func newBackendOps(t *testing.T, cfg backendOpsStub) *MockBackendOps {
 	return m
 }
 
-// newOpsUsage builds the operations layer's view of the counters: it records
-// what a pass spends, and admits it first.
-func newOpsUsage(t *testing.T) *opstest.MockUsageGate {
+// newOpsMover builds the mover a rewrite pass hands each copy to. It expects
+// no calls: the runtime these tests use resolves no backend, so a pass fails
+// each copy before it would move it.
+func newOpsMover(t *testing.T) *opstest.MockMover {
 	t.Helper()
-	m := opstest.NewMockUsageGate(gomock.NewController(t))
-	m.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	m.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	return m
+	return opstest.NewMockMover(gomock.NewController(t))
 }
 
 // newOpsIntegrityCfg builds the integrity settings that gate a scrub.
@@ -131,27 +129,27 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 
 // encryptionWith installs encryption operations over one store, for the tests
 // that drive the bulk rewrite and key rotation endpoints.
-func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.EncryptionStore) {
+func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.RewriteStore) {
 	t.Helper()
 	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
 		Runtime:   newRuntimeOps(t),
-		Usage:     newOpsUsage(t),
+		Mover:     newOpsMover(t),
 	})
 }
 
 // compressionWith installs a compression service over the given codec and
 // store, so a test drives one branch of the bulk passes without standing up the
 // rest of the operations layer.
-func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.CompressionStore) {
+func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.RewriteStore) {
 	t.Helper()
 	h.compression = ops.NewCompression(&ops.CompressionDeps{
 		Codec:   codec,
 		Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:   store,
 		Runtime: newRuntimeOps(t),
-		Usage:   newOpsUsage(t),
+		Mover:   newOpsMover(t),
 	})
 }
 

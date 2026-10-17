@@ -84,18 +84,6 @@ func TestBackendCalls_Health(t *testing.T) {
 	}
 }
 
-// TestCallFor maps each guarded operation to its bit and refuses one no
-// breaker guards.
-func TestCallFor(t *testing.T) {
-	t.Parallel()
-	if call, ok := CallFor(s3op.GetObject); !ok || call != CallGetObject {
-		t.Errorf("CallFor(GetObject) = %s, %t", call, ok)
-	}
-	if _, ok := CallFor(s3op.UploadPart); ok {
-		t.Error("CallFor(UploadPart) found a call")
-	}
-}
-
 // TestBackendCalls_Render covers names, the joined form and JSON.
 func TestBackendCalls_Render(t *testing.T) {
 	t.Parallel()

@@ -444,9 +444,9 @@ Per-backend usage and per-operation metric accounting flow through one shared he
 
 The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, 1, 0, size)` vs `Record(b, 1, size, 0)` form is eliminated because ingress vs egress is named in the method.
 
-Exceptions - *not* every Usage call goes through Recorder:
-- The operations layer's bulk passes take a `UsageGate` and call `Record(b, apiCalls, egress, ingress)` on the tracker with an arbitrary tuple. That bypasses the per-attempt rule on purpose: a fleet-wide rewrite asks once and spends in units the Recorder has no name for.
-- The usage tracker's own tests in `internal/counter` call `Record` directly - they're verifying the tracker, not the accounting rule.
+Backend-to-backend copies (replication, rebalance, drain and the bulk rewrite passes) are charged inside `StreamCopy`, which admits both legs and records what each one moved, so their callers charge nothing.
+
+Exception - the usage tracker's own tests in `internal/counter` call `Record` directly - they're verifying the tracker, not the accounting rule.
 
 ### Variable Naming
 

@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
 
 // -------------------------------------------------------------------------
@@ -68,15 +69,22 @@ func newCoordinatorWithStore(store CoordinatorStores) *Coordinator {
 // destination backend, so MoveObject's StreamCopy (GetObject src -> PutObject
 // dest) and its cleanup paths can be driven through the gomock recorders.
 func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store CoordinatorStores) *Coordinator {
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{srcName, destName}), nil)
+	coord, _ := newMoveCoordinator(srcName, src, destName, dest, store)
+	return coord
+}
+
+// newMoveCoordinator is newCoordinatorWith2Backends that also returns the
+// usage counters the copy is charged to.
+func newMoveCoordinator(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store CoordinatorStores) (*Coordinator, *counter.LocalCounterBackend) {
+	counters := counter.NewLocalCounterBackend([]string{srcName, destName})
 	c := infra.New(&infra.Config{
 		Backends:       map[string]s3be.ObjectBackend{srcName: src, destName: dest},
 		Order:          []string{srcName, destName},
 		BackendTimeout: 5 * time.Second,
-		Usage:          usage,
+		Usage:          counter.NewUsageTracker(counters, nil),
 		Quota:          counter.NewQuotaTracker([]string{srcName, destName}),
 	})
-	return New(c, store)
+	return New(c, store), counters
 }
 
 // expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
@@ -179,13 +187,191 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 		cleanupOf(sourceName, srcPath, RebalanceMoveReasons.SourceDelete, 4)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), sourceName, int64(4)).Return(nil).Times(1)
 
-	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	coord, counters := newMoveCoordinator(sourceName, src, destName, dest, store)
 	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if movedSize != 4 {
 		t.Errorf("movedSize = %d, want 4", movedSize)
+	}
+	// The copy charges each leg once; the source DELETE adds its own call.
+	if got := counters.Load(sourceName, counter.FieldEgressBytes); got != 4 {
+		t.Errorf("source egress = %d, want the 4 bytes read once", got)
+	}
+	if got := counters.Load(destName, counter.FieldIngressBytes); got != 4 {
+		t.Errorf("dest ingress = %d, want the 4 bytes written once", got)
+	}
+	if got := counters.Load(destName, counter.FieldAPIRequests); got != 1 {
+		t.Errorf("dest calls = %d, want the one PUT", got)
+	}
+}
+
+// reformTo returns a reform that reads the source, records what it read into
+// seen, and hands back body as bytes stored in form.
+func reformTo(body string, form *core.StoredForm, seen *string) func(context.Context, *s3be.GetObjectResult) (*storedform.Reformed, error) {
+	return func(_ context.Context, src *s3be.GetObjectResult) (*storedform.Reformed, error) {
+		raw, err := io.ReadAll(src.Body)
+		if err != nil {
+			return nil, err
+		}
+		*seen = string(raw)
+		return &storedform.Reformed{Body: strings.NewReader(body), Size: int64(len(body)), Form: form}, nil
+	}
+}
+
+// TestMoveObject_ReformInPlace verifies a move with a reform onto the source's
+// own backend writes the reformed bytes at a new path there, places them with
+// the reformed form and size, and deletes the source bytes at the size the
+// source row recorded.
+func TestMoveObject_ReformInPlace(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewMockObjectBackend(ctrl)
+	form := &core.StoredForm{CompressionAlgorithm: "zstd", LogicalSize: 4}
+	written := new(string)
+	be.EXPECT().GetObject(gomock.Any(), srcPath, "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+	be.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(2), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+			raw, _ := io.ReadAll(body)
+			if string(raw) != "zz" {
+				t.Errorf("wrote %q, want the reformed bytes", raw)
+			}
+			*written = key
+			return "etag", nil
+		})
+	be.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(nil)
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Cond(func(p *core.Placement) bool {
+		return p.Target == sourceName && p.Source.BackendName == sourceName && p.RemoveSource &&
+			p.StorageKey == *written && *written != srcPath && p.Form == form && p.Size == 2
+	})).Return(int64(2), nil)
+
+	coord := newCoordinatorWithBackend(sourceName, be, store)
+	var seen string
+	req := moveReq(be, be)
+	req.DestName = sourceName
+	req.Reasons = RewriteMoveReasons
+	req.Reform = reformTo("zz", form, &seen)
+
+	moved, err := coord.MoveObject(context.Background(), req)
+	if err != nil {
+		t.Fatalf("MoveObject: %v", err)
+	}
+	if moved != 2 || seen != "data" {
+		t.Errorf("moved = %d, reform read %q; want 2 and the source bytes", moved, seen)
+	}
+}
+
+// TestMoveObject_ReformDeclinedCleansUpTheWrittenSize verifies a declined
+// placement of reformed bytes cleans them up at the size the copy wrote, not
+// the source's size.
+func TestMoveObject_ReformDeclinedCleansUpTheWrittenSize(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	written := new(string)
+	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(7), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string, _ io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+			*written = key
+			return "etag", nil
+		})
+	dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), core.ErrCopyChanged)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == destName && c.StorageKey == *written &&
+			c.Reason == RewriteMoveReasons.StaleOrphan && c.SizeBytes == 7
+	})).Return(nil)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(7)).Return(nil)
+
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	var seen string
+	req := moveReq(src, dest)
+	req.Reasons = RewriteMoveReasons
+	req.Reform = reformTo("encoded", &core.StoredForm{}, &seen)
+	if _, err := coord.MoveObject(context.Background(), req); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("err = %v, want ErrCopyChanged", err)
+	}
+}
+
+// TestMoveObject_ReformErrorWritesNothing verifies a failed reform ends the
+// move before any destination write or placement.
+func TestMoveObject_ReformErrorWritesNothing(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+
+	sentinel := errors.New("reform failed")
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, NewMockCoordinatorStores(ctrl))
+	req := moveReq(src, dest)
+	req.Reform = func(context.Context, *s3be.GetObjectResult) (*storedform.Reformed, error) {
+		return nil, sentinel
+	}
+	_, err := coord.MoveObject(context.Background(), req)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the reform failure", err)
+	}
+	if ce, ok := errors.AsType[*s3be.CopyError](err); !ok || ce.Phase != s3be.CopyPhaseTransform {
+		t.Errorf("err = %v, want a transform-phase copy error", err)
+	}
+}
+
+// TestPlaceOrCleanup verifies a placement that commits returns its size and
+// cleans up nothing, and one that fails deletes the written bytes at the
+// placement's path under the reason its failure calls for.
+func TestPlaceOrCleanup(t *testing.T) {
+	t.Parallel()
+	reasons := ReplicationOrphanReasons
+	cases := []struct {
+		name       string
+		err        error
+		wantReason string
+	}{
+		{"committed", nil, ""},
+		{"source changed", core.ErrCopyChanged, reasons.StaleOrphan},
+		{"target refused", core.ErrTargetRefused, reasons.StaleOrphan},
+		{"store error", errors.New("tx failed"), reasons.Orphan},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			dest := backendtest.NewMockObjectBackend(ctrl)
+			store := NewMockCoordinatorStores(ctrl)
+			p := &core.Placement{
+				Source:     &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
+				Target:     destName,
+				StorageKey: "k!placed",
+			}
+			if tc.err == nil {
+				store.EXPECT().PlaceCopy(gomock.Any(), p).Return(int64(9), nil)
+			} else {
+				store.EXPECT().PlaceCopy(gomock.Any(), p).Return(int64(0), tc.err)
+				dest.EXPECT().DeleteObject(gomock.Any(), "k!placed").Return(errors.New("delete failed"))
+				store.EXPECT().EnqueueCleanup(gomock.Any(),
+					cleanupOf(destName, "k!placed", tc.wantReason, 7)).Return(nil)
+				store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(7)).Return(nil)
+			}
+
+			coord := newCoordinatorWith2Backends(sourceName, backendtest.NewMockObjectBackend(ctrl), destName, dest, store)
+			placed, err := coord.PlaceOrCleanup(context.Background(), p, dest, 7, reasons)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("err = %v, want %v", err, tc.err)
+			}
+			if tc.err == nil && placed != 9 {
+				t.Errorf("placed = %d, want 9", placed)
+			}
+		})
 	}
 }
 

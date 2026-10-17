@@ -739,14 +739,14 @@ func TestAdapter_BackendAdmits_CountsOrphanBytes(t *testing.T) {
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		// 900 stored + 50 orphaned leaves 50 free.
-		fits, err := a.BackendAdmits(ctx, "backend-a", 100)
+		fits, err := a.BackendAdmits(ctx, "backend-a", 100, core.AcceptForWrite)
 		if err != nil {
 			t.Fatalf("BackendAdmits: %v", err)
 		}
 		if fits {
 			t.Error("admitted 100 bytes into 50 of room; orphan bytes were not counted")
 		}
-		fits, err = a.BackendAdmits(ctx, "backend-a", 50)
+		fits, err = a.BackendAdmits(ctx, "backend-a", 50, core.AcceptForWrite)
 		if err != nil {
 			t.Fatalf("BackendAdmits: %v", err)
 		}
@@ -769,7 +769,7 @@ func TestAdapter_BackendAdmits_UnlimitedAlwaysFits(t *testing.T) {
 	seedBytesUsed(t, s, "backend-a", 1<<40)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		fits, err := a.BackendAdmits(ctx, "backend-a", 1<<30)
+		fits, err := a.BackendAdmits(ctx, "backend-a", 1<<30, core.AcceptForWrite)
 		if err != nil {
 			t.Fatalf("BackendAdmits: %v", err)
 		}
@@ -777,6 +777,42 @@ func TestAdapter_BackendAdmits_UnlimitedAlwaysFits(t *testing.T) {
 			t.Error("an unlimited backend refused a write")
 		}
 	})
+}
+
+// TestAdapter_BackendAdmits_AcceptsMask asserts a backend carrying a flag is
+// admitted only when the caller's mask accepts that flag: a cordon passes the
+// rewrite mask and fails the write mask, and a drain fails both.
+func TestAdapter_BackendAdmits_AcceptsMask(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		flag      core.BackendFlags
+		accepts   core.BackendFlags
+		wantAdmit bool
+	}{
+		{"cordoned for a write", core.FlagCordoned, core.AcceptForWrite, false},
+		{"cordoned for a rewrite", core.FlagCordoned, core.AcceptForRewrite, true},
+		{"draining for a rewrite", core.FlagDraining, core.AcceptForRewrite, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := context.Background()
+			if _, err := s.SetBackendFlag(ctx, "backend-a", tc.flag); err != nil {
+				t.Fatalf("SetBackendFlag: %v", err)
+			}
+			withAdapter(t, s, func(a *sqliteTxAdapter) {
+				fits, err := a.BackendAdmits(ctx, "backend-a", 1, tc.accepts)
+				if err != nil {
+					t.Fatalf("BackendAdmits: %v", err)
+				}
+				if fits != tc.wantAdmit {
+					t.Errorf("BackendAdmits = %v, want %v", fits, tc.wantAdmit)
+				}
+			})
+		})
+	}
 }
 
 // TestAdapter_AdjustQuotaStripe_MaterializesAndAccumulates asserts the first

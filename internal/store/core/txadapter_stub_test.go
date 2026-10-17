@@ -73,16 +73,8 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) BackendAdmits(context.Context, string, int64) (bool, error) { return true, nil }
-
-func (*noopTxAdapter) UpdateCompressedForm(context.Context, *CompressedUpdate) error { return nil }
-
-func (*noopTxAdapter) MarkCopyEncrypted(context.Context, *EncryptedUpdate) error { return nil }
-
-func (*noopTxAdapter) MarkCopyDecrypted(context.Context, *DecryptedUpdate) error { return nil }
-
-func (*noopTxAdapter) GetCopySizeBytes(context.Context, string, string) (int64, error) {
-	return 0, nil
+func (*noopTxAdapter) BackendAdmits(context.Context, string, int64, BackendFlags) (bool, error) {
+	return true, nil
 }
 
 func (*noopTxAdapter) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {

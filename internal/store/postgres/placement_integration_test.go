@@ -17,6 +17,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -203,8 +204,8 @@ func TestPgPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	if !got.CreatedAt.Equal(src.CreatedAt) {
 		t.Errorf("CreatedAt = %v, want the source's %v", got.CreatedAt, src.CreatedAt)
 	}
-	if got.RecordedETag() != src.RecordedETag() {
-		t.Errorf("ETag = %q, want the source's %q", got.RecordedETag(), src.RecordedETag())
+	if !reflect.DeepEqual(got.Identity, src.Identity) {
+		t.Errorf("Identity = %+v, want the source's %+v", got.Identity, src.Identity)
 	}
 	assertFormPreserved(t, got, fullyPopulatedForm())
 	if size, level := pgProbeOn(t, f.s, f.key, f.dst); size != 90 || level != "default" {

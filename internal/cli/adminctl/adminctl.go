@@ -83,7 +83,7 @@ Commands:
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
   lifecycle           Run one lifecycle expiration sweep now instead of waiting for the hourly tick
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
-  encrypt-existing    Encrypt all unencrypted objects in place, or -max=N of them, -backend to scope (requires encryption enabled)
+  encrypt-existing    Encrypt all unencrypted objects, or -max=N of them, -backend to scope (requires encryption enabled)
   decrypt-existing    Decrypt all encrypted objects back to plaintext, or -max=N of them, -backend to scope (requires encryption enabled)
   rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
   compress-existing   Store every uncompressed object as chunked zstd, or -max=N of them, -backend to scope (requires a compression codec)

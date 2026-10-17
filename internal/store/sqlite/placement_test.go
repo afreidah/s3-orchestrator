@@ -180,8 +180,8 @@ func TestPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	if !got.CreatedAt.Equal(src.CreatedAt) {
 		t.Errorf("CreatedAt = %v, want the source's %v", got.CreatedAt, src.CreatedAt)
 	}
-	if got.RecordedETag() != src.RecordedETag() {
-		t.Errorf("ETag = %q, want the source's %q", got.RecordedETag(), src.RecordedETag())
+	if got.Identity == nil || got.Identity.ETag != src.Identity.ETag {
+		t.Errorf("Identity = %+v, want the source's %+v", got.Identity, src.Identity)
 	}
 	assertFormPreserved(t, got, fullyPopulatedForm())
 	if size, level := probeOn(t, s, placedKey, "backend-b"); size != 90 || level != "default" {
@@ -227,4 +227,132 @@ func TestPlaceCopy_ReplicaKeepsTheSource(t *testing.T) {
 	if used := quotaBytesUsed(t, s, "backend-b"); used != 100 {
 		t.Errorf("backend-b bytes = %d, want 100", used)
 	}
+}
+
+// -------------------------------------------------------------------------
+// IN-PLACE REWRITES
+// -------------------------------------------------------------------------
+
+// rewrittenPath is where an in-place rewrite stores the transformed bytes.
+const rewrittenPath = placedKey + "!rw"
+
+// rewriteInPlace places the copy on backend-a back onto backend-a at
+// rewrittenPath, carrying a plaintext compressed form of size bytes.
+func rewriteInPlace(t *testing.T, s *Store, size int64) (int64, error) {
+	t.Helper()
+	return s.PlaceCopy(context.Background(), &core.Placement{
+		Source:       storetest.LocationOn(t, s, placedKey, "backend-a"),
+		Target:       "backend-a",
+		StorageKey:   rewrittenPath,
+		RemoveSource: true,
+		Form:         &core.StoredForm{CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 100},
+		Size:         size,
+	})
+}
+
+// TestPlaceCopy_InPlaceRewriteReplacesTheForm verifies a rewrite onto the
+// copy's own backend replaces the row at a new path with the new form and
+// size, keeps the source's hash, write time and identity, drops the
+// compression probe, and moves the backend's count by the size change.
+func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	recordWrite(t, s, firstWritePath, 100)
+	mustPatchCopy(t, s, placedKey, "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 90, Level: "default"}})
+	backdateCreatedAt(t, s, placedKey, "backend-a", 24*time.Hour)
+	src := storetest.LocationOn(t, s, placedKey, "backend-a")
+
+	placed, err := rewriteInPlace(t, s, 40)
+	if err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	if placed != 40 {
+		t.Errorf("placed = %d, want 40", placed)
+	}
+	got := readBackOne(t, s, placedKey)
+	if got.BackendName != "backend-a" || got.StorageKey != rewrittenPath || got.SizeBytes != 40 {
+		t.Errorf("rewritten copy = %s/%s at %d bytes, want backend-a/%s at 40",
+			got.BackendName, got.StorageKey, got.SizeBytes, rewrittenPath)
+	}
+	assertFormPreserved(t, got, &core.StoredForm{
+		ContentHash: src.ContentHash, CompressionAlgorithm: "zstd", CompressionLevel: "default",
+		CompressionFormatVersion: 1, LogicalSize: 100,
+	})
+	if !got.CreatedAt.Equal(src.CreatedAt) {
+		t.Errorf("CreatedAt = %v, want the source's %v", got.CreatedAt, src.CreatedAt)
+	}
+	if got.Identity == nil || got.Identity.ETag != src.Identity.ETag {
+		t.Errorf("Identity = %+v, want the source's %+v", got.Identity, src.Identity)
+	}
+	if size, level := probeOn(t, s, placedKey, "backend-a"); size != 0 || level != "" {
+		t.Errorf("probe = (%d, %q), want cleared", size, level)
+	}
+	if used := quotaBytesUsed(t, s, "backend-a"); used != 40 {
+		t.Errorf("backend-a bytes = %d, want 40 after the rewrite", used)
+	}
+}
+
+// TestPlaceCopy_InPlaceRewriteAdmitsTheGrowthOnly verifies a rewrite that
+// grows the copy needs room only for the growth, and one without that room
+// records nothing.
+func TestPlaceCopy_InPlaceRewriteAdmitsTheGrowthOnly(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{{Name: "backend-a", QuotaBytes: 150}}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	recordWrite(t, s, firstWritePath, 100)
+	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
+
+	_, err := rewriteInPlace(t, s, 160)
+	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
+
+	if _, err := rewriteInPlace(t, s, 150); err != nil {
+		t.Fatalf("PlaceCopy of a 50 byte growth into 50 of room: %v", err)
+	}
+	if used := quotaBytesUsed(t, s, "backend-a"); used != 150 {
+		t.Errorf("backend-a bytes = %d, want 150", used)
+	}
+}
+
+// TestPlaceCopy_InPlaceRewriteOnFlaggedBackend verifies a cordoned backend
+// still takes a rewrite of a copy it holds, while a draining one refuses it.
+func TestPlaceCopy_InPlaceRewriteOnFlaggedBackend(t *testing.T) {
+	t.Parallel()
+	t.Run("cordoned", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		recordWrite(t, s, firstWritePath, 100)
+		if _, err := s.SetBackendFlag(context.Background(), "backend-a", core.FlagCordoned); err != nil {
+			t.Fatalf("cordon: %v", err)
+		}
+		if _, err := rewriteInPlace(t, s, 40); err != nil {
+			t.Fatalf("PlaceCopy on a cordoned backend: %v", err)
+		}
+	})
+	t.Run("draining", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		recordWrite(t, s, firstWritePath, 100)
+		mustStartDrain(t, s, "backend-a")
+		before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
+		_, err := rewriteInPlace(t, s, 40)
+		assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
+	})
+}
+
+// TestPlaceCopy_InPlaceWithoutRemoveIsRefused verifies a placement onto the
+// source's own backend that would keep the source records nothing.
+func TestPlaceCopy_InPlaceWithoutRemoveIsRefused(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	recordWrite(t, s, firstWritePath, 100)
+	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
+
+	_, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source:     storetest.LocationOn(t, s, placedKey, "backend-a"),
+		Target:     "backend-a",
+		StorageKey: rewrittenPath,
+	})
+	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
 }

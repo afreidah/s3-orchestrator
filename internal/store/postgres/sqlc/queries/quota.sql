@@ -65,14 +65,6 @@ SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
 GROUP BY backend_name;
 
--- name: GetObjectSizeBytes :one
--- Returns the current size_bytes of an object_locations row. Used
--- inside MarkObjectDecrypted so the caller can compute the size
--- delta against the row that is about to be overwritten without
--- needing the old ciphertext size to flow through the API.
-SELECT size_bytes FROM object_locations
-WHERE object_key = $1 AND backend_name = $2;
-
 -- name: IncrementOrphanBytes :exec
 UPDATE backend_quotas
 SET orphan_bytes = orphan_bytes + @amount, updated_at = NOW()

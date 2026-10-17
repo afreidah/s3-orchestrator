@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -288,12 +289,18 @@ func ep(name string, be backend.ObjectBackend) backend.CopyEndpoint {
 	return backend.CopyEndpoint{Name: name, Backend: be}
 }
 
+// copyReq is a verbatim copy of k on src to k!dst on dst, admitted against
+// sizeEstimate.
+func copyReq(src, dst backend.CopyEndpoint, sizeEstimate int64) *backend.CopyRequest {
+	return &backend.CopyRequest{Src: src, Dst: dst, SrcKey: "k", DstKey: "k!dst", SizeEstimate: sizeEstimate}
+}
+
 func TestCore_StreamCopy_ReadSuccessThenWriteSuccess(t *testing.T) {
 	t.Parallel()
 	src := &readableBackend{payload: []byte("hello")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	if _, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0); err != nil {
+	if _, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0)); err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
 	if dst.putBodyLen != 5 {
@@ -306,7 +313,7 @@ func TestCore_StreamCopy_TagsReadPhaseOnGetError(t *testing.T) {
 	src := &readableBackend{getErr: errors.New("upstream gone")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0))
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -377,7 +384,7 @@ func TestCore_StreamCopy_SourceStallTaggedReadPhase(t *testing.T) {
 	src := &stallingSourceBackend{err: context.DeadlineExceeded}
 	dst := propagatingDstBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0))
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -396,7 +403,7 @@ func TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := writeRejectingBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("src", src), ep("dst", dst), 0))
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -439,7 +446,7 @@ func TestCore_StreamCopy_RefusesSourceOutOfEgress(t *testing.T) {
 		map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}},
 		map[string]core.UsageStat{"b1": {EgressBytes: 99}})
 
-	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 50)
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", dst), 50))
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -467,7 +474,7 @@ func TestCore_StreamCopy_RefusesDestinationOutOfIngress(t *testing.T) {
 		map[string]core.UsageLimits{"b2": {IngressByteLimit: 100}},
 		map[string]core.UsageStat{"b2": {IngressBytes: 99}})
 
-	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 50)
+	_, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", dst), 50))
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -492,12 +499,177 @@ func TestCore_StreamCopy_AdmitsWithinLimits(t *testing.T) {
 			"b2": {IngressByteLimit: 1 << 20},
 		}, nil)
 
-	moved, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 5)
+	moved, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", dst), 5))
 	if err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
 	if moved != 5 || dst.putBodyLen != 5 {
 		t.Errorf("moved = %d, destination got %d bytes, want 5 and 5", moved, dst.putBodyLen)
+	}
+}
+
+// newCopyRuntime builds a runtime over b1 and b2 with no usage limits, and
+// returns the counters its copies are charged to.
+func newCopyRuntime(t *testing.T) (*BackendRuntime, *counter.LocalCounterBackend) {
+	t.Helper()
+	counters := counter.NewLocalCounterBackend([]string{"b1", "b2"})
+	return New(&Config{
+		Backends:        map[string]backend.ObjectBackend{"b1": fakeBackend{}, "b2": fakeBackend{}},
+		Order:           []string{"b1", "b2"},
+		BackendTimeout:  100 * time.Millisecond,
+		Usage:           counter.NewUsageTracker(counters, nil),
+		RoutingStrategy: config.RoutingPack,
+		Log:             slog.Default(),
+	}), counters
+}
+
+// usageOf is one backend's charged calls, egress and ingress.
+type usageOf struct {
+	calls, egress, ingress int64
+}
+
+// loadUsage reads backend's charges from counters.
+func loadUsage(counters *counter.LocalCounterBackend, backend string) usageOf {
+	return usageOf{
+		calls:   counters.Load(backend, counter.FieldAPIRequests),
+		egress:  counters.Load(backend, counter.FieldEgressBytes),
+		ingress: counters.Load(backend, counter.FieldIngressBytes),
+	}
+}
+
+// TestCore_StreamCopy_ChargesBothLegs verifies a successful copy charges the
+// source one call and the bytes read, and the destination one call and the
+// bytes written.
+func TestCore_StreamCopy_ChargesBothLegs(t *testing.T) {
+	t.Parallel()
+	c, counters := newCopyRuntime(t)
+	src := &readableBackend{payload: []byte("hello")}
+
+	if _, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", &recordingBackend{}), 5)); err != nil {
+		t.Fatalf("StreamCopy: %v", err)
+	}
+	if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1, egress: 5}) {
+		t.Errorf("source charged %+v, want one call and 5 bytes out", got)
+	}
+	if got := loadUsage(counters, "b2"); got != (usageOf{calls: 1, ingress: 5}) {
+		t.Errorf("destination charged %+v, want one call and 5 bytes in", got)
+	}
+}
+
+// TestCore_StreamCopy_ChargesFailedLegs verifies a failed read charges the
+// source a call and leaves the destination alone, and a failed write charges
+// the source its read and the destination a call with no bytes.
+func TestCore_StreamCopy_ChargesFailedLegs(t *testing.T) {
+	t.Parallel()
+	t.Run("read fails", func(t *testing.T) {
+		t.Parallel()
+		c, counters := newCopyRuntime(t)
+		src := &readableBackend{getErr: errors.New("upstream gone")}
+		if _, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", &recordingBackend{}), 5)); err == nil {
+			t.Fatal("StreamCopy succeeded, want the read failure")
+		}
+		if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1}) {
+			t.Errorf("source charged %+v, want one call", got)
+		}
+		if got := loadUsage(counters, "b2"); got != (usageOf{}) {
+			t.Errorf("destination charged %+v, want nothing", got)
+		}
+	})
+	t.Run("write fails", func(t *testing.T) {
+		t.Parallel()
+		c, counters := newCopyRuntime(t)
+		src := &readableBackend{payload: []byte("hello")}
+		if _, err := c.StreamCopy(context.Background(), copyReq(ep("b1", src), ep("b2", writeRejectingBackend{}), 5)); err == nil {
+			t.Fatal("StreamCopy succeeded, want the write failure")
+		}
+		if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1, egress: 5}) {
+			t.Errorf("source charged %+v, want one call and 5 bytes out", got)
+		}
+		if got := loadUsage(counters, "b2"); got != (usageOf{calls: 1}) {
+			t.Errorf("destination charged %+v, want one call and no bytes", got)
+		}
+	})
+}
+
+// TestCore_StreamCopy_TransformReplacesTheBody verifies a transform sees the
+// object read, its body and size are what the destination gets and what the
+// destination is charged, the copy returns that size, and its release runs
+// after the write.
+func TestCore_StreamCopy_TransformReplacesTheBody(t *testing.T) {
+	t.Parallel()
+	c, counters := newCopyRuntime(t)
+	src := &readableBackend{payload: []byte("hello")}
+	dst := &recordingBackend{}
+	var seen string
+	released := 0
+	req := copyReq(ep("b1", src), ep("b2", dst), 5)
+	req.Transform = func(_ context.Context, read *backend.GetObjectResult) (io.Reader, int64, func(), error) {
+		raw, err := io.ReadAll(read.Body)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		seen = string(raw)
+		return strings.NewReader("HELLO!!"), 7, func() { released++ }, nil
+	}
+
+	written, err := c.StreamCopy(context.Background(), req)
+	if err != nil {
+		t.Fatalf("StreamCopy: %v", err)
+	}
+	if seen != "hello" {
+		t.Errorf("transform read %q, want the source bytes", seen)
+	}
+	if written != 7 || dst.putBodyLen != 7 {
+		t.Errorf("written = %d, destination got %d, want 7 and 7", written, dst.putBodyLen)
+	}
+	if released != 1 {
+		t.Errorf("release ran %d times, want once", released)
+	}
+	if got := loadUsage(counters, "b2"); got != (usageOf{calls: 1, ingress: 7}) {
+		t.Errorf("destination charged %+v, want one call and the 7 transformed bytes", got)
+	}
+}
+
+// TestCore_StreamCopy_TransformWithoutRelease verifies a transform that
+// buffers nothing may return a nil release.
+func TestCore_StreamCopy_TransformWithoutRelease(t *testing.T) {
+	t.Parallel()
+	c, _ := newCopyRuntime(t)
+	req := copyReq(ep("b1", &readableBackend{payload: []byte("hello")}), ep("b2", &recordingBackend{}), 5)
+	req.Transform = func(_ context.Context, read *backend.GetObjectResult) (io.Reader, int64, func(), error) {
+		return read.Body, read.Size, nil, nil
+	}
+	if written, err := c.StreamCopy(context.Background(), req); err != nil || written != 5 {
+		t.Fatalf("StreamCopy = %d, %v; want 5, nil", written, err)
+	}
+}
+
+// TestCore_StreamCopy_TransformErrorTagsTransformPhase verifies a failed
+// transform writes nothing and surfaces as a transform-phase copy error that
+// still carries the transform's own error.
+func TestCore_StreamCopy_TransformErrorTagsTransformPhase(t *testing.T) {
+	t.Parallel()
+	c, counters := newCopyRuntime(t)
+	dst := &recordingBackend{}
+	sentinel := errors.New("encode failed")
+	req := copyReq(ep("b1", &readableBackend{payload: []byte("hello")}), ep("b2", dst), 5)
+	req.Transform = func(context.Context, *backend.GetObjectResult) (io.Reader, int64, func(), error) {
+		return nil, 0, nil, sentinel
+	}
+
+	_, err := c.StreamCopy(context.Background(), req)
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok || ce.Phase != backend.CopyPhaseTransform {
+		t.Fatalf("err = %v, want a transform-phase *backend.CopyError", err)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want it to wrap the transform's error", err)
+	}
+	if dst.putBodyLen != 0 {
+		t.Errorf("destination got %d bytes, want none", dst.putBodyLen)
+	}
+	if got := loadUsage(counters, "b2"); got != (usageOf{}) {
+		t.Errorf("destination charged %+v, want nothing", got)
 	}
 }
 

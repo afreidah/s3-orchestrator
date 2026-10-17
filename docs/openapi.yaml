@@ -413,7 +413,7 @@ paths:
                     description: Missing or invalid admin token
     /admin/api/encrypt-existing:
         post:
-            summary: Encrypt every plaintext object in place
+            summary: Encrypt every plaintext object on its own backend
             operationId: postEncryptExisting
             parameters:
                 - name: backend

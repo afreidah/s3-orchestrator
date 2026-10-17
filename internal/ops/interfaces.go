@@ -14,15 +14,13 @@ package ops
 
 import (
 	"context"
-	"io"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -59,19 +57,12 @@ type UnhashedLister interface {
 	ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error)
 }
 
-// EncryptionStore is the admin surface the bulk rewrite passes read and write
-// as they move objects between plaintext and ciphertext. Key rotation patches
-// each copy's wrapped DEK.
-type EncryptionStore interface {
-	core.EncryptionAdmin
-	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
-}
-
-// CompressionStore is the admin surface the bulk compression passes read and
-// write as they move objects between stored-verbatim and stored-encoded. A
-// declined copy is patched with the probe that declined it.
-type CompressionStore interface {
-	core.CompressionAdmin
+// RewriteStore is the store surface the bulk rewrite passes and key rotation
+// read and write: the copies a pass selects by stored form, and the patch one
+// copy takes when a rotation re-wraps its DEK or a compression pass records
+// the probe that declined it.
+type RewriteStore interface {
+	core.CopyLister
 	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
 }
 
@@ -103,20 +94,6 @@ type RegistryPublisher interface {
 	Republish(ctx context.Context) error
 }
 
-// CompressionCodec is the encode and decode surface the bulk passes use.
-type CompressionCodec interface {
-	Compress(dst io.Writer, src io.Reader) (int64, error)
-	DecompressStream(r io.Reader) (io.ReadCloser, error)
-}
-
-// UsageGate admits and accounts backend work against the monthly limits; a
-// pass calls WithinLimits before it spends and RecordAll after.
-// *counter.UsageTracker satisfies it. Byte parameters are egress then ingress.
-type UsageGate interface {
-	WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool
-	RecordAll(backendName string, ops []s3op.Operation, egress, ingress int64)
-}
-
 // IntegrityConfigLoader reads the hot-reloadable integrity settings that gate
 // a scrub. Satisfied by the *syncutil.AtomicConfig[config.IntegrityConfig]
 // the composition root builds, so the operations layer reads the same value
@@ -135,6 +112,12 @@ type IntegrityConfigLoader interface {
 type RuntimeOps interface {
 	GetBackend(name string) (s3be.ObjectBackend, error)
 	UpdateQuotaMetrics(ctx context.Context) error
+}
+
+// Mover moves one copy through the placement step, which is how a bulk rewrite
+// replaces a copy with its reformed bytes. *writepath.Coordinator satisfies it.
+type Mover interface {
+	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 }
 
 // ReplicatorOps is the slice of *worker.Replicator the replication operations
@@ -196,9 +179,9 @@ type AdvisoryLocker interface {
 // Compile-time assertions.
 var (
 	_ ObjectAPI             = (*object.Manager)(nil)
-	_ UsageGate             = (*counter.UsageTracker)(nil)
 	_ IntegrityConfigLoader = (*syncutil.AtomicConfig[config.IntegrityConfig])(nil)
 	_ RuntimeOps            = (*infra.BackendRuntime)(nil)
+	_ Mover                 = (*writepath.Coordinator)(nil)
 	_ ReplicatorOps         = (*worker.Replicator)(nil)
 	_ RebalancerOps         = (*worker.Rebalancer)(nil)
 	_ OverReplicationOps    = (*worker.OverReplicationCleaner)(nil)

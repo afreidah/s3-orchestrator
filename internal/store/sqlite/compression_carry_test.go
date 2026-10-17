@@ -385,10 +385,23 @@ func TestListCopiesByForm_CandidatesPageByCursor(t *testing.T) {
 	}
 }
 
-// TestMarkObjectCompressed_MovesQuota pins the half that is easy to get wrong:
-// a rewrite changes how many bytes the copy occupies, and the backend counter
+// rewriteForm places the copy of key on backend-a back onto backend-a with
+// form and size, the way a compression pass records the bytes it rewrote.
+func rewriteForm(t *testing.T, s *Store, key string, form *core.StoredForm, size int64) {
+	t.Helper()
+	src := storetest.LocationOn(t, s, key, "backend-a")
+	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source: src, Target: "backend-a", StorageKey: src.StorageKey + "!rw",
+		RemoveSource: true, Form: form, Size: size,
+	}); err != nil {
+		t.Fatalf("PlaceCopy(%s): %v", key, err)
+	}
+}
+
+// TestCompressInPlace_MovesQuota pins the half that is easy to get wrong: a
+// rewrite changes how many bytes the copy occupies, and the backend counter
 // has to follow it or quota drifts by the compression ratio on every object.
-func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
+func TestCompressInPlace_MovesQuota(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -404,18 +417,9 @@ func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
 		t.Fatalf("GetQuotaStats: %v", err)
 	}
 
-	update := &core.CompressedUpdate{
-		ObjectKey:     "bucket/shrinking",
-		BackendName:   "backend-a",
-		Algorithm:     "zstd",
-		Level:         "default",
-		FormatVersion: 1,
-		SizeBytes:     250,
-		LogicalSize:   1000,
-	}
-	if err := s.MarkObjectCompressed(ctx, update, 1000); err != nil {
-		t.Fatalf("MarkObjectCompressed: %v", err)
-	}
+	rewriteForm(t, s, "bucket/shrinking", &core.StoredForm{
+		CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 1000,
+	}, 250)
 
 	loc := storetest.LocationOn(t, s, "bucket/shrinking", "backend-a")
 	if loc.SizeBytes != 250 {
@@ -434,10 +438,10 @@ func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
 	}
 }
 
-// TestMarkObjectCompressed_ClearsOnDecompress checks the reverse update: the
-// row stops claiming an encoding, so nothing downstream tries to decode bytes
-// that are no longer encoded.
-func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
+// TestDecompressInPlace_ClearsTheEncoding checks the reverse rewrite: the row
+// stops claiming an encoding, so nothing downstream tries to decode bytes that
+// are no longer encoded.
+func TestDecompressInPlace_ClearsTheEncoding(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -446,14 +450,7 @@ func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	update := &core.CompressedUpdate{
-		ObjectKey:   "bucket/expanding",
-		BackendName: "backend-a",
-		SizeBytes:   1000,
-	}
-	if err := s.MarkObjectCompressed(ctx, update, 250); err != nil {
-		t.Fatalf("MarkObjectCompressed: %v", err)
-	}
+	rewriteForm(t, s, "bucket/expanding", &core.StoredForm{}, 1000)
 
 	loc := storetest.LocationOn(t, s, "bucket/expanding", "backend-a")
 	if loc.CompressionAlgorithm != "" {

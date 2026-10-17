@@ -125,9 +125,3 @@ func CallsNamed(names []string) BackendCalls {
 	}
 	return calls
 }
-
-// CallFor returns the bit for the backend call op names, and false for an
-// operation no breaker guards.
-func CallFor(op s3op.Operation) (BackendCalls, bool) {
-	return backendCallNames.Lookup(op.String())
-}

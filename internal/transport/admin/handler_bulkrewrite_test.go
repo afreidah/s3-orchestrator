@@ -55,11 +55,6 @@ func (emptyCompressionStore) UpdateCopyMetadata(context.Context, *core.ObjectLoc
 	return nil
 }
 
-// MarkObjectCompressed is never reached with no rows to rewrite.
-func (emptyCompressionStore) MarkObjectCompressed(context.Context, *core.CompressedUpdate, int64) error {
-	return nil
-}
-
 // postBulkRewrite drives one endpoint and returns the recorder.
 func postBulkRewrite(t *testing.T, h *Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()

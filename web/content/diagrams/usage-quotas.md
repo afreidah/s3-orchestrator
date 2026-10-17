@@ -230,7 +230,7 @@ A charge lands in the counter backend first - local atomics, or Redis when it is
     RECORD: {
       title: 'Record the Charge',
       badge: 'process', badgeText: 'accounting',
-      body: '<p>One charge updates both views: <code>+1</code> on the backend\'s request total, and <code>+1</code> on every pool the operation belongs to. A rewrite pass that reads and writes one object charges a read pool and a write pool, not two of whichever pool a scalar count would have landed in.</p><p>Bytes are added on the same call: egress for a successful GET-like operation, ingress for a PUT-like one.</p><p>Because pools overlap, their counts do not sum to the request total and must never be presented as if they did.</p>'
+      body: '<p>One charge updates both views: <code>+1</code> on the backend\'s request total, and <code>+1</code> on every pool the operation belongs to. A rewrite pass that reads and writes one object charges a read pool and a write pool, not two of whichever pool a scalar count would have landed in.</p><p>Bytes are added on the same call: egress for a successful GET-like operation, ingress for a PUT-like one.</p><p>A backend-to-backend copy (replication, rebalance, drain, a rewrite pass) is admitted against both backends on the copy\'s expected size and charged inside the copy itself: the read at the bytes the source served, the write at the bytes the destination received. A rewrite that changes an object\'s size is therefore charged the new size on the write. A leg that fails is charged its API call and no bytes.</p><p>Because pools overlap, their counts do not sum to the request total and must never be presented as if they did.</p>'
     },
     COUNTER: {
       title: 'Counter Backend',

@@ -19,7 +19,7 @@ cleanup_queue:
 
 `multipart_stale_timeout` is consumed by the hourly `CleanupStaleMultipartUploads` sweep - uploads that have been open longer than this are aborted, their parts deleted from the backend, and the multipart rows removed. The default 24h matches the AWS S3 SDK's default abort behavior; lower it on backends with tight free-tier headroom to recover quota faster.
 
-When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
+When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, drainer, replicator, the bulk rewrite passes), the failed deletion is automatically enqueued for retry.
 
 Each enqueued item names the path to delete in `storage_key`, the path of the one write's bytes it is for, so a retry can never reach another write's copy of the same key. `object_key` rides along so an operator can tell which object an orphan belonged to.
 

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
@@ -103,6 +104,7 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
 	f.ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	placeThroughStore(f.pl, store)
 
 	f.pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ int64, exclude map[string]bool) []string {
@@ -126,16 +128,16 @@ func (f *replicaFleet) replicator() *Replicator {
 // backend that dies partway through the transfer, and expects each failed
 // attempt to clean up the path it was writing.
 func (f *replicaFleet) copyFails(key string) {
-	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), key, gomock.Any(), gomock.Any()).
+	f.ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: key}).
 		Return(int64(0), errors.New("stream copy: connection reset")).AnyTimes()
 	f.pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.ObjectKey == key && c.Reason == "replication_orphan"
+		return c.ObjectKey == key && c.Reason == writepath.ReplicationOrphanReasons.Orphan
 	})).MinTimes(1)
 }
 
 // copySucceeds lets every remaining copy through.
 func (f *replicaFleet) copySucceeds() {
-	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any()).
 		Return(int64(100), nil).AnyTimes()
 }
 

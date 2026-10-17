@@ -238,7 +238,8 @@ s3-orchestrator admin remove-backend <backend-name> --purge
 # Remove a backend AND delete its S3 objects (requires --confirm)
 s3-orchestrator admin remove-backend <backend-name> --purge --confirm
 
-# Encrypt all unencrypted objects in-place (requires encryption enabled)
+# Encrypt all unencrypted objects, each copy rewritten to a new path on its
+# own backend (requires encryption enabled)
 s3-orchestrator admin encrypt-existing
 
 # Decrypt all encrypted objects back to plaintext (requires encryption enabled for key access)
@@ -257,7 +258,8 @@ s3-orchestrator admin compress-existing -max=1000
 # against a single provider's read cost
 s3-orchestrator admin compress-existing -backend wasabi-eu
 
-# Rewrite every compressed object back to the bytes the client wrote
+# Rewrite every compressed object without its encoding; an encrypted copy
+# stays encrypted
 s3-orchestrator admin decompress-existing
 
 # Trigger an on-demand integrity scrub cycle (verify stored hashes)
@@ -273,8 +275,9 @@ s3-orchestrator admin scrub -key photos/2024/beach.jpg
 s3-orchestrator admin scrub -backend wasabi-eu
 
 # Compute and store content hashes for all unhashed objects. A copy that can
-# never be decoded (its row and bytes disagree about encryption, or it is
-# compressed with no codec configured) is skipped and counted as unreadable.
+# never be decoded (its row and bytes disagree about encryption, it is
+# compressed with no codec configured, or it is encrypted with no encryptor
+# configured) is skipped and counted as unreadable.
 s3-orchestrator admin backfill-checksums
 
 # Hash only the copies on one backend, which is what a restored backend needs

@@ -51,6 +51,7 @@ func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator
 	// A recorded replica inserts cleanly unless a test says otherwise, so
 	// "was it recorded" is a question about verification and not about races.
 	ms.placeCopySize = int64(len(verifyOnBody))
+	placeThroughStore(pl, ms)
 
 	r := newTestReplicator(ops, pl, ms)
 	r.SetIntegrityConfig(cfg)
@@ -355,7 +356,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, target: dstBe})
 	ops.EXPECT().GetBackend(target).Return(dstBe, nil).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
+	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
 		Return(int64(0), nil)
 	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(readBack)),
@@ -402,9 +403,9 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 	// it comes and pin only that the read-back addresses the path the copy was
 	// written to rather than the object's key.
 	var wrote string
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ backend.CopyEndpoint, _, dstKey string, _ int64) (int64, error) {
-			wrote = dstKey
+	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
+		DoAndReturn(func(_ context.Context, req *backend.CopyRequest) (int64, error) {
+			wrote = req.DstKey
 			return 0, nil
 		})
 	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Cond(func(key string) bool { return key == wrote }), "").
@@ -448,7 +449,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	srcBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
+	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
 		Return(int64(0), nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})

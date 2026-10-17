@@ -67,11 +67,11 @@ type KeyedExistingCopy struct {
 
 // ObjectsTxAdapter exposes the transactional operations on the object_locations
 // table. The ForUpdate reads lock their rows so the same transaction can delete
-// them and move the quota. The stored-form writes touch only the row; the
-// caller makes the matching quota adjustment in the same transaction.
-// InsertObjectLocation writes every column loc carries and stamps the current
-// time only when loc has no CreatedAt. BackendAdmits judges a write of size
-// bytes against backend_capacity, the view every admission test reads.
+// them and move the quota. InsertObjectLocation writes every column loc carries
+// and stamps the current time only when loc has no CreatedAt. BackendAdmits
+// judges a write of size bytes against backend_capacity, the view every
+// admission test reads, accepting a backend whose flags all fall within
+// accepts.
 // UpdateCopyMetadata writes a patch to the copy loc names and returns
 // ErrCopyChanged when no row has its storage key.
 // ListedPathStates reports, for paths a backend listed, which hold a recorded
@@ -88,15 +88,10 @@ type ObjectsTxAdapter interface {
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)           // untracked paths are absent
 	LockObjectOnBackend(ctx context.Context, objectKey, backend string) (loc *ObjectLocation, ok bool, err error) // ok=false: row gone, a benign race
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
-	GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error)
-	BackendAdmits(ctx context.Context, backendName string, size int64) (bool, error)
+	BackendAdmits(ctx context.Context, backendName string, size int64, accepts BackendFlags) (bool, error)
 
 	UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error) // import-side, preserves an existing row
-
-	UpdateCompressedForm(ctx context.Context, u *CompressedUpdate) error
-	MarkCopyEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	MarkCopyDecrypted(ctx context.Context, u *DecryptedUpdate) error
 }
 
 // -------------------------------------------------------------------------

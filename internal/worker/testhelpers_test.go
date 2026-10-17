@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -137,6 +138,27 @@ func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator
 	return NewReplicator(ReplicatorDeps{Ops: ops, Placement: pl, Store: store})
 }
 
+// placedCopy is one recorded PlaceOrCleanup call: the backend handed for the
+// cleanup, the bytes the caller wrote, and the cleanup reasons it chose.
+type placedCopy struct {
+	dest    backend.ObjectBackend
+	written int64
+	reasons writepath.OrphanReasons
+}
+
+// placeThroughStore has pl's PlaceOrCleanup record its placement on ms, the way
+// the coordinator places through the store, and answer with ms's configured
+// size or error. The returned slice pointer collects every call.
+func placeThroughStore(pl *MockPlacement, ms *mockMetadataStore) *[]placedCopy {
+	calls := &[]placedCopy{}
+	pl.EXPECT().PlaceOrCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons writepath.OrphanReasons) (int64, error) {
+			*calls = append(*calls, placedCopy{dest: dest, written: written, reasons: reasons})
+			return ms.PlaceCopy(ctx, p)
+		}).AnyTimes()
+	return calls
+}
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -163,7 +185,6 @@ type mockMetadataStore struct {
 	core.UsageFlusher
 	core.AdvisoryLocker
 	core.LifecycleAdmin
-	core.EncryptionAdmin
 	core.NotificationOutbox
 	pendingCleanups     []core.CleanupItem
 	completedIDs        []int64

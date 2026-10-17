@@ -116,7 +116,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		EncStore:     store,
 		Locker:       store,
 		Runtime:      st.Runtime,
-		Usage:        st.Runtime.Usage(),
+		Mover:        st.Coord,
 		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,

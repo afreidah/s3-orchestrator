@@ -144,7 +144,7 @@ func TestAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 func TestAdapterErr_BackendAdmits(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1); err == nil {
+	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1, core.AcceptForWrite); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

@@ -3,11 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// A placement records bytes copied verbatim from a source copy, so it commits
-// only while that source is still the copy the caller read, the target holds
-// no copy and admits the bytes. The destination row repeats every column of
-// the source, including the write time and the compression probe, and a move
-// removes the source row in the same transaction.
+// A placement records bytes copied from a source copy, so it commits only
+// while that source is still the copy the caller read, the target holds no
+// other copy and admits the bytes. A verbatim copy repeats every column of the
+// source, including the write time and the compression probe; a transformed
+// one carries its new form and size. A move removes the source row in the same
+// transaction, and a rewrite moves the copy onto its own backend.
 // -------------------------------------------------------------------------------
 
 package core
@@ -15,6 +16,8 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -24,15 +27,25 @@ import (
 // -------------------------------------------------------------------------
 
 // placeTxStub serves one locked source row and records what the placement
-// writes.
+// writes, the admission it asked for, and the order of its row writes.
 type placeTxStub struct {
 	*quotaTxStub
 	existing  []ExistingCopy
 	src       *ObjectLocation
 	refuses   bool
+	admitErr  error
 	insertErr error
 	inserted  []*ObjectLocation
 	deleted   []string
+	admits    []admitCall
+	steps     []string
+}
+
+// admitCall is one recorded BackendAdmits question.
+type admitCall struct {
+	backend string
+	size    int64
+	accepts BackendFlags
 }
 
 // newPlaceStub builds a stub holding src as the only copy, recorded at the
@@ -59,9 +72,11 @@ func (s *placeTxStub) LockObjectOnBackend(context.Context, string, string) (*Obj
 	return s.src, s.src != nil, nil
 }
 
-// BackendAdmits refuses every write when the stub is set to.
-func (s *placeTxStub) BackendAdmits(context.Context, string, int64) (bool, error) {
-	return !s.refuses, nil
+// BackendAdmits records the question and refuses every write when the stub is
+// set to.
+func (s *placeTxStub) BackendAdmits(_ context.Context, backend string, size int64, accepts BackendFlags) (bool, error) {
+	s.admits = append(s.admits, admitCall{backend: backend, size: size, accepts: accepts})
+	return !s.refuses, s.admitErr
 }
 
 // InsertObjectLocation records the destination row, or fails the placement.
@@ -70,12 +85,14 @@ func (s *placeTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocatio
 		return s.insertErr
 	}
 	s.inserted = append(s.inserted, loc)
+	s.steps = append(s.steps, "insert "+loc.BackendName)
 	return nil
 }
 
 // DeleteObjectFromBackend records the backend the copy left.
 func (s *placeTxStub) DeleteObjectFromBackend(_ context.Context, _, backend string) error {
 	s.deleted = append(s.deleted, backend)
+	s.steps = append(s.steps, "delete "+backend)
 	return nil
 }
 
@@ -140,7 +157,7 @@ func TestPlaceCopy_ReplicaCarriesEveryColumn(t *testing.T) {
 	if got.BackendName != want.BackendName || got.StorageKey != want.StorageKey ||
 		!got.CreatedAt.Equal(want.CreatedAt) || got.KeyID != want.KeyID ||
 		got.ContentHash != want.ContentHash || got.CompressionProbeSize != want.CompressionProbeSize ||
-		got.RecordedETag() != "etag" {
+		!reflect.DeepEqual(got.Identity, &ObjectIdentity{ETag: "etag"}) {
 		t.Errorf("inserted %+v, want the source at b2/k!dest", got)
 	}
 	if len(stub.deleted) != 0 {
@@ -148,6 +165,9 @@ func TestPlaceCopy_ReplicaCarriesEveryColumn(t *testing.T) {
 	}
 	if len(stub.ops) != 1 || stub.ops[0] != (quotaOp{backend: "b2", delta: 4096}) {
 		t.Errorf("quota ops = %v, want b2 +4096 only", stub.ops)
+	}
+	if want := []admitCall{{backend: "b2", size: 4096, accepts: AcceptForWrite}}; !slices.Equal(stub.admits, want) {
+		t.Errorf("admits = %+v, want %+v", stub.admits, want)
 	}
 }
 
@@ -221,10 +241,10 @@ func TestPlaceCopy_TargetRefuses(t *testing.T) {
 	}
 }
 
-// TestPlaceCopy_InsertFailureAbortsBeforeTheSourceGoes verifies a failed
-// insert surfaces and leaves the source row and the quotas untouched, so the
-// transaction rolls back with nothing half-moved.
-func TestPlaceCopy_InsertFailureAbortsBeforeTheSourceGoes(t *testing.T) {
+// TestPlaceCopy_InsertFailureChargesNothing verifies a failed insert surfaces
+// before any quota moves, so the transaction rolls back the source delete with
+// nothing charged.
+func TestPlaceCopy_InsertFailureChargesNothing(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("insert failed")
 	stub := newPlaceStub(placedSource())
@@ -233,8 +253,183 @@ func TestPlaceCopy_InsertFailureAbortsBeforeTheSourceGoes(t *testing.T) {
 	if _, err := runPlace(stub, true); !errors.Is(err, sentinel) {
 		t.Fatalf("error = %v, want the insert failure", err)
 	}
-	if len(stub.deleted) != 0 || len(stub.ops) != 0 {
-		t.Errorf("stub mutated: deleted=%v ops=%v", stub.deleted, stub.ops)
+	if len(stub.ops) != 0 {
+		t.Errorf("quota ops = %v, want none", stub.ops)
+	}
+}
+
+// TestPlaceCopy_AdmissionErrorSurfaces verifies a failed admission read
+// surfaces as itself, not as a refusal, and writes nothing.
+func TestPlaceCopy_AdmissionErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("capacity read failed")
+	stub := newPlaceStub(placedSource())
+	stub.admitErr = sentinel
+
+	if _, err := runPlace(stub, true); !errors.Is(err, sentinel) {
+		t.Fatalf("error = %v, want the admission failure", err)
+	}
+	if len(stub.steps) != 0 || len(stub.ops) != 0 {
+		t.Errorf("stub mutated: steps=%v ops=%v", stub.steps, stub.ops)
+	}
+}
+
+// rewrittenForm is the compressed and encrypted form a rewrite pass places,
+// with a hash of its own so a test can see the source's hash win.
+func rewrittenForm() *StoredForm {
+	return &StoredForm{
+		Encrypted:                true,
+		EncryptionKey:            []byte("new-dek"),
+		KeyID:                    "config-1",
+		PlaintextSize:            1500,
+		ContentHash:              "ignored",
+		CompressionAlgorithm:     "zstd",
+		CompressionLevel:         "default",
+		CompressionFormatVersion: 1,
+		LogicalSize:              4000,
+	}
+}
+
+// runRewrite places the stub's source back on its own backend at k!new with
+// form and size.
+func runRewrite(stub *placeTxStub, form *StoredForm, size int64, move bool) (int64, error) {
+	read := *stub.src
+	return PlaceCopy(context.Background(), &stubRunner{tx: stub}, &Placement{
+		Source:       &read,
+		Target:       read.BackendName,
+		StorageKey:   "k!new",
+		RemoveSource: move,
+		Form:         form,
+		Size:         size,
+	})
+}
+
+// TestPlaceCopy_InPlaceRewriteReplacesTheForm verifies a rewrite on the
+// source's own backend deletes the read row before inserting the new one,
+// which carries the new form and size, keeps the source's hash and write
+// time, and drops the compression probe.
+func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
+	t.Parallel()
+	stub := newPlaceStub(placedSource())
+
+	placed, err := runRewrite(stub, rewrittenForm(), 1600, true)
+	if err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	if placed != 1600 {
+		t.Errorf("placed %d bytes, want 1600", placed)
+	}
+	if want := []string{"delete b1", "insert b1"}; !slices.Equal(stub.steps, want) {
+		t.Fatalf("steps = %v, want %v", stub.steps, want)
+	}
+	got := stub.inserted[0]
+	wantForm := *rewrittenForm()
+	wantForm.ContentHash = "abc"
+	if !reflect.DeepEqual(got.StoredForm, wantForm) {
+		t.Errorf("form = %+v, want %+v", got.StoredForm, wantForm)
+	}
+	if got.StorageKey != "k!new" || got.SizeBytes != 1600 || !got.CreatedAt.Equal(stub.src.CreatedAt) {
+		t.Errorf("inserted %+v, want b1/k!new at 1600 bytes and the source write time", got)
+	}
+	if got.CompressionProbeSize != 0 || got.CompressionProbeLevel != "" {
+		t.Errorf("probe = %d/%q, want cleared", got.CompressionProbeSize, got.CompressionProbeLevel)
+	}
+	if !reflect.DeepEqual(got.Identity, stub.src.Identity) {
+		t.Errorf("identity = %+v, want the source's", got.Identity)
+	}
+	net := map[string]int64{}
+	for _, op := range stub.ops {
+		net[op.backend] += op.delta
+	}
+	if len(net) != 1 || net["b1"] != 1600-4096 {
+		t.Errorf("quota deltas = %v, want b1 moved by %d", net, 1600-4096)
+	}
+}
+
+// TestPlaceCopy_InPlaceAdmitsOnlyTheGrowth verifies a rewrite asks the backend
+// for the bytes it adds, nothing for one that shrinks, and accepts a cordoned
+// backend, while a move to another backend asks for every byte in full
+// service.
+func TestPlaceCopy_InPlaceAdmitsOnlyTheGrowth(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		size int64
+		want admitCall
+	}{
+		{"grows", 5000, admitCall{backend: "b1", size: 5000 - 4096, accepts: AcceptForRewrite}},
+		{"shrinks", 1000, admitCall{backend: "b1", size: 0, accepts: AcceptForRewrite}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stub := newPlaceStub(placedSource())
+			if _, err := runRewrite(stub, rewrittenForm(), tc.size, true); err != nil {
+				t.Fatalf("PlaceCopy: %v", err)
+			}
+			if !slices.Equal(stub.admits, []admitCall{tc.want}) {
+				t.Errorf("admits = %+v, want %+v", stub.admits, tc.want)
+			}
+		})
+	}
+
+	t.Run("refused growth records nothing", func(t *testing.T) {
+		t.Parallel()
+		stub := newPlaceStub(placedSource())
+		stub.refuses = true
+		if _, err := runRewrite(stub, rewrittenForm(), 5000, true); !errors.Is(err, ErrTargetRefused) {
+			t.Fatalf("error = %v, want ErrTargetRefused", err)
+		}
+		if len(stub.steps) != 0 || len(stub.ops) != 0 {
+			t.Errorf("stub mutated: steps=%v ops=%v", stub.steps, stub.ops)
+		}
+	})
+}
+
+// TestPlaceCopy_InPlaceWithoutRemoveIsRefused verifies a placement onto the
+// source's own backend that keeps the source is refused before the key is
+// even locked, since a key holds one copy per backend.
+func TestPlaceCopy_InPlaceWithoutRemoveIsRefused(t *testing.T) {
+	t.Parallel()
+	stub := newPlaceStub(placedSource())
+	stub.keyLockErr = errors.New("must not lock")
+
+	if _, err := runRewrite(stub, rewrittenForm(), 1600, false); !errors.Is(err, ErrTargetRefused) {
+		t.Fatalf("error = %v, want ErrTargetRefused", err)
+	}
+	if len(stub.steps) != 0 || len(stub.admits) != 0 {
+		t.Errorf("stub touched: steps=%v admits=%v", stub.steps, stub.admits)
+	}
+}
+
+// TestPlaceCopy_FormOnAnotherBackend verifies a transformed copy placed on a
+// different backend is still refused when that backend holds a copy, and
+// otherwise carries the new form at its full size.
+func TestPlaceCopy_FormOnAnotherBackend(t *testing.T) {
+	t.Parallel()
+	place := func(stub *placeTxStub) (int64, error) {
+		read := *stub.src
+		return PlaceCopy(context.Background(), &stubRunner{tx: stub}, &Placement{
+			Source: &read, Target: "b2", StorageKey: "k!dest", RemoveSource: true,
+			Form: rewrittenForm(), Size: 1600,
+		})
+	}
+
+	holds := newPlaceStub(placedSource())
+	holds.existing = append(holds.existing, ExistingCopy{BackendName: "b2", StorageKey: "k!other", SizeBytes: 4096})
+	if _, err := place(holds); !errors.Is(err, ErrTargetRefused) {
+		t.Fatalf("error = %v, want ErrTargetRefused", err)
+	}
+
+	stub := newPlaceStub(placedSource())
+	if _, err := place(stub); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	if want := []admitCall{{backend: "b2", size: 1600, accepts: AcceptForWrite}}; !slices.Equal(stub.admits, want) {
+		t.Errorf("admits = %+v, want %+v", stub.admits, want)
+	}
+	if got := stub.inserted[0]; got.SizeBytes != 1600 || got.KeyID != "config-1" {
+		t.Errorf("inserted %+v, want the new form at 1600 bytes", got)
 	}
 }
 

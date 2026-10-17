@@ -60,12 +60,3 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 
 	return tx.Commit(ctx)
 }
-
-// -------------------------------------------------------------------------
-// STORED-FORM REWRITES
-//
-// MarkObjectEncrypted, MarkObjectDecrypted and MarkObjectCompressed are
-// promoted operations: their whole body is a core transaction over the
-// TxAdapter, so they live in core.TxOps and this engine contributes only the
-// statements behind it.
-// -------------------------------------------------------------------------

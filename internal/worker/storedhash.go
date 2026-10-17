@@ -29,17 +29,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// errNoCodec reports a compressed copy this orchestrator cannot decode, which
-// is a copy it cannot judge. It surfaces as an unreadable copy rather than a
-// failed one, because treating "cannot read" as "corrupt" deletes objects that
-// were never damaged.
-var errNoCodec = errors.New("object is compressed but no codec is configured")
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -48,17 +39,18 @@ var errNoCodec = errors.New("object is compressed but no codec is configured")
 // storedHasher turns a stored copy back into the plaintext the client wrote and
 // hashes it. Encryptor and Codec are optional and are what the stored form has
 // to be undone through; a copy recorded as encrypted or compressed cannot be
-// hashed without the matching one.
+// hashed without the matching one, and surfaces as unreadable rather than
+// corrupt.
 type storedHasher struct {
 	ops       Ops
 	encryptor *encryption.Encryptor
-	codec     StreamDecompressor
+	codec     storedform.Decompressor
 	source    string
 }
 
 // newStoredHasher builds a hasher that attributes its metrics to source, which
 // names the caller in the encryption-flag-mismatch counter.
-func newStoredHasher(ops Ops, enc *encryption.Encryptor, codec StreamDecompressor, source string) *storedHasher {
+func newStoredHasher(ops Ops, enc *encryption.Encryptor, codec storedform.Decompressor, source string) *storedHasher {
 	return &storedHasher{ops: ops, encryptor: enc, codec: codec, source: source}
 }
 
@@ -104,22 +96,15 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 
 	h.ops.Acct().Egress(s3op.GetObject, loc.BackendName, result.Size)
 
-	// Check the stored bytes against what the row claims before hashing.
+	// Opening checks the stored bytes against what the row claims first.
 	// Hashing an envelope as if it were plaintext writes a ciphertext digest
 	// into content_hash, which makes the mismatch look verified forever and
 	// turns any later repair of the flag into a false integrity failure.
-	isEnvelope, body, err := encryption.PeekEnvelope(result.Body)
+	reader, closeDecoded, err := storedform.Open(ctx, h.encryptor, h.codec, result.Body, &loc.StoredForm)
 	if err != nil {
-		return storedDigests{}, fmt.Errorf("inspect object header: %w", err)
-	}
-	if isEnvelope != loc.Encrypted {
-		telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
-		return storedDigests{}, fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
-			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
-	}
-
-	reader, closeDecoded, err := h.decode(ctx, body, loc)
-	if err != nil {
+		if errors.Is(err, core.ErrEncryptionFlagMismatch) {
+			telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
+		}
 		return storedDigests{}, err
 	}
 	defer closeDecoded()
@@ -130,39 +115,4 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 		return storedDigests{}, fmt.Errorf("read body: %w", err)
 	}
 	return storedDigests{SHA256: hex.EncodeToString(hasher.Sum(nil)), MD5: etag.Hex(etagHasher)}, nil
-}
-
-// decode undoes the stored form in the order it was applied, so the hash covers
-// the bytes the client wrote: decrypt, then decompress. Hashing either layer as
-// if it were plaintext writes a digest of the wrong bytes into content_hash,
-// which every later verification then reads as corruption. The returned closer
-// is always safe to call.
-func (h *storedHasher) decode(ctx context.Context, body io.Reader, loc *core.ObjectLocation) (io.Reader, func(), error) {
-	noop := func() {
-		// Nothing to close on the paths that wrap no decoder.
-	}
-
-	reader := body
-	if loc.Encrypted && h.encryptor != nil {
-		decrypted, _, err := h.encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
-		if err != nil {
-			return nil, noop, fmt.Errorf("decrypt: %w", err)
-		}
-		reader = decrypted
-	}
-
-	if !loc.Form().Has(core.StoredCompressed) {
-		return reader, noop, nil
-	}
-	if h.codec == nil {
-		return nil, noop, errNoCodec
-	}
-	// Decoded front to back rather than through the seek table: the whole
-	// object is read anyway, and a streaming decode avoids buffering it
-	// locally just to have something seekable.
-	decoded, err := h.codec.DecompressStream(reader)
-	if err != nil {
-		return nil, noop, fmt.Errorf("decompress: %w", err)
-	}
-	return decoded, func() { _ = decoded.Close() }, nil
 }

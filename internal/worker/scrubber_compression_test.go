@@ -180,7 +180,8 @@ func TestScrub_CompressedWithoutCodecDoesNotJudge(t *testing.T) {
 // decode without hand-building a corrupt object.
 type failingDecoder struct{ err error }
 
-// DecompressStream implements StreamDecompressor.
+// DecompressStream implements storedform.Decompressor by refusing every
+// stream with the configured error.
 func (f failingDecoder) DecompressStream(_ io.Reader) (io.ReadCloser, error) { return nil, f.err }
 
 // TestScrub_UndecodableCopyIsNotCorrupt checks that bytes the codec rejects are

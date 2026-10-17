@@ -36,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -77,7 +78,7 @@ type ScrubberDeps struct {
 	Placement Placement
 	Store     ScrubberStore
 	Encryptor *encryption.Encryptor
-	Codec     StreamDecompressor
+	Codec     storedform.Decompressor
 }
 
 // NewScrubber creates a Scrubber with the given dependencies.
@@ -551,7 +552,8 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 // undecodable reports whether a hashing error is permanent rather than an outage
 // that clears on its own.
 func undecodable(err error) bool {
-	return errors.Is(err, core.ErrEncryptionFlagMismatch) || errors.Is(err, errNoCodec)
+	return errors.Is(err, core.ErrEncryptionFlagMismatch) ||
+		errors.Is(err, storedform.ErrNoCodec) || errors.Is(err, storedform.ErrNoEncryptor)
 }
 
 // recordETag gives an object with no recorded ETag the one this pass just

@@ -32,8 +32,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -71,7 +71,7 @@ type ReplicatorDeps struct {
 	Placement Placement
 	Store     ReplicatorStore
 	Encryptor *encryption.Encryptor
-	Codec     StreamDecompressor
+	Codec     storedform.Decompressor
 }
 
 // NewReplicator creates a Replicator with the given dependencies.
@@ -339,27 +339,28 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			continue
 		}
 
-		recordedSize, err := r.store.PlaceCopy(ctx, &core.Placement{
+		// A placement that records nothing has the replica's bytes removed by
+		// PlaceOrCleanup, so each failure only has to be tallied here. The
+		// target resolved for the copy, so it is registered.
+		targetBackend := r.ops.Backends()[target]
+		recordedSize, err := r.placement.PlaceOrCleanup(ctx, &core.Placement{
 			Source:     sourceLoc,
 			Target:     target,
 			StorageKey: targetStorageKey,
-		})
+		}, targetBackend, transferredSize, writepath.ReplicationOrphanReasons)
 		switch {
 		case core.PlacementDeclined(err):
 			// The source copy was deleted or overwritten during replication,
 			// or the target filled up or took a copy while the bytes were in
-			// flight. Either way no row was written, so the copy on the backend
-			// is an orphan and this target is out of the running.
-			r.log.InfoContext(ctx, "replica not recorded, cleaning up orphan",
+			// flight, so this target is out of the running.
+			r.log.InfoContext(ctx, "replica not recorded, cleaned up orphan",
 				"key", key, "target", target, "reason", err)
-			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
 			exclusion[target] = true
 			out.Superseded++
 			continue
 		case err != nil:
 			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
-			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			out.RecordErrors++
@@ -367,19 +368,12 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		}
 
 		// Surface the rare race where the source row's size_bytes shifted
-		// between GetUnderReplicatedObjects and the placement.
-		// recordedSize is authoritative for accounting; the operator
-		// sees the discrepancy in case it indicates a deeper bug.
+		// between GetUnderReplicatedObjects and the placement, in case it
+		// indicates a deeper bug.
 		if recordedSize != transferredSize {
 			r.log.WarnContext(ctx, "source size shifted mid-replication",
 				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
 		}
-
-		// Charged at the size the metadata commit settled on, not the size
-		// that crossed the wire. StreamCopy admitted the transfer against
-		// both backends' limits; it does not account for it.
-		r.ops.Acct().Egress(s3op.GetObject, source, recordedSize)
-		r.ops.Acct().Ingress(s3op.PutObject, target, recordedSize)
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),
@@ -503,13 +497,16 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 	if !ok {
 		return nil, false, nil
 	}
-	src := backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend}
-	dst := backend.CopyEndpoint{Name: target, Backend: targetBackend}
 	// StreamCopy tags a usage-limit refusal with the leg that had no headroom,
 	// so a source out of egress falls through to the next candidate and a
 	// full destination is terminal, as with an I/O failure.
-	_, err := r.ops.StreamCopy(ctx, src, dst,
-		core.StoragePath(key, loc.StorageKey), targetStorageKey, loc.SizeBytes)
+	_, err := r.ops.StreamCopy(ctx, &backend.CopyRequest{
+		Src:          backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend},
+		Dst:          backend.CopyEndpoint{Name: target, Backend: targetBackend},
+		SrcKey:       core.StoragePath(key, loc.StorageKey),
+		DstKey:       targetStorageKey,
+		SizeEstimate: loc.SizeBytes,
+	})
 	if err == nil {
 		return loc, true, nil
 	}
@@ -557,7 +554,7 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storag
 		BackendName: backendName,
 		ObjectKey:   key,
 		StorageKey:  storageKey,
-		Reason:      "replication_orphan",
+		Reason:      writepath.ReplicationOrphanReasons.Orphan,
 		SizeBytes:   sizeBytes,
 	})
 }

@@ -139,7 +139,7 @@ func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, o
 		Encryptor: enc,
 		Store:     store,
 		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+		Mover:     &fakeMover{},
 	})
 	res, err := svc.RotateKey(context.Background(), oldKeyID)
 	if err != nil {

@@ -128,7 +128,7 @@ Breakers open and close by themselves, so a degraded or down backend needs no ac
 
 ### Cordoning a backend
 
-Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads already in progress on it can complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled.
+Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads already in progress on it can complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled. The bulk rewrite passes still rewrite its copies, since a rewrite replaces a copy the backend already holds rather than adding one; a draining backend refuses them.
 
 ```bash
 # Stop new copies landing on the backend
@@ -255,13 +255,13 @@ If you enable encryption on an orchestrator that already has unencrypted objects
    s3-orchestrator admin encrypt-existing
    ```
 
-   This processes all unencrypted objects in batches of 100: downloads from the backend, encrypts, re-uploads the ciphertext (overwriting the plaintext), and updates the database record. The response shows progress:
+   This processes all unencrypted copies in batches of 100: downloads each from its backend, encrypts it, and writes the ciphertext to a new path on the same backend. The new row replaces the old one in one transaction, then the plaintext bytes are deleted. The response shows progress:
 
    ```json
-   {"status": "complete", "encrypted": 1423, "failed": 0, "total": 1423}
+   {"status": "complete", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
-3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (labels: `success`, `error`).
+3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (`status` values: `success`, `skipped`, `changed`, `error`). A `changed` copy is one a client wrote mid-pass; the client's write stands. See [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write).
 
 Failed objects are logged individually and can be retried by calling `encrypt-existing` again - it only processes objects without encryption metadata.
 
@@ -275,23 +275,23 @@ To remove encryption from all objects and restore plaintext on backends, use the
    s3-orchestrator admin decrypt-existing
    ```
 
-   This processes all encrypted objects in batches of 100: downloads ciphertext from the backend, decrypts, re-uploads plaintext (overwriting the ciphertext), and clears encryption metadata in the database. Each object costs 2 API calls (one GET, one PUT) plus egress and ingress against the backend's usage quota. The response shows progress:
+   This processes all encrypted copies in batches of 100: downloads the ciphertext from its backend, decrypts it, and writes the plaintext to a new path on the same backend. The new row, with no encryption metadata, replaces the old one in one transaction, then the ciphertext bytes are deleted. A compressed copy keeps its encoding. Each copy costs a GET, a PUT and a DELETE, plus egress and ingress against the backend's usage quota. The response shows progress:
 
    ```json
-   {"status": "complete", "decrypted": 1423, "failed": 0, "total": 1423}
+   {"status": "complete", "decrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
    ```
 
 2. **Disable encryption** in the config and restart the orchestrator.
 
-3. **Monitor** via the `s3o_decrypt_existing_objects_total` metric (labels: `success`, `error`).
+3. **Monitor** via the `s3o_decrypt_existing_objects_total` metric (`status` values: `success`, `skipped`, `changed`, `error`).
 
 Failed objects are logged individually and can be retried by calling `decrypt-existing` again - it only processes objects with encryption metadata.
 
-Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each object is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter advances by the size delta inside the same transaction as the metadata update. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
+Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each copy is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter moves by the size delta inside the transaction that replaces the row. Only that growth is judged against the backend's room. A cordoned backend still admits a rewrite, since it adds no copy; a draining backend refuses it and the copy is skipped. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
 
 ### Compressing existing data
 
-Enabling compression affects new writes only, exactly as enabling encryption does. `s3-orchestrator admin compress-existing` brings what is already stored under it, and `decompress-existing` takes it back out. Both keep quota consistent the same way, moving the counter by the size difference in the same transaction as the row update. Both also take `-max=N` to convert part of a fleet and stop; the next run continues from there without anything being carried between them.
+Enabling compression affects new writes only, exactly as enabling encryption does. `s3-orchestrator admin compress-existing` brings what is already stored under it, and `decompress-existing` takes it back out. Both rewrite each copy the same way, to a new path on its backend, and keep quota consistent by moving the counter by the size difference in the transaction that replaces the row. Both also take `-max=N` to convert part of a fleet and stop; the next run continues from there without anything being carried between them.
 
 Unlike the encryption passes, these decline objects on purpose: anything below `min_size`, and anything the encoder cannot shrink past `min_ratio`, is left alone and counted as skipped. Watch `s3o_compress_existing_objects_total{status="skipped"}` alongside the success count - on media or backup data most of a fleet will be skipped, and that is the pass working. See [Compression](compression.md) for what the thresholds mean.
 

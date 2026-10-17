@@ -85,10 +85,15 @@ func BenchmarkStreamCopy(b *testing.B) {
 
 			b.SetBytes(int64(tc.size))
 			b.ResetTimer()
-			srcEP := backend.CopyEndpoint{Name: "bench-src", Backend: src}
-			dstEP := backend.CopyEndpoint{Name: "bench-dst", Backend: dst}
+			req := &backend.CopyRequest{
+				Src:          backend.CopyEndpoint{Name: "bench-src", Backend: src},
+				Dst:          backend.CopyEndpoint{Name: "bench-dst", Backend: dst},
+				SrcKey:       "bench-key",
+				DstKey:       "bench-key!dst",
+				SizeEstimate: int64(tc.size),
+			}
 			for b.Loop() {
-				_, _ = core.StreamCopy(context.Background(), srcEP, dstEP, "bench-key", "bench-key!dst", int64(tc.size))
+				_, _ = core.StreamCopy(context.Background(), req)
 			}
 		})
 	}

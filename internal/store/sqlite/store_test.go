@@ -215,6 +215,24 @@ func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	}
 }
 
+// mustRecordEncrypted records key on backend as an encrypted copy wrapped
+// under keyID, occupying size bytes for a plaintext of plaintextSize.
+func mustRecordEncrypted(t *testing.T, s *Store, key, backend, keyID string, plaintextSize, size int64) {
+	t.Helper()
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+		Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: size,
+		Form: &core.StoredForm{Encrypted: true, EncryptionKey: []byte("dek"), KeyID: keyID, PlaintextSize: plaintextSize},
+	}); err != nil {
+		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
+	}
+}
+
+// encryptedForm is the form an encryption pass places for a plaintext of
+// plaintextSize wrapped under key-1.
+func encryptedForm(plaintextSize int64) *core.StoredForm {
+	return &core.StoredForm{Encrypted: true, EncryptionKey: []byte("dek"), KeyID: "key-1", PlaintextSize: plaintextSize}
+}
+
 // mustPatchCopy applies p to the copy of key on backend, failing the test on
 // error.
 func mustPatchCopy(t *testing.T, s *Store, key, backend string, p *core.CopyPatch) {
@@ -1874,16 +1892,9 @@ func TestListCopiesByForm_PagesByCursor(t *testing.T) {
 func TestListCopiesByForm_KeyID(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 10)
 	for key, keyID := range map[string]string{"bucket/a": "key-1", "bucket/b": "key-2", "bucket/c": "key-1"} {
-		mustRecordObject(t, s, key, "backend-a", 10)
-		if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-			ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("dek"),
-			KeyID: keyID, PlaintextSize: 10, CiphertextSize: 20,
-		}); err != nil {
-			t.Fatalf("MarkObjectEncrypted(%s): %v", key, err)
-		}
+		mustRecordEncrypted(t, s, key, "backend-a", keyID, 10, 20)
 	}
 
 	page := listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"})
@@ -2236,8 +2247,9 @@ func TestListExpiredObjects_TagFilter(t *testing.T) {
 // ADMIN STORE - ENCRYPTION OPERATIONS
 // -------------------------------------------------------------------------
 
-// TestEncryptionAdmin_MarkAndList verifies marking objects for re-encryption and listing them.
-func TestEncryptionAdmin_MarkAndList(t *testing.T) {
+// TestEncryptionAdmin_RewriteAndList verifies rewriting objects encrypted and
+// back, and listing them by form and key along the way.
+func TestEncryptionAdmin_RewriteAndList(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -2250,13 +2262,8 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 		t.Errorf("expected 1 unencrypted, got %d", len(unenc))
 	}
 
-	// Mark encrypted
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
-		KeyID: "key-1", PlaintextSize: 1024, CiphertextSize: 1100,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	// Encrypt in place
+	rewriteForm(t, s, "bucket/plain", encryptedForm(1024), 1100)
 
 	// List encrypted
 	enc := listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"})
@@ -2275,14 +2282,12 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 		t.Errorf("expected 0 for old key, got %d", len(enc))
 	}
 
-	// Decrypt
-	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: "bucket/plain", BackendName: "backend-a", PlaintextSize: 1024}); err != nil {
-		t.Fatalf("MarkObjectDecrypted: %v", err)
-	}
+	// Decrypt in place
+	rewriteForm(t, s, "bucket/plain", &core.StoredForm{}, 1024)
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/plain")
-	if locs[0].Encrypted {
-		t.Error("expected Encrypted=false after MarkObjectDecrypted")
+	if locs[0].Encrypted || locs[0].EncryptionKey != nil || locs[0].SizeBytes != 1024 {
+		t.Errorf("row = %+v, want plaintext at 1024 bytes after the decrypt rewrite", locs[0])
 	}
 }
 
@@ -4191,7 +4196,6 @@ func TestApplyMigration_FailedStatementRecordsNothing(t *testing.T) {
 func TestLedgerStats_PlaintextCopies(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	if n := ledgerOf(t, s).PlaintextCopies(); n != 0 {
 		t.Fatalf("empty store: count=%d, want 0", n)
@@ -4199,13 +4203,7 @@ func TestLedgerStats_PlaintextCopies(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/plain-a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/plain-b", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: "bucket/secret", BackendName: "backend-a", EncryptionKey: []byte("wrapped"),
-		KeyID: "key-0", PlaintextSize: 100, CiphertextSize: 132,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	mustRecordEncrypted(t, s, "bucket/secret", "backend-a", "key-0", 100, 132)
 
 	n := ledgerOf(t, s).PlaintextCopies()
 	if n != 2 {
@@ -4285,78 +4283,55 @@ func quotaBytesUsed(t *testing.T, s *Store, backend string) int64 {
 	return used
 }
 
-// TestMarkObjectDecrypted_DoesNotDriveQuotaNegative asserts a shrink larger
-// than the counter holds clamps at zero instead of underflowing. bytes_used is
-// per backend while the delta is per object, so an object whose recorded size
-// outruns the counter - a stale size, or a second pass over an already
-// decrypted copy - would otherwise leave a negative counter that over-admits
-// every later write until ReconcileUsage runs.
-func TestMarkObjectDecrypted_DoesNotDriveQuotaNegative(t *testing.T) {
+// TestDecryptInPlace_DoesNotDriveQuotaNegative asserts a shrink larger than
+// the counter holds clamps at zero instead of underflowing. bytes_used is per
+// backend while the delta is per object, so an object whose recorded size
+// outruns the counter - a stale size - would otherwise leave a negative
+// counter that over-admits every later write until ReconcileUsage runs.
+func TestDecryptInPlace_DoesNotDriveQuotaNegative(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
-	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: "bucket/secret", BackendName: "backend-a", EncryptionKey: []byte("dek"),
-		KeyID: "key-1", PlaintextSize: 100, CiphertextSize: 900,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	mustRecordEncrypted(t, s, "bucket/secret", "backend-a", "key-1", 100, 900)
 
 	// Drop the counter below what decryption is about to subtract, standing in
 	// for a ledger that drifted from the recorded object sizes.
 	seedBytesUsed(t, s, "backend-a", 50)
 
 	// 900 -> 100 is a -800 delta against a counter holding 50.
-	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: "bucket/secret", BackendName: "backend-a", PlaintextSize: 100}); err != nil {
-		t.Fatalf("MarkObjectDecrypted: %v", err)
-	}
+	rewriteForm(t, s, "bucket/secret", &core.StoredForm{}, 100)
 	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {
 		t.Errorf("bytes_used = %d, want 0 - a negative counter over-admits later writes", used)
 	}
 }
 
-// TestMarkObjectEncrypted_DoesNotDriveQuotaNegative asserts the encrypt path
+// TestEncryptInPlace_DoesNotDriveQuotaNegative asserts the encrypt path
 // carries the same clamp. Encryption usually grows a copy, but the delta is
-// signed and nothing in the schema forbids a ciphertext smaller than its
-// plaintext.
-func TestMarkObjectEncrypted_DoesNotDriveQuotaNegative(t *testing.T) {
+// signed and nothing forbids a placed size smaller than the source's.
+func TestEncryptInPlace_DoesNotDriveQuotaNegative(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 900)
 	seedBytesUsed(t, s, "backend-a", 50)
 
 	// 900 plaintext -> 100 ciphertext is a -800 delta against a counter of 50.
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
-		KeyID: "key-1", PlaintextSize: 900, CiphertextSize: 100,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	rewriteForm(t, s, "bucket/plain", encryptedForm(900), 100)
 	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {
 		t.Errorf("bytes_used = %d, want 0", used)
 	}
 }
 
-// TestMarkObjectEncrypted_ChargesTheCiphertextGrowth pins the ordinary case,
-// so the clamp above cannot be mistaken for permission to lose real bytes.
-func TestMarkObjectEncrypted_ChargesTheCiphertextGrowth(t *testing.T) {
+// TestEncryptInPlace_ChargesTheCiphertextGrowth pins the ordinary case, so the
+// clamp above cannot be mistaken for permission to lose real bytes.
+func TestEncryptInPlace_ChargesTheCiphertextGrowth(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 1000)
 	before := quotaBytesUsed(t, s, "backend-a")
 
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
-		KeyID: "key-1", PlaintextSize: 1000, CiphertextSize: 1100,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	rewriteForm(t, s, "bucket/plain", encryptedForm(1000), 1100)
 	if got := quotaBytesUsed(t, s, "backend-a") - before; got != 100 {
 		t.Errorf("bytes_used moved by %d, want the 100 bytes encryption added", got)
 	}

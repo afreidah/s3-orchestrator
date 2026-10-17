@@ -426,7 +426,7 @@ func (h *Handler) routes() []route {
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/encrypt-existing", Handler: h.handleEncryptExisting,
-			Summary:  "Encrypt every plaintext object in place",
+			Summary:  "Encrypt every plaintext object on its own backend",
 			Response: adminapi.EncryptExistingResponse{},
 			Params: []param{
 				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},

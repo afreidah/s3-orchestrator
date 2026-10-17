@@ -30,8 +30,6 @@ type engineRoles interface {
 	AdvisoryLocker
 	DashboardStore
 	LifecycleAdmin
-	EncryptionAdmin
-	CompressionAdmin
 	NotificationOutbox
 	TagStore
 	ProvisioningStore

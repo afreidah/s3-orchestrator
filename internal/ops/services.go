@@ -14,6 +14,7 @@ package ops
 import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
 
 // -------------------------------------------------------------------------
@@ -29,11 +30,11 @@ type Deps struct {
 	Objects      ObjectAPI
 	Store        ObjectStore
 	Encryptor    *encryption.Encryptor
-	EncStore     EncryptionStore
-	Codec        CompressionCodec
-	CompStore    CompressionStore
+	EncStore     RewriteStore
+	Codec        storedform.Codec
+	CompStore    RewriteStore
 	Runtime      RuntimeOps
-	Usage        UsageGate
+	Mover        Mover
 	IntegrityCfg IntegrityConfigLoader
 	Replicator   ReplicatorOps
 	OverRep      OverReplicationOps
@@ -98,7 +99,7 @@ func New(d *Deps) *Services {
 			Encryptor: d.Encryptor,
 			Store:     d.EncStore,
 			Runtime:   d.Runtime,
-			Usage:     d.Usage,
+			Mover:     d.Mover,
 		}),
 		Compression: NewCompression(&CompressionDeps{
 			Codec:     d.Codec,
@@ -106,7 +107,7 @@ func New(d *Deps) *Services {
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
 			Runtime:   d.Runtime,
-			Usage:     d.Usage,
+			Mover:     d.Mover,
 		}),
 		Provision: NewProvisioning(ProvisioningDeps{
 			Store:    d.Provisioning,

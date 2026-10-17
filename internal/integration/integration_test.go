@@ -3150,7 +3150,7 @@ func TestStore_PlaceCopy_StaleReplicaSourceDeclined(t *testing.T) {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
 
-	_, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-1", StorageKey: key + "!r"})
+	_, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-3", StorageKey: key + "!r"})
 	if !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("stale PlaceCopy err = %v, want ErrCopyChanged (source replaced)", err)
 	}

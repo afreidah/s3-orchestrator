@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"slices"
@@ -32,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -485,82 +487,113 @@ func (w *Coordinator) recordEnqueueFailure(ctx context.Context, c *core.CleanupR
 // is the copy the caller read; the move commits only while it is still the
 // copy recorded on its backend. The destination path is minted for the move,
 // so each cleanup path deletes exactly its own bytes.
+//
+// Reform, when set, rewrites the bytes on the way and reports the form they
+// then carry. A move with a reform may name the source's own backend as its
+// destination, which is how a rewrite pass replaces a copy.
 type MoveRequest struct {
 	Source      *core.ObjectLocation
 	SrcBackend  backend.ObjectBackend
 	DestBackend backend.ObjectBackend
 	DestName    string
 	Reasons     MoveReasonProfile
+	Reform      func(ctx context.Context, src *backend.GetObjectResult) (*storedform.Reformed, error)
 }
 
-// MoveReasonProfile groups the cleanup-queue reasons a move emits. Orphan
-// labels destination bytes left when the placement errors after the copy,
-// and StaleOrphan those left when the source changed or the target refused.
+// OrphanReasons are the cleanup-queue reasons for bytes a copy left on its
+// destination when nothing recorded them: Orphan when the placement errored,
+// and StaleOrphan when the source changed or the target refused.
+type OrphanReasons struct {
+	Orphan      string
+	StaleOrphan string
+}
+
+// MoveReasonProfile groups the cleanup-queue reasons a move emits: those for
+// its unrecorded destination bytes, and SourceDelete for the source-side
+// delete after a successful move.
 type MoveReasonProfile struct {
-	Orphan       string
-	StaleOrphan  string
-	SourceDelete string // the source-side delete after a successful move
+	OrphanReasons
+	SourceDelete string
 }
 
-// RebalanceMoveReasons and DrainMoveReasons are the cleanup-queue reason
-// profiles for the two subsystems that move objects.
+// RebalanceMoveReasons, DrainMoveReasons and RewriteMoveReasons are the
+// cleanup-queue reason profiles for the subsystems that move objects.
+// ReplicationOrphanReasons labels a replica that was never recorded.
 var (
 	RebalanceMoveReasons = MoveReasonProfile{
-		Orphan:       "rebalance_orphan",
-		StaleOrphan:  "rebalance_stale_orphan",
-		SourceDelete: "rebalance_source_delete",
+		OrphanReasons: OrphanReasons{Orphan: "rebalance_orphan", StaleOrphan: "rebalance_stale_orphan"},
+		SourceDelete:  "rebalance_source_delete",
 	}
 	DrainMoveReasons = MoveReasonProfile{
-		Orphan:       "drain_orphan",
-		StaleOrphan:  "drain_stale_orphan",
-		SourceDelete: "drain_source_delete",
+		OrphanReasons: OrphanReasons{Orphan: "drain_orphan", StaleOrphan: "drain_stale_orphan"},
+		SourceDelete:  "drain_source_delete",
 	}
+	RewriteMoveReasons = MoveReasonProfile{
+		OrphanReasons: OrphanReasons{Orphan: "rewrite_orphan", StaleOrphan: "rewrite_stale_orphan"},
+		SourceDelete:  "rewrite_source_delete",
+	}
+	ReplicationOrphanReasons = OrphanReasons{Orphan: "replication_orphan", StaleOrphan: "replication_stale_orphan"}
 )
 
-// MoveObject moves one object from src to dest for drain and rebalance: it
-// copies the bytes, records them on dest while removing the source row through
-// PlaceCopy, and then deletes the source bytes. If the placement fails, the
-// destination bytes are cleaned up instead. Returns the moved size, or the
-// wrapped failure: core.ErrCopyChanged when a newer write replaced the source,
+// MoveObject moves one object from src to dest for drain, rebalance and the
+// rewrite passes: it copies the bytes, reformed when the request says how,
+// records them on dest while removing the source row through PlaceCopy, and
+// then deletes the source bytes. Returns the moved size, or the wrapped
+// failure: core.ErrCopyChanged when a newer write replaced the source,
 // core.ErrTargetRefused when dest holds a copy or refused the bytes.
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
 	key, srcName := req.Source.ObjectKey, req.Source.BackendName
 	srcPath := core.StoragePath(key, req.Source.StorageKey)
-	// The caller's size is an estimate until the placement settles one; it is
-	// all a cleanup of the destination bytes has to go on.
-	dest := core.DeletedCopy{BackendName: req.DestName, StorageKey: NewStorageKey(key), SizeBytes: req.Source.SizeBytes}
-
-	src := backend.CopyEndpoint{Name: srcName, Backend: req.SrcBackend}
-	dst := backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend}
-	if _, err := w.core.StreamCopy(ctx, src, dst, srcPath, dest.StorageKey, req.Source.SizeBytes); err != nil {
+	copyReq := &backend.CopyRequest{
+		Src:          backend.CopyEndpoint{Name: srcName, Backend: req.SrcBackend},
+		Dst:          backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend},
+		SrcKey:       srcPath,
+		DstKey:       NewStorageKey(key),
+		SizeEstimate: req.Source.SizeBytes,
+	}
+	placement := &core.Placement{Source: req.Source, Target: req.DestName, StorageKey: copyReq.DstKey, RemoveSource: true}
+	if req.Reform != nil {
+		copyReq.Transform = func(ctx context.Context, src *backend.GetObjectResult) (io.Reader, int64, func(), error) {
+			out, err := req.Reform(ctx, src)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			placement.Form, placement.Size = out.Form, out.Size
+			return out.Body, out.Size, out.Release, nil
+		}
+	}
+	written, err := w.core.StreamCopy(ctx, copyReq)
+	if err != nil {
 		return 0, fmt.Errorf("stream copy %s -> %s: %w", srcName, req.DestName, err)
 	}
 
-	movedSize, err := w.stores.PlaceCopy(ctx, &core.Placement{
-		Source:       req.Source,
-		Target:       req.DestName,
-		StorageKey:   dest.StorageKey,
-		RemoveSource: true,
-	})
+	movedSize, err := w.PlaceOrCleanup(ctx, placement, req.DestBackend, written, req.Reasons.OrphanReasons)
 	if err != nil {
-		reason := req.Reasons.Orphan
-		if core.PlacementDeclined(err) {
-			reason = req.Reasons.StaleOrphan
-		}
-		w.DeleteOrEnqueue(ctx, req.DestBackend, dest.Cleanup(key, reason))
 		return 0, fmt.Errorf("place copy %s -> %s: %w", srcName, req.DestName, err)
 	}
-
-	// Charged at the size the move committed. Egress and Ingress each record
-	// their own API call, and DeleteOrEnqueue records the source DELETE.
-	removed := core.DeletedCopy{BackendName: srcName, StorageKey: srcPath, SizeBytes: movedSize}
+	// The placement confirmed the source row still named these bytes, so its
+	// size is what the delete frees.
+	removed := core.DeletedCopy{BackendName: srcName, StorageKey: srcPath, SizeBytes: req.Source.SizeBytes}
 	w.DeleteOrEnqueue(ctx, req.SrcBackend, removed.Cleanup(key, req.Reasons.SourceDelete))
-	w.core.Acct().Egress(s3op.GetObject, srcName, movedSize)
-	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
-	// Both ends moved at the size the CAS committed, charged by the move's own
-	// transaction so neither window exists where the bytes are counted on
-	// neither backend or on both.
 	return movedSize, nil
+}
+
+// PlaceOrCleanup records a copy whose bytes are already at the placement's
+// path on dest, or deletes those bytes when nothing recorded them, labelling
+// the cleanup by whether the placement was declined or errored. written is
+// how many bytes the copy left there. Returns what PlaceCopy returned.
+func (w *Coordinator) PlaceOrCleanup(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons OrphanReasons) (int64, error) {
+	placed, err := w.stores.PlaceCopy(ctx, p)
+	if err == nil {
+		return placed, nil
+	}
+	reason := reasons.Orphan
+	if core.PlacementDeclined(err) {
+		reason = reasons.StaleOrphan
+	}
+	orphan := core.DeletedCopy{BackendName: p.Target, StorageKey: p.StorageKey, SizeBytes: written}
+	w.DeleteOrEnqueue(ctx, dest, orphan.Cleanup(p.Source.ObjectKey, reason))
+	return 0, err
 }
 
 // ClaimUploadTarget picks the backend a multipart upload will live on and

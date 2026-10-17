@@ -22,7 +22,7 @@ type RotateEncryptionKeyResponse struct {
 }
 
 // EncryptExistingResponse reports an encrypt-existing pass: how many
-// previously plaintext objects were encrypted in place.
+// previously plaintext objects were encrypted on their own backend.
 type EncryptExistingResponse struct {
 	BulkRewriteOutcome
 	Encrypted int `json:"encrypted"`

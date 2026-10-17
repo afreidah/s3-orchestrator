@@ -92,11 +92,11 @@ The filter is applied when candidates are selected, not after, so `max` is spent
 
 ## When a conversion meets a live write
 
-The four conversions -- `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- read a stored copy, transform it, and write it back. A client writing the same key in between is a race the pass is expected to lose sometimes, and the result carries a `changed` count for the copies it lost.
+The four conversions -- `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- read a stored copy, transform it, and write the result to a new path on the same backend. A client writing the same key in between is a race the pass is expected to lose sometimes, and the result carries a `changed` count for the copies it lost.
 
-A conversion commits only while the copy still reports the ETag it read. When a client has replaced the object, no row matches and nothing is recorded, so the ledger never ends up describing bytes a newer write already replaced. Those copies are reported as `changed` rather than `failed`: nothing is misconfigured, and the newer write has already stored the object in whatever form the write path was set to use.
+A conversion records its new copy only while the copy it read is still the recorded one. The new row replaces the old one in a single transaction, and the old bytes are deleted after it commits. When a client has replaced the object, nothing is recorded and the pass deletes the bytes it wrote. The client's write stands, and readers never see bytes the row does not describe. Those copies are reported as `changed` rather than `failed`: nothing is misconfigured, and the newer write has already stored the object in whatever form the write path was set to use.
 
-A non-zero `changed` count is worth acting on. The transformed bytes reached the backend before the commit refused, so each one names a copy whose stored bytes are the pass's output written over a newer client write -- the object reverted. Each is recorded as a `storage.ConversionRaced` audit event naming the key, the backend and the ETag the pass expected, and counted by `s3o_bulk_rewrite_copy_changed_total`. If you see them, run the conversion against a quieter window.
+Each changed copy is recorded as a `storage.ConversionRaced` audit event naming the operation, the key, the backend and the storage key the pass read, and counted by `s3o_bulk_rewrite_copy_changed_total`. A changed copy was not converted, so a later pass picks it up if the new write left it in the old form. A steady count means the pass is overlapping live traffic on those keys.
 
 ## Verifying one object
 

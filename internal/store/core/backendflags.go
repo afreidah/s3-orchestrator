@@ -46,10 +46,13 @@ const DrainFlags = FlagDraining | FlagDrained | FlagDrainFailed
 // The accept masks. AcceptForWrite is what a backend may carry and still be
 // given new copies - client writes, replicas, rebalance moves and drain
 // destinations - which is nothing. AcceptForReconcile lets a cordoned backend
-// be reconciled, since only a drain is moving its rows off.
+// be reconciled, since only a drain is moving its rows off. AcceptForRewrite
+// lets a cordoned backend have a copy it holds rewritten in place, which adds
+// no copy to it.
 const (
 	AcceptForWrite     BackendFlags = 0
 	AcceptForReconcile              = FlagCordoned
+	AcceptForRewrite                = FlagCordoned
 )
 
 // backendFlagNames pairs each flag with its name, in the order a rendered set

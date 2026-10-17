@@ -535,9 +535,9 @@ func TestHandleCacheInvalidateKey_EmptyKey(t *testing.T) {
 // singleRowEncryptionStore returns one encrypted location on the first listing
 // and nothing afterwards, so the rotation loop runs end to end. The malformed
 // key trips the unpack branch, which is enough to drive the loop body.
-func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
+func singleRowEncryptionStore(t *testing.T) *opstest.MockRewriteStore {
 	t.Helper()
-	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	m := opstest.NewMockRewriteStore(gomock.NewController(t))
 	first := m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
@@ -550,9 +550,9 @@ func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 
 // emptyEncryptionStore reports nothing to rewrite in either direction, so a
 // pass runs to completion with zero counts.
-func emptyEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
+func emptyEncryptionStore(t *testing.T) *opstest.MockRewriteStore {
 	t.Helper()
-	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	m := opstest.NewMockRewriteStore(gomock.NewController(t))
 	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return m
 }
@@ -659,9 +659,9 @@ func TestReplicationStreams_ReportFailure(t *testing.T) {
 
 // failingEncryptionStore reports a listing failure in both directions, so the
 // bulk endpoints can be driven through their server-fault arm.
-func failingEncryptionStore(t *testing.T, err error) *opstest.MockEncryptionStore {
+func failingEncryptionStore(t *testing.T, err error) *opstest.MockRewriteStore {
 	t.Helper()
-	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	m := opstest.NewMockRewriteStore(gomock.NewController(t))
 	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
 	return m
 }

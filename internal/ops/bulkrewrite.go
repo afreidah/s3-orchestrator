@@ -3,17 +3,22 @@
 //
 // Author: Alex Freidah
 //
-// The pagination, download, transform, re-upload and metadata-update loop every
-// fleet-wide rewrite pass runs. Encryption and compression are co-equal
-// consumers: each supplies a listing query, a transform and the labels its run
-// reports under, and neither owns the loop.
+// The pagination and per-copy move every fleet-wide rewrite pass runs.
+// Encryption and compression are co-equal consumers: each supplies a listing
+// query, the stored form it wants each copy in, and the labels its run reports
+// under, and neither owns the loop.
+//
+// A rewrite is a move onto the copy's own backend with the bytes reformed on
+// the way. It lands at a new path and is recorded by the placement step, which
+// commits only while the copy read is still the one recorded, and the old bytes
+// are deleted after. Readers therefore see either the old copy or the new one,
+// never bytes the row does not describe.
 //
 // A pass reads and rewrites an entire fleet, so it is the largest consumer of
-// egress in the system. Everything here that looks defensive - per-object usage
-// admission, the cap counting rewrites rather than rows - is there because a
-// pass that gets one of them wrong either exhausts a metered backend or
-// silently skips part of the fleet while reporting success. Paging is a
-// batch.Pager cursor walk, shared with the other paged passes.
+// egress in the system. Each copy is admitted against its backend's usage
+// limits as it is moved, because a run that fits the budget when it starts can
+// exhaust it halfway through. Paging is a batch.Pager cursor walk, shared with
+// the other paged passes.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -21,7 +26,6 @@ package ops
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,22 +34,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
 // -------------------------------------------------------------------------
 // CONSTANTS
 // -------------------------------------------------------------------------
-
-// The operations one rewrite performs. Package-level so a pass over the whole
-// fleet does not allocate these per object.
-var (
-	readOp     = []s3op.Operation{s3op.GetObject}
-	writeOp    = []s3op.Operation{s3op.PutObject}
-	rewriteOps = []s3op.Operation{s3op.GetObject, s3op.PutObject}
-)
 
 // bulkRewriteBatchSize is how many locations one listing page of a bulk
 // rewrite pass collects, bounding how long any single transaction runs.
@@ -58,8 +55,8 @@ const bulkRewriteBatchSize = 100
 // BulkRewriteResult reports one bulk rewrite pass. Total counts every copy
 // considered, so Total - Succeeded - Failed - Skipped is zero for a run that
 // completed. Skipped counts copies the pass declined on purpose, such as
-// incompressible objects. Changed counts copies rewritten on the backend whose
-// row moved under the pass, meaning a conversion overlapped live traffic.
+// incompressible objects. Changed counts copies a client replaced while the
+// pass was rewriting them, meaning a conversion overlapped live traffic.
 type BulkRewriteResult struct {
 	Succeeded int
 	Failed    int
@@ -69,17 +66,19 @@ type BulkRewriteResult struct {
 }
 
 // bulkRewriteOp parameterises one direction of the rewrite: the listing query,
-// the transform, and the labels the run reports under.
+// the stored form each copy should end up in, and the labels the run reports
+// under.
 type bulkRewriteOp struct {
 	opName      string
 	resultLabel string
 	counter     *prometheus.CounterVec
 	listFn      func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error)
-	// rewrite consumes a downloaded object and produces what to upload in its
-	// place. Implementations close the source body if they fail before
-	// returning. Returning errSkipRewrite leaves the object exactly as it is
-	// and counts it as skipped.
-	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error)
+	// want names the layers a copy should carry once rewritten.
+	want func(loc *core.ObjectLocation) core.StoredFlags
+	// onDeclined, when set, records an encoding that missed the ratio so later
+	// passes can skip the copy. A failure to record costs efficiency, not
+	// correctness.
+	onDeclined func(ctx context.Context, loc *core.ObjectLocation, encodedSize int64)
 	// maxRewrites caps how many copies the pass rewrites before stopping, or zero
 	// for the whole listing. It counts rewrites rather than rows considered, so a
 	// capped run converts the number asked for instead of spending its budget
@@ -87,31 +86,14 @@ type bulkRewriteOp struct {
 	maxRewrites int
 }
 
-// rewritten is one transformed object: the bytes to upload, the size to declare
-// for them, the metadata update to run once they are durable, and the release
-// for anything the transform had to buffer.
-//
-// release is nil for a transform that streams. It must run whether or not the
-// upload succeeds, or a pass leaks a buffer per failed object.
-type rewritten struct {
-	body    io.Reader
-	size    int64
-	commit  func() error
-	release func()
-}
-
-// errSkipRewrite reports an object a pass declines to rewrite, as opposed to
-// one it tried and could not. Only the transform can raise it, because whether
-// a rewrite is worth doing is a question about the object's own bytes.
-var errSkipRewrite = errors.New("rewrite declined")
-
 // bulkRewriteEnv is what the shared driver needs from whichever service is
 // running the pass. Declared so the driver serves the compression passes as
 // well as the encryption ones rather than being tied to either.
 type bulkRewriteEnv struct {
 	log     *slog.Logger
 	runtime RuntimeOps
-	usage   UsageGate
+	mover   Mover
+	layers  *storedform.Layers
 }
 
 // rewriteOutcome is what one object's rewrite attempt produced.
@@ -238,97 +220,83 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 	return bulkRewriteBatchSize
 }
 
-// processLocation runs one rewrite step for a single location: admit the
-// work against the backend's usage limits, download, transform, re-upload,
-// account for what it spent, then update metadata. Failures are logged and
-// counted rather than returned, so one bad object does not end the pass.
-// Admission is per object because a run that fits the budget when it starts
-// can exhaust it halfway through.
+// processLocation rewrites one copy by moving it onto its own backend in the
+// form the pass wants. Failures are logged and counted rather than returned,
+// so one bad object does not end the pass.
 func (op bulkRewriteOp) processLocation(ctx context.Context, env bulkRewriteEnv, loc *core.ObjectLocation) rewriteOutcome {
-	key, backendName, sizeBytes := loc.ObjectKey, loc.BackendName, loc.SizeBytes
-	// Read and written at the copy's own path, so rewriting in place is safe: a
-	// client overwriting the key during the pass writes to a different path, and
-	// the etag CAS below stops the pass recording bytes that are not the
-	// current object.
-	storageKey := core.StoragePath(key, loc.StorageKey)
+	be, err := env.runtime.GetBackend(loc.BackendName)
+	if err != nil {
+		return op.failed(ctx, env, "backend not found", loc, err)
+	}
+	want := op.want(loc)
+	_, err = env.mover.MoveObject(ctx, &writepath.MoveRequest{
+		Source:      loc,
+		SrcBackend:  be,
+		DestBackend: be,
+		DestName:    loc.BackendName,
+		Reasons:     writepath.RewriteMoveReasons,
+		Reform: func(ctx context.Context, src *s3be.GetObjectResult) (*storedform.Reformed, error) {
+			return env.layers.Reform(ctx, src.Body, src.Size, &loc.StoredForm, want)
+		},
+	})
+	return op.outcome(ctx, env, loc, err)
+}
 
-	// The read is charged at the row's size and the write at the same figure
-	// as an estimate, since the transform's output is not known yet. Both are
-	// re-charged with the real numbers once they are. The read and the write
-	// are admitted as separate operations because providers meter them from
-	// separate allowances.
-	if !env.usage.WithinLimits(backendName, rewriteOps, sizeBytes, sizeBytes) {
+// outcome classifies what one move returned: done, declined on purpose by the
+// usage limits, the ratio or a backend that stopped taking it, overtaken by a
+// client write, or failed.
+func (op bulkRewriteOp) outcome(ctx context.Context, env bulkRewriteEnv, loc *core.ObjectLocation, err error) rewriteOutcome {
+	if err == nil {
+		op.counter.WithLabelValues("success").Inc()
+		return rewriteDone
+	}
+	if declined, ok := errors.AsType[*storedform.Declined](err); ok {
+		if op.onDeclined != nil {
+			op.onDeclined(ctx, loc, declined.EncodedSize)
+		}
 		op.counter.WithLabelValues("skipped").Inc()
-		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
-		env.log.WarnContext(ctx, op.opName+": object declined by usage limits",
-			"key", key, "backend", backendName, "size", sizeBytes)
 		return rewriteSkipped
 	}
-
-	be, err := env.runtime.GetBackend(backendName)
-	if err != nil {
-		return op.failed(ctx, env, "backend not found", key, backendName, err)
+	switch {
+	case errors.Is(err, core.ErrUsageLimitExceeded):
+		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
+		return op.skipped(ctx, env, "object declined by usage limits", loc)
+	case errors.Is(err, core.ErrTargetRefused):
+		return op.skipped(ctx, env, "backend refused the rewritten copy", loc)
+	case errors.Is(err, core.ErrCopyChanged):
+		return op.changed(ctx, env, loc)
+	default:
+		return op.failed(ctx, env, "rewrite failed", loc, err)
 	}
+}
 
-	src, err := be.GetObject(ctx, storageKey, "")
-	if err != nil {
-		env.usage.RecordAll(backendName, readOp, 0, 0)
-		return op.failed(ctx, env, "download failed", key, backendName, err)
-	}
-	env.usage.RecordAll(backendName, readOp, src.Size, 0)
-
-	out, err := op.rewrite(ctx, src, loc)
-	if err != nil {
-		src.Body.Close()
-		if errors.Is(err, errSkipRewrite) {
-			op.counter.WithLabelValues("skipped").Inc()
-			return rewriteSkipped
-		}
-		return op.failed(ctx, env, "transform failed", key, backendName, err)
-	}
-	if out.release != nil {
-		defer out.release()
-	}
-
-	_, err = be.PutObject(ctx, storageKey, out.body, out.size, src.ContentType, src.Metadata)
-	src.Body.Close()
-	if err != nil {
-		env.usage.RecordAll(backendName, writeOp, 0, 0)
-		return op.failed(ctx, env, "re-upload failed", key, backendName, err)
-	}
-	env.usage.RecordAll(backendName, writeOp, 0, out.size)
-
-	if err := out.commit(); err != nil {
-		if errors.Is(err, core.ErrCopyChanged) {
-			return op.changed(ctx, env, key, backendName, loc.RecordedETag())
-		}
-		return op.failed(ctx, env, "metadata update failed", key, backendName, err)
-	}
-
-	op.counter.WithLabelValues("success").Inc()
-	return rewriteDone
+// skipped records one copy the pass declined to rewrite this time.
+func (op bulkRewriteOp) skipped(ctx context.Context, env bulkRewriteEnv, msg string, loc *core.ObjectLocation) rewriteOutcome {
+	env.log.WarnContext(ctx, op.opName+": "+msg,
+		"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)
+	op.counter.WithLabelValues("skipped").Inc()
+	return rewriteSkipped
 }
 
 // failed records one non-fatal rewrite failure.
-func (op bulkRewriteOp) failed(ctx context.Context, env bulkRewriteEnv, msg, key, backendName string, err error) rewriteOutcome {
-	env.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
+func (op bulkRewriteOp) failed(ctx context.Context, env bulkRewriteEnv, msg string, loc *core.ObjectLocation, err error) rewriteOutcome {
+	env.log.WarnContext(ctx, op.opName+": "+msg, "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	op.counter.WithLabelValues("error").Inc()
 	return rewriteErrored
 }
 
-// changed records a copy a client wrote while the pass was converting it. The
-// commit is predicated on the etag the pass read, so it matched no row and
-// nothing was recorded. It is audited and counted separately because the
-// transformed bytes already reached the backend, so the stored copy is now the
-// pass's output over a newer write.
-func (op bulkRewriteOp) changed(ctx context.Context, env bulkRewriteEnv, key, backendName, expectedEtag string) rewriteOutcome {
+// changed records a copy a client replaced while the pass was converting it.
+// The placement found a different copy recorded, so nothing was recorded and
+// the move deleted the bytes it wrote. It is audited and counted separately
+// because it means the pass overlapped live traffic.
+func (op bulkRewriteOp) changed(ctx context.Context, env bulkRewriteEnv, loc *core.ObjectLocation) rewriteOutcome {
 	env.log.WarnContext(ctx, op.opName+": copy changed while it was being converted",
-		"key", key, "backend", backendName, "expected_etag", expectedEtag)
+		"key", loc.ObjectKey, "backend", loc.BackendName, "storage_key", loc.StorageKey)
 	audit.Log(ctx, "storage.ConversionRaced",
 		slog.String("operation", op.opName),
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.String("expected_etag", expectedEtag),
+		slog.String("key", loc.ObjectKey),
+		slog.String("backend", loc.BackendName),
+		slog.String("storage_key", loc.StorageKey),
 	)
 	op.counter.WithLabelValues("changed").Inc()
 	telemetry.BulkRewriteCopyChangedTotal.WithLabelValues(op.opName).Inc()

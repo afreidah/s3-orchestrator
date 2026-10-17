@@ -146,10 +146,10 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 }
 
 // BackendAdmits reports whether a backend accepts a write of size more bytes
-// under the mask a PUT is admitted with.
-func (a *pgTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64) (bool, error) {
+// while carrying only flags within accepts.
+func (a *pgTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64, accepts core.BackendFlags) (bool, error) {
 	admits, err := a.q.BackendAdmits(ctx, db.BackendAdmitsParams{
-		Accepts:     int64(core.AcceptForWrite),
+		Accepts:     int64(accepts),
 		SizeBytes:   size,
 		BackendName: backendName,
 	})
@@ -450,85 +450,6 @@ func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName strin
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
-}
-
-// -------------------------------------------------------------------------
-// STORED-FORM REWRITES
-// -------------------------------------------------------------------------
-
-// UpdateCompressedForm records the stored form a recompression pass left on
-// one copy.
-func (a *pgTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
-	rows, err := a.q.MarkObjectCompressed(ctx, db.MarkObjectCompressedParams{
-		ObjectKey:                u.ObjectKey,
-		BackendName:              u.BackendName,
-		CompressionAlgorithm:     strPtr(u.Algorithm),
-		CompressionLevel:         strPtr(u.Level),
-		CompressionFormatVersion: int16Ptr(u.FormatVersion),
-		LogicalSize:              int64Ptr(u.LogicalSize),
-		SizeBytes:                u.SizeBytes,
-		PlaintextSize:            int64Ptr(u.PlaintextSize),
-		EncryptionKey:            u.EncryptionKey,
-		KeyID:                    strPtr(u.KeyID),
-		ExpectedEtag:             strPtr(u.ExpectedEtag),
-	})
-	if err != nil {
-		return fmt.Errorf("update compressed form: %w", err)
-	}
-	return changedIfNoRows(rows)
-}
-
-// MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
-func (a *pgTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	rows, err := a.q.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
-		ObjectKey:     u.ObjectKey,
-		BackendName:   u.BackendName,
-		EncryptionKey: u.EncryptionKey,
-		KeyID:         &u.KeyID,
-		PlaintextSize: &u.PlaintextSize,
-		SizeBytes:     u.CiphertextSize,
-		ExpectedEtag:  strPtr(u.ExpectedEtag),
-	})
-	if err != nil {
-		return fmt.Errorf("mark copy encrypted: %w", err)
-	}
-	return changedIfNoRows(rows)
-}
-
-// MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
-func (a *pgTxAdapter) MarkCopyDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
-	rows, err := a.q.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
-		ObjectKey:    u.ObjectKey,
-		BackendName:  u.BackendName,
-		SizeBytes:    u.PlaintextSize,
-		ExpectedEtag: strPtr(u.ExpectedEtag),
-	})
-	if err != nil {
-		return fmt.Errorf("mark copy decrypted: %w", err)
-	}
-	return changedIfNoRows(rows)
-}
-
-// changedIfNoRows turns a stored-form write that matched nothing into the
-// sentinel the passes skip on. The statements are keyed on the copy and its
-// etag, so no match means a client wrote the key after the pass read it.
-func changedIfNoRows(rows int64) error {
-	if rows == 0 {
-		return core.ErrCopyChanged
-	}
-	return nil
-}
-
-// GetCopySizeBytes reads the size a copy currently reports.
-func (a *pgTxAdapter) GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error) {
-	size, err := a.q.GetObjectSizeBytes(ctx, db.GetObjectSizeBytesParams{
-		ObjectKey:   objectKey,
-		BackendName: backendName,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("get copy size_bytes: %w", err)
-	}
-	return size, nil
 }
 
 // Compile-time check that *pgTxAdapter satisfies core.TxAdapter.

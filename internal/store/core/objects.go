@@ -399,23 +399,29 @@ func removableCopy(existing []ExistingCopy, loc *ObjectLocation, keepAtLeast int
 // PLACE COPY
 // -------------------------------------------------------------------------
 
-// Placement records bytes copied verbatim from Source onto Target at
-// StorageKey, the path the caller wrote. RemoveSource makes it a move: the
-// source row goes in the same transaction. Source must be the copy the caller
-// read, since its storage key is what proves the copied bytes are still the
-// object.
+// Placement records bytes copied from Source onto Target at StorageKey, the
+// path the caller wrote. RemoveSource makes it a move: the source row goes in
+// the same transaction. Source must be the copy the caller read, since its
+// storage key is what proves the copied bytes are still the object.
+//
+// Form and Size describe bytes the copy transformed on the way, such as a
+// compression pass's encoding; a nil Form means the source's bytes verbatim.
+// A move may target the source's own backend, which replaces the copy read
+// with the transformed one.
 type Placement struct {
 	Source       *ObjectLocation
 	Target       string
 	StorageKey   string
 	RemoveSource bool
+	Form         *StoredForm
+	Size         int64
 }
 
 // PlaceCopy records the copy a placement describes and returns the bytes it
-// placed, read from the locked source row. A source gone or replaced since the
-// caller read it is ErrCopyChanged; a target that already holds a copy or does
-// not admit the bytes is ErrTargetRefused. Either way nothing is recorded and
-// the caller owns the bytes it wrote.
+// placed. A source gone or replaced since the caller read it is ErrCopyChanged;
+// a target that already holds another copy or does not admit the bytes is
+// ErrTargetRefused. Either way nothing is recorded and the caller owns the
+// bytes it wrote.
 func PlaceCopy(ctx context.Context, runner Runner, p *Placement) (int64, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
 		return placeCopyTx(ctx, tx, p)
@@ -423,10 +429,14 @@ func PlaceCopy(ctx context.Context, runner Runner, p *Placement) (int64, error) 
 }
 
 // placeCopyTx is the transactional body of PlaceCopy: lock the key, confirm
-// the source and the target against the locked copy set, admit, insert, and
-// for a move remove the source.
+// the source and the target against the locked copy set, admit, for a move
+// remove the source, and insert.
 func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (int64, error) {
 	key := p.Source.ObjectKey
+	inPlace := p.Target == p.Source.BackendName
+	if inPlace && !p.RemoveSource {
+		return 0, ErrTargetRefused
+	}
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
 		return 0, err
 	}
@@ -437,7 +447,7 @@ func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (int64, error)
 	if _, err := removableCopy(existing, p.Source, 0); err != nil {
 		return 0, err
 	}
-	if _, onTarget := copyOnBackend(existing, p.Target); onTarget {
+	if _, onTarget := copyOnBackend(existing, p.Target); onTarget && !inPlace {
 		return 0, ErrTargetRefused
 	}
 	src, ok, err := tx.LockObjectOnBackend(ctx, key, p.Source.BackendName)
@@ -447,27 +457,61 @@ func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (int64, error)
 	if !ok {
 		return 0, ErrCopyChanged
 	}
-	admitted, err := tx.BackendAdmits(ctx, p.Target, src.SizeBytes)
-	if err != nil {
+	placed := p.placedCopy(src)
+	if err := admitPlacement(ctx, tx, p.Target, placed.SizeBytes, src.SizeBytes, inPlace); err != nil {
 		return 0, err
 	}
-	if !admitted {
-		return 0, ErrTargetRefused
-	}
-	if err := tx.InsertObjectLocation(ctx, src.CopyAt(p.Target, p.StorageKey)); err != nil {
-		return 0, fmt.Errorf("insert placed copy on %s: %w", p.Target, err)
-	}
-	deltas := QuotaDeltas{p.Target: src.SizeBytes}
+	deltas := QuotaDeltas{}
+	// The source row goes first, since an in-place rewrite inserts on the same
+	// backend and a key holds one copy per backend.
 	if p.RemoveSource {
 		if err := tx.DeleteObjectFromBackend(ctx, key, src.BackendName); err != nil {
 			return 0, err
 		}
 		deltas.Add(src.BackendName, -src.SizeBytes)
 	}
+	if err := tx.InsertObjectLocation(ctx, placed); err != nil {
+		return 0, fmt.Errorf("insert placed copy on %s: %w", p.Target, err)
+	}
+	deltas.Add(p.Target, placed.SizeBytes)
 	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
 		return 0, err
 	}
-	return src.SizeBytes, nil
+	return placed.SizeBytes, nil
+}
+
+// placedCopy is the row the placement inserts: the locked source at its new
+// home, carrying the transformed form and size when the bytes changed. The
+// content hash stays the source's, since it covers the bytes the client wrote,
+// and a recorded compression decline no longer describes a new form.
+func (p *Placement) placedCopy(src *ObjectLocation) *ObjectLocation {
+	placed := src.CopyAt(p.Target, p.StorageKey)
+	if p.Form == nil {
+		return placed
+	}
+	placed.StoredForm = *p.Form
+	placed.ContentHash = src.ContentHash
+	placed.SizeBytes = p.Size
+	placed.CompressionProbeSize, placed.CompressionProbeLevel = 0, ""
+	return placed
+}
+
+// admitPlacement checks the target takes the placed bytes. An in-place rewrite
+// adds no copy, so only its growth is judged and a cordoned backend still
+// admits it; a new copy needs room for all of it on a backend in full service.
+func admitPlacement(ctx context.Context, tx TxAdapter, target string, size, sourceSize int64, inPlace bool) error {
+	accepts := AcceptForWrite
+	if inPlace {
+		size, accepts = max(size-sourceSize, 0), AcceptForRewrite
+	}
+	admitted, err := tx.BackendAdmits(ctx, target, size, accepts)
+	if err != nil {
+		return err
+	}
+	if !admitted {
+		return ErrTargetRefused
+	}
+	return nil
 }
 
 // -------------------------------------------------------------------------

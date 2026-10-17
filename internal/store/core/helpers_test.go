@@ -255,7 +255,7 @@ func TestGroupByKey_MultipleKeysAndReplicas(t *testing.T) {
 // applyQuotaDeltas - #687 deadlock regression
 // -------------------------------------------------------------------------
 
-// quotaTxStub is the TxAdapter implementation the quota, tag and stored-form
+// quotaTxStub is the TxAdapter implementation the quota and tag
 // tests drive. Everything it does not name comes from the embedded
 // noopTxAdapter; the quota mutators record call order so tests can assert the
 // lock-acquisition sequence.
@@ -282,20 +282,6 @@ type quotaTxStub struct {
 
 	adjustments []quotaOp
 	adjustErr   error
-	compressed  []CompressedUpdate
-	encrypted   []markedCopy
-	decrypted   []markedCopy
-	formErr     error
-	copySize    int64
-	copySizeErr error
-}
-
-// markedCopy is one recorded stored-form rewrite: which copy it touched and
-// the size it left behind.
-type markedCopy struct {
-	objectKey   string
-	backendName string
-	sizeBytes   int64
 }
 
 // storedCopy is the seed a tag test uses to say the object exists, since the
@@ -328,45 +314,6 @@ func (t *quotaTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int
 	t.ops = append(t.ops, op)
 	t.adjustments = append(t.adjustments, op)
 	return nil
-}
-
-// UpdateCompressedForm records the compressed form the rewrite wrote.
-func (t *quotaTxStub) UpdateCompressedForm(_ context.Context, u *CompressedUpdate) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.formErr != nil {
-		return t.formErr
-	}
-	t.compressed = append(t.compressed, *u)
-	return nil
-}
-
-// MarkCopyEncrypted records the copy the encrypt pass rewrote.
-func (t *quotaTxStub) MarkCopyEncrypted(_ context.Context, u *EncryptedUpdate) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.formErr != nil {
-		return t.formErr
-	}
-	t.encrypted = append(t.encrypted, markedCopy{u.ObjectKey, u.BackendName, u.CiphertextSize})
-	return nil
-}
-
-// MarkCopyDecrypted records the copy the decrypt pass rewrote.
-func (t *quotaTxStub) MarkCopyDecrypted(_ context.Context, u *DecryptedUpdate) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.formErr != nil {
-		return t.formErr
-	}
-	t.decrypted = append(t.decrypted, markedCopy{u.ObjectKey, u.BackendName, u.PlaintextSize})
-	return nil
-}
-
-// GetCopySizeBytes returns the size the decrypt pass reads before it
-// overwrites the row.
-func (t *quotaTxStub) GetCopySizeBytes(context.Context, string, string) (int64, error) {
-	return t.copySize, t.copySizeErr
 }
 
 // InsertObjectTag records the tag so replace-semantics tests can assert what
@@ -740,6 +687,31 @@ func TestObjectLocation_ObjectSize(t *testing.T) {
 			t.Parallel()
 			if got := tc.loc.ObjectSize(); got != tc.want {
 				t.Errorf("ObjectSize = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStoredForm_ClientSize verifies the client size is judged from the form
+// alone, falling back to the stored size the caller passes for verbatim
+// bytes.
+func TestStoredForm_ClientSize(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		form StoredForm
+		want int64
+	}{
+		{name: "verbatim", form: StoredForm{}, want: 70},
+		{name: "encrypted", form: StoredForm{Encrypted: true, PlaintextSize: 40}, want: 40},
+		{name: "compressed", form: StoredForm{CompressionAlgorithm: "zstd", LogicalSize: 100}, want: 100},
+		{name: "both", form: StoredForm{Encrypted: true, PlaintextSize: 40, CompressionAlgorithm: "zstd", LogicalSize: 100}, want: 100},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.form.ClientSize(70); got != tc.want {
+				t.Errorf("ClientSize(70) = %d, want %d", got, tc.want)
 			}
 		})
 	}

@@ -665,7 +665,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		EncStore:     mock,
 		Locker:       mock,
 		Runtime:      st.Runtime,
-		Usage:        st.Runtime.Usage(),
+		Mover:        st.Coord,
 		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,

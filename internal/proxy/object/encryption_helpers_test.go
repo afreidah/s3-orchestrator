@@ -3,14 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Verifies the proxy-side adapters that bridge the object manager to the
-// chunked encryption package: the on-write wrap of the upload reader,
-// the on-read unwrap and ciphertext range plumbing, and the metadata
-// projection that records encrypted, encryption_key, key_id, and
-// plaintext_size into object_locations. These adapters are the seam
-// where plaintext sizes and ciphertext ranges have to stay perfectly
-// aligned, so the tests are exhaustive across encrypted/unencrypted
-// branches.
+// Verifies the read-path decryption of GetObject responses, whole and ranged,
+// where plaintext sizes and ciphertext ranges have to stay aligned, and the
+// counting encryptor the write-path tests use to see KeyProvider round-trips.
 // -------------------------------------------------------------------------------
 
 package object
@@ -18,21 +13,14 @@ package object
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/iotest"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 )
 
 // countingKeyProvider wraps a real KeyProvider and counts WrapDEK calls so
@@ -276,140 +264,6 @@ func TestDecryptResponse_DecryptError(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// materializeEncrypted
-// -------------------------------------------------------------------------
-
-// TestMaterializeEncrypted_PopulatesFormAndSize verifies the envelope the
-// encrypt pass reports describes the ciphertext it materialized, and that the
-// DEK it wrapped cost one KeyProvider round-trip.
-func TestMaterializeEncrypted_PopulatesFormAndSize(t *testing.T) {
-	t.Parallel()
-	enc, cp := newCountingEncryptor(t)
-	plain := []byte("first call payload")
-
-	body, ctSize, form, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err != nil {
-		t.Fatalf("materializeEncrypted: %v", err)
-	}
-	defer body.Cleanup()
-
-	if !form.Encrypted {
-		t.Error("form.Encrypted = false, want true")
-	}
-	if form.PlaintextSize != int64(len(plain)) {
-		t.Errorf("form.PlaintextSize = %d, want %d", form.PlaintextSize, len(plain))
-	}
-	if form.KeyID == "" {
-		t.Error("form.KeyID is empty")
-	}
-	if form.ContentHash != "" {
-		t.Errorf("form.ContentHash = %q, want empty (caller layers integrity)", form.ContentHash)
-	}
-	if ctSize <= int64(len(plain)) {
-		t.Errorf("ciphertext size %d should exceed plaintext %d", ctSize, len(plain))
-	}
-	if got := body.Size(); got != ctSize {
-		t.Errorf("materialized %d bytes, form reports %d", got, ctSize)
-	}
-	if got := cp.wraps.Load(); got != 1 {
-		t.Errorf("WrapDEK called %d times, want 1", got)
-	}
-}
-
-// TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes asserts every reader
-// of the materialized ciphertext yields the same bytes under the same base
-// nonce, so every copy a write places is identical.
-func TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes(t *testing.T) {
-	t.Parallel()
-	enc, cp := newCountingEncryptor(t)
-	plain := []byte("payload placed on more backends than two")
-
-	body, _, _, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err != nil {
-		t.Fatalf("materializeEncrypted: %v", err)
-	}
-	defer body.Cleanup()
-
-	// Four, so nothing here holds for a reason peculiar to a pair.
-	const copies = 4
-	var first []byte
-	for i := range copies {
-		r, err := body.Reader()
-		if err != nil {
-			t.Fatalf("copy %d reader: %v", i, err)
-		}
-		got, err := io.ReadAll(r)
-		if err != nil {
-			t.Fatalf("copy %d read: %v", i, err)
-		}
-		if i == 0 {
-			first = got
-			continue
-		}
-		if !bytes.Equal(got, first) {
-			t.Errorf("copy %d differs from copy 0", i)
-		}
-	}
-	if got := cp.wraps.Load(); got != 1 {
-		t.Errorf("WrapDEK called %d times across %d copies, want 1", got, copies)
-	}
-}
-
-// TestMaterializeEncrypted_RoundTripDecrypts verifies the materialized
-// ciphertext decrypts back to the plaintext under the form's own key data.
-func TestMaterializeEncrypted_RoundTripDecrypts(t *testing.T) {
-	t.Parallel()
-	enc, _ := newCountingEncryptor(t)
-	plain := []byte("round-trip payload via materializeEncrypted")
-
-	body, _, form, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err != nil {
-		t.Fatalf("materializeEncrypted: %v", err)
-	}
-	defer body.Cleanup()
-
-	r, err := body.Reader()
-	if err != nil {
-		t.Fatalf("reader: %v", err)
-	}
-	_, wrappedDEK, err := encryption.UnpackKeyData(form.EncryptionKey)
-	if err != nil {
-		t.Fatalf("unpack key data: %v", err)
-	}
-	plainReader, err := enc.Decrypt(context.Background(), r, wrappedDEK, form.KeyID)
-	if err != nil {
-		t.Fatalf("decrypt: %v", err)
-	}
-	got, err := io.ReadAll(plainReader)
-	if err != nil {
-		t.Fatalf("read plaintext: %v", err)
-	}
-	if !bytes.Equal(got, plain) {
-		t.Errorf("round-trip mismatch: got %q, want %q", got, plain)
-	}
-}
-
-// TestMaterializeEncrypted_WrapErrorPropagates verifies a KeyProvider failure
-// surfaces with the provider error still in the chain, so the write reports why
-// it could not encrypt rather than a bare "encrypt failed".
-func TestMaterializeEncrypted_WrapErrorPropagates(t *testing.T) {
-	t.Parallel()
-	enc, cp := newCountingEncryptor(t)
-	cp.wrapErr = errors.New("simulated KeyProvider failure")
-
-	plain := []byte("doomed payload")
-	body, _, _, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err == nil {
-		body.Cleanup()
-		t.Fatal("expected error from failing KeyProvider")
-	}
-	if !errors.Is(err, cp.wrapErr) {
-		// fmt.Errorf("encrypt: %w", err) wraps the underlying provider error.
-		t.Errorf("error chain does not contain provider error: %v", err)
-	}
-}
-
 // TestDecryptResponse_BadKeyData verifies the decrypt response bad key data path by exercising io.NopCloser, bytes.NewReader, context.Background.
 func TestDecryptResponse_BadKeyData(t *testing.T) {
 	t.Parallel()
@@ -429,55 +283,4 @@ func TestDecryptResponse_BadKeyData(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for bad key data")
 	}
-}
-
-// TestStreamMetricReader_IncrementsOnNonEOFError asserts the wrapper
-// fires the encryption errors counter when the underlying reader
-// returns a non-EOF error mid-stream.
-func TestStreamMetricReader_IncrementsOnNonEOFError(t *testing.T) {
-	const op = "encrypt"
-	before := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
-
-	failing := iotest.ErrReader(errors.New("synthetic transport failure"))
-	wrapped := withStreamMetric(failing, op)
-
-	buf := make([]byte, 16)
-	if _, err := wrapped.Read(buf); err == nil {
-		t.Fatal("expected error from wrapped reader")
-	}
-
-	after := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
-	if after-before != 1 {
-		t.Errorf("counter delta = %v, want 1", after-before)
-	}
-}
-
-// TestStreamMetricReader_NoIncrementOnEOF asserts the wrapper does NOT
-// fire the counter on a clean EOF, the natural end of a healthy stream.
-func TestStreamMetricReader_NoIncrementOnEOF(t *testing.T) {
-	const op = "decrypt"
-	before := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
-
-	wrapped := withStreamMetric(strings.NewReader("hello"), op)
-	if _, err := io.ReadAll(wrapped); err != nil {
-		t.Fatalf("ReadAll: %v", err)
-	}
-
-	after := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
-	if after-before != 0 {
-		t.Errorf("counter delta = %v, want 0 on clean EOF", after-before)
-	}
-}
-
-// testutilPromCounter reads the current value of a Prometheus counter.
-func testutilPromCounter(t *testing.T, c prometheus.Counter) float64 {
-	t.Helper()
-	var m dto.Metric
-	if err := c.Write(&m); err != nil {
-		t.Fatalf("read counter: %v", err)
-	}
-	if m.Counter == nil {
-		return 0
-	}
-	return m.Counter.GetValue()
 }

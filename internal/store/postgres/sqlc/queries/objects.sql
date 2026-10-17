@@ -261,46 +261,6 @@ SELECT count(*) FROM object_locations
 WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
   AND (form & sqlc.arg(without_flags)::bigint) = 0;
 
--- name: MarkObjectEncrypted :execrows
---
--- Committed only while the row still reports the etag the transform read. A
--- client writing the key mid-pass changes it, and the bytes this would describe
--- are then no longer the bytes stored - so no row matches and the caller skips
--- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
--- and gained one from a client write fails the check instead of matching NULL.
-UPDATE object_locations
-SET encrypted = TRUE,
-    encryption_key = $3,
-    key_id = $4,
-    plaintext_size = $5,
-    size_bytes = $6
-WHERE object_key = $1 AND backend_name = $2
-  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
-
--- name: MarkObjectCompressed :execrows
--- Records how a rewritten copy is now stored. A NULL algorithm is the
--- decompress direction, which also clears the columns that only describe an
--- encoding. The envelope columns are rewritten too: re-encrypting an object
--- mints a new base nonce and wrapped key, so leaving the old ones would
--- describe bytes nothing can decrypt.
---
--- Committed only while the row still reports the etag the transform read. A
--- client writing the key mid-pass changes it, and the bytes this would describe
--- are then no longer the bytes stored - so no row matches and the caller skips
--- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
--- and gained one from a client write fails the check instead of matching NULL.
-UPDATE object_locations
-SET compression_algorithm = $3,
-    compression_level = $4,
-    compression_format_version = $5,
-    logical_size = $6,
-    size_bytes = $7,
-    plaintext_size = $8,
-    encryption_key = $9,
-    key_id = $10
-WHERE object_key = $1 AND backend_name = $2
-  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
-
 -- name: UpdateCopyMetadata :execrows
 -- Writes a patch to one copy: a NULL argument leaves its column as it is, and
 -- scrubbed stamps last_scrubbed_at. Matched on storage_key as well, so a write
@@ -315,22 +275,6 @@ SET encryption_key          = COALESCE(sqlc.narg(encryption_key)::bytea, encrypt
     compression_probe_level = COALESCE(sqlc.narg(probe_level)::text, compression_probe_level)
 WHERE object_key = sqlc.arg(object_key) AND backend_name = sqlc.arg(backend_name)
   AND storage_key = sqlc.arg(storage_key);
-
--- name: MarkObjectDecrypted :execrows
---
--- Committed only while the row still reports the etag the transform read. A
--- client writing the key mid-pass changes it, and the bytes this would describe
--- are then no longer the bytes stored - so no row matches and the caller skips
--- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
--- and gained one from a client write fails the check instead of matching NULL.
-UPDATE object_locations
-SET encrypted = FALSE,
-    encryption_key = NULL,
-    key_id = NULL,
-    size_bytes = $3,
-    plaintext_size = NULL
-WHERE object_key = $1 AND backend_name = $2
-  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
 
 -- name: GetLeastRecentlyScrubbedObjects :many
 -- Return the copies least recently touched, by verification or by writing.

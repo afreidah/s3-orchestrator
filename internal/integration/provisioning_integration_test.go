@@ -113,7 +113,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		CompStore:    testStore,
 		Locker:       testStore,
 		Runtime:      st.Runtime,
-		Usage:        st.Runtime.Usage(),
+		Mover:        st.Coord,
 		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,

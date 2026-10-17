@@ -5,10 +5,11 @@
 //
 // Drives the bulk compression bindings against a real Postgres. The two
 // listings are complements, and getting either predicate wrong makes a pass
-// either miss objects or re-encode what it just wrote. The update has to move
-// backend_quotas.bytes_used with the size it writes, and has to rewrite the
-// envelope columns: re-encrypting a copy mints a new base nonce and wrapped
-// key, so a row left holding the old ones describes bytes nothing can decrypt.
+// either miss objects or re-encode what it just wrote. The rewrite's placement
+// has to move backend_quotas.bytes_used with the size it writes, and has to
+// rewrite the envelope columns: re-encrypting a copy mints a new base nonce and
+// wrapped key, so a row left holding the old ones describes bytes nothing can
+// decrypt.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -21,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -196,10 +198,25 @@ func assertWalkedEachOnce(t *testing.T, seen map[string]int, total int) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope asserts the update
-// writes every column a rewritten copy needs and moves bytes_used by the
-// difference between what it occupied and what it occupies now.
-func TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope(t *testing.T) {
+// rewriteInPlace places the copy of key on backend-a back onto backend-a at a
+// fresh path, carrying form and size, as a compression or encryption pass
+// records it.
+func rewriteInPlace(t *testing.T, s *Store, key string, form *core.StoredForm, size int64) {
+	t.Helper()
+	src := storetest.LocationOn(t, s, key, "backend-a")
+	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source: src, Target: "backend-a", StorageKey: src.StorageKey + "!rw",
+		RemoveSource: true, Form: form, Size: size,
+	}); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+}
+
+// TestStoreInt_CompressRewrite_MovesQuotaAndEnvelope asserts the placement a
+// compression pass records writes every column a rewritten copy needs and
+// moves bytes_used by the difference between what it occupied and what it
+// occupies now.
+func TestStoreInt_CompressRewrite_MovesQuotaAndEnvelope(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
@@ -210,21 +227,16 @@ func TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope(t *testing.T) {
 	}
 	before := readBytesUsed(t, s, "backend-a")
 
-	update := &core.CompressedUpdate{
-		ObjectKey:     key,
-		BackendName:   "backend-a",
-		Algorithm:     "zstd",
-		Level:         "default",
-		FormatVersion: 1,
-		SizeBytes:     260,
-		PlaintextSize: 250,
-		LogicalSize:   1000,
-		EncryptionKey: []byte("new-packed-key"),
-		KeyID:         "key-new",
-	}
-	if err := s.MarkObjectCompressed(ctx, update, 1000); err != nil {
-		t.Fatalf("MarkObjectCompressed: %v", err)
-	}
+	rewriteInPlace(t, s, key, &core.StoredForm{
+		Encrypted:                true,
+		EncryptionKey:            []byte("new-packed-key"),
+		KeyID:                    "key-new",
+		PlaintextSize:            250,
+		CompressionAlgorithm:     "zstd",
+		CompressionLevel:         "default",
+		CompressionFormatVersion: 1,
+		LogicalSize:              1000,
+	}, 260)
 
 	if delta := readBytesUsed(t, s, "backend-a") - before; delta != -740 {
 		t.Errorf("bytes_used delta = %d, want -740 after a 1000 byte object became 260", delta)
@@ -251,10 +263,10 @@ func TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope(t *testing.T) {
 	}
 }
 
-// TestStoreInt_MarkObjectCompressed_ClearsEncoding asserts the decompress
+// TestStoreInt_DecompressRewrite_ClearsEncoding asserts the decompress
 // direction stops the row claiming an encoding, so nothing downstream tries to
 // decode bytes that are no longer encoded.
-func TestStoreInt_MarkObjectCompressed_ClearsEncoding(t *testing.T) {
+func TestStoreInt_DecompressRewrite_ClearsEncoding(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
@@ -265,14 +277,7 @@ func TestStoreInt_MarkObjectCompressed_ClearsEncoding(t *testing.T) {
 	}
 	before := readBytesUsed(t, s, "backend-a")
 
-	update := &core.CompressedUpdate{
-		ObjectKey:   key,
-		BackendName: "backend-a",
-		SizeBytes:   1000,
-	}
-	if err := s.MarkObjectCompressed(ctx, update, 300); err != nil {
-		t.Fatalf("MarkObjectCompressed: %v", err)
-	}
+	rewriteInPlace(t, s, key, &core.StoredForm{}, 1000)
 
 	if delta := readBytesUsed(t, s, "backend-a") - before; delta != 700 {
 		t.Errorf("bytes_used delta = %d, want 700 after a 300 byte object became 1000", delta)

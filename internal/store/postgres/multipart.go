@@ -205,15 +205,17 @@ func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit
 // PlaintextSize.
 func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
 	return core.MultipartPart{
+		StoredForm: core.StoredForm{
+			Encrypted:     r.Encrypted,
+			EncryptionKey: r.EncryptionKey,
+			KeyID:         derefStr(r.KeyID),
+			PlaintextSize: derefInt64(r.PlaintextSize),
+		},
 		PartNumber:    int(r.PartNumber),
 		ETag:          r.Etag,
 		PlaintextETag: derefStr(r.PlaintextEtag),
 		SizeBytes:     r.SizeBytes,
 		CreatedAt:     r.CreatedAt.Time,
-		Encrypted:     r.Encrypted,
-		EncryptionKey: r.EncryptionKey,
-		KeyID:         derefStr(r.KeyID),
-		PlaintextSize: derefInt64(r.PlaintextSize),
 	}
 }
 

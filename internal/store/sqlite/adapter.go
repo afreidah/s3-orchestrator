@@ -442,14 +442,15 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 	return true, nil
 }
 
-// BackendAdmits reports whether a backend accepts a write of size more bytes,
-// judged against backend_capacity, the view every admission test reads.
-func (a *sqliteTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64) (bool, error) {
+// BackendAdmits reports whether a backend accepts a write of size more bytes
+// while carrying only flags within accepts, judged against backend_capacity,
+// the view every admission test reads.
+func (a *sqliteTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64, accepts core.BackendFlags) (bool, error) {
 	var fits bool
 	if err := a.q.QueryRowContext(ctx, `
 		SELECT (flags & ~?) = 0 AND (available_bytes IS NULL OR available_bytes >= ?)
 		FROM backend_capacity
-		WHERE backend_name = ?`, core.AcceptForWrite, size, backendName).Scan(&fits); err != nil {
+		WHERE backend_name = ?`, accepts, size, backendName).Scan(&fits); err != nil {
 		return false, fmt.Errorf("check backend headroom: %w", err)
 	}
 	return fits, nil
@@ -634,96 +635,6 @@ func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName s
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
-}
-
-// -------------------------------------------------------------------------
-// STORED-FORM REWRITES
-// -------------------------------------------------------------------------
-
-// UpdateCompressedForm records the stored form a recompression pass left on
-// one copy. The envelope columns are rewritten too: re-encrypting mints a new
-// base nonce and wrapped key, so leaving the old ones would describe bytes
-// nothing can decrypt.
-func (a *sqliteTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
-	res, err := a.q.ExecContext(ctx, `
-		UPDATE object_locations
-		SET compression_algorithm = ?, compression_level = ?,
-		    compression_format_version = ?, logical_size = ?,
-		    size_bytes = ?, plaintext_size = ?,
-		    encryption_key = ?, key_id = ?
-		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
-		nullableString(u.Algorithm), nullableString(u.Level),
-		nullableInt64(int64(u.FormatVersion)), nullableInt64(u.LogicalSize),
-		u.SizeBytes, nullableInt64(u.PlaintextSize),
-		u.EncryptionKey, nullableString(u.KeyID),
-		u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
-	)
-	if err != nil {
-		return fmt.Errorf("update compressed form: %w", err)
-	}
-	return changedIfNoRows(res)
-}
-
-// MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
-func (a *sqliteTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	res, err := a.q.ExecContext(ctx, `
-		UPDATE object_locations
-		SET encrypted = 1, encryption_key = ?, key_id = ?,
-		    plaintext_size = ?, size_bytes = ?
-		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
-		u.EncryptionKey, u.KeyID, u.PlaintextSize, u.CiphertextSize,
-		u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
-	)
-	if err != nil {
-		return fmt.Errorf("mark copy encrypted: %w", err)
-	}
-	return changedIfNoRows(res)
-}
-
-// MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
-func (a *sqliteTxAdapter) MarkCopyDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
-	res, err := a.q.ExecContext(ctx, `
-		UPDATE object_locations
-		SET encrypted = 0, encryption_key = NULL, key_id = NULL,
-		    plaintext_size = NULL, size_bytes = ?
-		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
-		u.PlaintextSize, u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
-	)
-	if err != nil {
-		return fmt.Errorf("mark copy decrypted: %w", err)
-	}
-	return changedIfNoRows(res)
-}
-
-// changedIfNoRows turns a stored-form write that matched nothing into the
-// sentinel the passes skip on. The statements are keyed on the copy and its
-// etag, so no match means a client wrote the key after the pass read it.
-//
-// SQLite's IS is null-safe equality, which is what lets a copy with no etag be
-// matched by an empty expectation while one that gained an etag from a client
-// write is not.
-func changedIfNoRows(res sql.Result) error {
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if rows == 0 {
-		return core.ErrCopyChanged
-	}
-	return nil
-}
-
-// GetCopySizeBytes reads the size a copy currently reports.
-func (a *sqliteTxAdapter) GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error) {
-	var size int64
-	if err := a.q.QueryRowContext(ctx, `
-		SELECT size_bytes FROM object_locations
-		WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backendName,
-	).Scan(&size); err != nil {
-		return 0, fmt.Errorf("get copy size_bytes: %w", err)
-	}
-	return size, nil
 }
 
 // Compile-time check that *sqliteTxAdapter satisfies core.TxAdapter.

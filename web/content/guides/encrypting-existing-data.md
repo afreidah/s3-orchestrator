@@ -61,22 +61,29 @@ After restarting, all new objects will be encrypted automatically. Existing obje
 
 ## Step 4: Encrypt Existing Objects
 
-Encrypt all existing unencrypted objects by hitting the admin API. The
-orchestrator does not ship a CLI subcommand for this — use the HTTP endpoint:
+Encrypt all existing unencrypted objects with the CLI:
+
+```bash
+s3-orchestrator admin encrypt-existing
+```
+
+or by calling the admin API directly:
 
 ```bash
 curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
   -H "Authorization: Bearer ${ADMIN_TOKEN}"
 ```
 
-This processes objects in batches of 100: each object is downloaded from its backend, encrypted, re-uploaded (overwriting the plaintext), and its database record is updated. The response shows progress:
+This processes copies in batches of 100: each copy is downloaded from its backend, encrypted, and written to a new path on the same backend. The new row replaces the plaintext one in one transaction, then the plaintext bytes are deleted, so a reader sees either the old copy or the new one. A compressed copy keeps its encoding. The response shows progress:
 
 ```json
-{"status": "complete", "encrypted": 1423, "failed": 0, "total": 1423}
+{"status": "complete", "encrypted": 1423, "skipped": 0, "changed": 0, "failed": 0, "total": 1423}
 ```
 
+`skipped` counts copies on a backend with no usage headroom, no room for the larger ciphertext, or a drain in progress. `changed` counts copies a client wrote while the pass was converting them: the client's write stands and the pass deletes the bytes it wrote. See [When a conversion meets a live write](../../docs/admin-api/#when-a-conversion-meets-a-live-write).
+
 {{% notice warning %}}
-This operation downloads and re-uploads every unencrypted object. The re-uploads count against backend quotas and usage limits (API requests, egress, ingress). Plan for the additional network traffic and time, especially with large datasets.
+This operation downloads and rewrites every unencrypted copy. Each rewrite costs a GET, a PUT and a DELETE and counts against backend quotas and usage limits (API requests, egress, ingress). Plan for the additional network traffic and time, especially with large datasets.
 {{% /notice %}}
 
 ## Step 5: Verify
@@ -85,8 +92,10 @@ Monitor the `s3o_encrypt_existing_objects_total` metric:
 
 | Label | Meaning |
 |-------|---------|
-| `success` | Objects successfully encrypted |
-| `error` | Objects that failed encryption |
+| `success` | Copies successfully encrypted |
+| `skipped` | Copies the pass left alone this time |
+| `changed` | Copies a client wrote during the pass; the client's write stands |
+| `error` | Copies that failed encryption |
 
 If any objects failed, check the logs for details and re-POST to `/admin/api/encrypt-existing` again - it only processes objects without encryption metadata, so it's safe to retry.
 

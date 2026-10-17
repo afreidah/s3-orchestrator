@@ -137,27 +137,6 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, 
 	return items, nil
 }
 
-const getObjectSizeBytes = `-- name: GetObjectSizeBytes :one
-SELECT size_bytes FROM object_locations
-WHERE object_key = $1 AND backend_name = $2
-`
-
-type GetObjectSizeBytesParams struct {
-	ObjectKey   string
-	BackendName string
-}
-
-// Returns the current size_bytes of an object_locations row. Used
-// inside MarkObjectDecrypted so the caller can compute the size
-// delta against the row that is about to be overwritten without
-// needing the old ciphertext size to flow through the API.
-func (q *Queries) GetObjectSizeBytes(ctx context.Context, arg GetObjectSizeBytesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, getObjectSizeBytes, arg.ObjectKey, arg.BackendName)
-	var size_bytes int64
-	err := row.Scan(&size_bytes)
-	return size_bytes, err
-}
-
 const incrementOrphanBytes = `-- name: IncrementOrphanBytes :exec
 UPDATE backend_quotas
 SET orphan_bytes = orphan_bytes + $1, updated_at = NOW()

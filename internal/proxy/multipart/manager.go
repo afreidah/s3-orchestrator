@@ -32,7 +32,6 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -45,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
@@ -424,18 +424,11 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	result, err := mp.encryptor.EncryptWithDEK(body, size, dek, wrappedDEK, mu.KeyID)
+	sealed, err := storedform.Seal(ctx, mp.encryptor, body, size, &storedform.DataKey{DEK: dek, WrappedDEK: wrappedDEK, KeyID: mu.KeyID})
 	if err != nil {
-		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 		return nil, 0, nil, err
 	}
-	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-	return result.Body, result.CiphertextSize, &core.StoredForm{
-		Encrypted:     true,
-		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
-		KeyID:         result.KeyID,
-		PlaintextSize: size,
-	}, nil
+	return sealed.Body, sealed.Size, sealed.Form, nil
 }
 
 // prepareUploadPartBody returns the body, size and stored form for one part,
@@ -794,11 +787,10 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 	defer stored.cleanup()
 
-	uploadBody, uploadSize, form, err := mp.buildAssembledUpload(ctx, span, mu, stored.body, stored.size)
+	uploadBody, uploadSize, form, err := mp.buildAssembledUpload(ctx, span, mu, stored, totalPlaintextSize)
 	if err != nil {
 		return "", err
 	}
-	form = stored.applyMeta(form, mp.compression.Level, totalPlaintextSize)
 
 	// Record the intent before the assembly PUT so a crash between the PUT and
 	// the commit leaves the pending reaper a record to finish or remove, rather
@@ -951,17 +943,12 @@ func stampContentHash(form *core.StoredForm, hasher hash.Hash) *core.StoredForm 
 	return form
 }
 
-// sumPlaintextSize returns the total plaintext byte count across parts.
-// Encrypted parts contribute PlaintextSize; unencrypted parts contribute
-// SizeBytes.
+// sumPlaintextSize returns the total byte count the client uploaded across
+// parts, whatever each part was stored as.
 func sumPlaintextSize(parts []core.MultipartPart) int64 {
 	var total int64
 	for i := range parts {
-		if parts[i].Encrypted {
-			total += parts[i].PlaintextSize
-		} else {
-			total += parts[i].SizeBytes
-		}
+		total += parts[i].ClientSize(parts[i].SizeBytes)
 	}
 	return total
 }
@@ -991,67 +978,30 @@ func (a *assembledBody) cleanup() {
 	}
 }
 
-// applyMeta records how the assembled bytes were encoded, allocating a form when
-// nothing upstream needed one. LogicalSize is the size the client uploaded
-// across all parts, which is the only place that number survives once the row's
-// SizeBytes counts the encoding instead.
-func (a *assembledBody) applyMeta(form *core.StoredForm, level string, logicalSize int64) *core.StoredForm {
-	if !a.compressed {
-		return form
-	}
-	if form == nil {
-		form = &core.StoredForm{}
-	}
-	form.CompressionAlgorithm = compression.Algorithm
-	form.CompressionLevel = level
-	form.CompressionFormatVersion = compression.FormatVersion
-	form.LogicalSize = logicalSize
-	return form
-}
-
-// compressOnComplete reports whether an assembled object of this size should be
-// encoded, using the same gate as a single-object PUT.
-func (mp *Manager) compressOnComplete(size int64) bool {
-	return mp.codec != nil && mp.compression.Enabled && size >= mp.compression.MinSize
-}
-
 // compressAssembly encodes the assembled plaintext when compression applies and
 // reports what the PUT should send. The encoding is buffered because a backend
 // PUT declares its size up front. An encoding that misses min_ratio is decoded
 // back out of that buffer, since the part pipe delivers the plaintext only once
 // and re-reading the parts would charge their egress a second time.
 func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
-	if !mp.compressOnComplete(totalPlaintextSize) {
-		if mp.codec != nil && mp.compression.Enabled {
-			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
-		}
+	if !storedform.ShouldCompress(&mp.compression, mp.codec, totalPlaintextSize) {
 		return &assembledBody{body: src, size: totalPlaintextSize}, nil
 	}
 
-	buf, err := materialize.NewEmpty(totalPlaintextSize)
+	enc, err := storedform.Compress(mp.codec, src, totalPlaintextSize, mp.compression.MinRatio)
 	if err != nil {
-		return nil, fmt.Errorf("buffer assembled object: %w", err)
-	}
-	a := &assembledBody{encoded: buf}
-
-	encodedSize, err := mp.codec.Compress(buf.Writer(), src)
-	if err != nil {
-		a.cleanup()
-		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
 		return nil, fmt.Errorf("compress assembled object: %w", err)
 	}
-	reader, err := buf.Reader()
+	a := &assembledBody{encoded: enc.Body}
+	reader, err := enc.Body.Reader()
 	if err != nil {
 		a.cleanup()
 		return nil, fmt.Errorf("read back assembled object: %w", err)
 	}
-
-	if compression.WorthStoring(totalPlaintextSize, encodedSize, mp.compression.MinRatio) {
-		telemetry.RecordCompressed(totalPlaintextSize, encodedSize)
-		a.body, a.size, a.compressed = reader, encodedSize, true
+	if enc.Worth {
+		a.body, a.size, a.compressed = reader, enc.Size, true
 		return a, nil
 	}
-	telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
 
 	plain, err := mp.codec.Decompress(reader)
 	if err != nil {
@@ -1062,25 +1012,31 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 	return a, nil
 }
 
-// buildAssembledUpload returns the body the assembly PUT sends. With encryption
-// configured it encrypts the plaintext pipe under the upload-level DEK from mu,
-// so the assembled object shares its DEK with every part.
+// buildAssembledUpload returns the body the assembly PUT sends and the form
+// describing it. With encryption configured it encrypts the stored bytes under
+// the upload-level DEK from mu, so the assembled object shares its DEK with
+// every part.
 func (mp *Manager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,
 	mu *core.MultipartUpload,
-	pr io.Reader,
+	stored *assembledBody,
 	totalPlaintextSize int64,
 ) (io.Reader, int64, *core.StoredForm, error) {
-	if mp.encryptor == nil {
-		return pr, totalPlaintextSize, nil, nil
+	out, size := stored.body, stored.size
+	var form *core.StoredForm
+	if mp.encryptor != nil {
+		var err error
+		out, size, form, err = mp.encryptWithUploadDEK(ctx, mu, stored.body, stored.size)
+		if err != nil {
+			observe.RecordSpanError(span, err)
+			return nil, 0, nil, fmt.Errorf("encrypt final object: %w", err)
+		}
 	}
-	out, ciphertextSize, form, err := mp.encryptWithUploadDEK(ctx, mu, pr, totalPlaintextSize)
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", err)
+	if stored.compressed {
+		form = storedform.Describe(form, mp.compression.Level, totalPlaintextSize)
 	}
-	return out, ciphertextSize, form, nil
+	return out, size, form, nil
 }
 
 // -------------------------------------------------------------------------
@@ -1146,16 +1102,12 @@ func (mp *Manager) streamOnePart(
 	}
 	defer func() { _ = result.Body.Close() }()
 
-	src := io.Reader(result.Body)
-	if part.Encrypted && mp.encryptor != nil {
-		decrypted, _, decErr := mp.encryptor.DecryptStored(ctx, result.Body, part.EncryptionKey, part.KeyID, part.PlaintextSize, nil)
-		if decErr != nil {
-			if errors.Is(decErr, encryption.ErrInvalidKeyData) {
-				return fmt.Errorf("unpack part %d key: %w", part.PartNumber, decErr)
-			}
-			return fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr)
+	src, err := storedform.Unseal(ctx, mp.encryptor, result.Body, &part.StoredForm)
+	if err != nil {
+		if errors.Is(err, encryption.ErrInvalidKeyData) {
+			return fmt.Errorf("unpack part %d key: %w", part.PartNumber, err)
 		}
-		src = decrypted
+		return fmt.Errorf("open part %d: %w", part.PartNumber, err)
 	}
 
 	if _, err := bufpool.Copy(bw, src); err != nil {

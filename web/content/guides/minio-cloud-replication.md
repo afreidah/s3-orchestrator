@@ -163,7 +163,7 @@ To encrypt objects that were uploaded before encryption was enabled, hit the adm
 ```bash
 curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
   -H "Authorization: Bearer ${ADMIN_TOKEN}"
-# {"status":"complete","encrypted":N,"failed":N,"total":N}
+# {"status":"complete","encrypted":N,"skipped":N,"changed":N,"failed":N,"total":N}
 ```
 
 For production deployments, consider using [Vault Transit](../nomad-vault-deployment/) instead of an inline key. See the [Encrypting Existing Data](../encrypting-existing-data/) guide for the full walkthrough and the [Key Rotation](../key-rotation/) guide for rotating master keys.

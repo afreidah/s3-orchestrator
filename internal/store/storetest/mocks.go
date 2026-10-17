@@ -1162,48 +1162,6 @@ func (mr *MockMetadataStoreMockRecorder) MarkDrainFailed(ctx, backendName, reaso
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkDrainFailed", reflect.TypeOf((*MockMetadataStore)(nil).MarkDrainFailed), ctx, backendName, reason)
 }
 
-// MarkObjectCompressed mocks base method.
-func (m *MockMetadataStore) MarkObjectCompressed(ctx context.Context, u *core.CompressedUpdate, previousSize int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectCompressed", ctx, u, previousSize)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkObjectCompressed indicates an expected call of MarkObjectCompressed.
-func (mr *MockMetadataStoreMockRecorder) MarkObjectCompressed(ctx, u, previousSize any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectCompressed", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectCompressed), ctx, u, previousSize)
-}
-
-// MarkObjectDecrypted mocks base method.
-func (m *MockMetadataStore) MarkObjectDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectDecrypted", ctx, u)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkObjectDecrypted indicates an expected call of MarkObjectDecrypted.
-func (mr *MockMetadataStoreMockRecorder) MarkObjectDecrypted(ctx, u any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectDecrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectDecrypted), ctx, u)
-}
-
-// MarkObjectEncrypted mocks base method.
-func (m *MockMetadataStore) MarkObjectEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectEncrypted", ctx, u)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkObjectEncrypted indicates an expected call of MarkObjectEncrypted.
-func (mr *MockMetadataStoreMockRecorder) MarkObjectEncrypted(ctx, u any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectEncrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectEncrypted), ctx, u)
-}
-
 // MoveCleanupToDLQ mocks base method.
 func (m *MockMetadataStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	m.ctrl.T.Helper()

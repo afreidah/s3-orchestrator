@@ -272,22 +272,6 @@ type LifecycleAdmin interface {
 	Close()
 }
 
-// EncryptionAdmin defines the admin-only encryption key rotation and
-// encrypt/decrypt batch operations used by the admin HTTP handler. These
-// are not on the request hot path, so they bypass the circuit breaker.
-type EncryptionAdmin interface {
-	CopyLister
-	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error
-}
-
-// CompressionAdmin defines the admin-only bulk compression operations. They are
-// off the request hot path and bypass the circuit breaker.
-type CompressionAdmin interface {
-	CopyLister
-	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
-}
-
 // ProvisioningStore defines the store half of the bucket registry: the buckets,
 // users, credentials and grants held as rows rather than config entries.
 // Registry assembly reads the listings at startup and on every reload. The

@@ -1092,12 +1092,9 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Mark as encrypted.
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("packed"),
-		KeyID: "kid-1", PlaintextSize: 80, CiphertextSize: 100,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	rewriteInPlace(t, s, key, &core.StoredForm{
+		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 80,
+	}, 100)
 
 	// Now listed under its key ID and no longer as plaintext.
 	underKey := core.FormFilter{With: core.StoredEncrypted, KeyID: "kid-1"}
@@ -1124,9 +1121,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Mark decrypted.
-	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: key, BackendName: "backend-a", PlaintextSize: 80}); err != nil {
-		t.Fatalf("MarkObjectDecrypted: %v", err)
-	}
+	rewriteInPlace(t, s, key, &core.StoredForm{}, 80)
 	if got := pgKeysByForm(t, s, &encrypted); len(got) != 0 {
 		t.Errorf("encrypted listing = %v after decrypting, want none", got)
 	}
@@ -1923,12 +1918,9 @@ func TestStoreInt_LedgerStats_PlaintextCopies(t *testing.T) {
 
 	// Encrypting the copy removes it from the count, so the figure falls as an
 	// operator works through the backlog rather than staying put.
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("wrapped"),
-		KeyID: "key-0", PlaintextSize: 100, CiphertextSize: 132,
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
-	}
+	rewriteInPlace(t, s, key, &core.StoredForm{
+		Encrypted: true, EncryptionKey: []byte("wrapped"), KeyID: "key-0", PlaintextSize: 100,
+	}, 132)
 	encrypted := pgLedger(t, s).PlaintextCopies()
 	if encrypted != before {
 		t.Errorf("count = %d after encrypting the copy, want %d", encrypted, before)

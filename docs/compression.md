@@ -57,7 +57,9 @@ s3-orchestrator admin decompress-existing   # and back out again
 
 Both are available in the web UI as well, and as `POST /admin/api/compress-existing` and `/admin/api/decompress-existing`.
 
-The pass reads each copy, encodes it, writes it back in place and updates the row, moving the backend's quota by the difference in one transaction with it. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
+The pass reads each copy, encodes it, and writes the result to a new path on the same backend. The new row replaces the old one in one transaction, which also moves the backend's quota by the difference, and the old bytes are deleted after it commits. Readers see either the old copy or the new one, never bytes the row does not describe. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
+
+The new copy is recorded only while the copy the pass read is still the recorded one. A client that writes the key mid-pass keeps its write: nothing is recorded, the pass deletes the bytes it wrote, and the copy is counted as `changed` (see [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write)). Only the growth of a rewritten copy, its new size minus its old one, is judged against the backend's room. A cordoned backend still admits a rewrite, since it adds no copy; a draining backend refuses it and the copy is skipped.
 
 Objects it declines are reported as **skipped**, separately from failures. On a fleet of media or archives most of it will be skipped, and that is a healthy run rather than a broken one. Only objects below `min_size` are free to skip: deciding on the ratio means encoding the object first, since nothing else answers the question.
 
@@ -178,7 +180,7 @@ That holds through failure too. A PUT records its intent before the upload, so a
 
 It decodes front to back rather than through the seek table, since it reads the whole object anyway and would otherwise have to buffer it locally to have something seekable.
 
-A copy this orchestrator cannot decode - a compressed object with no codec configured, or bytes the codec rejects - is reported as unreadable rather than corrupt, and is left alone. The distinction matters because the scrubber deletes what it judges corrupt, and a copy it could not read has not been judged.
+A copy this orchestrator cannot decode - a compressed object with no codec configured, an encrypted object with no encryptor configured, or bytes the codec rejects - is reported as unreadable rather than corrupt, and is left alone. The distinction matters because the scrubber deletes what it judges corrupt, and a copy it could not read has not been judged.
 
 ## Copying an object
 

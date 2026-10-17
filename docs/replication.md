@@ -31,7 +31,7 @@ An overwrite is never an in-place replacement of bytes. Each write stores its ow
 
 What follows from that is the whole of the overwrite contract:
 
-- **A reader sees one version or the other, whole.** No client write lands over the object a reader is being served, because no client write lands at its path. The bulk compression and encryption passes are the exception: they rewrite a copy at its own path, guarded by an etag check. The previous copy is removed by the cleanup the overwrite queues, after its own row is gone.
+- **A reader sees one version or the other, whole.** No client write lands over the object a reader is being served, because no client write lands at its path. The bulk compression and encryption passes follow the same rule: each rewritten copy goes to a new path on its own backend, its row replaces the old one only while the old one is still the recorded copy, and the old bytes are deleted after that commit.
 - **Every cleanup names the bytes it is for.** A copy displaced by an overwrite, an intent a write superseded, a copy a further upload discarded when a newer write took the key, an over-replicated copy the cleaner dropped: each is deleted at the path its own row or intent recorded. None of them can reach another write's bytes.
 - **A displaced copy on the same backend still costs a delete.** An overwrite landing on the backend that already holds the object writes beside the old copy rather than over it, so the old copy is removed like one on any other backend, and its space comes back when that delete lands rather than at the moment of the write.
 

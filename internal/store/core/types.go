@@ -104,13 +104,20 @@ type ObjectLocation struct {
 // otherwise. It is the Go half of the definition object_locations.object_size
 // generates, and the two must agree.
 func (l *ObjectLocation) ObjectSize() int64 {
-	switch form := l.Form(); {
+	return l.ClientSize(l.SizeBytes)
+}
+
+// ClientSize is the size of the bytes the client wrote, for stored bytes of
+// size stored carrying this form: the logical size under an encoding, the
+// plaintext size under an envelope, and stored itself otherwise.
+func (f *StoredForm) ClientSize(stored int64) int64 {
+	switch form := f.Form(); {
 	case form.Has(StoredCompressed):
-		return l.LogicalSize
+		return f.LogicalSize
 	case form.Has(StoredEncrypted):
-		return l.PlaintextSize
+		return f.PlaintextSize
 	default:
-		return l.SizeBytes
+		return stored
 	}
 }
 
@@ -122,15 +129,6 @@ func (l *ObjectLocation) CopyAt(backend, storageKey string) *ObjectLocation {
 	dest.BackendName = backend
 	dest.StorageKey = storageKey
 	return &dest
-}
-
-// RecordedETag returns the ETag the row carries, or "" when it has none
-// recorded yet.
-func (l *ObjectLocation) RecordedETag() string {
-	if l.Identity == nil {
-		return ""
-	}
-	return l.Identity.ETag
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion
@@ -359,17 +357,15 @@ type MultipartUpload struct {
 // MultipartPart describes a single uploaded part of an active upload. ETag is
 // what the backend returned for the stored part; PlaintextETag is the MD5 of
 // the client's bytes and is the one that builds the composite ETag. Older
-// parts may have an empty PlaintextETag.
+// parts may have an empty PlaintextETag. Parts are never compressed, so the
+// stored form carries only the envelope.
 type MultipartPart struct {
+	StoredForm
 	PartNumber    int
 	ETag          string
 	PlaintextETag string
 	SizeBytes     int64
 	CreatedAt     time.Time
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
 }
 
 // RecordPartParams is one RecordPart call's inputs. Bundled rather than passed
@@ -560,50 +556,6 @@ type CopyPatch struct {
 	ContentHash   string
 	Scrubbed      bool
 	Probe         *CompressionProbe
-}
-
-// CompressedUpdate is the new description of a copy a compression pass has
-// rewritten. SizeBytes is what now occupies the backend, PlaintextSize is what
-// the encryptor was handed, and LogicalSize is the object the client wrote. An
-// empty Algorithm records the copy as no longer encoded. EncryptionKey and
-// KeyID are required when the copy was re-encrypted, since re-encryption mints
-// a new nonce and wrapped key, and empty for an unencrypted copy.
-type CompressedUpdate struct {
-	ObjectKey     string
-	BackendName   string
-	Algorithm     string
-	Level         string
-	FormatVersion int
-	SizeBytes     int64
-	PlaintextSize int64
-	LogicalSize   int64
-	EncryptionKey []byte
-	KeyID         string
-	ExpectedEtag  string
-}
-
-// EncryptedUpdate is the new description of a copy an encryption pass has
-// rewritten. PlaintextSize is what the encryptor was handed and CiphertextSize
-// is what now occupies the backend, so the difference between them is what the
-// envelope cost and what the backend's counter has to move by.
-type EncryptedUpdate struct {
-	ObjectKey      string
-	BackendName    string
-	EncryptionKey  []byte
-	KeyID          string
-	PlaintextSize  int64
-	CiphertextSize int64
-	ExpectedEtag   string
-}
-
-// DecryptedUpdate is the new description of a copy a decryption pass has
-// rewritten back to plaintext. PlaintextSize is what now occupies the backend,
-// and the envelope columns the row still holds are cleared.
-type DecryptedUpdate struct {
-	ObjectKey     string
-	BackendName   string
-	PlaintextSize int64
-	ExpectedEtag  string
 }
 
 // -------------------------------------------------------------------------

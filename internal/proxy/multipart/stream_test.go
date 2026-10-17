@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
 
 // newTestMultipartManager builds a minimal Manager suitable for
@@ -87,8 +88,9 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	}
 }
 
-// TestStreamOnePart_BodyReadErrorWrapsPartNumber verifies the stream one part body read error wraps part number contract.
-// Asserts that error missing part number / phase:.
+// TestStreamOnePart_BodyReadErrorWrapsPartNumber verifies a body that fails
+// on its first read surfaces while the envelope is inspected, naming the part
+// and keeping the backend error in the chain.
 func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
@@ -103,8 +105,69 @@ func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failing read")
 	}
-	if !strings.Contains(err.Error(), "failed to stream part 3") {
+	if !strings.Contains(err.Error(), "open part 3") {
 		t.Errorf("error missing part number / phase: %v", err)
+	}
+	if !errors.Is(err, be.GetReadErr) {
+		t.Errorf("error chain missing read error: %v", err)
+	}
+}
+
+// sealPart encrypts plain under enc and returns the stored ciphertext and the
+// part row that describes it.
+func sealPart(t *testing.T, enc *encryption.Encryptor, partNumber int, plain []byte) ([]byte, *core.MultipartPart) {
+	t.Helper()
+	res, err := enc.Encrypt(context.Background(), bytes.NewReader(plain), int64(len(plain)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+	return ciphertext, &core.MultipartPart{
+		PartNumber: partNumber,
+		SizeBytes:  int64(len(ciphertext)),
+		StoredForm: core.StoredForm{
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
+			KeyID:         res.KeyID,
+			PlaintextSize: int64(len(plain)),
+		},
+	}
+}
+
+// TestStreamOnePart_FlagMismatchFailsAssembly verifies a part whose row and
+// stored bytes disagree about encryption fails in both directions rather than
+// assembling ciphertext as plaintext or plaintext as ciphertext.
+func TestStreamOnePart_FlagMismatchFailsAssembly(t *testing.T) {
+	t.Parallel()
+	enc := newTestEncryptor(t)
+	ciphertext, sealed := sealPart(t, enc, 8, []byte("sealed part payload"))
+
+	cases := map[string]struct {
+		stored []byte
+		part   *core.MultipartPart
+	}{
+		"row says plain":  {stored: ciphertext, part: &core.MultipartPart{PartNumber: 8}},
+		"row says sealed": {stored: []byte("plaintext bytes on disk"), part: sealed},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			mp := newTestMultipartManager(enc)
+			be := backendtest.NewInMemory()
+			preloadPart(be, "upload-mm", 8, tc.stored)
+
+			var buf bytes.Buffer
+			err := mp.streamOnePart(context.Background(), be, &buf, "upload-mm", tc.part)
+			if !errors.Is(err, core.ErrEncryptionFlagMismatch) {
+				t.Fatalf("error = %v, want ErrEncryptionFlagMismatch", err)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("wrote %d bytes, want none", buf.Len())
+			}
+		})
 	}
 }
 
@@ -146,41 +209,43 @@ func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 	}
 }
 
-// TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext verifies the stream one part encrypted part without encryptor passes ciphertext contract.
-// Asserts that streamOnePart:.
-func TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext(t *testing.T) {
+// TestStreamOnePart_EncryptedPartWithoutEncryptorFails verifies an encrypted
+// part fails assembly when encryption has since been disabled, rather than
+// assembling its ciphertext into the object as though it were plaintext.
+func TestStreamOnePart_EncryptedPartWithoutEncryptorFails(t *testing.T) {
 	t.Parallel()
-	// Existing behavior: when part.Encrypted is true but mp.encryptor is nil
-	// (encryption disabled mid-upload), the helper writes ciphertext as-is.
+	ciphertext, part := sealPart(t, newTestEncryptor(t), 2, []byte("opaque part payload"))
 	mp := newTestMultipartManager(nil)
 	be := backendtest.NewInMemory()
 	const uploadID = "upload-noenc"
-	ciphertext := []byte("opaque ciphertext bytes")
 	preloadPart(be, uploadID, 2, ciphertext)
 
-	part := &core.MultipartPart{PartNumber: 2, Encrypted: true}
-
 	var buf bytes.Buffer
-	if err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part); err != nil {
-		t.Fatalf("streamOnePart: %v", err)
+	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
+	if !errors.Is(err, storedform.ErrNoEncryptor) {
+		t.Fatalf("error = %v, want ErrNoEncryptor", err)
 	}
-	if !bytes.Equal(buf.Bytes(), ciphertext) {
-		t.Errorf("expected ciphertext passthrough, got %q", buf.String())
+	if !strings.Contains(err.Error(), "open part 2") {
+		t.Errorf("error missing part number: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("wrote %d bytes of ciphertext, want none", buf.Len())
 	}
 }
 
-// TestStreamOnePart_BadEncryptionKeyWrapsPartNumber verifies the stream one part bad encryption key wraps part number contract.
-// Asserts that error missing phase / part number:.
+// TestStreamOnePart_BadEncryptionKeyWrapsPartNumber verifies a part whose
+// recorded key data cannot be unpacked fails naming the part and the phase.
 func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
 	be := backendtest.NewInMemory()
 	const uploadID = "upload-badkey"
-	preloadPart(be, uploadID, 4, []byte("anything"))
+	ciphertext, part := sealPart(t, enc, 4, []byte("anything"))
+	preloadPart(be, uploadID, 4, ciphertext)
 
 	// EncryptionKey too short -> UnpackKeyData fails.
-	part := &core.MultipartPart{PartNumber: 4, Encrypted: true, EncryptionKey: []byte("tiny")}
+	part.EncryptionKey = []byte("tiny")
 
 	var buf bytes.Buffer
 	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
@@ -192,38 +257,51 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	}
 }
 
-// TestStreamOnePart_DecryptErrorWrapsPartNumber verifies the stream one part decrypt error wraps part number contract.
-// Asserts that Encrypt:.
+// TestStreamOnePart_DecryptErrorWrapsPartNumber verifies an envelope that
+// does not open under the part's key fails naming the part, and is not
+// mistaken for a flag mismatch.
 func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
 	be := backendtest.NewInMemory()
 
-	// Encrypt one payload to mint valid key data, but store garbage as the
-	// "ciphertext" so Decrypt fails on parse/verify.
-	res, err := enc.Encrypt(context.Background(), bytes.NewReader([]byte("x")), 1)
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-	_, _ = io.ReadAll(res.Body)
+	// The stored bytes are a real envelope sealed under another data key, so
+	// the header check passes and the decrypt itself fails.
+	_, part := sealPart(t, enc, 6, []byte("payload whose key the row keeps"))
+	other, _ := sealPart(t, enc, 6, []byte("payload whose bytes the backend keeps"))
 
 	const uploadID = "upload-decryptfail"
-	preloadPart(be, uploadID, 6, []byte("not-real-ciphertext-bytes"))
-	part := &core.MultipartPart{
-		PartNumber:    6,
-		Encrypted:     true,
-		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
-		KeyID:         res.KeyID,
-	}
+	preloadPart(be, uploadID, 6, other)
 
 	var buf bytes.Buffer
 	streamErr := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
 	if streamErr == nil {
 		t.Fatal("expected decrypt failure")
 	}
-	if !strings.Contains(streamErr.Error(), "decrypt part 6") {
-		t.Errorf("error missing phase / part number: %v", streamErr)
+	if !strings.Contains(streamErr.Error(), "part 6") {
+		t.Errorf("error missing part number: %v", streamErr)
+	}
+	if errors.Is(streamErr, core.ErrEncryptionFlagMismatch) {
+		t.Errorf("error = %v, want a decrypt failure, not a flag mismatch", streamErr)
+	}
+}
+
+// TestSumPlaintextSize verifies the assembled size counts each part as the
+// bytes the client uploaded: the stored size for a plaintext part and the
+// plaintext size for an encrypted one.
+func TestSumPlaintextSize(t *testing.T) {
+	t.Parallel()
+	parts := []core.MultipartPart{
+		{PartNumber: 1, SizeBytes: 100},
+		{PartNumber: 2, SizeBytes: 164, StoredForm: core.StoredForm{Encrypted: true, PlaintextSize: 100}},
+		{PartNumber: 3, SizeBytes: 7},
+	}
+	if got := sumPlaintextSize(parts); got != 207 {
+		t.Errorf("sumPlaintextSize = %d, want 207", got)
+	}
+	if got := sumPlaintextSize(nil); got != 0 {
+		t.Errorf("sumPlaintextSize(nil) = %d, want 0", got)
 	}
 }
 

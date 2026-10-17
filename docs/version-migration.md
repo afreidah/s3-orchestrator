@@ -64,6 +64,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Rewrite passes go through the placement step ([#1714](https://github.com/afreidah/s3-orchestrator/issues/1714), v0.162.9)**
+
+The compress, decompress, encrypt and decrypt passes no longer overwrite a copy in place. Each rewritten copy is written to a new path on the same backend and recorded only while the copy the pass read is still the one recorded; the old bytes are deleted after. A reader no longer sees bytes in a form the row does not describe, and a client overwrite during a pass is never marked as converted.
+
+**Operator action items after upgrade:**
+
+- **New cleanup-queue reasons** `rewrite_orphan`, `rewrite_stale_orphan` and `rewrite_source_delete` label the bytes a pass leaves behind, and `replication_stale_orphan` labels a replica whose source changed or whose target refused it, which used to share `replication_orphan`.
+- **A rewrite needs room for its growth only while it runs.** The old and new copy coexist until the commit, and a backend without room for the difference skips the copy. A cordoned backend still has its copies rewritten; a draining one skips them.
+- **Backend-to-backend copies are charged as they move**, read at the bytes the source served and write at the bytes the destination received, and a failed leg now charges its API call.
+- **The scrubber reports an encrypted copy as unreadable when no encryptor is configured.** It used to hash the ciphertext and report the copy as corrupt.
+- **Completing a multipart upload fails when an encrypted part cannot be decrypted** because no encryptor is configured. It used to assemble the ciphertext as the object.
+
 **Stored form columns ([#1726](https://github.com/afreidah/s3-orchestrator/issues/1726), v0.162.8)**
 
 `object_locations` gains two generated columns. `form` records which layers a copy's bytes carry (compressed, encrypted, hashed, keyed), and `object_size` records the size the client wrote. The rewrite passes, hash backfill, the unreadable purge and the ledger figures now select on them instead of each re-deriving the same answer from the underlying columns.

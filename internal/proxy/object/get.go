@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
@@ -367,14 +368,9 @@ func verifyStoredEnvelope(r *s3be.GetObjectResult, loc *core.ObjectLocation, act
 	if loc == nil || (actualRange != "" && !strings.HasPrefix(actualRange, "bytes=0-")) {
 		return nil
 	}
-	isEnvelope, body, err := encryption.PeekEnvelope(r.Body)
-	if err != nil {
-		return fmt.Errorf("inspect object header: %w", err)
+	body, err := storedform.CheckEnvelope(r.Body, &loc.StoredForm)
+	if body != nil {
+		r.Body = ioutilx.ReadCloser(body, r.Body)
 	}
-	r.Body = ioutilx.ReadCloser(body, r.Body)
-	if isEnvelope != loc.Encrypted {
-		return fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
-			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
-	}
-	return nil
+	return err
 }

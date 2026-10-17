@@ -94,7 +94,7 @@ func (f *fakeBackend) ListObjects(context.Context, string, func([]s3be.ListedObj
 	return nil
 }
 
-// emptyEncAdmin is a minimal EncryptionAdmin stub: every listing is empty and
+// emptyEncAdmin is a minimal RewriteStore stub: every listing is empty and
 // every mutator is a no-op, so a pass runs to completion with nothing to do.
 type emptyEncAdmin struct{}
 
@@ -113,24 +113,12 @@ func (emptyEncAdmin) UpdateCopyMetadata(_ context.Context, _ *core.ObjectLocatio
 	return nil
 }
 
-// MarkObjectEncrypted is a no-op.
-func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpdate) error {
-	return nil
-}
-
-// MarkObjectDecrypted is a no-op.
-func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _ *core.DecryptedUpdate) error {
-	return nil
-}
-
 // rowEncAdmin serves exactly one plaintext location, so the bulk-rewrite loop
 // processes a single object and then terminates.
 type rowEncAdmin struct {
 	emptyEncAdmin
-	row     core.ObjectLocation
-	markErr error
-	served  atomic.Bool
-	marked  atomic.Bool
+	row    core.ObjectLocation
+	served atomic.Bool
 }
 
 // ListCopiesByForm serves the single row once to a listing of plaintext
@@ -142,16 +130,6 @@ func (r *rowEncAdmin) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ 
 	return []core.ObjectLocation{r.row}, nil
 }
 
-// MarkObjectEncrypted records that the post-encrypt metadata update ran, or
-// fails when the fixture is configured to.
-func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpdate) error {
-	if r.markErr != nil {
-		return r.markErr
-	}
-	r.marked.Store(true)
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
@@ -160,7 +138,14 @@ func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUp
 // backed by the union store mock, with replication at factor 1, integrity off
 // and no encryptor - the conditions every declined path checks. Backends maps
 // each name to a fake so a rewrite can run end to end.
-func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore EncryptionStore) *Services {
+func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore) *Services {
+	t.Helper()
+	return testServicesWith(t, backends, enc, encStore, &fakeMover{})
+}
+
+// testServicesWith is testServices over the given mover, for the rewrite tests
+// that assert on what was placed.
+func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore, mover Mover) *Services {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mock)
@@ -181,7 +166,7 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
 	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	var store EncryptionStore = mock
+	var store RewriteStore = mock
 	if encStore != nil {
 		store = encStore
 	}
@@ -191,7 +176,7 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 		Encryptor:    enc,
 		EncStore:     store,
 		Runtime:      st.Runtime,
-		Usage:        st.Runtime.Usage(),
+		Mover:        mover,
 		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
@@ -580,16 +565,20 @@ func TestEncryptExisting_EmptyStore(t *testing.T) {
 }
 
 // TestEncryptExisting_OneRow asserts the whole rewrite runs for a single
-// object: list, download, encrypt, re-upload, then mark the row encrypted.
+// object: list, download, encrypt, re-upload, then place the encrypted copy
+// in the source's stead. The placed bytes decrypt back to the object.
 func TestEncryptExisting_OneRow(t *testing.T) {
 	t.Parallel()
+	enc := testEncryptor(t)
 	fake := &fakeBackend{payload: []byte("hello world")}
 	encStore := &rowEncAdmin{row: core.ObjectLocation{
 		ObjectKey:   testBucket + "/file.txt",
 		BackendName: "backend-a",
 		SizeBytes:   int64(len(fake.payload)),
+		ContentHash: "hash",
 	}}
-	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore)
+	mover := &fakeMover{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, encStore, mover)
 
 	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -598,11 +587,55 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 	if res.Total != 1 || res.Succeeded != 1 || res.Failed != 0 {
 		t.Errorf("counts = (%d, %d, %d), want (1, 0, 1)", res.Succeeded, res.Failed, res.Total)
 	}
-	if !encStore.marked.Load() {
-		t.Error("MarkObjectEncrypted was not called; the metadata update did not run")
-	}
 	if fake.puts.Load() != 1 {
 		t.Errorf("PutObject calls = %d, want 1", fake.puts.Load())
+	}
+	placed := mover.placements()
+	if len(placed) != 1 {
+		t.Fatalf("placements = %d, want 1", len(placed))
+	}
+	form := placed[0].form
+	if form.Form()&core.StoredLayers != core.StoredEncrypted || form.PlaintextSize != int64(len(fake.payload)) || form.ContentHash != "hash" {
+		t.Errorf("placed form = %+v, want encrypted over the payload carrying the hash", form)
+	}
+	plain, _, err := enc.DecryptStored(context.Background(), bytes.NewReader(placed[0].body),
+		form.EncryptionKey, form.KeyID, form.PlaintextSize, nil)
+	if err != nil {
+		t.Fatalf("DecryptStored: %v", err)
+	}
+	if got, _ := io.ReadAll(plain); !bytes.Equal(got, fake.payload) {
+		t.Errorf("decrypted %q, want %q", got, fake.payload)
+	}
+}
+
+// TestEncryptExisting_KeepsTheEncoding checks the forward pass wraps a
+// compressed copy's encoding as it is, so the copy ends up compressed and
+// encrypted without being decoded.
+func TestEncryptExisting_KeepsTheEncoding(t *testing.T) {
+	t.Parallel()
+	encoded := []byte("pretend zstd frame")
+	fake := &fakeBackend{payload: encoded}
+	encStore := &rowEncAdmin{row: core.ObjectLocation{
+		ObjectKey: testBucket + "/file.txt", BackendName: "backend-a", SizeBytes: int64(len(encoded)),
+		CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 4096,
+	}}
+	mover := &fakeMover{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore, mover)
+
+	if res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, ""); err != nil || res.Succeeded != 1 {
+		t.Fatalf("EncryptExisting = %+v, %v; want one succeeded", res, err)
+	}
+	placed := mover.placements()
+	if len(placed) != 1 {
+		t.Fatalf("placements = %d, want 1", len(placed))
+	}
+	form := placed[0].form
+	if form.Form()&core.StoredLayers != core.StoredLayers {
+		t.Errorf("placed form %v, want compressed and encrypted", form.Form())
+	}
+	if form.LogicalSize != 4096 || form.PlaintextSize != int64(len(encoded)) {
+		t.Errorf("sizes logical=%d plaintext=%d, want 4096 and the %d byte encoding",
+			form.LogicalSize, form.PlaintextSize, len(encoded))
 	}
 }
 
@@ -612,7 +645,6 @@ type decryptRowStore struct {
 	emptyEncAdmin
 	row    core.ObjectLocation
 	served atomic.Bool
-	marked atomic.Bool
 }
 
 // ListCopiesByForm serves the single row once to a listing of encrypted
@@ -622,12 +654,6 @@ func (d *decryptRowStore) ListCopiesByForm(_ context.Context, f *core.FormFilter
 		return nil, nil
 	}
 	return []core.ObjectLocation{d.row}, nil
-}
-
-// MarkObjectDecrypted records that the post-decrypt metadata update ran.
-func (d *decryptRowStore) MarkObjectDecrypted(_ context.Context, _ *core.DecryptedUpdate) error {
-	d.marked.Store(true)
-	return nil
 }
 
 // sealed encrypts payload with enc and returns the stored key material and
@@ -659,11 +685,13 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 		ObjectKey:     testBucket + "/file.txt",
 		BackendName:   "backend-a",
 		SizeBytes:     int64(len(ciphertext)),
+		Encrypted:     true,
 		PlaintextSize: int64(len(payload)),
 		EncryptionKey: keyData,
 		KeyID:         keyID,
 	}}
-	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store)
+	mover := &fakeMover{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store, mover)
 
 	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -672,11 +700,18 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	if res.Total != 1 || res.Succeeded != 1 || res.Failed != 0 {
 		t.Errorf("res = %+v, want total=1 succeeded=1 failed=0", res)
 	}
-	if !store.marked.Load() {
-		t.Error("MarkObjectDecrypted was not called; the metadata update did not run")
-	}
 	if fake.puts.Load() != 1 {
 		t.Errorf("PutObject calls = %d, want 1", fake.puts.Load())
+	}
+	placed := mover.placements()
+	if len(placed) != 1 {
+		t.Fatalf("placements = %d, want 1", len(placed))
+	}
+	if got := placed[0]; got.form.Form() != 0 || got.form.EncryptionKey != nil || got.size != int64(len(payload)) {
+		t.Errorf("placed %+v at %d bytes, want plaintext of %d bytes with no envelope", got.form, got.size, len(payload))
+	}
+	if !bytes.Equal(placed[0].body, payload) {
+		t.Errorf("placed %q, want %q", placed[0].body, payload)
 	}
 }
 
@@ -694,7 +729,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	keyData, keyID, _ := sealed(t, enc, []byte("hello world"))
 
 	var updated bool
-	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	store := opstest.NewMockRewriteStore(gomock.NewController(t))
 	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
@@ -714,7 +749,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 		Encryptor: enc,
 		Store:     store,
 		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+		Mover:     &fakeMover{},
 	})
 
 	res, err := svc.RotateKey(context.Background(), keyID)
@@ -736,7 +771,7 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 	enc := testEncryptor(t)
 	keyData, keyID, _ := sealed(t, enc, []byte("hello world"))
 
-	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	store := opstest.NewMockRewriteStore(gomock.NewController(t))
 	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
@@ -750,7 +785,7 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 		Encryptor: enc,
 		Store:     store,
 		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+		Mover:     &fakeMover{},
 	})
 
 	res, err := svc.RotateKey(context.Background(), keyID)
@@ -763,36 +798,31 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 }
 
 // TestEncryptExisting_FailureModesAreCountedPerObject asserts each way one
-// object can fail leaves the pass running and the row untouched: the read, the
-// re-upload, and the metadata update each fail on their own.
+// object can fail leaves the pass running and nothing placed: the read, the
+// re-upload, and the placement each fail on their own.
 func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name    string
-		method  backendtest.Method
-		markErr error
+		name     string
+		method   backendtest.Method
+		placeErr error
 	}{
 		{name: "download fails", method: backendtest.MethodGet},
 		{name: "re-upload fails", method: backendtest.MethodPut},
-		{name: "metadata update fails", markErr: errors.New("ledger unavailable")},
+		{name: "placement fails", placeErr: errors.New("ledger unavailable")},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			be := backendtest.New(backendtest.NewInMemory())
-			if tc.markErr == nil {
+			key := testBucket + "/file.txt"
+			be := seededBackend(t, key)
+			if tc.placeErr == nil {
 				be.SetErr(tc.method, backendtest.ErrSimulatedBackendFailure)
 			}
-			store := &rowEncAdmin{
-				markErr: tc.markErr,
-				row: core.ObjectLocation{
-					ObjectKey:   testBucket + "/file.txt",
-					BackendName: "backend-a",
-					SizeBytes:   11,
-				},
-			}
-			svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store)
+			store := &rowEncAdmin{row: core.ObjectLocation{ObjectKey: key, BackendName: "backend-a", SizeBytes: 11}}
+			mover := &fakeMover{placeErr: tc.placeErr}
+			svc := testServicesWith(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store, mover)
 
 			res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 			if err != nil {
@@ -801,11 +831,22 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 			if res.Total != 1 || res.Failed != 1 || res.Succeeded != 0 {
 				t.Errorf("res = %+v, want total=1 failed=1 succeeded=0", res)
 			}
-			if tc.markErr == nil && store.marked.Load() {
-				t.Error("metadata was updated for an object that was never rewritten")
+			if n := len(mover.placements()); n != 0 {
+				t.Errorf("placements = %d, want none for an object that was never rewritten", n)
 			}
 		})
 	}
+}
+
+// seededBackend returns an in-memory backend holding an 11-byte object at key,
+// with failure injection available for the test to arm.
+func seededBackend(t *testing.T, key string) *backendtest.FailableBackend {
+	t.Helper()
+	be := backendtest.New(backendtest.NewInMemory())
+	if _, err := be.PutObject(context.Background(), key, bytes.NewReader([]byte("hello world")), 11, "", nil); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	return be
 }
 
 // TestRotateKey_SkippedWithoutEncryptor asserts rotation declines rather than
@@ -1015,7 +1056,8 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 		BackendName: "missing-backend",
 		SizeBytes:   11,
 	}}
-	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore)
+	mover := &fakeMover{}
+	svc := testServicesWith(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore, mover)
 
 	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
@@ -1024,8 +1066,8 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	if res.Total != 1 || res.Failed != 1 || res.Succeeded != 0 {
 		t.Errorf("res = %+v, want total=1 failed=1 succeeded=0", res)
 	}
-	if encStore.marked.Load() {
-		t.Error("metadata was updated for an object that was never rewritten")
+	if n := len(mover.moveRequests()); n != 0 {
+		t.Errorf("MoveObject calls = %d, want none for a backend that is gone", n)
 	}
 }
 
@@ -1302,7 +1344,7 @@ func TestDecryptExisting_EmptyStore(t *testing.T) {
 // its own rather than ending the pass.
 func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	t.Parallel()
-	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	store := opstest.NewMockRewriteStore(gomock.NewController(t))
 	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter("old"), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
@@ -1314,7 +1356,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 		Encryptor: testEncryptor(t),
 		Store:     store,
 		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+		Mover:     &fakeMover{},
 	})
 
 	res, err := svc.RotateKey(context.Background(), "old")

@@ -84,7 +84,7 @@ Closing that gap is a one-time, operator-triggered pass:
 s3-orchestrator admin encrypt-existing
 ```
 
-It walks every copy still recorded as plaintext, downloads it, encrypts it, re-uploads the ciphertext, and updates the ledger row. It is safe to re-run: copies already encrypted are not selected. Expect it to cost a full read and write of every affected object, which is metered egress and ingress on most providers, so run it deliberately rather than on a schedule.
+It walks every copy still recorded as plaintext, downloads it, encrypts it, and writes the ciphertext to a new path on the same backend. A compressed copy keeps its encoding, and only the encryption layer is added. The new row replaces the old one in one transaction, and the plaintext bytes are deleted after it commits, so a reader sees either the plaintext copy or the encrypted one, never bytes the row does not describe. A client that writes the key mid-pass keeps its write and the copy is counted as `changed` (see [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write)). It is safe to re-run: copies already encrypted are not selected. Expect it to cost a full read and write of every affected object, which is metered egress and ingress on most providers, so run it deliberately rather than on a schedule.
 
 **Knowing whether you need to.** These places report how much of the fleet is still plaintext. All of them read the fleet snapshot, so a count can lag a finished `encrypt-existing` run by up to one `telemetry.metrics.fleet_interval`:
 
@@ -117,7 +117,7 @@ integrity:
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
 - **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup. Range requests are not verified: the stored hash covers the whole object, so a slice of it could never match. The scrubber, which reads whole objects, is what covers data only ever read in ranges.
 - **Replication (`verify_on_replicate`):** Each new copy is read back from its target, decrypted and decompressed, and checked against the source's hash before it is recorded. Off by default: the read-back doubles the egress a replica costs. See [configuration.md#integrity](../configuration/#integrity) for what a mismatch means and which failures leave the copy in place.
-- **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
+- **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. An encrypted copy on an orchestrator with no encryptor configured is reported as unreadable rather than corrupt and left alone. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
 
 **Integrity is hot-reloadable** - changes take effect on SIGHUP without a restart.

@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -233,6 +234,57 @@ func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	}
 }
 
+// TestReplicate_UnrecordedReplicaEnqueuesWithReplicationReasons verifies the
+// bytes of a replica no row records are queued for cleanup under the
+// replication reasons when the target refuses to delete them: the stale reason
+// for a declined placement and the plain orphan reason for a failed one, each
+// at the size the copy wrote.
+func TestReplicate_UnrecordedReplicaEnqueuesWithReplicationReasons(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{"declined", core.ErrTargetRefused, writepath.ReplicationOrphanReasons.StaleOrphan},
+		{"failed", errors.New("db error"), writepath.ReplicationOrphanReasons.Orphan},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := backendtest.NewInMemory()
+			_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+			dst := backendtest.NewInMemory()
+			dst.DeleteErr = errors.New("delete failed")
+
+			et := &replicatorEnqueueTracker{}
+			ctrl := gomock.NewController(t)
+			store := storetest.NewMockMetadataStore(ctrl)
+			replicateSuccessStubs(store,
+				[]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}},
+				&placeCopyTracker{err: tc.err})
+			store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
+				DoAndReturn(stubReplicatorEnqueue(et)).AnyTimes()
+			storetest.Permissive(store)
+
+			w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst},
+				&fleetOpts{Order: []string{"b1", "b2"}})
+			if _, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil); err != nil {
+				t.Fatalf("Replicate: %v", err)
+			}
+
+			et.mu.Lock()
+			defer et.mu.Unlock()
+			if len(et.calls) != 1 {
+				t.Fatalf("enqueued %d cleanups, want 1", len(et.calls))
+			}
+			if got := et.calls[0]; got.BackendName != "b2" || got.Reason != tc.reason || got.SizeBytes != 4 {
+				t.Errorf("cleanup = %+v, want b2 %s at 4 bytes", got, tc.reason)
+			}
+		})
+	}
+}
+
 // TestCopyToReplica_FailoverToSecondCopy asserts a Get failure on the
 // first source falls through to the second.
 func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
@@ -334,8 +386,8 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	if len(et.calls) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(et.calls))
 	}
-	if et.calls[0].Reason != "replication_orphan" {
-		t.Errorf("expected reason=replication_orphan, got %q", et.calls[0].Reason)
+	if et.calls[0].Reason != writepath.ReplicationOrphanReasons.Orphan {
+		t.Errorf("expected reason=%s, got %q", writepath.ReplicationOrphanReasons.Orphan, et.calls[0].Reason)
 	}
 }
 
@@ -563,9 +615,10 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	}
 }
 
-// TestReplicate_UsesRecordedSize_NotFirstCopy regression-tests the
-// recorded-size accounting fix.
-func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
+// TestReplicate_ChargesTheBytesTheCopyMoved verifies the usage a replica costs
+// is what the stream copy moved between the source it read and the target,
+// not a row's recorded size or the first listed copy's.
+func TestReplicate_ChargesTheBytesTheCopyMoved(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 	b2 := backendtest.NewInMemory()
@@ -601,11 +654,14 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 
-	if got := fleet.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
-		t.Errorf("source egress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
+	if got := fleet.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 4 {
+		t.Errorf("source egress = %d, want the 4 bytes read from b2", got)
 	}
-	if got := fleet.Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
-		t.Errorf("target ingress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
+	if got := fleet.Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 4 {
+		t.Errorf("target ingress = %d, want the 4 bytes written to b3", got)
+	}
+	if got := fleet.Usage().Backend().Load("b1", counter.FieldEgressBytes); got != 0 {
+		t.Errorf("tripped b1 egress = %d, want 0", got)
 	}
 }
 

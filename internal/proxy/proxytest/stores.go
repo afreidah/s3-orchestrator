@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -271,7 +272,7 @@ type Workers struct {
 // pass, and the replicator records every new copy unverified.
 type WorkerFeatures struct {
 	Encryptor *encryption.Encryptor
-	Codec     worker.StreamDecompressor
+	Codec     storedform.Decompressor
 }
 
 // BuildWorkers constructs every worker over the stack with no stored-form

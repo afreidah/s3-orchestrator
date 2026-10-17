@@ -61,27 +61,29 @@ func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectB
 	return be.HeadObject(hctx, key)
 }
 
-// StreamCopy reads an object from src and writes it to dst with timeouts
-// applied to each leg, admitting the transfer against both backends' usage
-// limits first. Returns the bytes moved, or a *backend.CopyError tagged with
-// the failing phase.
+// StreamCopy reads an object from the request's source and writes it to its
+// destination with timeouts applied to each leg, admitting the transfer
+// against both backends' usage limits first and charging what each leg moved.
+// Returns the bytes written, or a *backend.CopyError tagged with the failing
+// phase.
 //
-// Admission happens here so every backend-to-backend copy enforces the same
-// limits, judged on sizeEstimate. Accounting stays with the caller, which
-// charges the size its metadata commit settled on.
+// Admission and accounting happen here so every backend-to-backend copy
+// enforces the same limits, judged on the request's size estimate, and is
+// charged the same way.
 //
-// srcKey and dstKey differ: the copy is a new write with its own path on the
+// The two keys differ: the copy is a new write with its own path on the
 // destination, so a cleanup after it deletes only those bytes.
-func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
+func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyRequest) (int64, error) {
+	src, dst := req.Src, req.Dst
 	// A refusal is tagged with the leg that had no headroom: another source
 	// may have egress left, but a destination that is full ends the attempt.
-	if !c.Acct().Allow(src.Name, []s3op.Operation{s3op.GetObject}, sizeEstimate, 0) {
+	if !c.Acct().Allow(src.Name, []s3op.Operation{s3op.GetObject}, req.SizeEstimate, 0) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseRead,
 			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
 		}
 	}
-	if !c.Acct().Allow(dst.Name, []s3op.Operation{s3op.PutObject}, 0, sizeEstimate) {
+	if !c.Acct().Allow(dst.Name, []s3op.Operation{s3op.PutObject}, 0, req.SizeEstimate) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseWrite,
 			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),
@@ -90,27 +92,58 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEn
 
 	rctx, rcancel := c.WithTimeout(ctx)
 	defer rcancel()
-	result, err := src.Backend.GetObject(rctx, srcKey, "")
+	result, err := src.Backend.GetObject(rctx, req.SrcKey, "")
 	if err != nil {
+		c.Acct().APICall(s3op.GetObject, src.Name)
 		return 0, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
 	defer func() { _ = result.Body.Close() }()
+	c.Acct().Egress(s3op.GetObject, src.Name, result.Size)
 
 	// PutObject consumes the source body live, so a write-leg error can come
 	// from a failing source read. Attributing it to the read phase keeps a
 	// degraded source from tripping a healthy target's breaker.
+	tracked := &readTracker{r: result.Body}
+	body, size, release, err := copyBody(ctx, req.Transform, result, tracked)
+	if err != nil {
+		return 0, &backend.CopyError{Phase: backend.CopyPhaseTransform, Err: err}
+	}
+	defer release()
 	wctx, wcancel := c.WithTimeout(ctx)
 	defer wcancel()
-	tracked := &readTracker{r: result.Body}
-	_, err = dst.Backend.PutObject(wctx, dstKey, tracked, result.Size, result.ContentType, result.Metadata)
+	_, err = dst.Backend.PutObject(wctx, req.DstKey, body, size, result.ContentType, result.Metadata)
 	if err != nil {
+		c.Acct().APICall(s3op.PutObject, dst.Name)
 		phase := backend.CopyPhaseWrite
 		if tracked.readErr != nil {
 			phase = backend.CopyPhaseRead
 		}
 		return 0, &backend.CopyError{Phase: phase, Err: err}
 	}
-	return result.Size, nil
+	c.Acct().Ingress(s3op.PutObject, dst.Name, size)
+	return size, nil
+}
+
+// copyBody is what a copy writes: the tracked source as read, or what the
+// transform made of it. The release is always safe to call.
+func copyBody(ctx context.Context, transform backend.CopyTransform, result *backend.GetObjectResult, tracked *readTracker) (io.Reader, int64, func(), error) {
+	if transform == nil {
+		return tracked, result.Size, func() {
+			// Nothing was buffered.
+		}, nil
+	}
+	read := *result
+	read.Body = io.NopCloser(tracked)
+	body, size, release, err := transform(ctx, &read)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if release == nil {
+		release = func() {
+			// The transform streams and buffered nothing.
+		}
+	}
+	return body, size, release, nil
 }
 
 // readTracker wraps the source body so StreamCopy can tell whether a copy

@@ -1,7 +1,10 @@
 // -------------------------------------------------------------------------------
-// Ops - Bulk Rewrite Paging Tests
+// Ops - Bulk Rewrite Paging and Outcome Tests
 //
 // Author: Alex Freidah
+//
+// How the driver classifies each move a pass makes, and the move it makes:
+// a copy rewritten onto its own backend under the rewrite cleanup reasons.
 //
 // Every bulk rewrite pass walks a listing whose rows it is simultaneously
 // rewriting, and each row it succeeds on falls out of the predicate that
@@ -17,19 +20,26 @@
 package ops
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
 
 // -------------------------------------------------------------------------
@@ -147,22 +157,29 @@ func (s *shrinkingSet) assertVisitedAll(t *testing.T, want int) {
 	}
 }
 
+// moverFunc adapts a function to the Mover interface, so a paging test states
+// what each move does in one closure.
+type moverFunc func(ctx context.Context, req *writepath.MoveRequest) (int64, error)
+
+// MoveObject calls the function.
+func (f moverFunc) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+	return f(ctx, req)
+}
+
 // pagingEnv builds the collaborators the driver needs, over a backend that
-// serves and accepts anything.
-func pagingEnv(t *testing.T) bulkRewriteEnv {
+// serves anything and a mover that does what move says.
+func pagingEnv(t *testing.T, move moverFunc) bulkRewriteEnv {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(&fakeBackend{payload: []byte("payload")}, nil).AnyTimes()
-	usageGate := opstest.NewMockUsageGate(ctrl)
-	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return bulkRewriteEnv{
 		log:     slog.New(slog.DiscardHandler),
 		runtime: runtime,
-		usage:   usageGate,
+		mover:   move,
+		layers:  &storedform.Layers{},
 	}
 }
 
@@ -172,20 +189,34 @@ func pagingCounter() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bulk_rewrite_paging_test"}, []string{"status"})
 }
 
-// leavingRewrite visits each row and, once its commit runs, takes it out of the
-// set, which is what a successful conversion does to a real listing.
-func leavingRewrite(set *shrinkingSet) func(context.Context, *s3be.GetObjectResult, *core.ObjectLocation) (rewritten, error) {
-	return func(_ context.Context, _ *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-		key := loc.ObjectKey
-		set.visit(key)
-		return rewritten{
-			body: strings.NewReader("rewritten"),
-			size: int64(len("rewritten")),
-			commit: func() error {
-				set.remove(key)
-				return nil
-			},
-		}, nil
+// leavingRewrite visits each row and takes it out of the set once its move
+// succeeds, which is what a successful conversion does to a real listing.
+func leavingRewrite(set *shrinkingSet) moverFunc {
+	return func(_ context.Context, req *writepath.MoveRequest) (int64, error) {
+		set.visit(req.Source.ObjectKey)
+		set.remove(req.Source.ObjectKey)
+		return req.Source.SizeBytes, nil
+	}
+}
+
+// decliningRewrite visits each row and declines it, leaving it in the set as a
+// copy the ratio turned away does.
+func decliningRewrite(set *shrinkingSet) moverFunc {
+	return func(_ context.Context, req *writepath.MoveRequest) (int64, error) {
+		set.visit(req.Source.ObjectKey)
+		return 0, &storedform.Declined{EncodedSize: req.Source.SizeBytes}
+	}
+}
+
+// pagingOp is the bulk rewrite op every paging test drives over set.
+func pagingOp(set *shrinkingSet, maxRewrites int) bulkRewriteOp {
+	return bulkRewriteOp{
+		opName:      "paging-test",
+		resultLabel: "rewritten",
+		counter:     pagingCounter(),
+		listFn:      set.page,
+		want:        func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() },
+		maxRewrites: maxRewrites,
 	}
 }
 
@@ -202,13 +233,7 @@ func TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		rewrite:     leavingRewrite(set),
-	}.run(context.Background(), pagingEnv(t), nil)
+	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, leavingRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -226,16 +251,7 @@ func TestRunBulkRewrite_TerminatesWhenRowsStay(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-			set.visit(loc.ObjectKey)
-			return rewritten{}, errSkipRewrite
-		},
-	}.run(context.Background(), pagingEnv(t), nil)
+	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, decliningRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -264,20 +280,14 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 		return n%3 == 0
 	}
 
-	leave := leavingRewrite(set)
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-			if declined(loc.ObjectKey) {
-				set.visit(loc.ObjectKey)
-				return rewritten{}, errSkipRewrite
-			}
-			return leave(ctx, src, loc)
-		},
-	}.run(context.Background(), pagingEnv(t), nil)
+	leave, decline := leavingRewrite(set), decliningRewrite(set)
+	move := func(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+		if declined(req.Source.ObjectKey) {
+			return decline(ctx, req)
+		}
+		return leave(ctx, req)
+	}
+	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -292,48 +302,28 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 }
 
 // TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom verifies an object
-// without usage headroom is counted as skipped, not failed, and the backend is
-// not touched on its behalf.
+// the usage limits turn away is counted as skipped, not failed, and stays in
+// the listing for a later run.
 func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(3)
-	ctrl := gomock.NewController(t)
-
-	runtime := opstest.NewMockRuntimeOps(ctrl)
-	be := &fakeBackend{payload: []byte("payload")}
-	// GetBackend is allowed but must never be reached: admission comes first,
-	// so a declined object costs no backend call.
-	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
-	usageGate := opstest.NewMockUsageGate(ctrl)
-	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
-	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-	env := bulkRewriteEnv{
-		log:     slog.New(slog.DiscardHandler),
-		runtime: runtime,
-		usage:   usageGate,
+	move := func(_ context.Context, req *writepath.MoveRequest) (int64, error) {
+		set.visit(req.Source.ObjectKey)
+		return 0, fmt.Errorf("stream copy: %w", core.ErrUsageLimitExceeded)
 	}
 
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		rewrite: func(context.Context, *s3be.GetObjectResult, *core.ObjectLocation) (rewritten, error) {
-			t.Error("an object with no usage headroom must not be downloaded or rewritten")
-			return rewritten{}, nil
-		},
-	}.run(context.Background(), env, nil)
+	res, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
 
 	if res.Skipped != 3 || res.Succeeded != 0 || res.Failed != 0 {
-		t.Errorf("counts = %+v, want 3 skipped and nothing attempted", res)
+		t.Errorf("counts = %+v, want 3 skipped", res)
 	}
-	if be.gets.Load() != 0 || be.puts.Load() != 0 {
-		t.Errorf("backend saw %d gets and %d puts, want none", be.gets.Load(), be.puts.Load())
+	if len(set.rows) != 3 {
+		t.Errorf("%d rows left in the set, want all 3", len(set.rows))
 	}
+	set.assertVisitedAll(t, 3)
 }
 
 // TestBulkRewritePageSize covers the arithmetic that turns a cap into a listing
@@ -376,14 +366,7 @@ func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
 	const capRewrites = bulkRewriteBatchSize + 50
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		maxRewrites: capRewrites,
-		rewrite:     leavingRewrite(set),
-	}.run(context.Background(), pagingEnv(t), nil)
+	res, err := pagingOp(set, capRewrites).run(context.Background(), pagingEnv(t, leavingRewrite(set)), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -419,20 +402,14 @@ func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
 	// many rows as it converts.
 	var considered int
 	leave := leavingRewrite(set)
-	res, err := bulkRewriteOp{
-		opName:      "paging-test",
-		resultLabel: "rewritten",
-		counter:     pagingCounter(),
-		listFn:      set.page,
-		maxRewrites: capRewrites,
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-			considered++
-			if considered%2 == 1 {
-				return rewritten{}, errSkipRewrite
-			}
-			return leave(ctx, src, loc)
-		},
-	}.run(context.Background(), pagingEnv(t), nil)
+	move := func(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+		considered++
+		if considered%2 == 1 {
+			return 0, &storedform.Declined{}
+		}
+		return leave(ctx, req)
+	}
+	res, err := pagingOp(set, capRewrites).run(context.Background(), pagingEnv(t, move), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
 	}
@@ -445,5 +422,166 @@ func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
 	}
 	if res.Total != 2*capRewrites {
 		t.Errorf("considered %d rows, want %d: a cap counts conversions, not rows", res.Total, 2*capRewrites)
+	}
+}
+
+// TestRunBulkRewrite_ClassifiesEachMoveOutcome drives one copy through each
+// answer a move can give and checks where the pass tallies it and which
+// counters move. A usage or target refusal is a skip, a copy a client replaced
+// is changed, and anything else is a failure.
+func TestRunBulkRewrite_ClassifiesEachMoveOutcome(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		err          error
+		want         BulkRewriteResult
+		label        string
+		usageDecline float64
+		copyChanged  float64
+	}{
+		{"placed", nil, BulkRewriteResult{Succeeded: 1, Total: 1}, "success", 0, 0},
+		{"ratio declined", &storedform.Declined{EncodedSize: 900}, BulkRewriteResult{Skipped: 1, Total: 1}, "skipped", 0, 0},
+		{"usage limits", fmt.Errorf("copy: %w", core.ErrUsageLimitExceeded), BulkRewriteResult{Skipped: 1, Total: 1}, "skipped", 1, 0},
+		{"target refused", fmt.Errorf("place: %w", core.ErrTargetRefused), BulkRewriteResult{Skipped: 1, Total: 1}, "skipped", 0, 0},
+		{"copy changed", fmt.Errorf("place: %w", core.ErrCopyChanged), BulkRewriteResult{Changed: 1, Total: 1}, "changed", 0, 1},
+		{"failed", errors.New("backend unreachable"), BulkRewriteResult{Failed: 1, Total: 1}, "error", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			set := newShrinkingSet(1)
+			op := pagingOp(set, 0)
+			op.opName = "outcome-test-" + tc.name
+			move := func(context.Context, *writepath.MoveRequest) (int64, error) { return 1024, tc.err }
+
+			res, err := op.run(context.Background(), pagingEnv(t, move), nil)
+			if err != nil {
+				t.Fatalf("bulk rewrite: %v", err)
+			}
+			if res != tc.want {
+				t.Errorf("counts = %+v, want %+v", res, tc.want)
+			}
+			assertOutcomeCounters(t, &op, tc.label, tc.usageDecline, tc.copyChanged)
+		})
+	}
+}
+
+// assertOutcomeCounters checks a pass moved its own result counter once under
+// label and the usage-declined and copy-changed counters by the given amounts.
+func assertOutcomeCounters(t *testing.T, op *bulkRewriteOp, label string, usageDecline, copyChanged float64) {
+	t.Helper()
+	if got := testutil.ToFloat64(op.counter.WithLabelValues(label)); got != 1 {
+		t.Errorf("%s counter = %v, want 1", label, got)
+	}
+	if got := testutil.ToFloat64(telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName)); got != usageDecline {
+		t.Errorf("usage declined counter = %v, want %v", got, usageDecline)
+	}
+	if got := testutil.ToFloat64(telemetry.BulkRewriteCopyChangedTotal.WithLabelValues(op.opName)); got != copyChanged {
+		t.Errorf("copy changed counter = %v, want %v", got, copyChanged)
+	}
+}
+
+// TestRunBulkRewrite_DeclineReachesOnDeclined checks a ratio decline hands the
+// copy and the encoded size to the pass's decline hook, and that a pass with
+// no hook still skips the copy.
+func TestRunBulkRewrite_DeclineReachesOnDeclined(t *testing.T) {
+	t.Parallel()
+	set := newShrinkingSet(1)
+	var gotKey string
+	var gotSize int64
+	op := pagingOp(set, 0)
+	op.onDeclined = func(_ context.Context, loc *core.ObjectLocation, encodedSize int64) {
+		gotKey, gotSize = loc.ObjectKey, encodedSize
+	}
+	move := func(context.Context, *writepath.MoveRequest) (int64, error) {
+		return 0, fmt.Errorf("stream copy: %w", &storedform.Declined{EncodedSize: 777})
+	}
+
+	res, err := op.run(context.Background(), pagingEnv(t, move), nil)
+	if err != nil {
+		t.Fatalf("bulk rewrite: %v", err)
+	}
+	if res.Skipped != 1 {
+		t.Errorf("counts = %+v, want one skipped", res)
+	}
+	if gotKey != "obj-0000" || gotSize != 777 {
+		t.Errorf("onDeclined got (%q, %d), want (obj-0000, 777)", gotKey, gotSize)
+	}
+}
+
+// TestRunBulkRewrite_AuditsAChangedCopy checks a copy a client replaced
+// mid-pass is audited as a conversion race. Not parallel: the audit hook is
+// process-wide.
+func TestRunBulkRewrite_AuditsAChangedCopy(t *testing.T) {
+	var raced atomic.Int64
+	audit.SetOnEvent(func(event string) {
+		if event == "storage.ConversionRaced" {
+			raced.Add(1)
+		}
+	})
+	t.Cleanup(func() { audit.SetOnEvent(nil) })
+
+	set := newShrinkingSet(1)
+	move := func(context.Context, *writepath.MoveRequest) (int64, error) { return 0, core.ErrCopyChanged }
+	if _, err := pagingOp(set, 0).run(context.Background(), pagingEnv(t, move), nil); err != nil {
+		t.Fatalf("bulk rewrite: %v", err)
+	}
+	if got := raced.Load(); got != 1 {
+		t.Errorf("ConversionRaced events = %d, want 1", got)
+	}
+}
+
+// TestRunBulkRewrite_MovesOntoTheSourceBackend checks each copy is handed to
+// the mover as a rewrite: read from and written back to its own backend under
+// the rewrite cleanup reasons, with a Reform that turns the copy into the form
+// the pass wants.
+func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t)
+	payload := []byte("hello world")
+	be := &fakeBackend{payload: payload}
+	ctrl := gomock.NewController(t)
+	runtime := opstest.NewMockRuntimeOps(ctrl)
+	runtime.EXPECT().GetBackend("backend-a").Return(be, nil).Times(1)
+	mover := &fakeMover{}
+	env := bulkRewriteEnv{
+		log:     slog.New(slog.DiscardHandler),
+		runtime: runtime,
+		mover:   mover,
+		layers:  &storedform.Layers{Encryptor: enc},
+	}
+	set := newShrinkingSet(1)
+	set.rows[0].ContentHash = "hash"
+	set.rows[0].SizeBytes = int64(len(payload))
+	op := pagingOp(set, 0)
+	op.want = func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() | core.StoredEncrypted }
+
+	if _, err := op.run(context.Background(), env, nil); err != nil {
+		t.Fatalf("bulk rewrite: %v", err)
+	}
+	reqs := mover.moveRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("MoveObject calls = %d, want 1", len(reqs))
+	}
+	req := reqs[0]
+	if req.DestName != "backend-a" || req.Source.BackendName != "backend-a" {
+		t.Errorf("move %s -> %s, want backend-a onto itself", req.Source.BackendName, req.DestName)
+	}
+	if req.SrcBackend != be || req.DestBackend != be {
+		t.Error("move did not read from and write to the copy's own backend")
+	}
+	if req.Reasons != writepath.RewriteMoveReasons {
+		t.Errorf("reasons = %+v, want RewriteMoveReasons", req.Reasons)
+	}
+	placed := mover.placements()
+	if len(placed) != 1 {
+		t.Fatalf("placements = %d, want 1", len(placed))
+	}
+	got := placed[0]
+	if !got.form.Encrypted || got.form.PlaintextSize != int64(len(payload)) || got.form.ContentHash != "hash" {
+		t.Errorf("placed form = %+v, want encrypted over %d bytes carrying the hash", got.form, len(payload))
+	}
+	if got.size != int64(len(got.body)) || bytes.Equal(got.body, payload) {
+		t.Errorf("placed %d bytes (size %d), want ciphertext of the payload", len(got.body), got.size)
 	}
 }

@@ -19,8 +19,8 @@ import (
 )
 
 // cmdEncryptExisting implements `s3-orchestrator admin encrypt-existing
-// [-max=N]`. Encrypts every unencrypted object in place, or the first N of
-// them; requires encryption enabled.
+// [-max=N]`. Encrypts every unencrypted object, or the first N of them;
+// requires encryption enabled.
 func cmdEncryptExisting(args []string, c *client) int {
 	return runBulkRewrite(args, c, "encrypt-existing", "/admin/api/encrypt-existing")
 }

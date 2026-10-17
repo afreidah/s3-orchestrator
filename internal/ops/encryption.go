@@ -5,9 +5,9 @@
 //
 // Fleet-wide transitions between plaintext and ciphertext, plus key rotation.
 // Encrypt-existing and decrypt-existing differ only in the listing query and
-// the transform applied to each object, so both drive one pagination,
-// download, transform, re-upload and metadata-update loop. Rotation re-wraps
-// each object's DEK with the current primary key without touching the bytes.
+// the form each copy should end up in, so both drive the bulk rewrite driver's
+// one pagination and per-copy move. Rotation re-wraps each object's DEK with
+// the current primary key without touching the bytes.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -17,12 +17,12 @@ import (
 	"errors"
 	"log/slog"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -50,9 +50,9 @@ type RotateKeyResult struct {
 // EncryptionDeps holds the collaborators Encryption requires.
 type EncryptionDeps struct {
 	Encryptor *encryption.Encryptor
-	Store     EncryptionStore
+	Store     RewriteStore
 	Runtime   RuntimeOps
-	Usage     UsageGate
+	Mover     Mover
 }
 
 // Encryption serves the fleet-wide encryption operations. Encryptor and Store
@@ -61,21 +61,21 @@ type EncryptionDeps struct {
 type Encryption struct {
 	log       *slog.Logger
 	encryptor *encryption.Encryptor
-	store     EncryptionStore
+	store     RewriteStore
 	runtime   RuntimeOps
-	usage     UsageGate
+	mover     Mover
 }
 
 // NewEncryption is the explicit-deps constructor.
 func NewEncryption(d EncryptionDeps) *Encryption {
 	must.NotNil("d.Runtime", d.Runtime)
-	must.NotNil("d.Usage", d.Usage)
+	must.NotNil("d.Mover", d.Mover)
 	return &Encryption{
 		log:       slog.Default().With(logfmt.Component("ops")),
 		encryptor: d.Encryptor,
 		store:     d.Store,
 		runtime:   d.Runtime,
-		usage:     d.Usage,
+		mover:     d.Mover,
 	}
 }
 
@@ -83,8 +83,8 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// EncryptExisting reads every plaintext copy, encrypts it, re-uploads the
-// ciphertext, and records the new encryption metadata.
+// EncryptExisting rewrites every plaintext copy as ciphertext and records the
+// new encryption metadata. A compressed copy keeps its encoding underneath.
 //
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
@@ -100,34 +100,13 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return e.store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredEncrypted, Backend: backend}, batchSize, after)
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-			encResult, err := e.encryptor.Encrypt(ctx, src.Body, loc.SizeBytes)
-			if err != nil {
-				return rewritten{}, err
-			}
-			return rewritten{
-				body: encResult.Body,
-				size: encResult.CiphertextSize,
-				commit: func() error {
-					keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
-					return e.store.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-						ObjectKey:      loc.ObjectKey,
-						BackendName:    loc.BackendName,
-						EncryptionKey:  keyData,
-						KeyID:          encResult.KeyID,
-						PlaintextSize:  loc.SizeBytes,
-						CiphertextSize: encResult.CiphertextSize,
-						ExpectedEtag:   loc.RecordedETag(),
-					})
-				},
-			}, nil
-		},
+		want: func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() | core.StoredEncrypted },
 	}.run(ctx, e.rewriteEnv(), obs)
 }
 
-// DecryptExisting reads every encrypted copy, decrypts it, re-uploads the
-// plaintext, and clears the encryption metadata. Encryption must still be
-// configured, since the key provider is what unwraps each DEK.
+// DecryptExisting rewrites every encrypted copy as plaintext and clears the
+// encryption metadata. Encryption must still be configured, since the key
+// provider is what unwraps each DEK. A compressed copy keeps its encoding.
 //
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet;
 // a capped run can be repeated to continue.
@@ -143,24 +122,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return e.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredEncrypted, Backend: backend}, batchSize, after)
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
-			plainReader, plainLen, err := e.encryptor.DecryptStored(ctx, src.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
-			if err != nil {
-				return rewritten{}, err
-			}
-			return rewritten{
-				body: plainReader,
-				size: plainLen,
-				commit: func() error {
-					return e.store.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{
-						ObjectKey:     loc.ObjectKey,
-						BackendName:   loc.BackendName,
-						PlaintextSize: loc.PlaintextSize,
-						ExpectedEtag:  loc.RecordedETag(),
-					})
-				},
-			}, nil
-		},
+		want: func(loc *core.ObjectLocation) core.StoredFlags { return loc.Form() &^ core.StoredEncrypted },
 	}.run(ctx, e.rewriteEnv(), obs)
 }
 
@@ -256,7 +218,9 @@ func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err erro
 	return batch.ItemResult{Outcome: batch.ItemFailed}
 }
 
-// rewriteEnv exposes this service's collaborators to the shared driver.
+// rewriteEnv exposes this service's collaborators to the shared driver. A
+// pass changes only the envelope, so an encoding is carried through rather
+// than decoded and no codec is needed.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, runtime: e.runtime, usage: e.usage}
+	return bulkRewriteEnv{log: e.log, runtime: e.runtime, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
 }

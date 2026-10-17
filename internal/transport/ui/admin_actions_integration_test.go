@@ -97,7 +97,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		CompStore:    store,
 		Locker:       store,
 		Runtime:      st.Runtime,
-		Usage:        st.Runtime.Usage(),
+		Mover:        st.Coord,
 		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
@@ -230,7 +230,7 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 			Encryptor: enc,
 			Store:     store,
 			Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
-			Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+			Mover:     opstest.NewMockMover(gomock.NewController(t)),
 		}),
 	}
 
@@ -489,7 +489,7 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 					Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 					Store:   store,
 					Runtime: opstest.NewMockRuntimeOps(gomock.NewController(t)),
-					Usage:   opstest.NewMockUsageGate(gomock.NewController(t)),
+					Mover:   opstest.NewMockMover(gomock.NewController(t)),
 				}),
 			}
 

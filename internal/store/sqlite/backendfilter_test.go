@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -61,10 +62,22 @@ func TestBackendFilter_UnknownBackendSelectsNothing(t *testing.T) {
 	}
 }
 
-// TestConversionRace_RefusesAChangedCopy pins the etag predicate on the SQLite
-// engine, where the null-safe comparison is IS rather than IS NOT DISTINCT
-// FROM. A copy a client replaced must not be stamped with the form the pass
-// read before it.
+// encryptInPlace places loc back on its own backend as an encrypted copy, the
+// way an encryption pass records the bytes it rewrote.
+func encryptInPlace(s *Store, loc *core.ObjectLocation) (int64, error) {
+	return s.PlaceCopy(context.Background(), &core.Placement{
+		Source:       loc,
+		Target:       loc.BackendName,
+		StorageKey:   loc.StorageKey + "!enc",
+		RemoveSource: true,
+		Form:         &core.StoredForm{Encrypted: true, EncryptionKey: []byte("k"), KeyID: "test-key", PlaintextSize: loc.SizeBytes},
+		Size:         loc.SizeBytes + 100,
+	})
+}
+
+// TestConversionRace_RefusesAChangedCopy pins that a rewrite placed against a
+// copy a client replaced since the pass read it is ErrCopyChanged, and leaves
+// the newer write's row as it was.
 func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -73,45 +86,34 @@ func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
 	key := "bucket/raced"
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
-		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w1"}},
 		Size:     100,
 		Identity: &core.ObjectIdentity{ETag: "etag-v1"},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
+	read := storetest.LocationOn(t, s, key, "backend-a")
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
-		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w2"}},
 		Size:     140,
 		Identity: &core.ObjectIdentity{ETag: "etag-v2"},
 	}); err != nil {
 		t.Fatalf("RecordObject (client write): %v", err)
 	}
 
-	err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey:      key,
-		BackendName:    "backend-a",
-		EncryptionKey:  []byte("k"),
-		KeyID:          "test-key",
-		PlaintextSize:  100,
-		CiphertextSize: 200,
-		ExpectedEtag:   "etag-v1",
-	})
-	if !errors.Is(err, core.ErrCopyChanged) {
-		t.Fatalf("MarkObjectEncrypted = %v, want ErrCopyChanged", err)
+	if _, err := encryptInPlace(s, read); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("PlaceCopy = %v, want ErrCopyChanged", err)
 	}
 
-	locs, err := s.GetAllObjectLocations(ctx, key)
-	if err != nil {
-		t.Fatalf("GetAllObjectLocations: %v", err)
-	}
-	if locs[0].Encrypted {
-		t.Error("the row was stamped encrypted despite the copy having changed")
+	got := storetest.LocationOn(t, s, key, "backend-a")
+	if got.Encrypted || got.StorageKey != key+"!w2" || got.SizeBytes != 140 {
+		t.Errorf("row = %+v, want the client's write untouched", got)
 	}
 }
 
-// TestConversionRace_ConvertsAnUnchangedCopy is the control: the predicate has
-// to let an untouched copy through.
+// TestConversionRace_ConvertsAnUnchangedCopy is the control: a rewrite of an
+// untouched copy commits at its new path.
 func TestConversionRace_ConvertsAnUnchangedCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -120,22 +122,18 @@ func TestConversionRace_ConvertsAnUnchangedCopy(t *testing.T) {
 	key := "bucket/quiet"
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
-		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w1"}},
 		Size:     100,
 		Identity: &core.ObjectIdentity{ETag: "etag-v1"},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
-		ObjectKey:      key,
-		BackendName:    "backend-a",
-		EncryptionKey:  []byte("k"),
-		KeyID:          "test-key",
-		PlaintextSize:  100,
-		CiphertextSize: 200,
-		ExpectedEtag:   "etag-v1",
-	}); err != nil {
-		t.Fatalf("MarkObjectEncrypted: %v", err)
+	if _, err := encryptInPlace(s, storetest.LocationOn(t, s, key, "backend-a")); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	got := storetest.LocationOn(t, s, key, "backend-a")
+	if !got.Encrypted || got.StorageKey != key+"!w1!enc" || got.SizeBytes != 200 {
+		t.Errorf("row = %+v, want the encrypted copy at its new path", got)
 	}
 }

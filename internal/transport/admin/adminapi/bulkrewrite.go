@@ -17,9 +17,10 @@ package adminapi
 // The per-operation responses embed it and add their own success count.
 //
 // Skipped counts copies left alone on purpose (too incompressible, or on a
-// backend at its usage limit), not failures. Changed counts copies rewritten
-// on the backend but not recorded because a client wrote the key meanwhile;
-// a non-zero value means the pass overlapped live traffic, not a fault.
+// backend at its usage limit or without room for the rewrite), not failures.
+// Changed counts copies converted but not recorded because a client wrote the
+// key meanwhile; the client's write stands, and a non-zero value means the
+// pass overlapped live traffic, not a fault.
 type BulkRewriteOutcome struct {
 	Status  string `json:"status"`
 	Skipped int    `json:"skipped"`

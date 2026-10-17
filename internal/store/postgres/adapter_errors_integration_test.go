@@ -140,7 +140,7 @@ func TestPgAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 // is wrapped.
 func TestPgAdapterErr_BackendAdmits(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1); err == nil {
+	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1, core.AcceptForWrite); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

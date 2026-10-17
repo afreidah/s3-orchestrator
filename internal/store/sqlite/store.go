@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Implements every core role interface and the three admin role interfaces
-// (LifecycleAdmin, EncryptionAdmin, NotificationOutbox) using an embedded
+// Implements every core role interface and the admin role interfaces
+// (LifecycleAdmin, NotificationOutbox) using an embedded
 // SQLite database via modernc.org/sqlite (pure Go, no CGo). Provides WAL
 // mode for concurrent reads, process-local mutex for advisory lock
 // emulation, and automatic schema migration on first start.
@@ -25,8 +25,8 @@ import (
 	_ "modernc.org/sqlite" // register pure-Go SQLite driver for database/sql
 )
 
-// Store implements every core role interface plus LifecycleAdmin,
-// EncryptionAdmin, and NotificationOutbox using SQLite. db may be
+// Store implements every core role interface plus LifecycleAdmin and
+// NotificationOutbox using SQLite. db may be
 // breaker-wrapped; rawDB is the same handle unwrapped, which transactions open
 // through cbWithTx. The embedded core.TxOps supplies the methods that are a
 // single core transaction over this store; the methods declared here are the
