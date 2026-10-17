@@ -173,11 +173,19 @@ type PendingStore interface {
 // occupies a batch slot. Both take scrubbedBefore so the count and the batch
 // describe the same population.
 type IntegrityStore interface {
+	CopyLister
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error)
-	GetObjectsWithoutHash(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
-	ListUnreadableLocations(ctx context.Context, limit int, after Cursor) ([]ObjectLocation, error)
-	CountUnreadableLocations(ctx context.Context) (int64, error)
+}
+
+// CopyLister selects copies by the layers their bytes carry, for the passes
+// that work through them: hash backfill, the unreadable purge, and the
+// encryption and compression rewrites. The listing pages by cursor, not
+// offset: a pass usually takes the copies it acts on out of its own filter,
+// and an offset would skip rows.
+type CopyLister interface {
+	ListCopiesByForm(ctx context.Context, f *FormFilter, limit int, after Cursor) ([]ObjectLocation, error)
+	CountCopiesByForm(ctx context.Context, with, without StoredFlags) (int64, error)
 }
 
 // ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
@@ -268,23 +276,15 @@ type LifecycleAdmin interface {
 // encrypt/decrypt batch operations used by the admin HTTP handler. These
 // are not on the request hot path, so they bypass the circuit breaker.
 type EncryptionAdmin interface {
-	ListEncryptedLocations(ctx context.Context, keyID string, limit int, after Cursor) ([]ObjectLocation, error)
-	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
+	CopyLister
 	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error
 }
 
 // CompressionAdmin defines the admin-only bulk compression operations. They are
 // off the request hot path and bypass the circuit breaker.
-//
-// The listings page by cursor, not offset: a pass rewrites the rows it walks,
-// so they leave the listing's predicate and an offset would skip rows. The
-// uncompressed listing filters on the thresholds so copies under the size
-// floor, or already measured as missing the ratio, are not fetched again.
 type CompressionAdmin interface {
-	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds, backend string) ([]ObjectLocation, error)
-	ListCompressedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
+	CopyLister
 	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
 }
 

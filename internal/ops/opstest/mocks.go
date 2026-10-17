@@ -864,19 +864,19 @@ func (m *MockUnhashedLister) EXPECT() *MockUnhashedListerMockRecorder {
 	return m.recorder
 }
 
-// GetObjectsWithoutHash mocks base method.
-func (m *MockUnhashedLister) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm mocks base method.
+func (m *MockUnhashedLister) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, after, arg3)
+	ret := m.ctrl.Call(m, "ListCopiesByForm", ctx, f, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetObjectsWithoutHash indicates an expected call of GetObjectsWithoutHash.
-func (mr *MockUnhashedListerMockRecorder) GetObjectsWithoutHash(ctx, limit, after, arg3 any) *gomock.Call {
+// ListCopiesByForm indicates an expected call of ListCopiesByForm.
+func (mr *MockUnhashedListerMockRecorder) ListCopiesByForm(ctx, f, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockUnhashedLister)(nil).GetObjectsWithoutHash), ctx, limit, after, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCopiesByForm", reflect.TypeOf((*MockUnhashedLister)(nil).ListCopiesByForm), ctx, f, limit, after)
 }
 
 // MockAdvisoryLocker is a mock of AdvisoryLocker interface.
@@ -942,49 +942,34 @@ func (m *MockEncryptionStore) EXPECT() *MockEncryptionStoreMockRecorder {
 	return m.recorder
 }
 
-// ListAllEncryptedLocations mocks base method.
-func (m *MockEncryptionStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.ObjectLocation, error) {
+// CountCopiesByForm mocks base method.
+func (m *MockEncryptionStore) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after, arg3)
+	ret := m.ctrl.Call(m, "CountCopiesByForm", ctx, with, without)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountCopiesByForm indicates an expected call of CountCopiesByForm.
+func (mr *MockEncryptionStoreMockRecorder) CountCopiesByForm(ctx, with, without any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountCopiesByForm", reflect.TypeOf((*MockEncryptionStore)(nil).CountCopiesByForm), ctx, with, without)
+}
+
+// ListCopiesByForm mocks base method.
+func (m *MockEncryptionStore) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCopiesByForm", ctx, f, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ListAllEncryptedLocations indicates an expected call of ListAllEncryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, after, arg3 any) *gomock.Call {
+// ListCopiesByForm indicates an expected call of ListCopiesByForm.
+func (mr *MockEncryptionStoreMockRecorder) ListCopiesByForm(ctx, f, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListAllEncryptedLocations), ctx, limit, after, arg3)
-}
-
-// ListEncryptedLocations mocks base method.
-func (m *MockEncryptionStore) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListEncryptedLocations", ctx, keyID, limit, after)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListEncryptedLocations indicates an expected call of ListEncryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) ListEncryptedLocations(ctx, keyID, limit, after any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEncryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListEncryptedLocations), ctx, keyID, limit, after)
-}
-
-// ListUnencryptedLocations mocks base method.
-func (m *MockEncryptionStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after, arg3)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListUnencryptedLocations indicates an expected call of ListUnencryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after, arg3 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListUnencryptedLocations), ctx, limit, after, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCopiesByForm", reflect.TypeOf((*MockEncryptionStore)(nil).ListCopiesByForm), ctx, f, limit, after)
 }
 
 // MarkObjectDecrypted mocks base method.
@@ -1053,34 +1038,34 @@ func (m *MockCompressionStore) EXPECT() *MockCompressionStoreMockRecorder {
 	return m.recorder
 }
 
-// ListCompressedLocations mocks base method.
-func (m *MockCompressionStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.ObjectLocation, error) {
+// CountCopiesByForm mocks base method.
+func (m *MockCompressionStore) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after, arg3)
+	ret := m.ctrl.Call(m, "CountCopiesByForm", ctx, with, without)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountCopiesByForm indicates an expected call of CountCopiesByForm.
+func (mr *MockCompressionStoreMockRecorder) CountCopiesByForm(ctx, with, without any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountCopiesByForm", reflect.TypeOf((*MockCompressionStore)(nil).CountCopiesByForm), ctx, with, without)
+}
+
+// ListCopiesByForm mocks base method.
+func (m *MockCompressionStore) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCopiesByForm", ctx, f, limit, after)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ListCompressedLocations indicates an expected call of ListCompressedLocations.
-func (mr *MockCompressionStoreMockRecorder) ListCompressedLocations(ctx, limit, after, arg3 any) *gomock.Call {
+// ListCopiesByForm indicates an expected call of ListCopiesByForm.
+func (mr *MockCompressionStoreMockRecorder) ListCopiesByForm(ctx, f, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListCompressedLocations), ctx, limit, after, arg3)
-}
-
-// ListUncompressedLocations mocks base method.
-func (m *MockCompressionStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, arg4 string) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t, arg4)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListUncompressedLocations indicates an expected call of ListUncompressedLocations.
-func (mr *MockCompressionStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t, arg4 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListUncompressedLocations), ctx, limit, after, t, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCopiesByForm", reflect.TypeOf((*MockCompressionStore)(nil).ListCopiesByForm), ctx, f, limit, after)
 }
 
 // MarkObjectCompressed mocks base method.

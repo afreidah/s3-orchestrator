@@ -30,10 +30,16 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// anyCandidate is the threshold set that excludes nothing, so a listing test
+// candidatesUnder is the filter compress-existing lists by: uncompressed copies
+// still worth encoding under thresholds.
+func candidatesUnder(thresholds core.CompressionThresholds) *core.FormFilter {
+	return &core.FormFilter{Without: core.StoredCompressed, Candidates: &thresholds}
+}
+
+// anyCandidate is the candidate filter that excludes nothing, so a listing test
 // sees every verbatim copy regardless of size or any recorded measurement.
-func anyCandidate() core.CompressionThresholds {
-	return core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"}
+func anyCandidate() *core.FormFilter {
+	return candidatesUnder(core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"})
 }
 
 // compressedForm describes an object stored both compressed and encrypted,
@@ -125,8 +131,8 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		ObjectKey:   "bucket/recovered",
 		BackendName: "backend-a",
 		SizeBytes:   4096,
+		StoredForm:  *compressedForm(),
 	}
-	intent.ApplyStoredForm(compressedForm())
 	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
@@ -150,14 +156,14 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	// LogicalSize is twice what landed, so a charge against the wrong one shows.
 	intent := core.PendingObject{
 		IntentID:    "intent-q",
 		ObjectKey:   "bucket/sized",
 		BackendName: "backend-a",
 		SizeBytes:   4096,
+		StoredForm:  *compressedForm(),
 	}
-	// LogicalSize is twice what landed, so a charge against the wrong one shows.
-	intent.ApplyStoredForm(compressedForm())
 	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
@@ -215,18 +221,10 @@ func probeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
 	return size.Int64, level.String
 }
 
-// listKeys returns the keys the uncompressed listing offers under thresholds.
+// listKeys returns the keys the candidate listing offers under thresholds.
 func listKeys(t *testing.T, s *Store, thresholds core.CompressionThresholds) []string {
 	t.Helper()
-	rows, err := s.ListUncompressedLocations(context.Background(), 10, core.Cursor{}, thresholds, "")
-	if err != nil {
-		t.Fatalf("ListUncompressedLocations: %v", err)
-	}
-	keys := make([]string, len(rows))
-	for i := range rows {
-		keys[i] = rows[i].ObjectKey
-	}
-	return keys
+	return keysOf(listByForm(t, s, candidatesUnder(thresholds)))
 }
 
 // -------------------------------------------------------------------------
@@ -256,10 +254,10 @@ func TestPlaceCopy_MoveCarriesCompressionProbe(t *testing.T) {
 	}
 }
 
-// TestListUncompressedLocations_ExcludesRecordedDeclines verifies a copy
+// TestListCopiesByForm_CandidatesExcludeRecordedDeclines verifies a copy
 // already measured as not shrinking enough is not offered again, and that
 // loosening min_ratio or changing the level returns it.
-func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
+func TestListCopiesByForm_CandidatesExcludeRecordedDeclines(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -285,11 +283,11 @@ func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
 	}
 }
 
-// TestListUncompressedLocations_ExcludesBelowMinSize checks the size floor is
+// TestListCopiesByForm_CandidatesExcludeBelowMinSize checks the size floor is
 // applied by the listing. A copy too small to be worth encoding is answered
 // from its own row, so selecting it only to decline it would spend a page slot
 // on every pass forever.
-func TestListUncompressedLocations_ExcludesBelowMinSize(t *testing.T) {
+func TestListCopiesByForm_CandidatesExcludeBelowMinSize(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -307,10 +305,11 @@ func TestListUncompressedLocations_ExcludesBelowMinSize(t *testing.T) {
 	}
 }
 
-// TestListUncompressedLocations_SelectsOnlyVerbatim checks the listing that
-// drives compress-existing: it must offer copies with no encoding and skip the
-// ones that already have one, or a pass would re-encode what it just wrote.
-func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
+// TestListCopiesByForm_CompressionSplit checks the listings that drive the
+// compression passes: the candidate listing must offer copies with no encoding
+// and skip the ones that already have one, or a pass would re-encode what it
+// just wrote, and the compressed listing must offer exactly the encoded ones.
+func TestListCopiesByForm_CompressionSplit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -322,18 +321,12 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{}, anyCandidate(), "")
-	if err != nil {
-		t.Fatalf("ListUncompressedLocations: %v", err)
-	}
+	verbatim := listByForm(t, s, anyCandidate())
 	if len(verbatim) != 1 || verbatim[0].ObjectKey != "bucket/plain" {
 		t.Fatalf("uncompressed listing = %+v, want only bucket/plain", verbatim)
 	}
 
-	encoded, err := s.ListCompressedLocations(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListCompressedLocations: %v", err)
-	}
+	encoded := listByForm(t, s, &core.FormFilter{With: core.StoredCompressed})
 	if len(encoded) != 1 || encoded[0].ObjectKey != "bucket/encoded" {
 		t.Fatalf("compressed listing = %+v, want only bucket/encoded", encoded)
 	}
@@ -347,12 +340,12 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 	}
 }
 
-// TestListUncompressedLocations_PagesByCursor checks the listing resumes after
+// TestListCopiesByForm_CandidatesPageByCursor checks the listing resumes after
 // the row it is given rather than at an offset. The pass that drives it rewrites
 // the rows it reads, so by the time it asks for the next page the earlier ones
 // have left the predicate; an offset would land past the rows that moved up and
 // the walk would skip them.
-func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
+func TestListCopiesByForm_CandidatesPageByCursor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -368,9 +361,9 @@ func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
 	seen := map[string]int{}
 	var after core.Cursor
 	for range total {
-		page, err := s.ListUncompressedLocations(ctx, 2, after, anyCandidate(), "")
+		page, err := s.ListCopiesByForm(ctx, anyCandidate(), 2, after)
 		if err != nil {
-			t.Fatalf("ListUncompressedLocations: %v", err)
+			t.Fatalf("ListCopiesByForm: %v", err)
 		}
 		if len(page) == 0 {
 			break

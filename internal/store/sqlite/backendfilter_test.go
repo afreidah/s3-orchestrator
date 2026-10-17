@@ -26,57 +26,24 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestBackendFilter_UnencryptedLocations asserts the encrypt-existing listing
-// selects one backend's copies when named and every backend when not.
-func TestBackendFilter_UnencryptedLocations(t *testing.T) {
+// TestBackendFilter_CopiesByForm asserts the copy listing every bulk pass walks
+// selects one backend's copies when named and every backend when not, whatever
+// form filter it is combined with.
+func TestBackendFilter_CopiesByForm(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/b", "backend-b", 200)
 
-	all, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("fleet-wide = %d rows, want 2", len(all))
-	}
-
-	scoped, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{}, "backend-a")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations(backend-a): %v", err)
-	}
-	if len(scoped) != 1 || scoped[0].BackendName != "backend-a" {
-		t.Errorf("scoped = %+v, want one row on backend-a", scoped)
-	}
-}
-
-// TestBackendFilter_ObjectsWithoutHash asserts the backfill listing scopes the
-// same way.
-func TestBackendFilter_ObjectsWithoutHash(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/b", "backend-b", 200)
-
-	all, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("fleet-wide = %d rows, want 2", len(all))
-	}
-
-	scoped, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "backend-b")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash(backend-b): %v", err)
-	}
-	if len(scoped) != 1 || scoped[0].BackendName != "backend-b" {
-		t.Errorf("scoped = %+v, want one row on backend-b", scoped)
+	for _, f := range []core.FormFilter{{Without: core.StoredEncrypted}, backfillCopies} {
+		if all := listByForm(t, s, &f); len(all) != 2 {
+			t.Fatalf("fleet-wide %+v = %d rows, want 2", f, len(all))
+		}
+		f.Backend = "backend-b"
+		if scoped := listByForm(t, s, &f); len(scoped) != 1 || scoped[0].BackendName != "backend-b" {
+			t.Errorf("scoped %+v = %+v, want one row on backend-b", f, scoped)
+		}
 	}
 }
 
@@ -86,15 +53,10 @@ func TestBackendFilter_ObjectsWithoutHash(t *testing.T) {
 func TestBackendFilter_UnknownBackendSelectsNothing(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 
-	rows, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{}, "backend-absent")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
-	}
-	if len(rows) != 0 {
+	if rows := listByForm(t, s, &core.FormFilter{Without: core.StoredEncrypted, Backend: "backend-absent"}); len(rows) != 0 {
 		t.Errorf("rows = %+v, want none", rows)
 	}
 }

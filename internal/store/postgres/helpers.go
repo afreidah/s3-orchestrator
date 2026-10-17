@@ -108,8 +108,7 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 		StorageKey:  r.StorageKey,
 		SizeBytes:   r.SizeBytes,
 		CreatedAt:   r.CreatedAt.Time,
-		Encrypted:   r.Encrypted,
-		HasDEK:      r.HasDek != nil && *r.HasDek,
+		Form:        core.StoredFlags(r.Form),
 	}
 }
 
@@ -121,29 +120,24 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 // struct, attaching the representation metadata that is present. A zero
 // CreatedAt passes NULL, which the query stamps as now.
 func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams {
+	form := loc.Recorded()
 	params := db.InsertObjectLocationParams{
-		ObjectKey:             loc.ObjectKey,
-		BackendName:           loc.BackendName,
-		StorageKey:            core.StoragePath(loc.ObjectKey, loc.StorageKey),
-		SizeBytes:             loc.SizeBytes,
-		CompressionProbeSize:  int64Ptr(loc.CompressionProbeSize),
-		CompressionProbeLevel: strPtr(loc.CompressionProbeLevel),
-		CreatedAt:             pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
-	}
-	if loc.Encrypted {
-		params.Encrypted = true
-		params.EncryptionKey = loc.EncryptionKey
-		params.KeyID = strPtr(loc.KeyID)
-		params.PlaintextSize = int64Ptr(loc.PlaintextSize)
-	}
-	if loc.ContentHash != "" {
-		params.ContentHash = strPtr(loc.ContentHash)
-	}
-	if loc.CompressionAlgorithm != "" {
-		params.CompressionAlgorithm = strPtr(loc.CompressionAlgorithm)
-		params.CompressionLevel = strPtr(loc.CompressionLevel)
-		params.CompressionFormatVersion = int16Ptr(loc.CompressionFormatVersion)
-		params.LogicalSize = int64Ptr(loc.LogicalSize)
+		ObjectKey:                loc.ObjectKey,
+		BackendName:              loc.BackendName,
+		StorageKey:               core.StoragePath(loc.ObjectKey, loc.StorageKey),
+		SizeBytes:                loc.SizeBytes,
+		Encrypted:                form.Encrypted,
+		EncryptionKey:            form.EncryptionKey,
+		KeyID:                    strPtr(form.KeyID),
+		PlaintextSize:            int64Ptr(form.PlaintextSize),
+		ContentHash:              strPtr(form.ContentHash),
+		CompressionAlgorithm:     strPtr(form.CompressionAlgorithm),
+		CompressionLevel:         strPtr(form.CompressionLevel),
+		CompressionFormatVersion: int16Ptr(form.CompressionFormatVersion),
+		LogicalSize:              int64Ptr(form.LogicalSize),
+		CompressionProbeSize:     int64Ptr(loc.CompressionProbeSize),
+		CompressionProbeLevel:    strPtr(loc.CompressionProbeLevel),
+		CreatedAt:                pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
 	}
 	if id := loc.Identity; id != nil {
 		params.Etag = strPtr(id.ETag)

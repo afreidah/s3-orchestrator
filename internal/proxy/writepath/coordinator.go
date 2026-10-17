@@ -264,7 +264,9 @@ func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.Ob
 		Identity:  id,
 	}
 	p.StorageKey = internalkey.StorageKey(key, p.IntentID)
-	p.ApplyStoredForm(form)
+	if form != nil {
+		p.StoredForm = *form
+	}
 	return p
 }
 

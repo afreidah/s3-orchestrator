@@ -23,7 +23,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -82,9 +84,11 @@ func incompressibleBytes(t *testing.T, n int) []byte {
 }
 
 // oneRowStore serves a single rewritable location once and captures the update
-// the pass records for it.
+// the pass records for it, along with every filter the pass listed by.
 type oneRowStore struct {
 	row        core.ObjectLocation
+	filtersMu  sync.Mutex
+	filters    []core.FormFilter
 	served     atomic.Bool
 	update     core.CompressedUpdate
 	previous   int64
@@ -99,15 +103,24 @@ type oneRowStore struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ListUncompressedLocations serves the row once, then reports the end of the
-// listing so the pass terminates. It applies the size floor, as the real store
-// does, so a copy under it never reaches the pass.
-func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds, _ string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm serves the row once, then reports the end of the listing so
+// the pass terminates. It records the filter it was asked for and applies the
+// candidate size floor, as the real store does, so a copy under it never
+// reaches the pass.
+func (s *oneRowStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ int, _ core.Cursor) ([]core.ObjectLocation, error) {
+	s.filtersMu.Lock()
+	s.filters = append(s.filters, *f)
+	s.filtersMu.Unlock()
 	rows := s.serveOnce()
-	if len(rows) == 1 && rows[0].LogicalSize == 0 && rows[0].SizeBytes < t.MinSize {
+	if f.Candidates != nil && len(rows) == 1 && rows[0].ObjectSize() < f.Candidates.MinSize {
 		return nil, nil
 	}
 	return rows, nil
+}
+
+// CountCopiesByForm is unused by the passes.
+func (s *oneRowStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, nil
 }
 
 // UpdateCopyMetadata records the probe a declined copy was measured at and the
@@ -119,11 +132,6 @@ func (s *oneRowStore) UpdateCopyMetadata(_ context.Context, loc *core.ObjectLoca
 		s.probedLocs = append(s.probedLocs, *loc)
 	}
 	return s.probeErr
-}
-
-// ListCompressedLocations serves the same row for the reverse direction.
-func (s *oneRowStore) ListCompressedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
-	return s.serveOnce(), nil
 }
 
 // serveOnce yields the row on the first page and nothing after it.
@@ -143,9 +151,13 @@ type pagedStore struct {
 	marked    int
 }
 
-// ListUncompressedLocations returns the rows after the cursor, capped at limit,
-// and records what the driver asked for.
-func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds, _ string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm returns the rows after the cursor, capped at limit, and
+// records what the driver asked for. It serves nothing to a listing of
+// compressed copies: these tests drive the forward pass.
+func (s *pagedStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	if f.With.Has(core.StoredCompressed) {
+		return nil, nil
+	}
 	s.pageSizes = append(s.pageSizes, limit)
 	out := make([]core.ObjectLocation, 0, limit)
 	for i := range s.rows {
@@ -160,9 +172,9 @@ func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, aft
 	return out, nil
 }
 
-// ListCompressedLocations serves nothing: these tests drive the forward pass.
-func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
-	return nil, nil
+// CountCopiesByForm is unused by the passes.
+func (s *pagedStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, nil
 }
 
 // MarkObjectCompressed counts the copies the pass rewrote. A rewritten copy is
@@ -280,6 +292,40 @@ func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 	if store.previous != int64(len(payload)) {
 		t.Errorf("previous size = %d, want %d so quota moves by the difference",
 			store.previous, len(payload))
+	}
+}
+
+// TestCompressionPasses_ListByForm verifies each pass selects its copies by
+// stored form: the forward pass lists uncompressed candidates judged against
+// the configured thresholds, and the reverse pass lists compressed copies, both
+// on the backend the operator named.
+func TestCompressionPasses_ListByForm(t *testing.T) {
+	t.Parallel()
+	cfg := compressionOn()
+	forward := &oneRowStore{}
+	svc, _ := newCompression(t, forward, cfg, nil)
+	if _, err := svc.CompressExisting(context.Background(), nil, 0, "backend-a"); err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	reverse := &oneRowStore{}
+	svc, _ = newCompression(t, reverse, cfg, nil)
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0, "backend-a"); err != nil {
+		t.Fatalf("DecompressExisting: %v", err)
+	}
+
+	wantForward := core.FormFilter{
+		Without: core.StoredCompressed, Backend: "backend-a",
+		Candidates: &core.CompressionThresholds{MinSize: cfg.MinSize, MinRatio: cfg.MinRatio, Level: cfg.Level},
+	}
+	if len(forward.filters) == 0 {
+		t.Fatal("the forward pass never listed")
+	}
+	if got := forward.filters[0]; !reflect.DeepEqual(got, wantForward) {
+		t.Errorf("forward filter = %+v (candidates %+v), want %+v", got, got.Candidates, wantForward)
+	}
+	wantReverse := core.FormFilter{With: core.StoredCompressed, Backend: "backend-a"}
+	if len(reverse.filters) == 0 || !reflect.DeepEqual(reverse.filters[0], wantReverse) {
+		t.Errorf("reverse filters = %+v, want %+v", reverse.filters, wantReverse)
 	}
 }
 
@@ -739,14 +785,14 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 // rather than being counted against a single object.
 type failingListStore struct{ err error }
 
-// ListUncompressedLocations fails.
-func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm fails.
+func (f failingListStore) ListCopiesByForm(context.Context, *core.FormFilter, int, core.Cursor) ([]core.ObjectLocation, error) {
 	return nil, f.err
 }
 
-// ListCompressedLocations fails.
-func (f failingListStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
-	return nil, f.err
+// CountCopiesByForm is never reached by the passes.
+func (f failingListStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, f.err
 }
 
 // MarkObjectCompressed is never reached when the listing fails.

@@ -3,8 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Pure-function coverage for ObjectFromStoredForm, displacedFromExisting,
-// DeletedCopy.Cleanup, ObjectLocation.ObjectSize and LocationOn.
+// Pure-function coverage for ObjectFromStoredForm, StoredForm.Described,
+// displacedFromExisting, DeletedCopy.Cleanup, ObjectLocation.ObjectSize and
+// LocationOn.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -15,6 +16,7 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -83,6 +85,55 @@ func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 	loc := ObjectFromStoredForm("k", "b1", "k!w1", 100, &StoredForm{}, nil)
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.ContentHash != "" {
 		t.Errorf("plaintext form did not yield zero encryption fields: %+v", loc)
+	}
+}
+
+// -------------------------------------------------------------------------
+// StoredForm.Described
+// -------------------------------------------------------------------------
+
+// TestStoredFormDescribed_NilWithNoLayerOrHash verifies a form with no
+// compression, encryption or hash describes nothing to carry, including one
+// that holds only a key.
+func TestStoredFormDescribed_NilWithNoLayerOrHash(t *testing.T) {
+	t.Parallel()
+	for name, f := range map[string]StoredForm{
+		"plain":      {},
+		"keyed only": {EncryptionKey: []byte("dek"), KeyID: "kid"},
+	} {
+		if got := f.Described(); got != nil {
+			t.Errorf("%s: Described() = %+v, want nil", name, got)
+		}
+	}
+}
+
+// TestStoredFormDescribed_CopiesEveryField verifies each layer, and a hash
+// alone, yields a copy carrying every field rather than the original.
+func TestStoredFormDescribed_CopiesEveryField(t *testing.T) {
+	t.Parallel()
+	full := StoredForm{
+		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 90,
+		ContentHash: "hash", CompressionAlgorithm: "zstd", CompressionLevel: "default",
+		CompressionFormatVersion: 1, LogicalSize: 120,
+	}
+	for name, f := range map[string]StoredForm{
+		"hash only":  {ContentHash: "hash"},
+		"encrypted":  {Encrypted: true, KeyID: "kid-1", PlaintextSize: 90},
+		"compressed": {CompressionAlgorithm: "zstd", LogicalSize: 120},
+		"every":      full,
+	} {
+		got := f.Described()
+		if got == nil {
+			t.Fatalf("%s: Described() = nil", name)
+		}
+		if !reflect.DeepEqual(*got, f) {
+			t.Errorf("%s: Described() = %+v, want %+v", name, *got, f)
+		}
+	}
+	got := full.Described()
+	got.KeyID = "changed"
+	if full.KeyID != "kid-1" {
+		t.Error("Described returned the original form, not a copy")
 	}
 }
 

@@ -33,13 +33,6 @@ import (
 // ROW INSPECTION
 // -------------------------------------------------------------------------
 
-// isCompressed reports whether a copy's stored bytes were encoded. An empty
-// algorithm is the store's own way of saying the bytes are verbatim, so this
-// never consults a separate flag that could disagree with it.
-func isCompressed(loc *core.ObjectLocation) bool {
-	return loc != nil && loc.CompressionAlgorithm != ""
-}
-
 // readLocation returns the row a GET or HEAD reads with: the database row when
 // there is one, or, during a database outage, a row built from the newest copy
 // on the backend and what that copy's bytes say about how they are stored.
@@ -60,7 +53,7 @@ func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beNam
 		return nil, err
 	}
 	_, form := core.ClassifyImport(discovered, nil)
-	if form != nil && form.Encrypted {
+	if form.Form().Has(core.StoredEncrypted) {
 		return nil, core.ErrServiceUnavailable
 	}
 	return core.ObjectFromStoredForm(key, beName, newest, size, form, nil), nil

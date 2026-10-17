@@ -171,10 +171,10 @@ func TestStoreInt_WithAdvisoryLock_ReleasedOnPanic(t *testing.T) {
 // INTEGRITY
 // -------------------------------------------------------------------------
 
-// TestStoreInt_GetObjectsWithoutHash verifies the helper returns
-// objects whose content_hash is NULL. After UpdateCopyMetadata flips
-// one row, the next call reflects the change.
-func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
+// TestStoreInt_BackfillListing verifies the backfill listing returns a copy
+// whose content_hash is NULL, and drops it once UpdateCopyMetadata records a
+// hash.
+func TestStoreInt_BackfillListing(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
@@ -183,32 +183,15 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	rows, err := s.GetObjectsWithoutHash(ctx, 1000, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
-	}
-	found := false
-	for _, r := range rows {
-		if r.ObjectKey == key {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected key %s in GetObjectsWithoutHash", key)
+	if got := pgKeysByForm(t, s, &backfillCopies); !slices.Equal(got, []string{key}) {
+		t.Errorf("backfill listing = %v, want %s", got, key)
 	}
 
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{ContentHash: "deadbeef", Scrubbed: true}); err != nil {
 		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
-	rows, err = s.GetObjectsWithoutHash(ctx, 1000, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash(after): %v", err)
-	}
-	for _, r := range rows {
-		if r.ObjectKey == key {
-			t.Errorf("key %s still in GetObjectsWithoutHash after UpdateCopyMetadata", key)
-		}
+	if got := pgKeysByForm(t, s, &backfillCopies); len(got) != 0 {
+		t.Errorf("backfill listing = %v after the hash was recorded, want none", got)
 	}
 }
 
@@ -1089,10 +1072,10 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 // ENCRYPTION ADMIN
 // -------------------------------------------------------------------------
 
-// TestStoreInt_EncryptionAdminLifecycle covers the encrypt/rotate/
-// decrypt admin helpers: ListUnencryptedLocations, MarkObjectEncrypted,
-// ListEncryptedLocations, UpdateCopyMetadata, ListAllEncryptedLocations,
-// MarkObjectDecrypted.
+// TestStoreInt_EncryptionAdminLifecycle covers the encrypt/rotate/decrypt admin
+// helpers and the listings each pass walks: MarkObjectEncrypted,
+// UpdateCopyMetadata and MarkObjectDecrypted, with the plaintext, per-key and
+// all-encrypted listings checked at each step.
 func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1102,20 +1085,10 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	// Initially unencrypted.
-	rows, err := s.ListUnencryptedLocations(ctx, 1000, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
-	}
-	found := false
-	for _, r := range rows {
-		if r.ObjectKey == key {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected key %s in ListUnencryptedLocations", key)
+	plaintext := core.FormFilter{Without: core.StoredEncrypted}
+	encrypted := core.FormFilter{With: core.StoredEncrypted}
+	if got := pgKeysByForm(t, s, &plaintext); !slices.Equal(got, []string{key}) {
+		t.Errorf("plaintext listing = %v, want %s", got, key)
 	}
 
 	// Mark as encrypted.
@@ -1126,20 +1099,13 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
-	// Now appears in ListEncryptedLocations(keyID).
-	encRows, err := s.ListEncryptedLocations(ctx, "kid-1", 1000, core.Cursor{})
-	if err != nil {
-		t.Fatalf("ListEncryptedLocations: %v", err)
+	// Now listed under its key ID and no longer as plaintext.
+	underKey := core.FormFilter{With: core.StoredEncrypted, KeyID: "kid-1"}
+	if got := pgKeysByForm(t, s, &underKey); !slices.Equal(got, []string{key}) {
+		t.Errorf("kid-1 listing = %v, want %s", got, key)
 	}
-	found = false
-	for _, r := range encRows {
-		if r.ObjectKey == key {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected key %s in ListEncryptedLocations(kid-1)", key)
+	if got := pgKeysByForm(t, s, &plaintext); len(got) != 0 {
+		t.Errorf("plaintext listing = %v after encrypting, want none", got)
 	}
 
 	// Rotate key.
@@ -1148,14 +1114,21 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
-	// ListAllEncryptedLocations sees the row regardless of key ID.
-	if _, err := s.ListAllEncryptedLocations(ctx, 1000, core.Cursor{}, ""); err != nil {
-		t.Fatalf("ListAllEncryptedLocations: %v", err)
+	// The old key's listing is empty; the all-encrypted listing still sees
+	// the row, whatever its key ID.
+	if got := pgKeysByForm(t, s, &underKey); len(got) != 0 {
+		t.Errorf("kid-1 listing = %v after rotation, want none", got)
+	}
+	if got := pgKeysByForm(t, s, &encrypted); !slices.Equal(got, []string{key}) {
+		t.Errorf("encrypted listing = %v, want %s", got, key)
 	}
 
 	// Mark decrypted.
 	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: key, BackendName: "backend-a", PlaintextSize: 80}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
+	}
+	if got := pgKeysByForm(t, s, &encrypted); len(got) != 0 {
+		t.Errorf("encrypted listing = %v after decrypting, want none", got)
 	}
 }
 
@@ -1962,9 +1935,9 @@ func TestStoreInt_LedgerStats_PlaintextCopies(t *testing.T) {
 	}
 
 	// The count and the list describe the same set.
-	listed, err := s.ListUnencryptedLocations(ctx, 10000, core.Cursor{}, "")
+	listed, err := s.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredEncrypted}, 10000, core.Cursor{})
 	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
+		t.Fatalf("ListCopiesByForm: %v", err)
 	}
 	if int64(len(listed)) != encrypted {
 		t.Errorf("count = %d but list returned %d rows", encrypted, len(listed))

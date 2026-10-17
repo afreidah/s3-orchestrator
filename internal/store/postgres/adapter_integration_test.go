@@ -669,7 +669,7 @@ func TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero(t *testing.T) {
 
 // TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
 // Postgres locked re-read reports the same encryption state the SQLite adapter
-// does. The surplus-copy removal's guard reads these two fields, so the engines must
+// does. The surplus-copy removal's guard reads that form, so the engines must
 // agree or the guard protects objects on one backend and not the other.
 func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {
 	s := adapterPgStore(t)
@@ -697,11 +697,8 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 			t.Fatalf("expected 2 copies, got %d", len(copies))
 		}
 		for _, ec := range copies {
-			if !ec.Encrypted {
-				t.Errorf("%s: Encrypted = false, want true", ec.BackendName)
-			}
-			if !ec.HasDEK {
-				t.Errorf("%s: HasDEK = false, want true (replication copies the key)", ec.BackendName)
+			if ec.Form != core.StoredReadable {
+				t.Errorf("%s: Form = %s, want encrypted,keyed (replication copies the key)", ec.BackendName, ec.Form)
 			}
 		}
 	})
@@ -728,9 +725,8 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.
 		if len(copies) != 1 {
 			t.Fatalf("expected 1 copy, got %d", len(copies))
 		}
-		if copies[0].Encrypted || copies[0].HasDEK {
-			t.Errorf("plain copy reported Encrypted=%v HasDEK=%v, want both false",
-				copies[0].Encrypted, copies[0].HasDEK)
+		if copies[0].Form != 0 {
+			t.Errorf("plain copy reported Form = %s, want no flags", copies[0].Form)
 		}
 	})
 }
@@ -845,15 +841,15 @@ func assertUnreadableHidden(t *testing.T, s *Store, key string) {
 		t.Errorf("ListObjectsDelimited = %+v, want the unreadable row left out", delimited)
 	}
 
-	unreadable, err := s.ListUnreadableLocations(ctx, 10000, core.Cursor{})
+	unreadable, err := s.ListCopiesByForm(ctx, &unreadableCopies, 10000, core.Cursor{})
 	if err != nil {
-		t.Fatalf("ListUnreadableLocations: %v", err)
+		t.Fatalf("ListCopiesByForm(unreadable): %v", err)
 	}
 	if !slices.ContainsFunc(unreadable, func(l core.ObjectLocation) bool { return l.ObjectKey == key }) {
-		t.Errorf("ListUnreadableLocations did not return %s", key)
+		t.Errorf("the unreadable listing did not return %s", key)
 	}
-	if n, err := s.CountUnreadableLocations(ctx); err != nil || n < 1 {
-		t.Errorf("CountUnreadableLocations = %d, %v; want at least 1", n, err)
+	if n, err := s.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without); err != nil || n < 1 {
+		t.Errorf("the unreadable count = %d, %v; want at least 1", n, err)
 	}
 }
 

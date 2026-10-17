@@ -78,7 +78,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
@@ -143,7 +143,7 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	if !claimed {
 		return discardUntrustedCopy(p), nil
 	}
-	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
 	}

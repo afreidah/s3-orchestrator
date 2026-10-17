@@ -66,7 +66,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 			// Those differ once the bytes were encrypted, compressed, or both,
 			// and a HEAD that reports the stored size sends clients ranging
 			// against coordinates the object does not have.
-			if loc.Encrypted || isCompressed(loc) {
+			if loc.Form().Any(core.StoredLayers) {
 				r.Size = loc.ObjectSize()
 			}
 
@@ -142,7 +142,7 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 		LastModified: loc.CreatedAt,
 		Metadata:     loc.Identity.UserMetadata,
 	}
-	if !loc.Encrypted && !isCompressed(loc) {
+	if !loc.Form().Any(core.StoredLayers) {
 		res.Size = loc.SizeBytes
 	}
 	telemetry.HeadServedFromMetadataTotal.Inc()
@@ -207,7 +207,7 @@ func storedBytesAreClientBytes(locs []core.ObjectLocation) bool {
 		return false
 	}
 	for i := range locs {
-		if locs[i].Encrypted || isCompressed(&locs[i]) {
+		if locs[i].Form().Any(core.StoredLayers) {
 			return false
 		}
 	}

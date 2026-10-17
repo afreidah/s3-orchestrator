@@ -47,9 +47,9 @@ func replicationFactorTwo() config.ReplicationConfig {
 // store, which covers every copy these tests write.
 func backfillPage(ctx context.Context, t *testing.T, scrubber *worker.Scrubber, store *postgres.Store) batch.Summary {
 	t.Helper()
-	locs, err := store.GetObjectsWithoutHash(ctx, 100, core.Cursor{}, "")
+	locs, err := store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredHashed, ManagedOnly: true}, 100, core.Cursor{})
 	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
+		t.Fatalf("ListCopiesByForm: %v", err)
 	}
 	return scrubber.HashCopies(ctx, locs, nil)
 }

@@ -51,6 +51,25 @@ func (q *Queries) BackendObjectStats(ctx context.Context, backendName string) (B
 	return i, err
 }
 
+const countCopiesByForm = `-- name: CountCopiesByForm :one
+SELECT count(*) FROM object_locations
+WHERE (form & $1::bigint) = $1::bigint
+  AND (form & $2::bigint) = 0
+`
+
+type CountCopiesByFormParams struct {
+	WithFlags    int64
+	WithoutFlags int64
+}
+
+// How many copies carry every bit of with_flags and none of without_flags.
+func (q *Queries) CountCopiesByForm(ctx context.Context, arg CountCopiesByFormParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countCopiesByForm, arg.WithFlags, arg.WithoutFlags)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
 SELECT count(DISTINCT object_key)
 FROM object_locations
@@ -89,19 +108,6 @@ type CountScrubCandidatesOnBackendsParams struct {
 // work the cycle would have done, not copies that were never due.
 func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, arg CountScrubCandidatesOnBackendsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countScrubCandidatesOnBackends, arg.BackendNames, arg.ScrubbedBefore)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countUnreadableLocations = `-- name: CountUnreadableLocations :one
-SELECT count(*) FROM object_locations
-WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
-`
-
-// Same predicate as ListUnreadableLocations.
-func (q *Queries) CountUnreadableLocations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUnreadableLocations)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -337,8 +343,7 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 }
 
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
-       (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
+SELECT backend_name, storage_key, size_bytes, created_at, form
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE
@@ -349,8 +354,7 @@ type GetExistingCopiesForUpdateRow struct {
 	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
-	Encrypted   bool
-	HasDek      *bool
+	Form        int64
 }
 
 // storage_key comes along because the caller that deletes these rows also
@@ -370,8 +374,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 			&i.StorageKey,
 			&i.SizeBytes,
 			&i.CreatedAt,
-			&i.Encrypted,
-			&i.HasDek,
+			&i.Form,
 		); err != nil {
 			return nil, err
 		}
@@ -508,84 +511,6 @@ func (q *Queries) GetObjectBackendsForKeys(ctx context.Context, objectKeys []str
 	return items, nil
 }
 
-const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
-FROM object_locations
-WHERE content_hash IS NULL AND managed
-  AND ($1::text = '' OR backend_name = $1::text)
-  AND (object_key, backend_name) > ($2::text, $3::text)
-ORDER BY object_key, backend_name
-LIMIT $4
-`
-
-type GetObjectsWithoutHashParams struct {
-	BackendFilter string
-	AfterKey      string
-	AfterBackend  string
-	RowLimit      int32
-}
-
-type GetObjectsWithoutHashRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CreatedAt                pgtype.Timestamptz
-}
-
-// Return object locations that have no content hash, for backfill. Hashing
-// reads the whole body, so unmanaged rows are left alone rather than spending
-// egress on data the orchestrator does not manage. Paged by cursor, since
-// hashing a copy takes it out of this predicate.
-func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWithoutHashParams) ([]GetObjectsWithoutHashRow, error) {
-	rows, err := q.db.Query(ctx, getObjectsWithoutHash,
-		arg.BackendFilter,
-		arg.AfterKey,
-		arg.AfterBackend,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetObjectsWithoutHashRow{}
-	for rows.Next() {
-		var i GetObjectsWithoutHashRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.StorageKey,
-			&i.SizeBytes,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
 INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
@@ -696,28 +621,65 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	return inserted, err
 }
 
-const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key
+const listCopiesByForm = `-- name: ListCopiesByForm :many
+SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key, form, object_size
 FROM object_locations
-WHERE encrypted = TRUE
-  AND ($1::text = '' OR backend_name = $1::text)
-  AND (object_key, backend_name) > ($2::text, $3::text)
+WHERE (form & $1::bigint) = $1::bigint
+  AND (form & $2::bigint) = 0
+  AND (NOT $3::boolean OR managed)
+  AND ($4::text = '' OR backend_name = $4::text)
+  AND ($5::text = '' OR key_id = $5::text)
+  AND object_size >= $6::bigint
+  AND ($7::text = ''
+       OR compression_probe_size IS NULL
+       OR compression_probe_level IS DISTINCT FROM $7::text
+       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= $8::float8)
+  AND (object_key, backend_name) > ($9::text, $10::text)
 ORDER BY object_key, backend_name
-LIMIT $4
+LIMIT $11
 `
 
-type ListAllEncryptedLocationsParams struct {
+type ListCopiesByFormParams struct {
+	WithFlags     int64
+	WithoutFlags  int64
+	ManagedOnly   bool
 	BackendFilter string
+	KeyID         string
+	MinSize       int64
+	ProbeLevel    string
+	MinRatio      float64
 	AfterKey      string
 	AfterBackend  string
 	RowLimit      int32
 }
 
-// Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
-// copy removes it from this set mid-walk.
-func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncryptedLocationsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, listAllEncryptedLocations,
+// The copies a pass works through, selected by the layers their bytes carry:
+// every bit of with_flags set and none of without_flags. The rest narrows the
+// page to what the pass will act on, so row_limit is not spent on rows it
+// would decline: an empty backend_filter or key_id matches every value, and
+// managed_only leaves out data the orchestrator does not manage.
+//
+// Paged by cursor rather than offset, since a pass usually takes the copies it
+// acts on out of its own predicate, and an offset would step over the rows
+// that moved up.
+//
+// A non-empty probe_level adds the compression candidate test: a copy already
+// measured at that level as unable to reach min_ratio is excluded, so it is not
+// downloaded and encoded again to reach the same verdict. The measurement is
+// judged against the current settings, so lowering min_ratio returns those
+// copies without reading any of them, and a probe taken at another level says
+// nothing about this one. A zero object_size makes the division NULL and
+// excludes the copy, matching WorthStoring, which declines it outright.
+func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormParams) ([]ObjectLocation, error) {
+	rows, err := q.db.Query(ctx, listCopiesByForm,
+		arg.WithFlags,
+		arg.WithoutFlags,
+		arg.ManagedOnly,
 		arg.BackendFilter,
+		arg.KeyID,
+		arg.MinSize,
+		arg.ProbeLevel,
+		arg.MinRatio,
 		arg.AfterKey,
 		arg.AfterBackend,
 		arg.RowLimit,
@@ -751,74 +713,8 @@ func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncr
 			&i.ContentType,
 			&i.UserMetadata,
 			&i.StorageKey,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCompressedLocations = `-- name: ListCompressedLocations :many
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key
-FROM object_locations
-WHERE compression_algorithm IS NOT NULL
-  AND ($1::text = '' OR backend_name = $1::text)
-  AND (object_key, backend_name) > ($2::text, $3::text)
-ORDER BY object_key, backend_name
-LIMIT $4
-`
-
-type ListCompressedLocationsParams struct {
-	BackendFilter string
-	AfterKey      string
-	AfterBackend  string
-	RowLimit      int32
-}
-
-// The complement of ListUncompressedLocations, which is what
-// decompress-existing rewrites. Cursor-paged for the same reason, and the case
-// that makes it matter most: every object this pass succeeds on leaves the
-// predicate, so an offset walk would skip whole pages and stop early.
-func (q *Queries) ListCompressedLocations(ctx context.Context, arg ListCompressedLocationsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, listCompressedLocations,
-		arg.BackendFilter,
-		arg.AfterKey,
-		arg.AfterBackend,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ObjectLocation{}
-	for rows.Next() {
-		var i ObjectLocation
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
+			&i.Form,
+			&i.ObjectSize,
 		); err != nil {
 			return nil, err
 		}
@@ -876,74 +772,6 @@ func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildren
 			&i.BackendNames,
 			&i.SizeBytes,
 			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listEncryptedLocations = `-- name: ListEncryptedLocations :many
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key
-FROM object_locations
-WHERE encrypted = TRUE AND key_id = $1::text
-  AND (object_key, backend_name) > ($2::text, $3::text)
-ORDER BY object_key, backend_name
-LIMIT $4
-`
-
-type ListEncryptedLocationsParams struct {
-	KeyID        string
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
-}
-
-// Paged by cursor: rotating a copy changes its key_id and takes it out of this
-// predicate, so an offset would skip the rows that moved up.
-//
-// The admin listings select whole rows, so each returns the table's model type
-// and one conversion serves them all.
-func (q *Queries) ListEncryptedLocations(ctx context.Context, arg ListEncryptedLocationsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, listEncryptedLocations,
-		arg.KeyID,
-		arg.AfterKey,
-		arg.AfterBackend,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ObjectLocation{}
-	for rows.Next() {
-		var i ObjectLocation
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
 		); err != nil {
 			return nil, err
 		}
@@ -1167,12 +995,7 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
 SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
-       (CASE
-           WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
-           WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
-           ELSE size_bytes
-       END)::bigint AS size_bytes,
-       etag, created_at
+       object_size AS size_bytes, etag, created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > $2
@@ -1272,13 +1095,7 @@ SELECT
     COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
 FROM walk w
 LEFT JOIN LATERAL (
-    SELECT backend_name,
-           CASE
-               WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
-               WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
-               ELSE size_bytes
-           END AS client_size,
-           etag, created_at
+    SELECT backend_name, object_size AS client_size, etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
        AND o2.managed
@@ -1339,229 +1156,6 @@ func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelim
 			&i.BackendName,
 			&i.SizeBytes,
 			&i.Etag,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUncompressedLocations = `-- name: ListUncompressedLocations :many
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key
-FROM object_locations
-WHERE compression_algorithm IS NULL
-  AND ($1::text = '' OR backend_name = $1::text)
-  AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= $2::bigint
-  AND (compression_probe_size IS NULL
-       OR compression_probe_level IS DISTINCT FROM $3::text
-       OR compression_probe_size::float8
-          / NULLIF(CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END, 0)::float8
-          <= $4::float8)
-  AND (object_key, backend_name) > ($5::text, $6::text)
-ORDER BY object_key, backend_name
-LIMIT $7
-`
-
-type ListUncompressedLocationsParams struct {
-	BackendFilter string
-	MinSize       int64
-	ProbeLevel    string
-	MinRatio      float64
-	AfterKey      string
-	AfterBackend  string
-	RowLimit      int32
-}
-
-// Copies whose stored bytes carry no encoding, which is what compress-existing
-// rewrites. The encryption columns come along because compression sits inside
-// encryption: an encrypted copy is decrypted, encoded, and re-encrypted under
-// the key it already had.
-//
-// Paged by cursor, not offset: an encoded copy leaves this predicate, so the
-// set shrinks under the pass walking it.
-//
-// Copies already measured as not worth encoding are excluded here rather than
-// downloaded and encoded again to reach the same verdict, which on an
-// incompressible fleet is the pass's largest wasted expense. The stored
-// measurement is judged against the current settings, so it excludes a copy
-// only while it would still be declined: lowering min_ratio returns those
-// copies to the pass without reading any of them. A probe taken at a different
-// level says nothing about this one and is ignored, since the levels are names
-// from an ordered set rather than numbers.
-//
-// The divisor is NULLIF'd because a zero-length copy cannot shrink: the
-// comparison goes NULL and the row is excluded, matching WorthStoring, which
-// declines a logical size of zero outright.
-//
-// The size floor is applied here for the same reason, one the row can answer:
-// a copy below it is never a candidate, so listing it only to decline it costs
-// a page slot on every pass forever.
-func (q *Queries) ListUncompressedLocations(ctx context.Context, arg ListUncompressedLocationsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, listUncompressedLocations,
-		arg.BackendFilter,
-		arg.MinSize,
-		arg.ProbeLevel,
-		arg.MinRatio,
-		arg.AfterKey,
-		arg.AfterBackend,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ObjectLocation{}
-	for rows.Next() {
-		var i ObjectLocation
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key
-FROM object_locations
-WHERE encrypted = FALSE
-  AND ($1::text = '' OR backend_name = $1::text)
-  AND (object_key, backend_name) > ($2::text, $3::text)
-ORDER BY object_key, backend_name
-LIMIT $4
-`
-
-type ListUnencryptedLocationsParams struct {
-	BackendFilter string
-	AfterKey      string
-	AfterBackend  string
-	RowLimit      int32
-}
-
-// Paged by cursor rather than offset. Encrypting a copy takes it out of this
-// predicate, so the set shrinks as encrypt-existing walks it and an offset
-// would step over the rows that moved up.
-//
-// An empty backend_filter selects every backend, which is what a pass over the
-// whole fleet asks for. Filtering here rather than after the page is read is
-// what keeps the row_limit spent on candidates the pass will act on.
-func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryptedLocationsParams) ([]ObjectLocation, error) {
-	rows, err := q.db.Query(ctx, listUnencryptedLocations,
-		arg.BackendFilter,
-		arg.AfterKey,
-		arg.AfterBackend,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ObjectLocation{}
-	for rows.Next() {
-		var i ObjectLocation
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.CreatedAt,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.Managed,
-			&i.LastScrubbedAt,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CompressionProbeSize,
-			&i.CompressionProbeLevel,
-			&i.Etag,
-			&i.ContentType,
-			&i.UserMetadata,
-			&i.StorageKey,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUnreadableLocations = `-- name: ListUnreadableLocations :many
-SELECT object_key, backend_name, storage_key, size_bytes, created_at
-FROM object_locations
-WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
-  AND (object_key, backend_name) > ($1::text, $2::text)
-ORDER BY object_key, backend_name
-LIMIT $3
-`
-
-type ListUnreadableLocationsParams struct {
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
-}
-
-type ListUnreadableLocationsRow struct {
-	ObjectKey   string
-	BackendName string
-	StorageKey  string
-	SizeBytes   int64
-	CreatedAt   pgtype.Timestamptz
-}
-
-// Copies imported as encrypted with no key, which nothing can decrypt. Paged by
-// cursor, so a copy the purge fails to discard is passed over and retried by the
-// next purge rather than on every page of this one.
-func (q *Queries) ListUnreadableLocations(ctx context.Context, arg ListUnreadableLocationsParams) ([]ListUnreadableLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listUnreadableLocations, arg.AfterKey, arg.AfterBackend, arg.RowLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListUnreadableLocationsRow{}
-	for rows.Next() {
-		var i ListUnreadableLocationsRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.StorageKey,
-			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1647,7 +1241,7 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 }
 
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key FROM object_locations
+SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key, form, object_size FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
 `
@@ -1685,6 +1279,8 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.ContentType,
 		&i.UserMetadata,
 		&i.StorageKey,
+		&i.Form,
+		&i.ObjectSize,
 	)
 	return i, err
 }

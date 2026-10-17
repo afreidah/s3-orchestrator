@@ -85,6 +85,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        BOOLEAN managed',
     '        TIMESTAMPTZ last_scrubbed_at',
     '        TIMESTAMPTZ created_at',
+    '        BIGINT form "generated"',
+    '        BIGINT object_size "generated"',
     '    }',
     '',
     '    object_tags {',
@@ -331,7 +333,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent. What a HEAD reports stops depending on which copy answers: with compression or encryption on, the backend\'s own ETag describes the stored bytes rather than the object that was written (nullable)</td></tr>' +
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, served from the row rather than from whichever backend replies (nullable)</td></tr>' +
         '<tr><td>user_metadata</td><td>JSONB</td><td>The x-amz-meta-* set. An empty object means the object has none; NULL means nobody has looked yet, which is what a row predating identity capture holds (nullable)</td></tr>' +
-        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr></table>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr>' +
+        '<tr><td>form</td><td>BIGINT</td><td>Generated from the columns above: the layers the stored bytes carry, compressed (1), encrypted (2), hashed (4) and keyed (8) when the row holds the key to its envelope. The rewrite passes, hash backfill, the unreadable purge and the ledger figures select on it with masks Go passes in, so what each bit means is defined once</td></tr>' +
+        '<tr><td>object_size</td><td>BIGINT</td><td>Generated: the size the client wrote, which is logical_size for an encoded copy, plaintext_size for an encrypted one and size_bytes otherwise. Listings report it</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C") for the reconcile walk &bull; idx_object_locations_backend_storage_key_unique UNIQUE (backend_name, storage_key) &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag) &bull; idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed, for the drain walk &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), fleet snapshot (LedgerStats, CountReplicationBacklog), drain (ListObjectsByBackend), reconcile import (ListedPathStates), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats, LedgerStats, CountReplicationBacklog, ListedPathStates</p>'

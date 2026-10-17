@@ -273,8 +273,8 @@ type scrubberStub struct {
 // backfillStore lists the scrubber stub's unhashed backlog, a page at a time.
 type backfillStore struct{ cfg *scrubberStub }
 
-// GetObjectsWithoutHash returns up to limit of the copies still unhashed.
-func (s backfillStore) GetObjectsWithoutHash(_ context.Context, limit int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm returns up to limit of the copies still unhashed.
+func (s backfillStore) ListCopiesByForm(_ context.Context, _ *core.FormFilter, limit int, _ core.Cursor) ([]core.ObjectLocation, error) {
 	locs := make([]core.ObjectLocation, min(limit, s.cfg.backfillBacklog))
 	for i := range locs {
 		locs[i] = core.ObjectLocation{ObjectKey: fmt.Sprintf("k-%d", i), BackendName: "b1"}

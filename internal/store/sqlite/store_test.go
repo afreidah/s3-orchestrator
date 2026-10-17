@@ -108,6 +108,9 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// The generated columns read the stored-form columns, so they go before
+		// any step that drops one of those.
+		{26, func() { dropColumns(t, s, "object_locations", "form", "object_size") }},
 		{25, func() {
 			exec("drop the pending storage-key index", `DROP INDEX IF EXISTS idx_pending_objects_backend_storage_key`)
 			exec("restore the pending backend index", `CREATE INDEX IF NOT EXISTS idx_pending_objects_backend ON pending_objects(backend_name)`)
@@ -1838,9 +1841,9 @@ func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
 // INTEGRITY
 // -------------------------------------------------------------------------
 
-// TestGetObjectsWithoutHash_PagesByCursor verifies each page starts after the
+// TestListCopiesByForm_PagesByCursor verifies each page starts after the
 // cursor, so a caller hashing as it goes still reaches every copy.
-func TestGetObjectsWithoutHash_PagesByCursor(t *testing.T) {
+func TestListCopiesByForm_PagesByCursor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1848,7 +1851,7 @@ func TestGetObjectsWithoutHash_PagesByCursor(t *testing.T) {
 		mustRecordObject(t, s, key, "backend-a", 10)
 	}
 
-	first, err := s.GetObjectsWithoutHash(ctx, 2, core.Cursor{}, "")
+	first, err := s.ListCopiesByForm(ctx, &backfillCopies, 2, core.Cursor{})
 	if err != nil || len(first) != 2 || first[0].ObjectKey != "bucket/a" || first[1].ObjectKey != "bucket/b" {
 		t.Fatalf("first page = %v, %v; want bucket/a and bucket/b", first, err)
 	}
@@ -1860,39 +1863,40 @@ func TestGetObjectsWithoutHash_PagesByCursor(t *testing.T) {
 		}
 	}
 	after := core.Cursor{ObjectKey: first[1].ObjectKey, BackendName: first[1].BackendName}
-	rest, err := s.GetObjectsWithoutHash(ctx, 2, after, "")
+	rest, err := s.ListCopiesByForm(ctx, &backfillCopies, 2, after)
 	if err != nil || len(rest) != 1 || rest[0].ObjectKey != "bucket/c" {
 		t.Errorf("second page = %v, %v; want only bucket/c", rest, err)
 	}
 }
 
-// TestListEncryptedLocations_PagesByCursor verifies each page of a key's
-// copies starts after the cursor.
-func TestListEncryptedLocations_PagesByCursor(t *testing.T) {
+// TestListCopiesByForm_KeyID verifies a key ID narrows the encrypted listing to
+// the copies wrapped under it, which is the set a rotation away from it walks.
+func TestListCopiesByForm_KeyID(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	for _, key := range []string{"bucket/a", "bucket/b", "bucket/c"} {
+	mustRecordObject(t, s, "bucket/plain", "backend-a", 10)
+	for key, keyID := range map[string]string{"bucket/a": "key-1", "bucket/b": "key-2", "bucket/c": "key-1"} {
 		mustRecordObject(t, s, key, "backend-a", 10)
 		if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
 			ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("dek"),
-			KeyID: "key-1", PlaintextSize: 10, CiphertextSize: 20,
+			KeyID: keyID, PlaintextSize: 10, CiphertextSize: 20,
 		}); err != nil {
 			t.Fatalf("MarkObjectEncrypted(%s): %v", key, err)
 		}
 	}
 
-	page, err := s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{ObjectKey: "bucket/a", BackendName: "backend-a"})
-	if err != nil {
-		t.Fatalf("ListEncryptedLocations: %v", err)
+	page := listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"})
+	if got := keysOf(page); !slices.Equal(got, []string{"bucket/a", "bucket/c"}) {
+		t.Errorf("key-1 copies = %v, want bucket/a and bucket/c", got)
 	}
-	if len(page) != 2 || page[0].ObjectKey != "bucket/b" || page[1].ObjectKey != "bucket/c" {
-		t.Errorf("page = %v, want bucket/b and bucket/c", page)
+	if got := keysOf(listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted})); len(got) != 3 {
+		t.Errorf("every encrypted copy = %v, want three", got)
 	}
 }
 
-// TestIntegrity_HashOperations verifies the integrity hash operations contract.
-// Asserts that GetObjectsWithoutHash:.
+// TestIntegrity_HashOperations verifies the backfill listing drops a copy once
+// it is hashed and the scrub listing picks it up.
 func TestIntegrity_HashOperations(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1902,10 +1906,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 
 	// Both should be without hash
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
-	}
+	unhashed := listByForm(t, s, &backfillCopies)
 	if len(unhashed) != 2 {
 		t.Errorf("expected 2 unhashed, got %d", len(unhashed))
 	}
@@ -1913,7 +1914,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	mustSetContentHash(t, s, "bucket/a", "backend-a", "sha256:abc")
 
 	// Now only 1 without hash
-	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
+	unhashed = listByForm(t, s, &backfillCopies)
 	if len(unhashed) != 1 {
 		t.Errorf("expected 1 unhashed, got %d", len(unhashed))
 	}
@@ -2244,10 +2245,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 1024)
 
 	// List unencrypted
-	unenc, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
-	}
+	unenc := listByForm(t, s, &core.FormFilter{Without: core.StoredEncrypted})
 	if len(unenc) != 1 {
 		t.Errorf("expected 1 unencrypted, got %d", len(unenc))
 	}
@@ -2261,10 +2259,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// List encrypted
-	enc, err := s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{})
-	if err != nil {
-		t.Fatalf("ListEncryptedLocations: %v", err)
-	}
+	enc := listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"})
 	if len(enc) != 1 {
 		t.Errorf("expected 1 encrypted, got %d", len(enc))
 	}
@@ -2275,7 +2270,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// Old key should have 0 entries
-	enc, _ = s.ListEncryptedLocations(ctx, "key-1", 10, core.Cursor{})
+	enc = listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"})
 	if len(enc) != 0 {
 		t.Errorf("expected 0 for old key, got %d", len(enc))
 	}
@@ -3209,9 +3204,10 @@ func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	}
 }
 
-// TestListAllEncryptedLocations verifies the list all encrypted locations contract.
-// Asserts that RecordObject:.
-func TestListAllEncryptedLocations(t *testing.T) {
+// TestListCopiesByForm_EncryptedRowCarriesPlaintextSize verifies a listing of
+// encrypted copies returns the plaintext size the decrypt pass sizes its
+// rewrite by.
+func TestListCopiesByForm_EncryptedRowCarriesPlaintextSize(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -3226,12 +3222,9 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	locs, err := s.ListAllEncryptedLocations(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListAllEncryptedLocations: %v", err)
-	}
+	locs := listByForm(t, s, &core.FormFilter{With: core.StoredEncrypted})
 	if len(locs) != 1 {
-		t.Errorf("expected 1, got %d", len(locs))
+		t.Fatalf("expected 1, got %d", len(locs))
 	}
 	if locs[0].PlaintextSize != 1024 {
 		t.Errorf("plaintext_size = %d, want 1024", locs[0].PlaintextSize)
@@ -3427,11 +3420,7 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	}
 	assertNoStray(t, "replication", under)
 
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
-	}
-	assertNoStray(t, "checksum backfill", unhashed)
+	assertNoStray(t, "checksum backfill", listByForm(t, s, &backfillCopies))
 }
 
 // TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers covers what
@@ -3474,11 +3463,7 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 		t.Fatalf("GetUnderReplicatedObjects: %v", err)
 	}
 	assertNotQueued(t, "replication", under, "bucket/gone")
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("GetObjectsWithoutHash: %v", err)
-	}
-	assertNotQueued(t, "checksum backfill", unhashed, "bucket/gone")
+	assertNotQueued(t, "checksum backfill", listByForm(t, s, &backfillCopies), "bucket/gone")
 }
 
 // assertUnreadableOnly fails unless the unreadable listing and count report
@@ -3486,19 +3471,16 @@ func TestImportObject_UnreadableEnvelopeIsHiddenFromClientsAndWorkers(t *testing
 func assertUnreadableOnly(t *testing.T, s *Store, key string, size int64) {
 	t.Helper()
 	ctx := context.Background()
-	unreadable, err := s.ListUnreadableLocations(ctx, 10, core.Cursor{})
-	if err != nil {
-		t.Fatalf("ListUnreadableLocations: %v", err)
-	}
+	unreadable := listByForm(t, s, &unreadableCopies)
 	if len(unreadable) != 1 || unreadable[0].ObjectKey != key || unreadable[0].SizeBytes != size {
 		t.Fatalf("unreadable = %+v, want only %s", unreadable, key)
 	}
 	past := core.Cursor{ObjectKey: unreadable[0].ObjectKey, BackendName: unreadable[0].BackendName}
-	if rest, err := s.ListUnreadableLocations(ctx, 10, past); err != nil || len(rest) != 0 {
-		t.Errorf("ListUnreadableLocations past the only row = %+v, %v; want none", rest, err)
+	if rest, err := s.ListCopiesByForm(ctx, &unreadableCopies, 10, past); err != nil || len(rest) != 0 {
+		t.Errorf("unreadable listing past the only row = %+v, %v; want none", rest, err)
 	}
-	if n, err := s.CountUnreadableLocations(ctx); err != nil || n != 1 {
-		t.Errorf("CountUnreadableLocations = %d, %v; want 1", n, err)
+	if n, err := s.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without); err != nil || n != 1 {
+		t.Errorf("unreadable count = %d, %v; want 1", n, err)
 	}
 }
 
@@ -4232,10 +4214,7 @@ func TestLedgerStats_PlaintextCopies(t *testing.T) {
 
 	// The count and the list agree, so the dashboard figure and the work
 	// encrypt-existing performs cannot drift apart.
-	listed, err := s.ListUnencryptedLocations(ctx, 100, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListUnencryptedLocations: %v", err)
-	}
+	listed := listByForm(t, s, &core.FormFilter{Without: core.StoredEncrypted})
 	if int64(len(listed)) != n {
 		t.Errorf("count = %d but list returned %d rows", n, len(listed))
 	}

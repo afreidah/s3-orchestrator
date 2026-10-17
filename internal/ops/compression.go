@@ -109,11 +109,15 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 		// either one excludes selects out of every future pass instead of being
 		// handed to each one only to be declined again.
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return c.store.ListUncompressedLocations(ctx, batchSize, after, core.CompressionThresholds{
-				MinSize:  c.cfg.MinSize,
-				MinRatio: c.cfg.MinRatio,
-				Level:    c.cfg.Level,
-			}, backend)
+			return c.store.ListCopiesByForm(ctx, &core.FormFilter{
+				Without: core.StoredCompressed,
+				Backend: backend,
+				Candidates: &core.CompressionThresholds{
+					MinSize:  c.cfg.MinSize,
+					MinRatio: c.cfg.MinRatio,
+					Level:    c.cfg.Level,
+				},
+			}, batchSize, after)
 		},
 		rewrite:     c.compressOne,
 		maxRewrites: maxRewrites,
@@ -132,7 +136,7 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return c.store.ListCompressedLocations(ctx, batchSize, after, backend)
+			return c.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredCompressed, Backend: backend}, batchSize, after)
 		},
 		rewrite:     c.decompressOne,
 		maxRewrites: maxRewrites,

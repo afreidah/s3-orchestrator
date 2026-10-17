@@ -151,7 +151,7 @@ func (h *storedHasher) decode(ctx context.Context, body io.Reader, loc *core.Obj
 		reader = decrypted
 	}
 
-	if loc.CompressionAlgorithm == "" {
+	if !loc.Form().Has(core.StoredCompressed) {
 		return reader, noop, nil
 	}
 	if h.codec == nil {

@@ -138,8 +138,7 @@ func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) er
 // single-writer model means no row lock is needed inside a write tx.
 func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]core.ExistingCopy, error) {
 	rows, err := a.q.QueryContext(ctx,
-		`SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
-		        (encryption_key IS NOT NULL AND length(encryption_key) > 0)
+		`SELECT backend_name, storage_key, size_bytes, created_at, form
 		 FROM object_locations
 		 WHERE object_key = ?`, objectKey)
 	if err != nil {
@@ -149,14 +148,10 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		var (
 			ec        core.ExistingCopy
 			createdAt string
-			encrypted int
-			hasDEK    int
 		)
-		if err := rows.Scan(&ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &encrypted, &hasDEK); err != nil {
+		if err := rows.Scan(&ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form); err != nil {
 			return core.ExistingCopy{}, fmt.Errorf("scan existing copy: %w", err)
 		}
-		ec.Encrypted = encrypted != 0
-		ec.HasDEK = hasDEK != 0
 		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			ec.CreatedAt = t
 		}
@@ -222,6 +217,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 	if !loc.CreatedAt.IsZero() {
 		created = formatTime(loc.CreatedAt)
 	}
+	form := loc.Recorded()
 	if _, err := a.q.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
@@ -231,11 +227,11 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		    etag, content_type, user_metadata,
 		    managed, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		loc.ObjectKey, loc.BackendName, loc.StorageKey, loc.SizeBytes, boolToInt(loc.Encrypted),
-		loc.EncryptionKey,
-		nullableString(loc.KeyID), nullableInt64(loc.PlaintextSize), nullableString(loc.ContentHash),
-		nullableString(loc.CompressionAlgorithm), nullableString(loc.CompressionLevel),
-		nullableInt64(int64(loc.CompressionFormatVersion)), nullableInt64(loc.LogicalSize),
+		loc.ObjectKey, loc.BackendName, loc.StorageKey, loc.SizeBytes, boolToInt(form.Encrypted),
+		form.EncryptionKey,
+		nullableString(form.KeyID), nullableInt64(form.PlaintextSize), nullableString(form.ContentHash),
+		nullableString(form.CompressionAlgorithm), nullableString(form.CompressionLevel),
+		nullableInt64(int64(form.CompressionFormatVersion)), nullableInt64(form.LogicalSize),
 		nullableInt64(loc.CompressionProbeSize), nullableString(loc.CompressionProbeLevel),
 		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
 		boolToInt(!loc.Unmanaged),

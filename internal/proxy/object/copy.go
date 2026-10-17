@@ -57,7 +57,7 @@ func (o *Manager) headSourceForCopy(
 			continue
 		}
 		return headResult.Size, headResult.ContentType, headResult.Metadata,
-			core.StoredFormFromLocation(&locations[i]), true
+			locations[i].Described(), true
 	}
 	return 0, "", nil, nil, false
 }

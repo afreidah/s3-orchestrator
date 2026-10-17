@@ -136,9 +136,6 @@ func TestToFatObjectLocations_EveryRowType(t *testing.T) {
 	if got := toFatObjectLocations([]db.GetLeastRecentlyScrubbedObjectsRow{{ObjectKey: "f", CreatedAt: now}}); got[0].ObjectKey != "f" {
 		t.Error("GetRandomHashedObjectsRow not converted")
 	}
-	if got := toFatObjectLocations([]db.GetObjectsWithoutHashRow{{ObjectKey: "g", CreatedAt: now}}); got[0].ObjectKey != "g" {
-		t.Error("GetObjectsWithoutHashRow not converted")
-	}
 }
 
 // -------------------------------------------------------------------------

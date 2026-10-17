@@ -76,7 +76,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 		return replicaNotChecked
 	}
 
-	if source.ContentHash == "" {
+	if !source.Form().Has(core.StoredHashed) {
 		// The object predates integrity, or backfill has not reached it.
 		// Reading the copy would produce a digest with nothing to judge it by.
 		r.log.WarnContext(ctx, "replica not verified, source has no content hash",

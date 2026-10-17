@@ -64,6 +64,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Stored form columns ([#1726](https://github.com/afreidah/s3-orchestrator/issues/1726), v0.162.8)**
+
+`object_locations` gains two generated columns. `form` records which layers a copy's bytes carry (compressed, encrypted, hashed, keyed), and `object_size` records the size the client wrote. The rewrite passes, hash backfill, the unreadable purge and the ledger figures now select on them instead of each re-deriving the same answer from the underlying columns.
+
+**Operator action items after upgrade:**
+
+- **Migration 00039 rewrites `object_locations` under an exclusive lock** while Postgres computes the stored generated columns. Reads and writes to the table wait for it. Plan the upgrade for a quiet window on a large ledger. SQLite adds the columns as virtual and does not rewrite the table.
+- **An empty encrypted object lists with size 0.** A listing used to report the envelope's size for one, since its plaintext size is stored as NULL.
+
 **Moves and replicas commit against the copy they copied ([#1713](https://github.com/afreidah/s3-orchestrator/issues/1713), v0.162.7)**
 
 A rebalance or drain move, and a new replica, now record their copy only while the source is still the copy that was streamed. A client overwrite that lands mid-copy used to have its new metadata written over the old bytes at the destination.

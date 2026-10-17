@@ -174,65 +174,51 @@ func (q *Queries) IncrementOrphanBytes(ctx context.Context, arg IncrementOrphanB
 	return err
 }
 
-const ledgerStats = `-- name: LedgerStats :many
-SELECT backend_name,
-    COUNT(*)::bigint AS objects,
-    COUNT(*) FILTER (WHERE content_hash IS NULL)::bigint AS unhashed,
-    COUNT(*) FILTER (WHERE encrypted = FALSE)::bigint AS plaintext,
-    COUNT(*) FILTER (WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0))::bigint AS unreadable,
-    COUNT(*) FILTER (WHERE compression_algorithm IS NOT NULL)::bigint AS compressed_objects,
-    COALESCE(SUM(logical_size) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_logical_bytes,
-    COALESCE(SUM(size_bytes) FILTER (WHERE compression_algorithm IS NOT NULL), 0)::bigint AS compressed_stored_bytes,
-    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed)::bigint AS verifiable,
-    COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed AND last_scrubbed_at IS NULL)::bigint AS never_verified,
-    MIN(COALESCE(last_scrubbed_at, created_at)) FILTER (WHERE content_hash IS NOT NULL AND managed)::timestamptz AS oldest_touched
+const ledgerGroups = `-- name: LedgerGroups :many
+SELECT backend_name, form, managed,
+    COUNT(*)::bigint AS copies,
+    COALESCE(SUM(size_bytes), 0)::bigint AS stored_bytes,
+    COALESCE(SUM(object_size), 0)::bigint AS object_bytes,
+    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_scrubbed,
+    MIN(COALESCE(last_scrubbed_at, created_at))::timestamptz AS oldest_touched
 FROM object_locations
-GROUP BY backend_name
+GROUP BY backend_name, form, managed
 `
 
-type LedgerStatsRow struct {
-	BackendName            string
-	Objects                int64
-	Unhashed               int64
-	Plaintext              int64
-	Unreadable             int64
-	CompressedObjects      int64
-	CompressedLogicalBytes int64
-	CompressedStoredBytes  int64
-	Verifiable             int64
-	NeverVerified          int64
-	OldestTouched          pgtype.Timestamptz
+type LedgerGroupsRow struct {
+	BackendName   string
+	Form          int64
+	Managed       bool
+	Copies        int64
+	StoredBytes   int64
+	ObjectBytes   int64
+	NeverScrubbed int64
+	OldestTouched pgtype.Timestamptz
 }
 
-// Every per-backend ledger figure in one grouped pass, so the dashboard and the
-// fleet snapshot read the table once rather than once per figure. Each FILTER
-// keeps the predicate of the figure it reports: unhashed counts every row,
-// plaintext matches ListUnencryptedLocations, unreadable matches
-// ListUnreadableLocations, compression counts encoded copies only, and the
-// verification figures count hashed managed rows, the population the scrub
-// queue draws from. The oldest touch falls back to created_at as the queue
-// ordering does, so a never-scrubbed copy is measured from when it was
-// written.
-func (q *Queries) LedgerStats(ctx context.Context) ([]LedgerStatsRow, error) {
-	rows, err := q.db.Query(ctx, ledgerStats)
+// The ledger in one grouped pass, by backend, stored form and managed flag, so
+// the dashboard and the fleet snapshot read the table once. What each figure
+// counts is decided in Go from the groups, so both engines report the same
+// figures from the same rule. The oldest touch falls back to created_at as the
+// scrub queue ordering does, so a never-scrubbed copy is measured from when it
+// was written.
+func (q *Queries) LedgerGroups(ctx context.Context) ([]LedgerGroupsRow, error) {
+	rows, err := q.db.Query(ctx, ledgerGroups)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []LedgerStatsRow{}
+	items := []LedgerGroupsRow{}
 	for rows.Next() {
-		var i LedgerStatsRow
+		var i LedgerGroupsRow
 		if err := rows.Scan(
 			&i.BackendName,
-			&i.Objects,
-			&i.Unhashed,
-			&i.Plaintext,
-			&i.Unreadable,
-			&i.CompressedObjects,
-			&i.CompressedLogicalBytes,
-			&i.CompressedStoredBytes,
-			&i.Verifiable,
-			&i.NeverVerified,
+			&i.Form,
+			&i.Managed,
+			&i.Copies,
+			&i.StoredBytes,
+			&i.ObjectBytes,
+			&i.NeverScrubbed,
 			&i.OldestTouched,
 		); err != nil {
 			return nil, err

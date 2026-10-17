@@ -46,8 +46,13 @@ func newBacklog(n int) *backlog {
 	return b
 }
 
-// GetObjectsWithoutHash lists up to limit unhashed copies after the cursor.
-func (b *backlog) GetObjectsWithoutHash(_ context.Context, limit int, after core.Cursor, _ string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm lists up to limit unhashed copies after the cursor. It
+// serves only the backfill's filter, managed copies without a hash, so a pass
+// that asked for anything else finds nothing to do.
+func (b *backlog) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	if !f.Without.Has(core.StoredHashed) || !f.ManagedOnly {
+		return nil, nil
+	}
 	var out []core.ObjectLocation
 	for _, k := range b.keys {
 		if len(out) == limit {
@@ -154,15 +159,19 @@ func assertAllUnder(t *testing.T, store *rotatingStore, keyID string) {
 	}
 }
 
-// ListEncryptedLocations lists up to limit copies under keyID after the cursor.
-func (s *rotatingStore) ListEncryptedLocations(_ context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+// ListCopiesByForm lists up to limit encrypted copies under the filter's key id
+// after the cursor.
+func (s *rotatingStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	if !f.With.Has(core.StoredEncrypted) {
+		return nil, nil
+	}
 	var out []core.ObjectLocation
 	for i := range s.locs {
 		loc := &s.locs[i]
 		if len(out) == limit {
 			break
 		}
-		if loc.KeyID == keyID && cursorAfter(loc.ObjectKey, loc.BackendName, after) {
+		if loc.KeyID == f.KeyID && cursorAfter(loc.ObjectKey, loc.BackendName, after) {
 			out = append(out, *loc)
 		}
 	}

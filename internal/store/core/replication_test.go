@@ -186,7 +186,7 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 
 // decryptable builds a copy that both claims encryption and still holds a key.
 func decryptable(backend string) ExistingCopy {
-	return ExistingCopy{BackendName: backend, SizeBytes: 10, Encrypted: true, HasDEK: true}
+	return ExistingCopy{BackendName: backend, SizeBytes: 10, Form: StoredReadable}
 }
 
 // TestRemoveExcessCopy_RefusesLastDecryptableCopy verifies a copy set that
@@ -272,7 +272,7 @@ func TestRemoveExcessCopy_AllowsRemovalWhenNoCopyEncrypted(t *testing.T) {
 func TestRemoveExcessCopy_AllowsRemovalWhenEncryptedCopyLostItsKey(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 10, Encrypted: true},
+		{BackendName: "b1", SizeBytes: 10, Form: StoredEncrypted},
 		{BackendName: "b2", SizeBytes: 10},
 	}})
 	removed, err := runRemoveExcess(stub, "k", "b1", 1)

@@ -3,12 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Implements the Postgres engine bindings for the integrity scrubber:
-// random-sample selection of objects whose content_hash is set,
-// listing of objects whose hash is null (so the backfill path can
-// compute one), and the unreadable-copy listing. Uses TABLESAMPLE
-// SYSTEM for cheap random sampling instead of ORDER BY random() so the
-// scrubber stays linear-time as the table grows.
+// Implements the Postgres engine bindings for the integrity scrubber's queue,
+// and the copy listing every pass over the ledger selects by stored form:
+// hash backfill, the unreadable purge, and the encryption and compression
+// rewrites.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -69,43 +67,42 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 }
 
 // -------------------------------------------------------------------------
-// REPORTING
+// COPIES BY STORED FORM
 // -------------------------------------------------------------------------
 
-// GetObjectsWithoutHash returns object locations that have no stored content
-// hash, in key order after the cursor. Used by the backfill command.
-func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.GetObjectsWithoutHash(ctx, db.GetObjectsWithoutHashParams{
-		BackendFilter: backend,
+// ListCopiesByForm returns up to limit copies after the cursor that the filter
+// selects, in key order. Candidates applies the compression thresholds; with
+// none, the size floor is zero and no probe is judged.
+func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	p := db.ListCopiesByFormParams{
+		WithFlags:     int64(f.With),
+		WithoutFlags:  int64(f.Without),
+		ManagedOnly:   f.ManagedOnly,
+		BackendFilter: f.Backend,
+		KeyID:         f.KeyID,
 		AfterKey:      after.ObjectKey,
 		AfterBackend:  after.BackendName,
 		RowLimit:      int32(max(0, min(limit, math.MaxInt32))), //nolint:gosec // clamped
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
 	}
-	return toFatObjectLocations(rows), nil
+	if t := f.Candidates; t != nil {
+		p.MinSize, p.ProbeLevel, p.MinRatio = t.MinSize, t.Level, t.MinRatio
+	}
+	rows, err := s.queries.ListCopiesByForm(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("list copies by form: %w", err)
+	}
+	return toWholeObjectLocations(rows), nil
 }
 
-// ListUnreadableLocations returns up to limit copies after the cursor that are
-// encrypted with no key, which nothing can decrypt.
-func (s *Store) ListUnreadableLocations(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.ListUnreadableLocations(ctx, db.ListUnreadableLocationsParams{
-		AfterKey:     after.ObjectKey,
-		AfterBackend: after.BackendName,
-		RowLimit:     int32(max(0, min(limit, math.MaxInt32))), //nolint:gosec // clamped
+// CountCopiesByForm reports how many copies carry every flag of with and none
+// of without.
+func (s *Store) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
+	n, err := s.queries.CountCopiesByForm(ctx, db.CountCopiesByFormParams{
+		WithFlags:    int64(with),
+		WithoutFlags: int64(without),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list unreadable locations: %w", err)
-	}
-	return toSlimObjectLocations(rows), nil
-}
-
-// CountUnreadableLocations reports how many copies are encrypted with no key.
-func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
-	n, err := s.queries.CountUnreadableLocations(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("count unreadable locations: %w", err)
+		return 0, fmt.Errorf("count copies by form: %w", err)
 	}
 	return n, nil
 }

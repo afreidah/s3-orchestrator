@@ -36,66 +36,15 @@ func intentSuperseded(existing []ExistingCopy, intentCreatedAt time.Time) bool {
 	return false
 }
 
-// ApplyStoredForm writes a description of an object's stored bytes onto a
-// pending row. The inverse of pendingStoredForm: what an intent records here is
-// what its promotion reads back, so a field missing from either side is a
-// recovered object whose row contradicts its bytes.
-func (p *PendingObject) ApplyStoredForm(form *StoredForm) {
-	if form == nil {
-		return
-	}
-	p.Encrypted = form.Encrypted
-	p.EncryptionKey = form.EncryptionKey
-	p.KeyID = form.KeyID
-	p.PlaintextSize = form.PlaintextSize
-	p.ContentHash = form.ContentHash
-	p.CompressionAlgorithm = form.CompressionAlgorithm
-	p.CompressionLevel = form.CompressionLevel
-	p.CompressionFormatVersion = form.CompressionFormatVersion
-	p.LogicalSize = form.LogicalSize
-}
-
-// pendingStoredForm builds a StoredForm from a PendingObject so the promoted
-// object_locations row carries the same representation metadata as the
-// original PUT recorded. Returns nil when the pending row describes bytes
-// stored verbatim with no hash.
-func pendingStoredForm(p *PendingObject) *StoredForm {
-	if !p.Encrypted && p.ContentHash == "" && p.CompressionAlgorithm == "" {
+// Described returns a copy of the form, or nil when it describes plaintext,
+// unencoded, unhashed bytes, which is the "nothing to carry" signal the write
+// path uses.
+func (f *StoredForm) Described() *StoredForm {
+	if !f.Form().Any(StoredCompressed | StoredEncrypted | StoredHashed) {
 		return nil
 	}
-	return &StoredForm{
-		Encrypted:                p.Encrypted,
-		EncryptionKey:            p.EncryptionKey,
-		KeyID:                    p.KeyID,
-		PlaintextSize:            p.PlaintextSize,
-		ContentHash:              p.ContentHash,
-		CompressionAlgorithm:     p.CompressionAlgorithm,
-		CompressionLevel:         p.CompressionLevel,
-		CompressionFormatVersion: p.CompressionFormatVersion,
-		LogicalSize:              p.LogicalSize,
-	}
-}
-
-// StoredFormFromLocation describes how a recorded copy's bytes are stored, so a
-// path that moves those bytes verbatim can repeat that description on the row it
-// writes for the destination. Returns nil when the row describes plaintext,
-// unencoded, unhashed bytes, which is the same "nothing to carry" signal the
-// write path uses.
-func StoredFormFromLocation(loc *ObjectLocation) *StoredForm {
-	if loc == nil || (!loc.Encrypted && loc.ContentHash == "" && loc.CompressionAlgorithm == "") {
-		return nil
-	}
-	return &StoredForm{
-		Encrypted:                loc.Encrypted,
-		EncryptionKey:            loc.EncryptionKey,
-		KeyID:                    loc.KeyID,
-		PlaintextSize:            loc.PlaintextSize,
-		ContentHash:              loc.ContentHash,
-		CompressionAlgorithm:     loc.CompressionAlgorithm,
-		CompressionLevel:         loc.CompressionLevel,
-		CompressionFormatVersion: loc.CompressionFormatVersion,
-		LogicalSize:              loc.LogicalSize,
-	}
+	c := *f
+	return &c
 }
 
 // ObjectFromStoredForm builds an ObjectLocation for InsertObjectLocation. form
@@ -110,23 +59,8 @@ func ObjectFromStoredForm(key, backend, storageKey string, size int64, form *Sto
 		SizeBytes:   size,
 		Identity:    id,
 	}
-	if form == nil {
-		return loc
-	}
-	if form.Encrypted {
-		loc.Encrypted = true
-		loc.EncryptionKey = form.EncryptionKey
-		loc.KeyID = form.KeyID
-		loc.PlaintextSize = form.PlaintextSize
-	}
-	if form.ContentHash != "" {
-		loc.ContentHash = form.ContentHash
-	}
-	if form.CompressionAlgorithm != "" {
-		loc.CompressionAlgorithm = form.CompressionAlgorithm
-		loc.CompressionLevel = form.CompressionLevel
-		loc.CompressionFormatVersion = form.CompressionFormatVersion
-		loc.LogicalSize = form.LogicalSize
+	if form != nil {
+		loc.StoredForm = *form
 	}
 	return loc
 }
@@ -195,7 +129,7 @@ func copyOnBackend(existing []ExistingCopy, backendName string) (ExistingCopy, b
 func isLastDecryptableCopy(existing []ExistingCopy, backendName string) bool {
 	var decryptable, target int
 	for i := range existing {
-		if existing[i].Encrypted && existing[i].HasDEK {
+		if existing[i].Form.Has(StoredReadable) {
 			decryptable++
 			if existing[i].BackendName == backendName {
 				target++
@@ -231,16 +165,17 @@ func ValidateEncryptionMetadata(loc *ObjectLocation) error {
 	if loc == nil {
 		return nil
 	}
-	if !loc.Encrypted {
+	form := loc.Form()
+	if !form.Has(StoredEncrypted) {
 		// A cleared flag next to a surviving key is the signature of a row that
 		// lost its encryption metadata: the bytes are almost certainly still an
 		// envelope, and serving them as plaintext hands the client ciphertext.
-		if len(loc.EncryptionKey) > 0 {
+		if form.Has(StoredKeyed) {
 			return fmt.Errorf("%w: row is not encrypted but still carries a key", ErrEncryptionFlagMismatch)
 		}
 		return nil
 	}
-	if len(loc.EncryptionKey) == 0 {
+	if form.Unreadable() {
 		return fmt.Errorf("%w: row is encrypted but carries no key", ErrEncryptionFlagMismatch)
 	}
 	if loc.PlaintextSize < 0 {

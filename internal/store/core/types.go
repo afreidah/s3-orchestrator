@@ -61,11 +61,11 @@ type StoredForm struct {
 // open it, which is how import records encrypted bytes no surviving row can
 // decrypt.
 func (f *StoredForm) Unreadable() bool {
-	return f != nil && f.Encrypted && len(f.EncryptionKey) == 0
+	return f.Form().Unreadable()
 }
 
 // ObjectLocation records that a backend currently holds a copy of a key,
-// along with the size and any encryption or integrity metadata.
+// along with the size and the stored form its bytes carry.
 //
 // StorageKey is the path this copy occupies on its backend; a write stores its
 // bytes under the object key plus its intent id (see internalkey.StorageKey),
@@ -85,36 +85,29 @@ func (f *StoredForm) Unreadable() bool {
 // copy reports the same count. Only GetAllObjectLocations fills it in, for the
 // tagging-count header on the read path.
 type ObjectLocation struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	CreatedAt                time.Time
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    string
-	PlaintextSize            int64
-	ContentHash              string
-	CompressionAlgorithm     string
-	CompressionLevel         string
-	CompressionFormatVersion int
-	LogicalSize              int64
-	CompressionProbeSize     int64
-	CompressionProbeLevel    string
-	LastScrubbedAt           *time.Time
-	Unmanaged                bool
-	Identity                 *ObjectIdentity
-	TagCount                 int
+	StoredForm
+	ObjectKey             string
+	BackendName           string
+	StorageKey            string
+	SizeBytes             int64
+	CreatedAt             time.Time
+	CompressionProbeSize  int64
+	CompressionProbeLevel string
+	LastScrubbedAt        *time.Time
+	Unmanaged             bool
+	Identity              *ObjectIdentity
+	TagCount              int
 }
 
 // ObjectSize is the size of the object the client wrote: logical_size for an
 // encoded copy, plaintext_size for an encrypted one, and the stored size
-// otherwise.
+// otherwise. It is the Go half of the definition object_locations.object_size
+// generates, and the two must agree.
 func (l *ObjectLocation) ObjectSize() int64 {
-	switch {
-	case l.CompressionAlgorithm != "":
+	switch form := l.Form(); {
+	case form.Has(StoredCompressed):
 		return l.LogicalSize
-	case l.Encrypted:
+	case form.Has(StoredEncrypted):
 		return l.PlaintextSize
 	default:
 		return l.SizeBytes
@@ -143,15 +136,14 @@ func (l *ObjectLocation) RecordedETag() string {
 // ExistingCopy is the projection of an object_locations row that promotion
 // and overwrite logic needs from a SELECT-for-update read.
 //
-// Encrypted and HasDEK let a caller choosing which copy to drop avoid
-// destroying the last row able to decrypt the object.
+// Form lets a caller choosing which copy to drop avoid destroying the last row
+// able to decrypt the object.
 type ExistingCopy struct {
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   time.Time
-	Encrypted   bool
-	HasDEK      bool
+	Form        StoredFlags
 }
 
 // DeletedCopy describes bytes that need removing from their backend: a copy
@@ -227,23 +219,15 @@ const (
 // and the intent id, is recorded up front so every resolver addresses exactly
 // the bytes this write placed.
 type PendingObject struct {
-	IntentID                 string
-	ObjectKey                string
-	StorageKey               string
-	BackendName              string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    string
-	PlaintextSize            int64
-	ContentHash              string
-	CompressionAlgorithm     string
-	CompressionLevel         string
-	CompressionFormatVersion int
-	LogicalSize              int64
-	Identity                 *ObjectIdentity
-	CreatedAt                time.Time
-	Role                     PendingRole
+	StoredForm
+	IntentID    string
+	ObjectKey   string
+	StorageKey  string
+	BackendName string
+	SizeBytes   int64
+	Identity    *ObjectIdentity
+	CreatedAt   time.Time
+	Role        PendingRole
 }
 
 // IsCompanion reports whether promoting this intent adds a copy rather than
@@ -533,11 +517,24 @@ type CompressionStat struct {
 	StoredBytes  int64
 }
 
+// FormFilter selects copies by the layers their bytes carry: every flag of With
+// and none of Without. Backend and KeyID narrow the page to one value when set,
+// and ManagedOnly leaves out data the orchestrator does not manage. Candidates,
+// when set, keeps only copies a compression pass would still try to encode.
+type FormFilter struct {
+	With        StoredFlags
+	Without     StoredFlags
+	Backend     string
+	KeyID       string
+	ManagedOnly bool
+	Candidates  *CompressionThresholds
+}
+
 // CompressionThresholds are the settings that decide whether a copy is worth
-// encoding, passed to the uncompressed listing so it selects only candidates.
-// Recorded probes are judged against the current values, so loosening a
-// threshold returns declined copies to the pass. A probe counts against
-// MinRatio only if it was taken at Level.
+// encoding, passed to the copy listing so it selects only candidates. Recorded
+// probes are judged against the current values, so loosening a threshold
+// returns declined copies to the pass. A probe counts against MinRatio only if
+// it was taken at Level.
 type CompressionThresholds struct {
 	MinSize  int64
 	MinRatio float64

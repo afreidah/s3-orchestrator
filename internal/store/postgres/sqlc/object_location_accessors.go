@@ -63,14 +63,6 @@ func (r ListObjectsByBackendKeyAscRow) GetBackendName() string           { retur
 func (r ListObjectsByBackendKeyAscRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByBackendKeyAscRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
-// ListUnreadableLocationsRow
-
-func (r ListUnreadableLocationsRow) GetObjectKey() string             { return r.ObjectKey }
-func (r ListUnreadableLocationsRow) GetStorageKey() string            { return r.StorageKey }
-func (r ListUnreadableLocationsRow) GetBackendName() string           { return r.BackendName }
-func (r ListUnreadableLocationsRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r ListUnreadableLocationsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
-
 // -------------------------------------------------------------------------
 // Fat rows (slim columns + encryption + content hash).
 // -------------------------------------------------------------------------
@@ -186,25 +178,6 @@ func (r GetLeastRecentlyScrubbedObjectsRow) GetCompressionFormatVersion() *int16
 }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetLastScrubbedAt() pgtype.Timestamptz {
 	return r.LastScrubbedAt
-}
-
-// GetObjectsWithoutHashRow
-
-func (r GetObjectsWithoutHashRow) GetObjectKey() string             { return r.ObjectKey }
-func (r GetObjectsWithoutHashRow) GetStorageKey() string            { return r.StorageKey }
-func (r GetObjectsWithoutHashRow) GetBackendName() string           { return r.BackendName }
-func (r GetObjectsWithoutHashRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r GetObjectsWithoutHashRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
-func (r GetObjectsWithoutHashRow) GetEncrypted() bool               { return r.Encrypted }
-func (r GetObjectsWithoutHashRow) GetEncryptionKey() []byte         { return r.EncryptionKey }
-func (r GetObjectsWithoutHashRow) GetKeyID() *string                { return r.KeyID }
-func (r GetObjectsWithoutHashRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
-func (r GetObjectsWithoutHashRow) GetContentHash() *string          { return r.ContentHash }
-func (r GetObjectsWithoutHashRow) GetCompressionAlgorithm() *string { return r.CompressionAlgorithm }
-func (r GetObjectsWithoutHashRow) GetCompressionLevel() *string     { return r.CompressionLevel }
-func (r GetObjectsWithoutHashRow) GetLogicalSize() *int64           { return r.LogicalSize }
-func (r GetObjectsWithoutHashRow) GetCompressionFormatVersion() *int16 {
-	return r.CompressionFormatVersion
 }
 
 // -------------------------------------------------------------------------

@@ -98,9 +98,14 @@ func (f *fakeBackend) ListObjects(context.Context, string, func([]s3be.ListedObj
 // every mutator is a no-op, so a pass runs to completion with nothing to do.
 type emptyEncAdmin struct{}
 
-// ListEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListEncryptedLocations(context.Context, string, int, core.Cursor) ([]core.ObjectLocation, error) {
+// ListCopiesByForm lists no locations, whatever the filter.
+func (emptyEncAdmin) ListCopiesByForm(context.Context, *core.FormFilter, int, core.Cursor) ([]core.ObjectLocation, error) {
 	return nil, nil
+}
+
+// CountCopiesByForm counts no locations.
+func (emptyEncAdmin) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, nil
 }
 
 // UpdateCopyMetadata is a no-op.
@@ -108,19 +113,9 @@ func (emptyEncAdmin) UpdateCopyMetadata(_ context.Context, _ *core.ObjectLocatio
 	return nil
 }
 
-// ListUnencryptedLocations lists no plaintext locations.
-func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
 // MarkObjectEncrypted is a no-op.
 func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpdate) error {
 	return nil
-}
-
-// ListAllEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
-	return nil, nil
 }
 
 // MarkObjectDecrypted is a no-op.
@@ -138,9 +133,10 @@ type rowEncAdmin struct {
 	marked  atomic.Bool
 }
 
-// ListUnencryptedLocations serves the single row once.
-func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
-	if r.served.Swap(true) {
+// ListCopiesByForm serves the single row once to a listing of plaintext
+// copies, and nothing to any other listing.
+func (r *rowEncAdmin) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ int, _ core.Cursor) ([]core.ObjectLocation, error) {
+	if !f.Without.Has(core.StoredEncrypted) || r.served.Swap(true) {
 		return nil, nil
 	}
 	return []core.ObjectLocation{r.row}, nil
@@ -619,9 +615,10 @@ type decryptRowStore struct {
 	marked atomic.Bool
 }
 
-// ListAllEncryptedLocations serves the single row once.
-func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
-	if d.served.Swap(true) {
+// ListCopiesByForm serves the single row once to a listing of encrypted
+// copies, and nothing to any other listing.
+func (d *decryptRowStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, _ int, _ core.Cursor) ([]core.ObjectLocation, error) {
+	if !f.With.Has(core.StoredEncrypted) || d.served.Swap(true) {
 		return nil, nil
 	}
 	return []core.ObjectLocation{d.row}, nil
@@ -683,6 +680,12 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	}
 }
 
+// rotationFilter is the listing a rotation away from keyID pages through: the
+// encrypted copies wrapped under that key, on every backend.
+func rotationFilter(keyID string) *core.FormFilter {
+	return &core.FormFilter{With: core.StoredEncrypted, KeyID: keyID}
+}
+
 // TestRotateKey_RewrapsEveryLocation asserts a rotation re-wraps the DEK and
 // records the new key material, leaving the object bytes untouched.
 func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
@@ -692,11 +695,11 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 
 	var updated bool
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, core.Cursor{}).
+	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
 		}, nil).Times(1)
-	store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, gomock.Any(), gomock.Any()).
+	store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
 	store.EXPECT().UpdateCopyMetadata(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
@@ -734,11 +737,11 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 	keyData, keyID, _ := sealed(t, enc, []byte("hello world"))
 
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, core.Cursor{}).
+	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
 		}, nil).Times(1)
-	store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, gomock.Any(), gomock.Any()).
+	store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter(keyID), gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
 	store.EXPECT().UpdateCopyMetadata(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(core.ErrCopyChanged).Times(1)
@@ -1300,11 +1303,11 @@ func TestDecryptExisting_EmptyStore(t *testing.T) {
 func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	t.Parallel()
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", rotateBatchSize, core.Cursor{}).
+	first := store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter("old"), rotateBatchSize, core.Cursor{}).
 		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
 		}, nil).Times(1)
-	store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", gomock.Any(), gomock.Any()).
+	store.EXPECT().ListCopiesByForm(gomock.Any(), rotationFilter("old"), gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
 
 	svc := NewEncryption(EncryptionDeps{

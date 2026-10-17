@@ -100,14 +100,8 @@ func TestStoreInt_CompressionListings_AreComplements(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	uncompressed, err := s.ListUncompressedLocations(ctx, 1000, core.Cursor{}, core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"}, "")
-	if err != nil {
-		t.Fatalf("ListUncompressedLocations: %v", err)
-	}
-	compressed, err := s.ListCompressedLocations(ctx, 1000, core.Cursor{}, "")
-	if err != nil {
-		t.Fatalf("ListCompressedLocations: %v", err)
-	}
+	uncompressed := pgListByForm(t, s, pgCandidatesUnder(core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"}))
+	compressed := pgListByForm(t, s, &core.FormFilter{With: core.StoredCompressed})
 
 	findRewritable(t, uncompressed, verbatimKey)
 	assertAbsent(t, uncompressed, encodedKey, "uncompressed")
@@ -161,9 +155,9 @@ func walkCompressedByCursor(t *testing.T, s *Store, ctx context.Context, want ma
 	seen := map[string]int{}
 	after := core.Cursor{ObjectKey: t.Name() + "/"}
 	for range 4 * total {
-		page, err := s.ListCompressedLocations(ctx, 2, after, "")
+		page, err := s.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredCompressed}, 2, after)
 		if err != nil {
-			t.Fatalf("ListCompressedLocations: %v", err)
+			t.Fatalf("ListCopiesByForm: %v", err)
 		}
 		if len(page) == 0 || len(seen) == total {
 			return seen

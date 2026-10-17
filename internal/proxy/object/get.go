@@ -63,7 +63,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 			if err != nil {
 				return readpath.ProbeResult[*s3be.GetObjectResult]{}, err
 			}
-			if isCompressed(loc) {
+			if loc.Form().Has(core.StoredCompressed) {
 				selfMetered.Store(true)
 			}
 			res, wire, err := o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
@@ -138,7 +138,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}
 	// A compressed copy is read by decoding it, which is driven by the codec
 	// rather than by a GET of the whole object.
-	if isCompressed(loc) {
+	if loc.Form().Has(core.StoredCompressed) {
 		res, err := o.compressedGetAttempt(ctx, key, rangeHeader, beName, backend, loc)
 		return res, 0, err
 	}

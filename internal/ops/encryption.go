@@ -98,7 +98,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.EncryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListUnencryptedLocations(ctx, batchSize, after, backend)
+			return e.store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredEncrypted, Backend: backend}, batchSize, after)
 		},
 		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 			encResult, err := e.encryptor.Encrypt(ctx, src.Body, loc.SizeBytes)
@@ -141,7 +141,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.DecryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListAllEncryptedLocations(ctx, batchSize, after, backend)
+			return e.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredEncrypted, Backend: backend}, batchSize, after)
 		},
 		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 			plainReader, plainLen, err := e.encryptor.DecryptStored(ctx, src.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
@@ -179,7 +179,7 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(rotateBatchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListEncryptedLocations(ctx, oldKeyID, limit, after)
+			return e.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredEncrypted, KeyID: oldKeyID}, limit, after)
 		},
 		CursorOf: func(loc core.ObjectLocation) core.Cursor {
 			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}

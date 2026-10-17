@@ -181,7 +181,7 @@ func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(batchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return i.store.GetObjectsWithoutHash(ctx, limit, after, backend)
+			return i.store.ListCopiesByForm(ctx, &core.FormFilter{Without: core.StoredHashed, Backend: backend, ManagedOnly: true}, limit, after)
 		},
 		CursorOf: func(loc core.ObjectLocation) core.Cursor {
 			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}

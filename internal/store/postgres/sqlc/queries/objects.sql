@@ -17,8 +17,7 @@ SELECT pg_advisory_xact_lock(hashtext($1));
 -- storage_key comes along because the caller that deletes these rows also
 -- deletes their bytes, and a per-write path cannot be derived from the object
 -- key.
-SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
-       (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
+SELECT backend_name, storage_key, size_bytes, created_at, form
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE;
@@ -121,12 +120,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- query for not matching the leading ORDER BY expression. Unmanaged rows are
 -- left out because clients cannot read them.
 SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
-       (CASE
-           WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
-           WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
-           ELSE size_bytes
-       END)::bigint AS size_bytes,
-       etag, created_at
+       object_size AS size_bytes, etag, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > @start_after
@@ -227,34 +221,45 @@ WHERE backend_name = $1;
 -- name: DeleteObjectLocationsByBackend :exec
 DELETE FROM object_locations WHERE backend_name = $1;
 
--- name: ListEncryptedLocations :many
--- Paged by cursor: rotating a copy changes its key_id and takes it out of this
--- predicate, so an offset would skip the rows that moved up.
+-- name: ListCopiesByForm :many
+-- The copies a pass works through, selected by the layers their bytes carry:
+-- every bit of with_flags set and none of without_flags. The rest narrows the
+-- page to what the pass will act on, so row_limit is not spent on rows it
+-- would decline: an empty backend_filter or key_id matches every value, and
+-- managed_only leaves out data the orchestrator does not manage.
 --
--- The admin listings select whole rows, so each returns the table's model type
--- and one conversion serves them all.
+-- Paged by cursor rather than offset, since a pass usually takes the copies it
+-- acts on out of its own predicate, and an offset would step over the rows
+-- that moved up.
+--
+-- A non-empty probe_level adds the compression candidate test: a copy already
+-- measured at that level as unable to reach min_ratio is excluded, so it is not
+-- downloaded and encoded again to reach the same verdict. The measurement is
+-- judged against the current settings, so lowering min_ratio returns those
+-- copies without reading any of them, and a probe taken at another level says
+-- nothing about this one. A zero object_size makes the division NULL and
+-- excludes the copy, matching WorthStoring, which declines it outright.
 SELECT *
 FROM object_locations
-WHERE encrypted = TRUE AND key_id = sqlc.arg(key_id)::text
+WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
+  AND (form & sqlc.arg(without_flags)::bigint) = 0
+  AND (NOT sqlc.arg(managed_only)::boolean OR managed)
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
+  AND (sqlc.arg(key_id)::text = '' OR key_id = sqlc.arg(key_id)::text)
+  AND object_size >= sqlc.arg(min_size)::bigint
+  AND (sqlc.arg(probe_level)::text = ''
+       OR compression_probe_size IS NULL
+       OR compression_probe_level IS DISTINCT FROM sqlc.arg(probe_level)::text
+       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= sqlc.arg(min_ratio)::float8)
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
 
--- name: ListUnencryptedLocations :many
--- Paged by cursor rather than offset. Encrypting a copy takes it out of this
--- predicate, so the set shrinks as encrypt-existing walks it and an offset
--- would step over the rows that moved up.
---
--- An empty backend_filter selects every backend, which is what a pass over the
--- whole fleet asks for. Filtering here rather than after the page is read is
--- what keeps the row_limit spent on candidates the pass will act on.
-SELECT *
-FROM object_locations
-WHERE encrypted = FALSE
-  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
+-- name: CountCopiesByForm :one
+-- How many copies carry every bit of with_flags and none of without_flags.
+SELECT count(*) FROM object_locations
+WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
+  AND (form & sqlc.arg(without_flags)::bigint) = 0;
 
 -- name: MarkObjectEncrypted :execrows
 --
@@ -271,69 +276,6 @@ SET encrypted = TRUE,
     size_bytes = $6
 WHERE object_key = $1 AND backend_name = $2
   AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
-
--- name: ListAllEncryptedLocations :many
--- Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
--- copy removes it from this set mid-walk.
-SELECT *
-FROM object_locations
-WHERE encrypted = TRUE
-  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
-
--- name: ListUncompressedLocations :many
--- Copies whose stored bytes carry no encoding, which is what compress-existing
--- rewrites. The encryption columns come along because compression sits inside
--- encryption: an encrypted copy is decrypted, encoded, and re-encrypted under
--- the key it already had.
---
--- Paged by cursor, not offset: an encoded copy leaves this predicate, so the
--- set shrinks under the pass walking it.
---
--- Copies already measured as not worth encoding are excluded here rather than
--- downloaded and encoded again to reach the same verdict, which on an
--- incompressible fleet is the pass's largest wasted expense. The stored
--- measurement is judged against the current settings, so it excludes a copy
--- only while it would still be declined: lowering min_ratio returns those
--- copies to the pass without reading any of them. A probe taken at a different
--- level says nothing about this one and is ignored, since the levels are names
--- from an ordered set rather than numbers.
---
--- The divisor is NULLIF'd because a zero-length copy cannot shrink: the
--- comparison goes NULL and the row is excluded, matching WorthStoring, which
--- declines a logical size of zero outright.
---
--- The size floor is applied here for the same reason, one the row can answer:
--- a copy below it is never a candidate, so listing it only to decline it costs
--- a page slot on every pass forever.
-SELECT *
-FROM object_locations
-WHERE compression_algorithm IS NULL
-  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-  AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= sqlc.arg(min_size)::bigint
-  AND (compression_probe_size IS NULL
-       OR compression_probe_level IS DISTINCT FROM sqlc.arg(probe_level)::text
-       OR compression_probe_size::float8
-          / NULLIF(CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END, 0)::float8
-          <= sqlc.arg(min_ratio)::float8)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
-
--- name: ListCompressedLocations :many
--- The complement of ListUncompressedLocations, which is what
--- decompress-existing rewrites. Cursor-paged for the same reason, and the case
--- that makes it matter most: every object this pass succeeds on leaves the
--- predicate, so an offset walk would skip whole pages and stop early.
-SELECT *
-FROM object_locations
-WHERE compression_algorithm IS NOT NULL
-  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
 
 -- name: MarkObjectCompressed :execrows
 -- Records how a rewritten copy is now stored. A NULL algorithm is the
@@ -431,35 +373,6 @@ FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
   AND COALESCE(last_scrubbed_at, created_at) < @scrubbed_before::timestamptz;
-
--- name: GetObjectsWithoutHash :many
--- Return object locations that have no content hash, for backfill. Hashing
--- reads the whole body, so unmanaged rows are left alone rather than spending
--- egress on data the orchestrator does not manage. Paged by cursor, since
--- hashing a copy takes it out of this predicate.
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
-FROM object_locations
-WHERE content_hash IS NULL AND managed
-  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
-
--- name: ListUnreadableLocations :many
--- Copies imported as encrypted with no key, which nothing can decrypt. Paged by
--- cursor, so a copy the purge fails to discard is passed over and retried by the
--- next purge rather than on every page of this one.
-SELECT object_key, backend_name, storage_key, size_bytes, created_at
-FROM object_locations
-WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)
-  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
-ORDER BY object_key, backend_name
-LIMIT sqlc.arg(row_limit);
-
--- name: CountUnreadableLocations :one
--- Same predicate as ListUnreadableLocations.
-SELECT count(*) FROM object_locations
-WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0);
 
 -- RecordObjectIdentity fills in what a read had to ask a backend for, so the
 -- next one does not. Every copy of the key is written, not just the one that
@@ -575,13 +488,7 @@ SELECT
     COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
 FROM walk w
 LEFT JOIN LATERAL (
-    SELECT backend_name,
-           CASE
-               WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
-               WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
-               ELSE size_bytes
-           END AS client_size,
-           etag, created_at
+    SELECT backend_name, object_size AS client_size, etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
        AND o2.managed

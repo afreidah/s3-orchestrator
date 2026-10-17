@@ -90,31 +90,27 @@ func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaU
 }
 
 // LedgerStats returns every per-backend ledger figure from one grouped pass
-// over object_locations.
+// over object_locations, folded by core.
 func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
-	rows, err := s.queries.LedgerStats(ctx)
+	rows, err := s.queries.LedgerGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ledger stats: %w", err)
 	}
-	out := make(core.LedgerStats, len(rows))
+	groups := make([]core.LedgerGroup, len(rows))
 	for i := range rows {
 		r := &rows[i]
-		out[r.BackendName] = core.LedgerStat{
-			Objects:    r.Objects,
-			Unhashed:   r.Unhashed,
-			Plaintext:  r.Plaintext,
-			Unreadable: r.Unreadable,
-			Compressed: core.CompressionStat{
-				Objects:      r.CompressedObjects,
-				LogicalBytes: r.CompressedLogicalBytes,
-				StoredBytes:  r.CompressedStoredBytes,
-			},
-			Verifiable:    r.Verifiable,
-			NeverVerified: r.NeverVerified,
+		groups[i] = core.LedgerGroup{
+			Backend:       r.BackendName,
+			Form:          core.StoredFlags(r.Form),
+			Managed:       r.Managed,
+			Copies:        r.Copies,
+			StoredBytes:   r.StoredBytes,
+			ObjectBytes:   r.ObjectBytes,
+			NeverScrubbed: r.NeverScrubbed,
 			OldestTouched: r.OldestTouched.Time,
 		}
 	}
-	return out, nil
+	return core.FoldLedger(groups), nil
 }
 
 // GetActiveMultipartCounts returns the number of in-progress multipart uploads

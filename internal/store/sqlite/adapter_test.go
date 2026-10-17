@@ -939,9 +939,9 @@ func TestAdapter_SatisfiesCoreInterfaces(t *testing.T) {
 
 // TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
 // locked re-read reports each copy's encryption flag and whether its key
-// survived. A surplus-copy removal decides what to delete from these two fields, so
-// an adapter that dropped them would silently re-enable destroying the only
-// readable copy of a mixed set.
+// survived. A surplus-copy removal decides what to delete from that form, so an
+// adapter that dropped it would silently re-enable destroying the only readable
+// copy of a mixed set.
 func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -968,11 +968,8 @@ func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T)
 			t.Fatalf("expected 2 copies, got %d", len(copies))
 		}
 		for _, ec := range copies {
-			if !ec.Encrypted {
-				t.Errorf("%s: Encrypted = false, want true", ec.BackendName)
-			}
-			if !ec.HasDEK {
-				t.Errorf("%s: HasDEK = false, want true (replication copies the key)", ec.BackendName)
+			if ec.Form != core.StoredReadable {
+				t.Errorf("%s: Form = %s, want encrypted,keyed (replication copies the key)", ec.BackendName, ec.Form)
 			}
 		}
 	})
@@ -999,9 +996,8 @@ func TestAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.T)
 		if len(copies) != 1 {
 			t.Fatalf("expected 1 copy, got %d", len(copies))
 		}
-		if copies[0].Encrypted || copies[0].HasDEK {
-			t.Errorf("plain copy reported Encrypted=%v HasDEK=%v, want both false",
-				copies[0].Encrypted, copies[0].HasDEK)
+		if copies[0].Form != 0 {
+			t.Errorf("plain copy reported Form = %s, want no flags", copies[0].Form)
 		}
 	})
 }

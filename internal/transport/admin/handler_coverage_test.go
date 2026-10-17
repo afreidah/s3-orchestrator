@@ -538,12 +538,12 @@ func TestHandleCacheInvalidateKey_EmptyKey(t *testing.T) {
 func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	first := m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	first := m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
 		}, nil).
 		Times(1)
-	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
 	return m
 }
@@ -553,9 +553,7 @@ func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 func emptyEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return m
 }
 
@@ -664,9 +662,7 @@ func TestReplicationStreams_ReportFailure(t *testing.T) {
 func failingEncryptionStore(t *testing.T, err error) *opstest.MockEncryptionStore {
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
-	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
-	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
-	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	m.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
 	return m
 }
 

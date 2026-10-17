@@ -181,7 +181,7 @@ func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification
 // with no stored hash short-circuits: reading it would spend egress to compare
 // against nothing.
 func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) CopyVerification {
-	if loc.ContentHash == "" {
+	if !loc.Form().Has(core.StoredHashed) {
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyNotHashed}
 	}
 
@@ -432,14 +432,18 @@ func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, re
 // UNREADABLE  -  copies encrypted with no key
 // -------------------------------------------------------------------------
 
+// unreadableCopies selects copies encrypted with no key, which nothing can
+// decrypt.
+var unreadableCopies = core.FormFilter{With: core.StoredEncrypted, Without: core.StoredKeyed}
+
 // ListUnreadable returns up to limit copies that are encrypted with no key,
 // and how many there are in total.
 func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.ObjectLocation, int64, error) {
-	locs, err := s.store.ListUnreadableLocations(ctx, limit, core.Cursor{})
+	locs, err := s.store.ListCopiesByForm(ctx, &unreadableCopies, limit, core.Cursor{})
 	if err != nil {
 		return nil, 0, err
 	}
-	count, err := s.store.CountUnreadableLocations(ctx)
+	count, err := s.store.CountCopiesByForm(ctx, unreadableCopies.With, unreadableCopies.Without)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -453,7 +457,7 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(batchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return s.store.ListUnreadableLocations(ctx, limit, after)
+			return s.store.ListCopiesByForm(ctx, &unreadableCopies, limit, after)
 		},
 		CursorOf: func(loc core.ObjectLocation) core.Cursor {
 			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}

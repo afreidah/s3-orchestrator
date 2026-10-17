@@ -89,13 +89,13 @@ func ClassifyImport(b DiscoveredBytes, siblings []ObjectLocation) (ImportDecisio
 	}
 	for i := range siblings {
 		s := &siblings[i]
-		if !s.Encrypted || len(s.EncryptionKey) == 0 {
+		if !s.Form().Has(StoredReadable) {
 			continue
 		}
 		if !encryption.SameEncryptionOperation(b.Header, s.EncryptionKey) {
 			continue
 		}
-		return ImportAdoptKey, StoredFormFromLocation(s)
+		return ImportAdoptKey, s.Described()
 	}
 	// Recording this as plaintext is what publishes ciphertext to clients as
 	// though it were the object, so an envelope with no matching key is

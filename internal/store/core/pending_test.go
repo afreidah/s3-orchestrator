@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic coverage for intentSuperseded and pendingStoredForm.
-// Both helpers are exercised exhaustively here; the per-engine adapter layers
-// only need integration coverage that the right values reach these helpers.
+// Engine-agnostic coverage for promotion and intentSuperseded. The per-engine
+// adapter layers only need integration coverage that the right values reach
+// these helpers.
 // -------------------------------------------------------------------------------
 
 package core
@@ -13,6 +13,7 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -216,6 +217,31 @@ func TestPromotePending_PrimaryReplacesTheCopySet(t *testing.T) {
 	}
 }
 
+// TestPromotePending_CarriesTheStoredForm verifies the promoted row records the
+// stored form the intent was written with, so a recovered object's row matches
+// its bytes.
+func TestPromotePending_CarriesTheStoredForm(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{claimed: true}
+	intent := companionIntent()
+	intent.Role = PendingRolePrimary
+	intent.StoredForm = StoredForm{
+		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 90,
+		ContentHash: "hash", CompressionAlgorithm: "zstd", CompressionLevel: "default",
+		CompressionFormatVersion: 1, LogicalSize: 120,
+	}
+
+	if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent); err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if len(stub.inserted) != 1 {
+		t.Fatalf("inserted = %+v, want one row", stub.inserted)
+	}
+	if got := stub.inserted[0].StoredForm; !reflect.DeepEqual(got, intent.StoredForm) {
+		t.Errorf("promoted form = %+v, want %+v", got, intent.StoredForm)
+	}
+}
+
 // TestPromotePending_PrimarySupersededByNewerCopy verifies the timestamp check
 // still refuses to promote a primary intent an existing newer copy has
 // overtaken, which is the insurance behind writes clearing their own intents.
@@ -296,58 +322,6 @@ func TestPromotePending_CompanionAlreadyResolved(t *testing.T) {
 	}
 	if slices.Contains(stub.ops, "delete_pending") {
 		t.Errorf("an unclaimed intent must not be deleted, got %v", stub.ops)
-	}
-}
-
-// -------------------------------------------------------------------------
-// pendingStoredForm
-// -------------------------------------------------------------------------
-
-// TestPendingStoredForm_ReturnsNilWhenUnencryptedAndNoHash verifies
-// the helper returns nil for plain unencrypted PUTs with no content hash,
-// so the promoted object_locations row mirrors the unencrypted shape.
-func TestPendingStoredForm_ReturnsNilWhenUnencryptedAndNoHash(t *testing.T) {
-	t.Parallel()
-	if got := pendingStoredForm(&PendingObject{}); got != nil {
-		t.Errorf("expected nil for unencrypted no-hash pending, got %+v", got)
-	}
-}
-
-// TestPendingStoredForm_PreservesEncryptionFields verifies that an
-// encrypted pending intent projects every encryption attribute onto the
-// StoredForm the promote path hands to RecordObject.
-func TestPendingStoredForm_PreservesEncryptionFields(t *testing.T) {
-	t.Parallel()
-	p := PendingObject{
-		Encrypted:     true,
-		EncryptionKey: []byte("packed"),
-		KeyID:         "kid-1",
-		PlaintextSize: 90,
-		ContentHash:   "hash",
-	}
-	got := pendingStoredForm(&p)
-	if got == nil {
-		t.Fatal("expected non-nil meta")
-	}
-	if !got.Encrypted || got.KeyID != "kid-1" || got.PlaintextSize != 90 || got.ContentHash != "hash" {
-		t.Errorf("meta mismatch: %+v", got)
-	}
-	if string(got.EncryptionKey) != "packed" {
-		t.Errorf("EncryptionKey not propagated: %v", got.EncryptionKey)
-	}
-}
-
-// TestPendingStoredForm_HashOnlyReturnsForm verifies that an
-// integrity-only PUT (encryption disabled, content hash present) still
-// produces a non-nil StoredForm so the hash survives promotion.
-func TestPendingStoredForm_HashOnlyReturnsForm(t *testing.T) {
-	t.Parallel()
-	got := pendingStoredForm(&PendingObject{ContentHash: "hash"})
-	if got == nil {
-		t.Fatal("expected non-nil meta when hash is set")
-	}
-	if got.Encrypted || got.ContentHash != "hash" {
-		t.Errorf("meta mismatch: %+v", got)
 	}
 }
 

@@ -327,9 +327,19 @@ func (m *mockMetadataStore) LedgerStats(context.Context) (core.LedgerStats, erro
 	return m.ledger, m.ledgerErr
 }
 
-// ListUnreadableLocations returns up to limit rows of the unreadable fixture
-// that sort after the cursor, in (object_key, backend_name) order.
-func (m *mockMetadataStore) ListUnreadableLocations(_ context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+// isUnreadableQuery reports whether a form query asks for the copies encrypted
+// with no key, the only population the fixture holds.
+func isUnreadableQuery(with, without core.StoredFlags) bool {
+	return with == core.StoredEncrypted && without == core.StoredKeyed
+}
+
+// ListCopiesByForm returns up to limit rows of the unreadable fixture that sort
+// after the cursor, in (object_key, backend_name) order, and nothing for any
+// other filter.
+func (m *mockMetadataStore) ListCopiesByForm(_ context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	if !isUnreadableQuery(f.With, f.Without) {
+		return nil, nil
+	}
 	rows := slices.Clone(m.unreadable)
 	slices.SortFunc(rows, func(a, b core.ObjectLocation) int {
 		return cmp.Or(cmp.Compare(a.ObjectKey, b.ObjectKey), cmp.Compare(a.BackendName, b.BackendName))
@@ -347,15 +357,13 @@ func (m *mockMetadataStore) ListUnreadableLocations(_ context.Context, limit int
 	return out, nil
 }
 
-// CountUnreadableLocations reports the size of the unreadable fixture.
-func (m *mockMetadataStore) CountUnreadableLocations(context.Context) (int64, error) {
+// CountCopiesByForm reports the size of the unreadable fixture for the
+// unreadable query, and zero for any other.
+func (m *mockMetadataStore) CountCopiesByForm(_ context.Context, with, without core.StoredFlags) (int64, error) {
+	if !isUnreadableQuery(with, without) {
+		return 0, nil
+	}
 	return int64(len(m.unreadable)), nil
-}
-
-// GetObjectsWithoutHash satisfies the store role; backfill paging is driven
-// by ops, so the scrubber never calls it.
-func (m *mockMetadataStore) GetObjectsWithoutHash(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
-	return nil, nil
 }
 
 // RecordObjectIdentity is a stub on mockMetadataStore; records the ETag the

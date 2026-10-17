@@ -75,6 +75,22 @@ CREATE TABLE IF NOT EXISTS object_locations (
     content_type   TEXT,
     user_metadata  TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- Generated from the columns above, so neither can disagree with them.
+    -- form is the set of layers the bytes carry: compressed (1), encrypted (2),
+    -- hashed (4) and keyed (8). object_size is the size the client wrote.
+    form INTEGER NOT NULL GENERATED ALWAYS AS (
+        (CASE WHEN NULLIF(compression_algorithm, '') IS NOT NULL THEN 1 ELSE 0 END)
+        | (CASE WHEN encrypted THEN 2 ELSE 0 END)
+        | (CASE WHEN NULLIF(content_hash, '') IS NOT NULL THEN 4 ELSE 0 END)
+        | (CASE WHEN length(encryption_key) > 0 THEN 8 ELSE 0 END)
+    ) VIRTUAL,
+    object_size INTEGER NOT NULL GENERATED ALWAYS AS (
+        CASE
+            WHEN NULLIF(compression_algorithm, '') IS NOT NULL THEN COALESCE(logical_size, 0)
+            WHEN encrypted THEN COALESCE(plaintext_size, 0)
+            ELSE size_bytes
+        END
+    ) VIRTUAL,
     PRIMARY KEY (object_key, backend_name)
 );
 
@@ -391,4 +407,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (25);
+INSERT INTO schema_version (version) VALUES (26);

@@ -1,13 +1,11 @@
 // -------------------------------------------------------------------------------
-// SQLite Admin Store - Encryption Admin and Notification Outbox Operations
+// SQLite Admin Store - Notification Outbox Operations
 //
 // Author: Alex Freidah
 //
-// Implements the EncryptionAdmin and NotificationOutbox role interfaces:
-// encryption key rotation, encrypt/decrypt existing data operations, and
-// the notification outbox used by the event delivery system. These methods
-// are not on a request-time role interface and are not wrapped by
-// CircuitBreakerStore.
+// Implements the NotificationOutbox role interface the event delivery system
+// uses. These methods are not on a request-time role interface and are not
+// wrapped by CircuitBreakerStore.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -20,41 +18,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
-
-// -------------------------------------------------------------------------
-// ENCRYPTION KEY ROTATION
-// -------------------------------------------------------------------------
-
-// ListEncryptedLocations returns a page of encrypted object locations filtered
-// by key ID, after the cursor. Used during key rotation to find objects wrapped
-// with the old key. Paged by cursor because rotating a copy changes its key_id.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	return s.listCopies(ctx, "encrypted locations", `encrypted = 1 AND key_id = ?`, limit, after, "", keyID)
-}
-
-// -------------------------------------------------------------------------
-// ENCRYPT EXISTING
-// -------------------------------------------------------------------------
-
-// ListUnencryptedLocations returns a page of plaintext copies for
-// encrypt-existing, on one backend or on all when backend is empty. It pages
-// by cursor because encrypting a copy removes it from the set, so an offset
-// would skip the rows that moved up.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
-	return s.listCopies(ctx, "unencrypted locations", `encrypted = 0`, limit, after, backend)
-}
-
-// -------------------------------------------------------------------------
-// DECRYPT EXISTING
-// -------------------------------------------------------------------------
-
-// ListAllEncryptedLocations returns a page of all encrypted object locations
-// with decryption metadata. Used by the decrypt-existing admin endpoint.
-// Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
-// copy removes it from this set mid-walk.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
-	return s.listCopies(ctx, "decryptable locations", `encrypted = 1`, limit, after, backend)
-}
 
 // -------------------------------------------------------------------------
 // NOTIFICATION OUTBOX

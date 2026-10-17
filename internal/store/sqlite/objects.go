@@ -119,12 +119,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ol.object_key, ol.backend_name, ol.storage_key,
-		       CASE
-		           WHEN ol.compression_algorithm IS NOT NULL THEN COALESCE(ol.logical_size, ol.size_bytes)
-		           WHEN ol.encrypted THEN COALESCE(ol.plaintext_size, ol.size_bytes)
-		           ELSE ol.size_bytes
-		       END AS size_bytes,
-		       ol.created_at, ol.etag
+		       ol.object_size AS size_bytes, ol.created_at, ol.etag
 		FROM object_locations ol
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
@@ -213,13 +208,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 					|| char(unicode(substr(w.k, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
 				ELSE w.k
 			END AS skip_bound,
-			ol.backend_name,
-			CASE
-				WHEN ol.compression_algorithm IS NOT NULL THEN COALESCE(ol.logical_size, ol.size_bytes)
-				WHEN ol.encrypted THEN COALESCE(ol.plaintext_size, ol.size_bytes)
-				ELSE ol.size_bytes
-			END AS size_bytes,
-			ol.created_at, ol.etag
+			ol.backend_name, ol.object_size AS size_bytes, ol.created_at, ol.etag
 		FROM walk w
 		LEFT JOIN object_locations ol ON ol.rowid = (
 			SELECT MIN(rowid) FROM object_locations o2
@@ -522,70 +511,56 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 		  AND COALESCE(last_scrubbed_at, created_at) < ?`, string(backendsJSON), formatTime(scrubbedBefore))
 }
 
-// GetObjectsWithoutHash returns object locations that have no stored content
-// hash, in key order after the cursor. Used by the backfill command. An empty
-// backend selects every one. Paged by cursor because hashing a copy takes it
-// out of the set.
-func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
-	return s.listCopies(ctx, "objects without hash", `content_hash IS NULL AND managed`, limit, after, backend)
-}
-
-// listCopies runs one page of a cursor-paged pass over whole copy rows, the
-// shape every bulk pass walks. predicate is a package constant, never caller
-// input, and args binds its placeholders. An empty backend selects every
-// backend.
+// ListCopiesByForm returns up to limit copies after the cursor that the filter
+// selects, in key order: every flag of With and none of Without, narrowed by an
+// optional backend and key ID. Paged by cursor, since a pass usually takes the
+// copies it acts on out of its own filter and an offset would skip rows.
 //
-// Paging is by cursor because each processed row leaves the predicate that
-// selected it, so an offset would skip the rows that moved up.
-func (s *Store) listCopies(ctx context.Context, what, predicate string, limit int, after core.Cursor, backend string, args ...any) ([]core.ObjectLocation, error) {
-	args = append([]any{backend, backend}, args...)
-	args = append(args, after.ObjectKey, after.BackendName, limit)
-	//nolint:gosec // G202: predicate is a package constant, never caller input
+// Candidates adds the compression candidate test: a copy already measured at
+// the configured level as unable to reach the ratio is excluded, so it is not
+// encoded again to reach the same verdict. A zero object_size makes the
+// division NULL and excludes the copy, matching WorthStoring.
+func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	var t core.CompressionThresholds
+	if f.Candidates != nil {
+		t = *f.Candidates
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+objectColumns+`, etag
 		FROM object_locations
-		WHERE (? = '' OR backend_name = ?)
-		  AND `+predicate+`
+		WHERE (form & ?) = ? AND (form & ?) = 0
+		  AND (NOT ? OR managed)
+		  AND (? = '' OR backend_name = ?)
+		  AND (? = '' OR key_id = ?)
+		  AND object_size >= ?
+		  AND (? = ''
+		       OR compression_probe_size IS NULL
+		       OR compression_probe_level IS NOT ?
+		       OR CAST(compression_probe_size AS REAL) / NULLIF(object_size, 0) <= ?)
 		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
 		LIMIT ?`,
-		args...,
+		f.With, f.With, f.Without,
+		f.ManagedOnly,
+		f.Backend, f.Backend,
+		f.KeyID, f.KeyID,
+		t.MinSize,
+		t.Level, t.Level, t.MinRatio,
+		after.ObjectKey, after.BackendName,
+		limit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list %s: %w", what, err)
+		return nil, fmt.Errorf("list copies by form: %w", err)
 	}
-	return collectRows(rows, what, scanETaggedObjectLocation)
+	return collectRows(rows, "copies by form", scanETaggedObjectLocation)
 }
 
-// unreadablePredicate selects copies that are encrypted with no key.
-const unreadablePredicate = `encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0)`
-
-// ListUnreadableLocations returns up to limit copies after the cursor that are
-// encrypted with no key, which nothing can decrypt.
-func (s *Store) ListUnreadableLocations(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, created_at
-		FROM object_locations
-		WHERE `+unreadablePredicate+`
-		  AND (object_key, backend_name) > (?, ?)
-		ORDER BY object_key, backend_name
-		LIMIT ?`, after.ObjectKey, after.BackendName, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list unreadable locations: %w", err)
-	}
-	defer rows.Close()
-
-	return scanSlimObjectLocations(rows)
-}
-
-// CountUnreadableLocations reports how many copies are encrypted with no key.
-func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
-	var n int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM object_locations WHERE `+unreadablePredicate).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count unreadable locations: %w", err)
-	}
-	return n, nil
+// CountCopiesByForm reports how many copies carry every flag of with and none
+// of without.
+func (s *Store) CountCopiesByForm(ctx context.Context, with, without core.StoredFlags) (int64, error) {
+	return s.countRows(ctx, "copies by form",
+		`SELECT count(*) FROM object_locations WHERE (form & ?) = ? AND (form & ?) = 0`,
+		with, with, without)
 }
 
 // -------------------------------------------------------------------------

@@ -40,19 +40,19 @@ type emptyCompressionStore struct{}
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ListUncompressedLocations returns no rows.
-func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.ObjectLocation, error) {
+// ListCopiesByForm returns no rows.
+func (emptyCompressionStore) ListCopiesByForm(context.Context, *core.FormFilter, int, core.Cursor) ([]core.ObjectLocation, error) {
 	return nil, nil
+}
+
+// CountCopiesByForm counts no rows.
+func (emptyCompressionStore) CountCopiesByForm(context.Context, core.StoredFlags, core.StoredFlags) (int64, error) {
+	return 0, nil
 }
 
 // UpdateCopyMetadata is never reached: the listing is empty.
 func (emptyCompressionStore) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil
-}
-
-// ListCompressedLocations returns no rows.
-func (emptyCompressionStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
-	return nil, nil
 }
 
 // MarkObjectCompressed is never reached with no rows to rewrite.

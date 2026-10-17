@@ -96,53 +96,48 @@ func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaU
 	})
 }
 
-// LedgerStats returns every per-backend ledger figure from one grouped pass
-// over object_locations. Each FILTER keeps the predicate of the figure it
-// reports: plaintext matches ListUnencryptedLocations, unreadable matches
-// ListUnreadableLocations, compression counts encoded copies only, and the
-// verification figures count hashed managed rows, the scrub population. The
-// oldest touch falls back to created_at as the scrub queue ordering does.
+// LedgerStats returns every per-backend ledger figure from one pass over
+// object_locations grouped by backend, stored form and managed flag, folded by
+// core. The oldest touch falls back to created_at as the scrub queue ordering
+// does.
 func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name,
+		SELECT backend_name, form, managed,
 		       COUNT(*),
-		       COUNT(*) FILTER (WHERE content_hash IS NULL),
-		       COUNT(*) FILTER (WHERE encrypted = 0),
-		       COUNT(*) FILTER (WHERE `+unreadablePredicate+`),
-		       COUNT(*) FILTER (WHERE compression_algorithm IS NOT NULL),
-		       COALESCE(SUM(logical_size) FILTER (WHERE compression_algorithm IS NOT NULL), 0),
-		       COALESCE(SUM(size_bytes) FILTER (WHERE compression_algorithm IS NOT NULL), 0),
-		       COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed),
-		       COUNT(*) FILTER (WHERE content_hash IS NOT NULL AND managed AND last_scrubbed_at IS NULL),
-		       MIN(COALESCE(last_scrubbed_at, created_at)) FILTER (WHERE content_hash IS NOT NULL AND managed)
+		       COALESCE(SUM(size_bytes), 0),
+		       COALESCE(SUM(object_size), 0),
+		       COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL),
+		       MIN(COALESCE(last_scrubbed_at, created_at))
 		FROM object_locations
-		GROUP BY backend_name`)
+		GROUP BY backend_name, form, managed`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ledger stats: %w", err)
 	}
-	return collectMap(rows, "ledger stats", scanLedgerStat)
+	groups, err := collectRows(rows, "ledger stats", scanLedgerGroup)
+	if err != nil {
+		return nil, err
+	}
+	return core.FoldLedger(groups), nil
 }
 
-// scanLedgerStat reads one backend's row of LedgerStats.
-func scanLedgerStat(rows *sql.Rows) (string, core.LedgerStat, error) {
+// scanLedgerGroup reads one row of the grouped ledger.
+func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 	var (
-		name   string
-		st     core.LedgerStat
+		g      core.LedgerGroup
 		oldest sql.NullString
 	)
-	if err := rows.Scan(&name, &st.Objects, &st.Unhashed, &st.Plaintext, &st.Unreadable,
-		&st.Compressed.Objects, &st.Compressed.LogicalBytes, &st.Compressed.StoredBytes,
-		&st.Verifiable, &st.NeverVerified, &oldest); err != nil {
-		return "", core.LedgerStat{}, fmt.Errorf("scan ledger stats: %w", err)
+	if err := rows.Scan(&g.Backend, &g.Form, &g.Managed, &g.Copies, &g.StoredBytes,
+		&g.ObjectBytes, &g.NeverScrubbed, &oldest); err != nil {
+		return core.LedgerGroup{}, fmt.Errorf("scan ledger stats: %w", err)
 	}
 	if oldest.Valid {
 		t, err := parseTime(oldest.String)
 		if err != nil {
-			return "", core.LedgerStat{}, fmt.Errorf("parse oldest touch %q: %w", oldest.String, err)
+			return core.LedgerGroup{}, fmt.Errorf("parse oldest touch %q: %w", oldest.String, err)
 		}
-		st.OldestTouched = t
+		g.OldestTouched = t
 	}
-	return name, st, nil
+	return g, nil
 }
 
 // -------------------------------------------------------------------------

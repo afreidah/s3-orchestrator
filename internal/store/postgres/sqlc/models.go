@@ -169,6 +169,8 @@ type ObjectLocation struct {
 	ContentType              *string
 	UserMetadata             []byte
 	StorageKey               string
+	Form                     int64
+	ObjectSize               int64
 }
 
 type ObjectTag struct {

@@ -41,9 +41,38 @@ type LedgerStat struct {
 // holds no rows is absent.
 type LedgerStats map[string]LedgerStat
 
+// LedgerGroup is the ledger's rows on one backend that share a stored form and
+// a managed flag: how many there are, their stored and client-facing bytes, how
+// many were never scrubbed, and the earliest of their last scrub or, for one
+// never scrubbed, their write. Both engines read these and FoldLedger turns
+// them into figures, so what each figure counts is stated once.
+type LedgerGroup struct {
+	Backend       string
+	Form          StoredFlags
+	Managed       bool
+	Copies        int64
+	StoredBytes   int64
+	ObjectBytes   int64
+	NeverScrubbed int64
+	OldestTouched time.Time
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
+
+// FoldLedger turns the grouped ledger into per-backend figures, summing every
+// group a backend holds.
+func FoldLedger(groups []LedgerGroup) LedgerStats {
+	out := make(LedgerStats)
+	for i := range groups {
+		g := &groups[i]
+		st := out[g.Backend]
+		st.add(g)
+		out[g.Backend] = st
+	}
+	return out
+}
 
 // ObjectCounts returns each backend's row count.
 func (s LedgerStats) ObjectCounts() map[string]int64 {
@@ -111,6 +140,34 @@ func (s LedgerStats) Coverage(reachable []string, now time.Time) CoverageStat {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// add counts one ledger group into the backend's figures. Verification counts
+// hashed managed rows, the population the scrub queue draws from.
+func (st *LedgerStat) add(g *LedgerGroup) {
+	st.Objects += g.Copies
+	if !g.Form.Has(StoredHashed) {
+		st.Unhashed += g.Copies
+	}
+	if !g.Form.Has(StoredEncrypted) {
+		st.Plaintext += g.Copies
+	}
+	if g.Form.Unreadable() {
+		st.Unreadable += g.Copies
+	}
+	if g.Form.Has(StoredCompressed) {
+		st.Compressed.Objects += g.Copies
+		st.Compressed.LogicalBytes += g.ObjectBytes
+		st.Compressed.StoredBytes += g.StoredBytes
+	}
+	if !g.Managed || !g.Form.Has(StoredHashed) {
+		return
+	}
+	st.Verifiable += g.Copies
+	st.NeverVerified += g.NeverScrubbed
+	if st.OldestTouched.IsZero() || g.OldestTouched.Before(st.OldestTouched) {
+		st.OldestTouched = g.OldestTouched
+	}
+}
 
 // perBackend maps each backend to one of its figures.
 func (s LedgerStats) perBackend(field func(LedgerStat) int64) map[string]int64 {

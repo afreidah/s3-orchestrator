@@ -53,9 +53,10 @@ type ObjectStore interface {
 	core.ObjectStore
 }
 
-// UnhashedLister lists the copies a checksum backfill still has to hash.
+// UnhashedLister lists the copies a checksum backfill still has to hash, which
+// the backfill selects by stored form.
 type UnhashedLister interface {
-	GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error)
+	ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit int, after core.Cursor) ([]core.ObjectLocation, error)
 }
 
 // EncryptionStore is the admin surface the bulk rewrite passes read and write
