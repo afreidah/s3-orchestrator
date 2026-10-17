@@ -54,7 +54,7 @@ type ObjectStore interface {
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int, after SizeCursor) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
-	MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error)
+	PlaceCopy(ctx context.Context, p *Placement) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)
 	DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error)
@@ -121,7 +121,6 @@ type CreateMultipartUploadParams struct {
 type ReplicationStore interface {
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
-	RecordReplica(ctx context.Context, r *ReplicaInsert) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
 }

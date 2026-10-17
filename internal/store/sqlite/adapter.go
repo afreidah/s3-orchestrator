@@ -212,11 +212,11 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 	return nil
 }
 
-// InsertObjectLocation writes a new object_locations row carrying the
-// encryption and integrity metadata on loc.
+// InsertObjectLocation writes a new object_locations row carrying every column
+// loc describes, including the compression probe a placed copy inherits.
 func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.ObjectLocation) error {
-	// A replicate or import carries the object's original write time, which the
-	// row keeps so every copy reports the same Last-Modified. A fresh write
+	// A placed or imported copy carries the object's original write time, which
+	// the row keeps so every copy reports the same Last-Modified. A fresh write
 	// leaves it zero and is stamped now.
 	created := now()
 	if !loc.CreatedAt.IsZero() {
@@ -227,14 +227,16 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		   (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		    key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
+		    compression_probe_size, compression_probe_level,
 		    etag, content_type, user_metadata,
 		    managed, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		loc.ObjectKey, loc.BackendName, loc.StorageKey, loc.SizeBytes, boolToInt(loc.Encrypted),
 		loc.EncryptionKey,
 		nullableString(loc.KeyID), nullableInt64(loc.PlaintextSize), nullableString(loc.ContentHash),
 		nullableString(loc.CompressionAlgorithm), nullableString(loc.CompressionLevel),
 		nullableInt64(int64(loc.CompressionFormatVersion)), nullableInt64(loc.LogicalSize),
+		nullableInt64(loc.CompressionProbeSize), nullableString(loc.CompressionProbeLevel),
 		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
 		boolToInt(!loc.Unmanaged),
 		created,
@@ -254,9 +256,9 @@ func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey stri
 	return nil
 }
 
-// CheckObjectExistsOnBackend reports whether (key, backend) is in
+// objectExistsOnBackend reports whether (key, backend) is in
 // object_locations.
-func (a *sqliteTxAdapter) CheckObjectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error) {
+func (a *sqliteTxAdapter) objectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error) {
 	var probe int
 	err := a.q.QueryRowContext(ctx,
 		`SELECT 1 FROM object_locations WHERE object_key = ? AND backend_name = ?`,
@@ -271,66 +273,23 @@ func (a *sqliteTxAdapter) CheckObjectExistsOnBackend(ctx context.Context, object
 	return true, nil
 }
 
-// LockObjectOnBackend reads the (key, backend) row's full payload
-// inside the writer-serialized tx. (nil, false, nil) means the row is
-// gone - benign race.
+// LockObjectOnBackend reads the (key, backend) row whole inside the
+// writer-serialized tx, through the scanner the read path uses, so a copy
+// placed from it carries every column. The tag count is per key and a
+// placement does not read it. (nil, false, nil) means the row is gone.
 func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backend string) (*core.ObjectLocation, bool, error) {
-	var (
-		storageKey    string
-		size          int64
-		encrypted     int
-		encryptionKey []byte
-		keyID         sql.NullString
-		plaintextSize sql.NullInt64
-		contentHash   sql.NullString
-		compAlgorithm sql.NullString
-		compLevel     sql.NullString
-		compVersion   sql.NullInt64
-		logicalSize   sql.NullInt64
-		probeSize     sql.NullInt64
-		probeLevel    sql.NullString
-		createdAt     sql.NullString
-	)
-	err := a.q.QueryRowContext(ctx,
-		`SELECT storage_key, size_bytes, encrypted, encryption_key,
-		        key_id, plaintext_size, content_hash,
-		        compression_algorithm, compression_level, compression_format_version, logical_size,
-		        compression_probe_size, compression_probe_level, created_at
-		 FROM object_locations
-		 WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backend,
-	).Scan(&storageKey, &size, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash,
-		&compAlgorithm, &compLevel, &compVersion, &logicalSize, &probeSize, &probeLevel, &createdAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
+	rows, err := a.q.QueryContext(ctx, `
+		SELECT `+objectColumns+`, etag, content_type, user_metadata, managed, 0
+		FROM object_locations
+		WHERE object_key = ? AND backend_name = ?`, objectKey, backend)
 	if err != nil {
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
-	loc := &core.ObjectLocation{
-		ObjectKey:                objectKey,
-		BackendName:              backend,
-		StorageKey:               storageKey,
-		SizeBytes:                size,
-		Encrypted:                encrypted != 0,
-		EncryptionKey:            encryptionKey,
-		KeyID:                    nullStringValue(keyID),
-		PlaintextSize:            nullInt64Value(plaintextSize),
-		ContentHash:              nullStringValue(contentHash),
-		CompressionAlgorithm:     nullStringValue(compAlgorithm),
-		CompressionLevel:         nullStringValue(compLevel),
-		CompressionFormatVersion: int(nullInt64Value(compVersion)),
-		LogicalSize:              nullInt64Value(logicalSize),
-		CompressionProbeSize:     nullInt64Value(probeSize),
-		CompressionProbeLevel:    nullStringValue(probeLevel),
+	locs, err := collectRows(rows, "lock object on backend", scanIdentifiedObjectLocation)
+	if err != nil || len(locs) == 0 {
+		return nil, false, err
 	}
-	// Carried so a replica built from this row inherits the object's write time
-	// rather than being stamped when the copy was made. An unparseable value
-	// leaves it zero, which the insert reads as "stamp your own".
-	if t, err := time.Parse(time.RFC3339Nano, nullStringValue(createdAt)); err == nil {
-		loc.CreatedAt = t
-	}
-	return loc, true, nil
+	return &locs[0], true, nil
 }
 
 // ListedPathStates reports what the ledger says about each listed path on the
@@ -474,7 +433,7 @@ func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKey
 // already exist for (key, backend). Returns true when a row was newly
 // inserted.
 func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
-	exists, err := a.CheckObjectExistsOnBackend(ctx, loc.ObjectKey, loc.BackendName)
+	exists, err := a.objectExistsOnBackend(ctx, loc.ObjectKey, loc.BackendName)
 	if err != nil {
 		return false, err
 	}
@@ -487,46 +446,9 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 	return true, nil
 }
 
-// InsertReplicaConditional inserts a replica row only if the source copy still
-// exists, the target does not already have a copy, and the target has room.
-// It returns the size read from the locked source row on success, or
-// (0, false, nil) when any of the three does not hold. The headroom test runs
-// inside the transaction that claims the space, the same way a PUT is admitted.
-func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
-	srcLoc, ok, err := a.LockObjectOnBackend(ctx, r.ObjectKey, r.SourceBackend)
-	if err != nil {
-		return 0, false, err
-	}
-	if !ok {
-		return 0, false, nil
-	}
-	targetExists, err := a.CheckObjectExistsOnBackend(ctx, r.ObjectKey, r.TargetBackend)
-	if err != nil {
-		return 0, false, err
-	}
-	if targetExists {
-		return 0, false, nil
-	}
-	fits, err := a.backendHasRoom(ctx, r.TargetBackend, srcLoc.SizeBytes)
-	if err != nil || !fits {
-		return 0, false, err
-	}
-	// Copy the whole source row rather than listing fields: the replica holds
-	// the same stored bytes, so any omitted column would contradict them. Only
-	// the storage key differs, since the caller uploaded to its own path.
-	dest := *srcLoc
-	dest.ObjectKey = r.ObjectKey
-	dest.BackendName = r.TargetBackend
-	dest.StorageKey = r.StorageKey
-	if err := a.InsertObjectLocation(ctx, &dest); err != nil {
-		return 0, false, err
-	}
-	return srcLoc.SizeBytes, true, nil
-}
-
-// backendHasRoom reports whether a backend accepts a write of size more bytes,
+// BackendAdmits reports whether a backend accepts a write of size more bytes,
 // judged against backend_capacity, the view every admission test reads.
-func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string, size int64) (bool, error) {
+func (a *sqliteTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64) (bool, error) {
 	var fits bool
 	if err := a.q.QueryRowContext(ctx, `
 		SELECT (flags & ~?) = 0 AND (available_bytes IS NULL OR available_bytes >= ?)

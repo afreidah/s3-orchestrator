@@ -476,21 +476,6 @@ func (mr *MockCoordinatorStoresMockRecorder) MoveCleanupToDLQ(ctx, id, lastError
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockCoordinatorStores)(nil).MoveCleanupToDLQ), ctx, id, lastError)
 }
 
-// MoveObjectLocation mocks base method.
-func (m_2 *MockCoordinatorStores) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
-	m_2.ctrl.T.Helper()
-	ret := m_2.ctrl.Call(m_2, "MoveObjectLocation", ctx, m)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MoveObjectLocation indicates an expected call of MoveObjectLocation.
-func (mr *MockCoordinatorStoresMockRecorder) MoveObjectLocation(ctx, m any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).MoveObjectLocation), ctx, m)
-}
-
 // PendingDepth mocks base method.
 func (m *MockCoordinatorStores) PendingDepth(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()
@@ -504,6 +489,21 @@ func (m *MockCoordinatorStores) PendingDepth(ctx context.Context) (int64, error)
 func (mr *MockCoordinatorStoresMockRecorder) PendingDepth(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendingDepth", reflect.TypeOf((*MockCoordinatorStores)(nil).PendingDepth), ctx)
+}
+
+// PlaceCopy mocks base method.
+func (m *MockCoordinatorStores) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PlaceCopy indicates an expected call of PlaceCopy.
+func (mr *MockCoordinatorStoresMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlaceCopy", reflect.TypeOf((*MockCoordinatorStores)(nil).PlaceCopy), ctx, p)
 }
 
 // PromotePending mocks base method.

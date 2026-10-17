@@ -1159,13 +1159,13 @@ func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName st
 	return f.inner.ListObjectsByBackend(ctx, backendName, limit, after)
 }
 
-// MoveObjectLocation is an integration-test fixture helper; see file header for
+// PlaceCopy is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
+func (f *FailableStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBOutage
 	}
-	return f.inner.MoveObjectLocation(ctx, m)
+	return f.inner.PlaceCopy(ctx, p)
 }
 
 // GetUnderReplicatedObjects is an integration-test fixture helper; see file header for
@@ -1175,15 +1175,6 @@ func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, l
 		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
-}
-
-// RecordReplica is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordReplica(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
-	if f.isFailing() {
-		return 0, false, errSimulatedDBOutage
-	}
-	return f.inner.RecordReplica(ctx, r)
 }
 
 // GetOverReplicatedObjects is an integration-test fixture helper; see file header for

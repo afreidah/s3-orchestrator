@@ -50,8 +50,7 @@ func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// A recorded replica inserts cleanly unless a test says otherwise, so
 	// "was it recorded" is a question about verification and not about races.
-	ms.recordReplicaOK = true
-	ms.recordReplicaSize = int64(len(verifyOnBody))
+	ms.placeCopySize = int64(len(verifyOnBody))
 
 	r := newTestReplicator(ops, pl, ms)
 	r.SetIntegrityConfig(cfg)
@@ -382,13 +381,13 @@ func TestReplicateObject_VerifiedCopyIsRecorded(t *testing.T) {
 	if out.VerifyMismatch != 0 || out.VerifyUnchecked != 0 {
 		t.Errorf("mismatch=%d unchecked=%d, want 0/0", out.VerifyMismatch, out.VerifyUnchecked)
 	}
-	if ms.replicaRecorded != 1 {
-		t.Errorf("RecordReplica calls = %d, want 1", ms.replicaRecorded)
+	if len(ms.placements) != 1 {
+		t.Errorf("PlaceCopy calls = %d, want 1", len(ms.placements))
 	}
 }
 
 // TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded is the reason the
-// check runs before RecordReplica rather than after: a copy that disagrees with
+// check runs before PlaceCopy rather than after: a copy that disagrees with
 // its source must never exist as a row, because a row is what makes it count
 // toward the replication factor and stop the object being rebuilt.
 func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
@@ -433,8 +432,8 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 	if out.Failed() == 0 {
 		t.Error("a discarded copy must count as a failed attempt")
 	}
-	if ms.replicaRecorded != 0 {
-		t.Errorf("RecordReplica calls = %d, want 0 (the copy was rejected)", ms.replicaRecorded)
+	if len(ms.placements) != 0 {
+		t.Errorf("PlaceCopy calls = %d, want 0 (the copy was rejected)", len(ms.placements))
 	}
 }
 
@@ -468,7 +467,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	if out.Failed() != 0 {
 		t.Errorf("Failed() = %d, want 0 (unchecked is not failed)", out.Failed())
 	}
-	if ms.replicaRecorded != 1 {
-		t.Errorf("RecordReplica calls = %d, want 1", ms.replicaRecorded)
+	if len(ms.placements) != 1 {
+		t.Errorf("PlaceCopy calls = %d, want 1", len(ms.placements))
 	}
 }

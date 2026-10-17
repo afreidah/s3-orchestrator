@@ -11,10 +11,12 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // drainBackendName is the backend every drain test drains.
@@ -163,8 +165,8 @@ func TestDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	}
 }
 
-// TestDrainRecord_RefusesReplicaTarget verifies the replica insert, the other
-// admission path, refuses a draining target.
+// TestDrainRecord_RefusesReplicaTarget verifies a placement, the other
+// admission path, refuses a draining target and records nothing there.
 func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -175,10 +177,14 @@ func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustStartDrain(t, s, "backend-b")
-	if _, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{
-		ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r",
-	}); err != nil || inserted {
-		t.Errorf("RecordReplica onto a draining backend = %v, %v; want refused", inserted, err)
+	_, err := s.PlaceCopy(ctx, &core.Placement{
+		Source: storetest.LocationOn(t, s, key, "backend-a"), Target: "backend-b", StorageKey: key + "!r",
+	})
+	if !errors.Is(err, core.ErrTargetRefused) {
+		t.Errorf("PlaceCopy onto a draining backend = %v; want ErrTargetRefused", err)
+	}
+	if locs, err := s.GetAllObjectLocations(ctx, key); err != nil || len(locs) != 1 {
+		t.Errorf("copies after a refused placement = %+v, %v; want only the source", locs, err)
 	}
 }
 

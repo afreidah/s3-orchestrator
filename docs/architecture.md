@@ -48,7 +48,7 @@ See [docs/database.md](database.md) for engine choice, migration mechanics, and 
 
 Split into three Go packages so the same orchestration code drives both engines:
 
-- `internal/store/core` - engine-agnostic types, role interfaces, and orchestration helpers (the multi-step transactional operations like `RecordObject`, `PromotePending`, `MoveObjectLocation`)
+- `internal/store/core` - engine-agnostic types, role interfaces, and orchestration helpers (the multi-step transactional operations like `RecordObject`, `PromotePending`, `PlaceCopy`)
 - `internal/store/postgres` - Postgres adapter
 - `internal/store/sqlite` - SQLite adapter
 

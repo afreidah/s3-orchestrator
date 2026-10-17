@@ -244,8 +244,8 @@ type ReplicationOutcome struct {
 	Key             string // object key
 	Created         int    // copies successfully recorded
 	CopyErrors      int    // source -> target stream copies that errored
-	RecordErrors    int    // RecordReplica failures (after the copy succeeded)
-	Superseded      int    // RecordReplica returned inserted=false (source row gone)
+	RecordErrors    int    // PlaceCopy failures (after the copy succeeded)
+	Superseded      int    // PlaceCopy declined: source changed or target refused
 	VerifyMismatch  int    // copies discarded because their hash disagreed with the source
 	VerifyUnchecked int    // copies recorded without a hash check that was asked for
 	NoTarget        bool   // selection failed before `needed` was reached
@@ -287,7 +287,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	}
 
 	// Target selection runs before a source is picked, so it uses the largest
-	// known copy size. The authoritative size is the one RecordReplica reads
+	// known copy size. The authoritative size is the one PlaceCopy reads
 	// from the source row at insert time.
 	sizeEstimate := maxCopySize(existingCopies)
 
@@ -312,7 +312,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			break
 		}
 
-		// No capacity claim is held across the copy: RecordReplica inserts the
+		// No capacity claim is held across the copy: PlaceCopy inserts the
 		// row only if the target still has room, so a failed attempt has
 		// nothing to give back. The target path is minted first so the verify
 		// read, the record, and every cleanup address the same bytes.
@@ -339,13 +339,24 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			continue
 		}
 
-		recordedSize, inserted, err := r.store.RecordReplica(ctx, &core.ReplicaInsert{
-			ObjectKey:     key,
-			TargetBackend: target,
-			SourceBackend: source,
-			StorageKey:    targetStorageKey,
+		recordedSize, err := r.store.PlaceCopy(ctx, &core.Placement{
+			Source:     sourceLoc,
+			Target:     target,
+			StorageKey: targetStorageKey,
 		})
-		if err != nil {
+		switch {
+		case core.PlacementDeclined(err):
+			// The source copy was deleted or overwritten during replication,
+			// or the target filled up or took a copy while the bytes were in
+			// flight. Either way no row was written, so the copy on the backend
+			// is an orphan and this target is out of the running.
+			r.log.InfoContext(ctx, "replica not recorded, cleaning up orphan",
+				"key", key, "target", target, "reason", err)
+			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
+			exclusion[target] = true
+			out.Superseded++
+			continue
+		case err != nil:
 			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
 			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
@@ -355,21 +366,8 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			continue
 		}
 
-		if !inserted {
-			// The source copy was deleted or overwritten during replication,
-			// or the target ran out of room while the bytes were in flight.
-			// Either way no row was written, so the copy on the backend is an
-			// orphan and this target is out of the running.
-			r.log.InfoContext(ctx, "replica not recorded, cleaning up orphan",
-				"key", key, "target", target)
-			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
-			exclusion[target] = true
-			out.Superseded++
-			continue
-		}
-
 		// Surface the rare race where the source row's size_bytes shifted
-		// between GetUnderReplicatedObjects and the conditional INSERT.
+		// between GetUnderReplicatedObjects and the placement.
 		// recordedSize is authoritative for accounting; the operator
 		// sees the discrepancy in case it indicates a deeper bug.
 		if recordedSize != transferredSize {

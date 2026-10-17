@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const backendAdmits = `-- name: BackendAdmits :one
+SELECT ((flags & ~($1::bigint)) = 0
+        AND (available_bytes IS NULL OR available_bytes >= $2::bigint))::boolean AS admits
+FROM backend_capacity
+WHERE backend_name = $3
+`
+
+type BackendAdmitsParams struct {
+	Accepts     int64
+	SizeBytes   int64
+	BackendName string
+}
+
+// Judged against backend_capacity, the view every admission test reads, with
+// the same accept mask a PUT is admitted under.
+func (q *Queries) BackendAdmits(ctx context.Context, arg BackendAdmitsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, backendAdmits, arg.Accepts, arg.SizeBytes, arg.BackendName)
+	var admits bool
+	err := row.Scan(&admits)
+	return admits, err
+}
+
 const backendObjectStats = `-- name: BackendObjectStats :one
 SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
 FROM object_locations
@@ -27,25 +49,6 @@ func (q *Queries) BackendObjectStats(ctx context.Context, backendName string) (B
 	var i BackendObjectStatsRow
 	err := row.Scan(&i.ObjectCount, &i.TotalBytes)
 	return i, err
-}
-
-const checkObjectExistsOnBackend = `-- name: CheckObjectExistsOnBackend :one
-SELECT EXISTS(
-    SELECT 1 FROM object_locations
-    WHERE object_key = $1 AND backend_name = $2
-) AS exists
-`
-
-type CheckObjectExistsOnBackendParams struct {
-	ObjectKey   string
-	BackendName string
-}
-
-func (q *Queries) CheckObjectExistsOnBackend(ctx context.Context, arg CheckObjectExistsOnBackendParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkObjectExistsOnBackend, arg.ObjectKey, arg.BackendName)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
@@ -584,8 +587,9 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 }
 
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+        COALESCE($19::timestamptz, NOW()))
 `
 
 type InsertObjectLocationParams struct {
@@ -602,11 +606,17 @@ type InsertObjectLocationParams struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	CompressionProbeSize     *int64
+	CompressionProbeLevel    *string
 	Etag                     *string
 	ContentType              *string
 	UserMetadata             []byte
+	CreatedAt                pgtype.Timestamptz
 }
 
+// A placed copy carries the object's write time and its compression probe,
+// since the bytes are the same bytes; a fresh write passes no time and is
+// stamped now.
 func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLocationParams) error {
 	_, err := q.db.Exec(ctx, insertObjectLocation,
 		arg.ObjectKey,
@@ -622,9 +632,12 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 		arg.CompressionLevel,
 		arg.CompressionFormatVersion,
 		arg.LogicalSize,
+		arg.CompressionProbeSize,
+		arg.CompressionProbeLevel,
 		arg.Etag,
 		arg.ContentType,
 		arg.UserMetadata,
+		arg.CreatedAt,
 	)
 	return err
 }
@@ -1634,10 +1647,7 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 }
 
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
-       compression_algorithm, compression_level, compression_format_version, logical_size,
-       compression_probe_size, compression_probe_level, etag, content_type, user_metadata
-FROM object_locations
+SELECT object_key, backend_name, size_bytes, created_at, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, last_scrubbed_at, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, storage_key FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
 `
@@ -1647,45 +1657,24 @@ type LockObjectOnBackendParams struct {
 	BackendName string
 }
 
-type LockObjectOnBackendRow struct {
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CompressionProbeSize     *int64
-	CompressionProbeLevel    *string
-	Etag                     *string
-	ContentType              *string
-	UserMetadata             []byte
-}
-
-// Every column describing the stored bytes, because the caller moving this row
-// to another backend rebuilds the destination from what this returns. A column
-// missing here is one the moved copy silently stops claiming, which for the
+// The whole row, because a copy placed from it repeats every column. A column
+// missing here is one the placed copy silently stops claiming, which for the
 // compression columns means a still-encoded object recorded as verbatim.
-//
-// The probe columns come along because a verbatim move does not change the
-// bytes, so what the encoder measured about them still holds. Dropping them
-// would have the next pass download and encode the copy again to learn what
-// this row already knows.
-func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (LockObjectOnBackendRow, error) {
+func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (ObjectLocation, error) {
 	row := q.db.QueryRow(ctx, lockObjectOnBackend, arg.ObjectKey, arg.BackendName)
-	var i LockObjectOnBackendRow
+	var i ObjectLocation
 	err := row.Scan(
-		&i.StorageKey,
+		&i.ObjectKey,
+		&i.BackendName,
 		&i.SizeBytes,
+		&i.CreatedAt,
 		&i.Encrypted,
 		&i.EncryptionKey,
 		&i.KeyID,
 		&i.PlaintextSize,
 		&i.ContentHash,
+		&i.Managed,
+		&i.LastScrubbedAt,
 		&i.CompressionAlgorithm,
 		&i.CompressionLevel,
 		&i.CompressionFormatVersion,
@@ -1695,6 +1684,7 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.Etag,
 		&i.ContentType,
 		&i.UserMetadata,
+		&i.StorageKey,
 	)
 	return i, err
 }

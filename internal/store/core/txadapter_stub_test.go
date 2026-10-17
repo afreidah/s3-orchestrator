@@ -19,8 +19,9 @@ import "context"
 // -------------------------------------------------------------------------
 
 // noopTxAdapter satisfies TxAdapter with zero values throughout, except that
-// every pending intent claims, as it does for a write nothing overtook. Embed
-// it, then override the methods a test actually exercises.
+// every pending intent claims, as it does for a write nothing overtook, and
+// every backend admits. Embed it, then override the methods a test actually
+// exercises.
 type noopTxAdapter struct{}
 
 // Compile-time check that embedding this is enough to be a TxAdapter.
@@ -54,10 +55,6 @@ func (*noopTxAdapter) GetCopiesForKeysForUpdate(context.Context, []string) ([]Ke
 
 func (*noopTxAdapter) DeleteObjectsByKeys(context.Context, []string) error { return nil }
 
-func (*noopTxAdapter) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
-	return false, nil
-}
-
 func (*noopTxAdapter) ListedPathStates(context.Context, string, []string) (map[string]PathState, error) {
 	return map[string]PathState{}, nil
 }
@@ -76,9 +73,7 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) InsertReplicaConditional(context.Context, *ReplicaInsert) (int64, bool, error) {
-	return 0, false, nil
-}
+func (*noopTxAdapter) BackendAdmits(context.Context, string, int64) (bool, error) { return true, nil }
 
 func (*noopTxAdapter) UpdateCompressedForm(context.Context, *CompressedUpdate) error { return nil }
 

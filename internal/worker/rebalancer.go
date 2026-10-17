@@ -14,7 +14,6 @@ package worker
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -82,21 +81,19 @@ func (r *Rebalancer) Config() *config.RebalanceConfig {
 
 // RebalanceMove describes a single object move from one backend to another.
 //
-// SrcStorageKey is where the copy sits on FromBackend. The destination path is
-// minted when the move runs, not when it is planned, since other writes can
-// take the key while a plan waits.
+// Source is the copy the plan read; the move commits only while it is still
+// the copy recorded on its backend. The destination path is minted when the
+// move runs, not when it is planned, since other writes can take the key while
+// a plan waits.
 type RebalanceMove struct {
-	ObjectKey     string
-	FromBackend   string
-	ToBackend     string
-	SizeBytes     int64
-	SrcStorageKey string
+	Source    *core.ObjectLocation
+	ToBackend string
 }
 
 // progressLabel names the move for a streaming caller: the object and the
 // backends it travels between, which is the whole of what a rebalance does.
 func (m RebalanceMove) progressLabel() string {
-	return fmt.Sprintf("%s  %s -> %s", m.ObjectKey, m.FromBackend, m.ToBackend)
+	return fmt.Sprintf("%s  %s -> %s", m.Source.ObjectKey, m.Source.BackendName, m.ToBackend)
 }
 
 // Why a cycle declined to move anything. Reported instead of a zero move count,
@@ -345,13 +342,7 @@ func (r *Rebalancer) packMovesFromSource(
 			continue
 		}
 
-		moves = append(moves, RebalanceMove{
-			ObjectKey:     objects[oi].ObjectKey,
-			FromBackend:   src.Name,
-			ToBackend:     dest.Name,
-			SizeBytes:     objects[oi].SizeBytes,
-			SrcStorageKey: objects[oi].StorageKey,
-		})
+		moves = append(moves, RebalanceMove{Source: &objects[oi], ToBackend: dest.Name})
 		state.accept(src.Name, dest.Name, objects[oi].SizeBytes)
 		*destFree -= objects[oi].SizeBytes
 	}
@@ -506,13 +497,7 @@ func (r *Rebalancer) spreadMovesFromSource(
 			continue
 		}
 
-		moves = append(moves, RebalanceMove{
-			ObjectKey:     objects[oi].ObjectKey,
-			FromBackend:   src.Name,
-			ToBackend:     dest.Name,
-			SizeBytes:     objects[oi].SizeBytes,
-			SrcStorageKey: objects[oi].StorageKey,
-		})
+		moves = append(moves, RebalanceMove{Source: &objects[oi], ToBackend: dest.Name})
 		src.Balance -= objects[oi].SizeBytes
 		dest.Balance += objects[oi].SizeBytes
 		state.accept(src.Name, dest.Name, objects[oi].SizeBytes)
@@ -575,12 +560,13 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 }
 
 // ExecuteOneMove performs a single object move: stream the bytes from
-// source to destination, swap the DB location with compare-and-swap, and
-// delete the source copy. Returns true when all steps succeed.
+// source to destination, place the copy there while removing the source row,
+// and delete the source bytes. Returns true when all steps succeed.
 func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
-	srcBackend, ok := r.ops.Backends()[move.FromBackend]
+	key, from := move.Source.ObjectKey, move.Source.BackendName
+	srcBackend, ok := r.ops.Backends()[from]
 	if !ok {
-		r.log.ErrorContext(ctx, "source backend not found", "backend", move.FromBackend)
+		r.log.ErrorContext(ctx, "source backend not found", "backend", from)
 		return false
 	}
 
@@ -591,31 +577,27 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	}
 
 	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Key:            move.ObjectKey,
-		SizeBytes:      move.SizeBytes,
-		SrcBackend:     srcBackend,
-		SrcName:        move.FromBackend,
-		DestBackend:    destBackend,
-		DestName:       move.ToBackend,
-		SrcStorageKey:  core.StoragePath(move.ObjectKey, move.SrcStorageKey),
-		DestStorageKey: writepath.NewStorageKey(move.ObjectKey),
-		Reasons:        writepath.RebalanceMoveReasons,
+		Source:      move.Source,
+		SrcBackend:  srcBackend,
+		DestBackend: destBackend,
+		DestName:    move.ToBackend,
+		Reasons:     writepath.RebalanceMoveReasons,
 	})
 	if err != nil {
-		if errors.Is(err, writepath.ErrMoveStale) {
-			r.log.InfoContext(ctx, "object already moved or deleted, cleaned up",
-				"key", move.ObjectKey)
+		if core.PlacementDeclined(err) {
+			r.log.InfoContext(ctx, "object changed or target refused it, cleaned up",
+				"key", key, "to", move.ToBackend, "reason", err)
 			return false
 		}
 		r.log.WarnContext(ctx, "rebalance move failed",
-			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
+			"key", key, "from", from, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
 
 	audit.Log(ctx, "rebalance.move",
-		slog.String("key", move.ObjectKey),
-		slog.String("src_backend", move.FromBackend),
+		slog.String("key", key),
+		slog.String("src_backend", from),
 		slog.String("dst_backend", move.ToBackend),
 		slog.Int64("size", movedSize),
 	)

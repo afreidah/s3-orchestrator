@@ -121,6 +121,16 @@ func (l *ObjectLocation) ObjectSize() int64 {
 	}
 }
 
+// CopyAt returns this copy as it reads once its bytes are copied verbatim to
+// storageKey on backend. Every other column carries over, including the write
+// time clients see as Last-Modified, because the bytes are the same bytes.
+func (l *ObjectLocation) CopyAt(backend, storageKey string) *ObjectLocation {
+	dest := *l
+	dest.BackendName = backend
+	dest.StorageKey = storageKey
+	return &dest
+}
+
 // RecordedETag returns the ETag the row carries, or "" when it has none
 // recorded yet.
 func (l *ObjectLocation) RecordedETag() string {

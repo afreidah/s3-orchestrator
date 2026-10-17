@@ -118,13 +118,17 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 // -------------------------------------------------------------------------
 
 // objectInsertParams maps a core.ObjectLocation onto the sqlc insert
-// struct, attaching the representation metadata that is present.
+// struct, attaching the representation metadata that is present. A zero
+// CreatedAt passes NULL, which the query stamps as now.
 func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams {
 	params := db.InsertObjectLocationParams{
-		ObjectKey:   loc.ObjectKey,
-		BackendName: loc.BackendName,
-		StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
-		SizeBytes:   loc.SizeBytes,
+		ObjectKey:             loc.ObjectKey,
+		BackendName:           loc.BackendName,
+		StorageKey:            core.StoragePath(loc.ObjectKey, loc.StorageKey),
+		SizeBytes:             loc.SizeBytes,
+		CompressionProbeSize:  int64Ptr(loc.CompressionProbeSize),
+		CompressionProbeLevel: strPtr(loc.CompressionProbeLevel),
+		CreatedAt:             pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
 	}
 	if loc.Encrypted {
 		params.Encrypted = true
@@ -176,6 +180,6 @@ func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLoca
 		ContentType:              p.ContentType,
 		UserMetadata:             p.UserMetadata,
 		Managed:                  !loc.Unmanaged,
-		CreatedAt:                pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
+		CreatedAt:                p.CreatedAt,
 	}
 }

@@ -17,6 +17,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -150,8 +151,8 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 		t.Error("imbalanced backends should produce moves")
 	}
 	for _, mv := range plan {
-		if mv.FromBackend != "b1" || mv.ToBackend != "b2" {
-			t.Errorf("move should be b1->b2, got %s->%s", mv.FromBackend, mv.ToBackend)
+		if mv.Source.BackendName != "b1" || mv.ToBackend != "b2" {
+			t.Errorf("move should be b1->b2, got %s->%s", mv.Source.BackendName, mv.ToBackend)
 		}
 	}
 }
@@ -251,7 +252,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 		t.Errorf("expected 1 GetObjectBackendsForKeys call (one per source), got %d", ms.getBackendsForKeysCalls)
 	}
 	for _, mv := range plan {
-		if mv.ObjectKey == "k2" {
+		if mv.Source.ObjectKey == "k2" {
 			t.Errorf("k2 already lives on b2 and must not be planned for move; plan=%+v", plan)
 		}
 	}
@@ -297,7 +298,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 		t.Errorf("expected 1 GetObjectBackendsForKeys call (one per source), got %d", ms.getBackendsForKeysCalls)
 	}
 	for _, mv := range plan {
-		if mv.ObjectKey == "k2" && mv.ToBackend == "b1" {
+		if mv.Source.ObjectKey == "k2" && mv.ToBackend == "b1" {
 			t.Errorf("k2 already on b1 and must not be planned for move to b1; plan=%+v", plan)
 		}
 	}
@@ -328,20 +329,24 @@ func TestExecuteOneMove_Success(t *testing.T) {
 		})
 
 	r := NewRebalancer(ops, pl, ms)
-	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
-		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
-	}, "spread")
-	if !ok {
+	move := planMove("key1", "b1", "b2", 100)
+	if !r.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected successful move")
 	}
-	if got == nil || got.Reasons != writepath.RebalanceMoveReasons {
+	if got == nil {
+		t.Fatal("MoveObject was not called")
+	}
+	if got.Reasons != writepath.RebalanceMoveReasons {
 		t.Errorf("MoveRequest.Reasons = %+v, want RebalanceMoveReasons", got.Reasons)
+	}
+	if got.Source != move.Source || got.SrcBackend != srcBe || got.DestBackend != dstBe || got.DestName != "b2" {
+		t.Errorf("MoveRequest = %+v, want the planned source copy moved b1 -> b2", got)
 	}
 }
 
 // TestExecuteOneMove_MoveObjectFails pins the failure-propagation
-// branch: a generic MoveObject error (not ErrMoveStale) bumps the error
-// telemetry counter and returns false.
+// branch: a MoveObject error that is not a declined placement bumps the
+// error telemetry counter and returns false.
 func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -356,36 +361,35 @@ func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("stream copy: timeout"))
 
 	r := NewRebalancer(ops, pl, ms)
-	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
-		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
-	}, "spread")
-	if ok {
+	if r.ExecuteOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
 		t.Error("expected failed move on MoveObject error")
 	}
 }
 
-// TestExecuteOneMove_MoveObjectStale pins the raced-row branch:
-// MoveObject returns ErrMoveStale (movedSize=0) and the helper treats
-// it as a non-error skip (no error-counter increment, no audit log).
-func TestExecuteOneMove_MoveObjectStale(t *testing.T) {
+// TestExecuteOneMove_PlacementDeclined pins the declined branch: MoveObject
+// reports the source changed or the target refused, and the helper treats it
+// as a skip rather than a failed move.
+func TestExecuteOneMove_PlacementDeclined(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
+	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
+		t.Run(declined.Error(), func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ops := newMockOps(ctrl)
+			pl := NewMockPlacement(ctrl)
 
-	srcBe := backendtest.NewMockObjectBackend(ctrl)
-	dstBe := backendtest.NewMockObjectBackend(ctrl)
+			srcBe := backendtest.NewMockObjectBackend(ctrl)
+			dstBe := backendtest.NewMockObjectBackend(ctrl)
 
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), writepath.ErrMoveStale)
+			ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
+			pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).
+				Return(int64(0), fmt.Errorf("place copy b1 -> b2: %w", declined))
 
-	r := NewRebalancer(ops, pl, ms)
-	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
-		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
-	}, "spread")
-	if ok {
-		t.Error("expected failed move when object already moved/deleted")
+			r := NewRebalancer(ops, pl, &mockMetadataStore{})
+			if r.ExecuteOneMove(context.Background(), planMove("key1", "b1", "b2", 100), "spread") {
+				t.Error("expected no move when the placement is declined")
+			}
+		})
 	}
 }
 
@@ -400,9 +404,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
 	r := NewRebalancer(ops, pl, ms)
-	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
-		ObjectKey: "key1", FromBackend: "gone", ToBackend: "b2",
-	}, "spread")
+	ok := r.ExecuteOneMove(context.Background(), planMove("key1", "gone", "b2", 0), "spread")
 	if ok {
 		t.Error("expected failure when source backend missing")
 	}
@@ -434,7 +436,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 // only meaningful as the object plus where it travelled between.
 func TestRebalanceMove_ProgressLabel(t *testing.T) {
 	t.Parallel()
-	mv := RebalanceMove{ObjectKey: "photos/a.jpg", SrcStorageKey: "photos/a.jpg", FromBackend: "oci", ToBackend: "e2", SizeBytes: 4096}
+	mv := planMove("photos/a.jpg", "oci", "e2", 4096)
 	if got, want := mv.progressLabel(), "photos/a.jpg  oci -> e2"; got != want {
 		t.Errorf("progressLabel() = %q, want %q", got, want)
 	}

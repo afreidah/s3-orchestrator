@@ -355,18 +355,14 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 		return false
 	}
 	movedSize, err := d.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Key:            obj.ObjectKey,
-		SizeBytes:      obj.SizeBytes,
-		SrcBackend:     src,
-		SrcName:        srcName,
-		DestBackend:    dest,
-		DestName:       destName,
-		SrcStorageKey:  core.StoragePath(obj.ObjectKey, obj.StorageKey),
-		DestStorageKey: writepath.NewStorageKey(obj.ObjectKey),
-		Reasons:        writepath.DrainMoveReasons,
+		Source:      obj,
+		SrcBackend:  src,
+		DestBackend: dest,
+		DestName:    destName,
+		Reasons:     writepath.DrainMoveReasons,
 	})
 	if err != nil {
-		if !errors.Is(err, writepath.ErrMoveStale) {
+		if !core.PlacementDeclined(err) {
 			d.log.WarnContext(ctx, "drain move failed",
 				"key", obj.ObjectKey, "src_backend", srcName, "dst_backend", destName, logfmt.Err(err))
 		}

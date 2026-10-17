@@ -80,71 +80,83 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 }
 
 // expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
-// them to dest.
-func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) {
+// them to dest. Returns the path the move wrote on dest, set once the copy runs.
+func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) *string {
+	written := new(string)
 	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
 		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
-	dest.EXPECT().PutObject(gomock.Any(), destPath, gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
-		Return("etag", nil)
+	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string, _ io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+			*written = key
+			return "etag", nil
+		})
+	return written
 }
 
-// The two paths one move addresses: where the source copy sits, and where the
-// move writes its own. They differ because a move is a write with its own
-// path, so each of the three cleanup paths deletes exactly its own bytes.
-const (
-	srcPath  = "k!src-copy"
-	destPath = "k!this-move"
-)
+// srcPath is where the source copy sits. The move writes its own copy under a
+// freshly minted path, so each cleanup path deletes exactly its own bytes.
+const srcPath = "k!src-copy"
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestMoveObject_CASError_OrphansDestWithProfileReason pins the metadata-CAS
-// failure path: the destination bytes are orphaned with the profile's Orphan
-// reason.
-func TestMoveObject_CASError_OrphansDestWithProfileReason(t *testing.T) {
+// TestMoveObject_PlacementError_OrphansDestWithProfileReason pins the failed
+// placement path: the destination bytes are orphaned with the profile's
+// Orphan reason, and the error is not read as a declined placement.
+func TestMoveObject_PlacementError_OrphansDestWithProfileReason(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
-	expectStreamCopyOK(src, dest)
-	// CAS errors -> orphan cleanup on dest; force the enqueue by failing the delete.
-	dest.EXPECT().DeleteObject(gomock.Any(), destPath).Return(errors.New("delete failed"))
+	written := expectStreamCopyOK(src, dest)
+	// Placement errors -> orphan cleanup on dest; force the enqueue by failing the delete.
+	dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).
-		Return(int64(0), errors.New("cas failed"))
+	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).
+		Return(int64(0), errors.New("tx failed"))
 	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf(destName, destPath, RebalanceMoveReasons.Orphan, 4)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
+		destCleanupOf(written, RebalanceMoveReasons.Orphan)).Return(nil).Times(1)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(4)).Return(nil).Times(1)
 
-	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
-	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
-		t.Fatal("expected error on CAS failure")
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if err == nil {
+		t.Fatal("expected error on placement failure")
+	}
+	if core.PlacementDeclined(err) {
+		t.Errorf("err = %v, want a failure that is not a declined placement", err)
 	}
 }
 
-// TestMoveObject_Stale_StaleOrphansDestWithProfileReason pins the raced-row
-// path (movedSize=0): the destination bytes are orphaned with the StaleOrphan
-// reason and the call returns ErrMoveStale.
-func TestMoveObject_Stale_StaleOrphansDestWithProfileReason(t *testing.T) {
+// TestMoveObject_Declined_StaleOrphansDestWithProfileReason pins the declined
+// placement path: a replaced source or a refusing target orphans the
+// destination bytes with the StaleOrphan reason, and the returned error still
+// names the sentinel so callers count the move as skipped.
+func TestMoveObject_Declined_StaleOrphansDestWithProfileReason(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	src := backendtest.NewMockObjectBackend(ctrl)
-	dest := backendtest.NewMockObjectBackend(ctrl)
-	expectStreamCopyOK(src, dest)
-	dest.EXPECT().DeleteObject(gomock.Any(), destPath).Return(errors.New("delete failed"))
+	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
+		t.Run(declined.Error(), func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			src := backendtest.NewMockObjectBackend(ctrl)
+			dest := backendtest.NewMockObjectBackend(ctrl)
+			written := expectStreamCopyOK(src, dest)
+			dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
 
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).Return(int64(0), nil)
-	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf(destName, destPath, RebalanceMoveReasons.StaleOrphan, 4)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
+			store := NewMockCoordinatorStores(ctrl)
+			store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).Return(int64(0), declined)
+			store.EXPECT().EnqueueCleanup(gomock.Any(),
+				destCleanupOf(written, RebalanceMoveReasons.StaleOrphan)).Return(nil).Times(1)
+			store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(4)).Return(nil).Times(1)
 
-	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
-	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); !errors.Is(err, ErrMoveStale) {
-		t.Fatalf("err = %v, want ErrMoveStale", err)
+			coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+			_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+			if !errors.Is(err, declined) || !core.PlacementDeclined(err) {
+				t.Fatalf("err = %v, want a declined placement wrapping %v", err, declined)
+			}
+		})
 	}
 }
 
@@ -156,18 +168,18 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
-	expectStreamCopyOK(src, dest)
+	written := expectStreamCopyOK(src, dest)
 	// Success -> source delete; force the enqueue by failing the delete so the
 	// SourceDelete reason is observable on EnqueueCleanup.
 	src.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).Return(int64(4), nil)
+	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).Return(int64(4), nil)
 	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf("src", srcPath, RebalanceMoveReasons.SourceDelete, 4)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "src", int64(4)).Return(nil).Times(1)
+		cleanupOf(sourceName, srcPath, RebalanceMoveReasons.SourceDelete, 4)).Return(nil).Times(1)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), sourceName, int64(4)).Return(nil).Times(1)
 
-	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -180,21 +192,20 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 // moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
 func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 	return &MoveRequest{
-		Key:            "k",
-		SizeBytes:      4,
-		SrcBackend:     src,
-		SrcName:        "src",
-		DestBackend:    dest,
-		DestName:       destName,
-		SrcStorageKey:  srcPath,
-		DestStorageKey: destPath,
-		Reasons:        RebalanceMoveReasons,
+		Source:      &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
+		SrcBackend:  src,
+		DestBackend: dest,
+		DestName:    destName,
+		Reasons:     RebalanceMoveReasons,
 	}
 }
 
-// destName is the backend the move writes to, named once so the expectations
-// and the request cannot drift apart.
-const destName = "dest"
+// sourceName and destName are the backends the move reads from and writes to,
+// named once so the expectations and the request cannot drift apart.
+const (
+	sourceName = "src"
+	destName   = "dest"
+)
 
 // cleanupOf matches an enqueued cleanup by the fields each move test is about:
 // the backend, the path being deleted, the reason and the size.
@@ -205,12 +216,22 @@ func cleanupOf(backendName, storageKey, reason string, size int64) gomock.Matche
 	})
 }
 
-// moveTo matches the metadata CAS a move performs, including the path it is
-// repointing the row at.
-func moveTo(key, from, to, storageKey string) gomock.Matcher {
-	return gomock.Cond(func(m *core.MoveLocation) bool {
-		return m.ObjectKey == key && m.FromBackend == from &&
-			m.ToBackend == to && m.StorageKey == storageKey
+// destCleanupOf matches the cleanup of the 4 bytes a move wrote on dest. The
+// path is read at match time because the move mints it while copying.
+func destCleanupOf(written *string, reason string) gomock.Matcher {
+	return gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == destName && c.StorageKey == *written &&
+			c.Reason == reason && c.SizeBytes == 4
+	})
+}
+
+// placementOf matches the move's placement: the source copy moveReq read,
+// removed as it lands on dest at the path the copy wrote there.
+func placementOf(written *string) gomock.Matcher {
+	return gomock.Cond(func(p *core.Placement) bool {
+		return p.Source.ObjectKey == "k" && p.Source.BackendName == sourceName &&
+			p.Source.StorageKey == srcPath && p.Target == destName &&
+			*written != "" && *written != srcPath && p.StorageKey == *written && p.RemoveSource
 	})
 }
 

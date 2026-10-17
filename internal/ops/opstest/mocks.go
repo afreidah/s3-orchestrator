@@ -369,19 +369,19 @@ func (mr *MockObjectStoreMockRecorder) ListedPathStates(ctx, arg1, paths any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListedPathStates", reflect.TypeOf((*MockObjectStore)(nil).ListedPathStates), ctx, arg1, paths)
 }
 
-// MoveObjectLocation mocks base method.
-func (m_2 *MockObjectStore) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
-	m_2.ctrl.T.Helper()
-	ret := m_2.ctrl.Call(m_2, "MoveObjectLocation", ctx, m)
+// PlaceCopy mocks base method.
+func (m *MockObjectStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// MoveObjectLocation indicates an expected call of MoveObjectLocation.
-func (mr *MockObjectStoreMockRecorder) MoveObjectLocation(ctx, m any) *gomock.Call {
+// PlaceCopy indicates an expected call of PlaceCopy.
+func (mr *MockObjectStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockObjectStore)(nil).MoveObjectLocation), ctx, m)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlaceCopy", reflect.TypeOf((*MockObjectStore)(nil).PlaceCopy), ctx, p)
 }
 
 // RecordObject mocks base method.

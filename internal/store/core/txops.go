@@ -69,10 +69,10 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 	return ImportObject(ctx, o.runner, req)
 }
 
-// MoveObjectLocation repoints a copy at a different backend and moves the
-// bytes between the two quotas.
-func (o TxOps) MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error) {
-	return MoveObjectLocation(ctx, o.runner, m)
+// PlaceCopy records a copy of a recorded copy on another backend, removing
+// the source for a move.
+func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, error) {
+	return PlaceCopy(ctx, o.runner, p)
 }
 
 // SweepStaleCleanupQueueRows drops queued cleanups for bytes reconcile found
@@ -85,12 +85,6 @@ func (o TxOps) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backe
 // queue for operator triage.
 func (o TxOps) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	return MoveCleanupToDLQ(ctx, o.runner, id, lastError)
-}
-
-// RecordReplica records a new copy on a target backend and reports the bytes
-// it wrote so the caller can charge them.
-func (o TxOps) RecordReplica(ctx context.Context, r *ReplicaInsert) (int64, bool, error) {
-	return RecordReplica(ctx, o.runner, r)
 }
 
 // ReconcileUsage recomputes bytes_used per backend from the location rows,

@@ -15,6 +15,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -203,15 +204,18 @@ func TestPgDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	}
 }
 
-// TestPgDrainRecord_RefusesReplicaTarget verifies the replica insert, the other
-// admission path, refuses a draining target.
+// TestPgDrainRecord_RefusesReplicaTarget verifies a placement, the other
+// admission path, refuses a draining target and records nothing there.
 func TestPgDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	s := adapterPgStore(t)
 	target := drainBackend(t, s)
 	key := pgRecordOn(t, s, "backend-a", "k")
 	pgStartDrain(t, s, target)
-	if _, inserted, err := s.RecordReplica(context.Background(), replicaOf(key, target, "backend-a")); err != nil || inserted {
-		t.Errorf("RecordReplica onto a draining backend = %v, %v; want refused", inserted, err)
+	if _, err := s.PlaceCopy(context.Background(), replicaOf(t, s, key, target, "backend-a")); !errors.Is(err, core.ErrTargetRefused) {
+		t.Errorf("PlaceCopy onto a draining backend = %v; want ErrTargetRefused", err)
+	}
+	if locs, err := s.GetAllObjectLocations(context.Background(), key); err != nil || len(locs) != 1 {
+		t.Errorf("copies after a refused placement = %+v, %v; want only the source", locs, err)
 	}
 }
 

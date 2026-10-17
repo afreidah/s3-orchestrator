@@ -329,9 +329,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	key := uniqueKey(t, "tags-replicated")
 
 	seedTaggedObject(t, s, key, "backend-a", nil)
-	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r"}); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{{Key: "keep", Value: "me"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}

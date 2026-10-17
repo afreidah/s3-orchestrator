@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // TestReplicateObject_SupersededCopyLeavesTheWritesCopy hands the replicator a
@@ -46,10 +47,10 @@ func TestReplicateObject_SupersededCopyLeavesTheWritesCopy(t *testing.T) {
 	}
 
 	b2.Objects[key+"!w2"] = backendtest.Object{Data: data}
-	if _, inserted, err := store.RecordReplica(ctx, &core.ReplicaInsert{
-		ObjectKey: key, TargetBackend: "b2", SourceBackend: "b1", StorageKey: key + "!w2",
-	}); err != nil || !inserted {
-		t.Fatalf("RecordReplica for the write's copy = %v, %v", inserted, err)
+	if _, err := store.PlaceCopy(ctx, &core.Placement{
+		Source: storetest.LocationOn(t, store, key, "b1"), Target: "b2", StorageKey: key + "!w2",
+	}); err != nil {
+		t.Fatalf("PlaceCopy for the write's copy: %v", err)
 	}
 
 	r := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})

@@ -578,7 +578,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
-	ms := &mockMetadataStore{recordReplicaOK: true}
+	ms := &mockMetadataStore{}
 
 	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"b2"})
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
@@ -597,8 +597,16 @@ func TestReplicateObject_Success(t *testing.T) {
 	if outcome.Failed() != 0 {
 		t.Errorf("Failed() = %d, want 0", outcome.Failed())
 	}
-	if ms.replicaRecorded != 1 {
-		t.Errorf("replicaRecorded = %d, want 1", ms.replicaRecorded)
+	if len(ms.placements) != 1 {
+		t.Fatalf("PlaceCopy calls = %d, want 1", len(ms.placements))
+	}
+	p := ms.placements[0]
+	if p.Source == nil || p.Source.BackendName != "b1" || p.Source.StorageKey != "key1!on-b1" {
+		t.Errorf("placement source = %+v, want the b1 copy the pass read", p.Source)
+	}
+	if p.Target != "b2" || p.StorageKey == "" || p.RemoveSource {
+		t.Errorf("placement = target %q storage key %q remove %v, want b2, a minted key, and the source kept",
+			p.Target, p.StorageKey, p.RemoveSource)
 	}
 }
 
@@ -614,7 +622,7 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	failBe := backendtest.NewMockObjectBackend(ctrl)
 	okBe := backendtest.NewMockObjectBackend(ctrl)
 
-	ms := &mockMetadataStore{recordReplicaOK: true}
+	ms := &mockMetadataStore{}
 
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{
@@ -670,9 +678,9 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	}
 }
 
-// TestReplicateObject_RecordReplicaErrorExcludesTarget verifies the replicate object record replica error excludes target contract.
-// Asserts that unexpected error:.
-func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
+// TestReplicateObject_PlaceCopyErrorExcludesTarget pins that a placement that
+// errors counts as a record error, cleans up the bytes, and drops the target.
+func TestReplicateObject_PlaceCopyErrorExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
@@ -681,7 +689,7 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	failBe := backendtest.NewMockObjectBackend(ctrl)
 
-	ms := &mockMetadataStore{recordReplicaErr: errors.New("db down")}
+	ms := &mockMetadataStore{placeCopyErr: errors.New("db down")}
 
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{
@@ -690,11 +698,11 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 
 	gomock.InOrder(
 		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"fail"}),
-		// After RecordReplica error, "fail" is excluded; no targets left.
+		// After a PlaceCopy error, "fail" is excluded; no targets left.
 		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
 			DoAndReturn(func(_ int64, excl map[string]bool) []string {
 				if !excl["fail"] {
-					t.Fatal("must exclude 'fail' after RecordReplica error")
+					t.Fatal("must exclude 'fail' after a PlaceCopy error")
 				}
 				return nil
 			}),
@@ -716,49 +724,51 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	}
 }
 
-// TestReplicateObject_NotInsertedExcludesTarget verifies the replicate object not inserted excludes target contract.
-// Asserts that unexpected error:.
-func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
+// TestReplicateObject_DeclinedPlacementExcludesTarget pins that a placement
+// declined because the source changed or the target refused counts as
+// superseded, cleans up the written bytes, and drops the target.
+func TestReplicateObject_DeclinedPlacementExcludesTarget(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
+	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
+		t.Run(declined.Error(), func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ops := newMockOps(ctrl)
+			pl := NewMockPlacement(ctrl)
 
-	srcBe := backendtest.NewMockObjectBackend(ctrl)
-	staleBe := backendtest.NewMockObjectBackend(ctrl)
+			srcBe := backendtest.NewMockObjectBackend(ctrl)
+			staleBe := backendtest.NewMockObjectBackend(ctrl)
+			ms := &mockMetadataStore{placeCopyErr: declined}
 
-	// recordReplicaOK=false simulates source deleted during replication
-	ms := &mockMetadataStore{recordReplicaOK: false}
+			ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+			expectFleet(ops, map[string]backend.ObjectBackend{
+				"src": srcBe, "stale": staleBe,
+			})
 
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	expectFleet(ops, map[string]backend.ObjectBackend{
-		"src": srcBe, "stale": staleBe,
-	})
+			gomock.InOrder(
+				pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"stale"}),
+				pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+					DoAndReturn(func(_ int64, excl map[string]bool) []string {
+						if !excl["stale"] {
+							t.Error("must exclude 'stale' after a declined placement")
+						}
+						return nil
+					}),
+			)
 
-	gomock.InOrder(
-		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"stale"}),
-		// After !inserted, "stale" is excluded; no targets left.
-		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
-			DoAndReturn(func(_ int64, excl map[string]bool) []string {
-				if !excl["stale"] {
-					t.Fatal("must exclude 'stale' after !inserted")
-				}
-				return nil
-			}),
-	)
+			ops.EXPECT().GetBackend("stale").Return(staleBe, nil)
+			ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{staleBe}, gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil)
+			pl.EXPECT().DeleteOrEnqueue(gomock.Any(), staleBe, cleanupOf("stale", "key1", "replication_orphan", int64(50)))
 
-	ops.EXPECT().GetBackend("stale").Return(staleBe, nil)
-	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{staleBe}, gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil)
-	// CleanupOrphan path
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), staleBe, cleanupOf("stale", "key1", "replication_orphan", int64(50)))
-
-	r := newTestReplicator(ops, pl, ms)
-	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
-	if outcome.Created != 0 {
-		t.Errorf("created = %d, want 0", outcome.Created)
-	}
-	if outcome.Superseded != 1 {
-		t.Errorf("Superseded = %d, want 1", outcome.Superseded)
+			r := newTestReplicator(ops, pl, ms)
+			copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
+			outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+			if outcome.Created != 0 {
+				t.Errorf("created = %d, want 0", outcome.Created)
+			}
+			if outcome.Superseded != 1 || outcome.RecordErrors != 0 {
+				t.Errorf("Superseded = %d RecordErrors = %d, want 1/0", outcome.Superseded, outcome.RecordErrors)
+			}
+		})
 	}
 }

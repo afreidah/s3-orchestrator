@@ -264,15 +264,34 @@ func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 	}
 }
 
-// mustRecordReplica records a replica, failing the test on error. The
-// size parameter is unused after #652  -  the SQL now reads size from the
-// source row inside the conditional INSERT  -  but the helper signature
-// keeps it so call sites continue to document expected size at a glance.
+// mustRecordReplica places a replica of the copy on source onto target,
+// failing the test on error. The size parameter only documents the expected
+// size at the call site; PlaceCopy reads it from the source row.
 func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int64) {
 	t.Helper()
-	if _, _, err := s.RecordReplica(context.Background(), &core.ReplicaInsert{ObjectKey: key, TargetBackend: target, SourceBackend: source, StorageKey: key + "!r-" + target}); err != nil {
-		t.Fatalf("RecordReplica(%s, %s): %v", key, target, err)
+	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source:     storetest.LocationOn(t, s, key, source),
+		Target:     target,
+		StorageKey: key + "!r-" + target,
+	}); err != nil {
+		t.Fatalf("PlaceCopy(%s, %s): %v", key, target, err)
 	}
+}
+
+// mustMoveCopy moves the copy of key on source onto target and returns the
+// moved size, failing the test on error.
+func mustMoveCopy(t *testing.T, s *Store, key, source, target string) int64 {
+	t.Helper()
+	moved, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source:       storetest.LocationOn(t, s, key, source),
+		Target:       target,
+		StorageKey:   key + "!m-" + target,
+		RemoveSource: true,
+	})
+	if err != nil {
+		t.Fatalf("PlaceCopy move(%s, %s -> %s): %v", key, source, target, err)
+	}
+	return moved
 }
 
 // mustEnqueueCleanup enqueues a cleanup item, failing the test on error.
@@ -853,66 +872,6 @@ func TestImportObject_OtherBackendUnaffected(t *testing.T) {
 	}
 	if outcome != core.ImportInserted {
 		t.Errorf("outcome = %s, want inserted on a backend with no pending delete", outcome)
-	}
-}
-
-// TestMoveObjectLocation verifies the move object location contract.
-// Asserts that MoveObjectLocation:.
-func TestMoveObjectLocation(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
-
-	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/key1", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/key1" + "!m-" + "backend-b"})
-	if err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
-	if moved != 1024 {
-		t.Errorf("moved = %d, want 1024", moved)
-	}
-
-	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
-	if len(locs) != 1 || locs[0].BackendName != "backend-b" {
-		t.Errorf("expected object on backend-b, got %+v", locs)
-	}
-}
-
-// TestMoveObjectLocation_TargetAlreadyHasCopy verifies the short-circuit
-// when the destination already holds a copy  -  MoveObjectLocation returns
-// (0, nil) without touching the source.
-func TestMoveObjectLocation_TargetAlreadyHasCopy(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/dup", "backend-a", 100)
-	mustRecordReplica(t, s, "bucket/dup", "backend-b", "backend-a", 100)
-
-	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/dup", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/dup" + "!m-" + "backend-b"})
-	if err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
-	if moved != 0 {
-		t.Errorf("moved = %d, want 0 (target already has copy)", moved)
-	}
-}
-
-// TestMoveObjectLocation_SourceGone verifies the benign no-op when the
-// source row has already been removed  -  MoveObjectLocation returns
-// (0, nil) rather than an error.
-func TestMoveObjectLocation_SourceGone(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/missing", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/missing" + "!m-" + "backend-b"})
-	if err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
-	if moved != 0 {
-		t.Errorf("moved = %d, want 0 (no source copy)", moved)
 	}
 }
 
@@ -1519,12 +1478,13 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 
 	// Record replica
-	size, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/key1", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/key1" + "!r-" + "backend-b"})
+	size, err := s.PlaceCopy(ctx, &core.Placement{
+		Source:     storetest.LocationOn(t, s, "bucket/key1", "backend-a"),
+		Target:     "backend-b",
+		StorageKey: "bucket/key1" + "!r-" + "backend-b",
+	})
 	if err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
-	if !inserted {
-		t.Error("expected replica to be inserted")
+		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if size != 1024 {
 		t.Errorf("expected recorded size 1024, got %d", size)
@@ -1593,29 +1553,6 @@ func TestReplication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 	}
 	if len(under) != 0 {
 		t.Errorf("under-replicated rows (excluding) = %d, want 0", len(under))
-	}
-}
-
-// TestRecordReplica_Duplicate verifies the record replica duplicate contract.
-// Asserts that RecordReplica duplicate:.
-func TestRecordReplica_Duplicate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
-	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
-
-	// Duplicate replica should return false
-	size, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/key1", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/key1" + "!r-" + "backend-b"})
-	if err != nil {
-		t.Fatalf("RecordReplica duplicate: %v", err)
-	}
-	if inserted {
-		t.Error("expected inserted=false for duplicate replica")
-	}
-	if size != 0 {
-		t.Errorf("expected size 0 on duplicate, got %d", size)
 	}
 }
 
@@ -4315,9 +4252,7 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 
 	const key = "bucket/replicated"
 	mustRecordObject(t, s, key, "backend-a", 100)
-	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r-" + "backend-b"}); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a", 100)
 	// Hashed at write rather than by backfill, which stamps: the point here is
 	// a copy that carries a hash and has still never been verified.
 	for _, backend := range []string{"backend-a", "backend-b"} {

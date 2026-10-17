@@ -343,6 +343,18 @@ func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectL
 	return out
 }
 
+// toWholeObjectLocations converts table-model rows from SELECT * queries. Only
+// the whole row carries the compression probe, which a copy placed from it and
+// a compression pass both read.
+func toWholeObjectLocations(rows []db.ObjectLocation) []core.ObjectLocation {
+	out := toIdentifiedObjectLocations(rows)
+	for i := range rows {
+		out[i].CompressionProbeSize = derefInt64(rows[i].CompressionProbeSize)
+		out[i].CompressionProbeLevel = derefStr(rows[i].CompressionProbeLevel)
+	}
+	return out
+}
+
 // toVerifiableObjectLocations converts rows from the queries that also select
 // last_scrubbed_at. The type constraint makes a query that selects the column
 // without its accessor fail to compile, rather than report every copy unverified.

@@ -200,16 +200,14 @@ type mockMetadataStore struct {
 	overReplicatedCount int64
 	quotaStats          map[string]core.QuotaStat
 	quotaStatsErr       error
-	recordReplicaOK     bool
-	recordReplicaSize   int64
-	recordReplicaErr    error
-	replicaRecorded     int
+	placeCopySize       int64
+	placeCopyErr        error
+	placements          []core.Placement
 	removedCopies       int
 	removedCopySize     int64
 	removeExcessNoOp    bool
 	removeExcessErr     error
 	objectsByBackend    map[string][]core.ObjectLocation
-	moveSize            int64
 	staleDeleted        int
 
 	getBackendsForKeysCalls int
@@ -407,14 +405,14 @@ func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.Qu
 	return m.quotaStats, m.quotaStatsErr
 }
 
-// RecordReplica is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) RecordReplica(_ context.Context, _ *core.ReplicaInsert) (int64, bool, error) {
-	m.replicaRecorded++
-	if m.recordReplicaErr != nil {
-		return 0, false, m.recordReplicaErr
+// PlaceCopy records the placement on mockMetadataStore and returns the
+// test-set size, or the test-set error in its place.
+func (m *mockMetadataStore) PlaceCopy(_ context.Context, p *core.Placement) (int64, error) {
+	m.placements = append(m.placements, *p)
+	if m.placeCopyErr != nil {
+		return 0, m.placeCopyErr
 	}
-	return m.recordReplicaSize, m.recordReplicaOK, nil
+	return m.placeCopySize, nil
 }
 
 // GetOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
@@ -447,12 +445,6 @@ func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string,
 		}
 	}
 	return withPaths(out), nil
-}
-
-// MoveObjectLocation is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _ *core.MoveLocation) (int64, error) {
-	return m.moveSize, nil
 }
 
 // GetAllObjectLocations is a stub on mockMetadataStore; returns either the test-set

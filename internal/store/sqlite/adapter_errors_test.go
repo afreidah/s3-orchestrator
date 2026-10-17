@@ -95,13 +95,13 @@ func TestAdapterErr_DeleteObjectCopies(t *testing.T) {
 	}
 }
 
-// TestAdapterErr_CheckObjectExistsOnBackend verifies the QueryRow
+// TestAdapterErr_ObjectExistsOnBackend verifies the QueryRow
 // scan error path is exercised (closed tx returns a non-ErrNoRows
 // error that gets wrapped).
-func TestAdapterErr_CheckObjectExistsOnBackend(t *testing.T) {
+func TestAdapterErr_ObjectExistsOnBackend(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.CheckObjectExistsOnBackend(context.Background(), "k", "backend-a"); err == nil {
+	if _, err := a.objectExistsOnBackend(context.Background(), "k", "backend-a"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }
@@ -139,14 +139,12 @@ func TestAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 	}
 }
 
-// TestAdapterErr_InsertReplicaConditional verifies the lock-source
-// error path is wrapped.
-func TestAdapterErr_InsertReplicaConditional(t *testing.T) {
+// TestAdapterErr_BackendAdmits verifies the admission-probe error path
+// is wrapped.
+func TestAdapterErr_BackendAdmits(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, _, err := a.InsertReplicaConditional(context.Background(), &core.ReplicaInsert{
-		ObjectKey: "k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "k!w1",
-	}); err == nil {
+	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

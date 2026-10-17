@@ -93,10 +93,10 @@ func assertCarried(t *testing.T, got *core.ObjectLocation, wantSize int64) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestMoveObjectLocation_CarriesRepresentation covers the rebalance and drain
+// TestPlaceCopy_MoveCarriesRepresentation covers the rebalance and drain
 // path. The bytes are moved verbatim, so the row that lands on the destination
 // has to say exactly what the source row said about them.
-func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
+func TestPlaceCopy_MoveCarriesRepresentation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -105,9 +105,7 @@ func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/moved", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/moved" + "!m-" + "backend-b"}); err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
+	mustMoveCopy(t, s, "bucket/moved", "backend-a", "backend-b")
 
 	assertCarried(t, storetest.LocationOn(t, s, "bucket/moved", "backend-b"), 4096)
 }
@@ -177,11 +175,11 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 	}
 }
 
-// TestRecordReplica_CarriesRepresentation covers the replicator. The replica is
-// a second copy of the same stored bytes, so it needs the same description; a
-// replica recorded as verbatim is one the read path serves as compressed bytes
-// at the wrong size.
-func TestRecordReplica_CarriesRepresentation(t *testing.T) {
+// TestPlaceCopy_ReplicaCarriesRepresentation covers the replicator. The
+// replica is a second copy of the same stored bytes, so it needs the same
+// description; a replica recorded as verbatim is one the read path serves as
+// compressed bytes at the wrong size.
+func TestPlaceCopy_ReplicaCarriesRepresentation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -190,9 +188,7 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/replicated", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/replicated" + "!r-" + "backend-b"}); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, "bucket/replicated", "backend-b", "backend-a", 4096)
 
 	assertCarried(t, storetest.LocationOn(t, s, "bucket/replicated", "backend-b"), 4096)
 }
@@ -237,12 +233,12 @@ func listKeys(t *testing.T, s *Store, thresholds core.CompressionThresholds) []s
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestMoveObjectLocation_CarriesCompressionProbe covers the rebalance path for
+// TestPlaceCopy_MoveCarriesCompressionProbe covers the rebalance path for
 // the measurement rather than the stored form. The bytes move verbatim, so what
 // the encoder measured about them still holds; a destination row that lands
 // without it has the next compression pass download the copy to learn what the
 // source row already knew, which is metered egress spent for nothing.
-func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
+func TestPlaceCopy_MoveCarriesCompressionProbe(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -252,9 +248,7 @@ func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
 	}
 	mustPatchCopy(t, s, "bucket/random.bin", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 4090, Level: "default"}})
 
-	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/random.bin", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/random.bin" + "!m-" + "backend-b"}); err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
-	}
+	mustMoveCopy(t, s, "bucket/random.bin", "backend-a", "backend-b")
 
 	size, level := probeOn(t, s, "bucket/random.bin", "backend-b")
 	if size != 4090 || level != "default" {

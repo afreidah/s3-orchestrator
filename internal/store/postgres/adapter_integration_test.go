@@ -25,6 +25,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
@@ -141,10 +142,20 @@ func uniqueKey(t *testing.T, suffix string) string {
 	return t.Name() + "/" + suffix
 }
 
-// replicaOf describes a replica of key copied from source to target, stored
-// at a path of its own the way the replicator stores one.
-func replicaOf(key, target, source string) *core.ReplicaInsert {
-	return &core.ReplicaInsert{ObjectKey: key, TargetBackend: target, SourceBackend: source, StorageKey: key + "!r"}
+// replicaOf describes a replica of the copy of key on source placed onto
+// target, stored at a path of its own the way the replicator stores one.
+func replicaOf(t *testing.T, s *Store, key, target, source string) *core.Placement {
+	t.Helper()
+	return &core.Placement{Source: storetest.LocationOn(t, s, key, source), Target: target, StorageKey: key + "!r"}
+}
+
+// mustRecordReplica places a replica of the copy of key on source onto
+// target, failing the test on error.
+func mustRecordReplica(t *testing.T, s *Store, key, target, source string) {
+	t.Helper()
+	if _, err := s.PlaceCopy(context.Background(), replicaOf(t, s, key, target, source)); err != nil {
+		t.Fatalf("PlaceCopy(%s, %s): %v", key, target, err)
+	}
 }
 
 // cleanupOf describes a cleanup row for bytes stored at the object's key.
@@ -331,9 +342,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
@@ -446,35 +455,6 @@ func TestPgAdapter_DeleteObjectCopies_RemovesAllRows(t *testing.T) {
 	})
 }
 
-// TestPgAdapter_CheckObjectExistsOnBackend verifies both the present
-// and missing branches of the existence probe.
-func TestPgAdapter_CheckObjectExistsOnBackend(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
-		t.Fatalf("RecordObject: %v", err)
-	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		got, err := a.CheckObjectExistsOnBackend(ctx, key, "backend-a")
-		if err != nil {
-			t.Fatalf("CheckObjectExistsOnBackend(present): %v", err)
-		}
-		if !got {
-			t.Error("expected true for present (key, backend)")
-		}
-		got, err = a.CheckObjectExistsOnBackend(ctx, key, "backend-b")
-		if err != nil {
-			t.Fatalf("CheckObjectExistsOnBackend(missing): %v", err)
-		}
-		if got {
-			t.Error("expected false for missing (key, backend)")
-		}
-	})
-}
-
 // TestPgAdapter_LockObjectOnBackend_ReturnsRow verifies the lock
 // returns the row payload when the (key, backend) row exists,
 // preserving every encryption and integrity column.
@@ -538,9 +518,7 @@ func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
@@ -572,48 +550,6 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	if got, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 50}); err != nil || got != core.ImportSkippedExisting {
 		t.Errorf("ImportObject(idempotent): got=%s err=%v, want skipped_existing", got, err)
 	}
-}
-
-// TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists
-// verifies the conditional insert succeeds when the source row is
-// present and the target row is absent.
-func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
-		t.Fatalf("RecordObject: %v", err)
-	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-
-	if _, ok, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil || !ok {
-		t.Fatalf("RecordReplica(insert): got ok=%v err=%v, want (true, nil)", ok, err)
-	}
-
-	locs, err := s.GetAllObjectLocations(ctx, key)
-	if err != nil {
-		t.Fatalf("GetAllObjectLocations: %v", err)
-	}
-	if len(locs) != 2 {
-		t.Errorf("expected 2 copies after replica, got %d", len(locs))
-	}
-}
-
-// TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing
-// verifies the conditional insert returns false (without error) when
-// the source row has been removed.
-func TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		_, got, err := a.InsertReplicaConditional(ctx, replicaOf(uniqueKey(t, "missing"), "backend-b", "backend-a"))
-		if err != nil {
-			t.Fatalf("InsertReplicaConditional: %v", err)
-		}
-		if got {
-			t.Error("expected false when source is missing")
-		}
-	})
 }
 
 // -------------------------------------------------------------------------
@@ -750,9 +686,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		copies, err := a.GetExistingCopiesForUpdate(ctx, key)

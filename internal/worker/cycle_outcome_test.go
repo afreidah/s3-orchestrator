@@ -178,7 +178,7 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 			for _, key := range tc.keys {
 				rows = append(rows, copyOn(key, "b1"))
 			}
-			store := &mockMetadataStore{underReplicated: rows, recordReplicaOK: true, recordReplicaSize: 100}
+			store := &mockMetadataStore{underReplicated: rows, placeCopySize: 100}
 			f := newReplicaFleet(t, store, "b1", "b2")
 			for _, key := range tc.failing {
 				f.copyFails(key)
@@ -251,9 +251,8 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 // fleet did half the work it did.
 func TestReplicate_SummaryCountsObjectsAndCopies(t *testing.T) {
 	store := &mockMetadataStore{
-		underReplicated:   []core.ObjectLocation{copyOn("key1", "b1")},
-		recordReplicaOK:   true,
-		recordReplicaSize: 100,
+		underReplicated: []core.ObjectLocation{copyOn("key1", "b1")},
+		placeCopySize:   100,
 	}
 	f := newReplicaFleet(t, store, "b1", "b2", "b3")
 	f.copySucceeds()

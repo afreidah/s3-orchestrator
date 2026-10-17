@@ -59,28 +59,22 @@ func stubRebalEnqueue(re *rebalEnqueue) func(context.Context, *core.CleanupReque
 	}
 }
 
-// stubMoveSize returns a MoveObjectLocation stub returning size+nil.
-func stubMoveSize(size int64) func(context.Context, *core.MoveLocation) (int64, error) {
-	return func(_ context.Context, _ *core.MoveLocation) (int64, error) {
-		return size, nil
+// planMove builds a rebalance move of key, read as a copy of size bytes on
+// from stored at the key itself, toward to.
+func planMove(key, from, to string, size int64) RebalanceMove {
+	return RebalanceMove{
+		Source:    &core.ObjectLocation{ObjectKey: key, BackendName: from, StorageKey: key, SizeBytes: size},
+		ToBackend: to,
 	}
 }
 
-// stubMoveErr returns a MoveObjectLocation stub returning 0+err.
-func stubMoveErr(err error) func(context.Context, *core.MoveLocation) (int64, error) {
-	return func(_ context.Context, _ *core.MoveLocation) (int64, error) {
-		return 0, err
-	}
-}
-
-// rebalanceStoreWithMoveSize returns a store with MoveObjectLocation
-// returning the given size on success.
+// rebalanceStoreWithMoveSize returns a store whose PlaceCopy succeeds with
+// the given size.
 func rebalanceStoreWithMoveSize(t *testing.T, size int64) *storetest.MockMetadataStore {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMoveSize(size)).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(size, nil).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -131,13 +125,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 
 	var plan []RebalanceMove
 	for i := range 5 {
-		plan = append(plan, RebalanceMove{
-			ObjectKey:     fmt.Sprintf("key%d", i),
-			SrcStorageKey: fmt.Sprintf("key%d", i),
-			FromBackend:   "src",
-			ToBackend:     "dest",
-			SizeBytes:     4,
-		})
+		plan = append(plan, planMove(fmt.Sprintf("key%d", i), "src", "dest", 4))
 	}
 
 	start := time.Now()
@@ -170,9 +158,9 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
 	plan := []RebalanceMove{
-		{ObjectKey: "ok1", SrcStorageKey: "ok1", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
-		{ObjectKey: "fail", SrcStorageKey: "fail", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
-		{ObjectKey: "ok2", SrcStorageKey: "ok2", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
+		planMove("ok1", "src", "dest", 4),
+		planMove("fail", "src", "dest", 4),
+		planMove("ok2", "src", "dest", 4),
 	}
 
 	moved := w.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
@@ -194,8 +182,8 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
 	plan := []RebalanceMove{
-		{ObjectKey: "a", SrcStorageKey: "a", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
-		{ObjectKey: "b", SrcStorageKey: "b", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
+		planMove("a", "src", "dest", 5),
+		planMove("b", "src", "dest", 5),
 	}
 	moved := w.ExecuteMoves(context.Background(), plan, "pack", 1, nil).Succeeded
 	if moved != 2 {
@@ -418,8 +406,8 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	if len(plan) == 0 {
 		t.Fatal("expected at least one move")
 	}
-	if plan[0].FromBackend != "b2" || plan[0].ToBackend != "b1" {
-		t.Errorf("expected move from b2 to b1, got %s -> %s", plan[0].FromBackend, plan[0].ToBackend)
+	if plan[0].Source.BackendName != "b2" || plan[0].ToBackend != "b1" {
+		t.Errorf("expected move from b2 to b1, got %s -> %s", plan[0].Source.BackendName, plan[0].ToBackend)
 	}
 }
 
@@ -513,8 +501,8 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 		t.Fatal("expected at least one move")
 	}
 	for _, mv := range plan {
-		if mv.FromBackend != "b1" || mv.ToBackend != "b2" {
-			t.Errorf("expected move from b1 to b2, got %s -> %s", mv.FromBackend, mv.ToBackend)
+		if mv.Source.BackendName != "b1" || mv.ToBackend != "b2" {
+			t.Errorf("expected move from b1 to b2, got %s -> %s", mv.Source.BackendName, mv.ToBackend)
 		}
 	}
 }
@@ -641,7 +629,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
 		Return(int64(4), nil).AnyTimes()
 	storetest.Permissive(store)
 
@@ -649,13 +637,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "dest", 4)
 	if !w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
@@ -677,13 +659,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	store := newPermissiveStore(t)
 	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"src": src}, &fleetOpts{Order: []string{"src"}})
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "nonexistent",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "nonexistent", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest backend not found")
 	}
@@ -701,13 +677,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when source get fails")
 	}
@@ -726,21 +696,15 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest put fails")
 	}
 }
 
-// TestExecuteOneMove_MoveLocationError_CleansUpOrphan asserts the
-// dest-orphan cleanup runs when MoveObjectLocation returns an error.
-func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
+// TestExecuteOneMove_PlaceCopyError_CleansUpOrphan asserts the
+// dest-orphan cleanup runs when PlaceCopy returns an error.
+func TestExecuteOneMove_PlaceCopyError_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -748,94 +712,99 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMoveErr(errors.New("db error"))).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		Return(int64(0), errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
-		t.Error("expected false when MoveObjectLocation fails")
+		t.Error("expected false when PlaceCopy fails")
 	}
 	if dest.HasCopyOf("key") {
 		t.Error("orphan should be cleaned up from destination")
 	}
 }
 
-// TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup
-// asserts the cleanup-queue fallback when the inline delete also fails.
-func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
+// TestExecuteOneMove_PlaceCopyFailure_EnqueuesCleanup asserts the
+// cleanup-queue fallback when the inline delete of the destination bytes also
+// fails, labeled stale when the placement was declined and orphan otherwise.
+func TestExecuteOneMove_PlaceCopyFailure_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
-	src := backendtest.NewInMemory()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := backendtest.NewInMemory()
-	dest.DeleteErr = errors.New("delete failed")
-
-	re := &rebalEnqueue{}
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMoveErr(errors.New("db error"))).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
-	storetest.Permissive(store)
-
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
-		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
-
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{"store error", errors.New("db error"), "rebalance_orphan"},
+		{"source changed", core.ErrCopyChanged, "rebalance_stale_orphan"},
+		{"target refused", core.ErrTargetRefused, "rebalance_stale_orphan"},
 	}
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
-		t.Error("expected false")
-	}
-	if len(re.calls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(re.calls))
-	}
-	if re.calls[0].Reason != "rebalance_orphan" {
-		t.Errorf("expected reason=rebalance_orphan, got %q", re.calls[0].Reason)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := backendtest.NewInMemory()
+			_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+			dest := backendtest.NewInMemory()
+			dest.DeleteErr = errors.New("delete failed")
+
+			re := &rebalEnqueue{}
+			ctrl := gomock.NewController(t)
+			store := storetest.NewMockMetadataStore(ctrl)
+			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), tc.err).AnyTimes()
+			store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
+				DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
+			storetest.Permissive(store)
+
+			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+				&fleetOpts{Order: []string{"src", "dest"}})
+			w := NewRebalancer(rt, coord, store)
+
+			if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
+				t.Error("expected false")
+			}
+			if len(re.calls) != 1 {
+				t.Fatalf("expected 1 enqueue call, got %d", len(re.calls))
+			}
+			if got := re.calls[0]; got.Reason != tc.reason || got.BackendName != "dest" {
+				t.Errorf("enqueued %s on %q, want %s on dest", got.Reason, got.BackendName, tc.reason)
+			}
+		})
 	}
 }
 
-// TestExecuteOneMove_MovedSizeZero_CleansUpOrphan asserts that a zero-
-// row Move triggers dest cleanup.
-func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
+// TestExecuteOneMove_PlacementDeclined_CleansUpOrphan asserts a move whose
+// placement is declined reports no move and removes the destination bytes.
+func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
-	src := backendtest.NewInMemory()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := backendtest.NewInMemory()
+	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
+		t.Run(declined.Error(), func(t *testing.T) {
+			t.Parallel()
+			src := backendtest.NewInMemory()
+			_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+			dest := backendtest.NewInMemory()
 
-	store := rebalanceStoreWithMoveSize(t, 0)
-	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
-		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+			ctrl := gomock.NewController(t)
+			store := storetest.NewMockMetadataStore(ctrl)
+			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), declined).AnyTimes()
+			storetest.Permissive(store)
+			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+				&fleetOpts{Order: []string{"src", "dest"}})
+			w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
-	if w.ExecuteOneMove(context.Background(), move, "spread") {
-		t.Error("expected false when movedSize is 0")
-	}
-	if dest.HasCopyOf("key") {
-		t.Error("orphan should be cleaned up from destination")
+			if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
+				t.Error("expected false when the placement is declined")
+			}
+			if len(dest.Objects) != 0 {
+				t.Errorf("destination holds %d objects, want the orphan cleaned up", len(dest.Objects))
+			}
+			if !src.HasCopyOf("key") {
+				t.Error("source bytes must stay when the placement is declined")
+			}
+		})
 	}
 }
 
@@ -851,8 +820,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	re := &rebalEnqueue{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMoveSize(4)).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(4), nil).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
 	storetest.Permissive(store)
@@ -861,13 +829,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		&fleetOpts{Order: []string{"src", "dest"}})
 	w := NewRebalancer(rt, coord, store)
 
-	move := RebalanceMove{
-		ObjectKey:     "key",
-		SrcStorageKey: "key",
-		FromBackend:   "src",
-		ToBackend:     "dest",
-		SizeBytes:     4,
-	}
+	move := planMove("key", "src", "dest", 4)
 	if !w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
@@ -925,7 +887,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	cancel()
 
 	moved := w.ExecuteMoves(ctx, []RebalanceMove{
-		{ObjectKey: "key1", SrcStorageKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 4},
+		planMove("key1", "b1", "b2", 4),
 	}, "pack", 1, nil).Succeeded
 	if moved != 0 {
 		t.Errorf("expected 0 moves when admission blocked, got %d", moved)

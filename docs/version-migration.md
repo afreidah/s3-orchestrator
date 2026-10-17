@@ -64,6 +64,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Moves and replicas commit against the copy they copied ([#1713](https://github.com/afreidah/s3-orchestrator/issues/1713), v0.162.7)**
+
+A rebalance or drain move, and a new replica, now record their copy only while the source is still the copy that was streamed. A client overwrite that lands mid-copy used to have its new metadata written over the old bytes at the destination.
+
+**Operator action items after upgrade:**
+
+- **A move keeps the object's Last-Modified.** It used to reset it to the time of the move.
+- **A move is admitted against its destination at commit**, the same way a PUT or a replica is. A destination that filled up or was cordoned while the bytes were in flight refuses the move; the copied bytes are cleaned up as `rebalance_stale_orphan` or `drain_stale_orphan` and the object is tried again on a later pass.
+
 **Writes need a backend that serves reads ([#1701](https://github.com/afreidah/s3-orchestrator/issues/1701), v0.162.1)**
 
 A backend refusing GetObject no longer takes new objects, replicas, rebalance moves or drain destinations. A copy written there could not be read back, and when it was an object's only copy the replicator had no source to copy it from.

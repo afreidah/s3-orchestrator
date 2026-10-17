@@ -158,8 +158,8 @@ func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).Return(core.DeletedCopy{}, core.ErrCopyNotExcess)
 	moves := 0
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, *core.MoveLocation) (int64, error) {
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, *core.Placement) (int64, error) {
 			moves++
 			return 4, nil
 		}).AnyTimes()
@@ -197,7 +197,7 @@ func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
 
 // TestDrainOne_OnlyCopy_MovesTheObject verifies an object only the draining
 // backend holds is streamed to a path of its own on another backend, and that
-// the row is moved to that path.
+// the drained copy is placed there and removed from the draining backend.
 func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
@@ -205,26 +205,32 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	dst := backendtest.NewInMemory()
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	var moved core.MoveLocation
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, m *core.MoveLocation) (int64, error) {
-			moved = *m
+	var placed core.Placement
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.Placement) (int64, error) {
+			placed = *p
 			return 4, nil
 		}).AnyTimes()
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if !d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
+	obj := drainedObject()
+	if !d.drainOne(context.Background(), src, "b1", obj, onlyOnB1) {
 		t.Fatal("drainOne failed to move the only copy")
 	}
-	if moved.StorageKey == "" || moved.StorageKey == "key1" || !dst.Has(moved.StorageKey) {
-		t.Errorf("row moved to path %q; the destination must hold the bytes at a fresh path", moved.StorageKey)
+	if placed.Source != obj || placed.Target != "b2" || !placed.RemoveSource {
+		t.Errorf("placement = source %+v target %q remove %v, want the drained copy moved to b2",
+			placed.Source, placed.Target, placed.RemoveSource)
+	}
+	if placed.StorageKey == "" || placed.StorageKey == "key1" || !dst.Has(placed.StorageKey) {
+		t.Errorf("copy placed at path %q; the destination must hold the bytes at a fresh path", placed.StorageKey)
 	}
 }
 
-// TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft verifies a move whose row
-// change fails, or finds the object already gone, queues the destination copy
-// for cleanup under the drain's own reasons.
+// TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft verifies a move whose
+// placement fails, or is declined because the object changed or the target
+// refused it, queues the destination copy for cleanup under the drain's own
+// reasons.
 func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -233,8 +239,9 @@ func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 		err    error
 		reason string
 	}{
-		{"row change fails", 0, errors.New("serialization failure"), "drain_orphan"},
-		{"object already gone", 0, nil, "drain_stale_orphan"},
+		{"placement fails", 0, errors.New("serialization failure"), "drain_orphan"},
+		{"object changed", 0, core.ErrCopyChanged, "drain_stale_orphan"},
+		{"target refused", 0, core.ErrTargetRefused, "drain_stale_orphan"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -244,7 +251,7 @@ func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 			dst.DeleteErr = errors.New("backend down")
 
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
-			store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
+			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
 				Return(tc.moved, tc.err).AnyTimes()
 			reasons := captureEnqueue(store)
 			storetest.Permissive(store)
@@ -339,14 +346,15 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 	placement.EXPECT().MoveObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, req *writepath.MoveRequest) (int64, error) {
 			got = req
-			return req.SizeBytes, nil
+			return req.Source.SizeBytes, nil
 		})
 
 	d := NewDrainer(DrainerDeps{Ops: rt, Placement: placement, Store: store, AbortUploads: func(context.Context, string) {}})
-	if !d.moveOff(context.Background(), src, "src", &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}) {
+	obj := &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}
+	if !d.moveOff(context.Background(), src, "src", obj) {
 		t.Fatal("moveOff reported failure")
 	}
-	if got == nil || got.Reasons != writepath.DrainMoveReasons || got.SrcName != "src" || got.DestName != "dest" {
+	if got == nil || got.Reasons != writepath.DrainMoveReasons || got.Source != obj || got.DestName != "dest" {
 		t.Errorf("move request = %+v, want src -> dest under DrainMoveReasons", got)
 	}
 }

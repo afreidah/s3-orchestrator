@@ -128,22 +128,9 @@ func (a *pgTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey string) 
 	return nil
 }
 
-// CheckObjectExistsOnBackend reports whether (objectKey, backend) is
-// present in object_locations.
-func (a *pgTxAdapter) CheckObjectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error) {
-	exists, err := a.q.CheckObjectExistsOnBackend(ctx, db.CheckObjectExistsOnBackendParams{
-		ObjectKey:   objectKey,
-		BackendName: backend,
-	})
-	if err != nil {
-		return false, fmt.Errorf("check object on backend: %w", err)
-	}
-	return exists, nil
-}
-
-// LockObjectOnBackend takes a FOR UPDATE lock on the (key, backend)
-// row and returns its full payload. (nil, false, nil) means the row
-// is gone - benign race.
+// LockObjectOnBackend takes a FOR UPDATE lock on the (key, backend) row and
+// returns it whole, so a copy placed from it carries every column.
+// (nil, false, nil) means the row is gone.
 func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backend string) (*core.ObjectLocation, bool, error) {
 	row, err := a.q.LockObjectOnBackend(ctx, db.LockObjectOnBackendParams{
 		ObjectKey:   objectKey,
@@ -155,27 +142,24 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 	if err != nil {
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
-	loc := &core.ObjectLocation{
-		ObjectKey:                objectKey,
-		BackendName:              backend,
-		StorageKey:               row.StorageKey,
-		SizeBytes:                row.SizeBytes,
-		Encrypted:                row.Encrypted,
-		EncryptionKey:            row.EncryptionKey,
-		KeyID:                    derefStr(row.KeyID),
-		PlaintextSize:            derefInt64(row.PlaintextSize),
-		ContentHash:              derefStr(row.ContentHash),
-		CompressionAlgorithm:     derefStr(row.CompressionAlgorithm),
-		CompressionLevel:         derefStr(row.CompressionLevel),
-		CompressionFormatVersion: int(derefInt16(row.CompressionFormatVersion)),
-		LogicalSize:              derefInt64(row.LogicalSize),
-		CompressionProbeSize:     derefInt64(row.CompressionProbeSize),
-		CompressionProbeLevel:    derefStr(row.CompressionProbeLevel),
+	return &toWholeObjectLocations([]db.ObjectLocation{row})[0], true, nil
+}
+
+// BackendAdmits reports whether a backend accepts a write of size more bytes
+// under the mask a PUT is admitted with.
+func (a *pgTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64) (bool, error) {
+	admits, err := a.q.BackendAdmits(ctx, db.BackendAdmitsParams{
+		Accepts:     int64(core.AcceptForWrite),
+		SizeBytes:   size,
+		BackendName: backendName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
 	}
-	// Carried so a move keeps the object's identity: the bytes are the same
-	// bytes, so the client-facing answer does not change with their address.
-	loc.Identity, _ = core.IdentityFromColumns(derefStr(row.Etag), derefStr(row.ContentType), row.UserMetadata)
-	return loc, true, nil
+	if err != nil {
+		return false, fmt.Errorf("check backend admission: %w", err)
+	}
+	return admits, nil
 }
 
 // ListedPathStates reports what the ledger says about each listed path on the
@@ -313,28 +297,6 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 		return fmt.Errorf("delete objects by keys: %w", err)
 	}
 	return nil
-}
-
-// InsertReplicaConditional inserts a replica row only if the source
-// copy still exists. Returns the inserted size_bytes (read from the
-// source row in the same statement) on success, or (0, false, nil)
-// when the source copy is gone - a benign race the caller treats as
-// nothing-to-do.
-func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
-	size, err := a.q.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
-		ObjectKey:     r.ObjectKey,
-		TargetBackend: r.TargetBackend,
-		SourceBackend: r.SourceBackend,
-		StorageKey:    r.StorageKey,
-		Accepts:       int64(core.AcceptForWrite),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("insert replica conditional: %w", err)
-	}
-	return size, true, nil
 }
 
 // -------------------------------------------------------------------------

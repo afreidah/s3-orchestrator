@@ -28,8 +28,12 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW());
+-- A placed copy carries the object's write time and its compression probe,
+-- since the bytes are the same bytes; a fresh write passes no time and is
+-- stamped now.
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, created_at)
+VALUES (@object_key, @backend_name, @storage_key, @size_bytes, @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash, @compression_algorithm, @compression_level, @compression_format_version, @logical_size, @compression_probe_size, @compression_probe_level, @etag, @content_type, @user_metadata,
+        COALESCE(sqlc.narg(created_at)::timestamptz, NOW()));
 
 -- ListObjectsByBackend backs the rebalance, placement and drain candidate
 -- scans, so it returns managed rows only. Objects outside every configured
@@ -68,12 +72,6 @@ WHERE backend_name = $1 AND storage_key COLLATE "C" > $2
 ORDER BY storage_key COLLATE "C" ASC
 LIMIT $3;
 
--- name: CheckObjectExistsOnBackend :one
-SELECT EXISTS(
-    SELECT 1 FROM object_locations
-    WHERE object_key = $1 AND backend_name = $2
-) AS exists;
-
 -- name: ListedPathStates :many
 -- What the ledger says about paths a backend listed, in one round trip for a
 -- whole listing page. State 3 is a delete still outstanding, queued or
@@ -95,21 +93,20 @@ SELECT o.storage_key, 1::int AS state FROM object_locations o
  WHERE o.backend_name = @backend_name AND o.storage_key = ANY(@paths::text[]);
 
 -- name: LockObjectOnBackend :one
--- Every column describing the stored bytes, because the caller moving this row
--- to another backend rebuilds the destination from what this returns. A column
--- missing here is one the moved copy silently stops claiming, which for the
+-- The whole row, because a copy placed from it repeats every column. A column
+-- missing here is one the placed copy silently stops claiming, which for the
 -- compression columns means a still-encoded object recorded as verbatim.
---
--- The probe columns come along because a verbatim move does not change the
--- bytes, so what the encoder measured about them still holds. Dropping them
--- would have the next pass download and encode the copy again to learn what
--- this row already knows.
-SELECT storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
-       compression_algorithm, compression_level, compression_format_version, logical_size,
-       compression_probe_size, compression_probe_level, etag, content_type, user_metadata
-FROM object_locations
+SELECT * FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
+
+-- name: BackendAdmits :one
+-- Judged against backend_capacity, the view every admission test reads, with
+-- the same accept mask a PUT is admitted under.
+SELECT ((flags & ~(@accepts::bigint)) = 0
+        AND (available_bytes IS NULL OR available_bytes >= @size_bytes::bigint))::boolean AS admits
+FROM backend_capacity
+WHERE backend_name = @backend_name;
 
 -- name: DeleteObjectFromBackend :exec
 DELETE FROM object_locations

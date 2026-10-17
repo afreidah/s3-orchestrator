@@ -208,7 +208,7 @@ func (r GetObjectsWithoutHashRow) GetCompressionFormatVersion() *int16 {
 }
 
 // -------------------------------------------------------------------------
-// Whole rows (the table model, returned by the SELECT * admin listings).
+// Whole rows (the table model, returned by every SELECT * query).
 // -------------------------------------------------------------------------
 
 // ObjectLocation

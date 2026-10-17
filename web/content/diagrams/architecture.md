@@ -289,7 +289,7 @@ The gray background workers run only when the process starts in `worker` or `all
     REBAL: {
       title: 'Rebalancer',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Redistributes objects across backends to optimize storage utilization. Disabled by default (<code>rebalance.enabled</code>). Runs every <code>rebalance.interval</code> (default 6 hours) under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: stream copy from source to target (binary copy, no re-encryption) &rarr; swap the DB location with compare-and-swap &rarr; delete the source copy. Destinations are limited to write targets.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Redistributes objects across backends to optimize storage utilization. Disabled by default (<code>rebalance.enabled</code>). Runs every <code>rebalance.interval</code> (default 6 hours) under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: stream copy from source to target (binary copy, no re-encryption) &rarr; record the copy with <code>PlaceCopy</code>, which commits only while the source is still the copy that was read and the target admits the bytes &rarr; delete the source copy. Destinations are limited to write targets.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     CLEAN: {
       title: 'Cleanup Queue',

@@ -221,11 +221,11 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 	assertFormPreserved(t, readBackOne(t, s, key), form)
 }
 
-// TestPgRecordReplica_PreservesRepresentation covers the replica insert, which
-// copies from the source row inside the INSERT ... SELECT rather than from a
-// caller-supplied form. A replica that loses the metadata describes bytes that
-// are not what it claims: the copier moves the stored bytes verbatim.
-func TestPgRecordReplica_PreservesRepresentation(t *testing.T) {
+// TestPgPlaceCopy_ReplicaPreservesRepresentation covers the replica insert,
+// which copies from the locked source row rather than from a caller-supplied
+// form. A replica that loses the metadata describes bytes that are not what it
+// claims: the copier moves the stored bytes verbatim.
+func TestPgPlaceCopy_ReplicaPreservesRepresentation(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	form := fullyPopulatedForm()
@@ -235,9 +235,7 @@ func TestPgRecordReplica_PreservesRepresentation(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, inserted, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil || !inserted {
-		t.Fatalf("RecordReplica: inserted=%v err=%v", inserted, err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
 	if err != nil {

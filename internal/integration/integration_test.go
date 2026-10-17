@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 
 	// -------------------------------------------------------------------------
@@ -2941,11 +2942,10 @@ func TestStore_DeleteObject_NotFound(t *testing.T) {
 	}
 }
 
-// TestStore_MoveObjectLocation_RaceSafe is one of the sub-cases extracted from the
-// original mega-TestStore; behaviour is preserved.
-func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
+// TestStore_PlaceCopy_MoveRaceSafe moves a copy and then replays the same
+// move, which must be declined as ErrCopyChanged without touching quotas.
+func TestStore_PlaceCopy_MoveRaceSafe(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
 
 	resetState(t)
 
@@ -2955,10 +2955,15 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	move := &core.MoveLocation{ObjectKey: key, FromBackend: "minio-1", ToBackend: "minio-2", StorageKey: key}
-	size, err := testStore.MoveObjectLocation(ctx, move)
+	move := &core.Placement{
+		Source:       storetest.LocationOn(t, testStore, key, "minio-1"),
+		Target:       "minio-2",
+		StorageKey:   key + "!m",
+		RemoveSource: true,
+	}
+	size, err := testStore.PlaceCopy(ctx, move)
 	if err != nil {
-		t.Fatalf("MoveObjectLocation: %v", err)
+		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if size != 100 {
 		t.Errorf("moved size = %d, want 100", size)
@@ -2971,12 +2976,8 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 		t.Errorf("minio-2 after move = %d, want 100", used)
 	}
 
-	size, err = testStore.MoveObjectLocation(ctx, move)
-	if err != nil {
-		t.Fatalf("second MoveObjectLocation: %v", err)
-	}
-	if size != 0 {
-		t.Errorf("second move size = %d, want 0 (source gone)", size)
+	if _, err = testStore.PlaceCopy(ctx, move); !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("second PlaceCopy err = %v, want ErrCopyChanged (source gone)", err)
 	}
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
@@ -3119,11 +3120,11 @@ func TestStore_ListBackendQuotaUsage_ReportsOccupancy(t *testing.T) {
 	}
 }
 
-// TestStore_RecordReplica_StaleSourceSkipped is one of the sub-cases extracted from the
-// original mega-TestStore; behaviour is preserved.
-func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
+// TestStore_PlaceCopy_StaleReplicaSourceDeclined records a replica, then
+// replaces the object and replays a placement from the old source copy,
+// which must be declined as ErrCopyChanged.
+func TestStore_PlaceCopy_StaleReplicaSourceDeclined(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
 
 	resetState(t)
 
@@ -3133,14 +3134,9 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	_, ok, err := testStore.RecordReplica(ctx, &core.ReplicaInsert{
-		ObjectKey: key, TargetBackend: "minio-2", SourceBackend: "minio-1", StorageKey: key + "!r",
-	})
-	if err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
-	if !ok {
-		t.Error("first RecordReplica = false, want true")
+	src := storetest.LocationOn(t, testStore, key, "minio-1")
+	if _, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-2", StorageKey: key + "!r"}); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
 		t.Errorf("minio-2 after replica = %d, want 100", used)
@@ -3154,14 +3150,9 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
 
-	_, ok, err = testStore.RecordReplica(ctx, &core.ReplicaInsert{
-		ObjectKey: key, TargetBackend: "minio-1", SourceBackend: "minio-1", StorageKey: key + "!r",
-	})
-	if err != nil {
-		t.Fatalf("RecordReplica stale: %v", err)
-	}
-	if ok {
-		t.Error("stale RecordReplica = true, want false (source doesn't exist)")
+	_, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-1", StorageKey: key + "!r"})
+	if !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("stale PlaceCopy err = %v, want ErrCopyChanged (source replaced)", err)
 	}
 }
 

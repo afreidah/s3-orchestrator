@@ -212,8 +212,8 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 }
 
-// pgProbeOn reads back the compression probe recorded for one copy. Neither
-// column is part of ObjectLocation, so it is read from the table directly.
+// pgProbeOn reads back the compression probe recorded for one copy, straight
+// from the table so the check does not depend on a listing's scan.
 func pgProbeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
 	t.Helper()
 	var (
@@ -1446,9 +1446,7 @@ func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
 
 	// A second copy of one key, so a tag-filtered query has to dedup replicas
 	// rather than trivially returning one row per object.
-	if _, _, err := s.RecordReplica(ctx, replicaOf(prefix+"both", "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, prefix+"both", "backend-b", "backend-a")
 
 	future := time.Now().Add(time.Hour)
 	base := core.ExpiredObjectsQuery{Prefix: prefix, Cutoff: future, Limit: 100}
@@ -1552,9 +1550,7 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, k1) }()
-	if _, _, err := s.RecordReplica(ctx, replicaOf(k1, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, k1, "backend-b", "backend-a")
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
@@ -1605,9 +1601,7 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, replicaOf(k1, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, k1, "backend-b", "backend-a")
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
@@ -1996,9 +1990,7 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{Scrubbed: true}); err != nil {
 		t.Fatalf("UpdateCopyMetadata: %v", err)

@@ -664,6 +664,8 @@ type scannedObjectColumns struct {
 	compLevel     *string
 	compVersion   *int64
 	logicalSize   *int64
+	probeSize     *int64
+	probeLevel    *string
 	lastScrubbed  *string
 }
 
@@ -671,6 +673,7 @@ type scannedObjectColumns struct {
 const objectColumns = `object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 	key_id, plaintext_size, content_hash,
 	compression_algorithm, compression_level, compression_format_version, logical_size,
+	compression_probe_size, compression_probe_level,
 	created_at, last_scrubbed_at`
 
 // scanDest returns the scan targets in the order every object_locations query
@@ -681,6 +684,7 @@ func (c *scannedObjectColumns) scanDest(loc *core.ObjectLocation) []any {
 		&loc.Encrypted, &loc.EncryptionKey,
 		&c.keyID, &c.plaintextSize, &c.contentHash,
 		&c.compAlgorithm, &c.compLevel, &c.compVersion, &c.logicalSize,
+		&c.probeSize, &c.probeLevel,
 		&c.createdAt, &c.lastScrubbed,
 	}
 }
@@ -712,6 +716,12 @@ func (c *scannedObjectColumns) apply(loc *core.ObjectLocation) error {
 	}
 	if c.logicalSize != nil {
 		loc.LogicalSize = *c.logicalSize
+	}
+	if c.probeSize != nil {
+		loc.CompressionProbeSize = *c.probeSize
+	}
+	if c.probeLevel != nil {
+		loc.CompressionProbeLevel = *c.probeLevel
 	}
 	if c.lastScrubbed != nil {
 		scrubbed, err := parseTime(*c.lastScrubbed)

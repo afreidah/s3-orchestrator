@@ -32,30 +32,25 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// recordReplicaRecord tracks one RecordReplica invocation.
-type recordReplicaRecord struct {
-	key, targetBackend, sourceBackend string
+// placeCopyTracker accumulates PlaceCopy calls and returns the configured
+// size, or the configured error in its place.
+type placeCopyTracker struct {
+	mu    sync.Mutex
+	calls []core.Placement
+	size  int64
+	err   error
 }
 
-// recordReplicaTracker accumulates RecordReplica calls and configurable
-// returns.
-type recordReplicaTracker struct {
-	mu       sync.Mutex
-	calls    []recordReplicaRecord
-	size     int64
-	inserted bool
-	err      error
-}
-
-// stubRecordReplica returns a DoAndReturn capturing into rt.
-func stubRecordReplica(rt *recordReplicaTracker) func(context.Context, *core.ReplicaInsert) (int64, bool, error) {
-	return func(_ context.Context, r *core.ReplicaInsert) (int64, bool, error) {
-		rt.mu.Lock()
-		defer rt.mu.Unlock()
-		rt.calls = append(rt.calls, recordReplicaRecord{
-			key: r.ObjectKey, targetBackend: r.TargetBackend, sourceBackend: r.SourceBackend,
-		})
-		return rt.size, rt.inserted, rt.err
+// stubPlaceCopy returns a DoAndReturn capturing into pt.
+func stubPlaceCopy(pt *placeCopyTracker) func(context.Context, *core.Placement) (int64, error) {
+	return func(_ context.Context, p *core.Placement) (int64, error) {
+		pt.mu.Lock()
+		defer pt.mu.Unlock()
+		pt.calls = append(pt.calls, *p)
+		if pt.err != nil {
+			return 0, pt.err
+		}
+		return pt.size, nil
 	}
 }
 
@@ -150,14 +145,14 @@ func TestReplicate_QueryError(t *testing.T) {
 
 // replicateSuccessStubs wires the per-call stubs replicator success
 // tests share: under-replicated returns, GetBackendWithSpace chosen-from-
-// eligible behaviour, and a successful RecordReplica.
-func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.ObjectLocation, rt *recordReplicaTracker) {
+// eligible behaviour, and a PlaceCopy captured into pt.
+func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.ObjectLocation, pt *placeCopyTracker) {
 	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(locations, nil).AnyTimes()
 	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(locations, nil).AnyTimes()
-	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubRecordReplica(rt)).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubPlaceCopy(pt)).AnyTimes()
 }
 
 // TestReplicate_Success drives the happy path.
@@ -167,7 +162,7 @@ func TestReplicate_Success(t *testing.T) {
 	b2 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	rt := &recordReplicaTracker{inserted: true}
+	rt := &placeCopyTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -210,17 +205,17 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 }
 
 // TestReplicate_FullTargetRecordsNoCopy asserts a target without room produces
-// no copy: the conditional insert declines the row even though ranking
-// proposed the backend, and the written bytes go to the cleanup queue.
+// no copy: the placement refuses the target even though ranking proposed the
+// backend, and the written bytes go to the cleanup queue.
 func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
-	// Every target declines, which is how a full backend reports itself.
-	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any()).
-		Return(int64(0), false, nil).AnyTimes()
+	// Every target refuses, which is how a full backend reports itself.
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		Return(int64(0), core.ErrTargetRefused).AnyTimes()
 	storetest.Permissive(store)
 
 	src := backendtest.NewInMemory()
@@ -344,15 +339,15 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
-// TestReplicate_RecordReplicaFails_CleansUpOrphan asserts the
-// orphan-cleanup branch when RecordReplica returns an error.
-func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
+// TestReplicate_PlaceCopyFails_CleansUpOrphan asserts the
+// orphan-cleanup branch when PlaceCopy returns an error.
+func TestReplicate_PlaceCopyFails_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 	b2 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	rt := &recordReplicaTracker{err: errors.New("db error")}
+	rt := &placeCopyTracker{err: errors.New("db error")}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -417,7 +412,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	b1 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	rt := &recordReplicaTracker{inserted: true}
+	rt := &placeCopyTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -440,14 +435,14 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 }
 
 // TestReplicate_SourceGoneDuringReplication asserts the orphan-cleanup
-// branch when the source-row inserted=false.
+// branch when the placement reports the source copy changed.
 func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 	b2 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	rt := &recordReplicaTracker{inserted: false}
+	rt := &placeCopyTracker{err: core.ErrCopyChanged}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -492,7 +487,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	cbb2 := newTrippedCBBackend(b2, "b2")
 
-	rt := &recordReplicaTracker{inserted: true}
+	rt := &placeCopyTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -532,7 +527,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	cbb1 := newTrippedCBBackend(b1, "b1")
 
-	rt := &recordReplicaTracker{inserted: true}
+	rt := &placeCopyTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
@@ -560,10 +555,11 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	}
 
 	if len(rt.calls) != 1 {
-		t.Fatalf("expected 1 RecordReplica call, got %d", len(rt.calls))
+		t.Fatalf("expected 1 PlaceCopy call, got %d", len(rt.calls))
 	}
-	if rt.calls[0].sourceBackend != "b2" {
-		t.Errorf("expected source=b2 (healthy), got %q", rt.calls[0].sourceBackend)
+	if got := rt.calls[0]; got.Source.BackendName != "b2" || got.Target != "b3" || got.RemoveSource {
+		t.Errorf("placement = source %q target %q remove %v, want b2 (healthy) -> b3 keeping the source",
+			got.Source.BackendName, got.Target, got.RemoveSource)
 	}
 }
 
@@ -578,7 +574,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	cbb1 := newTrippedCBBackend(b1, "b1")
 
-	rt := &recordReplicaTracker{inserted: true, size: 200}
+	rt := &placeCopyTracker{size: 200}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,

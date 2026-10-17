@@ -479,34 +479,21 @@ func (w *Coordinator) recordEnqueueFailure(ctx context.Context, c *core.CleanupR
 // SHARED OBJECT MOVE PRIMITIVE
 // -------------------------------------------------------------------------
 
-// ErrMoveStale signals that MoveObject was raced: the object was already moved
-// or deleted, and the destination bytes have been cleaned up. Callers count it
-// as skipped rather than as an error.
-var ErrMoveStale = errors.New("object already moved or deleted")
-
-// MoveRequest bundles the inputs to a single src -> dest object move.
-// SizeBytes is the caller's estimate, used only by the orphan-cleanup paths;
-// the success path charges the size the move committed. SrcStorageKey comes
-// from the source row, and DestStorageKey is a fresh path minted for the move,
+// MoveRequest bundles the inputs to a single src -> dest object move. Source
+// is the copy the caller read; the move commits only while it is still the
+// copy recorded on its backend. The destination path is minted for the move,
 // so each cleanup path deletes exactly its own bytes.
 type MoveRequest struct {
-	Key       string
-	SizeBytes int64
-
+	Source      *core.ObjectLocation
 	SrcBackend  backend.ObjectBackend
-	SrcName     string
 	DestBackend backend.ObjectBackend
 	DestName    string
-
-	SrcStorageKey  string
-	DestStorageKey string
-
-	Reasons MoveReasonProfile
+	Reasons     MoveReasonProfile
 }
 
 // MoveReasonProfile groups the cleanup-queue reasons a move emits. Orphan
-// labels destination bytes left when MoveObjectLocation errors after the copy,
-// and StaleOrphan those left when it reports the row was raced.
+// labels destination bytes left when the placement errors after the copy,
+// and StaleOrphan those left when the source changed or the target refused.
 type MoveReasonProfile struct {
 	Orphan       string
 	StaleOrphan  string
@@ -528,62 +515,45 @@ var (
 	}
 )
 
-// destCleanup describes the bytes this move put on the destination, for the two
-// paths that have to take them back off again. The size is the caller's
-// estimate, which is all either path has: neither of them completed a metadata
-// commit, so no authoritative size was ever settled.
-func (r *MoveRequest) destCleanup(reason string) *core.CleanupRequest {
-	return &core.CleanupRequest{
-		BackendName: r.DestName,
-		ObjectKey:   r.Key,
-		StorageKey:  r.DestStorageKey,
-		Reason:      reason,
-		SizeBytes:   r.SizeBytes,
-	}
-}
-
 // MoveObject moves one object from src to dest for drain and rebalance: it
-// copies the bytes, swaps the location row with MoveObjectLocation, and then
-// deletes the source copy. If the swap errors or was raced, the destination
-// bytes are cleaned up instead. Returns the moved size, ErrMoveStale when the
-// swap was raced, or the wrapped failure, including a refused admission.
+// copies the bytes, records them on dest while removing the source row through
+// PlaceCopy, and then deletes the source bytes. If the placement fails, the
+// destination bytes are cleaned up instead. Returns the moved size, or the
+// wrapped failure: core.ErrCopyChanged when a newer write replaced the source,
+// core.ErrTargetRefused when dest holds a copy or refused the bytes.
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
-	src := backend.CopyEndpoint{Name: req.SrcName, Backend: req.SrcBackend}
+	key, srcName := req.Source.ObjectKey, req.Source.BackendName
+	srcPath := core.StoragePath(key, req.Source.StorageKey)
+	// The caller's size is an estimate until the placement settles one; it is
+	// all a cleanup of the destination bytes has to go on.
+	dest := core.DeletedCopy{BackendName: req.DestName, StorageKey: NewStorageKey(key), SizeBytes: req.Source.SizeBytes}
+
+	src := backend.CopyEndpoint{Name: srcName, Backend: req.SrcBackend}
 	dst := backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend}
-	if _, err := w.core.StreamCopy(ctx, src, dst, req.SrcStorageKey, req.DestStorageKey, req.SizeBytes); err != nil {
-		return 0, fmt.Errorf("stream copy %s -> %s: %w", req.SrcName, req.DestName, err)
+	if _, err := w.core.StreamCopy(ctx, src, dst, srcPath, dest.StorageKey, req.Source.SizeBytes); err != nil {
+		return 0, fmt.Errorf("stream copy %s -> %s: %w", srcName, req.DestName, err)
 	}
 
-	movedSize, err := w.stores.MoveObjectLocation(ctx, &core.MoveLocation{
-		ObjectKey:   req.Key,
-		FromBackend: req.SrcName,
-		ToBackend:   req.DestName,
-		StorageKey:  req.DestStorageKey,
+	movedSize, err := w.stores.PlaceCopy(ctx, &core.Placement{
+		Source:       req.Source,
+		Target:       req.DestName,
+		StorageKey:   dest.StorageKey,
+		RemoveSource: true,
 	})
 	if err != nil {
-		// Destination has the bytes but the metadata CAS failed;
-		// enqueue the orphan so the cleanup worker collects it.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.destCleanup(req.Reasons.Orphan))
-		return 0, fmt.Errorf("move object location %s -> %s: %w", req.SrcName, req.DestName, err)
-	}
-	if movedSize == 0 {
-		// Raced: another process moved or deleted the row. The
-		// destination bytes are orphaned; enqueue them so the cleanup
-		// worker collects them.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.destCleanup(req.Reasons.StaleOrphan))
-		return 0, ErrMoveStale
+		reason := req.Reasons.Orphan
+		if core.PlacementDeclined(err) {
+			reason = req.Reasons.StaleOrphan
+		}
+		w.DeleteOrEnqueue(ctx, req.DestBackend, dest.Cleanup(key, reason))
+		return 0, fmt.Errorf("place copy %s -> %s: %w", srcName, req.DestName, err)
 	}
 
 	// Charged at the size the move committed. Egress and Ingress each record
 	// their own API call, and DeleteOrEnqueue records the source DELETE.
-	w.DeleteOrEnqueue(ctx, req.SrcBackend, &core.CleanupRequest{
-		BackendName: req.SrcName,
-		ObjectKey:   req.Key,
-		StorageKey:  req.SrcStorageKey,
-		Reason:      req.Reasons.SourceDelete,
-		SizeBytes:   movedSize,
-	})
-	w.core.Acct().Egress(s3op.GetObject, req.SrcName, movedSize)
+	removed := core.DeletedCopy{BackendName: srcName, StorageKey: srcPath, SizeBytes: movedSize}
+	w.DeleteOrEnqueue(ctx, req.SrcBackend, removed.Cleanup(key, req.Reasons.SourceDelete))
+	w.core.Acct().Egress(s3op.GetObject, srcName, movedSize)
 	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
 	// Both ends moved at the size the CAS committed, charged by the move's own
 	// transaction so neither window exists where the bytes are counted on

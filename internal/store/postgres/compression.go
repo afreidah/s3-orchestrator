@@ -36,7 +36,7 @@ func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after 
 	if err != nil {
 		return nil, fmt.Errorf("list uncompressed locations: %w", err)
 	}
-	return toIdentifiedObjectLocations(rows), nil
+	return toWholeObjectLocations(rows), nil
 }
 
 // ListCompressedLocations returns a page of copies whose bytes are an encoding.
@@ -50,5 +50,5 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 	if err != nil {
 		return nil, fmt.Errorf("list compressed locations: %w", err)
 	}
-	return toIdentifiedObjectLocations(rows), nil
+	return toWholeObjectLocations(rows), nil
 }

@@ -3,25 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic transactional logic for replica management. RecordReplica
-// inserts a new replica copy iff the source copy still exists. Surplus copies
-// are removed by DeleteObjectLocation with keepAtLeast set.
+// Types for replica management. A replica is recorded by PlaceCopy, and
+// surplus copies are removed by DeleteObjectLocation with keepAtLeast set.
 // -------------------------------------------------------------------------------
 
 package core
-
-import "context"
-
-// -------------------------------------------------------------------------
-// RECORD REPLICA
-// -------------------------------------------------------------------------
-
-// recordReplicaResult bundles the outputs of RecordReplica so the
-// transaction wrapper can pass both back without an extra round-trip.
-type recordReplicaResult struct {
-	size     int64
-	inserted bool
-}
 
 // ReplicationBacklog counts the keys whose copy count is off the target
 // factor. Under counts in-flight intents as copies, as the replicator's scan
@@ -29,32 +15,4 @@ type recordReplicaResult struct {
 type ReplicationBacklog struct {
 	Under int64
 	Over  int64
-}
-
-// ReplicaInsert is one replica the replicator is recording. StorageKey is the
-// path the caller uploaded to, not the source's, so cleanup of either copy
-// reaches only that copy's bytes.
-type ReplicaInsert struct {
-	ObjectKey     string
-	TargetBackend string
-	SourceBackend string
-	StorageKey    string
-}
-
-// RecordReplica inserts a replica row only if the source copy still exists, so
-// an overwrite or delete mid-copy leaves no stale replica. It returns the size
-// read from the source row inside the transaction, which the caller credits,
-// or (0, false, nil) when the source is gone or the target already has a copy.
-func RecordReplica(ctx context.Context, runner Runner, r *ReplicaInsert) (int64, bool, error) {
-	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (recordReplicaResult, error) {
-		size, inserted, err := tx.InsertReplicaConditional(ctx, r)
-		if err != nil || !inserted {
-			return recordReplicaResult{}, err
-		}
-		if err := chargeStripes(ctx, tx, r.ObjectKey, QuotaDeltas{r.TargetBackend: size}); err != nil {
-			return recordReplicaResult{}, err
-		}
-		return recordReplicaResult{size: size, inserted: true}, nil
-	})
-	return res.size, res.inserted, err
 }

@@ -87,9 +87,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 	// StreamCopy moves bytes verbatim, so the source row describes the new
 	// copy once the backend and path are swapped. Reading the source's path
 	// on the target would miss the replica or hash a different object.
-	replica := *source
-	replica.BackendName = target
-	replica.StorageKey = targetStorageKey
+	replica := source.CopyAt(target, targetStorageKey)
 
 	if !r.ops.Usage().WithinLimits(target, getObjectOp, replica.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
@@ -98,7 +96,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 		return replicaUnverified
 	}
 
-	actual, err := r.hasher.hashStored(ctx, &replica)
+	actual, err := r.hasher.hashStored(ctx, replica)
 	if err != nil {
 		r.log.WarnContext(ctx, "could not verify new replica, recording it unverified",
 			"key", source.ObjectKey, "target", target, "error", err)

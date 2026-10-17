@@ -46,9 +46,9 @@ func (e *S3Error) Error() string {
 // guessing. ErrCleanupItemNotFound and ErrCopyChanged are benign no-ops: another
 // worker resolved the row, or a client rewrote the key mid-pass. ErrCopyNotExcess
 // refuses a surplus-copy removal once the object is back at its target count.
-// ErrInvalidRange
-// covers a range that addresses no byte, such as a suffix range on an empty
-// object.
+// ErrTargetRefused declines a placement whose target already holds a copy or
+// does not admit the bytes. ErrInvalidRange covers a range that addresses no
+// byte, such as a suffix range on an empty object.
 var (
 	ErrNoSpaceAvailable       = errors.New("no backend has sufficient quota")
 	ErrDBUnavailable          = errors.New("database unavailable")
@@ -58,6 +58,7 @@ var (
 	ErrNoCopiesToRecord       = errors.New("record object request names no copies")
 	ErrCopyChanged            = errors.New("copy changed since the pass read it")
 	ErrCopyNotExcess          = errors.New("object holds no surplus copy to remove")
+	ErrTargetRefused          = errors.New("target backend holds a copy or refused the bytes")
 
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,
@@ -95,6 +96,13 @@ var (
 		Message:    "monthly usage limit exceeded for all backends holding this object",
 	}
 )
+
+// PlacementDeclined reports whether PlaceCopy recorded nothing because the
+// source changed or the target refused, which callers count as a skip rather
+// than a failure.
+func PlacementDeclined(err error) bool {
+	return errors.Is(err, ErrCopyChanged) || errors.Is(err, ErrTargetRefused)
+}
 
 // -------------------------------------------------------------------------
 // TAG VALIDATION ERRORS

@@ -1309,21 +1309,6 @@ func (mr *MockMetadataStoreMockRecorder) MoveCleanupToDLQ(ctx, id, lastError any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockMetadataStore)(nil).MoveCleanupToDLQ), ctx, id, lastError)
 }
 
-// MoveObjectLocation mocks base method.
-func (m_2 *MockMetadataStore) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
-	m_2.ctrl.T.Helper()
-	ret := m_2.ctrl.Call(m_2, "MoveObjectLocation", ctx, m)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MoveObjectLocation indicates an expected call of MoveObjectLocation.
-func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, m any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, m)
-}
-
 // NotificationQueueDepth mocks base method.
 func (m *MockMetadataStore) NotificationQueueDepth(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()
@@ -1352,6 +1337,21 @@ func (m *MockMetadataStore) PendingDepth(ctx context.Context) (int64, error) {
 func (mr *MockMetadataStoreMockRecorder) PendingDepth(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendingDepth", reflect.TypeOf((*MockMetadataStore)(nil).PendingDepth), ctx)
+}
+
+// PlaceCopy mocks base method.
+func (m *MockMetadataStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PlaceCopy indicates an expected call of PlaceCopy.
+func (mr *MockMetadataStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlaceCopy", reflect.TypeOf((*MockMetadataStore)(nil).PlaceCopy), ctx, p)
 }
 
 // PromotePending mocks base method.
@@ -1428,22 +1428,6 @@ func (m *MockMetadataStore) RecordPart(ctx context.Context, p *core.RecordPartPa
 func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordPart", reflect.TypeOf((*MockMetadataStore)(nil).RecordPart), ctx, p)
-}
-
-// RecordReplica mocks base method.
-func (m *MockMetadataStore) RecordReplica(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordReplica", ctx, r)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// RecordReplica indicates an expected call of RecordReplica.
-func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, r any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordReplica", reflect.TypeOf((*MockMetadataStore)(nil).RecordReplica), ctx, r)
 }
 
 // RenameUser mocks base method.

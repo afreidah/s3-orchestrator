@@ -108,9 +108,7 @@ func TestRecordObjectIdentity_AppliesToEveryCopy(t *testing.T) {
 	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
-	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/k" + "!r-" + "backend-b"}); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, "bucket/k", "backend-b", "backend-a", 100)
 
 	if err := s.RecordObjectIdentity(ctx, storetest.LocationOn(t, s, "bucket/k", "backend-b"), &core.ObjectIdentity{ETag: `"learned"`}); err != nil {
 		t.Fatalf("RecordObjectIdentity: %v", err)

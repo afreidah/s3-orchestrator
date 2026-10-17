@@ -320,25 +320,25 @@ func TestAdapter_DeleteObjectCopies_RemovesAllRows(t *testing.T) {
 	})
 }
 
-// TestAdapter_CheckObjectExistsOnBackend verifies both true and false
+// TestAdapter_ObjectExistsOnBackend verifies both true and false
 // cases of the existence probe.
-func TestAdapter_CheckObjectExistsOnBackend(t *testing.T) {
+func TestAdapter_ObjectExistsOnBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		got, err := a.CheckObjectExistsOnBackend(ctx, "bucket/k", "backend-a")
+		got, err := a.objectExistsOnBackend(ctx, "bucket/k", "backend-a")
 		if err != nil {
-			t.Fatalf("CheckObjectExistsOnBackend(present): %v", err)
+			t.Fatalf("objectExistsOnBackend(present): %v", err)
 		}
 		if !got {
 			t.Error("expected true for present (key, backend)")
 		}
-		got, err = a.CheckObjectExistsOnBackend(ctx, "bucket/k", "backend-b")
+		got, err = a.objectExistsOnBackend(ctx, "bucket/k", "backend-b")
 		if err != nil {
-			t.Fatalf("CheckObjectExistsOnBackend(missing): %v", err)
+			t.Fatalf("objectExistsOnBackend(missing): %v", err)
 		}
 		if got {
 			t.Error("expected false for missing (key, backend)")
@@ -458,121 +458,6 @@ func TestAdapter_InsertObjectLocationIfNotExists_SkipsWhenPresent(t *testing.T) 
 		}
 		if ok {
 			t.Error("expected false for existing row")
-		}
-	})
-}
-
-// TestAdapter_InsertReplicaConditional_InsertsWhenSourceExists verifies
-// the replica insert succeeds when the source row is present and the
-// target row is missing.
-func TestAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		size, ok, err := a.InsertReplicaConditional(ctx, &core.ReplicaInsert{ObjectKey: "bucket/k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/k" + "!r-" + "backend-b"})
-		if err != nil {
-			t.Fatalf("InsertReplicaConditional: %v", err)
-		}
-		if !ok {
-			t.Error("expected true when source exists and target missing")
-		}
-		if size != 100 {
-			t.Errorf("expected size 100 (source row's), got %d", size)
-		}
-		// Verify the replica row is there with the source's metadata.
-		copies, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
-		if err != nil {
-			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
-		}
-		if len(copies) != 2 {
-			t.Errorf("expected 2 copies after replica, got %d", len(copies))
-		}
-	})
-}
-
-// TestAdapter_InsertReplicaConditional_CarriesSourceCreatedAt asserts the
-// replica inherits the source row's timestamp instead of being stamped at the
-// moment it was made. It reaches clients as Last-Modified, so a per-copy stamp
-// makes an unmodified object report a different time once a read fails over.
-func TestAdapter_InsertReplicaConditional_CarriesSourceCreatedAt(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		before, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
-		if err != nil {
-			t.Fatalf("GetExistingCopiesForUpdate(source): %v", err)
-		}
-		if len(before) != 1 {
-			t.Fatalf("expected 1 source copy, got %d", len(before))
-		}
-		sourceCreatedAt := before[0].CreatedAt
-
-		if _, _, err := a.InsertReplicaConditional(ctx, &core.ReplicaInsert{ObjectKey: "bucket/k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/k" + "!r-" + "backend-b"}); err != nil {
-			t.Fatalf("InsertReplicaConditional: %v", err)
-		}
-
-		after, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
-		if err != nil {
-			t.Fatalf("GetExistingCopiesForUpdate(after): %v", err)
-		}
-		if len(after) != 2 {
-			t.Fatalf("expected 2 copies after replica, got %d", len(after))
-		}
-		for i := range after {
-			if !after[i].CreatedAt.Equal(sourceCreatedAt) {
-				t.Errorf("copy on %s has CreatedAt %v, want the source's %v",
-					after[i].BackendName, after[i].CreatedAt, sourceCreatedAt)
-			}
-		}
-	})
-}
-
-// TestAdapter_InsertReplicaConditional_FalseWhenSourceMissing verifies
-// the replica insert is skipped (without error) when the source row
-// has been removed.
-func TestAdapter_InsertReplicaConditional_FalseWhenSourceMissing(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		size, ok, err := a.InsertReplicaConditional(context.Background(), &core.ReplicaInsert{ObjectKey: "bucket/k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/k" + "!r-" + "backend-b"})
-		if err != nil {
-			t.Fatalf("InsertReplicaConditional: %v", err)
-		}
-		if ok {
-			t.Error("expected false when source is missing")
-		}
-		if size != 0 {
-			t.Errorf("expected size 0 when source missing, got %d", size)
-		}
-	})
-}
-
-// TestAdapter_InsertReplicaConditional_FalseWhenTargetExists verifies
-// the replica insert is skipped (without error) when the target
-// already has a copy.
-func TestAdapter_InsertReplicaConditional_FalseWhenTargetExists(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
-	mustRecordReplica(t, s, "bucket/k", "backend-b", "backend-a", 100)
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		size, ok, err := a.InsertReplicaConditional(ctx, &core.ReplicaInsert{ObjectKey: "bucket/k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/k" + "!r-" + "backend-b"})
-		if err != nil {
-			t.Fatalf("InsertReplicaConditional: %v", err)
-		}
-		if ok {
-			t.Error("expected false when target already has a copy")
-		}
-		if size != 0 {
-			t.Errorf("expected size 0 when target already exists, got %d", size)
 		}
 	})
 }
@@ -838,10 +723,10 @@ func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16)
 	return used
 }
 
-// TestAdapter_BackendHasRoom_CountsOrphanBytes asserts bytes awaiting physical
+// TestAdapter_BackendAdmits_CountsOrphanBytes asserts bytes awaiting physical
 // cleanup still occupy the backend, since they stay on disk until the cleanup
 // lands.
-func TestAdapter_BackendHasRoom_CountsOrphanBytes(t *testing.T) {
+func TestAdapter_BackendAdmits_CountsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -854,16 +739,16 @@ func TestAdapter_BackendHasRoom_CountsOrphanBytes(t *testing.T) {
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		// 900 stored + 50 orphaned leaves 50 free.
-		fits, err := a.backendHasRoom(ctx, "backend-a", 100)
+		fits, err := a.BackendAdmits(ctx, "backend-a", 100)
 		if err != nil {
-			t.Fatalf("backendHasRoom: %v", err)
+			t.Fatalf("BackendAdmits: %v", err)
 		}
 		if fits {
 			t.Error("admitted 100 bytes into 50 of room; orphan bytes were not counted")
 		}
-		fits, err = a.backendHasRoom(ctx, "backend-a", 50)
+		fits, err = a.BackendAdmits(ctx, "backend-a", 50)
 		if err != nil {
-			t.Fatalf("backendHasRoom: %v", err)
+			t.Fatalf("BackendAdmits: %v", err)
 		}
 		if !fits {
 			t.Error("refused 50 bytes that fit the remaining room exactly")
@@ -871,9 +756,9 @@ func TestAdapter_BackendHasRoom_CountsOrphanBytes(t *testing.T) {
 	})
 }
 
-// TestAdapter_BackendHasRoom_UnlimitedAlwaysFits asserts a zero bytes_limit
+// TestAdapter_BackendAdmits_UnlimitedAlwaysFits asserts a zero bytes_limit
 // means no enforcement, which is how the schema spells unlimited.
-func TestAdapter_BackendHasRoom_UnlimitedAlwaysFits(t *testing.T) {
+func TestAdapter_BackendAdmits_UnlimitedAlwaysFits(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -884,9 +769,9 @@ func TestAdapter_BackendHasRoom_UnlimitedAlwaysFits(t *testing.T) {
 	seedBytesUsed(t, s, "backend-a", 1<<40)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		fits, err := a.backendHasRoom(ctx, "backend-a", 1<<30)
+		fits, err := a.BackendAdmits(ctx, "backend-a", 1<<30)
 		if err != nil {
-			t.Fatalf("backendHasRoom: %v", err)
+			t.Fatalf("BackendAdmits: %v", err)
 		}
 		if !fits {
 			t.Error("an unlimited backend refused a write")
@@ -1072,9 +957,7 @@ func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T)
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r-" + "backend-b"}); err != nil {
-		t.Fatalf("RecordReplica: %v", err)
-	}
+	mustRecordReplica(t, s, key, "backend-b", "backend-a", 1100)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		copies, err := a.GetExistingCopiesForUpdate(ctx, key)

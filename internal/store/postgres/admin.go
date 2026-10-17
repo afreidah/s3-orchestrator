@@ -81,7 +81,7 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
 	}
-	return toIdentifiedObjectLocations(rows), nil
+	return toWholeObjectLocations(rows), nil
 }
 
 // ListUnencryptedLocations returns a page of unencrypted object locations.
@@ -96,7 +96,7 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
-	return toIdentifiedObjectLocations(rows), nil
+	return toWholeObjectLocations(rows), nil
 }
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations.
@@ -111,7 +111,7 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after 
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
-	return toIdentifiedObjectLocations(rows), nil
+	return toWholeObjectLocations(rows), nil
 }
 
 // -------------------------------------------------------------------------

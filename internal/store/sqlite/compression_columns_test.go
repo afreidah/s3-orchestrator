@@ -212,11 +212,11 @@ func TestPendingPromote_PreservesRepresentation(t *testing.T) {
 	assertFormPreserved(t, readBackOne(t, s, "bucket/promoted"), form)
 }
 
-// TestRecordReplica_PreservesRepresentation covers the replica insert, which
-// copies from the source row rather than from a caller-supplied form. A replica
-// that loses the metadata describes bytes that are not what it claims: the
-// copier moves the stored bytes verbatim.
-func TestRecordReplica_PreservesRepresentation(t *testing.T) {
+// TestPlaceCopy_ReplicaPreservesRepresentation covers the replica insert,
+// which copies from the source row rather than from a caller-supplied form. A
+// replica that loses the metadata describes bytes that are not what it claims:
+// the copier moves the stored bytes verbatim.
+func TestPlaceCopy_ReplicaPreservesRepresentation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -225,9 +225,7 @@ func TestRecordReplica_PreservesRepresentation(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/replicated", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/replicated" + "!r-" + "backend-b"}); err != nil || !inserted {
-		t.Fatalf("RecordReplica: inserted=%v err=%v", inserted, err)
-	}
+	mustRecordReplica(t, s, "bucket/replicated", "backend-b", "backend-a", 1024)
 
 	locs, err := s.GetAllObjectLocations(ctx, "bucket/replicated")
 	if err != nil {

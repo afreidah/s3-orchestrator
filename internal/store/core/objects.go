@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Engine-agnostic transactional logic for object_locations: recording new
-// objects, removing old ones, atomic moves between backends, and import of
+// objects, removing old ones, placing copies on other backends, and import of
 // pre-existing data. Each operation is a sequence of TxAdapter calls
 // composed inside a single transaction so the Postgres and SQLite paths
 // share one implementation.
@@ -396,70 +396,78 @@ func removableCopy(existing []ExistingCopy, loc *ObjectLocation, keepAtLeast int
 }
 
 // -------------------------------------------------------------------------
-// MOVE OBJECT LOCATION
+// PLACE COPY
 // -------------------------------------------------------------------------
 
-// MoveLocation is one src -> dest repointing of a copy. StorageKey is the
-// destination path the caller wrote, not the source's, so orphan cleanup for a
-// move that loses its race deletes exactly what that move uploaded.
-type MoveLocation struct {
-	ObjectKey   string
-	FromBackend string
-	ToBackend   string
-	StorageKey  string
+// Placement records bytes copied verbatim from Source onto Target at
+// StorageKey, the path the caller wrote. RemoveSource makes it a move: the
+// source row goes in the same transaction. Source must be the copy the caller
+// read, since its storage key is what proves the copied bytes are still the
+// object.
+type Placement struct {
+	Source       *ObjectLocation
+	Target       string
+	StorageKey   string
+	RemoveSource bool
 }
 
-// MoveObjectLocation atomically moves a copy of an object from one backend to
-// another and returns the bytes moved, for the caller to apply to the in-memory
-// counter. It returns (0, nil) if the source copy is gone or the target
-// already has a copy.
-func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (int64, error) {
-	key, fromBackend, toBackend := m.ObjectKey, m.FromBackend, m.ToBackend
+// PlaceCopy records the copy a placement describes and returns the bytes it
+// placed, read from the locked source row. A source gone or replaced since the
+// caller read it is ErrCopyChanged; a target that already holds a copy or does
+// not admit the bytes is ErrTargetRefused. Either way nothing is recorded and
+// the caller owns the bytes it wrote.
+func PlaceCopy(ctx context.Context, runner Runner, p *Placement) (int64, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
-		targetHasCopy, err := tx.CheckObjectExistsOnBackend(ctx, key, toBackend)
-		if err != nil {
-			return 0, err
-		}
-		if targetHasCopy {
-			return 0, nil
-		}
-		src, ok, err := tx.LockObjectOnBackend(ctx, key, fromBackend)
-		if err != nil || !ok {
-			return 0, err
-		}
-		if err := tx.DeleteObjectFromBackend(ctx, key, fromBackend); err != nil {
-			return 0, err
-		}
-		// Carry the full stored form; hand-listing source fields drops columns
-		// and leaves a row that contradicts its bytes.
-		dest := ObjectFromStoredForm(key, toBackend, m.StorageKey, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
-		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
-			return 0, err
-		}
-		if err := carryCompressionProbe(ctx, tx, src, dest); err != nil {
-			return 0, err
-		}
-		if err := chargeStripes(ctx, tx, key, QuotaDeltas{
-			fromBackend: -src.SizeBytes,
-			toBackend:   src.SizeBytes,
-		}); err != nil {
-			return 0, err
-		}
-		return src.SizeBytes, nil
+		return placeCopyTx(ctx, tx, p)
 	})
 }
 
-// carryCompressionProbe copies a source copy's compression measurement onto the
-// destination row of a move. The probe is not part of StoredForm, and dropping
-// it would make the next compression pass download the copy to measure again.
-func carryCompressionProbe(ctx context.Context, tx TxAdapter, src, dest *ObjectLocation) error {
-	if src.CompressionProbeSize <= 0 {
-		return nil
+// placeCopyTx is the transactional body of PlaceCopy: lock the key, confirm
+// the source and the target against the locked copy set, admit, insert, and
+// for a move remove the source.
+func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (int64, error) {
+	key := p.Source.ObjectKey
+	if err := tx.AcquireKeyLock(ctx, key); err != nil {
+		return 0, err
 	}
-	return tx.UpdateCopyMetadata(ctx, dest, &CopyPatch{Probe: &CompressionProbe{
-		Size:  src.CompressionProbeSize,
-		Level: src.CompressionProbeLevel,
-	}})
+	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := removableCopy(existing, p.Source, 0); err != nil {
+		return 0, err
+	}
+	if _, onTarget := copyOnBackend(existing, p.Target); onTarget {
+		return 0, ErrTargetRefused
+	}
+	src, ok, err := tx.LockObjectOnBackend(ctx, key, p.Source.BackendName)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrCopyChanged
+	}
+	admitted, err := tx.BackendAdmits(ctx, p.Target, src.SizeBytes)
+	if err != nil {
+		return 0, err
+	}
+	if !admitted {
+		return 0, ErrTargetRefused
+	}
+	if err := tx.InsertObjectLocation(ctx, src.CopyAt(p.Target, p.StorageKey)); err != nil {
+		return 0, fmt.Errorf("insert placed copy on %s: %w", p.Target, err)
+	}
+	deltas := QuotaDeltas{p.Target: src.SizeBytes}
+	if p.RemoveSource {
+		if err := tx.DeleteObjectFromBackend(ctx, key, src.BackendName); err != nil {
+			return 0, err
+		}
+		deltas.Add(src.BackendName, -src.SizeBytes)
+	}
+	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
+		return 0, err
+	}
+	return src.SizeBytes, nil
 }
 
 // -------------------------------------------------------------------------
