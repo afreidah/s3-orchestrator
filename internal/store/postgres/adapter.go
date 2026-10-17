@@ -207,16 +207,28 @@ func (a *pgTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey, ba
 	return nil
 }
 
-// RecordCompressionProbe stores what the encoder measured for a copy it
-// declined to store compressed.
-func (a *pgTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	if err := a.q.RecordCompressionProbe(ctx, db.RecordCompressionProbeParams{
-		ObjectKey:             probe.ObjectKey,
-		BackendName:           probe.BackendName,
-		CompressionProbeSize:  int64Ptr(probe.Size),
-		CompressionProbeLevel: strPtr(probe.Level),
-	}); err != nil {
-		return fmt.Errorf("record compression probe: %w", err)
+// UpdateCopyMetadata writes a patch to the copy loc names. A copy a newer write
+// replaced matches no row and is reported as core.ErrCopyChanged.
+func (a *pgTxAdapter) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	params := db.UpdateCopyMetadataParams{
+		EncryptionKey: p.EncryptionKey,
+		KeyID:         strPtr(p.KeyID),
+		ContentHash:   strPtr(p.ContentHash),
+		Scrubbed:      p.Scrubbed,
+		ObjectKey:     loc.ObjectKey,
+		BackendName:   loc.BackendName,
+		StorageKey:    loc.StorageKey,
+	}
+	if p.Probe != nil {
+		params.ProbeSize = &p.Probe.Size
+		params.ProbeLevel = &p.Probe.Level
+	}
+	n, err := a.q.UpdateCopyMetadata(ctx, params)
+	if err != nil {
+		return fmt.Errorf("update copy metadata: %w", err)
+	}
+	if n == 0 {
+		return core.ErrCopyChanged
 	}
 	return nil
 }

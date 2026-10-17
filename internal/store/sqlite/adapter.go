@@ -388,16 +388,39 @@ func (a *sqliteTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey
 	return nil
 }
 
-// RecordCompressionProbe stores what the encoder measured for a copy it
-// declined to store compressed.
-func (a *sqliteTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	if _, err := a.q.ExecContext(ctx,
+// UpdateCopyMetadata writes a patch to the copy loc names: a NULL argument
+// leaves its column as it is, and a set scrubbed stamps last_scrubbed_at.
+// Matching storage_key as well means a copy a newer write replaced matches no
+// row, which is reported as core.ErrCopyChanged.
+func (a *sqliteTxAdapter) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	var probeSize sql.NullInt64
+	var probeLevel sql.NullString
+	if p.Probe != nil {
+		probeSize = sql.NullInt64{Int64: p.Probe.Size, Valid: true}
+		probeLevel = sql.NullString{String: p.Probe.Level, Valid: true}
+	}
+	res, err := a.q.ExecContext(ctx,
 		`UPDATE object_locations
-		 SET compression_probe_size = ?, compression_probe_level = ?
-		 WHERE object_key = ? AND backend_name = ?`,
-		probe.Size, probe.Level, probe.ObjectKey, probe.BackendName,
-	); err != nil {
-		return fmt.Errorf("record compression probe: %w", err)
+		 SET encryption_key          = COALESCE(?, encryption_key),
+		     key_id                  = COALESCE(?, key_id),
+		     content_hash            = COALESCE(?, content_hash),
+		     last_scrubbed_at        = CASE WHEN ? THEN ? ELSE last_scrubbed_at END,
+		     compression_probe_size  = COALESCE(?, compression_probe_size),
+		     compression_probe_level = COALESCE(?, compression_probe_level)
+		 WHERE object_key = ? AND backend_name = ? AND storage_key = ?`,
+		p.EncryptionKey, nullableString(p.KeyID), nullableString(p.ContentHash),
+		p.Scrubbed, now(), probeSize, probeLevel,
+		loc.ObjectKey, loc.BackendName, loc.StorageKey,
+	)
+	if err != nil {
+		return fmt.Errorf("update copy metadata: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update copy metadata: %w", err)
+	}
+	if n == 0 {
+		return core.ErrCopyChanged
 	}
 	return nil
 }

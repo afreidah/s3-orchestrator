@@ -39,7 +39,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -131,7 +130,6 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	objectManager := r.Resolve[*object.Manager]()
 	integrityCfg := r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]]()
 	stores := r.Resolve[metadataStore]()
-	encAdmin := r.Resolve[core.EncryptionAdmin]()
 	replicator := r.Resolve[*worker.Replicator]()
 	overRep := r.Resolve[*worker.OverReplicationCleaner]()
 	rebalancer := r.Resolve[*worker.Rebalancer]()
@@ -158,7 +156,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Objects:      objectManager,
 		Store:        stores,
 		Encryptor:    enc,
-		EncStore:     encAdmin,
+		EncStore:     stores,
 		Codec:        codec,
 		CompStore:    stores,
 		Runtime:      rt,

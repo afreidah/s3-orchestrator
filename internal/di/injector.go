@@ -73,8 +73,8 @@ func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLe
 
 // registerInfrastructure wires the always-on persistence,
 // observability, and identity primitives every other provider builds
-// on (metadata store, lifecycle / encryption admin views, notification
-// outbox, database circuit breaker, instance id, metric deps).
+// on (metadata store, lifecycle admin view, notification outbox, database
+// circuit breaker, instance id, metric deps).
 func registerInfrastructure(inj do.Injector) {
 	do.Provide(inj, provideMetadataStore)
 	do.Provide(inj, ProvideDatabaseBreaker)
@@ -85,7 +85,6 @@ func registerInfrastructure(inj do.Injector) {
 	// registration instead of at first resolve.
 	do.MustAs[metadataStore, core.AdvisoryLocker](inj)
 	do.MustAs[metadataStore, core.LifecycleAdmin](inj)
-	do.MustAs[metadataStore, core.EncryptionAdmin](inj)
 	do.MustAs[metadataStore, core.NotificationOutbox](inj)
 	do.MustAs[metadataStore, core.ProvisioningStore](inj)
 	do.MustAs[metadataStore, metrics.Deps](inj)

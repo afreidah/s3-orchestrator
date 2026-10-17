@@ -164,6 +164,17 @@ func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
 	return displaced
 }
 
+// LocationOn returns the copy in locs held on backendName, or nil when there is
+// none. An object holds at most one copy per backend.
+func LocationOn(locs []ObjectLocation, backendName string) *ObjectLocation {
+	for i := range locs {
+		if locs[i].BackendName == backendName {
+			return &locs[i]
+		}
+	}
+	return nil
+}
+
 // copyOnBackend returns the copy held on backendName in the locked re-read, or
 // false when there is none. Callers must take size and storage key from this
 // copy, not their own stale values: a concurrent overwrite would otherwise

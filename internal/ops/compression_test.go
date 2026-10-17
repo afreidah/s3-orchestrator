@@ -84,14 +84,15 @@ func incompressibleBytes(t *testing.T, n int) []byte {
 // oneRowStore serves a single rewritable location once and captures the update
 // the pass records for it.
 type oneRowStore struct {
-	row      core.RewritableLocation
-	served   atomic.Bool
-	update   core.CompressedUpdate
-	previous int64
-	marked   atomic.Bool
-	probes   []core.CompressionProbe
-	probeErr error
-	markErr  error
+	row        core.ObjectLocation
+	served     atomic.Bool
+	update     core.CompressedUpdate
+	previous   int64
+	marked     atomic.Bool
+	probes     []core.CompressionProbe
+	probedLocs []core.ObjectLocation
+	probeErr   error
+	markErr    error
 }
 
 // -------------------------------------------------------------------------
@@ -101,7 +102,7 @@ type oneRowStore struct {
 // ListUncompressedLocations serves the row once, then reports the end of the
 // listing so the pass terminates. It applies the size floor, as the real store
 // does, so a copy under it never reaches the pass.
-func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds, _ string) ([]core.RewritableLocation, error) {
+func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds, _ string) ([]core.ObjectLocation, error) {
 	rows := s.serveOnce()
 	if len(rows) == 1 && rows[0].LogicalSize == 0 && rows[0].SizeBytes < t.MinSize {
 		return nil, nil
@@ -109,40 +110,44 @@ func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core
 	return rows, nil
 }
 
-// RecordCompressionProbe records what a declined copy was measured at, so a
-// test can assert the pass wrote down what its encode cost bought.
-func (s *oneRowStore) RecordCompressionProbe(_ context.Context, probe *core.CompressionProbe) error {
-	s.probes = append(s.probes, *probe)
+// UpdateCopyMetadata records the probe a declined copy was measured at and the
+// copy it names, so a test can assert the pass wrote down what its encode cost
+// bought.
+func (s *oneRowStore) UpdateCopyMetadata(_ context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	if p.Probe != nil {
+		s.probes = append(s.probes, *p.Probe)
+		s.probedLocs = append(s.probedLocs, *loc)
+	}
 	return s.probeErr
 }
 
 // ListCompressedLocations serves the same row for the reverse direction.
-func (s *oneRowStore) ListCompressedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.RewritableLocation, error) {
+func (s *oneRowStore) ListCompressedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
 	return s.serveOnce(), nil
 }
 
 // serveOnce yields the row on the first page and nothing after it.
-func (s *oneRowStore) serveOnce() []core.RewritableLocation {
+func (s *oneRowStore) serveOnce() []core.ObjectLocation {
 	if s.served.Swap(true) {
 		return nil
 	}
-	return []core.RewritableLocation{s.row}
+	return []core.ObjectLocation{s.row}
 }
 
 // pagedStore serves a fixed set of copies through the cursor the driver pages
 // with, so a test can watch a capped run stop partway rather than seeing every
 // row arrive on one page.
 type pagedStore struct {
-	rows      []core.RewritableLocation
+	rows      []core.ObjectLocation
 	pageSizes []int
 	marked    int
 }
 
 // ListUncompressedLocations returns the rows after the cursor, capped at limit,
 // and records what the driver asked for.
-func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds, _ string) ([]core.RewritableLocation, error) {
+func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds, _ string) ([]core.ObjectLocation, error) {
 	s.pageSizes = append(s.pageSizes, limit)
-	out := make([]core.RewritableLocation, 0, limit)
+	out := make([]core.ObjectLocation, 0, limit)
 	for i := range s.rows {
 		if s.rows[i].ObjectKey <= after.ObjectKey {
 			continue
@@ -156,7 +161,7 @@ func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, aft
 }
 
 // ListCompressedLocations serves nothing: these tests drive the forward pass.
-func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.RewritableLocation, error) {
+func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -165,22 +170,22 @@ func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor, 
 // again on a later page.
 func (s *pagedStore) MarkObjectCompressed(_ context.Context, u *core.CompressedUpdate, _ int64) error {
 	s.marked++
-	s.rows = slices.DeleteFunc(s.rows, func(r core.RewritableLocation) bool {
+	s.rows = slices.DeleteFunc(s.rows, func(r core.ObjectLocation) bool {
 		return r.ObjectKey == u.ObjectKey
 	})
 	return nil
 }
 
-// RecordCompressionProbe is unused: these tests use compressible payloads.
-func (s *pagedStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+// UpdateCopyMetadata is unused: these tests use compressible payloads.
+func (s *pagedStore) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil
 }
 
 // pagedRows builds n distinct copies, keyed so cursor order is obvious.
-func pagedRows(n int, size int64) []core.RewritableLocation {
-	rows := make([]core.RewritableLocation, n)
+func pagedRows(n int, size int64) []core.ObjectLocation {
+	rows := make([]core.ObjectLocation, n)
 	for i := range rows {
-		rows[i] = core.RewritableLocation{
+		rows[i] = core.ObjectLocation{
 			ObjectKey:   fmt.Sprintf("bucket/obj-%03d", i),
 			BackendName: "backend-a",
 			SizeBytes:   size,
@@ -237,7 +242,7 @@ func compressionOn() config.CompressionConfig {
 func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(compChunk * 2)
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/file.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	svc, be := newCompression(t, store, compressionOn(), payload)
@@ -287,7 +292,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatalf("read random payload: %v", err)
 	}
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	cfg := compressionOn()
@@ -314,7 +319,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 func TestCompressExisting_ExcludesBelowMinSize(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(512)
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/small.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	cfg := compressionOn()
@@ -443,7 +448,7 @@ func TestCompressExisting_CancelStopsWithoutFailingThePage(t *testing.T) {
 func TestCompressExisting_RecordsRatioDecline(t *testing.T) {
 	t.Parallel()
 	payload := incompressibleBytes(t, 8192)
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	cfg := compressionOn()
@@ -459,10 +464,10 @@ func TestCompressExisting_RecordsRatioDecline(t *testing.T) {
 	if len(store.probes) != 1 {
 		t.Fatalf("recorded %d probes, want 1", len(store.probes))
 	}
-	got := store.probes[0]
-	if got.ObjectKey != "bucket/random.bin" || got.BackendName != "backend-a" {
-		t.Errorf("probe names %s/%s, want bucket/random.bin/backend-a", got.ObjectKey, got.BackendName)
+	if loc := store.probedLocs[0]; loc.ObjectKey != "bucket/random.bin" || loc.BackendName != "backend-a" {
+		t.Errorf("probe names %s/%s, want bucket/random.bin/backend-a", loc.ObjectKey, loc.BackendName)
 	}
+	got := store.probes[0]
 	if got.Size <= 0 {
 		t.Errorf("probe size = %d, want what the encoder produced", got.Size)
 	}
@@ -479,7 +484,7 @@ func TestCompressExisting_RatioDeclineSurvivesProbeFailure(t *testing.T) {
 	t.Parallel()
 	payload := incompressibleBytes(t, 8192)
 	store := &oneRowStore{
-		row: core.RewritableLocation{
+		row: core.ObjectLocation{
 			ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 		},
 		probeErr: errors.New("probe write failed"),
@@ -498,6 +503,35 @@ func TestCompressExisting_RatioDeclineSurvivesProbeFailure(t *testing.T) {
 	}
 }
 
+// TestCompressExisting_RatioDeclineOnReplacedCopy checks a decline whose copy a
+// newer write replaced is still a plain skip: there is no row left to record
+// the probe against, and that is not a failure of the pass.
+func TestCompressExisting_RatioDeclineOnReplacedCopy(t *testing.T) {
+	t.Parallel()
+	payload := incompressibleBytes(t, 8192)
+	store := &oneRowStore{
+		row: core.ObjectLocation{
+			ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
+		},
+		probeErr: core.ErrCopyChanged,
+	}
+	svc, be := newCompression(t, store, compressionOn(), payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if res.Skipped != 1 || res.Failed != 0 || res.Succeeded != 0 {
+		t.Errorf("counts = %+v, want one skipped and no failures", res)
+	}
+	if len(store.probes) != 1 {
+		t.Errorf("probe writes = %d, want 1", len(store.probes))
+	}
+	if be.puts.Load() != 0 {
+		t.Errorf("PutObject calls = %d, want 0; the copy stays as it is", be.puts.Load())
+	}
+}
+
 // TestDecompressExisting_RestoresStoredBytes checks the reverse direction: the
 // encoding is decoded back to what the client wrote, and the row stops claiming
 // an algorithm so nothing tries to decode it again.
@@ -510,7 +544,7 @@ func TestDecompressExisting_RestoresStoredBytes(t *testing.T) {
 		t.Fatalf("Compress: %v", err)
 	}
 
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey:                "bucket/file.txt",
 		BackendName:              "backend-a",
 		SizeBytes:                int64(encoded.Len()),
@@ -557,42 +591,6 @@ func TestCompressExisting_WithoutCodec(t *testing.T) {
 	}
 }
 
-// TestRewriteRow_LogicalSizeOfSource pins which column names the bytes a
-// transform will read, which differs by how the copy is stored.
-func TestRewriteRow_LogicalSizeOfSource(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		row  core.RewritableLocation
-		want int64
-	}{
-		{"verbatim", core.RewritableLocation{SizeBytes: 100}, 100},
-		{"encrypted", core.RewritableLocation{SizeBytes: 140, Encrypted: true, PlaintextSize: 100}, 100},
-		{
-			"encoded",
-			core.RewritableLocation{SizeBytes: 40, CompressionAlgorithm: "zstd", LogicalSize: 100},
-			100,
-		},
-		{
-			"encoded and encrypted",
-			core.RewritableLocation{
-				SizeBytes: 60, Encrypted: true, PlaintextSize: 40,
-				CompressionAlgorithm: "zstd", LogicalSize: 100,
-			},
-			100,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			r := &rewriteRow{tt.row}
-			if got := r.LogicalSizeOfSource(); got != tt.want {
-				t.Errorf("LogicalSizeOfSource() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestCompressExisting_EncryptedObject covers the hardest path in either pass:
 // compression sits inside encryption, so an encrypted copy has to be decrypted,
 // encoded, and re-encrypted. The row it leaves behind carries three sizes that
@@ -613,7 +611,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey:     "bucket/secret.txt",
 		BackendName:   "backend-a",
 		SizeBytes:     int64(len(ciphertext)),
@@ -697,7 +695,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 // the object would store bytes that decode to nothing.
 func TestCompressExisting_EncryptedWithoutEncryptor(t *testing.T) {
 	t.Parallel()
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/secret", BackendName: "backend-a", SizeBytes: 4096,
 		Encrypted: true, PlaintextSize: 4000,
 	}}
@@ -719,7 +717,7 @@ func TestCompressExisting_EncryptedWithoutEncryptor(t *testing.T) {
 // over bytes that are not one is failed, and the object is left alone.
 func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 	t.Parallel()
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/claims-encoding", BackendName: "backend-a", SizeBytes: 64,
 		CompressionAlgorithm: compression.Algorithm, LogicalSize: 4096,
 	}}
@@ -742,12 +740,12 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 type failingListStore struct{ err error }
 
 // ListUncompressedLocations fails.
-func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.RewritableLocation, error) {
+func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.ObjectLocation, error) {
 	return nil, f.err
 }
 
 // ListCompressedLocations fails.
-func (f failingListStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.RewritableLocation, error) {
+func (f failingListStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
 	return nil, f.err
 }
 
@@ -756,8 +754,8 @@ func (f failingListStore) MarkObjectCompressed(context.Context, *core.Compressed
 	return nil
 }
 
-// RecordCompressionProbe is never reached when the listing fails.
-func (f failingListStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+// UpdateCopyMetadata is never reached when the listing fails.
+func (f failingListStore) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil
 }
 
@@ -797,7 +795,7 @@ func (f failingCodec) DecompressStream(io.Reader) (io.ReadCloser, error) { retur
 // One unreadable object must not stop a fleet-wide rewrite.
 func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 	t.Parallel()
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/file.txt", BackendName: "backend-a", SizeBytes: 4096,
 	}}
 	ctrl := gomock.NewController(t)
@@ -839,7 +837,7 @@ func TestCompressExisting_ReportsProgress(t *testing.T) {
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatalf("read random payload: %v", err)
 	}
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 	}}
 	svc, _ := newCompression(t, store, compressionOn(), payload)
@@ -874,7 +872,7 @@ func TestCompressExisting_ChangedCopyIsNotAFailure(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
 	store := &oneRowStore{
-		row: core.RewritableLocation{
+		row: core.ObjectLocation{
 			ObjectKey: "bucket/raced.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
 		},
 		markErr: core.ErrCopyChanged,
@@ -903,9 +901,9 @@ func TestCompressExisting_ChangedCopyIsNotAFailure(t *testing.T) {
 func TestCompressExisting_ChangedCopyCarriesTheEtag(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(8192)
-	store := &oneRowStore{row: core.RewritableLocation{
+	store := &oneRowStore{row: core.ObjectLocation{
 		ObjectKey: "bucket/quiet.txt", BackendName: "backend-a",
-		SizeBytes: int64(len(payload)), Etag: "etag-v1",
+		SizeBytes: int64(len(payload)), Identity: &core.ObjectIdentity{ETag: "etag-v1"},
 	}}
 	svc, _ := newCompression(t, store, compressionOn(), payload)
 

@@ -107,6 +107,29 @@ type ObjectLocation struct {
 	TagCount                 int
 }
 
+// ObjectSize is the size of the object the client wrote: logical_size for an
+// encoded copy, plaintext_size for an encrypted one, and the stored size
+// otherwise.
+func (l *ObjectLocation) ObjectSize() int64 {
+	switch {
+	case l.CompressionAlgorithm != "":
+		return l.LogicalSize
+	case l.Encrypted:
+		return l.PlaintextSize
+	default:
+		return l.SizeBytes
+	}
+}
+
+// RecordedETag returns the ETag the row carries, or "" when it has none
+// recorded yet.
+func (l *ObjectLocation) RecordedETag() string {
+	if l.Identity == nil {
+		return ""
+	}
+	return l.Identity.ETag
+}
+
 // ExistingCopy is the projection of an object_locations row that promotion
 // and overwrite logic needs from a SELECT-for-update read.
 //
@@ -473,38 +496,6 @@ type CoverageStat struct {
 // ENCRYPTION ADMIN
 // -------------------------------------------------------------------------
 
-// EncryptedLocation represents an encrypted object location for key rotation.
-type EncryptedLocation struct {
-	ObjectKey     string
-	BackendName   string
-	EncryptionKey []byte
-	KeyID         string
-}
-
-// UnencryptedLocation represents an unencrypted object location. Etag is the
-// value seen at listing time; the conversion commits only while the row still
-// reports it, so a client write mid-pass aborts the commit.
-type UnencryptedLocation struct {
-	ObjectKey   string
-	BackendName string
-	StorageKey  string
-	SizeBytes   int64
-	Etag        string
-}
-
-// DecryptableLocation represents an encrypted object location with all
-// metadata needed for decryption. Etag works as on UnencryptedLocation.
-type DecryptableLocation struct {
-	ObjectKey     string
-	BackendName   string
-	StorageKey    string
-	SizeBytes     int64
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	Etag          string
-}
-
 // Cursor is the position a paged admin listing resumes from: the last
 // (object_key, backend_name) it returned. The zero value starts at the
 // beginning. Bulk rewrite passes page by cursor because the rows they rewrite
@@ -532,26 +523,6 @@ type CompressionStat struct {
 	StoredBytes  int64
 }
 
-// RewritableLocation is one copy a bulk compression pass may rewrite. It
-// carries encryption metadata because an encrypted copy must be decrypted
-// before encoding and re-encrypted afterwards. An empty CompressionAlgorithm
-// means not encoded. Etag works as on UnencryptedLocation.
-type RewritableLocation struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    string
-	PlaintextSize            int64
-	CompressionAlgorithm     string
-	CompressionLevel         string
-	CompressionFormatVersion int
-	LogicalSize              int64
-	Etag                     string
-}
-
 // CompressionThresholds are the settings that decide whether a copy is worth
 // encoding, passed to the uncompressed listing so it selects only candidates.
 // Recorded probes are judged against the current values, so loosening a
@@ -568,10 +539,20 @@ type CompressionThresholds struct {
 // never probed. Only ratio declines are recorded, since other declines are
 // answered without encoding.
 type CompressionProbe struct {
-	ObjectKey   string
-	BackendName string
-	Size        int64
-	Level       string
+	Size  int64
+	Level string
+}
+
+// CopyPatch is a metadata write to one copy. Each field set is written and
+// the rest are left as they are: EncryptionKey and KeyID together re-wrap the
+// DEK, ContentHash records a backfilled hash, Scrubbed stamps the copy as
+// examined now, and Probe records a compression decline.
+type CopyPatch struct {
+	EncryptionKey []byte
+	KeyID         string
+	ContentHash   string
+	Scrubbed      bool
+	Probe         *CompressionProbe
 }
 
 // CompressedUpdate is the new description of a copy a compression pass has

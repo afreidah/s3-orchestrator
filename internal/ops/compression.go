@@ -19,6 +19,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,7 +100,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return bulkRewriteOp[*rewriteRow]{
+	return bulkRewriteOp{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
@@ -107,13 +108,13 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 		// listing rather than here: both answers outlive the pass, so a copy
 		// either one excludes selects out of every future pass instead of being
 		// handed to each one only to be declined again.
-		listFn: rewriteListFn(func(ctx context.Context, batchSize int, after core.Cursor) ([]core.RewritableLocation, error) {
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return c.store.ListUncompressedLocations(ctx, batchSize, after, core.CompressionThresholds{
 				MinSize:  c.cfg.MinSize,
 				MinRatio: c.cfg.MinRatio,
 				Level:    c.cfg.Level,
 			}, backend)
-		}),
+		},
 		rewrite:     c.compressOne,
 		maxRewrites: maxRewrites,
 	}.run(ctx, c.rewriteEnv(), obs)
@@ -126,13 +127,13 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return bulkRewriteOp[*rewriteRow]{
+	return bulkRewriteOp{
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
-		listFn: rewriteListFn(func(ctx context.Context, batchSize int, after core.Cursor) ([]core.RewritableLocation, error) {
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return c.store.ListCompressedLocations(ctx, batchSize, after, backend)
-		}),
+		},
 		rewrite:     c.decompressOne,
 		maxRewrites: maxRewrites,
 	}.run(ctx, c.rewriteEnv(), obs)
@@ -145,8 +146,8 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 // compressOne encodes one copy. The encoded bytes are buffered because a PUT
 // declares its size up front and an encoder only knows that size at the end,
 // which is also what lets the ratio be judged before anything is written.
-func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
-	logical := loc.LogicalSizeOfSource()
+func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
+	logical := loc.ObjectSize()
 	plain, err := c.plaintextOf(ctx, src.Body, loc)
 	if err != nil {
 		return rewritten{}, err
@@ -166,13 +167,13 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 		encoded.Cleanup()
 		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
 		// Record the decline so later runs skip this copy instead of
-		// re-encoding it. A failure here costs efficiency, not correctness.
-		if err := c.store.RecordCompressionProbe(ctx, &core.CompressionProbe{
-			ObjectKey:   loc.ObjectKey,
-			BackendName: loc.BackendName,
-			Size:        encodedSize,
-			Level:       c.cfg.Level,
-		}); err != nil {
+		// re-encoding it. A failure here costs efficiency, not correctness, and
+		// a copy a newer write replaced has nothing to record against.
+		err := c.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Probe: &core.CompressionProbe{
+			Size:  encodedSize,
+			Level: c.cfg.Level,
+		}})
+		if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 			c.log.WarnContext(ctx, "failed to record compression probe",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		}
@@ -201,7 +202,7 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 		LogicalSize:   logical,
 		EncryptionKey: out.key,
 		KeyID:         out.keyID,
-		ExpectedEtag:  loc.Etag,
+		ExpectedEtag:  loc.RecordedETag(),
 	}
 	previous := loc.SizeBytes
 	return rewritten{
@@ -215,7 +216,7 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 // decompressOne decodes one copy back to the bytes the client wrote. The
 // decoded size is known from the row, so unlike the encode direction this
 // streams: a decoder is handed a size rather than discovering one.
-func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
+func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 	stored, err := c.plaintextOf(ctx, src.Body, loc)
 	if err != nil {
 		return rewritten{}, err
@@ -238,7 +239,7 @@ func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResu
 		PlaintextSize: out.inner,
 		EncryptionKey: out.key,
 		KeyID:         out.keyID,
-		ExpectedEtag:  loc.Etag,
+		ExpectedEtag:  loc.RecordedETag(),
 	}
 	previous := loc.SizeBytes
 	return rewritten{
@@ -253,7 +254,7 @@ func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResu
 // the bytes compression actually operates on. A copy recorded as encrypted with
 // no encryptor configured is refused rather than rewritten as though it were
 // plaintext, which would publish ciphertext as the object.
-func (c *Compression) plaintextOf(ctx context.Context, body io.Reader, loc *rewriteRow) (io.Reader, error) {
+func (c *Compression) plaintextOf(ctx context.Context, body io.Reader, loc *core.ObjectLocation) (io.Reader, error) {
 	if !loc.Encrypted {
 		return body, nil
 	}
@@ -283,7 +284,7 @@ type sealedBody struct {
 // minting a fresh data key wrapped under the current primary. It assumes an
 // encryptor is configured, since plaintextOf already refused an encrypted copy
 // without one.
-func (c *Compression) seal(ctx context.Context, body io.Reader, size int64, loc *rewriteRow) (sealedBody, error) {
+func (c *Compression) seal(ctx context.Context, body io.Reader, size int64, loc *core.ObjectLocation) (sealedBody, error) {
 	if !loc.Encrypted {
 		return sealedBody{body: body, size: size}, nil
 	}
@@ -298,54 +299,4 @@ func (c *Compression) seal(ctx context.Context, body io.Reader, size int64, loc 
 		key:   encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
 		keyID: res.KeyID,
 	}, nil
-}
-
-// rewriteRow adapts a rewritable location to bulkRewriteRow. Pointer receivers
-// avoid copying the embedded store row.
-type rewriteRow struct{ core.RewritableLocation }
-
-// rewriteKey returns the object key to re-process.
-func (r *rewriteRow) rewriteKey() string { return r.ObjectKey }
-
-// rewriteBackend returns the backend the row currently lives on.
-func (r *rewriteRow) rewriteBackend() string { return r.BackendName }
-
-// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
-// which is what the rewrite reads and writes.
-func (r *rewriteRow) rewriteStorageKey() string { return r.StorageKey }
-
-// rewriteSize returns the row's stored size, used for quota accounting.
-func (r *rewriteRow) rewriteSize() int64 { return r.SizeBytes }
-
-// rewriteEtag returns what the copy reported when the listing selected it, which
-// the commit is predicated on.
-func (r *rewriteRow) rewriteEtag() string { return r.Etag }
-
-// LogicalSizeOfSource reports how many bytes the transform will read: the
-// object the client wrote. That is logical_size for an encoded copy,
-// plaintext_size for an encrypted one, and the stored size otherwise.
-func (r *rewriteRow) LogicalSizeOfSource() int64 {
-	switch {
-	case r.CompressionAlgorithm != "":
-		return r.LogicalSize
-	case r.Encrypted:
-		return r.PlaintextSize
-	default:
-		return r.SizeBytes
-	}
-}
-
-// rewriteListFn adapts a store listing to the driver's paging callback.
-func rewriteListFn(list func(context.Context, int, core.Cursor) ([]core.RewritableLocation, error)) func(context.Context, int, core.Cursor) ([]*rewriteRow, error) {
-	return func(ctx context.Context, batchSize int, after core.Cursor) ([]*rewriteRow, error) {
-		rows, err := list(ctx, batchSize, after)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]*rewriteRow, len(rows))
-		for i := range rows {
-			out[i] = &rewriteRow{rows[i]}
-		}
-		return out, nil
-	}
 }

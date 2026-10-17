@@ -59,15 +59,19 @@ type UnhashedLister interface {
 }
 
 // EncryptionStore is the admin surface the bulk rewrite passes read and write
-// as they move objects between plaintext and ciphertext.
+// as they move objects between plaintext and ciphertext. Key rotation patches
+// each copy's wrapped DEK.
 type EncryptionStore interface {
 	core.EncryptionAdmin
+	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
 }
 
 // CompressionStore is the admin surface the bulk compression passes read and
-// write as they move objects between stored-verbatim and stored-encoded.
+// write as they move objects between stored-verbatim and stored-encoded. A
+// declined copy is patched with the probe that declined it.
 type CompressionStore interface {
 	core.CompressionAdmin
+	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
 }
 
 // ProvisioningStore is the bucket and credential surface the provisioning

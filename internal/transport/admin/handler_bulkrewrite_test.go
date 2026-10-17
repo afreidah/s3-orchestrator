@@ -41,17 +41,17 @@ type emptyCompressionStore struct{}
 // -------------------------------------------------------------------------
 
 // ListUncompressedLocations returns no rows.
-func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.RewritableLocation, error) {
+func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
-// RecordCompressionProbe is never reached: the listing is empty.
-func (emptyCompressionStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+// UpdateCopyMetadata is never reached: the listing is empty.
+func (emptyCompressionStore) UpdateCopyMetadata(context.Context, *core.ObjectLocation, *core.CopyPatch) error {
 	return nil
 }
 
 // ListCompressedLocations returns no rows.
-func (emptyCompressionStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.RewritableLocation, error) {
+func (emptyCompressionStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 

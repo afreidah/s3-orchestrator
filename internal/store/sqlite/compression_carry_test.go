@@ -250,11 +250,7 @@ func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
-		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
-	}); err != nil {
-		t.Fatalf("RecordCompressionProbe: %v", err)
-	}
+	mustPatchCopy(t, s, "bucket/random.bin", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 4090, Level: "default"}})
 
 	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/random.bin", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/random.bin" + "!m-" + "backend-b"}); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
@@ -277,11 +273,7 @@ func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
-		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 900, Level: "default",
-	}); err != nil {
-		t.Fatalf("RecordCompressionProbe: %v", err)
-	}
+	mustPatchCopy(t, s, "bucket/random.bin", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 900, Level: "default"}})
 
 	strict := core.CompressionThresholds{MinRatio: 0.5, Level: "default"}
 	if keys := listKeys(t, s, strict); len(keys) != 0 {
@@ -532,12 +524,22 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	}
 }
 
-// TestRecordCompressionProbe_ReportsWriteFailure verifies a failed measurement
+// probePatch is the patch a compression pass writes for a copy it declined.
+func probePatch() *core.CopyPatch {
+	return &core.CopyPatch{Probe: &core.CompressionProbe{Size: 4090, Level: "default"}}
+}
+
+// randomBinCopy names the copy the probe-failure tests patch.
+func randomBinCopy() *core.ObjectLocation {
+	return &core.ObjectLocation{ObjectKey: "bucket/random.bin", BackendName: "backend-a", StorageKey: "bucket/random.bin"}
+}
+
+// TestUpdateCopyMetadata_ReportsWriteFailure verifies a failed measurement
 // write is reported rather than swallowed. Recording a measurement is what
 // takes a declined copy out of the compression listing, so a silent failure
 // leaves the pass re-downloading and re-encoding that copy on every future run
 // while reporting clean.
-func TestRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
+func TestUpdateCopyMetadata_ReportsWriteFailure(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -546,23 +548,21 @@ func TestRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
 		t.Fatalf("drop object_locations: %v", err)
 	}
 
-	err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
-		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
-	})
+	err := s.UpdateCopyMetadata(ctx, randomBinCopy(), probePatch())
 	if err == nil {
-		t.Fatal("RecordCompressionProbe returned nil against a missing table")
+		t.Fatal("UpdateCopyMetadata returned nil against a missing table")
 	}
-	if !strings.Contains(err.Error(), "record compression probe") {
+	if !strings.Contains(err.Error(), "update copy metadata") {
 		t.Errorf("error = %q, want it to name the operation", err)
 	}
 }
 
-// TestTxAdapterRecordCompressionProbe_ReportsWriteFailure covers the in-transaction
+// TestTxAdapterUpdateCopyMetadata_ReportsWriteFailure covers the in-transaction
 // form, which is the one a move uses to carry a measurement onto the destination
 // row. It has to surface the failure so the move rolls back whole: a committed
 // move that dropped the measurement is the same wasted re-encode as above, only
 // now the copy has changed backends and nothing points at what was lost.
-func TestTxAdapterRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
+func TestTxAdapterUpdateCopyMetadata_ReportsWriteFailure(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -577,14 +577,12 @@ func TestTxAdapterRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
 		if _, err := adapter.q.ExecContext(ctx, `DROP TABLE object_locations`); err != nil {
 			t.Fatalf("drop object_locations: %v", err)
 		}
-		return adapter.RecordCompressionProbe(ctx, &core.CompressionProbe{
-			ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
-		})
+		return adapter.UpdateCopyMetadata(ctx, randomBinCopy(), probePatch())
 	})
 	if err == nil {
-		t.Fatal("RecordCompressionProbe returned nil against a missing table")
+		t.Fatal("UpdateCopyMetadata returned nil against a missing table")
 	}
-	if !strings.Contains(err.Error(), "record compression probe") {
+	if !strings.Contains(err.Error(), "update copy metadata") {
 		t.Errorf("error = %q, want it to name the operation", err)
 	}
 }

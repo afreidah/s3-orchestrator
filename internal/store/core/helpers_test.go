@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Pure-function coverage for ObjectFromStoredForm, displacedFromExisting, and
-// DeletedCopy.Cleanup.
+// Pure-function coverage for ObjectFromStoredForm, displacedFromExisting,
+// DeletedCopy.Cleanup, ObjectLocation.ObjectSize and LocationOn.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -659,5 +659,50 @@ func TestDeletedCopy_Cleanup(t *testing.T) {
 	dc.Reason = CleanupReasonSupersededIntent
 	if got := dc.Cleanup("k", "overwrite_displaced"); got.Reason != CleanupReasonSupersededIntent {
 		t.Errorf("Reason = %q, want the copy's own %q", got.Reason, CleanupReasonSupersededIntent)
+	}
+}
+
+// TestObjectLocation_ObjectSize pins which size a client is told about for
+// each stored form. Getting this wrong sends clients ranging against
+// coordinates the object does not have.
+func TestObjectLocation_ObjectSize(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		loc  ObjectLocation
+		want int64
+	}{
+		{name: "verbatim", loc: ObjectLocation{SizeBytes: 100}, want: 100},
+		{name: "encrypted only", loc: ObjectLocation{SizeBytes: 160, Encrypted: true, PlaintextSize: 100}, want: 100},
+		{name: "compressed only", loc: ObjectLocation{SizeBytes: 40, LogicalSize: 100, CompressionAlgorithm: "zstd"}, want: 100},
+		{
+			name: "compressed and encrypted",
+			loc: ObjectLocation{
+				SizeBytes: 70, Encrypted: true, PlaintextSize: 40,
+				LogicalSize: 100, CompressionAlgorithm: "zstd",
+			},
+			want: 100,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.loc.ObjectSize(); got != tc.want {
+				t.Errorf("ObjectSize = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLocationOn verifies the copy on the named backend is found, and that a
+// backend holding no copy yields nil.
+func TestLocationOn(t *testing.T) {
+	t.Parallel()
+	locs := []ObjectLocation{{BackendName: "b1", StorageKey: "k!1"}, {BackendName: "b2", StorageKey: "k!2"}}
+	if got := LocationOn(locs, "b2"); got == nil || got.StorageKey != "k!2" {
+		t.Errorf("LocationOn(b2) = %+v, want the b2 copy", got)
+	}
+	if got := LocationOn(locs, "b3"); got != nil {
+		t.Errorf("LocationOn(b3) = %+v, want nil", got)
 	}
 }

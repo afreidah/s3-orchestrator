@@ -121,9 +121,10 @@ func TestHeadObject_NoStoredIdentity_RecordsWhatTheBackendReported(t *testing.T)
 		AnyTimes()
 
 	var recorded *core.ObjectIdentity
-	store.EXPECT().RecordObjectIdentity(gomock.Any(), "key", gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, id *core.ObjectIdentity) error {
-			recorded = id
+	var answered *core.ObjectLocation
+	store.EXPECT().RecordObjectIdentity(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
+			answered, recorded = loc, id
 			return nil
 		}).Times(1)
 	storetest.Permissive(store)
@@ -135,6 +136,9 @@ func TestHeadObject_NoStoredIdentity_RecordsWhatTheBackendReported(t *testing.T)
 
 	if recorded == nil {
 		t.Fatal("expected the backend's answer to be recorded")
+	}
+	if answered.ObjectKey != "key" || answered.BackendName != "b1" {
+		t.Errorf("recorded against %s/%s, want the copy that answered, key/b1", answered.ObjectKey, answered.BackendName)
 	}
 	if recorded.ETag != `"backend-etag"` {
 		t.Errorf("etag = %q, want the backend value adopted for a verbatim copy", recorded.ETag)

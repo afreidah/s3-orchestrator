@@ -50,7 +50,8 @@ type ScrubberStore interface {
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-	RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error
+	RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error
+	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
 }
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -354,7 +355,9 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) batc
 
 	// Stamped even when the read failed: a copy that always fails would
 	// otherwise sit at the head of the queue and starve the rest of the sweep.
-	if err := s.store.MarkObjectScrubbed(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+	// A copy a newer write replaced is not stamped, since what was read is gone.
+	err := s.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Scrubbed: true})
+	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		s.log.WarnContext(ctx, "failed to record scrub timestamp",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	}
@@ -525,7 +528,14 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
 		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
 	}
-	if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, digests.SHA256); err != nil {
+	// The pass read the whole body to produce the digest, so the copy is
+	// verified by construction and stamped as scrubbed in the same write.
+	err := s.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{ContentHash: digests.SHA256, Scrubbed: true})
+	if errors.Is(err, core.ErrCopyChanged) {
+		// A newer write replaced the copy mid-hash; its own write recorded a hash.
+		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusSkipped}
+	}
+	if err != nil {
 		s.log.WarnContext(ctx, "failed to store hash",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
@@ -549,7 +559,7 @@ func (s *Scrubber) recordETag(ctx context.Context, loc *core.ObjectLocation, dig
 		return
 	}
 	id := &core.ObjectIdentity{ETag: etag.Single(digest)}
-	if err := s.store.RecordObjectIdentity(ctx, loc.ObjectKey, id); err != nil {
+	if err := s.store.RecordObjectIdentity(ctx, loc, id); err != nil {
 		s.log.WarnContext(ctx, "failed to record object etag",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	}

@@ -555,17 +555,17 @@ func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, req any) *gomock.
 }
 
 // RecordObjectIdentity mocks base method.
-func (m *MockCoordinatorStores) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+func (m *MockCoordinatorStores) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, loc, id)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
-func (mr *MockCoordinatorStoresMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) RecordObjectIdentity(ctx, loc, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectIdentity), ctx, key, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectIdentity), ctx, loc, id)
 }
 
 // RequeueCleanupDLQ mocks base method.
@@ -610,4 +610,18 @@ func (m *MockCoordinatorStores) SweepStaleCleanupQueueRows(ctx context.Context, 
 func (mr *MockCoordinatorStoresMockRecorder) SweepStaleCleanupQueueRows(ctx, storageKey, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockCoordinatorStores)(nil).SweepStaleCleanupQueueRows), ctx, storageKey, backend)
+}
+
+// UpdateCopyMetadata mocks base method.
+func (m *MockCoordinatorStores) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateCopyMetadata", ctx, loc, p)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateCopyMetadata indicates an expected call of UpdateCopyMetadata.
+func (mr *MockCoordinatorStoresMockRecorder) UpdateCopyMetadata(ctx, loc, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCopyMetadata", reflect.TypeOf((*MockCoordinatorStores)(nil).UpdateCopyMetadata), ctx, loc, p)
 }

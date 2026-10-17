@@ -128,22 +128,6 @@ func resolveLastModified(backendValue time.Time, loc *core.ObjectLocation) time.
 	return backendValue
 }
 
-// logicalSize reports the size the client wrote. For a compressed copy that is
-// the only place it survives, since SizeBytes counts the stored bytes and
-// PlaintextSize counts the compressed stream inside them.
-func logicalSize(loc *core.ObjectLocation) int64 {
-	if isCompressed(loc) {
-		return loc.LogicalSize
-	}
-	if loc != nil && loc.Encrypted {
-		return loc.PlaintextSize
-	}
-	if loc == nil {
-		return 0
-	}
-	return loc.SizeBytes
-}
-
 // -------------------------------------------------------------------------
 // COMPRESSED READ
 // -------------------------------------------------------------------------
@@ -201,7 +185,7 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 // applying the client's range in logical coordinates. The headers come from the
 // fetcher, which already received a response while reading the seek table.
 func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRangeFetcher, loc *core.ObjectLocation, rangeHeader string) (*s3be.GetObjectResult, error) {
-	size := logicalSize(loc)
+	size := loc.ObjectSize()
 	r := &s3be.GetObjectResult{Body: reader, Size: size}
 	if attrs := fetcher.objectAttrs(); attrs != nil {
 		r.ContentType, r.ETag = attrs.ContentType, attrs.ETag

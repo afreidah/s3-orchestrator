@@ -67,7 +67,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 			// and a HEAD that reports the stored size sends clients ranging
 			// against coordinates the object does not have.
 			if loc.Encrypted || isCompressed(loc) {
-				r.Size = logicalSize(loc)
+				r.Size = loc.ObjectSize()
 			}
 
 			r.LastModified = resolveLastModified(r.LastModified, loc)
@@ -89,7 +89,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	// adopted only when the stored bytes are the client's bytes; for a
 	// compressed or encrypted copy the scrubber fills it in from a plaintext
 	// read.
-	o.recordHeadIdentity(ctx, key, result, locs)
+	o.recordHeadIdentity(ctx, result, backendName, locs)
 
 	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
 	return &HeadResult{HeadObjectResult: result, TagCount: tagCountOf(locs)}, nil
@@ -136,7 +136,7 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 	}
 
 	res := &s3be.HeadObjectResult{
-		Size:         logicalSize(loc),
+		Size:         loc.ObjectSize(),
 		ContentType:  loc.Identity.ContentType,
 		ETag:         loc.Identity.ETag,
 		LastModified: loc.CreatedAt,
@@ -151,9 +151,14 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 }
 
 // recordHeadIdentity persists what a backend HEAD reported so the next one is
-// answered locally. Best effort: a write failure costs another round trip
-// later, which is what the call just did anyway.
-func (o *Manager) recordHeadIdentity(ctx context.Context, key string, r *s3be.HeadObjectResult, locs []core.ObjectLocation) {
+// answered locally. The write is conditioned on the copy on beName, the one
+// that answered. Best effort: a write failure costs another round trip later,
+// which is what the call just did anyway.
+func (o *Manager) recordHeadIdentity(ctx context.Context, r *s3be.HeadObjectResult, beName string, locs []core.ObjectLocation) {
+	answered := core.LocationOn(locs, beName)
+	if answered == nil {
+		return
+	}
 	id := &core.ObjectIdentity{
 		ContentType:  r.ContentType,
 		UserMetadata: r.Metadata,
@@ -167,8 +172,8 @@ func (o *Manager) recordHeadIdentity(ctx context.Context, key string, r *s3be.He
 	if !fillsMissingColumn(id, locs) {
 		return
 	}
-	if err := o.stores.RecordObjectIdentity(ctx, key, id); err != nil {
-		o.log.WarnContext(ctx, "failed to record object identity", "key", key, "error", err)
+	if err := o.stores.RecordObjectIdentity(ctx, answered, id); err != nil {
+		o.log.WarnContext(ctx, "failed to record object identity", "key", answered.ObjectKey, "error", err)
 	}
 }
 

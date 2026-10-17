@@ -70,8 +70,8 @@ type KeyedExistingCopy struct {
 // them and move the quota. The stored-form writes touch only the row; the
 // caller makes the matching quota adjustment in the same transaction.
 // InsertReplicaConditional returns the source row's size as read inside the
-// insert, for the caller to credit. RecordCompressionProbe stores what the
-// encoder measured for a copy it declined to store compressed.
+// insert, for the caller to credit. UpdateCopyMetadata writes a patch to the
+// copy loc names and returns ErrCopyChanged when no row has its storage key.
 // ListedPathStates reports, for paths a backend listed, which hold a recorded
 // copy and which a queued or dead-lettered delete names; a pending delete
 // outranks a recorded copy.
@@ -89,7 +89,7 @@ type ObjectsTxAdapter interface {
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
 	GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error)
 
-	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
+	UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error) // import-side, preserves an existing row
 	InsertReplicaConditional(ctx context.Context, p *ReplicaInsert) (size int64, inserted bool, err error)
 

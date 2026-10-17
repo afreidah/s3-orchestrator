@@ -38,8 +38,11 @@ import (
 // ObjectStore defines object location CRUD and listing operations.
 //
 // RecordObjectIdentity fills in the identity columns a read had to ask a
-// backend for, on every copy of the key. Columns already set are left alone,
-// because a value the write computed outranks what a backend reports.
+// backend for, on every copy of the key, while the copy that was read is still
+// recorded. Columns already set are left alone, because a value the write
+// computed outranks what a backend reports. UpdateCopyMetadata writes a patch
+// to the copy loc names, or returns ErrCopyChanged when a newer write replaced
+// it.
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
@@ -55,7 +58,8 @@ type ObjectStore interface {
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)
 	DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error)
-	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
+	RecordObjectIdentity(ctx context.Context, loc *ObjectLocation, id *ObjectIdentity) error
+	UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error
 }
 
 // TagStore defines object tag read and write operations. Writes come from TxOps
@@ -175,8 +179,6 @@ type IntegrityStore interface {
 	GetObjectsWithoutHash(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	ListUnreadableLocations(ctx context.Context, limit int, after Cursor) ([]ObjectLocation, error)
 	CountUnreadableLocations(ctx context.Context) (int64, error)
-	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
-	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
 }
 
 // ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
@@ -267,11 +269,10 @@ type LifecycleAdmin interface {
 // encrypt/decrypt batch operations used by the admin HTTP handler. These
 // are not on the request hot path, so they bypass the circuit breaker.
 type EncryptionAdmin interface {
-	ListEncryptedLocations(ctx context.Context, keyID string, limit int, after Cursor) ([]EncryptedLocation, error)
-	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
-	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]UnencryptedLocation, error)
+	ListEncryptedLocations(ctx context.Context, keyID string, limit int, after Cursor) ([]ObjectLocation, error)
+	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]DecryptableLocation, error)
+	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error
 }
 
@@ -283,10 +284,9 @@ type EncryptionAdmin interface {
 // uncompressed listing filters on the thresholds so copies under the size
 // floor, or already measured as missing the ratio, are not fetched again.
 type CompressionAdmin interface {
-	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds, backend string) ([]RewritableLocation, error)
-	ListCompressedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]RewritableLocation, error)
+	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds, backend string) ([]ObjectLocation, error)
+	ListCompressedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]ObjectLocation, error)
 	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
-	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
 }
 
 // ProvisioningStore defines the store half of the bucket registry: the buckets,

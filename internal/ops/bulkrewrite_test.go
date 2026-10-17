@@ -45,7 +45,7 @@ const pagingRows = 250
 // served from a cursor, exactly as the SQL does.
 type shrinkingSet struct {
 	mu      sync.Mutex
-	rows    []core.RewritableLocation
+	rows    []core.ObjectLocation
 	served  int
 	limits  []int
 	visited map[string]int
@@ -56,7 +56,7 @@ type shrinkingSet struct {
 func newShrinkingSet(n int) *shrinkingSet {
 	s := &shrinkingSet{visited: map[string]int{}}
 	for i := range n {
-		s.rows = append(s.rows, core.RewritableLocation{
+		s.rows = append(s.rows, core.ObjectLocation{
 			ObjectKey:   fmt.Sprintf("obj-%04d", i),
 			BackendName: "backend-a",
 			SizeBytes:   1024,
@@ -72,12 +72,12 @@ func newShrinkingSet(n int) *shrinkingSet {
 // page returns the rows after the cursor, up to limit. served bounds the total
 // handed out so a driver that never advances its cursor fails the test instead
 // of spinning forever.
-func (s *shrinkingSet) page(_ context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+func (s *shrinkingSet) page(_ context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.limits = append(s.limits, limit)
-	var out []core.RewritableLocation
+	var out []core.ObjectLocation
 	for i := range s.rows {
 		r := &s.rows[i]
 		if r.ObjectKey > after.ObjectKey || (r.ObjectKey == after.ObjectKey && r.BackendName > after.BackendName) {
@@ -111,7 +111,7 @@ func (s *shrinkingSet) visit(key string) {
 }
 
 // slicesDelete returns rows without the entry for key.
-func slicesDelete(rows []core.RewritableLocation, key string) []core.RewritableLocation {
+func slicesDelete(rows []core.ObjectLocation, key string) []core.ObjectLocation {
 	out := rows[:0]
 	for i := range rows {
 		if rows[i].ObjectKey != key {
@@ -172,6 +172,23 @@ func pagingCounter() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bulk_rewrite_paging_test"}, []string{"status"})
 }
 
+// leavingRewrite visits each row and, once its commit runs, takes it out of the
+// set, which is what a successful conversion does to a real listing.
+func leavingRewrite(set *shrinkingSet) func(context.Context, *s3be.GetObjectResult, *core.ObjectLocation) (rewritten, error) {
+	return func(_ context.Context, _ *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
+		key := loc.ObjectKey
+		set.visit(key)
+		return rewritten{
+			body: strings.NewReader("rewritten"),
+			size: int64(len("rewritten")),
+			commit: func() error {
+				set.remove(key)
+				return nil
+			},
+		}, nil
+	}
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
@@ -185,23 +202,12 @@ func TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp[*rewriteRow]{
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
-		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
-			key := loc.rewriteKey()
-			set.visit(key)
-			return rewritten{
-				body: strings.NewReader("rewritten"),
-				size: int64(len("rewritten")),
-				commit: func() error {
-					set.remove(key)
-					return nil
-				},
-			}, nil
-		},
+		listFn:      set.page,
+		rewrite:     leavingRewrite(set),
 	}.run(context.Background(), pagingEnv(t), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
@@ -220,18 +226,14 @@ func TestRunBulkRewrite_TerminatesWhenRowsStay(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp[*rewriteRow]{
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
-		declines: func(loc *rewriteRow) bool {
-			set.visit(loc.rewriteKey())
-			return true
-		},
-		rewrite: func(context.Context, *s3be.GetObjectResult, *rewriteRow) (rewritten, error) {
-			t.Error("a declined row must not be downloaded or rewritten")
-			return rewritten{}, nil
+		listFn:      set.page,
+		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
+			set.visit(loc.ObjectKey)
+			return rewritten{}, errSkipRewrite
 		},
 	}.run(context.Background(), pagingEnv(t), nil)
 	if err != nil {
@@ -262,29 +264,18 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 		return n%3 == 0
 	}
 
-	res, err := bulkRewriteOp[*rewriteRow]{
+	leave := leavingRewrite(set)
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
-		declines: func(loc *rewriteRow) bool {
-			if !declined(loc.rewriteKey()) {
-				return false
+		listFn:      set.page,
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
+			if declined(loc.ObjectKey) {
+				set.visit(loc.ObjectKey)
+				return rewritten{}, errSkipRewrite
 			}
-			set.visit(loc.rewriteKey())
-			return true
-		},
-		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
-			key := loc.rewriteKey()
-			set.visit(key)
-			return rewritten{
-				body: strings.NewReader("rewritten"),
-				size: int64(len("rewritten")),
-				commit: func() error {
-					set.remove(key)
-					return nil
-				},
-			}, nil
+			return leave(ctx, src, loc)
 		},
 	}.run(context.Background(), pagingEnv(t), nil)
 	if err != nil {
@@ -323,12 +314,12 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 		usage:   usageGate,
 	}
 
-	res, err := bulkRewriteOp[*rewriteRow]{
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
-		rewrite: func(context.Context, *s3be.GetObjectResult, *rewriteRow) (rewritten, error) {
+		listFn:      set.page,
+		rewrite: func(context.Context, *s3be.GetObjectResult, *core.ObjectLocation) (rewritten, error) {
 			t.Error("an object with no usage headroom must not be downloaded or rewritten")
 			return rewritten{}, nil
 		},
@@ -385,24 +376,13 @@ func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
 	const capRewrites = bulkRewriteBatchSize + 50
 	set := newShrinkingSet(pagingRows)
 
-	res, err := bulkRewriteOp[*rewriteRow]{
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
+		listFn:      set.page,
 		maxRewrites: capRewrites,
-		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
-			key := loc.rewriteKey()
-			set.visit(key)
-			return rewritten{
-				body: strings.NewReader("rewritten"),
-				size: int64(len("rewritten")),
-				commit: func() error {
-					set.remove(key)
-					return nil
-				},
-			}, nil
-		},
+		rewrite:     leavingRewrite(set),
 	}.run(context.Background(), pagingEnv(t), nil)
 	if err != nil {
 		t.Fatalf("bulk rewrite: %v", err)
@@ -438,26 +418,19 @@ func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
 	// Declining every other row means reaching the cap has to walk twice as
 	// many rows as it converts.
 	var considered int
-	res, err := bulkRewriteOp[*rewriteRow]{
+	leave := leavingRewrite(set)
+	res, err := bulkRewriteOp{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
-		listFn:      rewriteListFn(set.page),
+		listFn:      set.page,
 		maxRewrites: capRewrites,
-		declines: func(*rewriteRow) bool {
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 			considered++
-			return considered%2 == 1
-		},
-		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
-			key := loc.rewriteKey()
-			return rewritten{
-				body: strings.NewReader("rewritten"),
-				size: int64(len("rewritten")),
-				commit: func() error {
-					set.remove(key)
-					return nil
-				},
-			}, nil
+			if considered%2 == 1 {
+				return rewritten{}, errSkipRewrite
+			}
+			return leave(ctx, src, loc)
 		},
 	}.run(context.Background(), pagingEnv(t), nil)
 	if err != nil {

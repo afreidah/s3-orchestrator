@@ -233,17 +233,15 @@ DELETE FROM object_locations WHERE backend_name = $1;
 -- name: ListEncryptedLocations :many
 -- Paged by cursor: rotating a copy changes its key_id and takes it out of this
 -- predicate, so an offset would skip the rows that moved up.
-SELECT object_key, backend_name, encryption_key, key_id
+--
+-- The admin listings select whole rows, so each returns the table's model type
+-- and one conversion serves them all.
+SELECT *
 FROM object_locations
 WHERE encrypted = TRUE AND key_id = sqlc.arg(key_id)::text
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
-
--- name: UpdateEncryptionKey :exec
-UPDATE object_locations
-SET encryption_key = $3, key_id = $4
-WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListUnencryptedLocations :many
 -- Paged by cursor rather than offset. Encrypting a copy takes it out of this
@@ -253,7 +251,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- An empty backend_filter selects every backend, which is what a pass over the
 -- whole fleet asks for. Filtering here rather than after the page is read is
 -- what keeps the row_limit spent on candidates the pass will act on.
-SELECT object_key, backend_name, storage_key, size_bytes, etag
+SELECT *
 FROM object_locations
 WHERE encrypted = FALSE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -280,7 +278,7 @@ WHERE object_key = $1 AND backend_name = $2
 -- name: ListAllEncryptedLocations :many
 -- Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 -- copy removes it from this set mid-walk.
-SELECT object_key, backend_name, storage_key, size_bytes, encryption_key, key_id, plaintext_size, etag
+SELECT *
 FROM object_locations
 WHERE encrypted = TRUE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -313,9 +311,7 @@ LIMIT sqlc.arg(row_limit);
 -- The size floor is applied here for the same reason, one the row can answer:
 -- a copy below it is never a candidate, so listing it only to decline it costs
 -- a page slot on every pass forever.
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
-       plaintext_size, compression_algorithm, compression_level,
-       compression_format_version, logical_size, etag
+SELECT *
 FROM object_locations
 WHERE compression_algorithm IS NULL
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -334,9 +330,7 @@ LIMIT sqlc.arg(row_limit);
 -- decompress-existing rewrites. Cursor-paged for the same reason, and the case
 -- that makes it matter most: every object this pass succeeds on leaves the
 -- predicate, so an offset walk would skip whole pages and stop early.
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
-       plaintext_size, compression_algorithm, compression_level,
-       compression_format_version, logical_size, etag
+SELECT *
 FROM object_locations
 WHERE compression_algorithm IS NOT NULL
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -368,18 +362,20 @@ SET compression_algorithm = $3,
 WHERE object_key = $1 AND backend_name = $2
   AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
 
--- name: RecordCompressionProbe :exec
--- Records what the encoder produced for a copy it declined to store compressed,
--- so the next pass reaches the same verdict from the row instead of downloading
--- and encoding the object again.
---
--- Only the min_ratio decline writes here. A min_size decline is answered from
--- the row at no cost, a copy declined by usage limits never reached the encoder,
--- and a failure measured nothing.
+-- name: UpdateCopyMetadata :execrows
+-- Writes a patch to one copy: a NULL argument leaves its column as it is, and
+-- scrubbed stamps last_scrubbed_at. Matched on storage_key as well, so a write
+-- based on a copy a newer write replaced matches no row instead of landing on
+-- the newer copy.
 UPDATE object_locations
-SET compression_probe_size = $3,
-    compression_probe_level = $4
-WHERE object_key = $1 AND backend_name = $2;
+SET encryption_key          = COALESCE(sqlc.narg(encryption_key)::bytea, encryption_key),
+    key_id                  = COALESCE(sqlc.narg(key_id)::text, key_id),
+    content_hash            = COALESCE(sqlc.narg(content_hash)::text, content_hash),
+    last_scrubbed_at        = CASE WHEN sqlc.arg(scrubbed)::bool THEN NOW() ELSE last_scrubbed_at END,
+    compression_probe_size  = COALESCE(sqlc.narg(probe_size)::bigint, compression_probe_size),
+    compression_probe_level = COALESCE(sqlc.narg(probe_level)::text, compression_probe_level)
+WHERE object_key = sqlc.arg(object_key) AND backend_name = sqlc.arg(backend_name)
+  AND storage_key = sqlc.arg(storage_key);
 
 -- name: MarkObjectDecrypted :execrows
 --
@@ -439,14 +435,6 @@ WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
   AND COALESCE(last_scrubbed_at, created_at) < @scrubbed_before::timestamptz;
 
--- name: MarkObjectScrubbed :exec
--- Stamp a copy the scrubber just examined. Applied to every attempted copy,
--- not only the ones that verified: a copy that cannot be read would otherwise
--- stay at the head of the queue and starve the rest of the sweep.
-UPDATE object_locations
-SET last_scrubbed_at = NOW()
-WHERE object_key = $1 AND backend_name = $2;
-
 -- name: GetObjectsWithoutHash :many
 -- Return object locations that have no content hash, for backfill. Hashing
 -- reads the whole body, so unmanaged rows are left alone rather than spending
@@ -476,16 +464,6 @@ LIMIT sqlc.arg(row_limit);
 SELECT count(*) FROM object_locations
 WHERE encrypted AND (encryption_key IS NULL OR length(encryption_key) = 0);
 
--- name: UpdateContentHash :exec
--- Record the hash the backfill pass computed and stamp the copy as verified in
--- the same statement. The pass read the whole body to produce the digest, so the
--- copy is verified by construction at that moment. Leaving last_scrubbed_at NULL
--- would report it as never verified and sort it to the head of the scrub queue
--- on its original created_at, so the next sweep would re-read the same bytes.
-UPDATE object_locations
-SET content_hash = $3, last_scrubbed_at = NOW()
-WHERE object_key = $1 AND backend_name = $2;
-
 -- RecordObjectIdentity fills in what a read had to ask a backend for, so the
 -- next one does not. Every copy of the key is written, not just the one that
 -- answered: a per-copy value is what lets a failover change the ETag under a
@@ -493,12 +471,20 @@ WHERE object_key = $1 AND backend_name = $2;
 --
 -- Only NULL columns are filled. A recorded identity is what the write computed
 -- over the client's own bytes, and a backend's answer must never overwrite it.
+--
+-- Written only while the copy that was read is still recorded. An overwrite
+-- replaces every copy of the key, so while that one survives the others belong
+-- to the same write.
 -- name: RecordObjectIdentity :exec
-UPDATE object_locations
-SET etag          = COALESCE(etag, sqlc.narg('etag')),
-    content_type  = COALESCE(content_type, sqlc.narg('content_type')),
-    user_metadata = COALESCE(user_metadata, sqlc.narg('user_metadata'))
-WHERE object_key = $1;
+UPDATE object_locations AS copy
+SET etag          = COALESCE(copy.etag, sqlc.narg('etag')),
+    content_type  = COALESCE(copy.content_type, sqlc.narg('content_type')),
+    user_metadata = COALESCE(copy.user_metadata, sqlc.narg('user_metadata'))
+WHERE copy.object_key = sqlc.arg(object_key)
+  AND EXISTS (SELECT 1 FROM object_locations AS read_copy
+              WHERE read_copy.object_key = sqlc.arg(object_key)
+                AND read_copy.backend_name = sqlc.arg(backend_name)
+                AND read_copy.storage_key = sqlc.arg(storage_key));
 
 -- name: GetCopiesForKeysForUpdate :many
 -- Returns (object_key, backend_name, size_bytes) for every row matching

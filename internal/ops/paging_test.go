@@ -100,7 +100,7 @@ func backlogHasher(t *testing.T, b *backlog, unreadable func(key string) bool) *
 // the old one.
 type rotatingStore struct {
 	emptyEncAdmin
-	locs []core.EncryptedLocation
+	locs []core.ObjectLocation
 }
 
 // keyedEncryptor builds an encryptor whose primary key is primary and which can
@@ -146,7 +146,8 @@ func rotateWith(t *testing.T, enc *encryption.Encryptor, store *rotatingStore, o
 // assertAllUnder fails unless every copy in store is under keyID.
 func assertAllUnder(t *testing.T, store *rotatingStore, keyID string) {
 	t.Helper()
-	for _, loc := range store.locs {
+	for i := range store.locs {
+		loc := &store.locs[i]
 		if loc.KeyID != keyID {
 			t.Fatalf("copy %s is under %q, want %q", loc.ObjectKey, loc.KeyID, keyID)
 		}
@@ -154,28 +155,31 @@ func assertAllUnder(t *testing.T, store *rotatingStore, keyID string) {
 }
 
 // ListEncryptedLocations lists up to limit copies under keyID after the cursor.
-func (s *rotatingStore) ListEncryptedLocations(_ context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
-	var out []core.EncryptedLocation
-	for _, loc := range s.locs {
+func (s *rotatingStore) ListEncryptedLocations(_ context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	var out []core.ObjectLocation
+	for i := range s.locs {
+		loc := &s.locs[i]
 		if len(out) == limit {
 			break
 		}
 		if loc.KeyID == keyID && cursorAfter(loc.ObjectKey, loc.BackendName, after) {
-			out = append(out, loc)
+			out = append(out, *loc)
 		}
 	}
 	return out, nil
 }
 
-// UpdateEncryptionKey records the copy's re-wrapped key and its new key id.
-func (s *rotatingStore) UpdateEncryptionKey(_ context.Context, objectKey, backendName string, keyData []byte, newKeyID string) error {
+// UpdateCopyMetadata records the copy's re-wrapped key and its new key id, and
+// reports core.ErrCopyChanged when no copy matches.
+func (s *rotatingStore) UpdateCopyMetadata(_ context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
 	for i := range s.locs {
-		if s.locs[i].ObjectKey == objectKey && s.locs[i].BackendName == backendName {
-			s.locs[i].EncryptionKey = keyData
-			s.locs[i].KeyID = newKeyID
+		if s.locs[i].ObjectKey == loc.ObjectKey && s.locs[i].BackendName == loc.BackendName && s.locs[i].StorageKey == loc.StorageKey {
+			s.locs[i].EncryptionKey = p.EncryptionKey
+			s.locs[i].KeyID = p.KeyID
+			return nil
 		}
 	}
-	return nil
+	return core.ErrCopyChanged
 }
 
 // -------------------------------------------------------------------------
@@ -211,7 +215,7 @@ func TestRotateKey_RotatesEveryRowAcrossPages(t *testing.T) {
 	keyData, keyID, _ := sealed(t, keyedEncryptor(t, "key-a"), []byte("hello world"))
 	store := &rotatingStore{}
 	for i := range copies {
-		store.locs = append(store.locs, core.EncryptedLocation{
+		store.locs = append(store.locs, core.ObjectLocation{
 			ObjectKey: fmt.Sprintf("k-%04d", i), BackendName: "b1", EncryptionKey: keyData, KeyID: keyID,
 		})
 	}

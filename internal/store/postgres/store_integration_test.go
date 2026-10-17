@@ -30,6 +30,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -171,7 +172,7 @@ func TestStoreInt_WithAdvisoryLock_ReleasedOnPanic(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestStoreInt_GetObjectsWithoutHash verifies the helper returns
-// objects whose content_hash is NULL. After UpdateContentHash flips
+// objects whose content_hash is NULL. After UpdateCopyMetadata flips
 // one row, the next call reflects the change.
 func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	s := adapterPgStore(t)
@@ -197,8 +198,8 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 		t.Errorf("expected key %s in GetObjectsWithoutHash", key)
 	}
 
-	if err := s.UpdateContentHash(ctx, key, "backend-a", "deadbeef"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{ContentHash: "deadbeef", Scrubbed: true}); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 	rows, err = s.GetObjectsWithoutHash(ctx, 1000, core.Cursor{}, "")
 	if err != nil {
@@ -206,8 +207,124 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 	for _, r := range rows {
 		if r.ObjectKey == key {
-			t.Errorf("key %s still in GetObjectsWithoutHash after UpdateContentHash", key)
+			t.Errorf("key %s still in GetObjectsWithoutHash after UpdateCopyMetadata", key)
 		}
+	}
+}
+
+// pgProbeOn reads back the compression probe recorded for one copy. Neither
+// column is part of ObjectLocation, so it is read from the table directly.
+func pgProbeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
+	t.Helper()
+	var (
+		size  *int64
+		level *string
+	)
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT compression_probe_size, compression_probe_level
+		 FROM object_locations WHERE object_key = $1 AND backend_name = $2`,
+		key, backendName,
+	).Scan(&size, &level); err != nil {
+		t.Fatalf("read probe for %s on %s: %v", key, backendName, err)
+	}
+	if size == nil || level == nil {
+		return 0, ""
+	}
+	return *size, *level
+}
+
+// recordAt stores one copy of key on backend-a at the given storage key, so a
+// test can replace a copy with a newer write on the same backend.
+func recordAt(t *testing.T, s *Store, key, storageKey string) {
+	t.Helper()
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+		Key: key, Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: storageKey}},
+	}); err != nil {
+		t.Fatalf("RecordObject(%s): %v", storageKey, err)
+	}
+}
+
+// TestStoreInt_UpdateCopyMetadata_ReplacedCopyIsChanged verifies a patch based
+// on a copy a newer write replaced on the same backend lands on nothing: it
+// reports core.ErrCopyChanged and leaves the newer copy as its write left it.
+// A copy that is gone altogether reports the same.
+func TestStoreInt_UpdateCopyMetadata_ReplacedCopyIsChanged(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	recordAt(t, s, key, key+"!old")
+	read := *storetest.LocationOn(t, s, key, "backend-a")
+	recordAt(t, s, key, key+"!new")
+
+	err := s.UpdateCopyMetadata(ctx, &read, &core.CopyPatch{ContentHash: "sha256:old", Scrubbed: true})
+	if !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("patch of the replaced copy = %v, want ErrCopyChanged", err)
+	}
+	if got := storetest.LocationOn(t, s, key, "backend-a"); got.ContentHash != "" || got.LastScrubbedAt != nil {
+		t.Errorf("newer copy patched: hash=%q scrubbed=%v", got.ContentHash, got.LastScrubbedAt)
+	}
+
+	missing := uniqueKey(t, "missing")
+	gone := &core.ObjectLocation{ObjectKey: missing, BackendName: "backend-a", StorageKey: missing}
+	if err := s.UpdateCopyMetadata(ctx, gone, &core.CopyPatch{Scrubbed: true}); !errors.Is(err, core.ErrCopyChanged) {
+		t.Errorf("patch of an absent copy = %v, want ErrCopyChanged", err)
+	}
+}
+
+// TestStoreInt_UpdateCopyMetadata_WritesOnlyTheFieldsSet verifies each patch
+// field lands on its column and an unset field leaves its column as it was.
+func TestStoreInt_UpdateCopyMetadata_WritesOnlyTheFieldsSet(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	for _, p := range []*core.CopyPatch{
+		{EncryptionKey: []byte("dek"), KeyID: "key-2"},
+		{Probe: &core.CompressionProbe{Size: 9, Level: "default"}},
+		{ContentHash: "sha256:k", Scrubbed: true},
+	} {
+		if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), p); err != nil {
+			t.Fatalf("UpdateCopyMetadata(%+v): %v", p, err)
+		}
+	}
+
+	got := storetest.LocationOn(t, s, key, "backend-a")
+	if string(got.EncryptionKey) != "dek" || got.KeyID != "key-2" {
+		t.Errorf("key = %q/%q, want dek/key-2 kept through later patches", got.EncryptionKey, got.KeyID)
+	}
+	if size, level := pgProbeOn(t, s, key, "backend-a"); size != 9 || level != "default" {
+		t.Errorf("probe = %d/%q, want 9/default kept through later patches", size, level)
+	}
+	if got.ContentHash != "sha256:k" || got.LastScrubbedAt == nil {
+		t.Errorf("hash = %q scrubbed = %v, want sha256:k and a stamp", got.ContentHash, got.LastScrubbedAt)
+	}
+}
+
+// TestStoreInt_RecordObjectIdentity_SkipsAReplacedRead verifies an identity
+// learned from a copy a newer write has since replaced is not written: the
+// newer write's rows describe other bytes, and filling their NULL columns
+// would give them the old object's identity.
+func TestStoreInt_RecordObjectIdentity_SkipsAReplacedRead(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	recordAt(t, s, key, key+"!old")
+	read := *storetest.LocationOn(t, s, key, "backend-a")
+	recordAt(t, s, key, key+"!new")
+
+	if err := s.RecordObjectIdentity(ctx, &read, &core.ObjectIdentity{ETag: `"old-bytes"`}); err != nil {
+		t.Fatalf("RecordObjectIdentity: %v", err)
+	}
+	if got := storetest.LocationOn(t, s, key, "backend-a").Identity; got != nil && got.ETag != "" {
+		t.Errorf("newer copy took the replaced read's etag: %+v", got)
 	}
 }
 
@@ -227,8 +344,8 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
 	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, scrubAllCutoff()); err != nil {
@@ -974,7 +1091,7 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 
 // TestStoreInt_EncryptionAdminLifecycle covers the encrypt/rotate/
 // decrypt admin helpers: ListUnencryptedLocations, MarkObjectEncrypted,
-// ListEncryptedLocations, UpdateEncryptionKey, ListAllEncryptedLocations,
+// ListEncryptedLocations, UpdateCopyMetadata, ListAllEncryptedLocations,
 // MarkObjectDecrypted.
 func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
@@ -1026,8 +1143,9 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Rotate key.
-	if err := s.UpdateEncryptionKey(ctx, key, "backend-a", []byte("repacked"), "kid-2"); err != nil {
-		t.Fatalf("UpdateEncryptionKey: %v", err)
+	rotate := &core.CopyPatch{EncryptionKey: []byte("repacked"), KeyID: "kid-2"}
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), rotate); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
 	// ListAllEncryptedLocations sees the row regardless of key ID.
@@ -1112,6 +1230,44 @@ func TestStoreInt_ListExpiredObjects(t *testing.T) {
 	}
 }
 
+// seedIntentPg inserts an in-flight write intent for key on backend-a,
+// failing unless the intent is admitted.
+func seedIntentPg(t *testing.T, s *Store, key string) {
+	t.Helper()
+	fits, err := s.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID:    key + "/intent",
+		ObjectKey:   key,
+		StorageKey:  key,
+		BackendName: "backend-a",
+		SizeBytes:   1,
+	})
+	if err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(%s): fits=%v, err=%v", key, fits, err)
+	}
+}
+
+// deadLetterPg enqueues a delete for key on backend-a and moves only that
+// row to the DLQ, leaving rows from other tests in the queue.
+func deadLetterPg(t *testing.T, s *Store, key string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 1)); err != nil {
+		t.Fatalf("EnqueueCleanup(%s): %v", key, err)
+	}
+	pending, err := s.GetPendingCleanups(ctx, 10000)
+	if err != nil {
+		t.Fatalf("GetPendingCleanups: %v", err)
+	}
+	for i := range pending {
+		if pending[i].StorageKey != key {
+			continue
+		}
+		if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, "gave up"); err != nil {
+			t.Fatalf("MoveCleanupToDLQ: %v", err)
+		}
+	}
+}
+
 // TestStoreInt_ListedPathStates verifies the one-query page lookup against real
 // Postgres: a recorded copy, an in-flight write intent, a queued delete, a dead-lettered
 // delete, a path both recorded and queued, and a path with both an intent and a queued
@@ -1123,40 +1279,9 @@ func TestStoreInt_ListedPathStates(t *testing.T) {
 		uniqueKey(t, "dlq"), uniqueKey(t, "both"), uniqueKey(t, "other"), uniqueKey(t, "absent")
 	intentOnly, intentAndQueued := uniqueKey(t, "intent-only"), uniqueKey(t, "intent-queued")
 
-	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
-		IntentID:    uniqueKey(t, "intent-1"),
-		ObjectKey:   intentOnly,
-		StorageKey:  intentOnly,
-		BackendName: "backend-a",
-		SizeBytes:   1,
-	}); err != nil || !fits {
-		t.Fatalf("InsertPendingIfFits(intentOnly): fits=%v, err=%v", fits, err)
-	}
-
-	if fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
-		IntentID:    uniqueKey(t, "intent-2"),
-		ObjectKey:   intentAndQueued,
-		StorageKey:  intentAndQueued,
-		BackendName: "backend-a",
-		SizeBytes:   1,
-	}); err != nil || !fits {
-		t.Fatalf("InsertPendingIfFits(intentAndQueued): fits=%v, err=%v", fits, err)
-	}
-
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", dlq, "test", 1)); err != nil {
-		t.Fatalf("EnqueueCleanup(dlq): %v", err)
-	}
-	pending, err := s.GetPendingCleanups(ctx, 10000)
-	if err != nil {
-		t.Fatalf("GetPendingCleanups: %v", err)
-	}
-	for i := range pending {
-		if pending[i].StorageKey == dlq {
-			if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, "gave up"); err != nil {
-				t.Fatalf("MoveCleanupToDLQ: %v", err)
-			}
-		}
-	}
+	seedIntentPg(t, s, intentOnly)
+	seedIntentPg(t, s, intentAndQueued)
+	deadLetterPg(t, s, dlq)
 	for key, be := range map[string]string{rec: "backend-a", both: "backend-a", other: "backend-b"} {
 		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: be}}, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
@@ -1628,8 +1753,9 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-		if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
+		if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), hashed); err != nil {
+			t.Fatalf("UpdateCopyMetadata(%s): %v", key, err)
 		}
 	}
 
@@ -1729,8 +1855,9 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-		if err := s.UpdateContentHash(ctx, key, backend, "abc123"); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
+		if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, backend), hashed); err != nil {
+			t.Fatalf("UpdateCopyMetadata(%s): %v", key, err)
 		}
 	}
 
@@ -1780,8 +1907,9 @@ func TestStoreInt_ScrubFloorExcludesRecentlyVerified(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
+	hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), hashed); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
 	past := time.Now().Add(-time.Hour)
@@ -1872,8 +2000,8 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
-	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed: %v", err)
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{Scrubbed: true}); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
@@ -1948,8 +2076,8 @@ func TestStoreInt_LedgerStats_CountsNeverVerifiedCopies(t *testing.T) {
 	}
 
 	// Verifying it retires it from both figures.
-	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed: %v", err)
+	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{Scrubbed: true}); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 	stat = pgCoverage(t, s, reachable)
 	if stat.OldestUnverifiedAge >= 47*time.Hour {

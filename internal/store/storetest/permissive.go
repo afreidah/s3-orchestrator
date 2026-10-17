@@ -76,7 +76,6 @@ func Permissive(m *MockMetadataStore) {
 	r.GetQuotaStats(a).Return(nil, nil).AnyTimes()
 	r.GetLeastRecentlyScrubbedObjects(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.CountScrubCandidatesOnBackends(a, a, a).Return(int64(0), nil).AnyTimes()
-	r.MarkObjectScrubbed(a, a, a).Return(nil).AnyTimes()
 	r.ListUnreadableLocations(a, a, a).Return(nil, nil).AnyTimes()
 	r.CountUnreadableLocations(a).Return(int64(0), nil).AnyTimes()
 	r.GetStalePending(a, a, a).Return(nil, nil).AnyTimes()
@@ -104,7 +103,6 @@ func Permissive(m *MockMetadataStore) {
 	r.ListCompressedLocations(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListUncompressedLocations(a, a, a, a, a).Return(nil, nil).AnyTimes()
 	r.MarkObjectCompressed(a, a, a).Return(nil).AnyTimes()
-	r.RecordCompressionProbe(a, a).Return(nil).AnyTimes()
 	r.MarkObjectDecrypted(a, a).Return(nil).AnyTimes()
 	r.MarkObjectEncrypted(a, a).Return(nil).AnyTimes()
 	r.MoveCleanupToDLQ(a, a, a).Return(false, nil).AnyTimes()
@@ -137,8 +135,7 @@ func Permissive(m *MockMetadataStore) {
 	r.DeleteCredential(a, a).Return(nil).AnyTimes()
 	r.DeleteGrant(a, a, a).Return(nil).AnyTimes()
 	r.SyncQuotaLimits(a, a).Return(nil).AnyTimes()
-	r.UpdateContentHash(a, a, a, a).Return(nil).AnyTimes()
-	r.UpdateEncryptionKey(a, a, a, a, a).Return(nil).AnyTimes()
+	r.UpdateCopyMetadata(a, a, a).Return(nil).AnyTimes()
 	r.VerifySchemaVersion(a).Return(nil).AnyTimes()
 	r.WithAdvisoryLock(a, a, a).DoAndReturn(
 		func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {

@@ -315,49 +315,6 @@ func TestCompressedGet_CarriesBackendMetadata(t *testing.T) {
 	}
 }
 
-// TestLogicalSize_ByStoredForm pins which size a client is told about for each
-// stored form. Getting this wrong sends clients ranging against coordinates the
-// object does not have.
-func TestLogicalSize_ByStoredForm(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		loc  *core.ObjectLocation
-		want int64
-	}{
-		{name: "nil row", loc: nil, want: 0},
-		{name: "verbatim", loc: &core.ObjectLocation{SizeBytes: 100}, want: 100},
-		{
-			name: "encrypted only",
-			loc:  &core.ObjectLocation{SizeBytes: 160, Encrypted: true, PlaintextSize: 100},
-			want: 100,
-		},
-		{
-			name: "compressed only",
-			loc: &core.ObjectLocation{
-				SizeBytes: 40, LogicalSize: 100, CompressionAlgorithm: compression.Algorithm,
-			},
-			want: 100,
-		},
-		{
-			name: "compressed and encrypted",
-			loc: &core.ObjectLocation{
-				SizeBytes: 70, Encrypted: true, PlaintextSize: 40,
-				LogicalSize: 100, CompressionAlgorithm: compression.Algorithm,
-			},
-			want: 100,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := logicalSize(tc.loc); got != tc.want {
-				t.Errorf("logicalSize = %d, want %d", got, tc.want)
-			}
-		})
-	}
-}
-
 // TestCompressedGet_WithoutCodecFailsOver covers a compressed row on a server
 // with no codec wired. Serving the stored bytes would hand the client a zstd
 // stream it never uploaded, so the read has to fail instead.

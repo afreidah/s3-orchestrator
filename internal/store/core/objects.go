@@ -436,7 +436,7 @@ func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (in
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
-		if err := carryCompressionProbe(ctx, tx, src, key, toBackend); err != nil {
+		if err := carryCompressionProbe(ctx, tx, src, dest); err != nil {
 			return 0, err
 		}
 		if err := chargeStripes(ctx, tx, key, QuotaDeltas{
@@ -452,16 +452,14 @@ func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (in
 // carryCompressionProbe copies a source copy's compression measurement onto the
 // destination row of a move. The probe is not part of StoredForm, and dropping
 // it would make the next compression pass download the copy to measure again.
-func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocation, key, toBackend string) error {
+func carryCompressionProbe(ctx context.Context, tx TxAdapter, src, dest *ObjectLocation) error {
 	if src.CompressionProbeSize <= 0 {
 		return nil
 	}
-	return tx.RecordCompressionProbe(ctx, &CompressionProbe{
-		ObjectKey:   key,
-		BackendName: toBackend,
-		Size:        src.CompressionProbeSize,
-		Level:       src.CompressionProbeLevel,
-	})
+	return tx.UpdateCopyMetadata(ctx, dest, &CopyPatch{Probe: &CompressionProbe{
+		Size:  src.CompressionProbeSize,
+		Level: src.CompressionProbeLevel,
+	}})
 }
 
 // -------------------------------------------------------------------------

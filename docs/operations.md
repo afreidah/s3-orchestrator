@@ -339,6 +339,7 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
 |--------|-------------|
 | `s3o_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
 | `s3o_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
+| `s3o_key_rotation_objects_total{status="changed"}` | Copies a client overwrote during the pass; the new write is already sealed with the current key |
 
 ### Rotating client credentials
 

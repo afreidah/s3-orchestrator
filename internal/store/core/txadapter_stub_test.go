@@ -68,7 +68,9 @@ func (*noopTxAdapter) LockObjectOnBackend(context.Context, string, string) (*Obj
 
 func (*noopTxAdapter) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
 
-func (*noopTxAdapter) RecordCompressionProbe(context.Context, *CompressionProbe) error { return nil }
+func (*noopTxAdapter) UpdateCopyMetadata(context.Context, *ObjectLocation, *CopyPatch) error {
+	return nil
+}
 
 func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
 	return false, nil

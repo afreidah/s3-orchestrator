@@ -186,6 +186,7 @@ type mockMetadataStore struct {
 	deferredCandidatesErr error
 
 	markScrubbedErr     error
+	hashPatchErr        error
 	deletedLocations    []string
 	deleteLocationErr   error
 	ledgerErr           error
@@ -307,10 +308,19 @@ func (m *mockMetadataStore) CountScrubCandidatesOnBackends(_ context.Context, ba
 	return m.deferredCandidates, m.deferredCandidatesErr
 }
 
-// MarkObjectScrubbed is a stub on mockMetadataStore; records the copies a
-// scrub cycle stamped so tests can assert the sweep advanced past them.
-func (m *mockMetadataStore) MarkObjectScrubbed(_ context.Context, key, backendName string) error {
-	m.scrubbed = append(m.scrubbed, key+"@"+backendName)
+// UpdateCopyMetadata is a stub on mockMetadataStore. A hash patch records the
+// hash and returns hashPatchErr; a bare stamp records the copy a scrub cycle
+// stamped, so tests can assert the sweep advanced past it, and returns
+// markScrubbedErr.
+func (m *mockMetadataStore) UpdateCopyMetadata(_ context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	if p.ContentHash != "" {
+		if m.hashPatchErr != nil {
+			return m.hashPatchErr
+		}
+		m.lastUpdatedHash = p.ContentHash
+		return nil
+	}
+	m.scrubbed = append(m.scrubbed, loc.ObjectKey+"@"+loc.BackendName)
 	return m.markScrubbedErr
 }
 
@@ -350,16 +360,9 @@ func (m *mockMetadataStore) GetObjectsWithoutHash(context.Context, int, core.Cur
 	return nil, nil
 }
 
-// UpdateContentHash is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) UpdateContentHash(_ context.Context, _, _, hash string) error {
-	m.lastUpdatedHash = hash
-	return nil
-}
-
 // RecordObjectIdentity is a stub on mockMetadataStore; records the ETag the
 // backfill computed so a test can assert the object learned one.
-func (m *mockMetadataStore) RecordObjectIdentity(_ context.Context, _ string, id *core.ObjectIdentity) error {
+func (m *mockMetadataStore) RecordObjectIdentity(_ context.Context, _ *core.ObjectLocation, id *core.ObjectIdentity) error {
 	if id != nil {
 		m.lastRecordedETag = id.ETag
 	}

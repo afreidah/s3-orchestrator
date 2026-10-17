@@ -264,9 +264,6 @@ func TestRegisterInfrastructure_StoreAliases(t *testing.T) {
 	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
 		t.Errorf("LifecycleAdmin alias: %v", err)
 	}
-	if _, err := do.Invoke[core.EncryptionAdmin](inj); err != nil {
-		t.Errorf("EncryptionAdmin alias: %v", err)
-	}
 	if _, err := do.Invoke[core.NotificationOutbox](inj); err != nil {
 		t.Errorf("NotificationOutbox alias: %v", err)
 	}
@@ -439,7 +436,6 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	for _, want := range []string{
 		"internal/di.metadataStore",
 		"internal/store/core.LifecycleAdmin",
-		"internal/store/core.EncryptionAdmin",
 		"internal/store/core.NotificationOutbox",
 		"internal/breaker.CircuitBreaker",
 		"internal/proxy/usage.Service",
@@ -560,9 +556,6 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 	}
 	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
 		t.Errorf("LifecycleAdmin: %v", err)
-	}
-	if _, err := do.Invoke[core.EncryptionAdmin](inj); err != nil {
-		t.Errorf("EncryptionAdmin: %v", err)
 	}
 	if _, err := do.Invoke[core.NotificationOutbox](inj); err != nil {
 		t.Errorf("NotificationOutbox: %v", err)
@@ -772,24 +765,16 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 		}},
-		{"+encAdmin", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
-		}},
 		{"+logLevel", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 		}},
 		{"+stores", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 			do.ProvideValue(i, stores)
 		}},
@@ -797,7 +782,6 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cfg)
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)
@@ -806,7 +790,6 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cfg)
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)
@@ -816,7 +799,6 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cfg)
 			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
-			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)

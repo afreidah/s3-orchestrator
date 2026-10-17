@@ -14,6 +14,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
@@ -38,7 +39,8 @@ const rotateBatchSize = 500
 // TYPES
 // -------------------------------------------------------------------------
 
-// RotateKeyResult reports one key-rotation pass.
+// RotateKeyResult reports one key-rotation pass. Total - Rotated - Failed
+// counts copies a newer write replaced during the pass.
 type RotateKeyResult struct {
 	Rotated int
 	Failed  int
@@ -90,23 +92,15 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return bulkRewriteOp[*encryptRow]{
+	return bulkRewriteOp{
 		opName:      "encrypt-existing",
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*encryptRow, error) {
-			rows, err := e.store.ListUnencryptedLocations(ctx, batchSize, after, backend)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]*encryptRow, len(rows))
-			for i := range rows {
-				out[i] = &encryptRow{rows[i]}
-			}
-			return out, nil
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
+			return e.store.ListUnencryptedLocations(ctx, batchSize, after, backend)
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *encryptRow) (rewritten, error) {
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 			encResult, err := e.encryptor.Encrypt(ctx, src.Body, loc.SizeBytes)
 			if err != nil {
 				return rewritten{}, err
@@ -123,7 +117,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 						KeyID:          encResult.KeyID,
 						PlaintextSize:  loc.SizeBytes,
 						CiphertextSize: encResult.CiphertextSize,
-						ExpectedEtag:   loc.Etag,
+						ExpectedEtag:   loc.RecordedETag(),
 					})
 				},
 			}, nil
@@ -141,23 +135,15 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return bulkRewriteOp[*decryptRow]{
+	return bulkRewriteOp{
 		opName:      "decrypt-existing",
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
-		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*decryptRow, error) {
-			rows, err := e.store.ListAllEncryptedLocations(ctx, batchSize, after, backend)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]*decryptRow, len(rows))
-			for i := range rows {
-				out[i] = &decryptRow{rows[i]}
-			}
-			return out, nil
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error) {
+			return e.store.ListAllEncryptedLocations(ctx, batchSize, after, backend)
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *decryptRow) (rewritten, error) {
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error) {
 			plainReader, plainLen, err := e.encryptor.DecryptStored(ctx, src.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
 			if err != nil {
 				return rewritten{}, err
@@ -170,7 +156,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 						ObjectKey:     loc.ObjectKey,
 						BackendName:   loc.BackendName,
 						PlaintextSize: loc.PlaintextSize,
-						ExpectedEtag:  loc.Etag,
+						ExpectedEtag:  loc.RecordedETag(),
 					})
 				},
 			}, nil
@@ -190,16 +176,16 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 	}
 
 	var res RotateKeyResult
-	pager := batch.Pager[core.EncryptedLocation, core.Cursor]{
+	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(rotateBatchSize),
-		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
+		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 			return e.store.ListEncryptedLocations(ctx, oldKeyID, limit, after)
 		},
-		CursorOf: func(loc core.EncryptedLocation) core.Cursor {
+		CursorOf: func(loc core.ObjectLocation) core.Cursor {
 			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}
 		},
 	}
-	_, err := pager.Walk(ctx, func(ctx context.Context, locs []core.EncryptedLocation) (batch.Step, error) {
+	_, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
 		e.rotateBatch(ctx, locs, &res)
 		return batch.Step{}, nil
 	})
@@ -216,22 +202,21 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 // -------------------------------------------------------------------------
 
 // rotateBatch re-wraps one page of locations and folds the outcomes into res.
-func (e *Encryption) rotateBatch(ctx context.Context, locs []core.EncryptedLocation, res *RotateKeyResult) {
-	runner := batch.Runner[core.EncryptedLocation]{Name: "key-rotation", Concurrency: 1}
-	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.EncryptedLocation) batch.ItemResult {
-		if e.rotateOneLocation(ctx, loc) {
-			return batch.ItemResult{Outcome: batch.ItemSucceeded}
-		}
-		return batch.ItemResult{Outcome: batch.ItemFailed}
+func (e *Encryption) rotateBatch(ctx context.Context, locs []core.ObjectLocation, res *RotateKeyResult) {
+	runner := batch.Runner[core.ObjectLocation]{Name: "key-rotation", Concurrency: 1}
+	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
+		return e.rotateOneLocation(ctx, &loc)
 	})
 	res.Rotated += sum.Succeeded
 	res.Failed += sum.Failed
-	res.Total += sum.Attempted
+	res.Total += sum.Attempted + sum.Skipped
 }
 
-// rotateOneLocation re-wraps the DEK for a single encrypted location. Reports
-// success; every failure mode is non-fatal so the pass continues.
-func (e *Encryption) rotateOneLocation(ctx context.Context, loc core.EncryptedLocation) bool {
+// rotateOneLocation re-wraps the DEK for a single encrypted location. Every
+// failure mode is non-fatal so the pass continues. A copy a newer write
+// replaced mid-pass is skipped: the newer write sealed it under the current
+// key already.
+func (e *Encryption) rotateOneLocation(ctx context.Context, loc *core.ObjectLocation) batch.ItemResult {
 	baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
 	if unpackErr != nil {
 		return e.rotateFailed(ctx, "unpack failed", loc.ObjectKey, unpackErr)
@@ -247,64 +232,29 @@ func (e *Encryption) rotateOneLocation(ctx context.Context, loc core.EncryptedLo
 		return e.rotateFailed(ctx, "wrap failed", loc.ObjectKey, wrapErr)
 	}
 
-	newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
-	if err := e.store.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
+	err := e.store.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{
+		EncryptionKey: encryption.PackKeyData(baseNonce, newWrapped),
+		KeyID:         newKeyID,
+	})
+	if errors.Is(err, core.ErrCopyChanged) {
+		telemetry.KeyRotationObjectsTotal.WithLabelValues("changed").Inc()
+		return batch.ItemResult{Outcome: batch.ItemSkipped}
+	}
+	if err != nil {
 		return e.rotateFailed(ctx, "update failed", loc.ObjectKey, err)
 	}
 
 	telemetry.KeyRotationObjectsTotal.WithLabelValues("success").Inc()
-	return true
+	return batch.ItemResult{Outcome: batch.ItemSucceeded}
 }
 
-// rotateFailed records one non-fatal rotation failure and reports false, so
-// each failure path in rotateOneLocation stays a single line.
-func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err error) bool {
+// rotateFailed records one non-fatal rotation failure, so each failure path in
+// rotateOneLocation stays a single line.
+func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err error) batch.ItemResult {
 	e.log.WarnContext(ctx, "key rotation "+msg, "key", key, "error", err)
 	telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-	return false
+	return batch.ItemResult{Outcome: batch.ItemFailed}
 }
-
-// encryptRow adapts a plaintext location to bulkRewriteRow. Pointer receivers
-// avoid copying the embedded store row.
-type encryptRow struct{ core.UnencryptedLocation }
-
-// rewriteKey returns the object key to re-process.
-func (r *encryptRow) rewriteKey() string { return r.ObjectKey }
-
-// rewriteBackend returns the backend the row currently lives on.
-func (r *encryptRow) rewriteBackend() string { return r.BackendName }
-
-// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
-// which is what the rewrite reads and writes.
-func (r *encryptRow) rewriteStorageKey() string { return r.StorageKey }
-
-// rewriteSize returns the row's stored size, used for quota accounting.
-func (r *encryptRow) rewriteSize() int64 { return r.SizeBytes }
-
-// rewriteEtag returns what the copy reported when the listing selected it, which
-// the commit is predicated on.
-func (r *encryptRow) rewriteEtag() string { return r.Etag }
-
-// decryptRow adapts an encrypted location to bulkRewriteRow, so one driver
-// serves both directions of the rewrite.
-type decryptRow struct{ core.DecryptableLocation }
-
-// rewriteKey returns the object key to re-process.
-func (r *decryptRow) rewriteKey() string { return r.ObjectKey }
-
-// rewriteBackend returns the backend the row currently lives on.
-func (r *decryptRow) rewriteBackend() string { return r.BackendName }
-
-// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
-// which is what the rewrite reads and writes.
-func (r *decryptRow) rewriteStorageKey() string { return r.StorageKey }
-
-// rewriteSize returns the row's stored size, used for quota accounting.
-func (r *decryptRow) rewriteSize() int64 { return r.SizeBytes }
-
-// rewriteEtag returns what the copy reported when the listing selected it, which
-// the commit is predicated on.
-func (r *decryptRow) rewriteEtag() string { return r.Etag }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {

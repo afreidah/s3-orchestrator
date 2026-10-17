@@ -82,10 +82,7 @@ type keyBackend struct {
 // for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash,
-		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at, etag, content_type, user_metadata, managed,
+		SELECT `+objectColumns+`, etag, content_type, user_metadata, managed,
 		       (SELECT count(*) FROM object_tags WHERE object_tags.object_key = ?1) AS tag_count
 		FROM object_locations
 		WHERE object_key = ?1
@@ -494,10 +491,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 		return nil, fmt.Errorf("encode scrub backend list: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash,
-		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at
+		SELECT `+objectColumns+`
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
 		  AND backend_name IN (SELECT value FROM json_each(?))
@@ -528,40 +522,39 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 		  AND COALESCE(last_scrubbed_at, created_at) < ?`, string(backendsJSON), formatTime(scrubbedBefore))
 }
 
-// MarkObjectScrubbed records that a copy was examined, which is what advances
-// the sweep past it.
-func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
-	now := now()
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE object_locations SET last_scrubbed_at = ?
-		 WHERE object_key = ? AND backend_name = ?`,
-		now, key, backendName,
-	); err != nil {
-		return fmt.Errorf("failed to mark object scrubbed: %w", err)
-	}
-	return nil
-}
-
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, in key order after the cursor. Used by the backfill command. An empty
 // backend selects every one. Paged by cursor because hashing a copy takes it
 // out of the set.
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
+	return s.listCopies(ctx, "objects without hash", `content_hash IS NULL AND managed`, limit, after, backend)
+}
+
+// listCopies runs one page of a cursor-paged pass over whole copy rows, the
+// shape every bulk pass walks. predicate is a package constant, never caller
+// input, and args binds its placeholders. An empty backend selects every
+// backend.
+//
+// Paging is by cursor because each processed row leaves the predicate that
+// selected it, so an offset would skip the rows that moved up.
+func (s *Store) listCopies(ctx context.Context, what, predicate string, limit int, after core.Cursor, backend string, args ...any) ([]core.ObjectLocation, error) {
+	args = append([]any{backend, backend}, args...)
+	args = append(args, after.ObjectKey, after.BackendName, limit)
+	//nolint:gosec // G202: predicate is a package constant, never caller input
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash,
-		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at
+		SELECT `+objectColumns+`, etag
 		FROM object_locations
-		WHERE content_hash IS NULL AND managed
-		  AND (? = '' OR backend_name = ?)
+		WHERE (? = '' OR backend_name = ?)
+		  AND `+predicate+`
 		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ?`, backend, backend, after.ObjectKey, after.BackendName, limit)
+		LIMIT ?`,
+		args...,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
+		return nil, fmt.Errorf("list %s: %w", what, err)
 	}
-	return collectRows(rows, "objects without hash", scanObjectLocation)
+	return collectRows(rows, what, scanETaggedObjectLocation)
 }
 
 // unreadablePredicate selects copies that are encrypted with no key.
@@ -595,19 +588,6 @@ func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// UpdateContentHash records the hash the backfill pass computed and stamps the
-// copy as verified in the same statement, since the pass read the whole body to
-// produce the digest. Leaving last_scrubbed_at NULL would put the copy at the
-// head of the scrub queue and the next sweep would re-read the same bytes.
-func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE object_locations
-		SET content_hash = ?, last_scrubbed_at = ?
-		WHERE object_key = ? AND backend_name = ?`,
-		hash, time.Now().UTC().Format(time.RFC3339Nano), key, backendName)
-	return err
-}
-
 // -------------------------------------------------------------------------
 // ROW SCANNERS
 // -------------------------------------------------------------------------
@@ -634,6 +614,24 @@ func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	}
 	loc.Identity = identityFromColumns(etag, contentType, userMetadata)
 	loc.Unmanaged = !managed
+	return loc, nil
+}
+
+// scanETaggedObjectLocation scans a full row followed by its ETag, which a bulk
+// pass commits against.
+func scanETaggedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
+	var (
+		loc  core.ObjectLocation
+		cols scannedObjectColumns
+		etag sql.NullString
+	)
+	if err := rows.Scan(append(cols.scanDest(&loc), &etag)...); err != nil {
+		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
+	}
+	if err := cols.apply(&loc); err != nil {
+		return core.ObjectLocation{}, err
+	}
+	loc.Identity = listedIdentity(etag)
 	return loc, nil
 }
 
@@ -668,6 +666,12 @@ type scannedObjectColumns struct {
 	logicalSize   *int64
 	lastScrubbed  *string
 }
+
+// objectColumns is the projection scanDest reads, in its order.
+const objectColumns = `object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
+	key_id, plaintext_size, content_hash,
+	compression_algorithm, compression_level, compression_format_version, logical_size,
+	created_at, last_scrubbed_at`
 
 // scanDest returns the scan targets in the order every object_locations query
 // selects them.
@@ -724,7 +728,11 @@ func (c *scannedObjectColumns) apply(loc *core.ObjectLocation) error {
 // failover change the ETag under a conditional request. Columns already set
 // are left alone, so what a write computed over the client's own bytes
 // outranks what a backend reports about the bytes as stored.
-func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+//
+// Written only while loc, the copy that was read, is still recorded. An
+// overwrite replaces every copy of the key, so while that one survives the
+// others belong to the same write.
+func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
 	if id == nil {
 		return nil
 	}
@@ -733,10 +741,21 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.O
 		SET etag          = COALESCE(etag, ?),
 		    content_type  = COALESCE(content_type, ?),
 		    user_metadata = COALESCE(user_metadata, ?)
-		WHERE object_key = ?`,
-		identityETag(id), identityContentType(id), identityMetadataJSON(id), key)
+		WHERE object_key = ?
+		  AND EXISTS (SELECT 1 FROM object_locations AS read_copy
+		              WHERE read_copy.object_key = ?
+		                AND read_copy.backend_name = ?
+		                AND read_copy.storage_key = ?)`,
+		identityETag(id), identityContentType(id), identityMetadataJSON(id),
+		loc.ObjectKey, loc.ObjectKey, loc.BackendName, loc.StorageKey)
 	if err != nil {
 		return fmt.Errorf("record object identity: %w", err)
 	}
 	return nil
+}
+
+// UpdateCopyMetadata writes a patch to the copy loc names, or returns
+// core.ErrCopyChanged when a newer write replaced it.
+func (s *Store) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	return s.direct().UpdateCopyMetadata(ctx, loc, p)
 }

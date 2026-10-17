@@ -237,6 +237,34 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	}
 }
 
+// TestBackfill_ReplacedCopyIsSkipped verifies a copy a newer write replaced
+// while it was being hashed is skipped rather than failed: the hash describes
+// bytes the row no longer names, and the newer write recorded its own.
+func TestBackfill_ReplacedCopyIsSkipped(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+	body := "plaintext object"
+	ms.hashPatchErr = core.ErrCopyChanged
+
+	locs := withPaths([]core.ObjectLocation{
+		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body))},
+	})
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader(body)),
+		Size: int64(len(body)),
+	}, func() {}, nil)
+
+	sum := s.HashCopies(context.Background(), locs, nil)
+	if sum.Skipped != 1 || sum.Failed != 0 || sum.Succeeded != 0 {
+		t.Errorf("summary = %+v, want the replaced copy skipped", sum)
+	}
+	if ms.lastRecordedETag != "" {
+		t.Errorf("recorded etag %q for a replaced copy", ms.lastRecordedETag)
+	}
+}
+
 // TestBackfill_BackendError verifies the backfill backend error contract.
 // Asserts that expected 0 processed, got.
 func TestBackfill_BackendError(t *testing.T) {

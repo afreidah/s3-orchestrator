@@ -44,7 +44,7 @@ func encodedForm() *core.StoredForm {
 
 // findRewritable returns the row for key from a listing page, failing when the
 // listing did not offer it.
-func findRewritable(t *testing.T, rows []core.RewritableLocation, key string) core.RewritableLocation {
+func findRewritable(t *testing.T, rows []core.ObjectLocation, key string) core.ObjectLocation {
 	t.Helper()
 	for i := range rows {
 		if rows[i].ObjectKey == key {
@@ -52,11 +52,11 @@ func findRewritable(t *testing.T, rows []core.RewritableLocation, key string) co
 		}
 	}
 	t.Fatalf("listing did not offer %q", key)
-	return core.RewritableLocation{}
+	return core.ObjectLocation{}
 }
 
 // assertAbsent fails when a listing offered a key belonging to the other one.
-func assertAbsent(t *testing.T, rows []core.RewritableLocation, key, listing string) {
+func assertAbsent(t *testing.T, rows []core.ObjectLocation, key, listing string) {
 	t.Helper()
 	for i := range rows {
 		if rows[i].ObjectKey == key {
@@ -67,7 +67,7 @@ func assertAbsent(t *testing.T, rows []core.RewritableLocation, key, listing str
 
 // assertEnvelopeCarried checks a listed row describes the stored bytes fully
 // enough for a rewrite to unwrap them and put them back.
-func assertEnvelopeCarried(t *testing.T, got core.RewritableLocation) {
+func assertEnvelopeCarried(t *testing.T, got core.ObjectLocation) {
 	t.Helper()
 	if !got.Encrypted || got.KeyID != "key-old" || string(got.EncryptionKey) != "old-packed-key" {
 		t.Errorf("envelope missing from the listing: %+v", got)
@@ -176,7 +176,7 @@ func walkCompressedByCursor(t *testing.T, s *Store, ctx context.Context, want ma
 }
 
 // countWanted folds one page into the tally, ignoring rows other tests seeded.
-func countWanted(page []core.RewritableLocation, want map[string]bool, seen map[string]int) {
+func countWanted(page []core.ObjectLocation, want map[string]bool, seen map[string]int) {
 	for i := range page {
 		if want[page[i].ObjectKey] {
 			seen[page[i].ObjectKey]++

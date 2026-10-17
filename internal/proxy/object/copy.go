@@ -213,10 +213,8 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 // bare source key when there is no such copy, which callers rule out first
 // with sameBackendCopyEligible.
 func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, sourceKey string) string {
-	for i := range locations {
-		if locations[i].BackendName == destBackendName {
-			return core.StoragePath(sourceKey, locations[i].StorageKey)
-		}
+	if loc := core.LocationOn(locations, destBackendName); loc != nil {
+		return core.StoragePath(sourceKey, loc.StorageKey)
 	}
 	return sourceKey
 }
@@ -227,12 +225,7 @@ func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, so
 // because no backend can satisfy a CopySource that points at a
 // foreign bucket.
 func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName string) bool {
-	for i := range locations {
-		if locations[i].BackendName == destBackendName {
-			return true
-		}
-	}
-	return false
+	return core.LocationOn(locations, destBackendName) != nil
 }
 
 // CopyObjectRequest is one CopyObject call's inputs.

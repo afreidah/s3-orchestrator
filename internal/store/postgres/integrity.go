@@ -6,7 +6,7 @@
 // Implements the Postgres engine bindings for the integrity scrubber:
 // random-sample selection of objects whose content_hash is set,
 // listing of objects whose hash is null (so the backfill path can
-// compute one), and the per-object UpdateContentHash. Uses TABLESAMPLE
+// compute one), and the unreadable-copy listing. Uses TABLESAMPLE
 // SYSTEM for cheap random sampling instead of ORDER BY random() so the
 // scrubber stays linear-time as the table grows.
 // -------------------------------------------------------------------------------
@@ -68,18 +68,6 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 	return n, nil
 }
 
-// MarkObjectScrubbed records that a copy was examined, which is what advances
-// the sweep past it.
-func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
-	if err := s.queries.MarkObjectScrubbed(ctx, db.MarkObjectScrubbedParams{
-		ObjectKey:   key,
-		BackendName: backendName,
-	}); err != nil {
-		return fmt.Errorf("failed to mark object scrubbed: %w", err)
-	}
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // REPORTING
 // -------------------------------------------------------------------------
@@ -120,15 +108,4 @@ func (s *Store) CountUnreadableLocations(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("count unreadable locations: %w", err)
 	}
 	return n, nil
-}
-
-// UpdateContentHash records the hash the backfill pass computed and stamps the
-// copy as verified in the same statement, because the pass read the whole body
-// to produce the digest.
-func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
-	return s.queries.UpdateContentHash(ctx, db.UpdateContentHashParams{
-		ObjectKey:   key,
-		BackendName: backendName,
-		ContentHash: &hash,
-	})
 }

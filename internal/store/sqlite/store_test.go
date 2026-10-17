@@ -212,6 +212,28 @@ func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	}
 }
 
+// mustPatchCopy applies p to the copy of key on backend, failing the test on
+// error.
+func mustPatchCopy(t *testing.T, s *Store, key, backend string, p *core.CopyPatch) {
+	t.Helper()
+	if err := s.UpdateCopyMetadata(context.Background(), storetest.LocationOn(t, s, key, backend), p); err != nil {
+		t.Fatalf("UpdateCopyMetadata(%s, %s): %v", key, backend, err)
+	}
+}
+
+// mustSetContentHash records hash on the copy of key on backend and stamps it
+// scrubbed, as the hash backfill does.
+func mustSetContentHash(t *testing.T, s *Store, key, backend, hash string) {
+	t.Helper()
+	mustPatchCopy(t, s, key, backend, &core.CopyPatch{ContentHash: hash, Scrubbed: true})
+}
+
+// mustMarkScrubbed stamps the copy of key on backend as examined now.
+func mustMarkScrubbed(t *testing.T, s *Store, key, backend string) {
+	t.Helper()
+	mustPatchCopy(t, s, key, backend, &core.CopyPatch{Scrubbed: true})
+}
+
 // seedBytesUsed writes a backend's counter directly, for the tests whose
 // subject is the SQL that reads or moves bytes_used. Recording an object no
 // longer touches it - a write reports its delta and the caller applies it to
@@ -1895,9 +1917,9 @@ func TestGetObjectsWithoutHash_PagesByCursor(t *testing.T) {
 	}
 	// Hashing the first page takes it out of the set; the cursor still has to
 	// land on the one copy left rather than skip it.
-	for _, loc := range first {
-		if err := s.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, "h"); err != nil {
-			t.Fatalf("UpdateContentHash: %v", err)
+	for i := range first {
+		if err := s.UpdateCopyMetadata(ctx, &first[i], &core.CopyPatch{ContentHash: "h", Scrubbed: true}); err != nil {
+			t.Fatalf("UpdateCopyMetadata: %v", err)
 		}
 	}
 	after := core.Cursor{ObjectKey: first[1].ObjectKey, BackendName: first[1].BackendName}
@@ -1951,10 +1973,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 		t.Errorf("expected 2 unhashed, got %d", len(unhashed))
 	}
 
-	// Update hash
-	if err := s.UpdateContentHash(ctx, "bucket/a", "backend-a", "sha256:abc"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
-	}
+	mustSetContentHash(t, s, "bucket/a", "backend-a", "sha256:abc")
 
 	// Now only 1 without hash
 	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, core.Cursor{}, "")
@@ -2313,9 +2332,9 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 		t.Errorf("expected 1 encrypted, got %d", len(enc))
 	}
 
-	// Update encryption key (rotation)
-	if err := s.UpdateEncryptionKey(ctx, "bucket/plain", "backend-a", []byte("new-dek"), "key-2"); err != nil {
-		t.Fatalf("UpdateEncryptionKey: %v", err)
+	// Re-wrap the DEK (rotation), patching the copy the listing returned.
+	if err := s.UpdateCopyMetadata(ctx, &enc[0], &core.CopyPatch{EncryptionKey: []byte("new-dek"), KeyID: "key-2"}); err != nil {
+		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
 
 	// Old key should have 0 entries
@@ -3636,19 +3655,13 @@ func TestScrubQueue_OrdersByLeastRecentlyScrubbed(t *testing.T) {
 
 	for _, key := range []string{"bucket/a", "bucket/b", "bucket/c"} {
 		mustRecordObject(t, s, key, "backend-a", 100)
-		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
-		}
+		mustSetContentHash(t, s, key, "backend-a", "sha256:"+key)
 	}
 
 	// Stamp two of them, leaving bucket/c never verified.
-	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed(a): %v", err)
-	}
+	mustMarkScrubbed(t, s, "bucket/a", "backend-a")
 	time.Sleep(2 * time.Millisecond)
-	if err := s.MarkObjectScrubbed(ctx, "bucket/b", "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed(b): %v", err)
-	}
+	mustMarkScrubbed(t, s, "bucket/b", "backend-a")
 
 	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"}, scrubAllCutoff())
 	if err != nil {
@@ -3677,9 +3690,7 @@ func TestScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 
 	for _, key := range []string{"bucket/old", "bucket/fresh"} {
 		mustRecordObject(t, s, key, "backend-a", 100)
-		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
-		}
+		mustSetContentHash(t, s, key, "backend-a", "sha256:"+key)
 	}
 
 	// bucket/old was written a year ago and verified a month ago.
@@ -3727,7 +3738,6 @@ func keysOf(locs []core.ObjectLocation) []string {
 func TestLedgerStats_ReportsCoverage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 	reachable := []string{"backend-a"}
 
 	// No hashed copies at all: nothing to report.
@@ -3753,9 +3763,7 @@ func TestLedgerStats_ReportsCoverage(t *testing.T) {
 
 	// Verifying the backlogged copy retires it from both figures, so the age
 	// falls back to the copy still outstanding.
-	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed: %v", err)
-	}
+	mustMarkScrubbed(t, s, "bucket/a", "backend-a")
 	stat = coverageOf(t, s, reachable)
 	if stat.NeverVerified != 1 {
 		t.Errorf("never verified = %d, want 1", stat.NeverVerified)
@@ -3793,19 +3801,16 @@ func TestLedgerStats_UnreachableBackendIsDeferred(t *testing.T) {
 	}
 }
 
-// TestUpdateContentHash_StampsAsVerified pins that the backfill pass does not
+// TestHashBackfillPatch_StampsAsVerified pins that the backfill pass does not
 // leave behind a copy the very next sweep would re-read. The pass hashed the
 // bytes it downloaded, so the copy is verified at that moment.
-func TestUpdateContentHash_StampsAsVerified(t *testing.T) {
+func TestHashBackfillPatch_StampsAsVerified(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	backdateCreatedAt(t, s, "bucket/a", "backend-a", 48*time.Hour)
-	if err := s.UpdateContentHash(ctx, "bucket/a", "backend-a", "sha256:a"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
-	}
+	mustSetContentHash(t, s, "bucket/a", "backend-a", "sha256:a")
 
 	stat := coverageOf(t, s, []string{"backend-a"})
 	if stat.NeverVerified != 0 {
@@ -3817,7 +3822,7 @@ func TestUpdateContentHash_StampsAsVerified(t *testing.T) {
 }
 
 // hashAtWrite gives a copy a content hash without stamping it, which is what
-// the write path leaves behind. UpdateContentHash cannot stand in for it: that
+// the write path leaves behind. mustSetContentHash cannot stand in for it: that
 // is the backfill pass, and it stamps.
 func hashAtWrite(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
@@ -3841,14 +3846,61 @@ func backdateCreatedAt(t *testing.T, s *Store, key, backend string, by time.Dura
 	}
 }
 
-// TestMarkObjectScrubbed_UnknownCopyIsNoOp verifies stamping a row that is not
-// there fails silently rather than erroring, so a copy deleted mid-cycle does
-// not fail the sweep.
-func TestMarkObjectScrubbed_UnknownCopyIsNoOp(t *testing.T) {
+// TestUpdateCopyMetadata_ReplacedCopyIsChanged verifies a patch based on a copy
+// a newer write replaced on the same backend lands on nothing: it reports
+// core.ErrCopyChanged and leaves the newer copy as its write left it. A copy
+// that is gone altogether reports the same.
+func TestUpdateCopyMetadata_ReplacedCopyIsChanged(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	if err := s.MarkObjectScrubbed(context.Background(), "bucket/missing", "backend-a"); err != nil {
-		t.Errorf("stamping an absent copy should be a no-op, got %v", err)
+	ctx := context.Background()
+
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!old"}},
+	}); err != nil {
+		t.Fatalf("RecordObject(old): %v", err)
+	}
+	read := *storetest.LocationOn(t, s, "bucket/k", "backend-a")
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!new"}},
+	}); err != nil {
+		t.Fatalf("RecordObject(new): %v", err)
+	}
+
+	err := s.UpdateCopyMetadata(ctx, &read, &core.CopyPatch{ContentHash: "sha256:old", Scrubbed: true})
+	if !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("patch of the replaced copy = %v, want ErrCopyChanged", err)
+	}
+	if got := storetest.LocationOn(t, s, "bucket/k", "backend-a"); got.ContentHash != "" || got.LastScrubbedAt != nil {
+		t.Errorf("newer copy patched: hash=%q scrubbed=%v", got.ContentHash, got.LastScrubbedAt)
+	}
+
+	gone := &core.ObjectLocation{ObjectKey: "bucket/missing", BackendName: "backend-a", StorageKey: "bucket/missing"}
+	if err := s.UpdateCopyMetadata(ctx, gone, &core.CopyPatch{Scrubbed: true}); !errors.Is(err, core.ErrCopyChanged) {
+		t.Errorf("patch of an absent copy = %v, want ErrCopyChanged", err)
+	}
+}
+
+// TestUpdateCopyMetadata_WritesOnlyTheFieldsSet verifies each patch field
+// lands on its column and an unset field leaves its column as it was.
+func TestUpdateCopyMetadata_WritesOnlyTheFieldsSet(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/k", "backend-a", 10)
+
+	mustPatchCopy(t, s, "bucket/k", "backend-a", &core.CopyPatch{EncryptionKey: []byte("dek"), KeyID: "key-2"})
+	mustPatchCopy(t, s, "bucket/k", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 9, Level: "default"}})
+	mustSetContentHash(t, s, "bucket/k", "backend-a", "sha256:k")
+
+	got := storetest.LocationOn(t, s, "bucket/k", "backend-a")
+	if string(got.EncryptionKey) != "dek" || got.KeyID != "key-2" {
+		t.Errorf("key = %q/%q, want dek/key-2 kept through later patches", got.EncryptionKey, got.KeyID)
+	}
+	if size, level := probeOn(t, s, "bucket/k", "backend-a"); size != 9 || level != "default" {
+		t.Errorf("probe = %d/%q, want 9/default kept through later patches", size, level)
+	}
+	if got.ContentHash != "sha256:k" || got.LastScrubbedAt == nil {
+		t.Errorf("hash = %q scrubbed = %v, want sha256:k and a stamp", got.ContentHash, got.LastScrubbedAt)
 	}
 }
 
@@ -3874,8 +3926,9 @@ func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
 	if _, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-a"}, scrubAllCutoff()); err == nil {
 		t.Error("CountScrubCandidatesOnBackends should surface a closed database")
 	}
-	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err == nil {
-		t.Error("MarkObjectScrubbed should surface a closed database")
+	loc := &core.ObjectLocation{ObjectKey: "bucket/a", BackendName: "backend-a", StorageKey: "bucket/a"}
+	if err := s.UpdateCopyMetadata(ctx, loc, &core.CopyPatch{Scrubbed: true}); err == nil || errors.Is(err, core.ErrCopyChanged) {
+		t.Errorf("UpdateCopyMetadata should surface a closed database, got %v", err)
 	}
 }
 
@@ -3893,9 +3946,7 @@ func TestSqlite_ScrubQueue_BackendFilterExcludesUnaffordableBackends(t *testing.
 		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		if err := s.UpdateContentHash(ctx, key, backend, "sha256:"+key); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
-		}
+		mustSetContentHash(t, s, key, backend, "sha256:"+key)
 	}
 
 	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"}, scrubAllCutoff())
@@ -3936,9 +3987,7 @@ func TestSqlite_ScrubFloorExcludesRecentlyVerified(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:fresh"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
-	}
+	mustSetContentHash(t, s, key, "backend-a", "sha256:fresh")
 
 	past := time.Now().Add(-time.Hour)
 	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"}, past)
@@ -3978,9 +4027,7 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		if err := s.UpdateContentHash(ctx, key, "backend-b", "sha256:"+key); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
-		}
+		mustSetContentHash(t, s, key, "backend-b", "sha256:"+key)
 	}
 	// Hashless copies are not scrub candidates and must not be counted.
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/z", Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 10}); err != nil {
@@ -4279,9 +4326,7 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 
 	// Verify one copy, leaving the other untouched. Per-copy is the point: a
 	// replicated object can have one copy checked and another never looked at.
-	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
-		t.Fatalf("MarkObjectScrubbed: %v", err)
-	}
+	mustMarkScrubbed(t, s, key, "backend-a")
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
 	if err != nil {

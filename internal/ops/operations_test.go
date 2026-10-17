@@ -99,17 +99,17 @@ func (f *fakeBackend) ListObjects(context.Context, string, func([]s3be.ListedObj
 type emptyEncAdmin struct{}
 
 // ListEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListEncryptedLocations(context.Context, string, int, core.Cursor) ([]core.EncryptedLocation, error) {
+func (emptyEncAdmin) ListEncryptedLocations(context.Context, string, int, core.Cursor) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
-// UpdateEncryptionKey is a no-op.
-func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
+// UpdateCopyMetadata is a no-op.
+func (emptyEncAdmin) UpdateCopyMetadata(_ context.Context, _ *core.ObjectLocation, _ *core.CopyPatch) error {
 	return nil
 }
 
 // ListUnencryptedLocations lists no plaintext locations.
-func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.UnencryptedLocation, error) {
+func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -119,7 +119,7 @@ func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpd
 }
 
 // ListAllEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.DecryptableLocation, error) {
+func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -132,18 +132,18 @@ func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _ *core.DecryptedUpd
 // processes a single object and then terminates.
 type rowEncAdmin struct {
 	emptyEncAdmin
-	row     core.UnencryptedLocation
+	row     core.ObjectLocation
 	markErr error
 	served  atomic.Bool
 	marked  atomic.Bool
 }
 
 // ListUnencryptedLocations serves the single row once.
-func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.UnencryptedLocation, error) {
+func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
 	if r.served.Swap(true) {
 		return nil, nil
 	}
-	return []core.UnencryptedLocation{r.row}, nil
+	return []core.ObjectLocation{r.row}, nil
 }
 
 // MarkObjectEncrypted records that the post-encrypt metadata update ran, or
@@ -588,7 +588,7 @@ func TestEncryptExisting_EmptyStore(t *testing.T) {
 func TestEncryptExisting_OneRow(t *testing.T) {
 	t.Parallel()
 	fake := &fakeBackend{payload: []byte("hello world")}
-	encStore := &rowEncAdmin{row: core.UnencryptedLocation{
+	encStore := &rowEncAdmin{row: core.ObjectLocation{
 		ObjectKey:   testBucket + "/file.txt",
 		BackendName: "backend-a",
 		SizeBytes:   int64(len(fake.payload)),
@@ -610,37 +610,21 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 	}
 }
 
-// TestBulkRewriteAdapters exercises the row adapters that let one rewrite
-// driver serve both directions.
-func TestBulkRewriteAdapters(t *testing.T) {
-	t.Parallel()
-
-	er := &encryptRow{ObjectKey: "k", BackendName: "b", SizeBytes: 42}
-	if er.rewriteKey() != "k" || er.rewriteBackend() != "b" || er.rewriteSize() != 42 {
-		t.Errorf("encryptRow accessors wrong: %+v", er)
-	}
-
-	dr := &decryptRow{ObjectKey: "x", BackendName: "y", SizeBytes: 7}
-	if dr.rewriteKey() != "x" || dr.rewriteBackend() != "y" || dr.rewriteSize() != 7 {
-		t.Errorf("decryptRow accessors wrong: %+v", dr)
-	}
-}
-
 // decryptRowStore serves exactly one encrypted location, so the reverse
 // rewrite processes a single object and then terminates.
 type decryptRowStore struct {
 	emptyEncAdmin
-	row    core.DecryptableLocation
+	row    core.ObjectLocation
 	served atomic.Bool
 	marked atomic.Bool
 }
 
 // ListAllEncryptedLocations serves the single row once.
-func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.DecryptableLocation, error) {
+func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.ObjectLocation, error) {
 	if d.served.Swap(true) {
 		return nil, nil
 	}
-	return []core.DecryptableLocation{d.row}, nil
+	return []core.ObjectLocation{d.row}, nil
 }
 
 // MarkObjectDecrypted records that the post-decrypt metadata update ran.
@@ -674,7 +658,7 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	keyData, keyID, ciphertext := sealed(t, enc, payload)
 
 	fake := &fakeBackend{payload: ciphertext}
-	store := &decryptRowStore{row: core.DecryptableLocation{
+	store := &decryptRowStore{row: core.ObjectLocation{
 		ObjectKey:     testBucket + "/file.txt",
 		BackendName:   "backend-a",
 		SizeBytes:     int64(len(ciphertext)),
@@ -709,14 +693,17 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	var updated bool
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
 	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, core.Cursor{}).
-		Return([]core.EncryptedLocation{
+		Return([]core.ObjectLocation{
 			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
 		}, nil).Times(1)
 	store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, gomock.Any(), gomock.Any()).
 		Return(nil, nil).After(first).AnyTimes()
-	store.EXPECT().UpdateEncryptionKey(gomock.Any(), testBucket+"/file.txt", "b1", gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, newKeyData []byte, _ string) error {
-			updated = len(newKeyData) > 0
+	store.EXPECT().UpdateCopyMetadata(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+			if loc.ObjectKey != testBucket+"/file.txt" || loc.BackendName != "b1" {
+				t.Errorf("patched copy = %s on %s, want %s on b1", loc.ObjectKey, loc.BackendName, testBucket+"/file.txt")
+			}
+			updated = len(p.EncryptionKey) > 0 && p.KeyID != ""
 			return nil
 		}).Times(1)
 
@@ -735,7 +722,40 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 		t.Errorf("res = %+v, want rotated=1 failed=0 total=1", res)
 	}
 	if !updated {
-		t.Error("UpdateEncryptionKey received no new key material")
+		t.Error("UpdateCopyMetadata received no new key material")
+	}
+}
+
+// TestRotateKey_ReplacedCopyIsSkipped asserts a copy a newer write replaced
+// mid-pass counts toward Total but as neither rotated nor failed.
+func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t)
+	keyData, keyID, _ := sealed(t, enc, []byte("hello world"))
+
+	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, rotateBatchSize, core.Cursor{}).
+		Return([]core.ObjectLocation{
+			{ObjectKey: testBucket + "/file.txt", BackendName: "b1", EncryptionKey: keyData, KeyID: keyID},
+		}, nil).Times(1)
+	store.EXPECT().ListEncryptedLocations(gomock.Any(), keyID, gomock.Any(), gomock.Any()).
+		Return(nil, nil).After(first).AnyTimes()
+	store.EXPECT().UpdateCopyMetadata(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(core.ErrCopyChanged).Times(1)
+
+	svc := NewEncryption(EncryptionDeps{
+		Encryptor: enc,
+		Store:     store,
+		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
+		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
+	})
+
+	res, err := svc.RotateKey(context.Background(), keyID)
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+	if res.Rotated != 0 || res.Failed != 0 || res.Total != 1 {
+		t.Errorf("res = %+v, want rotated=0 failed=0 total=1", res)
 	}
 }
 
@@ -763,7 +783,7 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 			}
 			store := &rowEncAdmin{
 				markErr: tc.markErr,
-				row: core.UnencryptedLocation{
+				row: core.ObjectLocation{
 					ObjectKey:   testBucket + "/file.txt",
 					BackendName: "backend-a",
 					SizeBytes:   11,
@@ -987,7 +1007,7 @@ func TestListUnreadable_DefaultsTheLimit(t *testing.T) {
 // backend is gone fails on its own rather than ending the pass.
 func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	t.Parallel()
-	encStore := &rowEncAdmin{row: core.UnencryptedLocation{
+	encStore := &rowEncAdmin{row: core.ObjectLocation{
 		ObjectKey:   testBucket + "/file.txt",
 		BackendName: "missing-backend",
 		SizeBytes:   11,
@@ -1281,7 +1301,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	t.Parallel()
 	store := opstest.NewMockEncryptionStore(gomock.NewController(t))
 	first := store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", rotateBatchSize, core.Cursor{}).
-		Return([]core.EncryptedLocation{
+		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
 		}, nil).Times(1)
 	store.EXPECT().ListEncryptedLocations(gomock.Any(), "old", gomock.Any(), gomock.Any()).

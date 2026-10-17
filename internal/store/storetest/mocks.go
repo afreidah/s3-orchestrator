@@ -909,10 +909,10 @@ func (mr *MockMetadataStoreMockRecorder) LedgerStats(ctx any) *gomock.Call {
 }
 
 // ListAllEncryptedLocations mocks base method.
-func (m *MockMetadataStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
+func (m *MockMetadataStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after, backend)
-	ret0, _ := ret[0].([]core.DecryptableLocation)
+	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -984,10 +984,10 @@ func (mr *MockMetadataStoreMockRecorder) ListCleanupDLQ(ctx, backend, limit any)
 }
 
 // ListCompressedLocations mocks base method.
-func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.RewritableLocation, error) {
+func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after, backend)
-	ret0, _ := ret[0].([]core.RewritableLocation)
+	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1029,10 +1029,10 @@ func (mr *MockMetadataStoreMockRecorder) ListDirectoryChildren(ctx, prefix, star
 }
 
 // ListEncryptedLocations mocks base method.
-func (m *MockMetadataStore) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
+func (m *MockMetadataStore) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListEncryptedLocations", ctx, keyID, limit, after)
-	ret0, _ := ret[0].([]core.EncryptedLocation)
+	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1164,10 +1164,10 @@ func (mr *MockMetadataStoreMockRecorder) ListParts(ctx, uploadID, afterPart, lim
 }
 
 // ListUncompressedLocations mocks base method.
-func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, backend string) ([]core.RewritableLocation, error) {
+func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t, backend)
-	ret0, _ := ret[0].([]core.RewritableLocation)
+	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1179,10 +1179,10 @@ func (mr *MockMetadataStoreMockRecorder) ListUncompressedLocations(ctx, limit, a
 }
 
 // ListUnencryptedLocations mocks base method.
-func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
+func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after, backend)
-	ret0, _ := ret[0].([]core.UnencryptedLocation)
+	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1294,20 +1294,6 @@ func (mr *MockMetadataStoreMockRecorder) MarkObjectEncrypted(ctx, u any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectEncrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectEncrypted), ctx, u)
 }
 
-// MarkObjectScrubbed mocks base method.
-func (m *MockMetadataStore) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectScrubbed", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkObjectScrubbed indicates an expected call of MarkObjectScrubbed.
-func (mr *MockMetadataStoreMockRecorder) MarkObjectScrubbed(ctx, key, backendName any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectScrubbed", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectScrubbed), ctx, key, backendName)
-}
-
 // MoveCleanupToDLQ mocks base method.
 func (m *MockMetadataStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -1400,20 +1386,6 @@ func (mr *MockMetadataStoreMockRecorder) ReconcileUsage(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileUsage", reflect.TypeOf((*MockMetadataStore)(nil).ReconcileUsage), ctx)
 }
 
-// RecordCompressionProbe mocks base method.
-func (m *MockMetadataStore) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordCompressionProbe", ctx, probe)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// RecordCompressionProbe indicates an expected call of RecordCompressionProbe.
-func (mr *MockMetadataStoreMockRecorder) RecordCompressionProbe(ctx, probe any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCompressionProbe", reflect.TypeOf((*MockMetadataStore)(nil).RecordCompressionProbe), ctx, probe)
-}
-
 // RecordObject mocks base method.
 func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
@@ -1431,17 +1403,17 @@ func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call
 }
 
 // RecordObjectIdentity mocks base method.
-func (m *MockMetadataStore) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+func (m *MockMetadataStore) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, loc, id)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
-func (mr *MockMetadataStoreMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordObjectIdentity(ctx, loc, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectIdentity), ctx, key, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectIdentity), ctx, loc, id)
 }
 
 // RecordPart mocks base method.
@@ -1661,32 +1633,18 @@ func (mr *MockMetadataStoreMockRecorder) UpdateBucket(ctx, b any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateBucket", reflect.TypeOf((*MockMetadataStore)(nil).UpdateBucket), ctx, b)
 }
 
-// UpdateContentHash mocks base method.
-func (m *MockMetadataStore) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
+// UpdateCopyMetadata mocks base method.
+func (m *MockMetadataStore) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateContentHash", ctx, key, backendName, hash)
+	ret := m.ctrl.Call(m, "UpdateCopyMetadata", ctx, loc, p)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateContentHash indicates an expected call of UpdateContentHash.
-func (mr *MockMetadataStoreMockRecorder) UpdateContentHash(ctx, key, backendName, hash any) *gomock.Call {
+// UpdateCopyMetadata indicates an expected call of UpdateCopyMetadata.
+func (mr *MockMetadataStoreMockRecorder) UpdateCopyMetadata(ctx, loc, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateContentHash", reflect.TypeOf((*MockMetadataStore)(nil).UpdateContentHash), ctx, key, backendName, hash)
-}
-
-// UpdateEncryptionKey mocks base method.
-func (m *MockMetadataStore) UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateEncryptionKey", ctx, objectKey, backendName, newEncryptionKey, newKeyID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdateEncryptionKey indicates an expected call of UpdateEncryptionKey.
-func (mr *MockMetadataStoreMockRecorder) UpdateEncryptionKey(ctx, objectKey, backendName, newEncryptionKey, newKeyID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateEncryptionKey", reflect.TypeOf((*MockMetadataStore)(nil).UpdateEncryptionKey), ctx, objectKey, backendName, newEncryptionKey, newKeyID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCopyMetadata", reflect.TypeOf((*MockMetadataStore)(nil).UpdateCopyMetadata), ctx, loc, p)
 }
 
 // VerifySchemaVersion mocks base method.

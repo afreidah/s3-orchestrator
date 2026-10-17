@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -26,17 +27,7 @@ import (
 // identityOf reads back the identity recorded for one copy.
 func identityOf(t *testing.T, s *Store, key, backendName string) *core.ObjectIdentity {
 	t.Helper()
-	locs, err := s.GetAllObjectLocations(context.Background(), key)
-	if err != nil {
-		t.Fatalf("GetAllObjectLocations(%s): %v", key, err)
-	}
-	for i := range locs {
-		if locs[i].BackendName == backendName {
-			return locs[i].Identity
-		}
-	}
-	t.Fatalf("no copy of %s on %s", key, backendName)
-	return nil
+	return storetest.LocationOn(t, s, key, backendName).Identity
 }
 
 // -------------------------------------------------------------------------
@@ -88,7 +79,7 @@ func TestRecordObjectIdentity_FillsOnlyWhatIsUnknown(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if err := s.RecordObjectIdentity(ctx, "bucket/k", &core.ObjectIdentity{
+	if err := s.RecordObjectIdentity(ctx, storetest.LocationOn(t, s, "bucket/k", "backend-a"), &core.ObjectIdentity{
 		ETag:         `"from-backend"`,
 		ContentType:  "application/json",
 		UserMetadata: map[string]string{"k": "v"},
@@ -121,7 +112,7 @@ func TestRecordObjectIdentity_AppliesToEveryCopy(t *testing.T) {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
-	if err := s.RecordObjectIdentity(ctx, "bucket/k", &core.ObjectIdentity{ETag: `"learned"`}); err != nil {
+	if err := s.RecordObjectIdentity(ctx, storetest.LocationOn(t, s, "bucket/k", "backend-b"), &core.ObjectIdentity{ETag: `"learned"`}); err != nil {
 		t.Fatalf("RecordObjectIdentity: %v", err)
 	}
 
@@ -130,6 +121,35 @@ func TestRecordObjectIdentity_AppliesToEveryCopy(t *testing.T) {
 		if got == nil || got.ETag != `"learned"` {
 			t.Errorf("copy on %s has identity %+v, want the learned etag", backendName, got)
 		}
+	}
+}
+
+// TestRecordObjectIdentity_SkipsAReplacedRead verifies an identity learned from
+// a copy a newer write has since replaced is not written: the newer write's
+// rows describe other bytes, and filling their NULL columns would give them
+// the old object's identity.
+func TestRecordObjectIdentity_SkipsAReplacedRead(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!old"}},
+	}); err != nil {
+		t.Fatalf("RecordObject(old): %v", err)
+	}
+	read := *storetest.LocationOn(t, s, "bucket/k", "backend-a")
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!new"}},
+	}); err != nil {
+		t.Fatalf("RecordObject(new): %v", err)
+	}
+
+	if err := s.RecordObjectIdentity(ctx, &read, &core.ObjectIdentity{ETag: `"old-bytes"`}); err != nil {
+		t.Fatalf("RecordObjectIdentity: %v", err)
+	}
+	if got := identityOf(t, s, "bucket/k", "backend-a"); got != nil && got.ETag != "" {
+		t.Errorf("newer copy took the replaced read's etag: %+v", got)
 	}
 }
 
@@ -210,7 +230,7 @@ func TestRecordObjectIdentity_NilIsANoOp(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if err := s.RecordObjectIdentity(ctx, "bucket/k", nil); err != nil {
+	if err := s.RecordObjectIdentity(ctx, storetest.LocationOn(t, s, "bucket/k", "backend-a"), nil); err != nil {
 		t.Fatalf("RecordObjectIdentity(nil): %v", err)
 	}
 

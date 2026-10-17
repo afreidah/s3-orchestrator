@@ -539,7 +539,7 @@ func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
 	first := m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.EncryptedLocation{
+		Return([]core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
 		}, nil).
 		Times(1)

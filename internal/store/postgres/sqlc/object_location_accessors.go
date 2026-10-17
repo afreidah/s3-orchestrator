@@ -5,13 +5,13 @@
 //
 // Hand-written companion to the sqlc-generated row types. Each row that is
 // projected into store.ObjectLocation exposes a small accessor surface so the
-// upper layer can convert any of the eleven row shapes through a single
-// generic helper instead of an eleven-case type switch.
+// upper layer can convert any of the row shapes through a single generic
+// helper instead of a type switch.
 //
 // sqlc only regenerates *.sql.go and the central models.go/db.go files, so
 // this file survives `make generate`. When adding a new row type that
 // projects ObjectLocation columns, add the corresponding accessor methods
-// here and the conversion helper in internal/store/store.go picks it up
+// here and the conversion helper in internal/store/postgres/store.go picks it up
 // without further plumbing.
 // -------------------------------------------------------------------------------
 
@@ -206,3 +206,29 @@ func (r GetObjectsWithoutHashRow) GetLogicalSize() *int64           { return r.L
 func (r GetObjectsWithoutHashRow) GetCompressionFormatVersion() *int16 {
 	return r.CompressionFormatVersion
 }
+
+// -------------------------------------------------------------------------
+// Whole rows (the table model, returned by the SELECT * admin listings).
+// -------------------------------------------------------------------------
+
+// ObjectLocation
+
+func (r ObjectLocation) GetObjectKey() string                  { return r.ObjectKey }
+func (r ObjectLocation) GetStorageKey() string                 { return r.StorageKey }
+func (r ObjectLocation) GetBackendName() string                { return r.BackendName }
+func (r ObjectLocation) GetSizeBytes() int64                   { return r.SizeBytes }
+func (r ObjectLocation) GetCreatedAt() pgtype.Timestamptz      { return r.CreatedAt }
+func (r ObjectLocation) GetEncrypted() bool                    { return r.Encrypted }
+func (r ObjectLocation) GetEncryptionKey() []byte              { return r.EncryptionKey }
+func (r ObjectLocation) GetKeyID() *string                     { return r.KeyID }
+func (r ObjectLocation) GetPlaintextSize() *int64              { return r.PlaintextSize }
+func (r ObjectLocation) GetContentHash() *string               { return r.ContentHash }
+func (r ObjectLocation) GetCompressionAlgorithm() *string      { return r.CompressionAlgorithm }
+func (r ObjectLocation) GetCompressionLevel() *string          { return r.CompressionLevel }
+func (r ObjectLocation) GetLogicalSize() *int64                { return r.LogicalSize }
+func (r ObjectLocation) GetCompressionFormatVersion() *int16   { return r.CompressionFormatVersion }
+func (r ObjectLocation) GetLastScrubbedAt() pgtype.Timestamptz { return r.LastScrubbedAt }
+func (r ObjectLocation) GetEtag() *string                      { return r.Etag }
+func (r ObjectLocation) GetContentType() *string               { return r.ContentType }
+func (r ObjectLocation) GetUserMetadata() []byte               { return r.UserMetadata }
+func (r ObjectLocation) GetManaged() bool                      { return r.Managed }

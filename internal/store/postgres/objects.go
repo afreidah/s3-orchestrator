@@ -280,9 +280,10 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 }
 
 // RecordObjectIdentity fills the identity columns a read had to ask a backend
-// for. Applied to every copy of the key: a per-copy value is what lets a
-// failover change the ETag under a conditional request.
-func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+// for. Applied to every copy of the key, while loc - the copy that was read -
+// is still recorded: a per-copy value is what lets a failover change the ETag
+// under a conditional request.
+func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
 	if id == nil {
 		return nil
 	}
@@ -291,7 +292,9 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.O
 		return err
 	}
 	if err := s.queries.RecordObjectIdentity(ctx, db.RecordObjectIdentityParams{
-		ObjectKey:    key,
+		ObjectKey:    loc.ObjectKey,
+		BackendName:  loc.BackendName,
+		StorageKey:   loc.StorageKey,
 		Etag:         strPtr(id.ETag),
 		ContentType:  strPtr(id.ContentType),
 		UserMetadata: meta,
@@ -299,4 +302,10 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.O
 		return fmt.Errorf("record object identity: %w", err)
 	}
 	return nil
+}
+
+// UpdateCopyMetadata writes a patch to the copy loc names, or returns
+// core.ErrCopyChanged when a newer write replaced it.
+func (s *Store) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	return s.direct().UpdateCopyMetadata(ctx, loc, p)
 }

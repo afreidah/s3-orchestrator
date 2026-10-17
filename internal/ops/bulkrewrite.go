@@ -68,33 +68,18 @@ type BulkRewriteResult struct {
 	Total     int
 }
 
-// bulkRewriteRow is the minimum surface every row passed to the bulk-rewrite
-// driver must expose. The encryption and compression row wrappers satisfy it.
-type bulkRewriteRow interface {
-	rewriteKey() string
-	rewriteBackend() string
-	rewriteStorageKey() string
-	rewriteSize() int64
-	rewriteEtag() string
-}
-
 // bulkRewriteOp parameterises one direction of the rewrite: the listing query,
 // the transform, and the labels the run reports under.
-type bulkRewriteOp[L bulkRewriteRow] struct {
+type bulkRewriteOp struct {
 	opName      string
 	resultLabel string
 	counter     *prometheus.CounterVec
-	listFn      func(ctx context.Context, batchSize int, after core.Cursor) ([]L, error)
-	// declines reports a row the pass will not rewrite, before anything is
-	// downloaded for it. Only what the row itself says can be judged here; a
-	// question about the bytes has to wait for the transform. Nil means every
-	// listed row is attempted.
-	declines func(loc L) bool
+	listFn      func(ctx context.Context, batchSize int, after core.Cursor) ([]core.ObjectLocation, error)
 	// rewrite consumes a downloaded object and produces what to upload in its
 	// place. Implementations close the source body if they fail before
 	// returning. Returning errSkipRewrite leaves the object exactly as it is
 	// and counts it as skipped.
-	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc L) (rewritten, error)
+	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc *core.ObjectLocation) (rewritten, error)
 	// maxRewrites caps how many copies the pass rewrites before stopping, or zero
 	// for the whole listing. It counts rewrites rather than rows considered, so a
 	// capped run converts the number asked for instead of spending its budget
@@ -174,24 +159,24 @@ func (o rewriteOutcome) status() string {
 // error, so a caller can report partial progress.
 //
 // obs reports each object as it is processed and may be nil.
-func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
+func (op bulkRewriteOp) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
-	pager := batch.Pager[L, core.Cursor]{
+	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		// A capped run's last page is asked for short, so the walk compares
 		// each page against what was asked for rather than the batch constant.
 		PageSize: func() int { return bulkRewritePageSize(op.maxRewrites, res.Succeeded) },
-		List: func(ctx context.Context, limit int, after core.Cursor) ([]L, error) {
+		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 			rows, err := op.listFn(ctx, limit, after)
 			if err != nil {
 				env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
 			}
 			return rows, err
 		},
-		CursorOf: func(row L) core.Cursor {
-			return core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
+		CursorOf: func(row core.ObjectLocation) core.Cursor {
+			return core.Cursor{ObjectKey: row.ObjectKey, BackendName: row.BackendName}
 		},
 	}
-	stop, err := pager.Walk(ctx, func(ctx context.Context, rows []L) (batch.Step, error) {
+	stop, err := pager.Walk(ctx, func(ctx context.Context, rows []core.ObjectLocation) (batch.Step, error) {
 		capped, err := op.runPage(ctx, env, obs, rows, &res)
 		return batch.Step{Stop: capped}, err
 	})
@@ -215,16 +200,16 @@ func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs prog
 // runner and counted apart here. Reports whether the pass reached its cap; the
 // page was asked for no more rows than the cap had room for, so the cap is
 // checked once the page is done.
-func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []L, res *BulkRewriteResult) (bool, error) {
+func (op bulkRewriteOp) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []core.ObjectLocation, res *BulkRewriteResult) (bool, error) {
 	changed := 0
-	runner := batch.Runner[L]{
+	runner := batch.Runner[core.ObjectLocation]{
 		Name:        op.opName,
 		Concurrency: 1,
 		Observer:    obs,
-		Key:         func(row L) string { return row.rewriteKey() },
+		Key:         func(row core.ObjectLocation) string { return row.ObjectKey },
 	}
-	sum := runner.Run(ctx, rows, func(ctx context.Context, row L) batch.ItemResult {
-		outcome := op.processLocation(ctx, env, row)
+	sum := runner.Run(ctx, rows, func(ctx context.Context, row core.ObjectLocation) batch.ItemResult {
+		outcome := op.processLocation(ctx, env, &row)
 		if outcome == rewriteChanged {
 			changed++
 		}
@@ -259,18 +244,13 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // counted rather than returned, so one bad object does not end the pass.
 // Admission is per object because a run that fits the budget when it starts
 // can exhaust it halfway through.
-func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteEnv, loc L) rewriteOutcome {
-	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
+func (op bulkRewriteOp) processLocation(ctx context.Context, env bulkRewriteEnv, loc *core.ObjectLocation) rewriteOutcome {
+	key, backendName, sizeBytes := loc.ObjectKey, loc.BackendName, loc.SizeBytes
 	// Read and written at the copy's own path, so rewriting in place is safe: a
 	// client overwriting the key during the pass writes to a different path, and
 	// the etag CAS below stops the pass recording bytes that are not the
 	// current object.
-	storageKey := core.StoragePath(key, loc.rewriteStorageKey())
-
-	if op.declines != nil && op.declines(loc) {
-		op.counter.WithLabelValues("skipped").Inc()
-		return rewriteSkipped
-	}
+	storageKey := core.StoragePath(key, loc.StorageKey)
 
 	// The read is charged at the row's size and the write at the same figure
 	// as an estimate, since the transform's output is not known yet. Both are
@@ -320,7 +300,7 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 
 	if err := out.commit(); err != nil {
 		if errors.Is(err, core.ErrCopyChanged) {
-			return op.changed(ctx, env, key, backendName, loc.rewriteEtag())
+			return op.changed(ctx, env, key, backendName, loc.RecordedETag())
 		}
 		return op.failed(ctx, env, "metadata update failed", key, backendName, err)
 	}
@@ -330,7 +310,7 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 }
 
 // failed records one non-fatal rewrite failure.
-func (op bulkRewriteOp[L]) failed(ctx context.Context, env bulkRewriteEnv, msg, key, backendName string, err error) rewriteOutcome {
+func (op bulkRewriteOp) failed(ctx context.Context, env bulkRewriteEnv, msg, key, backendName string, err error) rewriteOutcome {
 	env.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
 	op.counter.WithLabelValues("error").Inc()
 	return rewriteErrored
@@ -341,7 +321,7 @@ func (op bulkRewriteOp[L]) failed(ctx context.Context, env bulkRewriteEnv, msg, 
 // nothing was recorded. It is audited and counted separately because the
 // transformed bytes already reached the backend, so the stored copy is now the
 // pass's output over a newer write.
-func (op bulkRewriteOp[L]) changed(ctx context.Context, env bulkRewriteEnv, key, backendName, expectedEtag string) rewriteOutcome {
+func (op bulkRewriteOp) changed(ctx context.Context, env bulkRewriteEnv, key, backendName, expectedEtag string) rewriteOutcome {
 	env.log.WarnContext(ctx, op.opName+": copy changed while it was being converted",
 		"key", key, "backend", backendName, "expected_etag", expectedEtag)
 	audit.Log(ctx, "storage.ConversionRaced",

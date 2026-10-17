@@ -256,17 +256,31 @@ func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call {
 }
 
 // RecordObjectIdentity mocks base method.
-func (m *MockObjectStore) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+func (m *MockObjectStore) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, loc, id)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
-func (mr *MockObjectStoreMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) RecordObjectIdentity(ctx, loc, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectIdentity), ctx, key, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectIdentity), ctx, loc, id)
+}
+
+// UpdateCopyMetadata mocks base method.
+func (m *MockObjectStore) UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateCopyMetadata", ctx, loc, p)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateCopyMetadata indicates an expected call of UpdateCopyMetadata.
+func (mr *MockObjectStoreMockRecorder) UpdateCopyMetadata(ctx, loc, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCopyMetadata", reflect.TypeOf((*MockObjectStore)(nil).UpdateCopyMetadata), ctx, loc, p)
 }
 
 // MockQuotaStore is a mock of QuotaStore interface.

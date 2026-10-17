@@ -71,7 +71,7 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // ListEncryptedLocations returns a page of encrypted object locations filtered
 // by key ID, after the cursor. Used during key rotation to find objects wrapped
 // with the old key.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListEncryptedLocations(ctx, db.ListEncryptedLocationsParams{
 		KeyID:        keyID,
 		AfterKey:     after.ObjectKey,
@@ -81,34 +81,12 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
 	}
-	return mapSlice(rows, encryptedLocationFromRow), nil
-}
-
-// encryptedLocationFromRow converts a sqlc ListEncryptedLocations row
-// to core.EncryptedLocation, safely dereferencing the nullable KeyID.
-func encryptedLocationFromRow(r *db.ListEncryptedLocationsRow) core.EncryptedLocation {
-	return core.EncryptedLocation{
-		ObjectKey:     r.ObjectKey,
-		BackendName:   r.BackendName,
-		EncryptionKey: r.EncryptionKey,
-		KeyID:         derefStr(r.KeyID),
-	}
-}
-
-// UpdateEncryptionKey re-wraps a single object's encryption key. Used during
-// key rotation to replace the old wrapped DEK with one wrapped by the new key.
-func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error {
-	return s.queries.UpdateEncryptionKey(ctx, db.UpdateEncryptionKeyParams{
-		ObjectKey:     objectKey,
-		BackendName:   backendName,
-		EncryptionKey: newEncryptionKey,
-		KeyID:         &newKeyID,
-	})
+	return toIdentifiedObjectLocations(rows), nil
 }
 
 // ListUnencryptedLocations returns a page of unencrypted object locations.
 // Used by the encrypt-existing admin endpoint to find objects that need encryption.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListUnencryptedLocations(ctx, db.ListUnencryptedLocationsParams{
 		BackendFilter: backend,
 		AfterKey:      after.ObjectKey,
@@ -118,24 +96,12 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
-	return mapSlice(rows, unencryptedLocationFromRow), nil
-}
-
-// unencryptedLocationFromRow converts a sqlc ListUnencryptedLocations
-// row to core.UnencryptedLocation.
-func unencryptedLocationFromRow(r *db.ListUnencryptedLocationsRow) core.UnencryptedLocation {
-	return core.UnencryptedLocation{
-		ObjectKey:   r.ObjectKey,
-		BackendName: r.BackendName,
-		StorageKey:  r.StorageKey,
-		SizeBytes:   r.SizeBytes,
-		Etag:        derefStr(r.Etag),
-	}
+	return toIdentifiedObjectLocations(rows), nil
 }
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations.
 // Used by the decrypt-existing admin endpoint to find objects that need decryption.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListAllEncryptedLocations(ctx, db.ListAllEncryptedLocationsParams{
 		BackendFilter: backend,
 		AfterKey:      after.ObjectKey,
@@ -145,23 +111,7 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after 
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
-	return mapSlice(rows, decryptableLocationFromRow), nil
-}
-
-// decryptableLocationFromRow converts a sqlc ListAllEncryptedLocations
-// row to core.DecryptableLocation, safely dereferencing nullable
-// KeyID and PlaintextSize.
-func decryptableLocationFromRow(r *db.ListAllEncryptedLocationsRow) core.DecryptableLocation {
-	return core.DecryptableLocation{
-		ObjectKey:     r.ObjectKey,
-		BackendName:   r.BackendName,
-		StorageKey:    r.StorageKey,
-		SizeBytes:     r.SizeBytes,
-		EncryptionKey: r.EncryptionKey,
-		KeyID:         derefStr(r.KeyID),
-		PlaintextSize: derefInt64(r.PlaintextSize),
-		Etag:          derefStr(r.Etag),
-	}
+	return toIdentifiedObjectLocations(rows), nil
 }
 
 // -------------------------------------------------------------------------

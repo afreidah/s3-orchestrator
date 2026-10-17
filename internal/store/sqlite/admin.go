@@ -28,41 +28,8 @@ import (
 // ListEncryptedLocations returns a page of encrypted object locations filtered
 // by key ID, after the cursor. Used during key rotation to find objects wrapped
 // with the old key. Paged by cursor because rotating a copy changes its key_id.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.EncryptedLocation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, encryption_key, key_id
-		FROM object_locations
-		WHERE encrypted = 1 AND key_id = ?
-		  AND (object_key, backend_name) > (?, ?)
-		ORDER BY object_key, backend_name
-		LIMIT ?`,
-		keyID, after.ObjectKey, after.BackendName, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list encrypted locations: %w", err)
-	}
-	return collectRows(rows, "encrypted locations", func(rows *sql.Rows) (core.EncryptedLocation, error) {
-		var loc core.EncryptedLocation
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.EncryptionKey, &loc.KeyID); err != nil {
-			return core.EncryptedLocation{}, fmt.Errorf("scan encrypted location: %w", err)
-		}
-		return loc, nil
-	})
-}
-
-// UpdateEncryptionKey updates the wrapped DEK and key ID for a single object
-// location. Used after re-wrapping a DEK with a new master key.
-func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE object_locations
-		SET encryption_key = ?, key_id = ?
-		WHERE object_key = ? AND backend_name = ?`,
-		newEncryptionKey, newKeyID, objectKey, backendName,
-	)
-	if err != nil {
-		return fmt.Errorf("update encryption key: %w", err)
-	}
-	return nil
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
+	return s.listCopies(ctx, "encrypted locations", `encrypted = 1 AND key_id = ?`, limit, after, "", keyID)
 }
 
 // -------------------------------------------------------------------------
@@ -73,31 +40,8 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // encrypt-existing, on one backend or on all when backend is empty. It pages
 // by cursor because encrypting a copy removes it from the set, so an offset
 // would skip the rows that moved up.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, etag
-		FROM object_locations
-		WHERE encrypted = 0
-		  AND (? = '' OR backend_name = ?)
-		  AND (object_key, backend_name) > (?, ?)
-		ORDER BY object_key, backend_name
-		LIMIT ?`,
-		backend, backend, after.ObjectKey, after.BackendName, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list unencrypted locations: %w", err)
-	}
-	return collectRows(rows, "unencrypted locations", func(rows *sql.Rows) (core.UnencryptedLocation, error) {
-		var (
-			loc  core.UnencryptedLocation
-			etag sql.NullString
-		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &etag); err != nil {
-			return core.UnencryptedLocation{}, fmt.Errorf("scan unencrypted location: %w", err)
-		}
-		loc.Etag = nullStringValue(etag)
-		return loc, nil
-	})
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
+	return s.listCopies(ctx, "unencrypted locations", `encrypted = 0`, limit, after, backend)
 }
 
 // -------------------------------------------------------------------------
@@ -108,31 +52,8 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 // with decryption metadata. Used by the decrypt-existing admin endpoint.
 // Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 // copy removes it from this set mid-walk.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, storage_key, size_bytes, encryption_key, key_id, plaintext_size, etag
-		FROM object_locations
-		WHERE encrypted = 1
-		  AND (? = '' OR backend_name = ?)
-		  AND (object_key, backend_name) > (?, ?)
-		ORDER BY object_key, backend_name
-		LIMIT ?`,
-		backend, backend, after.ObjectKey, after.BackendName, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list all encrypted locations: %w", err)
-	}
-	return collectRows(rows, "decryptable locations", func(rows *sql.Rows) (core.DecryptableLocation, error) {
-		var (
-			loc  core.DecryptableLocation
-			etag sql.NullString
-		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &loc.EncryptionKey, &loc.KeyID, &loc.PlaintextSize, &etag); err != nil {
-			return core.DecryptableLocation{}, fmt.Errorf("scan decryptable location: %w", err)
-		}
-		loc.Etag = nullStringValue(etag)
-		return loc, nil
-	})
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.ObjectLocation, error) {
+	return s.listCopies(ctx, "decryptable locations", `encrypted = 1`, limit, after, backend)
 }
 
 // -------------------------------------------------------------------------

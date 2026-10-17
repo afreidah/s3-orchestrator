@@ -29,6 +29,7 @@ type moveTxStub struct {
 	src       *ObjectLocation
 	targetHas bool
 	probeErr  error
+	patched   []*ObjectLocation
 	probes    []*CompressionProbe
 	inserted  []*ObjectLocation
 	deleted   []string
@@ -66,12 +67,14 @@ func (s *moveTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocation
 	return nil
 }
 
-// RecordCompressionProbe records the carried measurement or fails the move.
-func (s *moveTxStub) RecordCompressionProbe(_ context.Context, probe *CompressionProbe) error {
+// UpdateCopyMetadata records the carried measurement and the copy it was
+// written to, or fails the move.
+func (s *moveTxStub) UpdateCopyMetadata(_ context.Context, loc *ObjectLocation, p *CopyPatch) error {
 	if s.probeErr != nil {
 		return s.probeErr
 	}
-	s.probes = append(s.probes, probe)
+	s.patched = append(s.patched, loc)
+	s.probes = append(s.probes, p.Probe)
 	return nil
 }
 
@@ -123,10 +126,10 @@ func TestMoveObjectLocation_CarriesTheProbe(t *testing.T) {
 	if len(stub.probes) != 1 {
 		t.Fatalf("recorded %d probes, want 1", len(stub.probes))
 	}
-	got := stub.probes[0]
-	if got.ObjectKey != "k" || got.BackendName != "b2" {
-		t.Errorf("probe written for %s/%s, want k/b2", got.ObjectKey, got.BackendName)
+	if dest := stub.patched[0]; dest.ObjectKey != "k" || dest.BackendName != "b2" || dest.StorageKey != "k!dest" {
+		t.Errorf("probe written for %s/%s at %s, want k/b2 at k!dest", dest.ObjectKey, dest.BackendName, dest.StorageKey)
 	}
+	got := stub.probes[0]
 	if got.Size != 4000 || got.Level != "default" {
 		t.Errorf("probe = {%d, %q}, want {4000, default}", got.Size, got.Level)
 	}
