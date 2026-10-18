@@ -53,7 +53,6 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '    backend_quotas {',
     '        TEXT backend_name PK',
     '        BIGINT bytes_limit',
-    '        BIGINT orphan_bytes',
     '        TIMESTAMPTZ updated_at',
     '    }',
     '',
@@ -117,6 +116,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        TEXT key_id',
     '        BIGINT plaintext_size',
     '        TEXT plaintext_etag',
+    '        TEXT storage_key',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -272,12 +272,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY</td></tr>' +
         '<tr><td>bytes_limit</td><td>BIGINT</td><td>Quota cap (0 = unlimited)</td></tr>' +
-        '<tr><td>orphan_bytes</td><td>BIGINT</td><td>Bytes freed logically but not yet deleted from backend</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last modification time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on backend_name</p>' +
-        '<p>Holds the ceiling and the orphan count. The stored byte total lives in <code>backend_quota_stripes</code>.</p>' +
+        '<p>Holds the ceiling. The stored byte total lives in <code>backend_quota_stripes</code>, and the <code>backend_capacity</code> view derives the orphan bytes from the backend\'s <code>cleanup_queue</code> and <code>cleanup_dlq</code> rows.</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (backend selection), quota enforcement, <a href="../background-services/">rebalancer</a>, dashboard stats.</p>' +
-        '<p class="ac-metric">Key queries: UpsertQuotaLimit, ListBackendQuotaUsage, IncrementOrphanBytes, DecrementOrphanBytes</p>'
+        '<p class="ac-metric">Key queries: UpsertQuotaLimit, ListBackendQuotaUsage, GetAllQuotaStats</p>'
     },
     backend_quota_stripes: {
       title: 'backend_quota_stripes',
@@ -375,7 +374,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     multipart_parts: {
       title: 'multipart_parts',
       badge: 'multipart', badgeText: 'multipart',
-      body: '<p>Stores individual parts of a multipart upload. Foreign key to <code>multipart_uploads</code> with <code>ON DELETE CASCADE</code> &mdash; aborting an upload deletes all its parts automatically. Supports upsert for part re-upload.</p>' +
+      body: '<p>Stores individual parts of a multipart upload. Foreign key to <code>multipart_uploads</code> with <code>ON DELETE CASCADE</code>. Abort and completion delete the parts explicitly, in the transaction that removes the upload, so each part\'s bytes are queued in <code>cleanup_queue</code> as its row goes. Supports upsert for part re-upload: the replaced part is read with <code>FOR UPDATE</code> and its bytes queued under reason <code>part_replaced</code> in the transaction that records the new one.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="fk">upload_id</td><td>TEXT</td><td>PK + FK &rarr; multipart_uploads (CASCADE)</td></tr>' +
         '<tr><td class="pk">part_number</td><td>INT</td><td>PK (composite), 1-10000</td></tr>' +
@@ -386,10 +385,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original part size</td></tr>' +
         '<tr><td>plaintext_etag</td><td>TEXT</td><td>MD5 of the bytes the client sent for this part (nullable)</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path of the part\'s bytes, <code>__multipart/&lt;upload_id&gt;/&lt;part&gt;!&lt;id&gt;</code>, the path its upload claimed with an intent. NULL for a part recorded at the part number\'s fixed path, <code>__multipart/&lt;upload_id&gt;/&lt;part&gt;</code> (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Part upload time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (upload_id, part_number)</p>' +
-        '<p>Used by: UploadPart (UpsertPart), CompleteMultipartUpload (GetParts &mdash; ordered by part_number), quota calculation (SUM of inflight part sizes JOINed to uploads).</p>' +
-        '<p class="ac-metric">Key queries: UpsertPart, GetParts</p>'
+        '<p>Used by: UploadPart (GetPartForUpdate, UpsertPart), CompleteMultipartUpload (GetParts &mdash; ordered by part_number), abort and completion (DeleteMultipartParts), quota calculation (SUM of inflight part sizes JOINed to uploads).</p>' +
+        '<p class="ac-metric">Key queries: GetPartForUpdate, UpsertPart, GetParts, ListParts, DeleteMultipartParts</p>'
     },
     backend_usage: {
       title: 'backend_usage',
@@ -409,30 +409,30 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     cleanup_queue: {
       title: 'cleanup_queue',
       badge: 'cleanup', badgeText: 'cleanup queue',
-      body: '<p>Retry queue for failed backend object deletions. When a delete fails (network error, backend down), the orphaned object is enqueued here with exponential backoff (1 min &rarr; 24 hours, max 10 attempts). Prevents storage leaks from transient failures.</p>' +
+      body: '<p>Bytes waiting to be deleted. Every transaction that stops recording bytes inserts their rows here before it commits, already claimed by its instance, which deletes the bytes once it commits and settles each row: retired on success or a 404, retried with exponential backoff (1 min &rarr; 24 hours, max 10 attempts) on failure. Because the row exists before the delete, no bytes awaiting deletion are ever untracked. A backend\'s orphan bytes are the sum of <code>size_bytes</code> over its rows here and in <code>cleanup_dlq</code>, computed by the <code>backend_capacity</code> view.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas</td></tr>' +
         '<tr><td>object_key</td><td>TEXT</td><td>Object the orphan belonged to, kept so an operator can tell which object it was</td></tr>' +
-        '<tr><td>storage_key</td><td>TEXT</td><td>Path on the backend the worker deletes</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path on the backend the delete targets</td></tr>' +
         '<tr><td>reason</td><td>TEXT</td><td>Why cleanup is needed</td></tr>' +
-        '<tr><td>size_bytes</td><td>BIGINT</td><td>Object size (for orphan_bytes tracking)</td></tr>' +
+        '<tr><td>size_bytes</td><td>BIGINT</td><td>Bytes at the path; summed into the backend\'s orphan bytes</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Enqueue time</td></tr>' +
         '<tr><td>next_retry</td><td>TIMESTAMPTZ</td><td>Earliest retry time</td></tr>' +
         '<tr><td>attempts</td><td>INT</td><td>Retry count (max 10)</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Most recent error message</td></tr>' +
-        '<tr><td>claimed_at</td><td>TIMESTAMPTZ</td><td>NULL when unclaimed; set by ClaimPendingCleanups, cleared by RetryCleanupItem</td></tr>' +
-        '<tr><td>claimed_by</td><td>TEXT</td><td>Stable instance identifier (hostname-XXXXXXXX) of the worker that holds the claim; observability only</td></tr></table>' +
+        '<tr><td>claimed_at</td><td>TIMESTAMPTZ</td><td>NULL when unclaimed; set by InsertCleanup and ClaimPendingCleanups, cleared by RetryCleanupItem</td></tr>' +
+        '<tr><td>claimed_by</td><td>TEXT</td><td>Stable instance identifier (hostname-XXXXXXXX) of the instance that holds the claim; observability only</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts &lt; 10 (partial index, supports the ClaimPendingCleanups ORDER BY next_retry, created_at without a sort) &bull; idx_cleanup_queue_backend_storage_key (backend_name, storage_key), for the reconcile page classification (ListedPathStates)</p>' +
-        '<p>Used by: <code>Coordinator.EnqueueCleanup()</code> at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator, drain, scrubber, pending reaper), and the <a href="../background-services/">cleanup-queue</a> background worker (runs every 1 min). The worker uses ClaimPendingCleanups, a CTE that selects candidate rows FOR UPDATE SKIP LOCKED and then runs UPDATE ... FROM the candidate set, so concurrent ticks across instances return disjoint row sets; rows whose claim is older than <code>cleanup_queue.claim_grace_period</code> (default 5m) are reclaimable. On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
-        '<p class="ac-metric">Key queries: EnqueueCleanup, ClaimPendingCleanups (worker), GetPendingCleanups (admin/dashboard), CompleteCleanupItem (atomic delete + orphan_bytes decrement CTE), UpdateCleanupRetry, CountPendingCleanups, MoveCleanupToDLQ</p>' +
-        '<p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total{reason}, s3o_cleanup_queue_processed_total{status=success|success_absent|retry|exhausted}, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_enqueue_failures_total{backend,reason,stage} &bull; Audit events: cleanup_queue.processed, cleanup_queue.already_absent, cleanup_queue.claim_recovered, cleanup_queue.exhausted_to_dlq</p>'
+        '<p>Written by: every transaction that stops recording bytes &mdash; client deletes, overwrites, <a href="../background-services/">rebalance</a>, drain and rewrite moves, the scrubber and read-path integrity failures, over-replication removal, multipart abort, completion and part replacement, discarded intents and refused placements. Settled by the instance that wrote them, and by the <a href="../background-services/">cleanup-queue</a> background worker (runs every 1 min), through one shared settler. The worker uses ClaimPendingCleanups, a CTE that selects candidate rows FOR UPDATE SKIP LOCKED and then runs UPDATE ... FROM the candidate set, so concurrent ticks across instances return disjoint row sets; rows whose claim is older than <code>cleanup_queue.claim_grace_period</code> (default 5m), such as those of a process that died before settling them, are reclaimable. On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>, where its bytes stay counted because they are still on disk.</p>' +
+        '<p class="ac-metric">Key queries: InsertCleanup, ClaimPendingCleanups (worker), GetPendingCleanups (admin/dashboard), DeleteCleanupItem, UpdateCleanupRetry, CountPendingCleanups, MoveCleanupToDLQ</p>' +
+        '<p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total{reason}, s3o_cleanup_queue_processed_total{status=success|success_absent|retry|exhausted}, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend} &bull; Audit events: cleanup_queue.processed, cleanup_queue.already_absent, cleanup_queue.claim_recovered, cleanup_queue.exhausted_to_dlq</p>'
     },
     cleanup_dlq: {
       title: 'cleanup_dlq',
       badge: 'cleanup', badgeText: 'dead-letter queue',
       body: '<p>Dead-letter table for cleanup_queue rows that exhausted their retry budget without ever succeeding at the physical backend delete. The row contents are preserved verbatim (key, path, backend, size, last_error) and the original_id correlates back to the queue row that was moved. Operators inspect this table to find unrecoverable orphans and retry them manually or write each entry off deliberately.</p>' +
-        '<p><b>Important:</b> moving a row here does NOT decrement <code>orphan_bytes</code>. The backend object is still on disk; reclaim happens only when an operator confirms it is gone (e.g. via the reconciler) and runs a manual cleanup.</p>' +
+        '<p><b>Important:</b> a row here still counts toward the backend\'s orphan bytes, because the backend object is still on disk. The space is released only when an operator confirms the object is gone (e.g. via the reconciler) and deletes the row.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
         '<tr><td>original_id</td><td>BIGINT</td><td>cleanup_queue.id at the time of the move</td></tr>' +
@@ -454,7 +454,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     pending_objects: {
       title: 'pending_objects',
       badge: 'cleanup', badgeText: 'in-flight intents',
-      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>Store.InsertPendingIfFits</code> (SQL <code>InsertPendingObjectIfFits</code>) immediately before the backend PUT. That one statement claims the space against the <code>backend_capacity</code> view and records the intent, and inserts nothing when the backend has no room or carries any state flag writes refuse (cordoned, draining, drained, drain failed). The row is deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
+      body: '<p>In-flight write intents. Every write claims its target with one before its bytes land: a client PUT and its extra copies, a replica, a drain or rebalance move, a rewrite pass, and a multipart part. A row is inserted by <code>Store.InsertPendingIfFits</code> (SQL <code>InsertPendingObjectIfFits</code>) immediately before the backend write. That one statement claims the space against the <code>backend_capacity</code> view and records the intent, and inserts nothing when the backend has no room or carries a state flag the write does not accept: a PUT, replica or move refuses any flag, while a rewrite of a copy the backend holds and a part of an upload started before a cordon accept a cordon but not a drain flag. The row is deleted by the transaction that records the copy. If the orchestrator dies between the backend write and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
         '<p>The row is also what admission counts: a backend\'s headroom is its committed rows minus the intents it is holding, so bytes in flight occupy the backend for every instance rather than only the one writing them. That is why the pattern cannot be turned off.</p>' +
         '<p>A write placing several copies at once inserts one intent per copy, and clears every intent for its key on commit apart from the ones its own uploads are still running under. Those surviving rows are what each late copy reads as proof that nothing newer has taken the key. See the <a href="../write-path/">write path</a>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
@@ -475,10 +475,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent, so a reaper-promoted object answers a HEAD without asking a backend (nullable)</td></tr>' +
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, promoted with the object (nullable)</td></tr>' +
         '<tr><td>user_metadata</td><td>JSONB</td><td>x-amz-meta-* the write carried. An empty object means the write had none; NULL means the intent predates identity capture (nullable)</td></tr>' +
-        '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted - the reaper cannot tell whether its upload finished, so it drops the row and removes the bytes at its path, and replication rebuilds the copy from one the client was told about</td></tr>' +
+        '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted: the reaper keeps it when a recorded copy already sits at its path, and otherwise drops the row and queues the bytes at its path for deletion, and replication rebuilds the copy from one the client was told about. Replicas, moves, rewrites and parts all claim with companion intents</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend_storage_key (backend_name, storage_key) &bull; idx_pending_objects_key (object_key) for the by-key clear every commit runs</p>' +
-        '<p>Used by: <code>writepath.Coordinator.ClaimWriteTarget</code> and <code>ClaimWriteCopies</code> (insert through <code>InsertPendingIfFits</code> on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper runs under advisory lock 1011 (<code>LockPendingReaper</code>), which the notification drainer currently shares. Its stale scan is a plain SELECT; promotion re-reads the row with a plain <code>FOR UPDATE</code> through <code>LockPendingForUpdate</code>, so a row already resolved elsewhere is a no-op.</p>' +
+        '<p>Used by: <code>writepath.Coordinator.ClaimWriteTarget</code> and <code>ClaimWriteCopies</code> (insert through <code>InsertPendingIfFits</code> on PUT entry) &bull; <code>ClaimCopyTarget</code> (insert for a replica, move, rewrite or part) &bull; <code>RecordObjectAndPromoteIntent</code>, <code>PlaceCopy</code> and <code>RecordPart</code> (delete on successful commit) &bull; <code>Coordinator.Discard</code> (delete when the backend stopped accepting writes mid-write or the copy failed, queueing the bytes in the same transaction) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper runs under advisory lock 1011 (<code>LockPendingReaper</code>), which the notification drainer currently shares. Its stale scan is a plain SELECT; promotion re-reads the row with a plain <code>FOR UPDATE</code> through <code>LockPendingForUpdate</code>, so a row already resolved elsewhere is a no-op.</p>' +
         '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|superseded|companion_kept|companion_discarded|ambiguous|already_resolved}, s3o_pending_intents_depth, s3o_detached_uploads_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded, pending_reaper.companion_kept, pending_reaper.companion_discarded</p>'
     },
     notification_outbox: {
@@ -672,9 +672,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
 | **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
-| **cleanup_queue** | Retry queue for failed orphan deletions | `id` (auto-increment) |
+| **cleanup_queue** | Bytes waiting to be deleted, queued by the transaction that stopped recording them | `id` (auto-increment) |
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
-| **pending_objects** | In-flight PUT intents (PUT-before-COMMIT write-path crash recovery) | `intent_id` (UUID) |
+| **pending_objects** | In-flight write intents, claimed by every write before its bytes land (admission and crash recovery) | `intent_id` (UUID) |
 | **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
 | **buckets** | Virtual buckets declared through the provisioning API rather than the config file | `name` |
 | **users** | The identity a credential proves, which grants are held by | `id` |
@@ -723,3 +723,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00035_worker_scan_indexes` | Add `idx_object_locations_managed_size (backend_name, size_bytes, object_key) WHERE managed` for the drain's smallest-first walk, and `idx_cleanup_queue_backend_storage_key` and `idx_cleanup_dlq_backend_storage_key (backend_name, storage_key)` for reconcile's per-page classification. Drop `idx_object_locations_managed`, `idx_object_locations_backend` and `idx_cleanup_dlq_backend`, each a prefix of an index that remains. Built `CONCURRENTLY` outside a transaction |
 | `00036_backend_states` | Rename `backend_drains` to `backend_states`, with its CHECK constraint and primary key, so states other than a drain can live in it. `backend_capacity` follows the rename |
 | `00037_backend_state_flags` | Replace `backend_states.state` with an integer `flags` column (cordoned 1, draining 2, drained 4, drain failed 8), so a cordon and a drain can be held at once. `backend_capacity` exposes `flags` in place of `accepting_writes`, and admission tests it against a mask passed in from Go |
+| `00038_pending_objects_storage_key_index` | Add `idx_pending_objects_backend_storage_key (backend_name, storage_key)` for the reconcile page classification's intent lookup, and drop `idx_pending_objects_backend`, which it subsumes. Built `CONCURRENTLY` outside a transaction |
+| `00039_object_stored_form` | Add the generated columns `form` (the layers a copy's bytes carry) and `object_size` (the size the client wrote) to `object_locations`. Stored generated columns rewrite the table under an exclusive lock |
+| `00040_derived_orphan_bytes` | Drop `backend_quotas.orphan_bytes` and recreate `backend_capacity` to sum `size_bytes` over the backend's `cleanup_queue` and `cleanup_dlq` rows. Every transaction that removes a copy queues its cleanup, so a counter would be written by every overwrite and delete |
+| `00041_multipart_part_paths` | Add nullable `storage_key` to `multipart_parts`. Each part upload writes its own path under an intent, so a re-upload of a part number never shares bytes with the part it replaces; a part with a NULL path sits at the part number's fixed path |

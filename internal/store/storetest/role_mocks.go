@@ -58,10 +58,10 @@ func (mr *MockObjectStoreMockRecorder) CountObjectsByPrefix(ctx, prefix any) *go
 }
 
 // DeleteObject mocks base method.
-func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -74,25 +74,25 @@ func (mr *MockObjectStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
-	ret0, _ := ret[0].(core.DeletedCopy)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockObjectStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockObjectStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
-	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -225,12 +225,13 @@ func (mr *MockObjectStoreMockRecorder) ListedPathStates(ctx, backend, paths any)
 }
 
 // PlaceCopy mocks base method.
-func (m *MockObjectStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+func (m *MockObjectStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
 	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].([]core.CleanupItem)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // PlaceCopy indicates an expected call of PlaceCopy.
@@ -240,10 +241,10 @@ func (mr *MockObjectStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -435,20 +436,6 @@ func (mr *MockCleanupStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockCleanupStore)(nil).CompleteCleanupItem), ctx, id)
 }
 
-// EnqueueCleanup mocks base method.
-func (m *MockCleanupStore) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, c)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// EnqueueCleanup indicates an expected call of EnqueueCleanup.
-func (mr *MockCleanupStoreMockRecorder) EnqueueCleanup(ctx, c any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCleanupStore)(nil).EnqueueCleanup), ctx, c)
-}
-
 // GetPendingCleanups mocks base method.
 func (m *MockCleanupStore) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
@@ -462,20 +449,6 @@ func (m *MockCleanupStore) GetPendingCleanups(ctx context.Context, limit int) ([
 func (mr *MockCleanupStoreMockRecorder) GetPendingCleanups(ctx, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPendingCleanups", reflect.TypeOf((*MockCleanupStore)(nil).GetPendingCleanups), ctx, limit)
-}
-
-// IncrementOrphanBytes mocks base method.
-func (m *MockCleanupStore) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// IncrementOrphanBytes indicates an expected call of IncrementOrphanBytes.
-func (mr *MockCleanupStoreMockRecorder) IncrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementOrphanBytes", reflect.TypeOf((*MockCleanupStore)(nil).IncrementOrphanBytes), ctx, backendName, amount)
 }
 
 // ListCleanupDLQ mocks base method.

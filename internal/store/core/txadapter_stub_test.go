@@ -19,9 +19,8 @@ import "context"
 // -------------------------------------------------------------------------
 
 // noopTxAdapter satisfies TxAdapter with zero values throughout, except that
-// every pending intent claims, as it does for a write nothing overtook, and
-// every backend admits. Embed it, then override the methods a test actually
-// exercises.
+// every pending intent claims, as it does for a write nothing overtook. Embed
+// it, then override the methods a test actually exercises.
 type noopTxAdapter struct{}
 
 // Compile-time check that embedding this is enough to be a TxAdapter.
@@ -73,12 +72,14 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) BackendAdmits(context.Context, string, int64, BackendFlags) (bool, error) {
-	return true, nil
+func (*noopTxAdapter) InsertCleanup(context.Context, *CleanupRequest) (int64, error) { return 0, nil }
+
+func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*MultipartPart, error) {
+	return nil, nil
 }
 
-func (*noopTxAdapter) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {
-	return 0, 0, nil
+func (*noopTxAdapter) DeleteMultipartUpload(context.Context, string) (string, []MultipartPart, error) {
+	return "", nil, nil
 }
 
 func (*noopTxAdapter) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
@@ -96,8 +97,6 @@ func (*noopTxAdapter) DeleteObjectTags(context.Context, string) error { return n
 func (*noopTxAdapter) DeleteObjectTagsForKeys(context.Context, []string) error { return nil }
 
 func (*noopTxAdapter) AdjustQuotaStripe(context.Context, string, int16, int64) error { return nil }
-
-func (*noopTxAdapter) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
 func (*noopTxAdapter) AllBackendBytesUsed(context.Context) (map[string]int64, error) {
 	return nil, nil

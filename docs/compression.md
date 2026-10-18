@@ -57,9 +57,9 @@ s3-orchestrator admin decompress-existing   # and back out again
 
 Both are available in the web UI as well, and as `POST /admin/api/compress-existing` and `/admin/api/decompress-existing`.
 
-The pass reads each copy, encodes it, and writes the result to a new path on the same backend. The new row replaces the old one in one transaction, which also moves the backend's quota by the difference, and the old bytes are deleted after it commits. Readers see either the old copy or the new one, never bytes the row does not describe. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
+The pass reads each copy, encodes it, and writes the result to a new path on the same backend. The new row replaces the old one in one transaction, which also moves the backend's quota by the difference and queues the old bytes for deletion; they are deleted once it commits. Readers see either the old copy or the new one, never bytes the row does not describe. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
 
-The new copy is recorded only while the copy the pass read is still the recorded one. A client that writes the key mid-pass keeps its write: nothing is recorded, the pass deletes the bytes it wrote, and the copy is counted as `changed` (see [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write)). Only the growth of a rewritten copy, its new size minus its old one, is judged against the backend's room. A cordoned backend still admits a rewrite, since it adds no copy; a draining backend refuses it and the copy is skipped.
+The new copy is recorded only while the copy the pass read is still the recorded one. A client that writes the key mid-pass keeps its write: nothing is recorded, the pass deletes the bytes it wrote, and the copy is counted as `changed` (see [admin-api.md](admin-api.md#when-a-conversion-meets-a-live-write)). Each rewritten copy claims its backend with a pending intent for its full new size once it is encoded, so the backend needs room for the new copy beside the old one until the old one is deleted; a backend without that room refuses the rewrite and the copy is skipped. A cordoned backend still admits a rewrite, since it replaces a copy the backend already holds; a draining backend refuses it and the copy is skipped.
 
 Objects it declines are reported as **skipped**, separately from failures. On a fleet of media or archives most of it will be skipped, and that is a healthy run rather than a broken one. Only objects below `min_size` are free to skip: deciding on the ratio means encoding the object first, since nothing else answers the question.
 
@@ -172,7 +172,7 @@ A compressed object that is also encrypted cannot be recognised from outside, si
 
 Quota counts what occupies a backend, so every size the write path records is the stored size: the encoded, encrypted bytes that landed, not the object they decode to. `logical_size` exists to answer the client and never to charge the operator.
 
-That holds through failure too. A PUT records its intent before the upload, so a crash between the two leaves a row the reaper resolves later; the intent carries the same description of the bytes the commit would have, so a recovered object is decodable rather than merely present. A write whose commit fails leaves a cleanup row sized by what landed, which is what credits the backend back when the orphan is removed.
+That holds through failure too. A PUT records its intent before the upload, so a crash between the two leaves a row the reaper resolves later; the intent carries the same description of the bytes the commit would have, so a recovered object is decodable rather than merely present. A write whose commit fails leaves that intent in place, sized by what landed, so the bytes stay counted against the backend until the reaper resolves it.
 
 ## Verification
 

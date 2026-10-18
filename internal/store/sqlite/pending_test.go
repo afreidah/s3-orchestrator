@@ -95,7 +95,7 @@ func TestPending_InsertAndDepth(t *testing.T) {
 	intent.KeyID = "kid-1"
 	intent.PlaintextSize = 90
 	intent.ContentHash = "abc"
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestPending_DeleteRemovesRow(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	if err := s.DeletePending(ctx, "intent-1"); err != nil {
@@ -168,7 +168,7 @@ func TestPending_GetStaleRespectsCutoff(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("fresh", "bucket/k1")
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestPending_GetStaleHonoursLimit(t *testing.T) {
 
 	for i := range 5 {
 		intent := pendingFixture("intent-"+string(rune('a'+i)), "bucket/k")
-		if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending(%d): %v", i, err)
 		}
 	}
@@ -220,7 +220,7 @@ func TestPending_DeleteByBackend(t *testing.T) {
 	b := pendingFixture("b", "k-b")
 	b.BackendName = "backend-b"
 	for _, p := range []core.PendingObject{a, b} {
-		if _, err := s.InsertPendingIfFits(ctx, &p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, &p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending: %v", err)
 		}
 	}
@@ -247,7 +247,7 @@ func TestPromotePending_Committed(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	// Reload so CreatedAt reflects the database default rather than the zero value.
@@ -305,7 +305,7 @@ func TestPromotePending_WriteAlreadyClearedTheIntent(t *testing.T) {
 
 	// Insert a pending intent first so its created_at is older.
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
@@ -364,7 +364,7 @@ func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -425,7 +425,7 @@ func TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", StorageKey: "bucket/k!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", StorageKey: "bucket/k!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
-		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
 	}
@@ -483,7 +483,7 @@ func TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.
 	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", StorageKey: "bucket/k!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", StorageKey: "bucket/k!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
-		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
 	}

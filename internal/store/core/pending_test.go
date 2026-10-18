@@ -244,26 +244,98 @@ func TestPromotePending_CarriesTheStoredForm(t *testing.T) {
 
 // TestPromotePending_PrimarySupersededByNewerCopy verifies the timestamp check
 // still refuses to promote a primary intent an existing newer copy has
-// overtaken, which is the insurance behind writes clearing their own intents.
+// overtaken, and that the intent is dropped with its uploaded bytes queued so
+// they do not leak.
 func TestPromotePending_PrimarySupersededByNewerCopy(t *testing.T) {
 	t.Parallel()
 	intent := companionIntent()
 	intent.Role = PendingRolePrimary
+	intent.StorageKey = "k!i-1"
 	intent.CreatedAt = time.Now().Add(-time.Minute)
 	stub := &promoteTxStub{
 		claimed:        true,
 		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50, CreatedAt: time.Now()}},
 	}
 
-	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	result, cleanup, deltas, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	if result != PendingPromoteSuperseded {
 		t.Errorf("result = %v, want Superseded", result)
 	}
-	if len(stub.inserted) != 0 || len(displaced) != 0 {
-		t.Errorf("a superseded intent must record nothing: inserted=%+v displaced=%+v", stub.inserted, displaced)
+	if len(stub.inserted) != 0 || len(deltas) != 0 {
+		t.Errorf("a superseded intent must record nothing: inserted=%+v deltas=%+v", stub.inserted, deltas)
+	}
+	if !slices.Equal(stub.deleted, []string{"i-1"}) {
+		t.Errorf("deleted intents = %v, want the superseded one", stub.deleted)
+	}
+	want := []CleanupItem{{BackendName: "b2", ObjectKey: "k", StorageKey: "k!i-1", Reason: CleanupReasonSupersededIntent, SizeBytes: 100}}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestPromotePending_SupersededDeleteFailureAborts verifies a superseded intent
+// that cannot be dropped fails the promotion rather than queueing bytes the
+// surviving intent would later claim again.
+func TestPromotePending_SupersededDeleteFailureAborts(t *testing.T) {
+	t.Parallel()
+	intent := companionIntent()
+	intent.Role = PendingRolePrimary
+	intent.CreatedAt = time.Now().Add(-time.Minute)
+	sentinel := errors.New("delete failed")
+	stub := &promoteTxStub{
+		claimed:        true,
+		deleteErr:      sentinel,
+		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50, CreatedAt: time.Now()}},
+	}
+
+	result, cleanup, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the delete failure", err)
+	}
+	if result != PendingPromoteAmbiguous || cleanup != nil {
+		t.Errorf("result = %v cleanup = %+v, want Ambiguous and nothing queued", result, cleanup)
+	}
+}
+
+// TestCompanion_QueueFailureRollsBack verifies a companion resolution that
+// cannot queue the bytes it discards fails, on both the reaper's path and the
+// late commit's.
+func TestCompanion_QueueFailureRollsBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("queue failed")
+	reaper := &queueRecorder{TxAdapter: &promoteTxStub{claimed: true}, err: sentinel}
+	if _, cleanup, _, err := PromotePending(context.Background(), &stubRunner{tx: reaper}, companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
+		t.Errorf("PromotePending cleanup=%+v err=%v, want the queue failure", cleanup, err)
+	}
+	late := &queueRecorder{TxAdapter: &companionTxStub{claimed: false}, err: sentinel}
+	if _, cleanup, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: late}, companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
+		t.Errorf("CommitCompanionCopy cleanup=%+v err=%v, want the queue failure", cleanup, err)
+	}
+}
+
+// TestPromotePending_CommitFailuresRollBack verifies each statement of a
+// committed promotion carries its failure out, including queueing the
+// displaced copy's bytes.
+func TestPromotePending_CommitFailuresRollBack(t *testing.T) {
+	t.Parallel()
+	intent := companionIntent()
+	intent.Role = PendingRolePrimary
+	sentinel := errors.New("step failed")
+	existing := []ExistingCopy{{BackendName: "b1", SizeBytes: 50}}
+	cases := map[string]TxAdapter{
+		"intent delete": &promoteTxStub{claimed: true, existingCopies: existing, deleteErr: sentinel},
+		"queue":         &queueRecorder{TxAdapter: &promoteTxStub{claimed: true, existingCopies: existing}, err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: tx}, intent); !errors.Is(err, sentinel) {
+				t.Errorf("err = %v, want the %s failure", err, name)
+			}
+		})
 	}
 }
 

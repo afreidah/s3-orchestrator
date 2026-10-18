@@ -1020,7 +1020,7 @@ func TestCompressExisting_MovesTheCopyTheListingReported(t *testing.T) {
 	if got := reqs[0].Source; got.StorageKey != row.StorageKey || !reflect.DeepEqual(got.Identity, row.Identity) {
 		t.Errorf("moved %+v, want the listed copy at %s", got, row.StorageKey)
 	}
-	if reqs[0].DestName != row.BackendName || reqs[0].Reasons != writepath.RewriteMoveReasons {
-		t.Errorf("move to %q with %+v, want a rewrite onto %s", reqs[0].DestName, reqs[0].Reasons, row.BackendName)
+	if reqs[0].DestName != row.BackendName || reqs[0].Profile != writepath.RewriteMove {
+		t.Errorf("move to %q with %+v, want a rewrite onto %s", reqs[0].DestName, reqs[0].Profile, row.BackendName)
 	}
 }

@@ -300,7 +300,7 @@ func TestUsage_MultipartCompleteChargesPartReadEgress(t *testing.T) {
 	// Measured before completing, which deletes the part objects.
 	var partBytes int64
 	for i := range parts {
-		partBytes += backendRawObjectSize(t, target, multipartPartStoredKey(uploadID, i+1))
+		partBytes += backendRawObjectSize(t, target, multipartPartStoredKey(t, uploadID, i+1))
 	}
 
 	delta := usageDelta(testStack.Runtime, target, func() {

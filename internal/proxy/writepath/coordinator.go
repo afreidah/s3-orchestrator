@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Owns the helpers that combine the per-role store views with the backend
-// runtime primitives to record objects, promote pending intents, enqueue
-// cleanups, and pick write targets. The object and multipart managers hold a
+// runtime primitives to record objects, promote pending intents, settle the
+// cleanups their transactions queue, and pick write targets. The object and multipart managers hold a
 // *Coordinator directly, so each is fully initialised at construction time
 // without post-construction patching.
 // -------------------------------------------------------------------------------
@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"slices"
 
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/cleanup"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -35,23 +35,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
-	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // -------------------------------------------------------------------------
 // TYPE
 // -------------------------------------------------------------------------
 
-// Coordinator bundles the infrastructure subset (WriteRuntime) with
-// the metadata-store contract and the pending-pattern flag so the
-// write-path helpers can be expressed as plain methods on one value every
-// consumer shares, with no post-construction wiring step.
 // CoordinatorStores is the narrow persistence surface the write coordinator needs:
 // object record/move, write-target selection (quota), pending-intent
-// insert/promote, and cleanup enqueue/recovery. Declared locally so
+// insert/promote/discard, and settling queued cleanups. Declared locally so
 // writepath does not pull in the full MetadataStore.
+//
 //go:generate mockgen -destination=mock_stores_test.go -package=writepath github.com/afreidah/s3-orchestrator/internal/proxy/writepath CoordinatorStores
-
 type CoordinatorStores interface {
 	core.ObjectStore
 	core.QuotaStore
@@ -60,11 +55,20 @@ type CoordinatorStores interface {
 	CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error)
 }
 
+// Coordinator bundles the infrastructure subset (WriteRuntime) with the
+// metadata-store contract so the write-path helpers can be expressed as plain
+// methods on one value every consumer shares, with no post-construction wiring
+// step.
 type Coordinator struct {
-	core   WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
-	stores CoordinatorStores
-	log    *slog.Logger
+	core    WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, deletes
+	stores  CoordinatorStores
+	settler *cleanup.Settler
+	log     *slog.Logger
 }
+
+// settleConcurrency bounds how many backends a request deletes from at once,
+// and how many of its cleanup rows it settles at once.
+const settleConcurrency = 8
 
 // New constructs a Coordinator. The supplied core must observe the same
 // admission, usage, drain, and backend state every other collaborator sees;
@@ -75,9 +79,10 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{
-		core:   core,
-		stores: stores,
-		log:    slog.Default().With(logfmt.Component("writepath")),
+		core:    core,
+		stores:  stores,
+		settler: cleanup.New(cleanup.Deps{Deleter: core, Store: stores, Concurrency: settleConcurrency}),
+		log:     slog.Default().With(logfmt.Component("writepath")),
 	}
 }
 
@@ -92,7 +97,7 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error) {
 	name, err := w.claimFirst(eligible, func(name string) (bool, error) {
 		p.BackendName = name
-		return w.stores.InsertPendingIfFits(ctx, p)
+		return w.stores.InsertPendingIfFits(ctx, p, core.AcceptForWrite)
 	})
 	if err != nil {
 		return "", err
@@ -138,7 +143,7 @@ func (w *Coordinator) ClaimWriteCopies(ctx context.Context, intents []*core.Pend
 		}
 		p := intents[len(claimed)]
 		p.BackendName = name
-		fits, err := w.stores.InsertPendingIfFits(ctx, p)
+		fits, err := w.stores.InsertPendingIfFits(ctx, p, core.AcceptForWrite)
 		if err != nil {
 			if len(claimed) == 0 {
 				return nil, fmt.Errorf("claim write target: %w", err)
@@ -195,38 +200,9 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 // RECORD + CLEANUP
 // -------------------------------------------------------------------------
 
-// RecordObjectOrCleanup calls RecordObject and, on failure, deletes the
-// orphaned bytes from be. On success it cleans up any copies the overwrite
-// displaced. The transaction itself charges the bytes, so no counter is
-// settled here. req must name exactly one copy, the one on be.
-func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error {
-	backendName, err := soleBackend(req)
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return err
-	}
-	displaced, _, err := w.stores.RecordObject(ctx, req)
-	if err != nil {
-		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
-			"key", req.Key, "backend", backendName, "error", err)
-		w.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
-			BackendName: backendName,
-			ObjectKey:   req.Key,
-			StorageKey:  req.Copies[0].StorageKey,
-			Reason:      "orphan_record_failed",
-			SizeBytes:   req.Size,
-		})
-		observe.RecordSpanError(span, err)
-		return fmt.Errorf("failed to record object: %w", err)
-	}
-	w.cleanupDisplacedCopies(ctx, req.Key, backendName, displaced)
-	return nil
-}
-
 // soleBackend names the single copy a request places, or reports why it cannot.
-// The helpers that clean up after a failed commit delete from one backend, so a
-// request naming any other number is a caller error rather than a state they
-// can recover from.
+// RecordObjectAndPromoteIntent accounts for one upload, so a request naming any
+// other number is a caller error rather than a state it can recover from.
 func soleBackend(req *core.RecordObjectRequest) (string, error) {
 	if len(req.Copies) != 1 {
 		return "", fmt.Errorf("%w: record request for %s names %d copies", errSingleCopyOnly, req.Key, len(req.Copies))
@@ -238,17 +214,29 @@ func soleBackend(req *core.RecordObjectRequest) (string, error) {
 // recovery path can only account for one.
 var errSingleCopyOnly = errors.New("write path: helper records a single copy")
 
-// reasonOverwriteDisplaced labels the cleanup of a copy an overwrite replaced,
-// which is what the store reports when it does not say otherwise.
-const reasonOverwriteDisplaced = "overwrite_displaced"
+// Settle deletes the bytes behind cleanup rows a transaction just queued and
+// settles each row: retired once the bytes are gone, retried with backoff when
+// the delete fails. The rows already name the bytes durably, so a failure here
+// leaves nothing untracked. Deletes are not gated on usage limits: refusing one
+// over budget would leave an operator unable to get back under it.
+func (w *Coordinator) Settle(ctx context.Context, items []core.CleanupItem) {
+	for i := range items {
+		telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(items[i].Reason).Inc()
+	}
+	w.settler.Settle(ctx, items)
+}
 
-// RecoverFromRecordFailure deletes the bytes a write uploaded after its commit
-// failed, charging both the PUT and the cleanup DELETE. A failed delete is
-// enqueued for retry; a 404 counts as done. It deletes only c's storage key,
-// which no other write shares. Callers own the failure log and span status.
-func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
-	w.core.Acct().APICall(s3op.PutObject, c.BackendName) // the PUT that succeeded
-	w.DeleteOrEnqueue(ctx, be, c)
+// Discard drops an intent whose upload will not be recorded and settles the
+// cleanup of its bytes. When the discard itself fails the intent stays, and the
+// pending reaper resolves it on a later tick.
+func (w *Coordinator) Discard(ctx context.Context, p *core.PendingObject, reason string) {
+	cleanup, err := w.stores.DiscardPending(ctx, p, reason)
+	if err != nil {
+		w.log.ErrorContext(ctx, "discard of an unrecorded upload failed; intent left for reaper",
+			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
+		return
+	}
+	w.Settle(ctx, cleanup)
 }
 
 // NewPendingIntent builds the intent a write is admitted on. ClaimWriteTarget
@@ -272,17 +260,47 @@ func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.Ob
 	return p
 }
 
-// NewStorageKey mints a unique path for a write with no pending intent, such as
-// a replica or a rebalance or drain move.
-func NewStorageKey(objectKey string) string {
-	return internalkey.StorageKey(objectKey, audit.NewID())
+// NewCopyIntent builds the intent a replica, move or rewrite claims its target
+// with before copying. It is a companion: the reaper never promotes it, and
+// discards its bytes unless a recorded copy already sits at its path. size is
+// what the copy will land on the backend and form how those bytes are stored.
+func NewCopyIntent(key, target string, size int64, form *core.StoredForm) *core.PendingObject {
+	p := NewPendingIntent(key, size, form, nil)
+	p.BackendName = target
+	p.Role = core.PendingRoleCompanion
+	return p
+}
+
+// ClaimCopyTarget claims the intent's backend for a copy, admitting the bytes
+// on a backend whose flags all fall within accepts. Returns core.ErrTargetRefused
+// when the backend has no room or refuses the copy, so nothing was written.
+func (w *Coordinator) ClaimCopyTarget(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) error {
+	fits, err := w.stores.InsertPendingIfFits(ctx, p, accepts)
+	if err != nil {
+		return fmt.Errorf("claim copy target %s: %w", p.BackendName, err)
+	}
+	if !fits {
+		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(p.BackendName).Inc()
+		return core.ErrTargetRefused
+	}
+	w.core.Quota().NotePlacement(p.BackendName, p.SizeBytes)
+	telemetry.PendingIntentsEnqueuedTotal.Inc()
+	return nil
+}
+
+// Place records a copy at the path its intent claimed and settles the cleanup
+// the placement queued: the source of a move, or the copy itself when the
+// placement was refused. Returns what PlaceCopy returned.
+func (w *Coordinator) Place(ctx context.Context, p *core.Placement) (int64, error) {
+	placed, cleanup, err := w.stores.PlaceCopy(ctx, p)
+	w.Settle(ctx, cleanup)
+	return placed, err
 }
 
 // RecordObjectAndPromoteIntent commits the object location, updates quota, and
 // clears the pending intent in one transaction. On failure the intent and the
 // backend bytes are left for the pending reaper, which HEADs the backend and
-// either promotes or removes the intent. A copy with no intent falls back to
-// RecordObjectOrCleanup.
+// either promotes or removes the intent.
 func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
 	backendName, err := soleBackend(req)
 	if err != nil {
@@ -290,18 +308,8 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		return err
 	}
 	intentID := req.Copies[0].IntentID
-	if intentID == "" {
-		// The backend is unavailable here, so we cannot use
-		// RecordObjectOrCleanup (which deletes on failure). Resolve via the
-		// backend map.
-		be, ok := w.core.Backends()[backendName]
-		if !ok {
-			return fmt.Errorf("backend %s not registered", backendName)
-		}
-		return w.RecordObjectOrCleanup(ctx, span, be, req)
-	}
 
-	displaced, _, err := w.stores.RecordObject(ctx, req)
+	cleanup, _, err := w.stores.RecordObject(ctx, req)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
@@ -318,7 +326,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
-	w.cleanupDisplacedCopies(ctx, req.Key, backendName, displaced)
+	w.settleDisplaced(ctx, req.Key, backendName, cleanup)
 	return nil
 }
 
@@ -329,7 +337,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 // recorded; a copy discarded because a newer write took the key is not an
 // error.
 func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (recorded bool, err error) {
-	result, displaced, _, err := w.stores.CommitCompanionCopy(ctx, p)
+	result, cleanup, _, err := w.stores.CommitCompanionCopy(ctx, p)
 	if err != nil {
 		// The intent stays, so the reaper resolves the copy on a later tick -
 		// discarding its bytes, since an extra copy is never promoted.
@@ -347,7 +355,7 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
 	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
-	w.DeleteDisplaced(ctx, p.ObjectKey, displaced)
+	w.Settle(ctx, cleanup)
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
 	return false, nil
 }
@@ -360,11 +368,10 @@ const (
 	WriteCopyFailed    = "failed"
 )
 
-// cleanupDisplacedCopies removes the copies an overwrite displaced and audits
-// the overwrite.
-func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBackend string, displaced []core.DeletedCopy) {
-	w.DeleteDisplaced(ctx, key, displaced)
-
+// settleDisplaced settles the cleanup an overwrite queued for the copies it
+// displaced, and audits the overwrite.
+func (w *Coordinator) settleDisplaced(ctx context.Context, key, newBackend string, displaced []core.CleanupItem) {
+	w.Settle(ctx, displaced)
 	if len(displaced) > 0 {
 		audit.Log(ctx, "storage.overwrite_displaced",
 			slog.String("key", key),
@@ -374,119 +381,14 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 	}
 }
 
-// DeleteDisplaced removes each copy's bytes at the path its own row or intent
-// named. It deletes per copy rather than per key, because two writes of one key
-// on one backend hold two paths and each cleanup must reach only its own bytes.
-func (w *Coordinator) DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
-	reqs := make([]*core.CleanupRequest, len(displaced))
-	for i, dc := range displaced {
-		// The store labels bytes it cleared for a reason of its own - an intent
-		// this write superseded, rather than a copy it replaced - so an operator
-		// reading the cleanup queue can tell which is which.
-		reqs[i] = dc.Cleanup(key, reasonOverwriteDisplaced)
-	}
-	w.DeleteAllOrEnqueue(ctx, reqs)
-}
-
-// DeleteOrEnqueue deletes the bytes at c's storage key, and on failure enqueues
-// the path for background retry and tracks SizeBytes as orphan bytes. Callers
-// take the storage key from the row or intent that recorded the copy, so the
-// delete cannot reach another write's bytes under the same key. Deletes are not
-// gated on usage limits: refusing one over budget would leave an operator
-// unable to get back under it.
-func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
-	w.settleDelete(ctx, c, w.core.Delete(ctx, c.BackendName, be, core.StoragePath(c.ObjectKey, c.StorageKey)))
-}
-
-// DeleteAllOrEnqueue deletes every request's bytes, each backend's in one
-// batched delete where the backend supports it and the backends in parallel,
-// then settles each request as DeleteOrEnqueue does. A request naming an
-// unknown backend is logged and skipped.
-func (w *Coordinator) DeleteAllOrEnqueue(ctx context.Context, reqs []*core.CleanupRequest) {
-	byBackend := make(map[string][]*core.CleanupRequest)
-	for _, c := range reqs {
-		byBackend[c.BackendName] = append(byBackend[c.BackendName], c)
-	}
-	groups := slices.Collect(maps.Values(byBackend))
-	workerpool.Run(ctx, len(groups), groups, func(ctx context.Context, group []*core.CleanupRequest) {
-		name := group[0].BackendName
-		be, ok := w.core.Backends()[name]
-		if !ok {
-			w.log.WarnContext(ctx, "delete target backend not found", "backend", name, "copies", len(group))
-			return
-		}
-		paths := make([]string, len(group))
-		for i, c := range group {
-			paths[i] = core.StoragePath(c.ObjectKey, c.StorageKey)
-		}
-		failed := w.core.DeleteMany(ctx, name, be, paths)
-		for i, c := range group {
-			w.settleDelete(ctx, c, failed[paths[i]])
-		}
-	})
-}
-
-// settleDelete finishes one delete: nothing to do when it succeeded or the
-// bytes were already absent, otherwise the path is queued for retry. A 404 is
-// not queued, since the cleanup worker would only rediscover it as a no-op.
-func (w *Coordinator) settleDelete(ctx context.Context, c *core.CleanupRequest, err error) {
-	if err == nil {
-		return
-	}
-	if backend.IsNotFound(err) {
-		w.log.InfoContext(ctx, "delete target already absent on backend, skipping cleanup enqueue",
-			"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey, "reason", c.Reason)
-		return
-	}
-	w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
-		"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey, "reason", c.Reason, "error", err)
-	w.EnqueueCleanup(ctx, c)
-}
-
-// EnqueueCleanup queues a failed cleanup for retry and adds its size to
-// orphan_bytes. It is best-effort: a failure increments
-// s3o_cleanup_enqueue_failures_total and emits a storage.OrphanEnqueueFailed
-// audit event naming the object, which reconcile recovers later.
-func (w *Coordinator) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) {
-	if err := w.stores.EnqueueCleanup(ctx, c); err != nil {
-		w.recordEnqueueFailure(ctx, c, "enqueue", err)
-		return
-	}
-	if c.SizeBytes > 0 {
-		if err := w.stores.IncrementOrphanBytes(ctx, c.BackendName, c.SizeBytes); err != nil {
-			w.recordEnqueueFailure(ctx, c, "orphan_bytes", err)
-		}
-	}
-	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(c.Reason).Inc()
-}
-
-// recordEnqueueFailure increments the failure counter, emits an audit
-// event carrying enough attributes to identify the specific orphan,
-// and logs an error, for both failure stages (enqueue and orphan_bytes).
-func (w *Coordinator) recordEnqueueFailure(ctx context.Context, c *core.CleanupRequest, stage string, err error) {
-	telemetry.CleanupEnqueueFailuresTotal.WithLabelValues(c.BackendName, c.Reason, stage).Inc()
-	audit.Log(ctx, "storage.OrphanEnqueueFailed",
-		slog.String("backend", c.BackendName),
-		slog.String("key", c.ObjectKey),
-		slog.String("storage_key", c.StorageKey),
-		slog.String("reason", c.Reason),
-		slog.String("stage", stage),
-		slog.Int64("size", c.SizeBytes),
-		slog.String("error", err.Error()),
-	)
-	w.log.ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
-		"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey,
-		"reason", c.Reason, "stage", stage, "error", err)
-}
-
 // -------------------------------------------------------------------------
 // SHARED OBJECT MOVE PRIMITIVE
 // -------------------------------------------------------------------------
 
 // MoveRequest bundles the inputs to a single src -> dest object move. Source
 // is the copy the caller read; the move commits only while it is still the
-// copy recorded on its backend. The destination path is minted for the move,
-// so each cleanup path deletes exactly its own bytes.
+// copy recorded on its backend. The destination is claimed with an intent at a
+// path minted for the move, so each cleanup deletes exactly its own bytes.
 //
 // Reform, when set, rewrites the bytes on the way and reports the form they
 // then carry. A move with a reform may name the source's own backend as its
@@ -496,104 +398,90 @@ type MoveRequest struct {
 	SrcBackend  backend.ObjectBackend
 	DestBackend backend.ObjectBackend
 	DestName    string
-	Reasons     MoveReasonProfile
+	Profile     MoveProfile
 	Reform      func(ctx context.Context, src *backend.GetObjectResult) (*storedform.Reformed, error)
 }
 
-// OrphanReasons are the cleanup-queue reasons for bytes a copy left on its
-// destination when nothing recorded them: Orphan when the placement errored,
-// and StaleOrphan when the source changed or the target refused.
-type OrphanReasons struct {
-	Orphan      string
-	StaleOrphan string
+// MoveProfile is how one subsystem moves objects: the labels it queues bytes
+// under, and the backend flags its destination may carry.
+type MoveProfile struct {
+	Reasons core.MoveReasons
+	Accepts core.BackendFlags
 }
 
-// MoveReasonProfile groups the cleanup-queue reasons a move emits: those for
-// its unrecorded destination bytes, and SourceDelete for the source-side
-// delete after a successful move.
-type MoveReasonProfile struct {
-	OrphanReasons
-	SourceDelete string
-}
-
-// RebalanceMoveReasons, DrainMoveReasons and RewriteMoveReasons are the
-// cleanup-queue reason profiles for the subsystems that move objects.
-// ReplicationOrphanReasons labels a replica that was never recorded.
+// RebalanceMove, DrainMove and RewriteMove are the profiles of the subsystems
+// that move objects. A rewrite replaces a copy on its own backend, so a
+// cordoned backend still takes it. ReplicationReasons labels a replica that
+// was never recorded.
 var (
-	RebalanceMoveReasons = MoveReasonProfile{
-		OrphanReasons: OrphanReasons{Orphan: "rebalance_orphan", StaleOrphan: "rebalance_stale_orphan"},
-		SourceDelete:  "rebalance_source_delete",
+	RebalanceMove = MoveProfile{
+		Reasons: core.MoveReasons{Orphan: "rebalance_orphan", SourceDelete: "rebalance_source_delete"},
+		Accepts: core.AcceptForWrite,
 	}
-	DrainMoveReasons = MoveReasonProfile{
-		OrphanReasons: OrphanReasons{Orphan: "drain_orphan", StaleOrphan: "drain_stale_orphan"},
-		SourceDelete:  "drain_source_delete",
+	DrainMove = MoveProfile{
+		Reasons: core.MoveReasons{Orphan: "drain_orphan", SourceDelete: "drain_source_delete"},
+		Accepts: core.AcceptForWrite,
 	}
-	RewriteMoveReasons = MoveReasonProfile{
-		OrphanReasons: OrphanReasons{Orphan: "rewrite_orphan", StaleOrphan: "rewrite_stale_orphan"},
-		SourceDelete:  "rewrite_source_delete",
+	RewriteMove = MoveProfile{
+		Reasons: core.MoveReasons{Orphan: "rewrite_orphan", SourceDelete: "rewrite_source_delete"},
+		Accepts: core.AcceptForRewrite,
 	}
-	ReplicationOrphanReasons = OrphanReasons{Orphan: "replication_orphan", StaleOrphan: "replication_stale_orphan"}
+	ReplicationReasons = core.MoveReasons{Orphan: "replication_orphan"}
 )
 
 // MoveObject moves one object from src to dest for drain, rebalance and the
-// rewrite passes: it copies the bytes, reformed when the request says how,
-// records them on dest while removing the source row through PlaceCopy, and
-// then deletes the source bytes. Returns the moved size, or the wrapped
-// failure: core.ErrCopyChanged when a newer write replaced the source,
-// core.ErrTargetRefused when dest holds a copy or refused the bytes.
+// rewrite passes: it claims dest for the bytes, copies them, reformed when the
+// request says how, and places them while removing the source through
+// PlaceCopy, which queues the source's bytes for the cleanup settled here.
+// Returns the moved size, or the wrapped failure: core.ErrCopyChanged when a
+// newer write replaced the source, core.ErrTargetRefused when dest holds a
+// copy or has no room for the bytes.
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
 	key, srcName := req.Source.ObjectKey, req.Source.BackendName
-	srcPath := core.StoragePath(key, req.Source.StorageKey)
+	intent := NewCopyIntent(key, req.DestName, req.Source.SizeBytes, &req.Source.StoredForm)
 	copyReq := &backend.CopyRequest{
 		Src:          backend.CopyEndpoint{Name: srcName, Backend: req.SrcBackend},
 		Dst:          backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend},
-		SrcKey:       srcPath,
-		DstKey:       NewStorageKey(key),
+		SrcKey:       core.StoragePath(key, req.Source.StorageKey),
+		DstKey:       intent.StorageKey,
 		SizeEstimate: req.Source.SizeBytes,
 	}
-	placement := &core.Placement{Source: req.Source, Target: req.DestName, StorageKey: copyReq.DstKey, RemoveSource: true}
-	if req.Reform != nil {
+	placement := &core.Placement{Source: req.Source, Intent: intent, RemoveSource: true, Reasons: req.Profile.Reasons}
+	claimed := false
+	if req.Reform == nil {
+		if err := w.ClaimCopyTarget(ctx, intent, req.Profile.Accepts); err != nil {
+			return 0, fmt.Errorf("claim %s for %s: %w", req.DestName, key, err)
+		}
+		claimed = true
+	} else {
+		// A reform learns its size only once it has encoded the bytes, so the
+		// claim waits for it and admits exactly what will land.
 		copyReq.Transform = func(ctx context.Context, src *backend.GetObjectResult) (io.Reader, int64, func(), error) {
 			out, err := req.Reform(ctx, src)
 			if err != nil {
 				return nil, 0, nil, err
 			}
-			placement.Form, placement.Size = out.Form, out.Size
+			intent.StoredForm, intent.SizeBytes = *out.Form, out.Size
+			if err := w.ClaimCopyTarget(ctx, intent, req.Profile.Accepts); err != nil {
+				out.Release()
+				return nil, 0, nil, err
+			}
+			claimed, placement.Reformed = true, true
 			return out.Body, out.Size, out.Release, nil
 		}
 	}
-	written, err := w.core.StreamCopy(ctx, copyReq)
-	if err != nil {
+	if _, err := w.core.StreamCopy(ctx, copyReq); err != nil {
+		if claimed {
+			w.Discard(ctx, intent, req.Profile.Reasons.Orphan)
+		}
 		return 0, fmt.Errorf("stream copy %s -> %s: %w", srcName, req.DestName, err)
 	}
 
-	movedSize, err := w.PlaceOrCleanup(ctx, placement, req.DestBackend, written, req.Reasons.OrphanReasons)
+	movedSize, err := w.Place(ctx, placement)
 	if err != nil {
 		return 0, fmt.Errorf("place copy %s -> %s: %w", srcName, req.DestName, err)
 	}
-	// The placement confirmed the source row still named these bytes, so its
-	// size is what the delete frees.
-	removed := core.DeletedCopy{BackendName: srcName, StorageKey: srcPath, SizeBytes: req.Source.SizeBytes}
-	w.DeleteOrEnqueue(ctx, req.SrcBackend, removed.Cleanup(key, req.Reasons.SourceDelete))
 	return movedSize, nil
-}
-
-// PlaceOrCleanup records a copy whose bytes are already at the placement's
-// path on dest, or deletes those bytes when nothing recorded them, labelling
-// the cleanup by whether the placement was declined or errored. written is
-// how many bytes the copy left there. Returns what PlaceCopy returned.
-func (w *Coordinator) PlaceOrCleanup(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons OrphanReasons) (int64, error) {
-	placed, err := w.stores.PlaceCopy(ctx, p)
-	if err == nil {
-		return placed, nil
-	}
-	reason := reasons.Orphan
-	if core.PlacementDeclined(err) {
-		reason = reasons.StaleOrphan
-	}
-	orphan := core.DeletedCopy{BackendName: p.Target, StorageKey: p.StorageKey, SizeBytes: written}
-	w.DeleteOrEnqueue(ctx, dest, orphan.Cleanup(p.Source.ObjectKey, reason))
-	return 0, err
 }
 
 // ClaimUploadTarget picks the backend a multipart upload will live on and

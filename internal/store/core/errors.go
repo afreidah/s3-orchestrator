@@ -47,8 +47,10 @@ func (e *S3Error) Error() string {
 // worker resolved the row, or a client rewrote the key mid-pass. ErrCopyNotExcess
 // refuses a surplus-copy removal once the object is back at its target count.
 // ErrTargetRefused declines a placement whose target already holds a copy or
-// does not admit the bytes. ErrInvalidRange covers a range that addresses no
-// byte, such as a suffix range on an empty object.
+// does not admit the bytes. ErrIntentLost refuses a write whose intent was
+// resolved by someone else while it uploaded, so its bytes are discarded
+// rather than recorded. ErrInvalidRange covers a range that addresses no byte,
+// such as a suffix range on an empty object.
 var (
 	ErrNoSpaceAvailable       = errors.New("no backend has sufficient quota")
 	ErrDBUnavailable          = errors.New("database unavailable")
@@ -59,6 +61,7 @@ var (
 	ErrCopyChanged            = errors.New("copy changed since the pass read it")
 	ErrCopyNotExcess          = errors.New("object holds no surplus copy to remove")
 	ErrTargetRefused          = errors.New("target backend holds a copy or refused the bytes")
+	ErrIntentLost             = errors.New("write's intent was resolved while it uploaded")
 
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,

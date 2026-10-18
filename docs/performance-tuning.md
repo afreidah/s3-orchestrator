@@ -511,7 +511,7 @@ While load tests run, the Grafana dashboard shows system behavior in real time:
 - **Request Performance** - latency percentiles, status code distribution, request rate
 - **Circuit Breaker** - backend health state transitions under load
 - **Replication** - pending replica count and copy duration after write bursts
-- **Cleanup Queue** - orphaned objects queued for cleanup after failures
+- **Cleanup Queue** - rows queued for deletion by deletes and overwrites, and the ones left for retry
 
 ### Baseline Workflow
 

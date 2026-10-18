@@ -18,9 +18,28 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
+
+// placeWritesCopy records a copy of key on target at path, claimed and placed
+// the way a committed write's copy is, from the key's copy on b1.
+func placeWritesCopy(t *testing.T, store *sqlite.Store, key, target, path string, size int64) {
+	t.Helper()
+	ctx := context.Background()
+	intent := writepath.NewCopyIntent(key, target, size, nil)
+	intent.StorageKey = path
+	if ok, err := store.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil || !ok {
+		t.Fatalf("InsertPendingIfFits for the write's copy = %v, %v", ok, err)
+	}
+	if _, _, err := store.PlaceCopy(ctx, &core.Placement{
+		Source: storetest.LocationOn(t, store, key, "b1"), Intent: intent, Reasons: writepath.ReplicationReasons,
+	}); err != nil {
+		t.Fatalf("PlaceCopy for the write's copy: %v", err)
+	}
+}
 
 // TestReplicateObject_SupersededCopyLeavesTheWritesCopy hands the replicator a
 // copy list read before a write committed its copy on b2. The replicator picks
@@ -47,11 +66,7 @@ func TestReplicateObject_SupersededCopyLeavesTheWritesCopy(t *testing.T) {
 	}
 
 	b2.Objects[key+"!w2"] = backendtest.Object{Data: data}
-	if _, err := store.PlaceCopy(ctx, &core.Placement{
-		Source: storetest.LocationOn(t, store, key, "b1"), Target: "b2", StorageKey: key + "!w2",
-	}); err != nil {
-		t.Fatalf("PlaceCopy for the write's copy: %v", err)
-	}
+	placeWritesCopy(t, store, key, "b2", key+"!w2", int64(len(data)))
 
 	r := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 	out := r.ReplicateObject(ctx, key, stale, 1)

@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS backend_quotas (
     backend_name TEXT PRIMARY KEY,
     bytes_limit  INTEGER NOT NULL,
-    orphan_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -156,6 +155,9 @@ CREATE TABLE IF NOT EXISTS multipart_parts (
     -- concatenated part digests, so it can only be built from these.
     plaintext_etag TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- The path this part's upload wrote. NULL for a part recorded before each
+    -- upload had its own path, which sits at the part number's fixed path.
+    storage_key    TEXT,
     PRIMARY KEY (upload_id, part_number)
 );
 
@@ -369,20 +371,21 @@ CREATE TABLE IF NOT EXISTS backend_states (
 
 -- What occupies each backend and the state flags it carries, defined once for
 -- every admission test and the quota tracker's baseline refresh. In-flight is
--- incomplete multipart parts plus the intents of writes still uploading.
--- available_bytes is NULL for a backend with no ceiling (bytes_limit = 0), and
--- flags is 0 for a backend with no state row. Admission tests flags against an
--- accept mask the store passes in.
+-- incomplete multipart parts plus the intents of writes still uploading, and
+-- orphans are the bytes queued or dead-lettered cleanup rows still have to
+-- delete. available_bytes is NULL for a backend with no ceiling
+-- (bytes_limit = 0), and flags is 0 for a backend with no state row. Admission
+-- tests flags against an accept mask the store passes in.
 CREATE VIEW IF NOT EXISTS backend_capacity AS
 SELECT q.backend_name,
        q.bytes_limit,
        MAX(0, COALESCE(s.bytes_used, 0)) AS bytes_used,
-       q.orphan_bytes,
+       COALESCE(o.orphan_bytes, 0) AS orphan_bytes,
        COALESCE(m.inflight, 0) + COALESCE(p.inflight, 0) AS inflight_bytes,
        CASE WHEN q.bytes_limit = 0 THEN NULL
             ELSE q.bytes_limit
                  - MAX(0, COALESCE(s.bytes_used, 0))
-                 - q.orphan_bytes
+                 - COALESCE(o.orphan_bytes, 0)
                  - COALESCE(m.inflight, 0)
                  - COALESCE(p.inflight, 0)
        END AS available_bytes,
@@ -393,6 +396,15 @@ LEFT JOIN (
     FROM backend_quota_stripes
     GROUP BY backend_name
 ) s ON s.backend_name = q.backend_name
+LEFT JOIN (
+    SELECT backend_name, SUM(size_bytes) AS orphan_bytes
+    FROM (
+        SELECT backend_name, size_bytes FROM cleanup_queue
+        UNION ALL
+        SELECT backend_name, size_bytes FROM cleanup_dlq
+    )
+    GROUP BY backend_name
+) o ON o.backend_name = q.backend_name
 LEFT JOIN (
     SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
     FROM multipart_uploads mu
@@ -407,4 +419,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (26);
+INSERT INTO schema_version (version) VALUES (28);

@@ -30,13 +30,14 @@ import (
 
 // InsertPendingIfFits claims the bytes and records the intent in one statement,
 // so admission and the durable record of it cannot disagree. Reports false when
-// the backend had no room, which is the caller's cue to try the next candidate.
+// the backend had no room or carries a flag outside accepts, which is the
+// caller's cue to try the next candidate.
 //
 // Called before the backend upload, so a metadata commit failure cannot
 // silently destroy the prior copy of an overwritten key, and so the bytes are
 // occupying the backend for every instance for as long as the write runs.
-func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
-	n, err := s.queries.InsertPendingObjectIfFits(ctx, pendingInsertParams(p))
+func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
+	n, err := s.queries.InsertPendingObjectIfFits(ctx, pendingInsertParams(p, accepts))
 	if err != nil {
 		return false, fmt.Errorf("insert pending object: %w", err)
 	}
@@ -91,7 +92,7 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 // pendingInsertParams maps a PendingObject onto the sqlc insert struct.
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
-func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectIfFitsParams {
+func pendingInsertParams(p *core.PendingObject, accepts core.BackendFlags) db.InsertPendingObjectIfFitsParams {
 	var (
 		etag        *string
 		contentType *string
@@ -121,7 +122,7 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectIfFitsPara
 		CompressionFormatVersion: int16Ptr(p.CompressionFormatVersion),
 		LogicalSize:              int64Ptr(p.LogicalSize),
 		Role:                     string(p.RoleOrDefault()),
-		Accepts:                  int64(core.AcceptForWrite),
+		Accepts:                  int64(accepts),
 	}
 }
 

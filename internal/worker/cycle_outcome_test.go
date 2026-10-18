@@ -126,13 +126,13 @@ func (f *replicaFleet) replicator() *Replicator {
 
 // copyFails makes the streaming copy of key fail, standing in for a source
 // backend that dies partway through the transfer, and expects each failed
-// attempt to clean up the path it was writing.
+// attempt to discard the intent it was writing under.
 func (f *replicaFleet) copyFails(key string) {
 	f.ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: key}).
 		Return(int64(0), errors.New("stream copy: connection reset")).AnyTimes()
-	f.pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.ObjectKey == key && c.Reason == writepath.ReplicationOrphanReasons.Orphan
-	})).MinTimes(1)
+	f.pl.EXPECT().Discard(gomock.Any(), gomock.Cond(func(p *core.PendingObject) bool {
+		return p.ObjectKey == key
+	}), writepath.ReplicationReasons.Orphan).MinTimes(1)
 }
 
 // copySucceeds lets every remaining copy through.
@@ -332,7 +332,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 	}).AnyTimes()
 	f.ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
-	f.pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	f.pl.EXPECT().Settle(gomock.Any(), gomock.Any()).AnyTimes()
 	return f
 }
 
@@ -351,11 +351,11 @@ func overReplicatedOn(key string, backends ...string) []core.ObjectLocation {
 }
 
 // TestClean_ReportsCycleOutcome asserts a cleanup cycle labels its runs-total
-// by what the objects actually did. keyB's surplus copy sits on a backend that
-// has left the fleet, so its removal cannot complete.
+// by what the objects actually did. keyB's surplus-copy removal fails in the
+// store, so it cannot complete.
 func TestClean_ReportsCycleOutcome(t *testing.T) {
 	cleanable := overReplicatedOn("keyA", "b1", "b2", "b3")
-	stranded := overReplicatedOn("keyB", "gone", "b2", "b3")
+	stranded := overReplicatedOn("keyB", "b1", "b2", "b3")
 
 	cases := []struct {
 		name string
@@ -369,7 +369,7 @@ func TestClean_ReportsCycleOutcome(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newCleanerFleet(t, &mockMetadataStore{overReplicated: tc.rows})
+			f := newCleanerFleet(t, &mockMetadataStore{overReplicated: tc.rows, removeExcessFailKey: "keyB"})
 			wantCycleLabel(t, telemetry.OverReplicationRunsTotal, tc.want, func() {
 				if _, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil); err != nil {
 					t.Fatalf("Clean: %v", err)

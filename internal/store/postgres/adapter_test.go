@@ -109,12 +109,22 @@ func TestPendingInsertParams_OmitsZeroOptionals(t *testing.T) {
 		ObjectKey:   "k",
 		BackendName: "b1",
 		SizeBytes:   100,
-	})
+	}, core.AcceptForWrite)
 	if got.IntentID != "abc" || got.ObjectKey != "k" || got.BackendName != "b1" || got.SizeBytes != 100 {
 		t.Errorf("required fields not propagated: %+v", got)
 	}
 	if got.KeyID != nil || got.PlaintextSize != nil || got.ContentHash != nil {
 		t.Errorf("expected SQL NULL for optional fields, got %+v", got)
+	}
+}
+
+// TestPendingInsertParams_ForwardsAcceptMask verifies the caller's accept
+// mask reaches the admission statement rather than a fixed write mask.
+func TestPendingInsertParams_ForwardsAcceptMask(t *testing.T) {
+	t.Parallel()
+	got := pendingInsertParams(&core.PendingObject{IntentID: "abc"}, core.AcceptForPart)
+	if got.Accepts != int64(core.FlagCordoned) {
+		t.Errorf("Accepts = %d, want %d", got.Accepts, core.FlagCordoned)
 	}
 }
 
@@ -132,7 +142,7 @@ func TestPendingInsertParams_SetsOptionalsWhenPresent(t *testing.T) {
 		KeyID:         "kid-1",
 		PlaintextSize: 90,
 		ContentHash:   "deadbeef",
-	})
+	}, core.AcceptForWrite)
 	if got.KeyID == nil || *got.KeyID != "kid-1" {
 		t.Errorf("KeyID = %v, want pointer to %q", got.KeyID, "kid-1")
 	}

@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Implements quota enforcement, backend space selection, usage delta flushing,
-// and orphan byte tracking for the SQLite backend. Uses dynamic IN clause
-// expansion for backend-filtered queries.
+// Implements quota enforcement, backend space selection and usage delta
+// flushing for the SQLite backend. Uses dynamic IN clause expansion for
+// backend-filtered queries.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -46,17 +46,9 @@ func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendCo
 // GetQuotaStats returns quota statistics for all backends.
 func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT q.backend_name,
-		       COALESCE(MAX(0, s.bytes_used), 0),
-		       q.bytes_limit,
-		       q.orphan_bytes,
-		       q.updated_at
-		FROM backend_quotas q
-		LEFT JOIN (
-			SELECT backend_name, SUM(bytes_used) AS bytes_used
-			FROM backend_quota_stripes
-			GROUP BY backend_name
-		) s ON s.backend_name = q.backend_name`)
+		SELECT c.backend_name, c.bytes_used, c.bytes_limit, c.orphan_bytes, q.updated_at
+		FROM backend_capacity c
+		JOIN backend_quotas q ON q.backend_name = c.backend_name`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quota stats: %w", err)
 	}
@@ -138,24 +130,6 @@ func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 		g.OldestTouched = t
 	}
 	return g, nil
-}
-
-// -------------------------------------------------------------------------
-// ORPHAN BYTES
-// -------------------------------------------------------------------------
-
-// IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
-// Called when a physical delete fails and is enqueued for retry.
-func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	now := now()
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET orphan_bytes = orphan_bytes + ?, updated_at = ?
-		WHERE backend_name = ?`, amount, now, backendName)
-	if err != nil {
-		return fmt.Errorf("failed to increment orphan bytes: %w", err)
-	}
-	return nil
 }
 
 // -------------------------------------------------------------------------

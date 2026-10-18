@@ -43,7 +43,7 @@ type Stores interface {
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backendName string) (int64, error)
 }
@@ -294,7 +294,8 @@ func (m *Manager) deleter() DeleterFn {
 	return func(ctx context.Context, loc *core.ObjectLocation) error {
 		// The delete credits the backend's stripes in its own transaction, so
 		// there is nothing to tell the routing snapshot; it reloads on its tick.
-		if _, err := m.stores.DeleteObjectLocation(ctx, loc, 0); err != nil {
+		// It queues no cleanup, since the bytes are already gone.
+		if _, err := m.stores.DeleteObjectLocation(ctx, loc, 0, ""); err != nil {
 			return err
 		}
 		// Swept by path: what this pass established is that these particular

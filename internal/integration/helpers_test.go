@@ -59,6 +59,10 @@ import (
 // the surrounding lifecycle the helpers participate in.
 const virtualBucket = "test-bucket"
 
+// testInstanceID is the instance id the test stores stamp on the cleanup rows
+// their transactions claim.
+const testInstanceID = "integration-test"
+
 // The shared suite fixture, set up once by TestMain and read by every test.
 //
 // testDBConfig and minioEndpoints describe the containers rather than the
@@ -301,7 +305,7 @@ func TestMain(m *testing.M) {
 	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
 	testDatabaseCB = dbCB
 
-	db, err := postgres.NewStore(ctx, &cfg.Database, dbCB)
+	db, err := postgres.NewStore(ctx, &cfg.Database, dbCB, testInstanceID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
@@ -531,7 +535,7 @@ func queryLogicalSize(t *testing.T, key string) int64 {
 // read from the object_locations row in db. Each write stores its bytes under a
 // path of its own, so a test that reaches a backend directly has to ask the
 // ledger where the copy is. A key with no row on that backend, such as a
-// multipart part object, is returned unchanged.
+// multipart part's path, is returned unchanged.
 func storagePathIn(t *testing.T, db *sql.DB, backendName, storedKey string) string {
 	t.Helper()
 	var storageKey string
@@ -637,6 +641,7 @@ func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
 		"DELETE FROM cleanup_queue",
+		"DELETE FROM cleanup_dlq",
 		"DELETE FROM pending_objects",
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
@@ -653,9 +658,6 @@ func resetState(t *testing.T) {
 		{Name: "minio-3", QuotaBytes: 2048},
 	}); err != nil {
 		t.Fatalf("resetState: SyncQuotaLimits: %v", err)
-	}
-	if _, err := testDB.Exec("UPDATE backend_quotas SET orphan_bytes = 0, updated_at = NOW()"); err != nil {
-		t.Fatalf("resetState: %v", err)
 	}
 	if _, err := testDB.Exec("DELETE FROM backend_quota_stripes"); err != nil {
 		t.Fatalf("resetState: %v", err)
@@ -807,11 +809,12 @@ func queryObjectBackends(t *testing.T, key string) []string {
 	return backends
 }
 
-// queryOrphanBytes returns the orphan_bytes value for a backend.
+// queryOrphanBytes returns a backend's orphan bytes, which backend_capacity
+// derives from its queued and dead-lettered cleanup rows.
 func queryOrphanBytes(t *testing.T, backendName string) int64 {
 	t.Helper()
 	var orphanBytes int64
-	err := testDB.QueryRow("SELECT orphan_bytes FROM backend_quotas WHERE backend_name = $1", backendName).Scan(&orphanBytes)
+	err := testDB.QueryRow("SELECT orphan_bytes FROM backend_capacity WHERE backend_name = $1", backendName).Scan(&orphanBytes)
 	if err != nil {
 		t.Fatalf("queryOrphanBytes(%q): %v", backendName, err)
 	}
@@ -842,13 +845,52 @@ func queryCleanupQueueItem(t *testing.T, backendName string) (objectKey string, 
 	return
 }
 
-// setOrphanBytes directly sets orphan_bytes for a backend via SQL (for test setup).
-func setOrphanBytes(t *testing.T, backendName string, amount int64) {
+// seedCleanupRow inserts an unclaimed cleanup_queue row, the state a row is in
+// once its claim has lapsed, and returns its id. storage_key is the object key.
+func seedCleanupRow(t *testing.T, backendName, objectKey, reason string, sizeBytes int64) int64 {
 	t.Helper()
-	_, err := testDB.Exec("UPDATE backend_quotas SET orphan_bytes = $1, updated_at = NOW() WHERE backend_name = $2", amount, backendName)
+	var id int64
+	err := testDB.QueryRow(
+		"INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes) VALUES ($1, $2, $2, $3, $4) RETURNING id",
+		backendName, objectKey, reason, sizeBytes,
+	).Scan(&id)
 	if err != nil {
-		t.Fatalf("setOrphanBytes(%q, %d): %v", backendName, amount, err)
+		t.Fatalf("seedCleanupRow(%q, %q): %v", backendName, objectKey, err)
 	}
+	return id
+}
+
+// claimCopyIntent claims target for a copy of key the way the copy workers do,
+// failing the test when the backend declines it.
+func claimCopyIntent(t *testing.T, ctx context.Context, key, target string, size int64) *core.PendingObject {
+	t.Helper()
+	p := writepath.NewCopyIntent(key, target, size, nil)
+	fits, err := testStore.InsertPendingIfFits(ctx, p, core.AcceptForWrite)
+	if err != nil {
+		t.Fatalf("claim %s for %s: %v", target, key, err)
+	}
+	if !fits {
+		t.Fatalf("claim %s for %s: declined", target, key)
+	}
+	return p
+}
+
+// placeReplica records a replica of key's copy on source onto target through
+// a claimed intent, failing the test when the store refuses it.
+func placeReplica(t *testing.T, ctx context.Context, key, source, target string) {
+	t.Helper()
+	src := storetest.LocationOn(t, testStore, key, source)
+	intent := claimCopyIntent(t, ctx, key, target, src.SizeBytes)
+	if _, _, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Intent: intent}); err != nil {
+		t.Fatalf("PlaceCopy %s -> %s: %v", source, target, err)
+	}
+}
+
+// seedOrphanBytes queues one unclaimed cleanup row of amount bytes on a backend
+// so its orphan bytes hold that much capacity, then reloads the quota snapshot.
+func seedOrphanBytes(t *testing.T, backendName string, amount int64) {
+	t.Helper()
+	seedCleanupRow(t, backendName, internalKey(uniqueKey(t, "orphan-seed")), "orphan_seed", amount)
 	refreshQuota(t)
 }
 
@@ -989,7 +1031,7 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 // triggers degraded mode. A commit carrying a pending intent also honours the
 // one-shot fail-commit flag with the plain errSimulatedCommitFailure, so the
 // caller fails the PUT instead of entering degraded mode.
-func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	if f.isFailing() {
 		return nil, nil, errSimulatedDBOutage
 	}
@@ -1035,7 +1077,7 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 
 // DeleteObject is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	if f.isFailing() {
 		return nil, nil, errSimulatedDBOutage
 	}
@@ -1080,9 +1122,9 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 
 // RecordPart is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
+func (f *FailableStore) RecordPart(ctx context.Context, p *core.RecordPartParams) ([]core.CleanupItem, error) {
 	if f.isFailing() {
-		return errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.RecordPart(ctx, p)
 }
@@ -1098,11 +1140,11 @@ func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.M
 
 // DeleteMultipartUpload is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
+func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
 	if f.isFailing() {
-		return errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
-	return f.inner.DeleteMultipartUpload(ctx, uploadID)
+	return f.inner.DeleteMultipartUpload(ctx, uploadID, reason)
 }
 
 // GetQuotaStats is an integration-test fixture helper; see file header for
@@ -1161,9 +1203,9 @@ func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName st
 
 // PlaceCopy is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+func (f *FailableStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	if f.isFailing() {
-		return 0, errSimulatedDBOutage
+		return 0, nil, errSimulatedDBOutage
 	}
 	return f.inner.PlaceCopy(ctx, p)
 }
@@ -1197,11 +1239,11 @@ func (f *FailableStore) CountReplicationBacklog(ctx context.Context, factor int)
 
 // DeleteObjectLocation is an integration-test fixture helper; see file header
 // for the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (f *FailableStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	if f.isFailing() {
-		return core.DeletedCopy{}, errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
-	return f.inner.DeleteObjectLocation(ctx, loc, keepAtLeast)
+	return f.inner.DeleteObjectLocation(ctx, loc, keepAtLeast, reason)
 }
 
 // tripCircuitBreaker drives the test breaker through enough simulated

@@ -30,27 +30,27 @@ func NewTxOps(r Runner) TxOps { return TxOps{runner: r} }
 // -------------------------------------------------------------------------
 
 // RecordObject records an object's copies and tag set in one transaction,
-// returning the displaced copies and the byte deltas the caller applies.
-func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
+// returning the cleanup rows it queued and the byte deltas it charged.
+func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]CleanupItem, QuotaDeltas, error) {
 	return RecordObject(ctx, o.runner, req)
 }
 
-// DeleteObject removes every copy of an object, returning the deleted copies
-// for backend cleanup and the byte deltas their removal made.
-func (o TxOps) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, QuotaDeltas, error) {
+// DeleteObject removes every copy of an object, returning the cleanup rows it
+// queued for their bytes and the byte deltas their removal made.
+func (o TxOps) DeleteObject(ctx context.Context, key string) ([]CleanupItem, QuotaDeltas, error) {
 	return DeleteObject(ctx, o.runner, key)
 }
 
-// DeleteObjectsBatch removes every supplied key in one transaction and
-// returns the displaced copies per key, plus the deltas folded per backend.
-func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, QuotaDeltas, error) {
+// DeleteObjectsBatch removes every supplied key in one transaction and returns
+// the cleanup rows it queued, plus the deltas folded per backend.
+func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, QuotaDeltas, error) {
 	return DeleteObjectsBatch(ctx, o.runner, keys)
 }
 
 // DeleteObjectLocation removes the copy loc names while it is still the copy
-// the caller read, and returns it for the caller to delete its bytes.
-func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error) {
-	return DeleteObjectLocation(ctx, o.runner, loc, keepAtLeast)
+// the caller read, queueing its bytes under reason unless reason is empty.
+func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
+	return DeleteObjectLocation(ctx, o.runner, loc, keepAtLeast, reason)
 }
 
 // ReplaceObjectTags swaps an object's whole tag set for the supplied one.
@@ -69,16 +69,28 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 	return ImportObject(ctx, o.runner, req)
 }
 
-// PlaceCopy records a copy of a recorded copy on another backend, removing
-// the source for a move.
-func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, error) {
+// PlaceCopy records a copy at the path its intent claimed, removing the source
+// for a move, or queues the copied bytes when the placement is refused.
+func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error) {
 	return PlaceCopy(ctx, o.runner, p)
 }
 
-// SweepStaleCleanupQueueRows drops queued cleanups for bytes reconcile found
-// missing from the backend.
-func (o TxOps) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
-	return SweepStaleCleanupQueueRows(ctx, o.runner, storageKey, backend)
+// DiscardPending drops an intent whose upload will not be recorded and queues
+// its bytes.
+func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error) {
+	return DiscardPending(ctx, o.runner, p, reason)
+}
+
+// RecordPart records an uploaded part and clears its intent, queueing the bytes
+// of a part it replaced.
+func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error) {
+	return RecordPart(ctx, o.runner, p)
+}
+
+// DeleteMultipartUpload removes an upload and its parts and queues the parts'
+// bytes.
+func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]CleanupItem, error) {
+	return DeleteMultipartUpload(ctx, o.runner, uploadID, reason)
 }
 
 // MoveCleanupToDLQ graduates an exhausted cleanup row to the dead-letter
@@ -94,12 +106,12 @@ func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 }
 
 // PromotePending resolves a surviving PUT intent into a committed location.
-func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error) {
+func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error) {
 	return PromotePending(ctx, o.runner, p)
 }
 
 // CommitCompanionCopy adds an extra copy whose upload finished after the client
 // was answered, or reports that a newer write took the key first.
-func (o TxOps) CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error) {
+func (o TxOps) CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, QuotaDeltas, error) {
 	return CommitCompanionCopy(ctx, o.runner, p)
 }

@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -56,11 +55,7 @@ func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
 	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := testStore.PlaceCopy(ctx, &core.Placement{
-		Source: storetest.LocationOn(t, testStore, key, "minio-1"), Target: "minio-2", StorageKey: key + "!r",
-	}); err != nil {
-		t.Fatalf("PlaceCopy: %v", err)
-	}
+	placeReplica(t, ctx, key, "minio-1", "minio-2")
 	t.Cleanup(func() {
 		_, _, _ = testStore.DeleteObject(context.Background(), key)
 	})
@@ -127,11 +122,7 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: repKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(replicated): %v", err)
 	}
-	if _, err := testStore.PlaceCopy(ctx, &core.Placement{
-		Source: storetest.LocationOn(t, testStore, repKey, "minio-1"), Target: "minio-2", StorageKey: repKey + "!r",
-	}); err != nil {
-		t.Fatalf("PlaceCopy: %v", err)
-	}
+	placeReplica(t, ctx, repKey, "minio-1", "minio-2")
 	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: singleKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(single): %v", err)
 	}

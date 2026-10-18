@@ -27,13 +27,13 @@ import (
 
 // InsertPendingIfFits claims the bytes and records the intent in one statement,
 // so admission and the durable record of it cannot disagree. Reports false when
-// the backend had no room or is being drained, which is the caller's cue to try
-// the next candidate.
+// the backend had no room or carries a flag outside accepts, which is the
+// caller's cue to try the next candidate.
 //
 // The headroom is read inside the statement rather than from a snapshot: every
 // instance's committed bytes, orphans, and writes in progress are rows here, so
 // two instances admitting at once are judged against the same totals.
-func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
+func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
 	keyID := nullableString(p.KeyID)
 	plaintextSize := nullableInt64(p.PlaintextSize)
 	contentHash := nullableString(p.ContentHash)
@@ -62,7 +62,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
 		now(), string(p.RoleOrDefault()),
-		p.BackendName, core.AcceptForWrite, p.SizeBytes,
+		p.BackendName, accepts, p.SizeBytes,
 	)
 }
 

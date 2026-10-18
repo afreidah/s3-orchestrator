@@ -3,9 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Implements cleanup queue operations for the SQLite backend: enqueue failed
-// deletions, fetch pending items with backoff-aware scheduling, and mark items
-// as completed or retried.
+// Implements cleanup queue operations for the SQLite backend: claim queued rows
+// with backoff-aware scheduling, retire them once their bytes are gone, and
+// schedule retries. Rows are queued by the transactions that stop recording
+// bytes, through the tx adapter.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -13,7 +14,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -23,20 +23,6 @@ import (
 // -------------------------------------------------------------------------
 // QUEUE
 // -------------------------------------------------------------------------
-
-// EnqueueCleanup adds a failed cleanup operation to the retry queue.
-func (s *Store) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
-	now := now()
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.BackendName, c.ObjectKey, core.StoragePath(c.ObjectKey, c.StorageKey), c.Reason, c.SizeBytes, now, now,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to enqueue cleanup: %w", err)
-	}
-	return nil
-}
 
 // GetPendingCleanups returns a read-only snapshot of pending cleanup rows
 // for the admin endpoint. The cleanup worker uses ClaimPendingCleanups
@@ -150,39 +136,23 @@ func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, inst
 // COMPLETION AND RETRY
 // -------------------------------------------------------------------------
 
-// CompleteCleanupItem atomically deletes a successfully-processed row and
-// decrements the backing backend's orphan_bytes by the row's size. The two
-// statements run inside a single transaction so a worker crash between them
-// cannot leave the counter inconsistent. Idempotent against re-claim retries:
-// if the row was already deleted the update affects zero rows.
+// CompleteCleanupItem retires a row whose bytes are gone. A row already
+// retired is a no-op.
 func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
-	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		var backend string
-		var size int64
-		row := tx.QueryRowContext(ctx,
-			`DELETE FROM cleanup_queue
-			 WHERE id = ?
-			 RETURNING backend_name, size_bytes`,
-			id,
-		)
-		if err := row.Scan(&backend, &size); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return fmt.Errorf("delete cleanup row: %w", err)
-		}
-		if size > 0 {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE backend_quotas
-				 SET orphan_bytes = MAX(0, orphan_bytes - ?)
-				 WHERE backend_name = ?`,
-				size, backend,
-			); err != nil {
-				return fmt.Errorf("decrement orphan bytes: %w", err)
-			}
-		}
-		return nil
-	})
+	return s.direct().DeleteCleanupItem(ctx, id)
+}
+
+// SweepStaleCleanupQueueRows drops the queued cleanups for a path reconcile
+// found missing from the backend, and returns how many went.
+func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?`,
+		storageKey, backend,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("sweep stale cleanup rows: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // RetryCleanupItem increments the attempt counter, schedules the next retry,
@@ -260,7 +230,7 @@ func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) (
 // and attempts to 0. Returns the number of rows requeued.
 func (s *Store) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
 	// Set created_at/next_retry explicitly in RFC3339Nano to match
-	// EnqueueCleanup and GetPendingCleanups' comparison format; the column
+	// InsertCleanup and GetPendingCleanups' comparison format; the column
 	// default's millisecond form sorts inconsistently (a trailing 'Z' outranks
 	// digits), which would delay eligibility of the requeued rows.
 	now := now()

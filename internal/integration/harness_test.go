@@ -117,7 +117,7 @@ func newHarness(t *testing.T, spec harnessSpec) *harness {
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
-	}))
+	}), testInstanceID)
 	if err != nil {
 		t.Fatalf("open harness store: %v", err)
 	}

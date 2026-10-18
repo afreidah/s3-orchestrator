@@ -11,28 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const backendAdmits = `-- name: BackendAdmits :one
-SELECT ((flags & ~($1::bigint)) = 0
-        AND (available_bytes IS NULL OR available_bytes >= $2::bigint))::boolean AS admits
-FROM backend_capacity
-WHERE backend_name = $3
-`
-
-type BackendAdmitsParams struct {
-	Accepts     int64
-	SizeBytes   int64
-	BackendName string
-}
-
-// Judged against backend_capacity, the view every admission test reads, with
-// the same accept mask a PUT is admitted under.
-func (q *Queries) BackendAdmits(ctx context.Context, arg BackendAdmitsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, backendAdmits, arg.Accepts, arg.SizeBytes, arg.BackendName)
-	var admits bool
-	err := row.Scan(&admits)
-	return admits, err
-}
-
 const backendObjectStats = `-- name: BackendObjectStats :one
 SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
 FROM object_locations

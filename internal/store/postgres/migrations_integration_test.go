@@ -61,7 +61,7 @@ func TestRunMigrations_ConcurrentInstances(t *testing.T) {
 			SSLMode:  "disable",
 			MaxConns: 2,
 			MinConns: 1,
-		}, nil)
+		}, nil, pgFixtureInstance)
 		if err != nil {
 			t.Fatalf("NewStore %d: %v", i, err)
 		}

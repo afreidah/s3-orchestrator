@@ -28,10 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// purgedObjectSize is the per-object size every purge fixture stores, and so
-// the bytes each ledger-row delete reports as freed.
-const purgedObjectSize = 5
-
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -43,7 +39,8 @@ type purgeCalls struct {
 }
 
 type deleteLocationRecord struct {
-	key, backend string
+	key, backend, reason string
+	keepAtLeast          int
 }
 
 // -------------------------------------------------------------------------
@@ -64,14 +61,16 @@ func pagedLister(pages [][]core.ObjectLocation) func(context.Context, string, in
 	}
 }
 
-// stubDeleteObjectLocation captures DeleteObjectLocation calls, reporting size
-// as the bytes the removed row freed.
-func stubDeleteObjectLocation(c *purgeCalls, size int64, err error) func(context.Context, *core.ObjectLocation, int) (core.DeletedCopy, error) {
-	return func(_ context.Context, loc *core.ObjectLocation, _ int) (core.DeletedCopy, error) {
+// stubDeleteObjectLocation captures DeleteObjectLocation calls and returns err
+// with no cleanup rows.
+func stubDeleteObjectLocation(c *purgeCalls, err error) func(context.Context, *core.ObjectLocation, int, string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{key: loc.ObjectKey, backend: loc.BackendName})
-		return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: size}, err
+		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{
+			key: loc.ObjectKey, backend: loc.BackendName, reason: reason, keepAtLeast: keepAtLeast,
+		})
+		return nil, err
 	}
 }
 
@@ -98,8 +97,8 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 			},
 			{},
 		})).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, rt := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -114,6 +113,9 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 		keys[e.key] = true
 		if e.backend != "b1" {
 			t.Errorf("DeleteObjectLocation be = %q, want b1", e.backend)
+		}
+		if e.reason != "" || e.keepAtLeast != 0 {
+			t.Errorf("DeleteObjectLocation reason=%q keep=%d, want row-only removal", e.reason, e.keepAtLeast)
 		}
 	}
 	if !keys["obj1"] || !keys["obj2"] {
@@ -149,8 +151,8 @@ func TestPurgeBackendObjects_EmitsProgressPerObject(t *testing.T) {
 			},
 			{},
 		})).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -191,8 +193,8 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 			{{ObjectKey: "missing", BackendName: "b1", SizeBytes: 5}},
 			{},
 		})).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -236,8 +238,8 @@ func TestPurgeBackendObjects_PassesOverRowsItCannotDrop(t *testing.T) {
 			}
 			return nil, nil
 		}).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(core.DeletedCopy{}, errors.New("simulated persistent DB failure")).Times(purgePageSize)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("simulated persistent DB failure")).Times(purgePageSize)
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -337,8 +339,8 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
 		})).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -363,8 +365,8 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
 		})).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(core.DeletedCopy{}, errors.New("db error")).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})

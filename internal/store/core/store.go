@@ -26,8 +26,9 @@ import (
 // locked first so two reapers cannot promote the same intent. A location row
 // newer than the intent makes it Superseded, and a row that vanished before
 // the lock means another reaper won (AlreadyResolved). Otherwise the intent is
-// promoted and the displaced copies are returned for cleanup.
-func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error) {
+// promoted. Whatever bytes the resolution stopped recording are queued, and the
+// rows are returned for the caller to settle.
+func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error) {
 	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (promoteOutcome, error) {
 		return promotePendingTx(ctx, tx, p)
 	})
@@ -35,22 +36,22 @@ func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (Pendi
 		// Ambiguous is the safe result for a caller that inspects it before err.
 		return PendingPromoteAmbiguous, nil, nil, fmt.Errorf("promote pending: %w", err)
 	}
-	return out.result, out.displaced, out.deltas, nil
+	return out.result, out.cleanup, out.deltas, nil
 }
 
 // CommitCompanionCopy adds a copy whose upload was still running when the
 // client was answered, keeping the copies its siblings committed. It returns
-// Untrusted when a newer write took the key mid-upload, with the bytes to
-// delete as displaced copies.
-func CommitCompanionCopy(ctx context.Context, runner Runner, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error) {
+// Untrusted when a newer write took the key mid-upload, with the cleanup row
+// queued for the copy's bytes.
+func CommitCompanionCopy(ctx context.Context, runner Runner, p *PendingObject) (CompanionCommitResult, []CleanupItem, QuotaDeltas, error) {
 	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (companionOutcome, error) {
 		return commitCompanionTx(ctx, tx, p)
 	})
 	if err != nil {
-		// The zero value with nothing displaced, so a caller that reaches the
+		// The zero value with nothing queued, so a caller that reaches the
 		// result before the error deletes no bytes over a database blip. The
 		// intent is still there either way, and the reaper resolves it.
 		return CompanionCopyCommitted, nil, nil, fmt.Errorf("commit companion copy: %w", err)
 	}
-	return out.result, out.displaced, out.deltas, nil
+	return out.result, out.cleanup, out.deltas, nil
 }

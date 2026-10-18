@@ -15,38 +15,24 @@ import (
 
 // Cleanup retry queue metrics.
 var (
-	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.
+	// CleanupQueueEnqueuedTotal counts the rows the request path and the
+	// workers settle as their transactions queue them, by reason. Every copy,
+	// intent or part a transaction stops recording is queued, so this is the
+	// rate bytes are given up for deletion, not the rate deletes fail.
 	CleanupQueueEnqueuedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_cleanup_queue_enqueued_total",
-			Help: "Total items added to the cleanup retry queue",
+			Help: "Total rows queued for deletion by the transactions that stopped recording their bytes",
 		},
 		[]string{"reason"},
 	)
 
-	// CleanupEnqueueFailuresTotal counts cleanup-queue enqueue attempts
-	// that failed after a backend write already succeeded. The orphan
-	// object exists on the backend but the system lost the chance to
-	// track it for retry. stage="enqueue" means the cleanup_queue row
-	// itself did not persist (worst case  -  cleanup-queue worker will
-	// never see this orphan); stage="orphan_bytes" means the row
-	// persisted but the orphan_bytes counter did not increment (quota
-	// accounting drifts but cleanup still runs). Operators alert on any
-	// non-zero rate of stage="enqueue" and run the reconciler
-	// (POST /admin/api/reconcile) once DB connectivity returns.
-	CleanupEnqueueFailuresTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_cleanup_enqueue_failures_total",
-			Help: "Cleanup-queue enqueue attempts that failed after a successful backend write",
-		},
-		[]string{"backend", "reason", "stage"},
-	)
-
-	// CleanupQueueProcessedTotal counts items processed from the cleanup queue.
+	// CleanupQueueProcessedTotal counts cleanup rows settled, whether on the
+	// request path right after their transaction or by the cleanup worker.
 	CleanupQueueProcessedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_cleanup_queue_processed_total",
-			Help: "Total items processed from the cleanup retry queue",
+			Help: "Total cleanup queue rows settled, by outcome",
 		},
 		[]string{"status"},
 	)
@@ -177,8 +163,8 @@ var (
 	// WriteTargetRefusedTotal counts PutObject attempts that landed bytes on a
 	// backend which stopped accepting writes mid-write, because it was
 	// cordoned or a drain started. The orchestrator detects it after the
-	// backend PUT completes, deletes the orphaned bytes, and fails the attempt
-	// over to the next eligible backend.
+	// backend PUT completes, discards the intent and queues its bytes for
+	// deletion, and fails the attempt over to the next eligible backend.
 	WriteTargetRefusedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "s3o_write_target_refused_total",

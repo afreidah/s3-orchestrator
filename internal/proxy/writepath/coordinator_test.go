@@ -3,11 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Targeted tests for the branches of Coordinator that the existing
-// PUT/multipart end-to-end tests do not exercise: encryption metadata
-// copy on InsertPendingIntent, InsertPending error propagation, and the
-// "backend not registered" branch of RecordObjectAndPromoteIntent when
-// intentID is empty.
+// Targeted tests for the branches of Coordinator that the PUT/multipart
+// end-to-end tests do not exercise: intent construction, claiming write and
+// copy targets, settling the cleanup rows a transaction hands back, discarding
+// unrecorded uploads, and the claim/copy/place sequence of a move.
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -18,6 +17,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,9 +25,13 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/mock/gomock"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -38,11 +42,10 @@ import (
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// newCoordinatorWithBackend builds a Coordinator whose infra.BackendRuntime knows
-// about a single named backend. Used by DeleteOrEnqueue branch tests so
-// the backend's DeleteObject can be controlled directly through the
-// gomock recorder. A real (in-memory) UsageTracker is supplied so the
-// Acct().APICall path on DeleteOrEnqueue does not nil-deref.
+// newCoordinatorWithBackend builds a Coordinator whose infra.BackendRuntime
+// knows about a single named backend, so the backend's deletes can be driven
+// through the gomock recorder. A real in-memory UsageTracker keeps the
+// accounting calls from nil-dereferencing.
 func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store CoordinatorStores) *Coordinator {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{name}), nil)
 	c := infra.New(&infra.Config{
@@ -60,6 +63,7 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 func newCoordinatorWithStore(store CoordinatorStores) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
+		Usage:    counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil),
 		Quota:    counter.NewQuotaTracker(nil),
 	})
 	return New(c, store)
@@ -88,61 +92,188 @@ func newMoveCoordinator(srcName string, src s3be.ObjectBackend, destName string,
 }
 
 // expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
-// them to dest. Returns the path the move wrote on dest, set once the copy runs.
-func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) *string {
+// them to dest. Returns the path the move wrote on dest, set once the copy
+// runs, and the source read so a test can order the claim before it.
+func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) (*string, *gomock.Call) {
 	written := new(string)
-	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
+	get := src.EXPECT().GetObject(gomock.Any(), srcPath, "").
 		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
 	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, key string, _ io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
 			*written = key
 			return "etag", nil
 		})
-	return written
+	return written, get
 }
 
 // srcPath is where the source copy sits. The move writes its own copy under a
 // freshly minted path, so each cleanup path deletes exactly its own bytes.
 const srcPath = "k!src-copy"
 
+// sourceName and destName are the backends the move reads from and writes to,
+// named once so the expectations and the request cannot drift apart.
+const (
+	sourceName = "src"
+	destName   = "dest"
+)
+
+// errDBDown is the store failure the error-path tests inject.
+var errDBDown = errors.New("db down")
+
 // -------------------------------------------------------------------------
-// PUBLIC API
+// MATCHERS AND BUILDERS
 // -------------------------------------------------------------------------
 
-// TestMoveObject_PlacementError_OrphansDestWithProfileReason pins the failed
-// placement path: the destination bytes are orphaned with the profile's
-// Orphan reason, and the error is not read as a declined placement.
-func TestMoveObject_PlacementError_OrphansDestWithProfileReason(t *testing.T) {
+// moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
+func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
+	return &MoveRequest{
+		Source:      &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
+		SrcBackend:  src,
+		DestBackend: dest,
+		DestName:    destName,
+		Profile:     RebalanceMove,
+	}
+}
+
+// cleanupRow builds one queued cleanup row for the settle paths.
+func cleanupRow(id int64, backendName, path, reason string, size int64) core.CleanupItem {
+	return core.CleanupItem{ID: id, BackendName: backendName, ObjectKey: "k", StorageKey: path, Reason: reason, SizeBytes: size}
+}
+
+// copyIntentOn matches the companion intent a move claims on target for size
+// bytes.
+func copyIntentOn(target string, size int64) gomock.Matcher {
+	return gomock.Cond(func(p *core.PendingObject) bool {
+		return p.ObjectKey == "k" && p.BackendName == target && p.SizeBytes == size &&
+			p.Role == core.PendingRoleCompanion && p.IntentID != "" && p.StorageKey != srcPath
+	})
+}
+
+// placementOf matches the move's placement: the source copy moveReq read,
+// removed as its intent's copy lands on dest at the path the copy wrote.
+func placementOf(written *string, reasons core.MoveReasons) gomock.Matcher {
+	return gomock.Cond(func(p *core.Placement) bool {
+		return p.Source.ObjectKey == "k" && p.Source.BackendName == sourceName &&
+			p.Source.StorageKey == srcPath && p.Intent.BackendName == destName &&
+			*written != "" && *written != srcPath && p.Intent.StorageKey == *written &&
+			p.RemoveSource && !p.Reformed && p.Reasons == reasons
+	})
+}
+
+// -------------------------------------------------------------------------
+// MOVE
+// -------------------------------------------------------------------------
+
+// TestMoveObject_ClaimsThenCopiesThenPlaces pins the success path: the
+// destination is claimed before the source is read, the placement carries
+// the claimed intent, and the source cleanup the placement queued is settled.
+func TestMoveObject_ClaimsThenCopiesThenPlaces(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
-	written := expectStreamCopyOK(src, dest)
-	// Placement errors -> orphan cleanup on dest; force the enqueue by failing the delete.
-	dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
+	written, get := expectStreamCopyOK(src, dest)
+	src.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(nil)
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).
-		Return(int64(0), errors.New("tx failed"))
-	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		destCleanupOf(written, RebalanceMoveReasons.Orphan)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(4)).Return(nil).Times(1)
+	claim := store.EXPECT().InsertPendingIfFits(gomock.Any(), copyIntentOn(destName, 4), core.AcceptForWrite).Return(true, nil)
+	gomock.InOrder(claim, get)
+	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written, RebalanceMove.Reasons)).
+		Return(int64(4), []core.CleanupItem{cleanupRow(11, sourceName, srcPath, RebalanceMove.Reasons.SourceDelete, 4)}, nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(11)).Return(nil)
 
-	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
-	if err == nil {
-		t.Fatal("expected error on placement failure")
+	coord, counters := newMoveCoordinator(sourceName, src, destName, dest, store)
+	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if err != nil {
+		t.Fatalf("MoveObject: %v", err)
 	}
-	if core.PlacementDeclined(err) {
-		t.Errorf("err = %v, want a failure that is not a declined placement", err)
+	if movedSize != 4 {
+		t.Errorf("movedSize = %d, want 4", movedSize)
+	}
+	if got := counters.Load(sourceName, counter.FieldEgressBytes); got != 4 {
+		t.Errorf("source egress = %d, want the 4 bytes read once", got)
+	}
+	if got := counters.Load(destName, counter.FieldIngressBytes); got != 4 {
+		t.Errorf("dest ingress = %d, want the 4 bytes written once", got)
 	}
 }
 
-// TestMoveObject_Declined_StaleOrphansDestWithProfileReason pins the declined
-// placement path: a replaced source or a refusing target orphans the
-// destination bytes with the StaleOrphan reason, and the returned error still
-// names the sentinel so callers count the move as skipped.
-func TestMoveObject_Declined_StaleOrphansDestWithProfileReason(t *testing.T) {
+// TestMoveObject_ClaimRefusedCopiesNothing verifies a destination without room
+// ends the move before any byte is read, and the refusal reads as declined.
+func TestMoveObject_ClaimRefusedCopiesNothing(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(false, nil)
+
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if !errors.Is(err, core.ErrTargetRefused) || !core.PlacementDeclined(err) {
+		t.Fatalf("err = %v, want a declined placement wrapping ErrTargetRefused", err)
+	}
+}
+
+// TestMoveObject_ClaimErrorCopiesNothing verifies a database error on the claim
+// ends the move and is not read as a declined placement.
+func TestMoveObject_ClaimErrorCopiesNothing(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, errDBDown)
+
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if !errors.Is(err, errDBDown) || core.PlacementDeclined(err) {
+		t.Fatalf("err = %v, want the claim failure, not a declined placement", err)
+	}
+}
+
+// TestMoveObject_CopyFailureDiscardsTheClaim verifies a failed copy discards the
+// claimed intent under the profile's Orphan reason and settles what the
+// discard queued.
+func TestMoveObject_CopyFailureDiscardsTheClaim(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+	written := new(string)
+	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string, _ io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+			*written = key
+			return "", errors.New("put failed")
+		})
+	dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string) error {
+			if key != *written {
+				t.Errorf("deleted %q, want the path the copy wrote (%q)", key, *written)
+			}
+			return nil
+		})
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+	store.EXPECT().DiscardPending(gomock.Any(), copyIntentOn(destName, 4), RebalanceMove.Reasons.Orphan).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
+			return []core.CleanupItem{cleanupRow(5, destName, p.StorageKey, reason, 4)}, nil
+		})
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(5)).Return(nil)
+
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
+		t.Fatal("expected the copy failure to surface")
+	}
+}
+
+// TestMoveObject_RefusedPlacementSettlesTheOrphan verifies a placement the
+// store refused still settles the cleanup it queued for the written copy, and
+// the error names the sentinel so callers count the move as skipped.
+func TestMoveObject_RefusedPlacementSettlesTheOrphan(t *testing.T) {
 	t.Parallel()
 	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
 		t.Run(declined.Error(), func(t *testing.T) {
@@ -150,14 +281,16 @@ func TestMoveObject_Declined_StaleOrphansDestWithProfileReason(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			src := backendtest.NewMockObjectBackend(ctrl)
 			dest := backendtest.NewMockObjectBackend(ctrl)
-			written := expectStreamCopyOK(src, dest)
-			dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
+			written, _ := expectStreamCopyOK(src, dest)
+			dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil)
 
 			store := NewMockCoordinatorStores(ctrl)
-			store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).Return(int64(0), declined)
-			store.EXPECT().EnqueueCleanup(gomock.Any(),
-				destCleanupOf(written, RebalanceMoveReasons.StaleOrphan)).Return(nil).Times(1)
-			store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(4)).Return(nil).Times(1)
+			store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+			store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written, RebalanceMove.Reasons)).
+				DoAndReturn(func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
+					return 0, []core.CleanupItem{cleanupRow(9, destName, p.Intent.StorageKey, p.Reasons.Orphan, 4)}, declined
+				})
+			store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(9)).Return(nil)
 
 			coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 			_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
@@ -168,42 +301,23 @@ func TestMoveObject_Declined_StaleOrphansDestWithProfileReason(t *testing.T) {
 	}
 }
 
-// TestMoveObject_Success_SourceDeleteWithProfileReason pins the success path:
-// the source copy is deleted with the SourceDelete reason and the authoritative
-// moved size is returned.
-func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
+// TestMoveObject_PlacementErrorIsNotDeclined verifies a placement that failed
+// in the store surfaces as a failure rather than a declined placement.
+func TestMoveObject_PlacementErrorIsNotDeclined(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
-	written := expectStreamCopyOK(src, dest)
-	// Success -> source delete; force the enqueue by failing the delete so the
-	// SourceDelete reason is observable on EnqueueCleanup.
-	src.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(errors.New("delete failed"))
+	written, _ := expectStreamCopyOK(src, dest)
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written)).Return(int64(4), nil)
-	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf(sourceName, srcPath, RebalanceMoveReasons.SourceDelete, 4)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), sourceName, int64(4)).Return(nil).Times(1)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written, RebalanceMove.Reasons)).Return(int64(0), nil, errDBDown)
 
-	coord, counters := newMoveCoordinator(sourceName, src, destName, dest, store)
-	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if movedSize != 4 {
-		t.Errorf("movedSize = %d, want 4", movedSize)
-	}
-	// The copy charges each leg once; the source DELETE adds its own call.
-	if got := counters.Load(sourceName, counter.FieldEgressBytes); got != 4 {
-		t.Errorf("source egress = %d, want the 4 bytes read once", got)
-	}
-	if got := counters.Load(destName, counter.FieldIngressBytes); got != 4 {
-		t.Errorf("dest ingress = %d, want the 4 bytes written once", got)
-	}
-	if got := counters.Load(destName, counter.FieldAPIRequests); got != 1 {
-		t.Errorf("dest calls = %d, want the one PUT", got)
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if !errors.Is(err, errDBDown) || core.PlacementDeclined(err) {
+		t.Fatalf("err = %v, want the store failure, not a declined placement", err)
 	}
 }
 
@@ -221,18 +335,18 @@ func reformTo(body string, form *core.StoredForm, seen *string) func(context.Con
 }
 
 // TestMoveObject_ReformInPlace verifies a move with a reform onto the source's
-// own backend writes the reformed bytes at a new path there, places them with
-// the reformed form and size, and deletes the source bytes at the size the
-// source row recorded.
+// own backend claims the reformed size after reading the source and before
+// writing, writes the reformed bytes at a new path, and places them as
+// reformed.
 func TestMoveObject_ReformInPlace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	form := &core.StoredForm{CompressionAlgorithm: "zstd", LogicalSize: 4}
 	written := new(string)
-	be.EXPECT().GetObject(gomock.Any(), srcPath, "").
+	get := be.EXPECT().GetObject(gomock.Any(), srcPath, "").
 		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
-	be.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(2), gomock.Any(), gomock.Any()).
+	put := be.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(2), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, key string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
 			raw, _ := io.ReadAll(body)
 			if string(raw) != "zz" {
@@ -244,16 +358,21 @@ func TestMoveObject_ReformInPlace(t *testing.T) {
 	be.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(nil)
 
 	store := NewMockCoordinatorStores(ctrl)
+	claim := store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Cond(func(p *core.PendingObject) bool {
+		return p.BackendName == sourceName && p.SizeBytes == 2 && p.CompressionAlgorithm == "zstd"
+	}), core.AcceptForRewrite).Return(true, nil)
+	gomock.InOrder(get, claim, put)
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Cond(func(p *core.Placement) bool {
-		return p.Target == sourceName && p.Source.BackendName == sourceName && p.RemoveSource &&
-			p.StorageKey == *written && *written != srcPath && p.Form == form && p.Size == 2
-	})).Return(int64(2), nil)
+		return p.Intent.BackendName == sourceName && p.Source.BackendName == sourceName && p.RemoveSource &&
+			p.Reformed && p.Intent.StorageKey == *written && *written != srcPath && p.Intent.SizeBytes == 2
+	})).Return(int64(2), []core.CleanupItem{cleanupRow(3, sourceName, srcPath, RewriteMove.Reasons.SourceDelete, 4)}, nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(3)).Return(nil)
 
 	coord := newCoordinatorWithBackend(sourceName, be, store)
 	var seen string
 	req := moveReq(be, be)
 	req.DestName = sourceName
-	req.Reasons = RewriteMoveReasons
+	req.Profile = RewriteMove
 	req.Reform = reformTo("zz", form, &seen)
 
 	moved, err := coord.MoveObject(context.Background(), req)
@@ -265,44 +384,58 @@ func TestMoveObject_ReformInPlace(t *testing.T) {
 	}
 }
 
-// TestMoveObject_ReformDeclinedCleansUpTheWrittenSize verifies a declined
-// placement of reformed bytes cleans them up at the size the copy wrote, not
-// the source's size.
-func TestMoveObject_ReformDeclinedCleansUpTheWrittenSize(t *testing.T) {
+// TestMoveObject_ReformClaimRefusedWritesNothing verifies a reformed copy the
+// destination has no room for is never written, and nothing is discarded
+// since nothing was claimed.
+func TestMoveObject_ReformClaimRefusedWritesNothing(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
-	written := new(string)
 	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
 		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
-	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(7), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, key string, _ io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
-			*written = key
-			return "etag", nil
-		})
-	dest.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), core.ErrCopyChanged)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == destName && c.StorageKey == *written &&
-			c.Reason == RewriteMoveReasons.StaleOrphan && c.SizeBytes == 7
-	})).Return(nil)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(7)).Return(nil)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), copyIntentOn(destName, 7), core.AcceptForRewrite).Return(false, nil)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 	var seen string
 	req := moveReq(src, dest)
-	req.Reasons = RewriteMoveReasons
+	req.Profile = RewriteMove
 	req.Reform = reformTo("encoded", &core.StoredForm{}, &seen)
-	if _, err := coord.MoveObject(context.Background(), req); !errors.Is(err, core.ErrCopyChanged) {
-		t.Fatalf("err = %v, want ErrCopyChanged", err)
+	if _, err := coord.MoveObject(context.Background(), req); !errors.Is(err, core.ErrTargetRefused) {
+		t.Fatalf("err = %v, want ErrTargetRefused", err)
+	}
+}
+
+// TestMoveObject_ReformedCopyFailureDiscards verifies a reformed copy whose
+// write fails after its claim is discarded at the reformed size.
+func TestMoveObject_ReformedCopyFailureDiscards(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+	dest.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), int64(7), gomock.Any(), gomock.Any()).
+		Return("", errors.New("put failed"))
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+	store.EXPECT().DiscardPending(gomock.Any(), copyIntentOn(destName, 7), RewriteMove.Reasons.Orphan).Return(nil, nil)
+
+	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
+	var seen string
+	req := moveReq(src, dest)
+	req.Profile = RewriteMove
+	req.Reform = reformTo("encoded", &core.StoredForm{}, &seen)
+	if _, err := coord.MoveObject(context.Background(), req); err == nil {
+		t.Fatal("expected the write failure to surface")
 	}
 }
 
 // TestMoveObject_ReformErrorWritesNothing verifies a failed reform ends the
-// move before any destination write or placement.
+// move before any claim, destination write or placement.
 func TestMoveObject_ReformErrorWritesNothing(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -326,100 +459,181 @@ func TestMoveObject_ReformErrorWritesNothing(t *testing.T) {
 	}
 }
 
-// TestPlaceOrCleanup verifies a placement that commits returns its size and
-// cleans up nothing, and one that fails deletes the written bytes at the
-// placement's path under the reason its failure calls for.
-func TestPlaceOrCleanup(t *testing.T) {
+// -------------------------------------------------------------------------
+// SETTLE, DISCARD, CLAIM, PLACE
+// -------------------------------------------------------------------------
+
+// TestSettle_CountsEachRowUnderItsReason verifies every row handed to Settle is
+// counted as enqueued under its own reason before its bytes are deleted.
+func TestSettle_CountsEachRowUnderItsReason(t *testing.T) {
 	t.Parallel()
-	reasons := ReplicationOrphanReasons
+	const reasonA, reasonB = "settle_count_a", "settle_count_b"
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewInMemory()
+	be.Objects["k!a"] = backendtest.Object{}
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Return(nil).Times(3)
+
+	beforeA := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonA))
+	beforeB := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonB))
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.Settle(context.Background(), []core.CleanupItem{
+		cleanupRow(1, "b1", "k!a", reasonA, 1),
+		cleanupRow(2, "b1", "k!b", reasonA, 1),
+		cleanupRow(3, "b1", "k!c", reasonB, 1),
+	})
+
+	if got := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonA)) - beforeA; got != 2 {
+		t.Errorf("enqueued %s = %v, want 2", reasonA, got)
+	}
+	if got := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonB)) - beforeB; got != 1 {
+		t.Errorf("enqueued %s = %v, want 1", reasonB, got)
+	}
+	if be.Has("k!a") {
+		t.Error("settled bytes are still on the backend")
+	}
+}
+
+// TestSettle_NothingToSettle verifies an empty batch touches neither the store
+// nor any backend.
+func TestSettle_NothingToSettle(t *testing.T) {
+	t.Parallel()
+	coord := newCoordinatorWithStore(NewMockCoordinatorStores(gomock.NewController(t)))
+	coord.Settle(context.Background(), nil)
+}
+
+// TestDiscard_SettlesWhatTheDiscardQueued verifies a discarded intent's bytes
+// are deleted at the intent's own path and the row is retired.
+func TestDiscard_SettlesWhatTheDiscardQueued(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewInMemory()
+	p := NewCopyIntent("k", "b1", 4, nil)
+	be.Objects[p.StorageKey] = backendtest.Object{}
+	be.Objects["k!other"] = backendtest.Object{}
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().DiscardPending(gomock.Any(), p, "discard_reason").
+		Return([]core.CleanupItem{cleanupRow(4, "b1", p.StorageKey, "discard_reason", 4)}, nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(4)).Return(nil)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.Discard(context.Background(), p, "discard_reason")
+
+	if be.Has(p.StorageKey) {
+		t.Error("the discarded intent's bytes are still on the backend")
+	}
+	if !be.Has("k!other") {
+		t.Error("the discard reached bytes that were not the intent's")
+	}
+}
+
+// TestDiscard_ErrorLeavesTheBytes verifies a failed discard deletes nothing, so
+// the intent and its bytes stay for the reaper.
+func TestDiscard_ErrorLeavesTheBytes(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewInMemory()
+	p := NewCopyIntent("k", "b1", 4, nil)
+	be.Objects[p.StorageKey] = backendtest.Object{}
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().DiscardPending(gomock.Any(), p, "discard_reason").Return(nil, errDBDown)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.Discard(context.Background(), p, "discard_reason")
+
+	if !be.Has(p.StorageKey) {
+		t.Error("a failed discard deleted the intent's bytes")
+	}
+}
+
+// TestNewCopyIntent_IsACompanionOnTheTarget verifies a copy intent names its
+// target, is never promoted, and carries a path of its own.
+func TestNewCopyIntent_IsACompanionOnTheTarget(t *testing.T) {
+	t.Parallel()
+	form := &core.StoredForm{ContentHash: "abc"}
+	p := NewCopyIntent("k", "b1", 4, form)
+	if p.BackendName != "b1" || p.Role != core.PendingRoleCompanion || p.SizeBytes != 4 {
+		t.Errorf("intent = %+v, want a 4-byte companion on b1", p)
+	}
+	if p.ContentHash != "abc" {
+		t.Errorf("ContentHash = %q, want the form's", p.ContentHash)
+	}
+	if p.StorageKey == "" || p.StorageKey == "k" {
+		t.Errorf("StorageKey = %q, want a path minted for the intent", p.StorageKey)
+	}
+}
+
+// TestClaimCopyTarget covers the three outcomes of claiming a copy target: an
+// accepted claim, a backend that declines, and a database error.
+func TestClaimCopyTarget(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
-		name       string
-		err        error
-		wantReason string
+		name    string
+		fits    bool
+		err     error
+		wantErr error
 	}{
-		{"committed", nil, ""},
-		{"source changed", core.ErrCopyChanged, reasons.StaleOrphan},
-		{"target refused", core.ErrTargetRefused, reasons.StaleOrphan},
-		{"store error", errors.New("tx failed"), reasons.Orphan},
+		{"accepted", true, nil, nil},
+		{"declined", false, nil, core.ErrTargetRefused},
+		{"store error", false, errDBDown, errDBDown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctrl := gomock.NewController(t)
-			dest := backendtest.NewMockObjectBackend(ctrl)
 			store := NewMockCoordinatorStores(ctrl)
-			p := &core.Placement{
-				Source:     &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
-				Target:     destName,
-				StorageKey: "k!placed",
-			}
-			if tc.err == nil {
-				store.EXPECT().PlaceCopy(gomock.Any(), p).Return(int64(9), nil)
-			} else {
-				store.EXPECT().PlaceCopy(gomock.Any(), p).Return(int64(0), tc.err)
-				dest.EXPECT().DeleteObject(gomock.Any(), "k!placed").Return(errors.New("delete failed"))
-				store.EXPECT().EnqueueCleanup(gomock.Any(),
-					cleanupOf(destName, "k!placed", tc.wantReason, 7)).Return(nil)
-				store.EXPECT().IncrementOrphanBytes(gomock.Any(), destName, int64(7)).Return(nil)
-			}
+			p := NewCopyIntent("k", "b1", 4, nil)
+			store.EXPECT().InsertPendingIfFits(gomock.Any(), p, core.AcceptForPart).Return(tc.fits, tc.err)
 
-			coord := newCoordinatorWith2Backends(sourceName, backendtest.NewMockObjectBackend(ctrl), destName, dest, store)
-			placed, err := coord.PlaceOrCleanup(context.Background(), p, dest, 7, reasons)
-			if !errors.Is(err, tc.err) {
-				t.Fatalf("err = %v, want %v", err, tc.err)
+			coord := newCoordinatorWithStore(store)
+			err := coord.ClaimCopyTarget(context.Background(), p, core.AcceptForPart)
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
-			if tc.err == nil && placed != 9 {
-				t.Errorf("placed = %d, want 9", placed)
+			if tc.err != nil && errors.Is(err, core.ErrTargetRefused) {
+				t.Error("a database error was reported as a refused target")
 			}
 		})
 	}
 }
 
-// moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
-func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
-	return &MoveRequest{
-		Source:      &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
-		SrcBackend:  src,
-		DestBackend: dest,
-		DestName:    destName,
-		Reasons:     RebalanceMoveReasons,
+// TestPlace_SettlesAndReturnsWhatPlaceCopyReturned verifies Place settles the
+// cleanup the placement queued whether or not the placement committed.
+func TestPlace_SettlesAndReturnsWhatPlaceCopyReturned(t *testing.T) {
+	t.Parallel()
+	for _, placeErr := range []error{nil, core.ErrTargetRefused} {
+		name := "committed"
+		if placeErr != nil {
+			name = placeErr.Error()
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			be := backendtest.NewInMemory()
+			be.Objects["k!queued"] = backendtest.Object{}
+			store := NewMockCoordinatorStores(ctrl)
+			p := &core.Placement{Intent: NewCopyIntent("k", "b1", 4, nil), Reasons: ReplicationReasons}
+			store.EXPECT().PlaceCopy(gomock.Any(), p).
+				Return(int64(9), []core.CleanupItem{cleanupRow(2, "b1", "k!queued", ReplicationReasons.Orphan, 4)}, placeErr)
+			store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(2)).Return(nil)
+
+			coord := newCoordinatorWithBackend("b1", be, store)
+			placed, err := coord.Place(context.Background(), p)
+			if !errors.Is(err, placeErr) || placed != 9 {
+				t.Fatalf("Place = (%d, %v), want (9, %v)", placed, err, placeErr)
+			}
+			if be.Has("k!queued") {
+				t.Error("the queued bytes were not settled")
+			}
+		})
 	}
 }
 
-// sourceName and destName are the backends the move reads from and writes to,
-// named once so the expectations and the request cannot drift apart.
-const (
-	sourceName = "src"
-	destName   = "dest"
-)
-
-// cleanupOf matches an enqueued cleanup by the fields each move test is about:
-// the backend, the path being deleted, the reason and the size.
-func cleanupOf(backendName, storageKey, reason string, size int64) gomock.Matcher {
-	return gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == backendName && c.StorageKey == storageKey &&
-			c.Reason == reason && c.SizeBytes == size
-	})
-}
-
-// destCleanupOf matches the cleanup of the 4 bytes a move wrote on dest. The
-// path is read at match time because the move mints it while copying.
-func destCleanupOf(written *string, reason string) gomock.Matcher {
-	return gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == destName && c.StorageKey == *written &&
-			c.Reason == reason && c.SizeBytes == 4
-	})
-}
-
-// placementOf matches the move's placement: the source copy moveReq read,
-// removed as it lands on dest at the path the copy wrote there.
-func placementOf(written *string) gomock.Matcher {
-	return gomock.Cond(func(p *core.Placement) bool {
-		return p.Source.ObjectKey == "k" && p.Source.BackendName == sourceName &&
-			p.Source.StorageKey == srcPath && p.Target == destName &&
-			*written != "" && *written != srcPath && p.StorageKey == *written && p.RemoveSource
-	})
-}
+// -------------------------------------------------------------------------
+// INTENTS AND WRITE TARGETS
+// -------------------------------------------------------------------------
 
 // TestNewPendingIntent_CopiesStoredForm drives the form != nil branch so the
 // PendingObject carries the wrapped DEK, keyID, plaintext size, and content
@@ -494,8 +708,8 @@ func TestClaimWriteTarget_TriesTheNextCandidateWhenOneIsFull(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 
 	var claimed []string
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
 			claimed = append(claimed, p.BackendName)
 			return p.BackendName == "b2", nil
 		}).Times(2)
@@ -522,7 +736,7 @@ func TestClaimWriteTarget_NoCandidateFits(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, nil).Times(2)
 
 	coord := newCoordinatorWithStore(store)
@@ -540,8 +754,8 @@ func TestClaimWriteTarget_StoreError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
-		Return(false, errors.New("db down")).Times(1)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, errDBDown).Times(1)
 
 	coord := newCoordinatorWithStore(store)
 
@@ -558,137 +772,42 @@ func TestClaimWriteTarget_StoreError(t *testing.T) {
 	}
 }
 
-// TestDeleteOrEnqueue_NotFound_SkipsEnqueue asserts that when the
-// immediate backend DELETE returns 404, no cleanup_queue row is inserted
-// (the backend already agrees the object is gone). Issue #843 - this
-// prevents phantom 404s from seeding the cleanup queue at the source.
-func TestDeleteOrEnqueue_NotFound_SkipsEnqueue(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	be := backendtest.NewMockObjectBackend(ctrl)
-	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
-		Return(&backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
+// -------------------------------------------------------------------------
+// RECORD
+// -------------------------------------------------------------------------
 
-	store := NewMockCoordinatorStores(ctrl)
-	// The whole point of the fix: EnqueueCleanup must NOT be called.
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).Times(0)
-
-	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.DeleteOrEnqueue(context.Background(), be, &core.CleanupRequest{
-		BackendName: "b1", ObjectKey: "phantom.txt", StorageKey: "phantom.txt",
-		Reason: "overwrite_displaced", SizeBytes: 128,
-	})
-}
-
-// TestDeleteOrEnqueue_GenericError_Enqueues asserts the regression
-// guard for the existing failure path: a non-404 error still enqueues
-// the cleanup so the worker can retry.
-func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	be := backendtest.NewMockObjectBackend(ctrl)
-	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
-
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf("b1", "real.txt", "overwrite_displaced", 256)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
-
-	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.DeleteOrEnqueue(context.Background(), be, &core.CleanupRequest{
-		BackendName: "b1", ObjectKey: "real.txt", StorageKey: "real.txt",
-		Reason: "overwrite_displaced", SizeBytes: 256,
-	})
-}
-
-// TestDeleteAllOrEnqueue_GroupsAndSettlesPerKey verifies requests are deleted
-// one batch per backend and each settled on its own: a failure is queued, a 404
-// is not, and a request on an unknown backend is skipped.
-func TestDeleteAllOrEnqueue_GroupsAndSettlesPerKey(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
-	b1.BatchDeleteEnabled = true
-	b1.BatchDeleteKeyErrs = map[string]error{
-		"b": errors.New("denied"),
-		"c": &backendtest.StatusError{Code: 404, Msg: "NoSuchKey"},
-	}
-	for _, k := range []string{"a", "b", "c"} {
-		b1.Objects[k] = backendtest.Object{}
-	}
-	b2.Objects["x"] = backendtest.Object{}
-
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), cleanupOf("b1", "b", "overwrite_displaced", 2)).Return(nil)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(2)).Return(nil)
-
-	coord := newCoordinatorWith2Backends("b1", b1, "b2", b2, store)
-	req := func(be, key string, size int64) *core.CleanupRequest {
-		return &core.CleanupRequest{BackendName: be, ObjectKey: key, StorageKey: key, Reason: "overwrite_displaced", SizeBytes: size}
-	}
-	coord.DeleteAllOrEnqueue(context.Background(), []*core.CleanupRequest{
-		req("b1", "a", 1), req("b1", "b", 2), req("b1", "c", 3), req("b2", "x", 4), req("gone", "y", 5),
-	})
-
-	if b1.BatchDeleteCalls != 1 {
-		t.Errorf("b1 batch calls = %d, want one batch for its three copies", b1.BatchDeleteCalls)
-	}
-	if b1.Has("a") || b2.Has("x") {
-		t.Error("a deleted copy is still on its backend")
+// recordReq is the single-copy record request the record tests share.
+func recordReq() *core.RecordObjectRequest {
+	return &core.RecordObjectRequest{
+		Key: "k", Size: 100,
+		Copies: []core.ObjectCopy{{Backend: "new", IntentID: "i-1", StorageKey: "k!new"}},
 	}
 }
 
-// TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue covers
-// #880: the post-record-failure cleanup path must treat a backend 404
-// the same way DeleteOrEnqueue does and skip the enqueue. Otherwise
-// the cleanup queue accumulates phantom rows for objects the backend
-// already agrees are gone.
-func TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	be := backendtest.NewMockObjectBackend(ctrl)
-	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
-		Return(&backendtest.StatusError{Code: 404, Msg: "NoSuchKey"})
-
-	store := NewMockCoordinatorStores(ctrl)
-	// The whole point of the fix: EnqueueCleanup must NOT be called.
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).Times(0)
-
-	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.RecoverFromRecordFailure(context.Background(), be, &core.CleanupRequest{
-		BackendName: "b1", ObjectKey: "phantom.txt", StorageKey: "phantom.txt",
-		Reason: "record_failure", SizeBytes: 128,
+// recordAuditEvents captures every audit event emitted until the test ends.
+// Settle emits from several goroutines, so reads go through the returned func.
+func recordAuditEvents(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var events []string
+	audit.SetOnEvent(func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
 	})
+	t.Cleanup(func() { audit.SetOnEvent(nil) })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(events)
+	}
 }
 
-// TestRecoverFromRecordFailure_GenericError_Enqueues pins the
-// retain-the-existing-behavior contract: a non-404 cleanup failure
-// still seeds the cleanup queue so the worker can retry.
-func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	be := backendtest.NewMockObjectBackend(ctrl)
-	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
-
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(),
-		cleanupOf("b1", "real.txt", "record_failure", 256)).Return(nil).Times(1)
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
-
-	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.RecoverFromRecordFailure(context.Background(), be, &core.CleanupRequest{
-		BackendName: "b1", ObjectKey: "real.txt", StorageKey: "real.txt",
-		Reason: "record_failure", SizeBytes: 256,
-	})
-}
-
-// TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced verifies the
-// two kinds of bytes a commit hands back are deleted under their own cleanup
-// reason, and at their own paths: a copy the write replaced, and an intent it
-// superseded. Each names where its bytes are, which is not the object's key and
-// not what this write just stored.
-func TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced(t *testing.T) {
-	t.Parallel()
+// TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced verifies the
+// rows a commit queued are deleted at their own paths and retired, and the
+// overwrite is audited. Each row names where its bytes are, which is not the
+// object's key and not what this write just stored.
+func TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	old := backendtest.NewMockObjectBackend(ctrl)
 	stale := backendtest.NewMockObjectBackend(ctrl)
@@ -696,29 +815,67 @@ func TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced(t *testing.
 	stale.EXPECT().DeleteObject(gomock.Any(), "k!superseded").Return(nil)
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return([]core.DeletedCopy{
-		{BackendName: "old", StorageKey: "k!replaced", SizeBytes: 50},
-		{BackendName: "stale", StorageKey: "k!superseded", SizeBytes: 70, Reason: core.CleanupReasonSupersededIntent},
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return([]core.CleanupItem{
+		cleanupRow(1, "old", "k!replaced", core.CleanupReasonOverwritten, 50),
+		cleanupRow(2, "stale", "k!superseded", core.CleanupReasonSupersededIntent, 70),
 	}, nil, nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(2)).Return(nil)
+	events := recordAuditEvents(t)
 
 	coord := newCoordinatorWith2Backends("old", old, "stale", stale, store)
-
-	tracer := noop.NewTracerProvider().Tracer("test")
-	_, sp := tracer.Start(context.Background(), "test")
-	defer sp.End()
-
-	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
-		Key: "k", Size: 100,
-		Copies: []core.ObjectCopy{{Backend: "new", IntentID: "i-1", StorageKey: "k!new"}},
-	})
-	if err != nil {
+	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq()); err != nil {
 		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)
+	}
+	if events := events(); !slices.Contains(events, "storage.overwrite_displaced") {
+		t.Errorf("audit events = %v, want storage.overwrite_displaced", events)
+	}
+}
+
+// TestRecordObjectAndPromoteIntent_FreshKeyAuditsNothing verifies a commit that
+// displaced nothing settles nothing and records no overwrite.
+func TestRecordObjectAndPromoteIntent_FreshKeyAuditsNothing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, nil, nil)
+	events := recordAuditEvents(t)
+
+	coord := newCoordinatorWithStore(store)
+	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq()); err != nil {
+		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)
+	}
+	if slices.Contains(events(), "storage.overwrite_displaced") {
+		t.Error("a commit that displaced nothing was audited as an overwrite")
+	}
+}
+
+// TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut verifies a failed
+// commit surfaces, still charges the PUT the backend served, and deletes
+// nothing: the intent stays for the reaper.
+func TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, nil, errDBDown)
+
+	counters := counter.NewLocalCounterBackend([]string{"new"})
+	coord := New(infra.New(&infra.Config{
+		Backends: map[string]s3be.ObjectBackend{"new": backendtest.NewInMemory()},
+		Usage:    counter.NewUsageTracker(counters, nil),
+		Quota:    counter.NewQuotaTracker([]string{"new"}),
+	}), store)
+	err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq())
+	if !errors.Is(err, errDBDown) {
+		t.Fatalf("err = %v, want the store failure", err)
+	}
+	if got := counters.Load("new", counter.FieldAPIRequests); got != 1 {
+		t.Errorf("api calls = %d, want the one PUT charged", got)
 	}
 }
 
 // TestRecordObjectAndPromoteIntent_RejectsMultipleCopies verifies the helper
-// refuses a request placing more than one copy. Its recovery path deletes from
-// a single backend, so it cannot account for the rest.
+// refuses a request placing more than one copy, since it accounts for one
+// upload only.
 func TestRecordObjectAndPromoteIntent_RejectsMultipleCopies(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -739,29 +896,6 @@ func TestRecordObjectAndPromoteIntent_RejectsMultipleCopies(t *testing.T) {
 	}
 }
 
-// TestRecordObjectAndPromoteIntent_UnknownBackend covers the legacy
-// fallback path's "backend not registered" branch: with intentID empty
-// and an unknown backend name, the method returns an error before any
-// store call.
-func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	coord := newCoordinatorWithStore(store)
-
-	tracer := noop.NewTracerProvider().Tracer("test")
-	_, sp := tracer.Start(context.Background(), "test")
-	defer sp.End()
-
-	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
-		Key: "k", Size: 1024, Copies: []core.ObjectCopy{{Backend: "no-such-backend"}},
-	})
-	if err == nil {
-		t.Fatal("expected error for unregistered backend")
-	}
-}
-
 // testSpan returns a no-op span for calls that take one.
 func testSpan(t *testing.T) trace.Span {
 	t.Helper()
@@ -769,6 +903,10 @@ func testSpan(t *testing.T) trace.Span {
 	t.Cleanup(func() { sp.End() })
 	return sp
 }
+
+// -------------------------------------------------------------------------
+// UPLOAD TARGETS
+// -------------------------------------------------------------------------
 
 // TestClaimUploadTarget_SkipsADecliningBackend verifies an upload the first
 // candidate's insert declines, as a draining backend does, is recorded on the
@@ -820,7 +958,7 @@ func TestClaimUploadTarget_DatabaseErrorEndsTheWalk(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, errors.New("db down")).Times(1)
+	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, errDBDown).Times(1)
 
 	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
 	if _, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,

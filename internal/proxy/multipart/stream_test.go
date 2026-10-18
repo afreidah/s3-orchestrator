@@ -38,7 +38,7 @@ func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
 // preloadPart stores body bytes at the multipart part key for the given
 // upload + part number, returning the key for assertions.
 func preloadPart(be *backendtest.InMemory, uploadID string, partNum int, body []byte) string {
-	key := multipartPartKey(uploadID, partNum)
+	key := core.PartPath(uploadID, partNum)
 	be.Objects[key] = backendtest.Object{Data: body, ContentType: "application/octet-stream", ETag: "x"}
 	return key
 }

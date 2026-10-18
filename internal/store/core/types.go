@@ -144,21 +144,21 @@ type ExistingCopy struct {
 	Form        StoredFlags
 }
 
-// DeletedCopy describes bytes that need removing from their backend: a copy
-// displaced by an overwrite or delete, or a superseded intent's upload.
-// StorageKey is the exact path to delete; never derive it from the object key,
-// or a late cleanup could remove a newer write's bytes. Reason is the
-// cleanup-queue label used on retry; empty means the caller's default.
-type DeletedCopy struct {
+// removedCopy describes bytes a transaction stopped recording: a copy displaced
+// by an overwrite or delete, or the upload of an intent it cleared. StorageKey
+// is the exact path to delete; never derive it from the object key, or a late
+// cleanup could remove a newer write's bytes. Reason overrides the label the
+// transaction queues the bytes under; empty means its default.
+type removedCopy struct {
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64
 	Reason      string
 }
 
-// Cleanup is the request that deletes this copy of objectKey, labelled with the
+// request is the cleanup that deletes this copy of objectKey, labelled with the
 // copy's own reason or defaultReason when it has none.
-func (d DeletedCopy) Cleanup(objectKey, defaultReason string) *CleanupRequest {
+func (d removedCopy) request(objectKey, defaultReason string) *CleanupRequest {
 	reason := d.Reason
 	if reason == "" {
 		reason = defaultReason
@@ -166,18 +166,23 @@ func (d DeletedCopy) Cleanup(objectKey, defaultReason string) *CleanupRequest {
 	return &CleanupRequest{
 		BackendName: d.BackendName,
 		ObjectKey:   objectKey,
-		StorageKey:  d.StorageKey,
+		StorageKey:  StoragePath(objectKey, d.StorageKey),
 		Reason:      reason,
 		SizeBytes:   d.SizeBytes,
 	}
 }
 
+// The labels the store queues bytes under when the caller does not name one.
 // CleanupReasonSupersededIntent labels bytes of an intent a newer write
 // cleared. CleanupReasonCompanionDiscarded labels an extra-copy intent the
 // reaper could not vouch for. CleanupReasonCompanionUntrusted labels an extra
-// copy that finished after a newer write took the key. None was committed, so
-// the backend may not hold the bytes at all.
+// copy that finished after a newer write took the key. None of those three
+// was committed, so the backend may not hold the bytes at all.
+// CleanupReasonPartReplaced labels a part a re-upload of its number replaced.
 const (
+	CleanupReasonOverwritten        = "overwrite_displaced"
+	CleanupReasonDeleted            = "object_deleted"
+	CleanupReasonPartReplaced       = "part_replaced"
 	CleanupReasonSupersededIntent   = "superseded_intent"
 	CleanupReasonCompanionDiscarded = "companion_discarded"
 	CleanupReasonCompanionUntrusted = "companion_untrusted"
@@ -358,19 +363,29 @@ type MultipartUpload struct {
 // what the backend returned for the stored part; PlaintextETag is the MD5 of
 // the client's bytes and is the one that builds the composite ETag. Older
 // parts may have an empty PlaintextETag. Parts are never compressed, so the
-// stored form carries only the envelope.
+// stored form carries only the envelope. StorageKey is the path the upload of
+// this part wrote; it is empty for a part recorded before each upload had its
+// own path, which sits at the part number's fixed path.
 type MultipartPart struct {
 	StoredForm
 	PartNumber    int
 	ETag          string
 	PlaintextETag string
 	SizeBytes     int64
+	StorageKey    string
 	CreatedAt     time.Time
+}
+
+// Path returns where the part's bytes are stored on the upload's backend.
+func (p *MultipartPart) Path(uploadID string) string {
+	return StoragePath(PartPath(uploadID, p.PartNumber), p.StorageKey)
 }
 
 // RecordPartParams is one RecordPart call's inputs. Bundled rather than passed
 // positionally: the two ETags and the two sizes are adjacent values of the same
-// types, which is exactly the shape a transposition hides in.
+// types, which is exactly the shape a transposition hides in. Intent is the
+// claim the part's upload holds on the upload's backend; its path is where the
+// bytes were written, and recording the part clears it.
 type RecordPartParams struct {
 	UploadID      string
 	PartNumber    int
@@ -378,6 +393,7 @@ type RecordPartParams struct {
 	PlaintextETag string
 	SizeBytes     int64
 	Form          *StoredForm
+	Intent        *PendingObject
 }
 
 // CompletePart is one entry of a client's CompleteMultipartUpload manifest:
@@ -394,9 +410,9 @@ type CompletePart struct {
 // CLEANUP QUEUE
 // -------------------------------------------------------------------------
 
-// CleanupRequest is one deletion handed to the retry queue. The worker deletes
-// StorageKey; ObjectKey tells an operator what the orphan was. SizeBytes is
-// credited back to orphan_bytes when the delete lands.
+// CleanupRequest is one deletion a transaction queues. StorageKey is what is
+// deleted; ObjectKey tells an operator what the bytes belonged to. SizeBytes
+// counts as the backend's orphan bytes until the row is retired.
 type CleanupRequest struct {
 	BackendName string
 	ObjectKey   string

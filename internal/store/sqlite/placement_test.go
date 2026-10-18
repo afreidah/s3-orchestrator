@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Drives PlaceCopy against the real engine: a placement commits only while the
-// source is still the copy the caller read and the target admits the bytes, a
-// move carries every column of the source row, and a refused placement leaves
-// rows and quotas as they were.
+// Drives PlaceCopy against the real engine: a placement commits only while its
+// intent is still held and the source is still the copy the caller read, a
+// move carries every column of the source row and queues the source's bytes,
+// and a refused placement leaves rows and quotas as they were while queueing
+// the copied bytes and dropping the intent.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -49,6 +50,19 @@ func recordWrite(t *testing.T, s *Store, storageKey string, size int64) {
 	}
 }
 
+// claimFor claims an intent for size bytes of placedKey at path on backend.
+func claimFor(t *testing.T, s *Store, backend, path string, size int64) *core.PendingObject {
+	t.Helper()
+	return mustClaimCopyIntent(t, s, placedKey, backend, path, size, core.AcceptForWrite)
+}
+
+// place runs PlaceCopy of src to the intent's path under the test reasons.
+func place(s *Store, src *core.ObjectLocation, intent *core.PendingObject, removeSource bool) (int64, []core.CleanupItem, error) {
+	return s.PlaceCopy(context.Background(), &core.Placement{
+		Source: src, Intent: intent, RemoveSource: removeSource, Reasons: testMoveReasons,
+	})
+}
+
 // assertDeclined checks a placement failed with want and left the copy set
 // and both backends' byte counts as they were before it.
 func assertDeclined(t *testing.T, s *Store, err, want error, before []core.ObjectLocation, usedA, usedB int64) {
@@ -77,41 +91,68 @@ func assertDeclined(t *testing.T, s *Store, err, want error, before []core.Objec
 	}
 }
 
+// assertIntentQueued checks the placement dropped its intent and returned one
+// cleanup row for the intent's bytes under reason, committed to the queue.
+func assertIntentQueued(t *testing.T, s *Store, cleanup []core.CleanupItem, intent *core.PendingObject, reason string) {
+	t.Helper()
+	if n := queryPendingCount(t, s); n != 0 {
+		t.Errorf("pending intents = %d, want the placement's dropped", n)
+	}
+	if len(cleanup) != 1 {
+		t.Fatalf("cleanup = %+v, want one row for the intent's bytes", cleanup)
+	}
+	got := cleanup[0]
+	if got.BackendName != intent.BackendName || got.StorageKey != intent.StorageKey ||
+		got.SizeBytes != intent.SizeBytes || got.Reason != reason {
+		t.Errorf("cleanup row = %+v, want %s/%s %d bytes under %q",
+			got, intent.BackendName, intent.StorageKey, intent.SizeBytes, reason)
+	}
+	for _, q := range queuedCleanups(t, s) {
+		if q.ID == got.ID {
+			return
+		}
+	}
+	t.Errorf("cleanup row %d is not in the queue", got.ID)
+}
+
 // -------------------------------------------------------------------------
 // DECLINED PLACEMENTS
 // -------------------------------------------------------------------------
 
 // TestPlaceCopy_ReplacedSourceIsCopyChanged verifies a move whose source a
 // newer write replaced between the read and the placement records nothing.
+// The newer write cleared the move's intent, so the copied bytes are queued
+// as a superseded intent's.
 func TestPlaceCopy_ReplacedSourceIsCopyChanged(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	recordWrite(t, s, firstWritePath, 100)
 	read := storetest.LocationOn(t, s, placedKey, "backend-a")
+	intent := claimFor(t, s, "backend-b", movedPath, 100)
 	recordWrite(t, s, placedKey+"!w2", 200)
 	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
 
-	_, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source: read, Target: "backend-b", StorageKey: movedPath, RemoveSource: true,
-	})
+	_, cleanup, err := place(s, read, intent, true)
 	assertDeclined(t, s, err, core.ErrCopyChanged, before, 200, 0)
+	assertIntentQueued(t, s, cleanup, intent, core.CleanupReasonSupersededIntent)
 }
 
 // TestPlaceCopy_SourceGoneIsCopyChanged verifies a placement whose source row
-// no longer exists records nothing.
+// no longer exists records nothing and queues the copied bytes.
 func TestPlaceCopy_SourceGoneIsCopyChanged(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	_, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:     &core.ObjectLocation{ObjectKey: placedKey, BackendName: "backend-a", StorageKey: firstWritePath},
-		Target:     "backend-b",
-		StorageKey: movedPath,
-	})
+	intent := claimFor(t, s, "backend-b", movedPath, 100)
+	_, cleanup, err := place(s,
+		&core.ObjectLocation{ObjectKey: placedKey, BackendName: "backend-a", StorageKey: firstWritePath},
+		intent, false)
 	assertDeclined(t, s, err, core.ErrCopyChanged, nil, 0, 0)
+	assertIntentQueued(t, s, cleanup, intent, testMoveReasons.Orphan)
 }
 
 // TestPlaceCopy_TargetHoldingCopyIsRefused verifies a placement onto a backend
-// that already holds a copy of the key records nothing.
+// that already holds a copy of the key records nothing and queues the copied
+// bytes.
 func TestPlaceCopy_TargetHoldingCopyIsRefused(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -119,32 +160,49 @@ func TestPlaceCopy_TargetHoldingCopyIsRefused(t *testing.T) {
 	mustRecordReplica(t, s, placedKey, "backend-b", "backend-a", 100)
 	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
 
-	_, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:       storetest.LocationOn(t, s, placedKey, "backend-a"),
-		Target:       "backend-b",
-		StorageKey:   movedPath,
-		RemoveSource: true,
-	})
+	intent := claimFor(t, s, "backend-b", movedPath, 100)
+	_, cleanup, err := place(s, storetest.LocationOn(t, s, placedKey, "backend-a"), intent, true)
 	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 100)
+	assertIntentQueued(t, s, cleanup, intent, testMoveReasons.Orphan)
 }
 
-// TestPlaceCopy_TargetOverQuotaIsRefused verifies a placement onto a backend
-// without room for the source's bytes records nothing.
-func TestPlaceCopy_TargetOverQuotaIsRefused(t *testing.T) {
+// TestPlaceCopy_SupersededIntentIsCopyChanged verifies a placement whose
+// intent a client write cleared mid-copy records nothing and queues the copied
+// bytes as a superseded intent's.
+func TestPlaceCopy_SupersededIntentIsCopyChanged(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	recordWrite(t, s, firstWritePath, 100)
+	intent := claimFor(t, s, "backend-b", replicaPath, 100)
+	if err := s.DeletePending(context.Background(), intent.IntentID); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
+
+	_, cleanup, err := place(s, storetest.LocationOn(t, s, placedKey, "backend-a"), intent, false)
+	assertDeclined(t, s, err, core.ErrCopyChanged, before, 100, 0)
+	assertIntentQueued(t, s, cleanup, intent, core.CleanupReasonSupersededIntent)
+}
+
+// TestPlaceCopy_ClaimOnFullTargetIsRefused verifies a target without room for
+// the source's bytes refuses the claim the copy takes before writing, so no
+// intent is recorded.
+func TestPlaceCopy_ClaimOnFullTargetIsRefused(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{{Name: "backend-b", QuotaBytes: 50}}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
-	recordWrite(t, s, firstWritePath, 100)
-	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
-
-	_, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:     storetest.LocationOn(t, s, placedKey, "backend-a"),
-		Target:     "backend-b",
-		StorageKey: replicaPath,
-	})
-	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
+	fits, err := s.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID: "intent-full", ObjectKey: placedKey, StorageKey: replicaPath,
+		BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion,
+	}, core.AcceptForWrite)
+	if err != nil || fits {
+		t.Fatalf("InsertPendingIfFits on a full target = %v, %v, want refused", fits, err)
+	}
+	if n := queryPendingCount(t, s); n != 0 {
+		t.Errorf("pending intents = %d, want 0", n)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -153,8 +211,9 @@ func TestPlaceCopy_TargetOverQuotaIsRefused(t *testing.T) {
 
 // TestPlaceCopy_MoveCarriesTheSourceRow verifies a move lands the source row
 // on the target unchanged but for backend and path, removes the source row,
-// and moves the bytes between the backends' counts. Last-Modified surviving
-// the move is the reason created_at is carried.
+// queues the source's bytes, clears the intent, and moves the bytes between
+// the backends' counts. Last-Modified surviving the move is the reason
+// created_at is carried.
 func TestPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -163,14 +222,16 @@ func TestPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	backdateCreatedAt(t, s, placedKey, "backend-a", 24*time.Hour)
 	src := storetest.LocationOn(t, s, placedKey, "backend-a")
 
-	moved, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source: src, Target: "backend-b", StorageKey: movedPath, RemoveSource: true,
-	})
+	moved, cleanup, err := place(s, src, claimFor(t, s, "backend-b", movedPath, 100), true)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if moved != 100 {
 		t.Errorf("moved = %d, want 100", moved)
+	}
+	assertQueuedOnly(t, s, cleanup, "backend-a", firstWritePath, testMoveReasons.SourceDelete, 100)
+	if n := queryPendingCount(t, s); n != 0 {
+		t.Errorf("pending intents = %d, want the placed intent cleared", n)
 	}
 
 	got := readBackOne(t, s, placedKey)
@@ -196,21 +257,23 @@ func TestPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 }
 
 // TestPlaceCopy_ReplicaKeepsTheSource verifies a placement without
-// RemoveSource adds the copy and leaves the source row and its bytes alone.
+// RemoveSource adds the copy, queues nothing, and leaves the source row and
+// its bytes alone.
 func TestPlaceCopy_ReplicaKeepsTheSource(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	recordWrite(t, s, firstWritePath, 100)
 	src := storetest.LocationOn(t, s, placedKey, "backend-a")
 
-	placed, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source: src, Target: "backend-b", StorageKey: replicaPath,
-	})
+	placed, cleanup, err := place(s, src, claimFor(t, s, "backend-b", replicaPath, 100), false)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if placed != 100 {
 		t.Errorf("placed = %d, want 100", placed)
+	}
+	if len(cleanup) != 0 || len(queuedCleanups(t, s)) != 0 {
+		t.Errorf("cleanup = %+v, want nothing queued for a replica", cleanup)
 	}
 
 	if kept := storetest.LocationOn(t, s, placedKey, "backend-a"); kept.StorageKey != src.StorageKey {
@@ -236,24 +299,50 @@ func TestPlaceCopy_ReplicaKeepsTheSource(t *testing.T) {
 // rewrittenPath is where an in-place rewrite stores the transformed bytes.
 const rewrittenPath = placedKey + "!rw"
 
-// rewriteInPlace places the copy on backend-a back onto backend-a at
-// rewrittenPath, carrying a plaintext compressed form of size bytes.
-func rewriteInPlace(t *testing.T, s *Store, size int64) (int64, error) {
+// rewriteIntent is the claim an in-place rewrite of placedKey takes on
+// backend-a: a plaintext compressed form of size bytes at rewrittenPath.
+func rewriteIntent(size int64) *core.PendingObject {
+	return &core.PendingObject{
+		IntentID: "intent-rewrite", ObjectKey: placedKey, StorageKey: rewrittenPath,
+		BackendName: "backend-a", SizeBytes: size, Role: core.PendingRoleCompanion,
+		StoredForm: core.StoredForm{CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 100},
+	}
+}
+
+// claimRewrite claims the rewrite intent of size bytes the way a rewrite
+// pass does, reporting whether backend-a admitted it.
+func claimRewrite(t *testing.T, s *Store, size int64) (*core.PendingObject, bool) {
 	t.Helper()
+	p := rewriteIntent(size)
+	fits, err := s.InsertPendingIfFits(context.Background(), p, core.AcceptForRewrite)
+	if err != nil {
+		t.Fatalf("InsertPendingIfFits(rewrite): %v", err)
+	}
+	return p, fits
+}
+
+// rewriteInPlace claims and places the copy on backend-a back onto backend-a
+// at rewrittenPath, carrying the rewrite intent's form of size bytes.
+func rewriteInPlace(t *testing.T, s *Store, size int64) (int64, []core.CleanupItem, error) {
+	t.Helper()
+	intent, fits := claimRewrite(t, s, size)
+	if !fits {
+		t.Fatalf("backend-a refused the %d byte rewrite claim", size)
+	}
 	return s.PlaceCopy(context.Background(), &core.Placement{
 		Source:       storetest.LocationOn(t, s, placedKey, "backend-a"),
-		Target:       "backend-a",
-		StorageKey:   rewrittenPath,
+		Intent:       intent,
 		RemoveSource: true,
-		Form:         &core.StoredForm{CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 100},
-		Size:         size,
+		Reformed:     true,
+		Reasons:      testMoveReasons,
 	})
 }
 
 // TestPlaceCopy_InPlaceRewriteReplacesTheForm verifies a rewrite onto the
 // copy's own backend replaces the row at a new path with the new form and
 // size, keeps the source's hash, write time and identity, drops the
-// compression probe, and moves the backend's count by the size change.
+// compression probe, queues the old copy's bytes, and moves the backend's
+// count by the size change.
 func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -262,13 +351,14 @@ func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
 	backdateCreatedAt(t, s, placedKey, "backend-a", 24*time.Hour)
 	src := storetest.LocationOn(t, s, placedKey, "backend-a")
 
-	placed, err := rewriteInPlace(t, s, 40)
+	placed, cleanup, err := rewriteInPlace(t, s, 40)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if placed != 40 {
 		t.Errorf("placed = %d, want 40", placed)
 	}
+	assertQueuedOnly(t, s, cleanup, "backend-a", firstWritePath, testMoveReasons.SourceDelete, 100)
 	got := readBackOne(t, s, placedKey)
 	if got.BackendName != "backend-a" || got.StorageKey != rewrittenPath || got.SizeBytes != 40 {
 		t.Errorf("rewritten copy = %s/%s at %d bytes, want backend-a/%s at 40",
@@ -292,31 +382,31 @@ func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
 	}
 }
 
-// TestPlaceCopy_InPlaceRewriteAdmitsTheGrowthOnly verifies a rewrite that
-// grows the copy needs room only for the growth, and one without that room
-// records nothing.
-func TestPlaceCopy_InPlaceRewriteAdmitsTheGrowthOnly(t *testing.T) {
+// TestPlaceCopy_InPlaceRewriteClaimsTheWholeCopy verifies the claim an
+// in-place rewrite takes needs room for the whole new copy beside the one it
+// replaces, since both occupy the backend until the old bytes are deleted.
+func TestPlaceCopy_InPlaceRewriteClaimsTheWholeCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{{Name: "backend-a", QuotaBytes: 150}}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
 	recordWrite(t, s, firstWritePath, 100)
-	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
 
-	_, err := rewriteInPlace(t, s, 160)
-	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
-
-	if _, err := rewriteInPlace(t, s, 150); err != nil {
-		t.Fatalf("PlaceCopy of a 50 byte growth into 50 of room: %v", err)
+	if _, fits := claimRewrite(t, s, 60); fits {
+		t.Fatal("backend-a admitted a 60 byte rewrite into 50 bytes of room")
 	}
-	if used := quotaBytesUsed(t, s, "backend-a"); used != 150 {
-		t.Errorf("backend-a bytes = %d, want 150", used)
+	if _, _, err := rewriteInPlace(t, s, 50); err != nil {
+		t.Fatalf("PlaceCopy of a 50 byte rewrite into 50 of room: %v", err)
+	}
+	if used := quotaBytesUsed(t, s, "backend-a"); used != 50 {
+		t.Errorf("backend-a bytes = %d, want 50", used)
 	}
 }
 
 // TestPlaceCopy_InPlaceRewriteOnFlaggedBackend verifies a cordoned backend
-// still takes a rewrite of a copy it holds, while a draining one refuses it.
+// still admits a rewrite of a copy it holds, while a draining one refuses the
+// claim.
 func TestPlaceCopy_InPlaceRewriteOnFlaggedBackend(t *testing.T) {
 	t.Parallel()
 	t.Run("cordoned", func(t *testing.T) {
@@ -326,7 +416,7 @@ func TestPlaceCopy_InPlaceRewriteOnFlaggedBackend(t *testing.T) {
 		if _, err := s.SetBackendFlag(context.Background(), "backend-a", core.FlagCordoned); err != nil {
 			t.Fatalf("cordon: %v", err)
 		}
-		if _, err := rewriteInPlace(t, s, 40); err != nil {
+		if _, _, err := rewriteInPlace(t, s, 40); err != nil {
 			t.Fatalf("PlaceCopy on a cordoned backend: %v", err)
 		}
 	})
@@ -335,24 +425,23 @@ func TestPlaceCopy_InPlaceRewriteOnFlaggedBackend(t *testing.T) {
 		s := newTestStore(t)
 		recordWrite(t, s, firstWritePath, 100)
 		mustStartDrain(t, s, "backend-a")
-		before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
-		_, err := rewriteInPlace(t, s, 40)
-		assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
+		if _, fits := claimRewrite(t, s, 40); fits {
+			t.Error("a draining backend admitted a rewrite claim")
+		}
 	})
 }
 
 // TestPlaceCopy_InPlaceWithoutRemoveIsRefused verifies a placement onto the
-// source's own backend that would keep the source records nothing.
+// source's own backend that would keep the source records nothing and queues
+// the copied bytes.
 func TestPlaceCopy_InPlaceWithoutRemoveIsRefused(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	recordWrite(t, s, firstWritePath, 100)
 	before, _ := s.GetAllObjectLocations(context.Background(), placedKey)
 
-	_, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:     storetest.LocationOn(t, s, placedKey, "backend-a"),
-		Target:     "backend-a",
-		StorageKey: rewrittenPath,
-	})
+	intent := claimFor(t, s, "backend-a", rewrittenPath, 100)
+	_, cleanup, err := place(s, storetest.LocationOn(t, s, placedKey, "backend-a"), intent, false)
 	assertDeclined(t, s, err, core.ErrTargetRefused, before, 100, 0)
+	assertIntentQueued(t, s, cleanup, intent, testMoveReasons.Orphan)
 }

@@ -136,7 +136,7 @@ func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	m, stores, _, _ := newTestManager(t, ctrl)
 
 	loc := &core.ObjectLocation{ObjectKey: "bucket/k1", BackendName: "b1", StorageKey: "bucket/k1!w1"}
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0).Return(core.DeletedCopy{SizeBytes: 512}, nil).Times(1)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0, "").Return(nil, nil).Times(1)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "bucket/k1!w1", "b1").Return(int64(0), nil).Times(1)
 
 	if err := m.deleter()(t.Context(), loc); err != nil {
@@ -154,7 +154,7 @@ func TestDeleter_SweepFailureNotPropagated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(core.DeletedCopy{}, nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), "").Return(nil, nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("sweep boom"))
 
@@ -171,7 +171,7 @@ func TestDeleter_DeleteFailurePropagates(t *testing.T) {
 	m, stores, _, _ := newTestManager(t, ctrl)
 
 	want := errors.New("delete boom")
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(core.DeletedCopy{}, want)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), "").Return(nil, want)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	if err := m.deleter()(t.Context(), staleLoc); !errors.Is(err, want) {
@@ -221,8 +221,8 @@ func TestReconcileBackend_ImportsAndDeletes(t *testing.T) {
 	// a and c are backend-only; b matches; x is ledger-only.
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).Return(core.ImportInserted, nil)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/c", "b1", 3, false)).Return(core.ImportInserted, nil)
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), &core.ObjectLocation{ObjectKey: "vb/x", BackendName: "b1", StorageKey: "vb/x"}, 0).
-		Return(core.DeletedCopy{}, nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), &core.ObjectLocation{ObjectKey: "vb/x", BackendName: "b1", StorageKey: "vb/x"}, 0, "").
+		Return(nil, nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
 	usage.EXPECT().APICalls(s3op.ListObjects, "b1", gomock.Any()).Times(1)
 
@@ -252,7 +252,7 @@ func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 
 	// Any mutation at all would be a bug.
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).Times(0)
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
@@ -305,7 +305,7 @@ func TestReconcileBackend_StrayDoesNotChurn(t *testing.T) {
 	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).Times(0)
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {

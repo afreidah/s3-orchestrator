@@ -313,28 +313,30 @@ func (m *MockPlacement) EXPECT() *MockPlacementMockRecorder {
 	return m.recorder
 }
 
-// DeleteDisplaced mocks base method.
-func (m *MockPlacement) DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
+// ClaimCopyTarget mocks base method.
+func (m *MockPlacement) ClaimCopyTarget(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) error {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "DeleteDisplaced", ctx, key, displaced)
+	ret := m.ctrl.Call(m, "ClaimCopyTarget", ctx, p, accepts)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// DeleteDisplaced indicates an expected call of DeleteDisplaced.
-func (mr *MockPlacementMockRecorder) DeleteDisplaced(ctx, key, displaced any) *gomock.Call {
+// ClaimCopyTarget indicates an expected call of ClaimCopyTarget.
+func (mr *MockPlacementMockRecorder) ClaimCopyTarget(ctx, p, accepts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDisplaced", reflect.TypeOf((*MockPlacement)(nil).DeleteDisplaced), ctx, key, displaced)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimCopyTarget", reflect.TypeOf((*MockPlacement)(nil).ClaimCopyTarget), ctx, p, accepts)
 }
 
-// DeleteOrEnqueue mocks base method.
-func (m *MockPlacement) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
+// Discard mocks base method.
+func (m *MockPlacement) Discard(ctx context.Context, p *core.PendingObject, reason string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "DeleteOrEnqueue", ctx, be, c)
+	m.ctrl.Call(m, "Discard", ctx, p, reason)
 }
 
-// DeleteOrEnqueue indicates an expected call of DeleteOrEnqueue.
-func (mr *MockPlacementMockRecorder) DeleteOrEnqueue(ctx, be, c any) *gomock.Call {
+// Discard indicates an expected call of Discard.
+func (mr *MockPlacementMockRecorder) Discard(ctx, p, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOrEnqueue", reflect.TypeOf((*MockPlacement)(nil).DeleteOrEnqueue), ctx, be, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Discard", reflect.TypeOf((*MockPlacement)(nil).Discard), ctx, p, reason)
 }
 
 // MoveObject mocks base method.
@@ -352,19 +354,19 @@ func (mr *MockPlacementMockRecorder) MoveObject(ctx, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockPlacement)(nil).MoveObject), ctx, req)
 }
 
-// PlaceOrCleanup mocks base method.
-func (m *MockPlacement) PlaceOrCleanup(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons writepath.OrphanReasons) (int64, error) {
+// Place mocks base method.
+func (m *MockPlacement) Place(ctx context.Context, p *core.Placement) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PlaceOrCleanup", ctx, p, dest, written, reasons)
+	ret := m.ctrl.Call(m, "Place", ctx, p)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// PlaceOrCleanup indicates an expected call of PlaceOrCleanup.
-func (mr *MockPlacementMockRecorder) PlaceOrCleanup(ctx, p, dest, written, reasons any) *gomock.Call {
+// Place indicates an expected call of Place.
+func (mr *MockPlacementMockRecorder) Place(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlaceOrCleanup", reflect.TypeOf((*MockPlacement)(nil).PlaceOrCleanup), ctx, p, dest, written, reasons)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Place", reflect.TypeOf((*MockPlacement)(nil).Place), ctx, p)
 }
 
 // RankReplicaTargets mocks base method.
@@ -379,6 +381,18 @@ func (m *MockPlacement) RankReplicaTargets(size int64, exclusion map[string]bool
 func (mr *MockPlacementMockRecorder) RankReplicaTargets(size, exclusion any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RankReplicaTargets", reflect.TypeOf((*MockPlacement)(nil).RankReplicaTargets), size, exclusion)
+}
+
+// Settle mocks base method.
+func (m *MockPlacement) Settle(ctx context.Context, items []core.CleanupItem) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Settle", ctx, items)
+}
+
+// Settle indicates an expected call of Settle.
+func (mr *MockPlacementMockRecorder) Settle(ctx, items any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Settle", reflect.TypeOf((*MockPlacement)(nil).Settle), ctx, items)
 }
 
 // MockBackendSyncer is a mock of BackendSyncer interface.

@@ -53,13 +53,15 @@ type Ops interface {
 	Acct() *accounting.Recorder
 }
 
-// Placement is the store-coupled write-path facet (target selection, move,
-// placement, delete-or-enqueue) workers get from *writepath.Coordinator, kept
-// apart from Ops because the runtime deliberately holds no store.
+// Placement is the store-coupled write-path facet (target selection, claim,
+// move, placement, discard, and settling queued cleanup) workers get from
+// *writepath.Coordinator, kept apart from Ops because the runtime deliberately
+// holds no store.
 type Placement interface {
 	RankReplicaTargets(size int64, exclusion map[string]bool) []string
+	ClaimCopyTarget(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) error
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
-	PlaceOrCleanup(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons writepath.OrphanReasons) (int64, error)
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
-	DeleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy)
+	Place(ctx context.Context, p *core.Placement) (int64, error)
+	Discard(ctx context.Context, p *core.PendingObject, reason string)
+	Settle(ctx context.Context, items []core.CleanupItem)
 }

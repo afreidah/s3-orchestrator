@@ -59,9 +59,9 @@ func TestUploadPart_ReturnsClientMD5(t *testing.T) {
 
 	var recorded *core.RecordPartParams
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.RecordPartParams) error {
+		DoAndReturn(func(_ context.Context, p *core.RecordPartParams) ([]core.CleanupItem, error) {
 			recorded = p
-			return nil
+			return nil, nil
 		}).AnyTimes()
 	storetest.Permissive(store)
 

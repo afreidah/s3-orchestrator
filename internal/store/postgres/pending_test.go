@@ -33,7 +33,7 @@ func TestPendingInsertParams_NullableFieldsOmittedWhenZero(t *testing.T) {
 		BackendName: "b1",
 		SizeBytes:   100,
 	}
-	got := pendingInsertParams(&p)
+	got := pendingInsertParams(&p, core.AcceptForWrite)
 	if got.IntentID != "abc" || got.ObjectKey != "k" || got.BackendName != "b1" || got.SizeBytes != 100 {
 		t.Errorf("required fields not propagated: %+v", got)
 	}
@@ -64,7 +64,7 @@ func TestPendingInsertParams_NullableFieldsSetWhenPresent(t *testing.T) {
 		PlaintextSize: 90,
 		ContentHash:   "deadbeef",
 	}
-	got := pendingInsertParams(&p)
+	got := pendingInsertParams(&p, core.AcceptForWrite)
 	if got.KeyID == nil || *got.KeyID != "kid-1" {
 		t.Errorf("KeyID = %v, want pointer to %q", got.KeyID, "kid-1")
 	}

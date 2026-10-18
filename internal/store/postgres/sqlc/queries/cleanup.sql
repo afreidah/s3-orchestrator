@@ -3,19 +3,21 @@
 --
 -- Author: Alex Freidah
 --
--- sqlc-input definitions for cleanup_queue and cleanup_dlq operations.
--- Covers the enqueue + retry-state lifecycle, the move-to-DLQ flow that
--- graduates exhausted rows, and the engine-side helpers core/ uses for the
--- atomic stale-row sweep that keeps orphan_bytes in lockstep with row
--- delete.
+-- sqlc-input definitions for cleanup_queue and cleanup_dlq operations: the
+-- insert every copy-removing transaction makes, the claim and retry lifecycle,
+-- and the move-to-DLQ flow that graduates exhausted rows. A backend's orphan
+-- bytes are the sum of its rows here, read through backend_capacity.
 -- -----------------------------------------------------------------------------
 
--- name: EnqueueCleanup :exec
--- storage_key is what the worker deletes; object_key rides along so an operator
--- reading the queue still sees which object the orphan belongs to. The two hold
--- the same value when the bytes were stored at the object's key.
-INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
-VALUES ($1, $2, $3, $4, $5);
+-- name: InsertCleanup :one
+-- Queued inside the transaction that stopped recording the bytes, already
+-- claimed by the instance that will delete them once it commits. A claim that
+-- instance never settles becomes reclaimable after the grace period.
+-- storage_key is what is deleted; object_key rides along so an operator reading
+-- the queue still sees which object the bytes belonged to.
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, claimed_at, claimed_by)
+VALUES (@backend_name, @object_key, @storage_key, @reason, @size_bytes, NOW(), @claimed_by)
+RETURNING id;
 
 -- name: GetPendingCleanups :many
 -- Read-only listing for the admin endpoint and operator visibility. The
@@ -67,27 +69,9 @@ JOIN candidate c ON cl.id = c.id
 ORDER BY cl.id;
 
 -- name: DeleteCleanupItem :exec
--- Used inside the move-to-DLQ transaction; orphan_bytes is intentionally
--- left untouched because the underlying backend object is still on disk.
--- The cleanup worker's success path uses CompleteCleanupItem instead,
--- which atomically deletes the row and decrements orphan_bytes.
+-- Retires a row whose bytes are gone, and removes a row graduating to the DLQ.
+-- Deleting a row a previous claim already retired is a no-op.
 DELETE FROM cleanup_queue WHERE id = $1;
-
--- name: CompleteCleanupItem :exec
--- Atomically removes a successfully-processed cleanup_queue row and
--- decrements the backing backend's orphan_bytes by the row's size.
--- Idempotent against re-claim retries: if the row was already deleted
--- by a previous worker, the CTE is empty and orphan_bytes is not
--- double-decremented. GREATEST(0, ...) clamps the counter so a stale
--- size_bytes value cannot drive orphan_bytes negative.
-WITH deleted AS (
-    DELETE FROM cleanup_queue WHERE id = $1
-    RETURNING backend_name, size_bytes
-)
-UPDATE backend_quotas bq
-SET orphan_bytes = GREATEST(0, orphan_bytes - d.size_bytes)
-FROM deleted d
-WHERE bq.backend_name = d.backend_name;
 
 -- name: UpdateCleanupRetry :exec
 -- Schedules a retry by advancing next_retry, recording the error, and
@@ -108,24 +92,12 @@ SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10;
 -- name: DeleteCleanupQueueByBackend :exec
 DELETE FROM cleanup_queue WHERE backend_name = $1;
 
--- name: SumCleanupQueueSizeByKey :one
--- Returns the sum of size_bytes for every cleanup_queue row matching the
--- given (storage_key, backend_name) pair. Used by the reconciler-driven
--- sweep so orphan_bytes can be decremented in step with the row delete.
---
--- Rows are matched on the path rather than the object, because reconcile only
--- established that the bytes at that path are gone. Sweeping by object would
--- also drop queued deletions for the key's other writes, whose bytes are still
--- on the backend.
-SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
-       COUNT(*)::bigint AS row_count
-FROM cleanup_queue
-WHERE storage_key = $1 AND backend_name = $2;
-
 -- name: DeleteCleanupQueueByKey :execrows
--- Removes every cleanup_queue row matching the given (storage_key,
--- backend_name) pair. Returns the number of rows deleted so the caller
--- can confirm the sum-then-delete pair stayed consistent.
+-- Removes every cleanup_queue row for the (storage_key, backend_name) pair and
+-- returns how many went. Rows are matched on the path rather than the object,
+-- because reconcile only established that the bytes at that path are gone.
+-- Sweeping by object would also drop queued deletions for the key's other
+-- writes, whose bytes are still on the backend.
 DELETE FROM cleanup_queue
 WHERE storage_key = $1 AND backend_name = $2;
 
@@ -170,10 +142,8 @@ LIMIT sqlc.arg(row_limit);
 -- cleanup worker retries them against a now-recovered backend. The
 -- writable CTE deletes the DLQ rows and re-inserts them in one
 -- statement; cleanup_queue defaults reset created_at/next_retry to NOW()
--- and attempts to 0. orphan_bytes is untouched here - it was never
--- decremented on the DLQ move, and the worker will debit it when the
--- retried delete finally succeeds. An empty backend requeues every
--- backend. Returns the number of rows requeued.
+-- and attempts to 0. An empty backend requeues every backend. Returns the
+-- number of rows requeued.
 WITH moved AS (
     DELETE FROM cleanup_dlq
     WHERE (sqlc.arg(backend)::text = '' OR backend_name = sqlc.arg(backend))

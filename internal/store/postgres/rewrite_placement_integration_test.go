@@ -7,7 +7,7 @@
 // placement back onto the copy's own backend. These pin what that placement
 // does against a real PostgreSQL: the row is replaced at the new path with the
 // new form and size, the content hash survives, the backend's bytes_used moves
-// by exactly the growth, admission judges only that growth and still admits a
+// by exactly the growth, the claim judges the rewritten size and still admits a
 // cordoned backend, and a source a client replaced mid-pass records nothing.
 // -------------------------------------------------------------------------------
 
@@ -43,13 +43,40 @@ func (f *placementFixture) recordPlain(t *testing.T, suffix string, size int64) 
 	}
 }
 
-// rewrite places source back onto its own backend at the rewritten path,
-// carrying form and size.
-func (f *placementFixture) rewrite(source *core.ObjectLocation, form *core.StoredForm, size int64) (int64, error) {
-	return f.s.PlaceCopy(context.Background(), &core.Placement{
-		Source: source, Target: source.BackendName, StorageKey: f.key + rewrittenSuffix,
-		RemoveSource: true, Form: form, Size: size,
+// rewriteIntent is the intent a rewrite claims on the source's own backend for
+// size bytes of form at the rewritten path.
+func (f *placementFixture) rewriteIntent(t *testing.T, source *core.ObjectLocation, form *core.StoredForm, size int64) *core.PendingObject {
+	return &core.PendingObject{
+		StoredForm: *form, IntentID: uniqueKey(t, "rewrite"), ObjectKey: f.key, StorageKey: f.key + rewrittenSuffix,
+		BackendName: source.BackendName, SizeBytes: size, Role: core.PendingRoleCompanion,
+	}
+}
+
+// claimRewrite reports whether the source's backend admits a rewrite of size
+// bytes under the rewrite accept mask, returning the claimed intent when it
+// does.
+func (f *placementFixture) claimRewrite(t *testing.T, source *core.ObjectLocation, form *core.StoredForm, size int64) (*core.PendingObject, bool) {
+	t.Helper()
+	p := f.rewriteIntent(t, source, form, size)
+	fits, err := f.s.InsertPendingIfFits(context.Background(), p, core.AcceptForRewrite)
+	if err != nil {
+		t.Fatalf("InsertPendingIfFits: %v", err)
+	}
+	return p, fits
+}
+
+// rewrite claims the source's own backend and places source back onto it at
+// the rewritten path, carrying form and size.
+func (f *placementFixture) rewrite(t *testing.T, source *core.ObjectLocation, form *core.StoredForm, size int64) (int64, error) {
+	t.Helper()
+	p, fits := f.claimRewrite(t, source, form, size)
+	if !fits {
+		t.Fatalf("the source's backend declined a rewrite of %d bytes", size)
+	}
+	placed, _, err := f.s.PlaceCopy(context.Background(), &core.Placement{
+		Source: source, Intent: p, RemoveSource: true, Reformed: true, Reasons: testMoveReasons,
 	})
+	return placed, err
 }
 
 // sealedForm is the envelope an encrypt pass records for 100 plaintext bytes.
@@ -79,7 +106,7 @@ func TestPgRewrite_EncryptReplacesTheRow(t *testing.T) {
 	f.recordPlain(t, firstWriteSuffix, 100)
 	before := readBytesUsed(t, f.s, f.src)
 
-	placed, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200)
+	placed, err := f.rewrite(t, storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
@@ -109,7 +136,7 @@ func TestPgRewrite_DecryptCreditsTheEnvelope(t *testing.T) {
 	f.recordWrite(t, firstWriteSuffix, 200)
 	before := readBytesUsed(t, f.s, f.src)
 
-	if _, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), &core.StoredForm{}, 100); err != nil {
+	if _, err := f.rewrite(t, storetest.LocationOn(t, f.s, f.key, f.src), &core.StoredForm{}, 100); err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 
@@ -127,7 +154,7 @@ func TestPgRewrite_ZeroGrowthLeavesTheCounter(t *testing.T) {
 	f.recordPlain(t, firstWriteSuffix, 100)
 	before := readBytesUsed(t, f.s, f.src)
 
-	if _, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 100); err != nil {
+	if _, err := f.rewrite(t, storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 100); err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if got := readBytesUsed(t, f.s, f.src); got != before {
@@ -135,37 +162,42 @@ func TestPgRewrite_ZeroGrowthLeavesTheCounter(t *testing.T) {
 	}
 }
 
-// TestPgRewrite_AdmissionJudgesOnlyTheGrowth verifies a full backend still
-// takes a rewrite that shrinks the copy, and refuses one whose growth does not
-// fit while leaving the row and its bytes as they were.
-func TestPgRewrite_AdmissionJudgesOnlyTheGrowth(t *testing.T) {
+// TestPgRewrite_ClaimJudgesTheRewrittenSize verifies the claim admits a rewrite
+// only when the backend has room for all of its bytes beside the copy it
+// replaces, and that a declined claim leaves the row and its bytes alone.
+func TestPgRewrite_ClaimJudgesTheRewrittenSize(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
-	if err := f.s.SyncQuotaLimits(context.Background(), backendQuota(f.src, 150, f.dst)); err != nil {
+	if err := f.s.SyncQuotaLimits(context.Background(), backendQuota(f.src, 300, f.dst)); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
 	f.recordWrite(t, firstWriteSuffix, 120)
+	src := storetest.LocationOn(t, f.s, f.key, f.src)
 
-	before := f.copies(t)
-	_, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200)
-	f.assertDeclined(t, err, core.ErrTargetRefused, before, 120, 0)
-
-	if _, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 140); err != nil {
-		t.Fatalf("PlaceCopy of 20 bytes growth: %v", err)
+	if _, fits := f.claimRewrite(t, src, sealedForm(), 200); fits {
+		t.Fatal("claimed 200 bytes on a backend with 180 free")
 	}
-	if got := readBytesUsed(t, f.s, f.src); got != 140 {
-		t.Errorf("bytes_used = %d, want 140", got)
+	if got := readBackOne(t, f.s, f.key); got.SizeBytes != 120 || got.StorageKey != f.key+firstWriteSuffix {
+		t.Errorf("copy = %+v, want the 120-byte original", got)
+	}
+
+	if _, err := f.rewrite(t, src, sealedForm(), 150); err != nil {
+		t.Fatalf("PlaceCopy of a 150-byte rewrite: %v", err)
+	}
+	if got := readBytesUsed(t, f.s, f.src); got != 150 {
+		t.Errorf("bytes_used = %d, want 150", got)
 	}
 }
 
 // TestPgRewrite_CordonedAdmitsDrainingRefuses verifies a cordoned backend
-// still has its copies rewritten in place, while a draining one refuses.
+// still has its copies rewritten in place, while a draining one declines the
+// claim.
 func TestPgRewrite_CordonedAdmitsDrainingRefuses(t *testing.T) {
 	t.Run("cordoned", func(t *testing.T) {
 		f := newPlacementFixture(t, 1<<30)
 		f.recordPlain(t, firstWriteSuffix, 100)
 		f.flagSource(t, core.FlagCordoned)
 
-		if _, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200); err != nil {
+		if _, err := f.rewrite(t, storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200); err != nil {
 			t.Fatalf("PlaceCopy on a cordoned backend: %v", err)
 		}
 		if got := readBackOne(t, f.s, f.key); !got.Encrypted {
@@ -176,10 +208,10 @@ func TestPgRewrite_CordonedAdmitsDrainingRefuses(t *testing.T) {
 		f := newPlacementFixture(t, 1<<30)
 		f.recordPlain(t, firstWriteSuffix, 100)
 		f.flagSource(t, core.FlagDraining)
-		before := f.copies(t)
 
-		_, err := f.rewrite(storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200)
-		f.assertDeclined(t, err, core.ErrTargetRefused, before, 100, 0)
+		if _, fits := f.claimRewrite(t, storetest.LocationOn(t, f.s, f.key, f.src), sealedForm(), 200); fits {
+			t.Error("a draining backend admitted a rewrite")
+		}
 	})
 }
 
@@ -193,7 +225,7 @@ func TestPgRewrite_ReplacedSourceIsCopyChanged(t *testing.T) {
 	f.recordPlain(t, secondWriteSuffix, 140)
 	before := f.copies(t)
 
-	_, err := f.rewrite(read, sealedForm(), 200)
+	_, err := f.rewrite(t, read, sealedForm(), 200)
 	f.assertDeclined(t, err, core.ErrCopyChanged, before, 140, 0)
 	if got := readBackOne(t, f.s, f.key); got.Encrypted || got.SizeBytes != 140 {
 		t.Errorf("copy = %+v, want the client's plain 140 bytes", got)
@@ -201,23 +233,30 @@ func TestPgRewrite_ReplacedSourceIsCopyChanged(t *testing.T) {
 }
 
 // TestPgRewrite_InPlaceWithoutRemoveIsRefused verifies a placement onto the
-// source's own backend that keeps the source records nothing.
+// source's own backend that keeps the source records nothing, drops its
+// intent, and queues the rewritten bytes under the orphan reason.
 func TestPgRewrite_InPlaceWithoutRemoveIsRefused(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
 	f.recordPlain(t, firstWriteSuffix, 100)
 	before := f.copies(t)
 	src := storetest.LocationOn(t, f.s, f.key, f.src)
+	p, fits := f.claimRewrite(t, src, sealedForm(), 200)
+	if !fits {
+		t.Fatal("rewrite claim declined")
+	}
 
-	_, err := f.s.PlaceCopy(context.Background(), &core.Placement{
-		Source: src, Target: f.src, StorageKey: f.key + rewrittenSuffix, Form: sealedForm(), Size: 200,
+	_, cleanup, err := f.s.PlaceCopy(context.Background(), &core.Placement{
+		Source: src, Intent: p, Reformed: true, Reasons: testMoveReasons,
 	})
 	f.assertDeclined(t, err, core.ErrTargetRefused, before, 100, 0)
+	assertQueued(t, f.s, cleanup, f.src, f.key+rewrittenSuffix, testMoveReasons.Orphan)
+	assertIntentGone(t, f.s, p)
 }
 
-// TestPgBackendAdmits_AcceptMask verifies the accept mask decides which flags
-// a backend may carry and still admit: a cordoned backend admits a rewrite but
-// not a write, and a draining one admits neither.
-func TestPgBackendAdmits_AcceptMask(t *testing.T) {
+// TestPgInsertPendingIfFits_AcceptMask verifies the accept mask decides which
+// flags a backend may carry and still admit an intent: a cordoned backend
+// admits a rewrite but not a write, and a draining one admits neither.
+func TestPgInsertPendingIfFits_AcceptMask(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	cases := []struct {
@@ -235,20 +274,20 @@ func TestPgBackendAdmits_AcceptMask(t *testing.T) {
 				t.Fatalf("SetBackendFlag(%s) = %v, %v", tc.flag, set, err)
 			}
 		}
-		withPgAdapter(t, s, func(a *pgTxAdapter) {
-			for accepts, want := range map[core.BackendFlags]bool{
-				core.AcceptForWrite:   tc.wantWrite,
-				core.AcceptForRewrite: tc.wantRewrite,
-			} {
-				got, err := a.BackendAdmits(ctx, backend, 1, accepts)
-				if err != nil {
-					t.Fatalf("BackendAdmits: %v", err)
-				}
-				if got != want {
-					t.Errorf("flags %s, accepts %s: admits = %v, want %v", tc.flag, accepts, got, want)
-				}
+		for accepts, want := range map[core.BackendFlags]bool{
+			core.AcceptForWrite:   tc.wantWrite,
+			core.AcceptForRewrite: tc.wantRewrite,
+		} {
+			id := backend + "/" + accepts.String()
+			got, err := s.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: id, ObjectKey: id, BackendName: backend, SizeBytes: 1}, accepts)
+			if err != nil {
+				t.Fatalf("InsertPendingIfFits: %v", err)
 			}
-		})
+			if got != want {
+				t.Errorf("flags %s, accepts %s: admits = %v, want %v", tc.flag, accepts, got, want)
+			}
+			_ = s.DeletePending(ctx, id)
+		}
 	}
 }
 

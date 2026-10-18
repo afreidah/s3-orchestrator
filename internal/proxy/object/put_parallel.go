@@ -179,14 +179,7 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 		return err
 	}
 	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
-		telemetry.WriteTargetRefusedTotal.Inc()
-		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
-			BackendName: p.BackendName,
-			ObjectKey:   req.Key,
-			StorageKey:  p.StorageKey,
-			Reason:      reasonWriteTargetRefused,
-			SizeBytes:   plan.uploadSize,
-		})
+		o.refuseWriteTarget(ctx, p)
 		return errWriteTargetRefused
 	}
 	return nil

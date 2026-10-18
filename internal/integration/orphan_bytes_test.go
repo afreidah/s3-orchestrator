@@ -26,7 +26,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -55,7 +54,7 @@ func TestOrphanBytes_OrphanBytesBlockWrite(t *testing.T) {
 		t.Fatalf("fill PutObject: %v", err)
 	}
 
-	setOrphanBytes(t, "minio-1", 10)
+	seedOrphanBytes(t, "minio-1", 10)
 	testStack.Objects.LocationCache().Clear()
 
 	overflowKey := uniqueKey(t, "orphan-block")
@@ -107,8 +106,8 @@ func TestOrphanBytes_OrphanBytesBlockAllBackends507(t *testing.T) {
 		t.Fatalf("fill minio-2: %v", err)
 	}
 
-	setOrphanBytes(t, "minio-1", 24)
-	setOrphanBytes(t, "minio-2", 48)
+	seedOrphanBytes(t, "minio-1", 24)
+	seedOrphanBytes(t, "minio-2", 48)
 	testStack.Objects.LocationCache().Clear()
 
 	tinyKey := uniqueKey(t, "orphan-507")
@@ -123,27 +122,12 @@ func TestOrphanBytes_OrphanBytesBlockAllBackends507(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes_EnqueueIncrementsOrphanBytes is one of the sub-cases extracted from the
-// original mega-TestOrphanBytes; behaviour is preserved.
-func TestOrphanBytes_EnqueueIncrementsOrphanBytes(t *testing.T) {
-	client := newS3Client(t)
-	_ = client
-	ctx := context.Background()
-	_ = ctx
-
+// TestOrphanBytes_QueuedRowCountsAsOrphanBytes asserts a queued cleanup row's
+// size is what backend_capacity reports as the backend's orphan bytes.
+func TestOrphanBytes_QueuedRowCountsAsOrphanBytes(t *testing.T) {
 	resetState(t)
 
-	err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: "minio-1", ObjectKey: "test-bucket/orphan-test-key", StorageKey: "test-bucket/orphan-test-key",
-		Reason: "test_reason", SizeBytes: 512,
-	})
-	if err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-	err = testStore.IncrementOrphanBytes(ctx, "minio-1", 512)
-	if err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
+	seedCleanupRow(t, "minio-1", "test-bucket/orphan-test-key", "test_reason", 512)
 
 	orphan := queryOrphanBytes(t, "minio-1")
 	if orphan != 512 {
@@ -164,9 +148,9 @@ func TestOrphanBytes_EnqueueIncrementsOrphanBytes(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes is one of the sub-cases extracted from the
-// original mega-TestOrphanBytes; behaviour is preserved.
-func TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes(t *testing.T) {
+// TestOrphanBytes_SettledRowStopsCounting asserts a cleanup row the worker
+// settles stops counting as orphan bytes once its row is gone.
+func TestOrphanBytes_SettledRowStopsCounting(t *testing.T) {
 	client := newS3Client(t)
 	_ = client
 	ctx := context.Background()
@@ -187,17 +171,7 @@ func TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes(t *testing.T) {
 
 	backend := queryObjectBackend(t, key)
 
-	internalK := internalKey(key)
-	err = testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: backend, ObjectKey: internalK, StorageKey: internalK, Reason: "test_reason", SizeBytes: 100,
-	})
-	if err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-	err = testStore.IncrementOrphanBytes(ctx, backend, 100)
-	if err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
+	seedCleanupRow(t, backend, internalKey(key), "test_reason", 100)
 
 	orphanBefore := queryOrphanBytes(t, backend)
 	if orphanBefore != 100 {
@@ -234,27 +208,8 @@ func TestOrphanBytes_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 
 	resetState(t)
 
-	err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: "minio-1", ObjectKey: "test-bucket/dlq-graduate", StorageKey: "test-bucket/dlq-graduate",
-		Reason: "delete_failed", SizeBytes: 4096,
-	})
-	if err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-	if err := testStore.IncrementOrphanBytes(ctx, "minio-1", 4096); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
-
-	// Look up the queue row id and stamp a pre-existing last_error
-	// so the move preserves it when an empty argument is passed
-	// (covers the "use the row's stored error" branch).
-	var id int64
-	if err := testDB.QueryRow(
-		"SELECT id FROM cleanup_queue WHERE object_key = $1",
-		"test-bucket/dlq-graduate",
-	).Scan(&id); err != nil {
-		t.Fatalf("lookup id: %v", err)
-	}
+	// Stamp a pre-existing last_error so the move has one to overwrite.
+	id := seedCleanupRow(t, "minio-1", "test-bucket/dlq-graduate", "delete_failed", 4096)
 	if _, err := testDB.Exec(
 		"UPDATE cleanup_queue SET last_error = $1 WHERE id = $2",
 		"transient-earlier", id,
@@ -297,7 +252,7 @@ func TestOrphanBytes_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 	}
 
 	if got := queryOrphanBytes(t, "minio-1"); got != 4096 {
-		t.Errorf("orphan_bytes after move = %d, want 4096 (unchanged)", got)
+		t.Errorf("orphan_bytes after move = %d, want 4096 (dead-lettered rows still count)", got)
 	}
 
 	depth, err := testStore.CleanupDLQDepth(ctx)
@@ -327,48 +282,43 @@ func TestOrphanBytes_MoveCleanupToDLQ_MissingRowIsNoOp(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes_CleanupZeroSizeSkipsOrphanDecrement is one of the sub-cases extracted from the
-// original mega-TestOrphanBytes; behaviour is preserved.
-func TestOrphanBytes_CleanupZeroSizeSkipsOrphanDecrement(t *testing.T) {
+// TestOrphanBytes_DeleteSettlesItsCleanupRows asserts a DELETE queues the
+// object's bytes with the delete and settles them before answering: the copy
+// is gone from the backend and no cleanup row or orphan byte is left.
+func TestOrphanBytes_DeleteSettlesItsCleanupRows(t *testing.T) {
 	client := newS3Client(t)
-	_ = client
 	ctx := context.Background()
-	_ = ctx
 
 	resetState(t)
 
-	key := uniqueKey(t, "cleanup-zero")
+	key := uniqueKey(t, "delete-settles")
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
-		Body:          bytes.NewReader(bytes.Repeat([]byte("Z"), 50)),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("D"), 50)),
 		ContentLength: aws.Int64(50),
 	})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-
 	backend := queryObjectBackend(t, key)
-	internalK := internalKey(key)
+	path := storagePath(t, backend, key)
 
-	err = testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: backend, ObjectKey: internalK, StorageKey: internalK, Reason: "test_zero",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	}); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	setOrphanBytes(t, backend, 200)
-
-	cleanSum := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
-	processed, _ := cleanSum.Succeeded, cleanSum.Failed
-	if processed != 1 {
-		t.Errorf("processed = %d, want 1", processed)
+	if got := queryCleanupQueueCount(t, backend); got != 0 {
+		t.Errorf("cleanup_queue rows after delete = %d, want 0 (settled on the request)", got)
 	}
-
-	orphan := queryOrphanBytes(t, backend)
-	if orphan != 200 {
-		t.Errorf("orphan_bytes = %d, want 200 (unchanged)", orphan)
+	if got := queryOrphanBytes(t, backend); got != 0 {
+		t.Errorf("orphan_bytes after delete = %d, want 0", got)
+	}
+	if _, err := allBackends[backend].HeadObject(ctx, path); err == nil {
+		t.Errorf("backend %s still holds %s after the delete settled", backend, path)
 	}
 }
 
@@ -382,8 +332,8 @@ func TestOrphanBytes_QuotaStatsIncludeOrphanBytes(t *testing.T) {
 
 	resetState(t)
 
-	setOrphanBytes(t, "minio-1", 256)
-	setOrphanBytes(t, "minio-2", 512)
+	seedOrphanBytes(t, "minio-1", 256)
+	seedOrphanBytes(t, "minio-2", 512)
 
 	stats, err := testStore.GetQuotaStats(ctx)
 	if err != nil {
@@ -444,7 +394,7 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 		t.Fatalf("fill minio-2: %v", err)
 	}
 
-	setOrphanBytes(t, "minio-2", 148)
+	seedOrphanBytes(t, "minio-2", 148)
 	testStack.Objects.LocationCache().Clear()
 
 	replCfg := config.ReplicationConfig{
@@ -528,6 +478,9 @@ func TestOrphanBytes_OverwriteDisplacedCopiesCleanedUp(t *testing.T) {
 		orphan := queryOrphanBytes(t, be)
 		if orphan != 0 {
 			t.Errorf("%s orphan_bytes = %d after overwrite, want 0 (successful displacement)", be, orphan)
+		}
+		if got := queryCleanupQueueCount(t, be); got != 0 {
+			t.Errorf("%s cleanup_queue rows = %d after overwrite, want 0 (settled on the request)", be, got)
 		}
 	}
 
@@ -619,7 +572,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 		t.Fatalf("expected fill on minio-1 (pack routing), got %q", be)
 	}
 
-	setOrphanBytes(t, "minio-2", 1500)
+	seedOrphanBytes(t, "minio-2", 1500)
 	spreadStack.Objects.LocationCache().Clear()
 
 	spreadKey := uniqueKey(t, "spread-orphan")

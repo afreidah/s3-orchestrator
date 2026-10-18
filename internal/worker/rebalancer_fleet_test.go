@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -36,27 +37,50 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// rebalEnqueue captures EnqueueCleanup calls for rebalancer tests.
-type rebalEnqueue struct {
-	mu    sync.Mutex
-	calls []core.CleanupItem
+// rebalRetries captures RetryCleanupItem calls for rebalancer tests.
+type rebalRetries struct {
+	mu  sync.Mutex
+	ids []int64
 }
+
+// rebalCleanupID is the id of the cleanup row a stubbed placement queues.
+const rebalCleanupID = 7
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// stubRebalEnqueue returns a DoAndReturn that captures into re.
-func stubRebalEnqueue(re *rebalEnqueue) func(context.Context, *core.CleanupRequest) error {
-	return func(_ context.Context, req *core.CleanupRequest) error {
-		re.mu.Lock()
-		defer re.mu.Unlock()
-		re.calls = append(re.calls, core.CleanupItem{
-			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
-			Reason: req.Reason, SizeBytes: req.SizeBytes,
-		})
+// stubRebalRetry returns a DoAndReturn that captures into rr.
+func stubRebalRetry(rr *rebalRetries) func(context.Context, int64, time.Duration, string) error {
+	return func(_ context.Context, id int64, _ time.Duration, _ string) error {
+		rr.mu.Lock()
+		defer rr.mu.Unlock()
+		rr.ids = append(rr.ids, id)
 		return nil
 	}
+}
+
+// refusePlacement returns a PlaceCopy stub that refuses with err and queues
+// the copy the move wrote under the placement's orphan reason, as the store
+// does. Every placement's reasons are recorded on reasons.
+func refusePlacement(err error, reasons *[]core.MoveReasons) func(context.Context, *core.Placement) (int64, []core.CleanupItem, error) {
+	return func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
+		*reasons = append(*reasons, p.Reasons)
+		return 0, []core.CleanupItem{{
+			ID: rebalCleanupID, BackendName: p.Intent.BackendName, ObjectKey: p.Intent.ObjectKey,
+			StorageKey: p.Intent.StorageKey, Reason: p.Reasons.Orphan, SizeBytes: p.Intent.SizeBytes,
+		}}, err
+	}
+}
+
+// placeMovingSource is a PlaceCopy stub that records the move and queues the
+// source copy it removed under the placement's source-delete reason.
+func placeMovingSource(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
+	return p.Source.SizeBytes, []core.CleanupItem{{
+		ID: rebalCleanupID, BackendName: p.Source.BackendName, ObjectKey: p.Source.ObjectKey,
+		StorageKey: core.StoragePath(p.Source.ObjectKey, p.Source.StorageKey),
+		Reason:     p.Reasons.SourceDelete, SizeBytes: p.Source.SizeBytes,
+	}}, nil
 }
 
 // planMove builds a rebalance move of key, read as a copy of size bytes on
@@ -74,7 +98,7 @@ func rebalanceStoreWithMoveSize(t *testing.T, size int64) *storetest.MockMetadat
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(size, nil).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(size, nil, nil).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -616,11 +640,10 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	}
 }
 
-// TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete pins issue
-// #917: DeleteOrEnqueue owns the DELETE API-call accounting, so a
-// successful rebalance move should record source APICalls == 2 (one
-// for the GET via Egress, one for the source DELETE via
-// DeleteOrEnqueue), not 3.
+// TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete verifies the settle
+// owns the DELETE API-call accounting, so a successful rebalance move records
+// source APICalls == 2 (one for the GET via Egress, one for the settled source
+// DELETE), not 3.
 func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
@@ -629,8 +652,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-		Return(int64(4), nil).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(placeMovingSource).AnyTimes()
 	storetest.Permissive(store)
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
@@ -643,7 +665,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	}
 
 	if got := rt.Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
-		t.Errorf("src apiRequests = %d, want 2 (Egress + DeleteOrEnqueue, no double-count)", got)
+		t.Errorf("src apiRequests = %d, want 2 (Egress + settled delete, no double-count)", got)
 	}
 	if got := rt.Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
@@ -702,9 +724,10 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	}
 }
 
-// TestExecuteOneMove_PlaceCopyError_CleansUpOrphan asserts the
-// dest-orphan cleanup runs when PlaceCopy returns an error.
-func TestExecuteOneMove_PlaceCopyError_CleansUpOrphan(t *testing.T) {
+// TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper asserts a placement
+// that fails outright queues nothing, so the destination copy stays under its
+// intent for the pending reaper to resolve.
+func TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -713,7 +736,7 @@ func TestExecuteOneMove_PlaceCopyError_CleansUpOrphan(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-		Return(int64(0), errors.New("db error")).AnyTimes()
+		Return(int64(0), nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
@@ -724,60 +747,51 @@ func TestExecuteOneMove_PlaceCopyError_CleansUpOrphan(t *testing.T) {
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when PlaceCopy fails")
 	}
-	if dest.HasCopyOf("key") {
-		t.Error("orphan should be cleaned up from destination")
+	if !dest.HasCopyOf("key") {
+		t.Error("the unplaced copy was deleted; its intent leaves it to the reaper")
+	}
+	if !src.HasCopyOf("key") {
+		t.Error("source bytes must stay when the placement fails")
 	}
 }
 
-// TestExecuteOneMove_PlaceCopyFailure_EnqueuesCleanup asserts the
-// cleanup-queue fallback when the inline delete of the destination bytes also
-// fails, labeled stale when the placement was declined and orphan otherwise.
-func TestExecuteOneMove_PlaceCopyFailure_EnqueuesCleanup(t *testing.T) {
+// TestExecuteOneMove_RefusalSettleFails_RetriesTheRow asserts a refused
+// placement whose destination delete fails leaves the queued row retried
+// for the cleanup worker, under the rebalancer's reasons.
+func TestExecuteOneMove_RefusalSettleFails_RetriesTheRow(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name   string
-		err    error
-		reason string
-	}{
-		{"store error", errors.New("db error"), "rebalance_orphan"},
-		{"source changed", core.ErrCopyChanged, "rebalance_stale_orphan"},
-		{"target refused", core.ErrTargetRefused, "rebalance_stale_orphan"},
+	src := backendtest.NewInMemory()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	dest := backendtest.NewInMemory()
+	dest.DeleteErr = errors.New("delete failed")
+
+	var reasons []core.MoveReasons
+	rr := &rebalRetries{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(refusePlacement(core.ErrTargetRefused, &reasons))
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubRebalRetry(rr)).AnyTimes()
+	storetest.Permissive(store)
+
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
+
+	if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
+		t.Error("expected false")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			src := backendtest.NewInMemory()
-			_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-			dest := backendtest.NewInMemory()
-			dest.DeleteErr = errors.New("delete failed")
-
-			re := &rebalEnqueue{}
-			ctrl := gomock.NewController(t)
-			store := storetest.NewMockMetadataStore(ctrl)
-			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), tc.err).AnyTimes()
-			store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-				DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
-			storetest.Permissive(store)
-
-			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
-				&fleetOpts{Order: []string{"src", "dest"}})
-			w := NewRebalancer(rt, coord, store)
-
-			if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
-				t.Error("expected false")
-			}
-			if len(re.calls) != 1 {
-				t.Fatalf("expected 1 enqueue call, got %d", len(re.calls))
-			}
-			if got := re.calls[0]; got.Reason != tc.reason || got.BackendName != "dest" {
-				t.Errorf("enqueued %s on %q, want %s on dest", got.Reason, got.BackendName, tc.reason)
-			}
-		})
+	if len(reasons) != 1 || reasons[0] != writepath.RebalanceMove.Reasons {
+		t.Errorf("placement reasons = %+v, want the rebalancer's", reasons)
+	}
+	if len(rr.ids) != 1 || rr.ids[0] != rebalCleanupID {
+		t.Errorf("retried rows %v, want the refused copy's row", rr.ids)
 	}
 }
 
 // TestExecuteOneMove_PlacementDeclined_CleansUpOrphan asserts a move whose
-// placement is declined reports no move and removes the destination bytes.
+// placement is declined reports no move and settles the cleanup the refusal
+// queued, removing the destination bytes.
 func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
@@ -787,9 +801,10 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 			_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 			dest := backendtest.NewInMemory()
 
+			var reasons []core.MoveReasons
 			ctrl := gomock.NewController(t)
 			store := storetest.NewMockMetadataStore(ctrl)
-			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(0), declined).AnyTimes()
+			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(refusePlacement(declined, &reasons))
 			storetest.Permissive(store)
 			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 				&fleetOpts{Order: []string{"src", "dest"}})
@@ -808,21 +823,22 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 	}
 }
 
-// TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup asserts the
-// source-delete failure enqueues a cleanup row but still returns true.
-func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
+// TestExecuteOneMove_SourceDeleteFails_RetriesTheRow asserts a move whose
+// source delete fails still succeeds, leaving the source's queued row retried
+// for the cleanup worker.
+func TestExecuteOneMove_SourceDeleteFails_RetriesTheRow(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	src.DeleteErr = errors.New("delete failed")
 	dest := backendtest.NewInMemory()
 
-	re := &rebalEnqueue{}
+	rr := &rebalRetries{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).Return(int64(4), nil).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).DoAndReturn(placeMovingSource)
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubRebalRetry(rr)).AnyTimes()
 	storetest.Permissive(store)
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
@@ -833,11 +849,8 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	if !w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
-	if len(re.calls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(re.calls))
-	}
-	if re.calls[0].Reason != "rebalance_source_delete" {
-		t.Errorf("expected reason=rebalance_source_delete, got %q", re.calls[0].Reason)
+	if len(rr.ids) != 1 || rr.ids[0] != rebalCleanupID {
+		t.Errorf("retried rows %v, want the source copy's row", rr.ids)
 	}
 }
 

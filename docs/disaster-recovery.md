@@ -185,7 +185,7 @@ Enable replication with `replication.factor: 2` or higher so every object exists
 
 ## Cleanup Queue Recovery
 
-The cleanup queue tracks failed delete operations with exponential backoff (1 minute to 24 hours, max 10 attempts). Each item tracks `size_bytes`, and the corresponding backend's `orphan_bytes` counter is incremented on enqueue and decremented on successful cleanup. This ensures the write path never overcommits storage on a backend with pending cleanups. If items get stuck:
+Every transaction that removes a copy queues its bytes in the cleanup queue before it commits, and the instance that ran it deletes them right after. A delete that fails stays queued and is retried with exponential backoff (1 minute to 24 hours, max 10 attempts). Each row tracks `size_bytes`, and a backend's orphan bytes are the sum over its queued and dead-lettered rows, so the write path never overcommits storage on a backend with pending cleanups. A process that dies before settling its rows leaves them claimed; the worker reclaims them after `cleanup_queue.claim_grace_period` (default 5m). If items get stuck:
 
 ```bash
 # Check the queue
@@ -195,30 +195,25 @@ s3-orchestrator admin cleanup-queue
 # If the queue is backed up, check the logs for persistent errors.
 ```
 
-Items that exhaust all 10 retry attempts are graduated to the `cleanup_dlq` table by the worker (single transaction: read the queue row, insert into `cleanup_dlq`, delete the queue row). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The write path continues to account for the unreleased space until an operator confirms the object is gone and writes off the row.
+Items that exhaust all 10 retry attempts are graduated to the `cleanup_dlq` table by the worker (single transaction: read the queue row, insert into `cleanup_dlq`, delete the queue row). The bytes are still on disk, so the DLQ row keeps them counted as orphan bytes, and the write path accounts for the unreleased space until an operator confirms the object is gone and writes off the row.
 
 Monitor `s3o_cleanup_dlq_depth` (gauge) and `s3o_cleanup_dlq_enqueued_total{backend}` (counter): a non-zero depth means at least one unrecoverable orphan needs operator action; a single backend dominating the counter rate means that backend's delete path is broken and should be investigated.
 
-After manually resolving a DLQ entry (e.g. confirming via the reconciler that the object is gone, or deleting it out-of-band), decrement `orphan_bytes` and remove the row:
+After manually resolving a DLQ entry (e.g. confirming via the reconciler that the object is gone, or deleting it out-of-band), remove the row. Removing it releases its bytes from the backend's orphan bytes:
 
 ```sql
 -- View pending DLQ entries
-SELECT id, original_id, backend_name, object_key, reason, attempts,
+SELECT id, original_id, backend_name, object_key, storage_key, reason, attempts,
        size_bytes, first_enqueued_at, moved_at, last_error
 FROM cleanup_dlq
 ORDER BY moved_at;
 
 -- After confirming the object is gone:
-BEGIN;
-UPDATE backend_quotas
-   SET orphan_bytes = GREATEST(0, orphan_bytes - (SELECT size_bytes FROM cleanup_dlq WHERE id = 42))
- WHERE backend_name = (SELECT backend_name FROM cleanup_dlq WHERE id = 42);
 DELETE FROM cleanup_dlq WHERE id = 42;
-COMMIT;
 
 -- To push a DLQ entry back through automatic retry (e.g. after fixing the backend):
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
-SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, storage_key, reason, size_bytes, NOW(), 0, last_error
   FROM cleanup_dlq WHERE id = 42;
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```

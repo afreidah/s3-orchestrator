@@ -160,11 +160,11 @@ func (mr *MockMetadataStoreMockRecorder) Close() *gomock.Call {
 }
 
 // CommitCompanionCopy mocks base method.
-func (m *MockMetadataStore) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockMetadataStore) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CommitCompanionCopy", ctx, p)
 	ret0, _ := ret[0].(core.CompanionCommitResult)
-	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret1, _ := ret[1].([]core.CleanupItem)
 	ret2, _ := ret[2].(core.QuotaDeltas)
 	ret3, _ := ret[3].(error)
 	return ret0, ret1, ret2, ret3
@@ -422,24 +422,25 @@ func (mr *MockMetadataStoreMockRecorder) DeleteGrant(ctx, userID, r any) *gomock
 }
 
 // DeleteMultipartUpload mocks base method.
-func (m *MockMetadataStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
+func (m *MockMetadataStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteMultipartUpload", ctx, uploadID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "DeleteMultipartUpload", ctx, uploadID, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteMultipartUpload indicates an expected call of DeleteMultipartUpload.
-func (mr *MockMetadataStoreMockRecorder) DeleteMultipartUpload(ctx, uploadID any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) DeleteMultipartUpload(ctx, uploadID, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMultipartUpload", reflect.TypeOf((*MockMetadataStore)(nil).DeleteMultipartUpload), ctx, uploadID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMultipartUpload", reflect.TypeOf((*MockMetadataStore)(nil).DeleteMultipartUpload), ctx, uploadID, reason)
 }
 
 // DeleteObject mocks base method.
-func (m *MockMetadataStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockMetadataStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -452,18 +453,18 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
-	ret0, _ := ret[0].(core.DeletedCopy)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
 }
 
 // DeleteObjectTags mocks base method.
@@ -481,10 +482,10 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObjectTags(ctx, key any) *gomock.
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockMetadataStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockMetadataStore) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
-	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -538,18 +539,19 @@ func (mr *MockMetadataStoreMockRecorder) DeleteUser(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUser", reflect.TypeOf((*MockMetadataStore)(nil).DeleteUser), ctx, id)
 }
 
-// EnqueueCleanup mocks base method.
-func (m *MockMetadataStore) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
+// DiscardPending mocks base method.
+func (m *MockMetadataStore) DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, c)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "DiscardPending", ctx, p, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// EnqueueCleanup indicates an expected call of EnqueueCleanup.
-func (mr *MockMetadataStoreMockRecorder) EnqueueCleanup(ctx, c any) *gomock.Call {
+// DiscardPending indicates an expected call of DiscardPending.
+func (mr *MockMetadataStoreMockRecorder) DiscardPending(ctx, p, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockMetadataStore)(nil).EnqueueCleanup), ctx, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscardPending", reflect.TypeOf((*MockMetadataStore)(nil).DiscardPending), ctx, p, reason)
 }
 
 // FlushPoolDeltas mocks base method.
@@ -835,20 +837,6 @@ func (mr *MockMetadataStoreMockRecorder) ImportObject(ctx, req any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockMetadataStore)(nil).ImportObject), ctx, req)
 }
 
-// IncrementOrphanBytes mocks base method.
-func (m *MockMetadataStore) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// IncrementOrphanBytes indicates an expected call of IncrementOrphanBytes.
-func (mr *MockMetadataStoreMockRecorder) IncrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementOrphanBytes", reflect.TypeOf((*MockMetadataStore)(nil).IncrementOrphanBytes), ctx, backendName, amount)
-}
-
 // InsertNotification mocks base method.
 func (m *MockMetadataStore) InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error {
 	m.ctrl.T.Helper()
@@ -864,18 +852,18 @@ func (mr *MockMetadataStoreMockRecorder) InsertNotification(ctx, eventType, payl
 }
 
 // InsertPendingIfFits mocks base method.
-func (m *MockMetadataStore) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
+func (m *MockMetadataStore) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p)
+	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p, accepts)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // InsertPendingIfFits indicates an expected call of InsertPendingIfFits.
-func (mr *MockMetadataStoreMockRecorder) InsertPendingIfFits(ctx, p any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) InsertPendingIfFits(ctx, p, accepts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockMetadataStore)(nil).InsertPendingIfFits), ctx, p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockMetadataStore)(nil).InsertPendingIfFits), ctx, p, accepts)
 }
 
 // LedgerStats mocks base method.
@@ -1208,12 +1196,13 @@ func (mr *MockMetadataStoreMockRecorder) PendingDepth(ctx any) *gomock.Call {
 }
 
 // PlaceCopy mocks base method.
-func (m *MockMetadataStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+func (m *MockMetadataStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
 	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].([]core.CleanupItem)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // PlaceCopy indicates an expected call of PlaceCopy.
@@ -1223,11 +1212,11 @@ func (mr *MockMetadataStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
 }
 
 // PromotePending mocks base method.
-func (m *MockMetadataStore) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockMetadataStore) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PromotePending", ctx, p)
 	ret0, _ := ret[0].(core.PendingPromoteResult)
-	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret1, _ := ret[1].([]core.CleanupItem)
 	ret2, _ := ret[2].(core.QuotaDeltas)
 	ret3, _ := ret[3].(error)
 	return ret0, ret1, ret2, ret3
@@ -1255,10 +1244,10 @@ func (mr *MockMetadataStoreMockRecorder) ReconcileUsage(ctx any) *gomock.Call {
 }
 
 // RecordObject mocks base method.
-func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -1285,11 +1274,12 @@ func (mr *MockMetadataStoreMockRecorder) RecordObjectIdentity(ctx, loc, id any) 
 }
 
 // RecordPart mocks base method.
-func (m *MockMetadataStore) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
+func (m *MockMetadataStore) RecordPart(ctx context.Context, p *core.RecordPartParams) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordPart", ctx, p)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].([]core.CleanupItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RecordPart indicates an expected call of RecordPart.

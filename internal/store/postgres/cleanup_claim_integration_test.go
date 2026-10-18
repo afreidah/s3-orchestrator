@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Exercises the FOR UPDATE SKIP LOCKED claim path, the grace-cutoff reclaim
-// rule, and the atomic CompleteCleanupItem CTE against a real Postgres
+// Exercises the FOR UPDATE SKIP LOCKED claim path, the claim a queued row is
+// born with, the grace-cutoff reclaim rule, row retirement, and the orphan
+// bytes backend_capacity derives from the queue against a real Postgres
 // container. These behaviours are the load-bearing pieces of the cleanup
-// race fix and are not adequately covered by unit tests with mocks.
+// outbox and are not adequately covered by unit tests with mocks.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -28,9 +30,8 @@ import (
 
 // TestStoreInt_ClaimPendingCleanups_ConcurrentDisjoint asserts that two
 // concurrent ClaimPendingCleanups transactions return disjoint row sets.
-// Without FOR UPDATE SKIP LOCKED, both calls would return the same rows;
-// the disjoint-set property is the correctness guarantee that prevents the
-// double-decrement of orphan_bytes that motivated this change.
+// Without FOR UPDATE SKIP LOCKED, both calls would return the same rows and
+// two workers would delete the same bytes.
 func TestStoreInt_ClaimPendingCleanups_ConcurrentDisjoint(t *testing.T) {
 	s := adapterPgStore(t)
 
@@ -50,13 +51,12 @@ type claimResult struct {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// enqueueN inserts n cleanup_queue rows with the given uniqueKey suffix.
+// enqueueN queues n unclaimed cleanup_queue rows with the given uniqueKey
+// suffix.
 func enqueueN(t *testing.T, s *Store, n int, suffix string) {
 	t.Helper()
 	for range n {
-		if err := s.EnqueueCleanup(context.Background(), cleanupOf("backend-a", uniqueKey(t, suffix), "test", 256)); err != nil {
-			t.Fatalf("EnqueueCleanup: %v", err)
-		}
+		queueUnclaimed(t, s, cleanupOf("backend-a", uniqueKey(t, suffix), "test", 256))
 	}
 }
 
@@ -113,6 +113,42 @@ func assertDisjointAndCleanup(t *testing.T, s *Store, results []claimResult) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
+// TestStoreInt_InsertCleanup_ClaimedUntilGrace asserts a row a transaction
+// queues is born claimed by the store's instance, is left alone by a worker
+// claim while that claim is fresh, and is reclaimed with Reclaimed set once
+// the claim ages past the grace cutoff.
+func TestStoreInt_InsertCleanup_ClaimedUntilGrace(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "outbox")
+	id := queueCleanup(t, s, cleanupOf("backend-a", key, "test", 256))
+	defer func() { _ = s.CompleteCleanupItem(ctx, id) }()
+
+	var claimedBy string
+	var claimedAt time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT claimed_by, claimed_at FROM cleanup_queue WHERE id = $1`, id).Scan(&claimedBy, &claimedAt); err != nil {
+		t.Fatalf("read claim: %v", err)
+	}
+	if claimedBy != pgFixtureInstance {
+		t.Errorf("claimed_by = %q, want %q", claimedBy, pgFixtureInstance)
+	}
+	if time.Since(claimedAt) > time.Minute {
+		t.Errorf("claimed_at = %v, want the insert time", claimedAt)
+	}
+
+	if findByID(mustClaim(t, s, "instance-B", time.Now().Add(-5*time.Minute)), id) != nil {
+		t.Fatal("a worker claimed a row whose queueing claim is still fresh")
+	}
+	backdateClaim(t, s, id, "10 minutes")
+	got := findByID(mustClaim(t, s, "instance-B", time.Now().Add(-5*time.Minute)), id)
+	if got == nil {
+		t.Fatal("a row whose queueing claim aged past the grace was not reclaimed")
+	}
+	if !got.Reclaimed {
+		t.Error("reclaimed row Reclaimed=false, want true")
+	}
+}
+
 // TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace asserts that a row
 // whose claim is older than the grace cutoff is reclaimable, and that the
 // returned item carries Reclaimed=true so the caller can drive the
@@ -122,13 +158,11 @@ func TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace(t *testing.T) {
 	ctx := context.Background()
 
 	key := uniqueKey(t, "reclaim")
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueUnclaimed(t, s, cleanupOf("backend-a", key, "test", 256))
 
 	item := claimByKey(t, s, "instance-A", time.Now().Add(-time.Hour), key)
 	if item.Reclaimed {
-		t.Errorf("first claim of fresh row marked Reclaimed=true")
+		t.Errorf("first claim of an unclaimed row marked Reclaimed=true")
 	}
 	defer func() { _ = s.CompleteCleanupItem(ctx, item.ID) }()
 
@@ -157,7 +191,7 @@ func TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace(t *testing.T) {
 // mustClaim wraps ClaimPendingCleanups + t.Fatal on error so callers stay focused on assertions.
 func mustClaim(t *testing.T, s *Store, instanceID string, graceCutoff time.Time) []core.CleanupItem {
 	t.Helper()
-	items, err := s.ClaimPendingCleanups(context.Background(), 100, instanceID, graceCutoff)
+	items, err := s.ClaimPendingCleanups(context.Background(), 1000, instanceID, graceCutoff)
 	if err != nil {
 		t.Fatalf("ClaimPendingCleanups(%s): %v", instanceID, err)
 	}
@@ -201,96 +235,82 @@ func backdateClaim(t *testing.T, s *Store, id int64, interval string) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestStoreInt_CompleteCleanupItem_AtomicDecrement asserts CompleteCleanupItem
-// deletes the row AND decrements orphan_bytes for the backing backend in a
-// single round-trip. A second call against the (now-missing) row must be a
-// no-op  -  no double-decrement.
-func TestStoreInt_CompleteCleanupItem_AtomicDecrement(t *testing.T) {
+// TestStoreInt_CompleteCleanupItem_RetiresRow asserts CompleteCleanupItem
+// deletes the row, and that a second call against the missing row is a
+// no-op.
+func TestStoreInt_CompleteCleanupItem_RetiresRow(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
-
-	const size = int64(4096)
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", size); err != nil {
-		t.Fatalf("seed orphan_bytes: %v", err)
-	}
-	before := readOrphanBytes(t, s, "backend-a")
-
-	key := uniqueKey(t, "atomic-complete")
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", size)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-
-	pending, err := s.GetPendingCleanups(ctx, 200)
-	if err != nil {
-		t.Fatalf("GetPendingCleanups: %v", err)
-	}
-	var id int64
-	for _, p := range pending {
-		if p.ObjectKey == key {
-			id = p.ID
-			break
-		}
-	}
-	if id == 0 {
-		t.Fatalf("row for %s not found", key)
-	}
+	id := queueCleanup(t, s, cleanupOf("backend-a", uniqueKey(t, "complete"), "test", 4096))
 
 	if err := s.CompleteCleanupItem(ctx, id); err != nil {
 		t.Fatalf("CompleteCleanupItem: %v", err)
 	}
-	after := readOrphanBytes(t, s, "backend-a")
-	if before-after != size {
-		t.Errorf("orphan_bytes delta = %d, want %d", before-after, size)
+	if pgCount(t, s, `SELECT COUNT(*) FROM cleanup_queue WHERE id = $1`, id) != 0 {
+		t.Errorf("row %d still queued after completion", id)
 	}
-
-	// Idempotent: a second complete on a deleted row must not move the
-	// counter further.
 	if err := s.CompleteCleanupItem(ctx, id); err != nil {
-		t.Fatalf("CompleteCleanupItem (second): %v", err)
-	}
-	if after2 := readOrphanBytes(t, s, "backend-a"); after2 != after {
-		t.Errorf("orphan_bytes drifted on idempotent re-complete: before=%d after=%d", after, after2)
+		t.Errorf("CompleteCleanupItem (second): %v", err)
 	}
 }
 
-// TestStoreInt_CompleteCleanupItem_ClampsAtZero asserts that orphan_bytes is
-// clamped to 0 even when the cleanup row's recorded size_bytes exceeds the
-// current counter. GREATEST(0, ...) in the SQL is the load-bearing piece.
-func TestStoreInt_CompleteCleanupItem_ClampsAtZero(t *testing.T) {
+// TestStoreInt_OrphanBytes_DerivedFromQueueAndDLQ asserts a backend's orphan
+// bytes are the sum of its queued and dead-lettered rows in backend_capacity,
+// GetQuotaStats and ListBackendQuotaUsage alike, that they count against the
+// bytes the backend has available, and that a retired row stops counting.
+func TestStoreInt_OrphanBytes_DerivedFromQueueAndDLQ(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
+	backend := uniqueKey(t, "backend")
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{{Name: backend, QuotaBytes: 1000}}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	queued := queueCleanup(t, s, cleanupOf(backend, uniqueKey(t, "q"), "test", 100))
+	dead := queueCleanup(t, s, cleanupOf(backend, uniqueKey(t, "d"), "test", 40))
+	if moved, err := s.MoveCleanupToDLQ(ctx, dead, "gave up"); err != nil || !moved {
+		t.Fatalf("MoveCleanupToDLQ = %v, %v", moved, err)
+	}
+	defer func() { _, _ = s.pool.Exec(ctx, `DELETE FROM cleanup_dlq WHERE backend_name = $1`, backend) }()
 
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE backend_quotas SET orphan_bytes = 100 WHERE backend_name = 'backend-a'`,
-	); err != nil {
-		t.Fatalf("reset orphan_bytes: %v", err)
-	}
-
-	key := uniqueKey(t, "clamp-zero")
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 10_000)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-
-	pending, err := s.GetPendingCleanups(ctx, 200)
-	if err != nil {
-		t.Fatalf("GetPendingCleanups: %v", err)
-	}
-	var id int64
-	for _, p := range pending {
-		if p.ObjectKey == key {
-			id = p.ID
-			break
-		}
-	}
-	if id == 0 {
-		t.Fatalf("row for %s not found", key)
+	assertOrphanBytes(t, s, backend, 140)
+	if avail := readAvailableBytes(t, s, backend); avail != 860 {
+		t.Errorf("available_bytes = %d, want 860 with 140 orphan bytes", avail)
 	}
 
-	if err := s.CompleteCleanupItem(ctx, id); err != nil {
+	if err := s.CompleteCleanupItem(ctx, queued); err != nil {
 		t.Fatalf("CompleteCleanupItem: %v", err)
 	}
-	if got := readOrphanBytes(t, s, "backend-a"); got != 0 {
-		t.Errorf("orphan_bytes = %d, want 0 (clamped)", got)
+	assertOrphanBytes(t, s, backend, 40)
+}
+
+// TestStoreInt_SweepStaleCleanupQueueRows_ByPath asserts a sweep removes every
+// queued row for the path on the backend, returns how many went, and leaves
+// rows for other paths and backends.
+func TestStoreInt_SweepStaleCleanupQueueRows_ByPath(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "sweep")
+	queueCleanup(t, s, cleanupOf("backend-a", key, "test", 10))
+	queueCleanup(t, s, cleanupOf("backend-a", key, "test", 20))
+	otherPath := queueCleanup(t, s, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, StorageKey: key + "!w2", Reason: "test", SizeBytes: 1})
+	otherBackend := queueCleanup(t, s, cleanupOf("backend-b", key, "test", 1))
+	defer func() {
+		_ = s.CompleteCleanupItem(ctx, otherPath)
+		_ = s.CompleteCleanupItem(ctx, otherBackend)
+	}()
+
+	n, err := s.SweepStaleCleanupQueueRows(ctx, key, "backend-a")
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("swept %d rows, want 2", n)
+	}
+	if left := pgCount(t, s, `SELECT COUNT(*) FROM cleanup_queue WHERE id = ANY($1)`, []int64{otherPath, otherBackend}); left != 2 {
+		t.Errorf("%d of the other rows left, want both", left)
+	}
+	if again, err := s.SweepStaleCleanupQueueRows(ctx, key, "backend-a"); err != nil || again != 0 {
+		t.Errorf("second sweep = %d, %v; want 0", again, err)
 	}
 }
 
@@ -301,25 +321,7 @@ func TestStoreInt_RetryCleanupItem_ClearsClaim(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	key := uniqueKey(t, "retry-clears")
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-
-	claimed, err := s.ClaimPendingCleanups(ctx, 100, "instance-A", time.Now().Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	var id int64
-	for _, c := range claimed {
-		if c.ObjectKey == key {
-			id = c.ID
-			break
-		}
-	}
-	if id == 0 {
-		t.Fatalf("row for %s not claimed", key)
-	}
+	id := queueCleanup(t, s, cleanupOf("backend-a", uniqueKey(t, "retry-clears"), "test", 256))
 
 	// A backoff already in the past makes the row unambiguously due, so the
 	// assertion below is about the claim being cleared rather than about
@@ -328,34 +330,56 @@ func TestStoreInt_RetryCleanupItem_ClearsClaim(t *testing.T) {
 		t.Fatalf("RetryCleanupItem: %v", err)
 	}
 
-	again, err := s.ClaimPendingCleanups(ctx, 100, "instance-B", time.Now())
-	if err != nil {
-		t.Fatalf("claim again: %v", err)
+	got := findByID(mustClaim(t, s, "instance-B", time.Now().Add(-time.Hour)), id)
+	if got == nil {
+		t.Fatal("row not eligible after RetryCleanupItem cleared the claim")
 	}
-	var seen bool
-	for _, c := range again {
-		if c.ID == id {
-			seen = true
-			if c.Reclaimed {
-				t.Errorf("row reclaimed=true after RetryCleanupItem cleared its claim, want false")
-			}
-			break
-		}
+	if got.Reclaimed {
+		t.Errorf("row reclaimed=true after RetryCleanupItem cleared its claim, want false")
 	}
-	if !seen {
-		t.Errorf("row not eligible after RetryCleanupItem cleared the claim")
+	if got.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", got.Attempts)
 	}
 	_ = s.CompleteCleanupItem(ctx, id)
 }
 
-// readOrphanBytes returns the current orphan_bytes value for backendName.
-func readOrphanBytes(t *testing.T, s *Store, backendName string) int64 {
+// assertOrphanBytes checks the backend's orphan bytes read the same through
+// backend_capacity, GetQuotaStats and ListBackendQuotaUsage.
+func assertOrphanBytes(t *testing.T, s *Store, backend string, want int64) {
+	t.Helper()
+	ctx := context.Background()
+	var view int64
+	if err := s.pool.QueryRow(ctx, `SELECT orphan_bytes FROM backend_capacity WHERE backend_name = $1`, backend).Scan(&view); err != nil {
+		t.Fatalf("read backend_capacity: %v", err)
+	}
+	stats, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	usage, err := s.ListBackendQuotaUsage(ctx)
+	if err != nil {
+		t.Fatalf("ListBackendQuotaUsage: %v", err)
+	}
+	var listed int64 = -1
+	for _, u := range usage {
+		if u.BackendName == backend {
+			listed = u.OrphanBytes
+		}
+	}
+	if view != want || stats[backend].OrphanBytes != want || listed != want {
+		t.Errorf("orphan bytes = view %d, stats %d, usage %d; want %d", view, stats[backend].OrphanBytes, listed, want)
+	}
+}
+
+// readAvailableBytes returns the bytes backend_capacity reports free on the
+// backend.
+func readAvailableBytes(t *testing.T, s *Store, backend string) int64 {
 	t.Helper()
 	var v int64
 	if err := s.pool.QueryRow(context.Background(),
-		`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = $1`, backendName,
+		`SELECT available_bytes FROM backend_capacity WHERE backend_name = $1`, backend,
 	).Scan(&v); err != nil {
-		t.Fatalf("read orphan_bytes: %v", err)
+		t.Fatalf("read available_bytes: %v", err)
 	}
 	return v
 }

@@ -14,6 +14,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"reflect"
 	"slices"
@@ -31,6 +32,15 @@ import (
 // TEST HELPERS
 // -------------------------------------------------------------------------
 
+// testInstanceID is the instance every test store claims its queued cleanup
+// rows for. testAbortReason and testDropReason are the labels the tests
+// queue removed parts and copies under.
+const (
+	testInstanceID  = "instance-test"
+	testAbortReason = "test_abort"
+	testDropReason  = "test_drop"
+)
+
 // newTestStore creates an in-memory SQLite store for testing.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
@@ -38,7 +48,7 @@ func newTestStore(t *testing.T) *Store {
 	s, err := NewStore(ctx, &config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   ":memory:",
-	}, nil)
+	}, nil, testInstanceID)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -108,6 +118,18 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// The view reads multipart_parts, so it goes before the column; 0027
+		// recreates it.
+		{28, func() {
+			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			dropColumns(t, s, "multipart_parts", "storage_key")
+		}},
+		// The older views read the counter column, so it comes back for the
+		// migrations that recreate them.
+		{27, func() {
+			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			exec("restore the orphan counter", `ALTER TABLE backend_quotas ADD COLUMN orphan_bytes INTEGER NOT NULL DEFAULT 0`)
+		}},
 		// The generated columns read the stored-form columns, so they go before
 		// any step that drops one of those.
 		{26, func() { dropColumns(t, s, "object_locations", "form", "object_size") }},
@@ -285,16 +307,82 @@ func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 	}
 }
 
+// partStorageKey is where a test upload of part n carrying etag writes its
+// bytes; the etag tells two uploads of one part number apart.
+func partStorageKey(uploadID string, n int, etag string) string {
+	return core.PartPath(uploadID, n) + "!" + etag
+}
+
+// mustRecordPart claims an intent for p on its upload's backend, the way an
+// UploadPart claims before writing, then records the part under it. It
+// returns the cleanup rows the record queued, failing the test on error.
+func mustRecordPart(t *testing.T, s *Store, p *core.RecordPartParams) []core.CleanupItem {
+	t.Helper()
+	ctx := context.Background()
+	mu, err := s.GetMultipartUpload(ctx, p.UploadID)
+	if err != nil {
+		t.Fatalf("GetMultipartUpload(%s): %v", p.UploadID, err)
+	}
+	p.Intent = mustClaimCopyIntent(t, s, core.PartPath(p.UploadID, p.PartNumber), mu.BackendName,
+		partStorageKey(p.UploadID, p.PartNumber, p.ETag), p.SizeBytes, core.AcceptForPart)
+	cleanup, err := s.RecordPart(ctx, p)
+	if err != nil {
+		t.Fatalf("RecordPart(%s, %d): %v", p.UploadID, p.PartNumber, err)
+	}
+	return cleanup
+}
+
+// mustClaimCopyIntent claims an extra-copy intent for size bytes of key at
+// storageKey on backend, admitting it on a backend whose flags fall within
+// accepts, the way a copy claims its target before writing. It fails the test
+// unless the backend took the claim.
+func mustClaimCopyIntent(t *testing.T, s *Store, key, backend, storageKey string, size int64, accepts core.BackendFlags) *core.PendingObject {
+	t.Helper()
+	p := &core.PendingObject{
+		IntentID: "intent-" + backend + "-" + storageKey, ObjectKey: key, StorageKey: storageKey,
+		BackendName: backend, SizeBytes: size, Role: core.PendingRoleCompanion,
+	}
+	fits, err := s.InsertPendingIfFits(context.Background(), p, accepts)
+	if err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(%s on %s) = %v, %v", storageKey, backend, fits, err)
+	}
+	return p
+}
+
+// placeOnto places the copy of key on source onto target at storageKey under
+// a freshly claimed intent, removing the source when remove is set.
+func placeOnto(t *testing.T, s *Store, key, source, target, storageKey string, remove bool) (int64, []core.CleanupItem, error) {
+	t.Helper()
+	src := storetest.LocationOn(t, s, key, source)
+	return s.PlaceCopy(context.Background(), &core.Placement{
+		Source:       src,
+		Intent:       mustClaimCopyIntent(t, s, key, target, storageKey, src.SizeBytes, core.AcceptForWrite),
+		RemoveSource: remove,
+		Reasons:      testMoveReasons,
+	})
+}
+
+// reformInPlace claims and places loc back on its own backend at storageKey
+// with form and size, the way a rewrite pass records the bytes it rewrote.
+func reformInPlace(t *testing.T, s *Store, loc *core.ObjectLocation, storageKey string, form *core.StoredForm, size int64) (int64, error) {
+	t.Helper()
+	intent := mustClaimCopyIntent(t, s, loc.ObjectKey, loc.BackendName, storageKey, size, core.AcceptForRewrite)
+	intent.StoredForm = *form
+	placed, _, err := s.PlaceCopy(context.Background(), &core.Placement{
+		Source: loc, Intent: intent, RemoveSource: true, Reformed: true, Reasons: testMoveReasons,
+	})
+	return placed, err
+}
+
+// testMoveReasons are the labels the test placements queue bytes under.
+var testMoveReasons = core.MoveReasons{Orphan: "test_orphan", SourceDelete: "test_source_delete"}
+
 // mustRecordReplica places a replica of the copy on source onto target,
 // failing the test on error. The size parameter only documents the expected
-// size at the call site; PlaceCopy reads it from the source row.
+// size at the call site; the intent takes it from the source row.
 func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int64) {
 	t.Helper()
-	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:     storetest.LocationOn(t, s, key, source),
-		Target:     target,
-		StorageKey: key + "!r-" + target,
-	}); err != nil {
+	if _, _, err := placeOnto(t, s, key, source, target, key+"!r-"+target, false); err != nil {
 		t.Fatalf("PlaceCopy(%s, %s): %v", key, target, err)
 	}
 }
@@ -303,26 +391,11 @@ func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int
 // moved size, failing the test on error.
 func mustMoveCopy(t *testing.T, s *Store, key, source, target string) int64 {
 	t.Helper()
-	moved, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source:       storetest.LocationOn(t, s, key, source),
-		Target:       target,
-		StorageKey:   key + "!m-" + target,
-		RemoveSource: true,
-	})
+	moved, _, err := placeOnto(t, s, key, source, target, key+"!m-"+target, true)
 	if err != nil {
 		t.Fatalf("PlaceCopy move(%s, %s -> %s): %v", key, source, target, err)
 	}
 	return moved
-}
-
-// mustEnqueueCleanup enqueues a cleanup item, failing the test on error.
-func mustEnqueueCleanup(t *testing.T, s *Store, backend, key string) {
-	t.Helper()
-	if err := s.EnqueueCleanup(context.Background(), &core.CleanupRequest{
-		BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "test", SizeBytes: 256,
-	}); err != nil {
-		t.Fatalf("EnqueueCleanup(%s): %v", key, err)
-	}
 }
 
 // mustInsertNotification inserts a notification, failing the test on error.
@@ -588,7 +661,7 @@ func TestListedPathStates(t *testing.T) {
 		StorageKey:  "bucket/intent-only",
 		BackendName: "backend-a",
 		SizeBytes:   10,
-	}); err != nil || !fits {
+	}, core.AcceptForWrite); err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits(intent-only): fits=%v, err=%v", fits, err)
 	}
 
@@ -598,7 +671,7 @@ func TestListedPathStates(t *testing.T) {
 		StorageKey:  "bucket/intent-queued",
 		BackendName: "backend-a",
 		SizeBytes:   10,
-	}); err != nil || !fits {
+	}, core.AcceptForWrite); err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits(intent-queued): fits=%v, err=%v", fits, err)
 	}
 	mustEnqueueCleanup(t, s, "backend-a", "bucket/intent-queued")
@@ -733,7 +806,7 @@ func TestListObjectsByBackendKeyAsc_ExcludesPendingIntents(t *testing.T) {
 		StorageKey:  "bucket/k!new",
 		BackendName: "backend-a",
 		SizeBytes:   600,
-	}); err != nil || !fits {
+	}, core.AcceptForWrite); err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits: fits=%v, err=%v", fits, err)
 	}
 
@@ -785,8 +858,9 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 		backend = "backend-a"
 	)
 
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
+	mustRecordObject(t, s, key, backend, 500)
+	if _, _, err := s.DeleteObject(ctx, key); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
 	}
 
 	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: backend, Size: 500})
@@ -821,7 +895,7 @@ func TestImportObject_SuppressedByInFlightIntent(t *testing.T) {
 		BackendName: backend,
 		SizeBytes:   500,
 	}
-	if fits, err := s.InsertPendingIfFits(ctx, &p); err != nil || !fits {
+	if fits, err := s.InsertPendingIfFits(ctx, &p, core.AcceptForWrite); err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits: fits=%v err=%v", fits, err)
 	}
 
@@ -852,14 +926,8 @@ func TestImportObject_SuppressedByDeadLetteredCleanup(t *testing.T) {
 		backend = "backend-a"
 	)
 
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
-	items, err := s.GetPendingCleanups(ctx, 10)
-	if err != nil || len(items) == 0 {
-		t.Fatalf("GetPendingCleanups: %v (got %d)", err, len(items))
-	}
-	if _, err := s.MoveCleanupToDLQ(ctx, items[0].ID, "gave up"); err != nil {
+	id := queueCleanup(t, s, backend, key, 500)
+	if _, err := s.MoveCleanupToDLQ(ctx, id, "gave up"); err != nil {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
 
@@ -883,9 +951,7 @@ func TestImportObject_OtherBackendUnaffected(t *testing.T) {
 
 	const key = "bucket/partial"
 
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueCleanup(t, s, "backend-a", key, 500)
 
 	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-b", Size: 500})
 	if err != nil {
@@ -898,8 +964,9 @@ func TestImportObject_OtherBackendUnaffected(t *testing.T) {
 
 // TestRecordObject_Overwrite_SameBackend covers an overwrite landing on the
 // backend that already holds the object. The prior copy is displaced at its
-// own path: the new write stores its bytes elsewhere, so the old bytes stay
-// where the last write put them until an explicit cleanup reclaims them.
+// own path: the new write stores its bytes elsewhere, and the overwrite queues
+// the old path for deletion, claimed by this instance, in its own
+// transaction.
 func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -919,12 +986,41 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if len(displaced) != 1 {
-		t.Fatalf("expected the prior copy displaced, got %+v", displaced)
+	assertQueuedOnly(t, s, displaced, "backend-a", "bucket/k!first", core.CleanupReasonOverwritten, 500)
+	if got := orphanBytes(t, s, "backend-a"); got != 500 {
+		t.Errorf("orphan_bytes = %d, want the displaced copy's 500", got)
 	}
-	if displaced[0].StorageKey != "bucket/k!first" {
-		t.Errorf("displaced path = %q, want the first write's own; %q is what this write just stored",
-			displaced[0].StorageKey, "bucket/k!second")
+}
+
+// TestDeleteObject_QueuesEveryCopy verifies a delete queues the bytes of
+// every copy it removes under the delete reason, and the rows count as the
+// backends' orphans until they are retired.
+func TestDeleteObject_QueuesEveryCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/gone", "backend-a", 300)
+	mustRecordReplica(t, s, "bucket/gone", "backend-b", "backend-a", 300)
+
+	cleanup, _, err := s.DeleteObject(ctx, "bucket/gone")
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if len(cleanup) != 2 {
+		t.Fatalf("cleanup = %+v, want one row per copy", cleanup)
+	}
+	for _, c := range cleanup {
+		if c.Reason != core.CleanupReasonDeleted || c.SizeBytes != 300 || c.ObjectKey != "bucket/gone" {
+			t.Errorf("cleanup row = %+v, want 300 bytes of bucket/gone under %q", c, core.CleanupReasonDeleted)
+		}
+	}
+	if depth, _ := s.CleanupQueueDepth(ctx); depth != 2 {
+		t.Errorf("queue depth = %d, want 2", depth)
+	}
+	for _, backend := range []string{"backend-a", "backend-b"} {
+		if got := orphanBytes(t, s, backend); got != 300 {
+			t.Errorf("orphan_bytes(%s) = %d, want 300", backend, got)
+		}
 	}
 }
 
@@ -1063,11 +1159,11 @@ func TestListBackendQuotaUsage_ReportsCeilingAndOccupancy(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET orphan_bytes = 100, bytes_limit = 1000
-		 WHERE backend_name = 'backend-a'`); err != nil {
+		`UPDATE backend_quotas SET bytes_limit = 1000 WHERE backend_name = 'backend-a'`); err != nil {
 		t.Fatalf("seed quota row: %v", err)
 	}
 	seedBytesUsed(t, s, "backend-a", 400)
+	queueCleanup(t, s, "backend-a", "bucket/orphan", 100)
 
 	usage, err := s.ListBackendQuotaUsage(ctx)
 	if err != nil {
@@ -1103,14 +1199,12 @@ func TestListBackendQuotaUsage_CountsInflightParts(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	if err := s.RecordPart(ctx, &core.RecordPartParams{
+	mustRecordPart(t, s, &core.RecordPartParams{
 		UploadID:   "upload-inflight",
 		PartNumber: 1,
 		ETag:       `"p1"`,
 		SizeBytes:  777,
-	}); err != nil {
-		t.Fatalf("RecordPart: %v", err)
-	}
+	})
 
 	usage, err := s.ListBackendQuotaUsage(ctx)
 	if err != nil {
@@ -1142,20 +1236,19 @@ func TestGetQuotaStats(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes verifies IncrementOrphanBytes adds to the backend's
-// orphan_bytes counter. The decrement is covered by the adapter tests.
+// TestOrphanBytes verifies a backend's orphan bytes are its queued cleanup
+// rows, read through GetQuotaStats.
 func TestOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
+	queueCleanup(t, s, "backend-a", "bucket/orphan", 500)
 
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 500); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
-
-	stats, _ := s.GetQuotaStats(ctx)
+	stats, _ := s.GetQuotaStats(context.Background())
 	if stats["backend-a"].OrphanBytes != 500 {
 		t.Errorf("orphan_bytes = %d, want 500", stats["backend-a"].OrphanBytes)
+	}
+	if stats["backend-b"].OrphanBytes != 0 {
+		t.Errorf("backend-b orphan_bytes = %d, want 0", stats["backend-b"].OrphanBytes)
 	}
 }
 
@@ -1332,9 +1425,7 @@ func TestListParts_PagesAfterMarker(t *testing.T) {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
 	for _, n := range []int{5, 1, 3, 2, 4} {
-		if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-pages", PartNumber: n, ETag: "e", SizeBytes: 1}); err != nil {
-			t.Fatalf("RecordPart(%d): %v", n, err)
-		}
+		mustRecordPart(t, s, &core.RecordPartParams{UploadID: "upload-pages", PartNumber: n, ETag: "e", SizeBytes: 1})
 	}
 
 	for _, tc := range []struct {
@@ -1379,11 +1470,15 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	// Record parts
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-1", PartNumber: 1, ETag: "etag1", SizeBytes: 1024, Form: nil}); err != nil {
-		t.Fatalf("RecordPart 1: %v", err)
+	for n, size := range map[int]int64{1: 1024, 2: 2048} {
+		if cleanup := mustRecordPart(t, s, &core.RecordPartParams{
+			UploadID: "upload-1", PartNumber: n, ETag: fmt.Sprintf("etag%d", n), SizeBytes: size,
+		}); len(cleanup) != 0 {
+			t.Errorf("RecordPart(%d) queued %+v, want nothing for a first upload", n, cleanup)
+		}
 	}
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-1", PartNumber: 2, ETag: "etag2", SizeBytes: 2048, Form: nil}); err != nil {
-		t.Fatalf("RecordPart 2: %v", err)
+	if n := queryPendingCount(t, s); n != 0 {
+		t.Errorf("pending intents = %d, want every part's intent cleared", n)
 	}
 
 	// Get parts
@@ -1410,14 +1505,167 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	// Delete
-	if err := s.DeleteMultipartUpload(ctx, "upload-1"); err != nil {
+	cleanup, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason)
+	if err != nil {
 		t.Fatalf("DeleteMultipartUpload: %v", err)
 	}
+	assertPartsQueued(t, cleanup, "upload-1", map[int]int64{1: 1024, 2: 2048})
 
 	_, err = s.GetMultipartUpload(ctx, "upload-1")
 	if !errors.Is(err, core.ErrMultipartUploadNotFound) {
 		t.Errorf("expected ErrMultipartUploadNotFound, got %v", err)
 	}
+	again, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason)
+	if err != nil || len(again) != 0 {
+		t.Errorf("DeleteMultipartUpload of a gone upload = %+v, %v; want nothing queued", again, err)
+	}
+}
+
+// assertPartsQueued checks cleanup holds one row per part in sizes, each at
+// the path the part's upload wrote on backend-a under the test abort reason.
+func assertPartsQueued(t *testing.T, cleanup []core.CleanupItem, uploadID string, sizes map[int]int64) {
+	t.Helper()
+	if len(cleanup) != len(sizes) {
+		t.Fatalf("cleanup = %+v, want one row per part", cleanup)
+	}
+	want := map[string]int64{}
+	for n, size := range sizes {
+		want[partStorageKey(uploadID, n, fmt.Sprintf("etag%d", n))] = size
+	}
+	for _, c := range cleanup {
+		if size, ok := want[c.StorageKey]; !ok || c.SizeBytes != size || c.Reason != testAbortReason || c.BackendName != "backend-a" {
+			t.Errorf("cleanup row = %+v, want one of %v on backend-a under test_abort", c, want)
+		}
+	}
+}
+
+// TestRecordPart_ReuploadQueuesReplacedPart verifies a second upload of a
+// part number records the new path and queues the replaced part's bytes at
+// the path its own upload wrote.
+func TestRecordPart_ReuploadQueuesReplacedPart(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	const uploadID = "upload-re"
+	mustCreateUpload(t, s, uploadID, "bucket/re", "backend-a")
+	mustRecordPart(t, s, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "first", SizeBytes: 100})
+
+	cleanup := mustRecordPart(t, s, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "second", SizeBytes: 150})
+	assertQueuedOnly(t, s, cleanup, "backend-a", partStorageKey(uploadID, 1, "first"), core.CleanupReasonPartReplaced, 100)
+
+	parts, err := s.GetParts(context.Background(), uploadID)
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].StorageKey != partStorageKey(uploadID, 1, "second") || parts[0].SizeBytes != 150 {
+		t.Errorf("parts = %+v, want the second upload at its own path", parts)
+	}
+}
+
+// TestRecordPart_LostIntentQueuesTheUpload verifies a part whose intent was
+// resolved while it uploaded is refused with ErrIntentLost, records nothing,
+// and queues the bytes the upload wrote.
+func TestRecordPart_LostIntentQueuesTheUpload(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	const uploadID = "upload-lost"
+	mustCreateUpload(t, s, uploadID, "bucket/lost", "backend-a")
+	path := core.PartPath(uploadID, 1)
+	written := path + "!lost"
+	intent := mustClaimCopyIntent(t, s, path, "backend-a", written, 64, core.AcceptForPart)
+	if err := s.DeletePending(ctx, intent.IntentID); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+
+	cleanup, err := s.RecordPart(ctx, &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: 1, ETag: "e", SizeBytes: 64, Intent: intent,
+	})
+	if !errors.Is(err, core.ErrIntentLost) {
+		t.Fatalf("RecordPart = %v, want ErrIntentLost", err)
+	}
+	assertQueuedOnly(t, s, cleanup, "backend-a", written, core.CleanupReasonSupersededIntent, 64)
+	if parts, _ := s.GetParts(ctx, uploadID); len(parts) != 0 {
+		t.Errorf("parts = %+v, want none recorded", parts)
+	}
+}
+
+// TestRecordPart_RejectsPartNumberOutOfRange verifies a part number outside
+// the S3 range is refused before any transaction runs.
+func TestRecordPart_RejectsPartNumberOutOfRange(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, n := range []int{0, 10001} {
+		if _, err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "u", PartNumber: n}); err == nil {
+			t.Errorf("RecordPart(part %d) succeeded, want a range error", n)
+		}
+	}
+}
+
+// TestUpsertPart_ReturnsReplacedPart verifies the adapter returns nil for a
+// first record of a part number and the prior row, with its storage key, for
+// a second, and stores each record's storage key.
+func TestUpsertPart_ReturnsReplacedPart(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	const uploadID = "upload-up"
+	mustCreateUpload(t, s, uploadID, "bucket/up", "backend-a")
+	a := s.direct()
+	first, err := a.UpsertPart(ctx, &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: 2, ETag: "a", SizeBytes: 10,
+		Intent: &core.PendingObject{StorageKey: "path-a"},
+	})
+	if err != nil || first != nil {
+		t.Fatalf("first UpsertPart = %+v, %v; want nil replaced", first, err)
+	}
+	second, err := a.UpsertPart(ctx, &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: 2, ETag: "b", SizeBytes: 20,
+		Form:   encryptedForm(18),
+		Intent: &core.PendingObject{StorageKey: "path-b"},
+	})
+	if err != nil {
+		t.Fatalf("second UpsertPart: %v", err)
+	}
+	if second == nil || second.PartNumber != 2 || second.SizeBytes != 10 || second.StorageKey != "path-a" {
+		t.Errorf("replaced = %+v, want part 2 of 10 bytes at path-a", second)
+	}
+	parts, err := s.GetParts(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].StorageKey != "path-b" || !parts[0].Encrypted || parts[0].PlaintextSize != 18 {
+		t.Errorf("parts = %+v, want the encrypted second record at path-b", parts)
+	}
+}
+
+// TestDeleteMultipartUpload_LegacyPartAtFixedPath verifies a part recorded
+// with no storage key is queued at the part number's fixed path.
+func TestDeleteMultipartUpload_LegacyPartAtFixedPath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	const uploadID = "upload-legacy"
+	mustCreateUpload(t, s, uploadID, "bucket/legacy", "backend-b")
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO multipart_parts (upload_id, part_number, etag, size_bytes) VALUES (?, 3, 'e', 42)`,
+		uploadID); err != nil {
+		t.Fatalf("seed legacy part: %v", err)
+	}
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		backend, parts, err := a.DeleteMultipartUpload(ctx, uploadID)
+		if err != nil {
+			t.Fatalf("DeleteMultipartUpload: %v", err)
+		}
+		if backend != "backend-b" || len(parts) != 1 || parts[0].StorageKey != "" || parts[0].SizeBytes != 42 {
+			t.Errorf("DeleteMultipartUpload = %s, %+v; want backend-b and the one legacy part", backend, parts)
+		}
+	})
+	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason)
+	if err != nil {
+		t.Fatalf("DeleteMultipartUpload: %v", err)
+	}
+	assertQueuedOnly(t, s, cleanup, "backend-b", core.PartPath(uploadID, 3), testAbortReason, 42)
 }
 
 // TestListMultipartUploads verifies prefix-scoped listing of active multipart uploads.
@@ -1499,11 +1747,7 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 
 	// Record replica
-	size, err := s.PlaceCopy(ctx, &core.Placement{
-		Source:     storetest.LocationOn(t, s, "bucket/key1", "backend-a"),
-		Target:     "backend-b",
-		StorageKey: "bucket/key1" + "!r-" + "backend-b",
-	})
+	size, _, err := placeOnto(t, s, "bucket/key1", "backend-a", "backend-b", "bucket/key1!r-backend-b", false)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
@@ -1547,7 +1791,7 @@ func TestReplication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 	primary := core.PendingObject{IntentID: "i-primary", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 1024}
 	companion := core.PendingObject{IntentID: "i-companion", ObjectKey: "bucket/k", BackendName: "backend-c", SizeBytes: 1024, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&primary, &companion} {
-		if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+		if fits, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil || !fits {
 			t.Fatalf("InsertPendingIfFits %s: fits=%v err=%v", p.IntentID, fits, err)
 		}
 	}
@@ -1578,7 +1822,8 @@ func TestReplication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 }
 
 // TestRemoveExcessCopy verifies a surplus copy is removed while the object
-// holds more copies than keepAtLeast.
+// holds more copies than keepAtLeast, and its bytes are queued under the
+// caller's reason.
 func TestRemoveExcessCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1587,13 +1832,35 @@ func TestRemoveExcessCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
-	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/key1", "backend-b"), 1); err != nil {
+	cleanup, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/key1", "backend-b"), 1, testDropReason)
+	if err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
+	assertQueuedOnly(t, s, cleanup, "backend-b", "bucket/key1!r-backend-b", testDropReason, 1024)
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
 	if len(locs) != 1 {
 		t.Errorf("expected 1 copy after removal, got %d", len(locs))
+	}
+}
+
+// TestRemoveCopy_EmptyReasonQueuesNothing verifies a removal with no reason
+// drops the row only, for bytes the caller knows are already gone.
+func TestRemoveCopy_EmptyReasonQueuesNothing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/vanished", "backend-a", 64)
+
+	cleanup, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/vanished", "backend-a"), 0, "")
+	if err != nil {
+		t.Fatalf("DeleteObjectLocation: %v", err)
+	}
+	if len(cleanup) != 0 || len(queuedCleanups(t, s)) != 0 {
+		t.Errorf("cleanup = %+v, want nothing queued without a reason", cleanup)
+	}
+	if n := queryObjectLocationsCount(t, s, "bucket/vanished"); n != 0 {
+		t.Errorf("rows left = %d, want the copy removed", n)
 	}
 }
 
@@ -1608,7 +1875,7 @@ func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k-atfactor", "backend-a", 1024)
 
-	_, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/k-atfactor", "backend-a"), 1)
+	_, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/k-atfactor", "backend-a"), 1, testDropReason)
 	if !errors.Is(err, core.ErrCopyNotExcess) {
 		t.Fatalf("expected ErrCopyNotExcess when count==factor, got %v", err)
 	}
@@ -1635,11 +1902,11 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 
 	// Simulate a parallel client landing the delete on backend-b
 	// before the cleaner's per-victim tx executes.
-	if _, err := s.DeleteObjectLocation(ctx, victim, 0); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, victim, 0, ""); err != nil {
 		t.Fatalf("setup DeleteObjectLocation: %v", err)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, victim, 1); !errors.Is(err, core.ErrCopyChanged) {
+	if _, err := s.DeleteObjectLocation(ctx, victim, 1, testDropReason); !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("expected ErrCopyChanged when victim already gone, got %v", err)
 	}
 
@@ -1701,9 +1968,7 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/orphan", StorageKey: "bucket/orphan", Reason: "test", SizeBytes: 512}); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueCleanup(t, s, "backend-a", "bucket/orphan", 512)
 
 	depth, _ := s.CleanupQueueDepth(ctx)
 	if depth != 1 {
@@ -1753,31 +2018,19 @@ func TestCleanupQueue_Retry(t *testing.T) {
 	}
 }
 
-// TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan verifies
-// the sweep deletes every cleanup_queue row matching the (key, backend)
-// pair and credits the bytes back to the backend's orphan_bytes counter.
-func TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan(t *testing.T) {
+// TestSweepStaleCleanupQueueRows_RemovesMatchAndItsOrphans verifies the
+// sweep deletes every cleanup_queue row matching the (path, backend) pair,
+// and their bytes stop counting as the backend's orphans.
+func TestSweepStaleCleanupQueueRows_RemovesMatchAndItsOrphans(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// Two queue rows for the same key+backend, plus a row that should be
-	// left untouched. EnqueueCleanup itself does not bump orphan_bytes
-	// (the production code does that at the call sites that enqueue), so
-	// we set it directly to simulate the steady state the sweep should
-	// undo.
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 100}); err != nil {
-		t.Fatalf("EnqueueCleanup #1: %v", err)
-	}
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "retry", SizeBytes: 200}); err != nil {
-		t.Fatalf("EnqueueCleanup #2: %v", err)
-	}
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/other", StorageKey: "bucket/other", Reason: "test", SizeBytes: 50}); err != nil {
-		t.Fatalf("EnqueueCleanup #3: %v", err)
-	}
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 350); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
+	// Two queue rows for the same path and backend, plus a row that should
+	// be left untouched.
+	queueCleanup(t, s, "backend-a", "bucket/k", 100)
+	queueCleanup(t, s, "backend-a", "bucket/k", 200)
+	queueCleanup(t, s, "backend-a", "bucket/other", 50)
 
 	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/k", "backend-a")
 	if err != nil {
@@ -1793,7 +2046,7 @@ func TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan(t *testing.T
 		t.Errorf("queue depth = %d, want 1 (only bucket/other left)", depth)
 	}
 
-	// orphan_bytes for backend-a: 350 - (100+200) = 50.
+	// Only bucket/other's 50 bytes are still queued on backend-a.
 	stats, err := s.GetQuotaStats(ctx)
 	if err != nil {
 		t.Fatalf("GetQuotaStats: %v", err)
@@ -1804,15 +2057,12 @@ func TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan(t *testing.T
 }
 
 // TestSweepStaleCleanupQueueRows_NoMatchIsNoOp verifies that calling the
-// sweep when no rows match returns 0 and does not touch orphan_bytes.
+// sweep when no rows match returns 0 and leaves the queued rows' orphans.
 func TestSweepStaleCleanupQueueRows_NoMatchIsNoOp(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 100); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
+	queueCleanup(t, s, "backend-a", "bucket/kept", 100)
 
 	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/missing", "backend-a")
 	if err != nil {
@@ -1835,12 +2085,8 @@ func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 100}); err != nil {
-		t.Fatalf("EnqueueCleanup a: %v", err)
-	}
-	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-b", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 200}); err != nil {
-		t.Fatalf("EnqueueCleanup b: %v", err)
-	}
+	queueCleanup(t, s, "backend-a", "bucket/k", 100)
+	queueCleanup(t, s, "backend-b", "bucket/k", 200)
 
 	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/k", "backend-a")
 	if err != nil {
@@ -2569,9 +2815,7 @@ func TestCorruptTimestamp_GetParts(t *testing.T) {
 	ctx := context.Background()
 
 	mustCreateUpload(t, s, "up-parts", "bucket/mp", "backend-a")
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "up-parts", PartNumber: 1, ETag: "etag1", SizeBytes: 100, Form: nil}); err != nil {
-		t.Fatalf("RecordPart: %v", err)
-	}
+	mustRecordPart(t, s, &core.RecordPartParams{UploadID: "up-parts", PartNumber: 1, ETag: "etag1", SizeBytes: 100})
 
 	_, err := s.db.ExecContext(ctx, `UPDATE multipart_parts SET created_at = 'corrupt' WHERE upload_id = 'up-parts'`)
 	if err != nil {
@@ -2840,6 +3084,57 @@ func TestRunMigrations_UpgradesAnOlderDatabase(t *testing.T) {
 	}
 }
 
+// columnNames returns the sorted column names of a table or view, so a
+// fresh and an upgraded schema can be compared regardless of column order.
+func columnNames(t *testing.T, s *Store, table string) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(), `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column of %s: %v", table, err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("columns of %s: %v", table, err)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestMigrations_DerivedOrphansAndPartPaths_MatchFreshSchema verifies a
+// database upgraded through 0027 and 0028 ends with the columns a fresh
+// schema has: no orphan counter on backend_quotas, a part storage key, and a
+// backend_capacity view that derives orphan bytes from the cleanup rows.
+func TestMigrations_DerivedOrphansAndPartPaths_MatchFreshSchema(t *testing.T) {
+	t.Parallel()
+	fresh := newTestStore(t)
+	upgraded := newTestStore(t)
+	rewindToSchemaVersion(t, upgraded, 26)
+	if got := columnNames(t, upgraded, "backend_quotas"); !slices.Contains(got, "orphan_bytes") {
+		t.Fatalf("rewound backend_quotas = %v, want the orphan counter back", got)
+	}
+	if err := upgraded.RunMigrations(context.Background()); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	for _, table := range []string{"backend_quotas", "multipart_parts", "backend_capacity"} {
+		if got, want := columnNames(t, upgraded, table), columnNames(t, fresh, table); !slices.Equal(got, want) {
+			t.Errorf("%s columns after upgrade = %v, want the fresh schema's %v", table, got, want)
+		}
+	}
+	queueCleanup(t, upgraded, "backend-a", "bucket/orphan", 70)
+	if got := orphanBytes(t, upgraded, "backend-a"); got != 70 {
+		t.Errorf("upgraded orphan_bytes = %d, want the queued row's 70", got)
+	}
+}
+
 // TestMigrations_AreNumberedAndReachExpectedVersion guards the pairing between
 // the embedded files and expectedSchemaVersion. A migration added without
 // bumping the constant would never run; a constant bumped without a migration
@@ -2883,13 +3178,11 @@ func TestDeleteObjectLocation(t *testing.T) {
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 100)
 	replica := storetest.LocationOn(t, s, "bucket/key1", "backend-b")
 
-	removed, err := s.DeleteObjectLocation(ctx, replica, 0)
+	removed, err := s.DeleteObjectLocation(ctx, replica, 0, testDropReason)
 	if err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
-	if removed.SizeBytes != 100 || removed.StorageKey != replica.StorageKey {
-		t.Errorf("removed = %+v, want the replica's 100 bytes at %q", removed, replica.StorageKey)
-	}
+	assertQueuedOnly(t, s, removed, "backend-b", replica.StorageKey, testDropReason, 100)
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
 	if len(locs) != 1 || locs[0].BackendName != "backend-a" {
@@ -2915,7 +3208,7 @@ func TestDeleteObjectLocation(t *testing.T) {
 
 	// Deleting a copy that is already gone reports ErrCopyChanged and makes no
 	// spurious debit against the backend that still holds the object.
-	if _, err := s.DeleteObjectLocation(ctx, replica, 0); !errors.Is(err, core.ErrCopyChanged) {
+	if _, err := s.DeleteObjectLocation(ctx, replica, 0, testDropReason); !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("DeleteObjectLocation (already gone) = %v, want ErrCopyChanged", err)
 	}
 	if stats, _ := s.GetQuotaStats(ctx); stats["backend-a"].BytesUsed != 100 {
@@ -2944,7 +3237,7 @@ func TestDeleteObjectLocation_KeepsOverwrittenCopy(t *testing.T) {
 	stale := storetest.LocationOn(t, s, key, "backend-a")
 	record(key + "!new")
 
-	if _, err := s.DeleteObjectLocation(ctx, stale, 0); !errors.Is(err, core.ErrCopyChanged) {
+	if _, err := s.DeleteObjectLocation(ctx, stale, 0, testDropReason); !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("DeleteObjectLocation(stale) = %v, want ErrCopyChanged", err)
 	}
 	if got := storetest.LocationOn(t, s, key, "backend-a"); got.StorageKey != key+"!new" {
@@ -3150,7 +3443,7 @@ func TestGetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 }
 
 // TestDeleteObjectsBatch_EmptyInput verifies the batch helper returns
-// an empty map for nil/empty input without opening a transaction.
+// nothing for nil/empty input without opening a transaction.
 func TestDeleteObjectsBatch_EmptyInput(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -3159,14 +3452,15 @@ func TestDeleteObjectsBatch_EmptyInput(t *testing.T) {
 		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
 	}
 	if len(got) != 0 {
-		t.Errorf("expected empty map, got %v", got)
+		t.Errorf("expected nothing queued, got %v", got)
 	}
 }
 
 // TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas verifies a
 // mixed batch removes every supplied key's rows, decrements the
-// affected backend quotas exactly once each by the summed sizes, and
-// returns the per-key displaced copies for cleanup.
+// affected backend quotas exactly once each by the summed sizes, queues
+// one cleanup row per removed copy, and clears the in-flight intents of
+// the removed keys.
 func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -3174,19 +3468,29 @@ func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/k1", "backend-b", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/k2", "backend-a", 50)
+	seedPendingIntent(t, s, "intent-k2", "bucket/k2", "backend-b", 50)
 
 	got, _, err := s.DeleteObjectsBatch(ctx, []string{"bucket/k1", "bucket/k2", "bucket/missing"})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
-	if len(got["bucket/k1"]) != 2 {
-		t.Errorf("k1 should have 2 displaced copies, got %v", got["bucket/k1"])
+	perReason := map[string]int{}
+	for _, c := range got {
+		perReason[c.ObjectKey+" "+c.Reason]++
 	}
-	if len(got["bucket/k2"]) != 1 || got["bucket/k2"][0].BackendName != "backend-a" {
-		t.Errorf("k2 displaced copy mismatch: %v", got["bucket/k2"])
+	want := map[string]int{
+		"bucket/k1 " + core.CleanupReasonDeleted:          2,
+		"bucket/k2 " + core.CleanupReasonDeleted:          1,
+		"bucket/k2 " + core.CleanupReasonSupersededIntent: 1,
 	}
-	if _, ok := got["bucket/missing"]; ok {
-		t.Errorf("missing key must not be in result map: %v", got)
+	if !maps.Equal(perReason, want) {
+		t.Errorf("cleanup rows = %v, want %v", perReason, want)
+	}
+	if depth, _ := s.CleanupQueueDepth(ctx); depth != 4 {
+		t.Errorf("queue depth = %d, want 4", depth)
+	}
+	if n := queryPendingCount(t, s); n != 0 {
+		t.Errorf("pending intents = %d, want the deleted key's intent cleared", n)
 	}
 
 	// Verify rows are gone.
@@ -3242,15 +3546,12 @@ func TestListCopiesByForm_EncryptedRowCarriesPlaintextSize(t *testing.T) {
 
 // TestStore_MoveCleanupToDLQ_GraduatesQueueRow asserts MoveCleanupToDLQ moves
 // the queue row into cleanup_dlq with its key, size, backend, and last_error,
-// and leaves orphan_bytes untouched.
+// and its bytes still count as the backend's orphans.
 func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	mustEnqueueCleanup(t, s, "backend-a", "bucket/doomed")
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 256); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
 
 	// Stamp a last_error and look up the queue row id.
 	if _, err := s.db.ExecContext(ctx,
@@ -3307,16 +3608,10 @@ func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 			dlqOriginal, dlqBackend, dlqKey, dlqReason, dlqSize, dlqLastError)
 	}
 
-	// orphan_bytes must NOT have been decremented - the backend object
-	// is still on disk and the DLQ flow is intentionally not a write-off.
-	var orphan int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-	).Scan(&orphan); err != nil {
-		t.Fatalf("query orphan_bytes: %v", err)
-	}
-	if orphan != 256 {
-		t.Errorf("orphan_bytes=%d, want 256 (move must not decrement)", orphan)
+	// The backend object is still on disk and the DLQ flow is not a
+	// write-off, so its bytes still count.
+	if orphan := orphanBytes(t, s, "backend-a"); orphan != cleanupRowSize {
+		t.Errorf("orphan_bytes=%d, want %d (a dead-lettered row still counts)", orphan, cleanupRowSize)
 	}
 }
 

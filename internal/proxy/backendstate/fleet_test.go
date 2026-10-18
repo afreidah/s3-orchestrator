@@ -64,7 +64,7 @@ func newDrainFleet(t *testing.T, store fleetStore, backends map[string]backend.O
 func newSQLiteStore(t *testing.T, backends ...string) *sqlite.Store {
 	t.Helper()
 	ctx := context.Background()
-	s, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
+	s, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil, "test-instance")
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

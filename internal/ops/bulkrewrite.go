@@ -234,7 +234,7 @@ func (op bulkRewriteOp) processLocation(ctx context.Context, env bulkRewriteEnv,
 		SrcBackend:  be,
 		DestBackend: be,
 		DestName:    loc.BackendName,
-		Reasons:     writepath.RewriteMoveReasons,
+		Profile:     writepath.RewriteMove,
 		Reform: func(ctx context.Context, src *s3be.GetObjectResult) (*storedform.Reformed, error) {
 			return env.layers.Reform(ctx, src.Body, src.Size, &loc.StoredForm, want)
 		},

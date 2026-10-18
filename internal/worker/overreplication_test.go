@@ -180,8 +180,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// b1 is more utilized (lower score -> removed first)
-	ops.EXPECT().GetBackend("b1").Return(be1, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, cleanupOf("b1", "key1", "over_replication", int64(100)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "key1", reasonOverReplication, int64(100)))
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{
@@ -202,11 +201,9 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	}
 }
 
-// TestCleanObject_DoesNotDoubleCountAPICalls pins issue #881: cleanObject
-// must let DeleteOrEnqueue own the backend DELETE API-call accounting
-// and not record its own. Setting ops.EXPECT().Acct().Times(0) makes the
-// previous duplicate Acct().APICall(victim.BackendName) line fail loudly
-// if it is ever reintroduced.
+// TestCleanObject_DoesNotDoubleCountAPICalls verifies cleanObject leaves the
+// backend DELETE API-call accounting to the settle and records none of its
+// own.
 func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -222,8 +219,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	ops.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": be1, "b2": be2})
 	ops.EXPECT().Acct().Times(0)
-	ops.EXPECT().GetBackend("b1").Return(be1, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, cleanupOf("b1", "key1", "over_replication", int64(100)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "key1", reasonOverReplication, int64(100)))
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{
@@ -243,8 +239,8 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 // TestCleanObject_SkipsBackendDeleteOnRaceNoOp verifies that when the
 // removal reports ErrCopyNotExcess (a concurrent path already
 // absorbed the excess), the cleaner counts nothing and never touches the
-// backend -- no GetBackend, no DeleteOrEnqueue. The unset gomock
-// expectations assert the latter.
+// backend or settles anything. The unset gomock expectations assert the
+// latter.
 func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

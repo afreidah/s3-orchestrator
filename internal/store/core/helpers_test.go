@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Pure-function coverage for ObjectFromStoredForm, StoredForm.Described,
-// displacedFromExisting, DeletedCopy.Cleanup, ObjectLocation.ObjectSize and
-// LocationOn.
+// removedFromExisting, removedCopy.request, PartPath, ObjectLocation.ObjectSize
+// and LocationOn.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -138,33 +138,33 @@ func TestStoredFormDescribed_CopiesEveryField(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// displacedFromExisting
+// removedFromExisting
 // -------------------------------------------------------------------------
 
-// TestDisplacedFromExisting_EmptyInput verifies the empty-slice case
+// TestRemovedFromExisting_EmptyInput verifies the empty-slice case
 // returns nil rather than an allocated zero-length slice.
-func TestDisplacedFromExisting_EmptyInput(t *testing.T) {
+func TestRemovedFromExisting_EmptyInput(t *testing.T) {
 	t.Parallel()
-	got := displacedFromExisting(nil)
+	got := removedFromExisting(nil)
 	if got != nil {
 		t.Errorf("expected nil for empty input, got %+v", got)
 	}
-	got = displacedFromExisting([]ExistingCopy{})
+	got = removedFromExisting([]ExistingCopy{})
 	if got != nil {
 		t.Errorf("expected nil for empty slice, got %+v", got)
 	}
 }
 
-// TestDisplacedFromExisting_SameBackendStillDisplaced verifies that a copy on a
-// backend the new write also lands on is displaced. The new write stores its
+// TestRemovedFromExisting_SameBackendStillRemoved verifies that a copy on a
+// backend the new write also lands on is removed. The new write stores its
 // bytes at a path of its own, so the old copy stays at its old path and leaving
 // it would leak the bytes.
-func TestDisplacedFromExisting_SameBackendStillDisplaced(t *testing.T) {
+func TestRemovedFromExisting_SameBackendStillRemoved(t *testing.T) {
 	t.Parallel()
 	existing := []ExistingCopy{
 		{BackendName: "b1", StorageKey: "k!old", SizeBytes: 100},
 	}
-	got := displacedFromExisting(existing)
+	got := removedFromExisting(existing)
 	if len(got) != 1 {
 		t.Fatalf("expected the prior copy to be displaced, got %+v", got)
 	}
@@ -173,20 +173,20 @@ func TestDisplacedFromExisting_SameBackendStillDisplaced(t *testing.T) {
 	}
 }
 
-// TestDisplacedFromExisting_CarriesEveryPath verifies that every copy comes
+// TestRemovedFromExisting_CarriesEveryPath verifies that every copy comes
 // back naming its own path, which is what the cleanup deletes.
-func TestDisplacedFromExisting_CarriesEveryPath(t *testing.T) {
+func TestRemovedFromExisting_CarriesEveryPath(t *testing.T) {
 	t.Parallel()
 	existing := []ExistingCopy{
 		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 100},
 		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
 		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}
-	got := displacedFromExisting(existing)
+	got := removedFromExisting(existing)
 	if len(got) != 3 {
-		t.Fatalf("expected 3 displaced copies, got %d", len(got))
+		t.Fatalf("expected 3 removed copies, got %d", len(got))
 	}
-	seen := map[string]DeletedCopy{}
+	seen := map[string]removedCopy{}
 	for _, dc := range got {
 		seen[dc.BackendName] = dc
 	}
@@ -405,11 +405,6 @@ func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *Ob
 	s.importedLoc = &captured
 	return true, nil
 }
-
-// DecrementOrphanBytes is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
 // TestChargeStripes_StableOrderAcrossInputs charges the same backend set with
 // two different map insertion orders (Go map iteration is non-deterministic)
@@ -642,21 +637,44 @@ func TestStoredForm_Unreadable(t *testing.T) {
 	}
 }
 
-// TestDeletedCopy_Cleanup verifies the cleanup request carries the copy's own
-// path and size, and keeps a reason the store set over the caller's default.
-func TestDeletedCopy_Cleanup(t *testing.T) {
+// TestRemovedCopy_Request verifies the cleanup request carries the copy's own
+// path and size, keeps a reason the store set over the caller's default, and
+// falls back to the object key for a copy with no storage key.
+func TestRemovedCopy_Request(t *testing.T) {
 	t.Parallel()
-	dc := DeletedCopy{BackendName: "b1", StorageKey: "k!1", SizeBytes: 7}
+	dc := removedCopy{BackendName: "b1", StorageKey: "k!1", SizeBytes: 7}
 
-	got := dc.Cleanup("k", "overwrite_displaced")
-	want := CleanupRequest{BackendName: "b1", ObjectKey: "k", StorageKey: "k!1", Reason: "overwrite_displaced", SizeBytes: 7}
+	got := dc.request("k", CleanupReasonOverwritten)
+	want := CleanupRequest{BackendName: "b1", ObjectKey: "k", StorageKey: "k!1", Reason: CleanupReasonOverwritten, SizeBytes: 7}
 	if *got != want {
-		t.Errorf("Cleanup = %+v, want %+v", *got, want)
+		t.Errorf("request = %+v, want %+v", *got, want)
 	}
 
 	dc.Reason = CleanupReasonSupersededIntent
-	if got := dc.Cleanup("k", "overwrite_displaced"); got.Reason != CleanupReasonSupersededIntent {
+	if got := dc.request("k", CleanupReasonOverwritten); got.Reason != CleanupReasonSupersededIntent {
 		t.Errorf("Reason = %q, want the copy's own %q", got.Reason, CleanupReasonSupersededIntent)
+	}
+
+	legacy := removedCopy{BackendName: "b1", SizeBytes: 7}
+	if got := legacy.request("k", CleanupReasonDeleted); got.StorageKey != "k" {
+		t.Errorf("StorageKey = %q, want the object key for a copy with no path", got.StorageKey)
+	}
+}
+
+// TestPartPath verifies a part's fixed path and that a part's Path prefers the
+// storage key its upload wrote.
+func TestPartPath(t *testing.T) {
+	t.Parallel()
+	if got := PartPath("up1", 3); got != "__multipart/up1/3" {
+		t.Errorf("PartPath = %q, want __multipart/up1/3", got)
+	}
+	legacy := MultipartPart{PartNumber: 3}
+	if got := legacy.Path("up1"); got != "__multipart/up1/3" {
+		t.Errorf("legacy Path = %q, want the fixed path", got)
+	}
+	keyed := MultipartPart{PartNumber: 3, StorageKey: "__multipart/up1/3!w9"}
+	if got := keyed.Path("up1"); got != "__multipart/up1/3!w9" {
+		t.Errorf("keyed Path = %q, want the upload's own path", got)
 	}
 }
 

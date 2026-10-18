@@ -33,6 +33,7 @@ type TxAdapter interface {
 	CleanupTxAdapter
 	QuotaTxAdapter
 	TagsTxAdapter
+	MultipartTxAdapter
 
 	AcquireKeyLock(ctx context.Context, objectKey string) error
 }
@@ -68,10 +69,7 @@ type KeyedExistingCopy struct {
 // ObjectsTxAdapter exposes the transactional operations on the object_locations
 // table. The ForUpdate reads lock their rows so the same transaction can delete
 // them and move the quota. InsertObjectLocation writes every column loc carries
-// and stamps the current time only when loc has no CreatedAt. BackendAdmits
-// judges a write of size bytes against backend_capacity, the view every
-// admission test reads, accepting a backend whose flags all fall within
-// accepts.
+// and stamps the current time only when loc has no CreatedAt.
 // UpdateCopyMetadata writes a patch to the copy loc names and returns
 // ErrCopyChanged when no row has its storage key.
 // ListedPathStates reports, for paths a backend listed, which hold a recorded
@@ -88,7 +86,6 @@ type ObjectsTxAdapter interface {
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)           // untracked paths are absent
 	LockObjectOnBackend(ctx context.Context, objectKey, backend string) (loc *ObjectLocation, ok bool, err error) // ok=false: row gone, a benign race
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
-	BackendAdmits(ctx context.Context, backendName string, size int64, accepts BackendFlags) (bool, error)
 
 	UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error) // import-side, preserves an existing row
@@ -100,13 +97,29 @@ type ObjectsTxAdapter interface {
 
 // CleanupTxAdapter exposes the transactional operations on the cleanup_queue
 // table that core orchestration needs; single-statement operations live on
-// CleanupStore. InsertCleanupDLQ keeps the queue row's id and created_at so an
-// operator can tell how long the cleanup was outstanding.
+// CleanupStore. InsertCleanup queues a row claimed by this instance and
+// returns its id. InsertCleanupDLQ keeps the queue row's id and created_at so
+// an operator can tell how long the cleanup was outstanding.
 type CleanupTxAdapter interface {
-	SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (deleted int64, totalBytes int64, err error)
+	InsertCleanup(ctx context.Context, c *CleanupRequest) (int64, error)
 	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
 	InsertCleanupDLQ(ctx context.Context, row *CleanupQueueRow) error // pointer: the row payload is 112 bytes
 	DeleteCleanupItem(ctx context.Context, id int64) error
+}
+
+// -------------------------------------------------------------------------
+// MULTIPART
+// -------------------------------------------------------------------------
+
+// MultipartTxAdapter exposes the transactional writes on multipart parts.
+// UpsertPart records a part at the path its intent names and returns the part
+// of that number it replaced, or nil. DeleteMultipartUpload removes the upload
+// and its parts and returns the upload's backend with the parts it removed. A
+// part recorded concurrently cannot slip between the read and the delete, and
+// an upload already gone returns no parts.
+type MultipartTxAdapter interface {
+	UpsertPart(ctx context.Context, p *RecordPartParams) (replaced *MultipartPart, err error)
+	DeleteMultipartUpload(ctx context.Context, uploadID string) (backendName string, parts []MultipartPart, err error)
 }
 
 // -------------------------------------------------------------------------
@@ -133,7 +146,6 @@ type TagsTxAdapter interface {
 // for AdjustQuotaStripe with StripeFor.
 type QuotaTxAdapter interface {
 	AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error
-	DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error // clamped at zero
 
 	AllBackendBytesUsed(ctx context.Context) (map[string]int64, error)     // the striped total per backend
 	SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) // the ledger truth it is diffed against

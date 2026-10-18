@@ -570,8 +570,8 @@ func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
 	if req.SrcBackend != be || req.DestBackend != be {
 		t.Error("move did not read from and write to the copy's own backend")
 	}
-	if req.Reasons != writepath.RewriteMoveReasons {
-		t.Errorf("reasons = %+v, want RewriteMoveReasons", req.Reasons)
+	if req.Profile != writepath.RewriteMove {
+		t.Errorf("profile = %+v, want RewriteMove", req.Profile)
 	}
 	placed := mover.placements()
 	if len(placed) != 1 {

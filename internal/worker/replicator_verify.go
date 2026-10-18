@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -49,12 +50,13 @@ const (
 // -------------------------------------------------------------------------
 
 // admitVerifiedReplica applies the verify-on-replicate verdict to a copy that
-// has just landed, tallying it on out. Returns false when the copy was rejected
-// and its bytes discarded, in which case the caller must try another target.
-func (r *Replicator) admitVerifiedReplica(ctx context.Context, key, target, targetStorageKey string, source *core.ObjectLocation, out *ReplicationOutcome) bool {
-	switch r.verifyReplica(ctx, target, targetStorageKey, source) {
+// has just landed at intent's path, tallying it on out. Returns false when the
+// copy was rejected and its intent discarded, in which case the caller must
+// try another target.
+func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.PendingObject, source *core.ObjectLocation, out *ReplicationOutcome) bool {
+	switch r.verifyReplica(ctx, intent.BackendName, intent.StorageKey, source) {
 	case replicaMismatch:
-		r.CleanupOrphan(ctx, target, key, targetStorageKey, source.SizeBytes)
+		r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 		out.VerifyMismatch++
 		return false
 	case replicaUnverified:

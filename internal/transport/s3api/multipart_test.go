@@ -812,8 +812,8 @@ func TestCreateMultipartUpload_PerBucketLimit_BelowAllows(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // The object every UploadPartCopy test copies from, how a client names it on
-// the wire, the request line that copies it into part 1, and the internal key
-// that part lands on.
+// the wire, the request line that copies it into part 1, and the part path
+// whose per-write storage key holds that part's bytes.
 const (
 	copySourceKey    = "mybucket/source-key"
 	copySourceHeader = "/mybucket/source-key"
@@ -891,7 +891,7 @@ func TestUploadPartCopy_StoresTheSourceBytes(t *testing.T) {
 		t.Error("CopyPartResult carries no ETag")
 	}
 
-	part, ok := backend.Get(copyPartKey)
+	part, ok := backend.CopyOf(copyPartKey)
 	if !ok {
 		t.Fatal("no part was stored")
 	}
@@ -915,7 +915,7 @@ func TestUploadPartCopy_HonoursCopySourceRange(t *testing.T) {
 		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
 	}
 
-	part, ok := backend.Get(copyPartKey)
+	part, ok := backend.CopyOf(copyPartKey)
 	if !ok {
 		t.Fatal("no part was stored")
 	}
@@ -951,7 +951,7 @@ func TestUploadPartCopy_RejectsUnusableRanges(t *testing.T) {
 			if resp.StatusCode != tc.wantStatus {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
 			}
-			if _, ok := backend.Get(copyPartKey); ok {
+			if _, ok := backend.CopyOf(copyPartKey); ok {
 				t.Error("a part was stored for a refused range")
 			}
 		})
@@ -1027,7 +1027,7 @@ func TestUploadPartCopy_RejectsUnusableRequests(t *testing.T) {
 			if resp.StatusCode != tc.wantStatus {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
 			}
-			if _, ok := backend.Get(copyPartKey); ok {
+			if _, ok := backend.CopyOf(copyPartKey); ok {
 				t.Error("a part was stored for a refused request")
 			}
 		})
@@ -1048,7 +1048,7 @@ func TestUploadPartCopy_SourceReadFails(t *testing.T) {
 	if resp.StatusCode == http.StatusOK {
 		t.Errorf("status = 200, want a failure")
 	}
-	if _, ok := backend.Get(copyPartKey); ok {
+	if _, ok := backend.CopyOf(copyPartKey); ok {
 		t.Error("a part was stored despite the source read failing")
 	}
 }

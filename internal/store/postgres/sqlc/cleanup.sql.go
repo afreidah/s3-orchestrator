@@ -94,28 +94,6 @@ func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingClea
 	return items, nil
 }
 
-const completeCleanupItem = `-- name: CompleteCleanupItem :exec
-WITH deleted AS (
-    DELETE FROM cleanup_queue WHERE id = $1
-    RETURNING backend_name, size_bytes
-)
-UPDATE backend_quotas bq
-SET orphan_bytes = GREATEST(0, orphan_bytes - d.size_bytes)
-FROM deleted d
-WHERE bq.backend_name = d.backend_name
-`
-
-// Atomically removes a successfully-processed cleanup_queue row and
-// decrements the backing backend's orphan_bytes by the row's size.
-// Idempotent against re-claim retries: if the row was already deleted
-// by a previous worker, the CTE is empty and orphan_bytes is not
-// double-decremented. GREATEST(0, ...) clamps the counter so a stale
-// size_bytes value cannot drive orphan_bytes negative.
-func (q *Queries) CompleteCleanupItem(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, completeCleanupItem, id)
-	return err
-}
-
 const countCleanupDLQ = `-- name: CountCleanupDLQ :one
 SELECT COUNT(*) FROM cleanup_dlq
 `
@@ -144,10 +122,8 @@ const deleteCleanupItem = `-- name: DeleteCleanupItem :exec
 DELETE FROM cleanup_queue WHERE id = $1
 `
 
-// Used inside the move-to-DLQ transaction; orphan_bytes is intentionally
-// left untouched because the underlying backend object is still on disk.
-// The cleanup worker's success path uses CompleteCleanupItem instead,
-// which atomically deletes the row and decrements orphan_bytes.
+// Retires a row whose bytes are gone, and removes a row graduating to the DLQ.
+// Deleting a row a previous claim already retired is a no-op.
 func (q *Queries) DeleteCleanupItem(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteCleanupItem, id)
 	return err
@@ -172,54 +148,17 @@ type DeleteCleanupQueueByKeyParams struct {
 	BackendName string
 }
 
-// Removes every cleanup_queue row matching the given (storage_key,
-// backend_name) pair. Returns the number of rows deleted so the caller
-// can confirm the sum-then-delete pair stayed consistent.
+// Removes every cleanup_queue row for the (storage_key, backend_name) pair and
+// returns how many went. Rows are matched on the path rather than the object,
+// because reconcile only established that the bytes at that path are gone.
+// Sweeping by object would also drop queued deletions for the key's other
+// writes, whose bytes are still on the backend.
 func (q *Queries) DeleteCleanupQueueByKey(ctx context.Context, arg DeleteCleanupQueueByKeyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteCleanupQueueByKey, arg.StorageKey, arg.BackendName)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const enqueueCleanup = `-- name: EnqueueCleanup :exec
-
-INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
-VALUES ($1, $2, $3, $4, $5)
-`
-
-type EnqueueCleanupParams struct {
-	BackendName string
-	ObjectKey   string
-	StorageKey  string
-	Reason      string
-	SizeBytes   int64
-}
-
-// -----------------------------------------------------------------------------
-// Cleanup Queue Queries
-//
-// Author: Alex Freidah
-//
-// sqlc-input definitions for cleanup_queue and cleanup_dlq operations.
-// Covers the enqueue + retry-state lifecycle, the move-to-DLQ flow that
-// graduates exhausted rows, and the engine-side helpers core/ uses for the
-// atomic stale-row sweep that keeps orphan_bytes in lockstep with row
-// delete.
-// -----------------------------------------------------------------------------
-// storage_key is what the worker deletes; object_key rides along so an operator
-// reading the queue still sees which object the orphan belongs to. The two hold
-// the same value when the bytes were stored at the object's key.
-func (q *Queries) EnqueueCleanup(ctx context.Context, arg EnqueueCleanupParams) error {
-	_, err := q.db.Exec(ctx, enqueueCleanup,
-		arg.BackendName,
-		arg.ObjectKey,
-		arg.StorageKey,
-		arg.Reason,
-		arg.SizeBytes,
-	)
-	return err
 }
 
 const getCleanupQueueRow = `-- name: GetCleanupQueueRow :one
@@ -316,6 +255,51 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 		return nil, err
 	}
 	return items, nil
+}
+
+const insertCleanup = `-- name: InsertCleanup :one
+
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, claimed_at, claimed_by)
+VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+RETURNING id
+`
+
+type InsertCleanupParams struct {
+	BackendName string
+	ObjectKey   string
+	StorageKey  string
+	Reason      string
+	SizeBytes   int64
+	ClaimedBy   *string
+}
+
+// -----------------------------------------------------------------------------
+// Cleanup Queue Queries
+//
+// Author: Alex Freidah
+//
+// sqlc-input definitions for cleanup_queue and cleanup_dlq operations: the
+// insert every copy-removing transaction makes, the claim and retry lifecycle,
+// and the move-to-DLQ flow that graduates exhausted rows. A backend's orphan
+// bytes are the sum of its rows here, read through backend_capacity.
+// -----------------------------------------------------------------------------
+// Queued inside the transaction that stopped recording the bytes, already
+// claimed by the instance that will delete them once it commits. A claim that
+// instance never settles becomes reclaimable after the grace period.
+// storage_key is what is deleted; object_key rides along so an operator reading
+// the queue still sees which object the bytes belonged to.
+func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertCleanup,
+		arg.BackendName,
+		arg.ObjectKey,
+		arg.StorageKey,
+		arg.Reason,
+		arg.SizeBytes,
+		arg.ClaimedBy,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec
@@ -429,48 +413,14 @@ SELECT backend_name, object_key, storage_key, reason, size_bytes FROM moved
 // cleanup worker retries them against a now-recovered backend. The
 // writable CTE deletes the DLQ rows and re-inserts them in one
 // statement; cleanup_queue defaults reset created_at/next_retry to NOW()
-// and attempts to 0. orphan_bytes is untouched here - it was never
-// decremented on the DLQ move, and the worker will debit it when the
-// retried delete finally succeeds. An empty backend requeues every
-// backend. Returns the number of rows requeued.
+// and attempts to 0. An empty backend requeues every backend. Returns the
+// number of rows requeued.
 func (q *Queries) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueCleanupDLQ, backend)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const sumCleanupQueueSizeByKey = `-- name: SumCleanupQueueSizeByKey :one
-SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
-       COUNT(*)::bigint AS row_count
-FROM cleanup_queue
-WHERE storage_key = $1 AND backend_name = $2
-`
-
-type SumCleanupQueueSizeByKeyParams struct {
-	StorageKey  string
-	BackendName string
-}
-
-type SumCleanupQueueSizeByKeyRow struct {
-	TotalBytes int64
-	RowCount   int64
-}
-
-// Returns the sum of size_bytes for every cleanup_queue row matching the
-// given (storage_key, backend_name) pair. Used by the reconciler-driven
-// sweep so orphan_bytes can be decremented in step with the row delete.
-//
-// Rows are matched on the path rather than the object, because reconcile only
-// established that the bytes at that path are gone. Sweeping by object would
-// also drop queued deletions for the key's other writes, whose bytes are still
-// on the backend.
-func (q *Queries) SumCleanupQueueSizeByKey(ctx context.Context, arg SumCleanupQueueSizeByKeyParams) (SumCleanupQueueSizeByKeyRow, error) {
-	row := q.db.QueryRow(ctx, sumCleanupQueueSizeByKey, arg.StorageKey, arg.BackendName)
-	var i SumCleanupQueueSizeByKeyRow
-	err := row.Scan(&i.TotalBytes, &i.RowCount)
-	return i, err
 }
 
 const updateCleanupRetry = `-- name: UpdateCleanupRetry :exec

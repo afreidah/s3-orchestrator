@@ -373,20 +373,13 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 
 	// A backend cordoned or put into a drain after the claim should not get the
 	// object, so abort the commit and let the write try another backend. The
-	// intent stays for the reaper, which finds no bytes and drops it. The check
+	// intent is dropped and its bytes queued in one transaction. The check
 	// reads cached backend state, so a change made on another instance is
 	// caught late, but a drain cannot finish while this intent exists.
 	if !o.core.BackendFlags(backendName).AcceptedBy(core.AcceptForWrite) {
 		o.log.WarnContext(ctx, "backend stopped accepting writes mid-write; aborting commit",
 			"key", key, "backend", backendName)
-		telemetry.WriteTargetRefusedTotal.Inc()
-		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
-			BackendName: backendName,
-			ObjectKey:   key,
-			StorageKey:  intent.StorageKey,
-			Reason:      reasonWriteTargetRefused,
-			SizeBytes:   uploadSize,
-		})
+		o.refuseWriteTarget(ctx, intent)
 		return putAttemptResult{backend: backendName, putErr: errWriteTargetRefused}
 	}
 
@@ -425,6 +418,15 @@ func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
 // reasonWriteTargetRefused is the cleanup-queue reason for bytes a write left
 // on a backend that stopped accepting writes before the commit.
 const reasonWriteTargetRefused = "write_target_refused"
+
+// refuseWriteTarget abandons an upload that landed on a backend which stopped
+// accepting writes before the commit: it charges the PUT that succeeded, then
+// drops the intent and settles the cleanup of its bytes.
+func (o *Manager) refuseWriteTarget(ctx context.Context, p *core.PendingObject) {
+	telemetry.WriteTargetRefusedTotal.Inc()
+	o.core.Acct().APICall(s3op.PutObject, p.BackendName)
+	o.coord.Discard(ctx, p, reasonWriteTargetRefused)
+}
 
 // errWriteTargetRefused is the sentinel putErr the post-PUT re-check returns
 // so the outer failover loop drops the backend from the eligible set and

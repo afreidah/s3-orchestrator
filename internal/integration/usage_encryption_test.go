@@ -22,7 +22,7 @@ package integration
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"database/sql"
 	"io"
 	"testing"
 
@@ -30,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -216,7 +217,7 @@ func TestUsage_EncryptedUploadPartChargesCiphertext(t *testing.T) {
 		}
 	})
 
-	physical := backendRawObjectSize(t, target, multipartPartStoredKey(uploadID, 1))
+	physical := backendRawObjectSize(t, target, multipartPartStoredKey(t, uploadID, 1))
 	if want := env.encryptor.CiphertextSize(int64(len(part))); physical != want {
 		t.Fatalf("part occupies %d bytes, want the ciphertext size %d", physical, want)
 	}
@@ -224,9 +225,18 @@ func TestUsage_EncryptedUploadPartChargesCiphertext(t *testing.T) {
 		usageSnapshot{APICalls: 1, Ingress: physical})
 }
 
-// multipartPartStoredKey mirrors the temp key the multipart manager stores a
-// part under. Duplicated rather than exported: the layout is internal to that
-// package, and a test reaching for the real bytes has to name it somehow.
-func multipartPartStoredKey(uploadID string, partNumber int) string {
-	return fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
+// multipartPartStoredKey returns the path a recorded part's bytes sit at,
+// read from its multipart_parts row. Each upload of a part stores its bytes
+// under a path of its own, so the ledger is the only place that names it.
+func multipartPartStoredKey(t *testing.T, uploadID string, partNumber int) string {
+	t.Helper()
+	var storageKey sql.NullString
+	err := testDB.QueryRow(
+		"SELECT storage_key FROM multipart_parts WHERE upload_id = $1 AND part_number = $2",
+		uploadID, partNumber).Scan(&storageKey)
+	if err != nil {
+		t.Fatalf("multipartPartStoredKey(%s, %d): %v", uploadID, partNumber, err)
+	}
+	part := core.MultipartPart{PartNumber: partNumber, StorageKey: storageKey.String}
+	return part.Path(uploadID)
 }

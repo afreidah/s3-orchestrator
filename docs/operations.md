@@ -128,7 +128,7 @@ Breakers open and close by themselves, so a degraded or down backend needs no ac
 
 ### Cordoning a backend
 
-Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads already in progress on it can complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled. The bulk rewrite passes still rewrite its copies, since a rewrite replaces a copy the backend already holds rather than adding one; a draining backend refuses them.
+Cordoning stops new copies landing on a backend without moving anything off it. Client writes, server-side copies, new replicas, rebalance moves, drain destinations and new multipart uploads all go elsewhere. The backend keeps serving reads of what it holds, deletes and cleanup still reach it, and multipart uploads started on it before the cordon can still upload parts and complete. Its copies still count toward the replication factor, so a cordon does not start new replicas, and it is still reconciled. The bulk rewrite passes still rewrite its copies, since a rewrite replaces a copy the backend already holds rather than adding one; a draining backend refuses them.
 
 ```bash
 # Stop new copies landing on the backend
@@ -287,7 +287,7 @@ To remove encryption from all objects and restore plaintext on backends, use the
 
 Failed objects are logged individually and can be retried by calling `decrypt-existing` again - it only processes objects with encryption metadata.
 
-Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each copy is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter moves by the size delta inside the transaction that replaces the row. Only that growth is judged against the backend's room. A cordoned backend still admits a rewrite, since it adds no copy; a draining backend refuses it and the copy is skipped. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
+Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each copy is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter moves by the size delta inside the transaction that replaces the row. Each rewritten copy is written to a new path under a pending intent for its full size, so the backend needs room for the new copy beside the old one until the old one is deleted; a backend without it refuses the rewrite and the copy is skipped. A cordoned backend still admits a rewrite, since it replaces a copy the backend already holds; a draining backend refuses it and the copy is skipped. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
 
 ### Compressing existing data
 

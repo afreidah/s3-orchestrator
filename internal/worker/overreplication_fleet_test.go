@@ -36,8 +36,8 @@ const removedCopyBytes = 100
 
 // removeExcessRecord captures one surplus-copy removal.
 type removeExcessRecord struct {
-	key, backend string
-	keepAtLeast  int
+	key, backend, reason string
+	keepAtLeast          int
 }
 
 // removeExcessTracker accumulates surplus-copy removals and returns the
@@ -49,17 +49,22 @@ type removeExcessTracker struct {
 	err   error
 }
 
-// stubRemoveExcessCopy returns a DoAndReturn that captures into rt, reporting
-// removedCopyBytes as the bytes the dropped row freed.
-func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, *core.ObjectLocation, int) (core.DeletedCopy, error) {
-	return func(_ context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+// stubRemoveExcessCopy returns a DoAndReturn that captures into rt, queuing a
+// cleanup row of removedCopyBytes for the dropped copy.
+func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, *core.ObjectLocation, int, string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 		rt.mu.Lock()
 		defer rt.mu.Unlock()
-		rt.calls = append(rt.calls, removeExcessRecord{key: loc.ObjectKey, backend: loc.BackendName, keepAtLeast: keepAtLeast})
+		rt.calls = append(rt.calls, removeExcessRecord{
+			key: loc.ObjectKey, backend: loc.BackendName, reason: reason, keepAtLeast: keepAtLeast,
+		})
 		if rt.err != nil {
-			return core.DeletedCopy{}, rt.err
+			return nil, rt.err
 		}
-		return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: removedCopyBytes}, nil
+		return []core.CleanupItem{{
+			BackendName: loc.BackendName, ObjectKey: loc.ObjectKey, StorageKey: loc.StorageKey,
+			Reason: reason, SizeBytes: removedCopyBytes,
+		}}, nil
 	}
 }
 
@@ -172,7 +177,7 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 			"b2": {BytesUsed: 500, BytesLimit: 1000},
 			"b3": {BytesUsed: 900, BytesLimit: 1000},
 		}, nil).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
 	storetest.Permissive(store)
 
@@ -199,6 +204,9 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	if rt.calls[0].backend != "b3" {
 		t.Errorf("expected removal from b3 (most utilized), got %s", rt.calls[0].backend)
 	}
+	if rt.calls[0].reason != reasonOverReplication || rt.calls[0].keepAtLeast != 2 {
+		t.Errorf("removal = %+v, want queued as %s keeping 2 copies", rt.calls[0], reasonOverReplication)
+	}
 }
 
 // TestClean_RemoveCopyError swallows the per-object failure.
@@ -213,7 +221,7 @@ func TestClean_RemoveCopyError(t *testing.T) {
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
 		}, nil).AnyTimes()
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
 	storetest.Permissive(store)
 
@@ -271,8 +279,9 @@ func TestClean_MultipleObjects(t *testing.T) {
 	}
 }
 
-// TestClean_BackendNotFoundDuringCleanup asserts a missing backend is
-// skipped without panic.
+// TestClean_BackendNotFoundDuringCleanup asserts a surplus copy on a backend
+// that has left the fleet is still removed, since removing the row and
+// queuing its bytes does not need the backend.
 func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -297,8 +306,8 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if sum.CopiesRemoved != 0 {
-		t.Errorf("expected 0 removed (backend not found), got %d", sum.CopiesRemoved)
+	if sum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed (the copy on the departed backend), got %d", sum.CopiesRemoved)
 	}
 }
 

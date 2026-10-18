@@ -139,26 +139,57 @@ func TestAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 	}
 }
 
-// TestAdapterErr_BackendAdmits verifies the admission-probe error path
-// is wrapped.
-func TestAdapterErr_BackendAdmits(t *testing.T) {
+// -------------------------------------------------------------------------
+// CLEANUP TX ERRORS
+// -------------------------------------------------------------------------
+
+// TestAdapterErr_InsertCleanup verifies the insert error is wrapped.
+func TestAdapterErr_InsertCleanup(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1, core.AcceptForWrite); err == nil {
+	if _, err := a.InsertCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "backend-a", ObjectKey: "k", StorageKey: "k", Reason: "test", SizeBytes: 1,
+	}); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }
 
 // -------------------------------------------------------------------------
-// CLEANUP TX ERRORS
+// MULTIPART TX ERRORS
 // -------------------------------------------------------------------------
 
-// TestAdapterErr_SumAndDeleteCleanupQueueRows verifies the sum-step
-// error is wrapped.
-func TestAdapterErr_SumAndDeleteCleanupQueueRows(t *testing.T) {
+// TestAdapterErr_UpsertPart verifies the replaced-part read error is
+// wrapped.
+func TestAdapterErr_UpsertPart(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, _, err := a.SumAndDeleteCleanupQueueRows(context.Background(), "k", "backend-a"); err == nil {
+	if _, err := a.UpsertPart(context.Background(), &core.RecordPartParams{
+		UploadID: "u", PartNumber: 1, Intent: &core.PendingObject{StorageKey: "p"},
+	}); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
+// TestAdapterErr_UpsertPartWithoutUpload verifies a part whose upload row
+// does not exist fails the insert on the foreign key and the error is
+// wrapped.
+func TestAdapterErr_UpsertPartWithoutUpload(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if _, err := s.direct().UpsertPart(context.Background(), &core.RecordPartParams{
+		UploadID: "no-such-upload", PartNumber: 1, ETag: "e", SizeBytes: 1,
+		Intent: &core.PendingObject{StorageKey: "p"},
+	}); err == nil {
+		t.Error("expected a foreign key error for a part with no upload")
+	}
+}
+
+// TestAdapterErr_DeleteMultipartUpload verifies the upload read error is
+// wrapped.
+func TestAdapterErr_DeleteMultipartUpload(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if _, _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }
@@ -172,16 +203,6 @@ func TestAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
 	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestAdapterErr_DecrementOrphanBytes verifies the Exec error is
-// wrapped.
-func TestAdapterErr_DecrementOrphanBytes(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	if err := a.DecrementOrphanBytes(context.Background(), "backend-a", 100); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

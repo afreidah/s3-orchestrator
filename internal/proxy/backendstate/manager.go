@@ -372,7 +372,8 @@ func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.Obj
 			slog.String("backend", name), slog.String("key", key), "error", deleteErr)
 	}
 
-	_, err := d.objects.DeleteObjectLocation(ctx, obj, 0)
+	// The purge deleted the bytes itself, so the row goes without a cleanup.
+	_, err := d.objects.DeleteObjectLocation(ctx, obj, 0, "")
 	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)

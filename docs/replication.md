@@ -39,6 +39,8 @@ The second property is what keeps racing writes safe. With `write_path.parallel_
 
 **Health-aware replication:** When backend circuit breakers are enabled, the replicator watches which backends serve reads. If a backend has refused reads for longer than `unhealthy_threshold` - because it is unreachable, or because its GET breaker is open, as when a provider's download quota runs out - copies on that backend are treated as unavailable and replacement copies are created on backends serving reads. This prevents sustained outages from silently reducing redundancy. A backend refusing only other calls, such as uploads, keeps its copies counted. The threshold prevents churn during brief transient failures.
 
+**Claiming the target:** Each replica claims its target with a pending intent before the copy starts, the same insert a client PUT is admitted on, so a target without room for the copy refuses it and concurrent copies cannot overfill a target. The intent holds the space until the copy is recorded. A copy that fails is discarded with its bytes queued for deletion, and one whose process dies mid-transfer leaves its intent for the [pending reaper](cleanup-and-lifecycle.md#put-before-commit-pending-intents), which deletes those bytes rather than promoting them.
+
 **Verifying new copies:** Copies are streamed backend-to-backend and recorded without being read back, so a copy that lands corrupt still counts toward the replication factor until the scrubber reaches it. Setting `integrity.verify_on_replicate` closes that window by hash-checking each new copy before recording it, at the cost of reading every replica back. It is off by default; see [configuration.md#integrity](../configuration/#integrity).
 
 
@@ -61,6 +63,8 @@ rebalance:
 - **spread** - equalizes utilization ratios across all backends. Good for distributing load.
 
 Object moves run concurrently within each batch, bounded by `concurrency`. Increase for faster rebalancing; decrease to reduce backend load.
+
+Each move claims its destination with a pending intent before copying, so a destination that has filled up since the plan was made refuses the move. The source is removed and its bytes queued for deletion in the transaction that records the new copy.
 
 
 ## Over-replication cleanup

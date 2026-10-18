@@ -357,7 +357,7 @@ func TestPutObject_ParallelCopies_CommitFailureAbandonsTheRest(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjCommitCompanion(c)).AnyTimes()
@@ -448,5 +448,41 @@ func TestPutObject_ParallelCopies_SurvivesAnUploadThatOutlivesTheRequest(t *test
 	obj, _ := slow.CopyOf("key")
 	if !bytes.Equal(obj.Data, payload) {
 		t.Errorf("the detached copy holds %d bytes, want %d", len(obj.Data), len(payload))
+	}
+}
+
+// TestPutObject_ParallelCopies_RefusedTargetDiscardsItsCopy asserts a copy
+// that lands on a backend which stopped accepting writes mid-upload is
+// discarded, deleting its bytes, while the write commits on the other copy.
+func TestPutObject_ParallelCopies_RefusedTargetDiscardsItsCopy(t *testing.T) {
+	t.Parallel()
+	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
+
+	store, c := eligibleStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{
+		Order:          []string{"b1", "b2"},
+		CopiesPerWrite: 2,
+	})
+	mgr.Runtime.SetStateChecker(&flippingDrainChecker{backend: "b2"})
+
+	payload := []byte("one copy refused")
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+		Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	testx.Eventually(t, settleWindow, func() bool {
+		_, _, discarded := c.snapshot()
+		return len(discarded) == 1
+	}, "the refused copy was never discarded")
+	_, _, discarded := c.snapshot()
+	if discarded[0].BackendName != "b2" || discarded[0].Reason != reasonWriteTargetRefused {
+		t.Errorf("discarded = %+v, want a %s row on b2", discarded[0], reasonWriteTargetRefused)
+	}
+	testx.Eventually(t, settleWindow, func() bool { return !b2.HasCopyOf("key") },
+		"the refused copy's bytes are still on b2")
+	if !b1.HasCopyOf("key") {
+		t.Error("the accepted copy should stay on b1")
 	}
 }

@@ -166,7 +166,7 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 	// denominator read amplification is measured against.
 	telemetry.CompressionServedBytesTotal.Add(float64(r.Size))
 
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend, r.ContentRange != "")
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, r.ContentRange != "")
 	return readpath.ProbeResult[*s3be.GetObjectResult]{
 		Value:   r,
 		Size:    r.Size,

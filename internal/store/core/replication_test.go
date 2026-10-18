@@ -68,7 +68,7 @@ func newExcessStub(s *excessTxStub) *excessTxStub {
 // have their own assertions.
 func runRemoveExcess(stub *excessTxStub, key, backend string, keepAtLeast int) (bool, error) {
 	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
-	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, keepAtLeast)
+	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, keepAtLeast, "")
 	return err == nil, err
 }
 
@@ -158,9 +158,8 @@ func TestRemoveExcessCopy_DeleteError(t *testing.T) {
 }
 
 // TestRemoveExcessCopy_RemovesVictimWithLockedSize verifies the success
-// path: the victim row is deleted, and the bytes reported are the ones on the
-// locked row rather than caller-supplied values - so the caller debits the
-// backend by what actually went.
+// path: the victim row is deleted, and the bytes queued are the ones on the
+// locked row rather than caller-supplied values.
 func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
@@ -169,18 +168,18 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}})
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 1}
-	dropped, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 2)
+	dropped, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 2, "over_replication")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
 		t.Errorf("expected b1 deleted, got %v", stub.deleted)
 	}
-	if dropped.SizeBytes != 100 {
-		t.Errorf("SizeBytes = %d, want 100 (the locked row's size)", dropped.SizeBytes)
+	if len(dropped) != 1 {
+		t.Fatalf("queued %d rows, want 1", len(dropped))
 	}
-	if dropped.StorageKey != "k!a" || dropped.BackendName != "b1" {
-		t.Errorf("dropped = %+v, want b1 at %q", dropped, "k!a")
+	if got := dropped[0]; got.SizeBytes != 100 || got.StorageKey != "k!a" || got.BackendName != "b1" || got.Reason != "over_replication" {
+		t.Errorf("queued = %+v, want b1 at k!a, 100 bytes, over_replication", got)
 	}
 }
 

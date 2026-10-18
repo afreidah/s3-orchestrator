@@ -96,7 +96,9 @@ A backend is eligible if it meets all of these conditions:
 - It carries **no state flag**: it is not cordoned and not draining
 - It **does not already hold** a copy of the object
 - It is **serving uploads**: neither its backend breaker nor its PUT breaker is open
-- It has **enough free space**: `quota - used_bytes - orphan_bytes >= object_size`
+- It has **enough free space**: `quota - used_bytes - orphan_bytes - in-flight >= object_size`
+
+The free-space test is settled by the claim itself: before copying, the replicator inserts a pending intent for the copy on the target, and the insert succeeds only if the target still has room. A target that filled up since it was picked refuses the claim and the next one is tried. The intent holds the space until the copy is recorded, so concurrent copies cannot overfill a target.
 
 If no backend qualifies, the object remains under-replicated until the next scan.
 
@@ -130,7 +132,7 @@ The first-fit target selection means backends listed earlier in your configurati
 
 ### Orphan bytes from failures
 
-If a replication copy succeeds on the backend but the database record fails to commit, the object becomes an orphan — it exists on the backend but is not tracked. The cleanup queue will eventually remove it, but until then the orphan bytes reduce available space on that backend.
+If a replication copy lands on the backend but is not recorded - the copy failed partway, the source changed mid-copy, or the commit failed - its bytes are queued in the cleanup queue under reason `replication_orphan` and deleted right after. A delete that fails stays queued and is retried. If the process dies mid-copy, the copy's intent is left for the pending reaper, which deletes those bytes rather than promoting them. Until the bytes are deleted they count as orphan bytes and reduce available space on that backend.
 
 ## Mitigations
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
@@ -170,7 +171,7 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteDisplaced(gomock.Any(), "bucket/k", gomock.Len(0))
+	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -196,7 +197,7 @@ func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteDisplaced(gomock.Any(), "bucket/k", gomock.Len(0))
+	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
@@ -205,24 +206,24 @@ func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
 }
 
 // TestProcessPendingQueue_CompanionDiscardedRemovesBytes verifies that an
-// extra-copy intent with nothing recorded on its backend has its bytes deleted
-// under the reason the store labelled them with, leaving the copy for the
-// replication worker to rebuild.
+// extra-copy intent with nothing recorded on its backend has the cleanup row
+// the store queued for its bytes settled, leaving the copy for the replication
+// worker to rebuild.
 func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
 	t.Parallel()
 	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCompanionDiscarded
-	ms.promoteDisplaced = []core.DeletedCopy{
-		{BackendName: "b1", SizeBytes: 100, Reason: core.CleanupReasonCompanionDiscarded},
+	ms.promoteCleanup = []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "bucket/k", SizeBytes: 100, Reason: core.CleanupReasonCompanionDiscarded},
 	}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteDisplaced(gomock.Any(), "bucket/k", ms.promoteDisplaced)
+	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
@@ -232,18 +233,23 @@ func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
 
 // TestProcessPendingQueue_PromoteSupersededCounts verifies the new
 // timestamp-aware resolution: PendingPromoteSuperseded counts as resolved
-// (the store deleted the row in-txn) and skips the displaced-cleanup step.
+// (the store deleted the row in-txn) and that the cleanup row the store queued
+// for the intent's own bytes is settled.
 func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	t.Parallel()
-	r, ops, _, be, ms := setupReaper(t)
+	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteSuperseded
+	ms.promoteCleanup = []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "bucket/k", SizeBytes: 100, Reason: core.CleanupReasonSupersededIntent},
+	}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -257,10 +263,11 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 // erroring.
 func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	t.Parallel()
-	r, ops, _, be, ms := setupReaper(t)
+	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAlreadyResolved
+	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -280,10 +287,11 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 // reaper must still handle it sanely.
 func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	t.Parallel()
-	r, ops, _, be, ms := setupReaper(t)
+	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAmbiguous
+	pl.EXPECT().Settle(gomock.Any(), gomock.Len(0))
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -340,23 +348,25 @@ func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 	}
 }
 
-// TestProcessPendingQueue_PromoteWithDisplacedEnqueues verifies that
-// successful promotion of an intent which displaces copies on other
-// backends fans out cleanup deletes for each.
-func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
+// TestProcessPendingQueue_PromoteWithDisplacedSettles verifies that a
+// promotion which displaces copies on other backends settles the cleanup rows
+// it queued for them.
+func TestProcessPendingQueue_PromoteWithDisplacedSettles(t *testing.T) {
 	t.Parallel()
 	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCommitted
-	ms.promoteDisplaced = []core.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
+	ms.promoteCleanup = []core.CleanupItem{
+		{ID: 1, BackendName: "b2", ObjectKey: "bucket/k", SizeBytes: 200, Reason: core.CleanupReasonOverwritten},
+	}
 
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteDisplaced(gomock.Any(), "bucket/k", ms.promoteDisplaced)
+	pl.EXPECT().Settle(gomock.Any(), ms.promoteCleanup)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, _ := pendSum.Succeeded, pendSum.Failed
@@ -539,19 +549,20 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 // onPromote* handlers  -  direct tests of the four result-code branches
 // -------------------------------------------------------------------------
 
-// TestOnPromoteCommitted_HandsDisplacedToCleanup verifies a successful
-// promotion passes the copies it displaced to the shared cleanup, so orphan
-// bytes do not accumulate. How each copy is deleted is the coordinator's,
-// covered in writepath.
-func TestOnPromoteCommitted_HandsDisplacedToCleanup(t *testing.T) {
+// TestOnPromoteCommitted_CountsThePromotion verifies a successful promotion is
+// counted as promoted and settles nothing itself, since the caller settled the
+// displaced copies' cleanup.
+func TestOnPromoteCommitted_CountsThePromotion(t *testing.T) {
 	t.Parallel()
-	r, _, pl, _, _ := setupReaper(t)
+	r, _, _, _, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
-	displaced := []core.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
 
-	pl.EXPECT().DeleteDisplaced(gomock.Any(), "bucket/k", displaced)
-
-	r.onPromoteCommitted(context.Background(), &p, displaced)
+	counter := telemetry.PendingIntentsResolvedTotal.WithLabelValues("promoted")
+	before := readCounterValue(t, counter)
+	r.onPromoteCommitted(context.Background(), &p, 2)
+	if got := readCounterValue(t, counter) - before; got < 1 {
+		t.Errorf("promoted counter moved by %v, want at least 1", got)
+	}
 }
 
 // TestOnPromoteSuperseded_NoFurtherDelete verifies the timestamp drop branch

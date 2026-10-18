@@ -3,15 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Verifies that orphan-cleanup deletes after a metadata-record failure go
-// through deleteWithTimeout (i.e. the per-backend timeout is honored). Without
-// the timeout wiring, a hung backend would block the user's request for the
+// Verifies that the delete settling a discarded part carries the per-backend
+// timeout. Without it, a hung backend would block the user's request for the
 // full request-context lifetime.
-//
-// Note: PutObject no longer goes through the orphan-cleanup path; the
-// pending-row pattern leaves bytes on the backend for the reaper to
-// resolve. Multipart commit still uses the legacy cleanup-on-failure
-// flow until the pending pattern extends to the multipart manager.
 // -------------------------------------------------------------------------------
 
 package multipart
@@ -31,7 +25,7 @@ import (
 )
 
 // TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline asserts the
-// upload-part record-failure cleanup delete carries a deadline.
+// delete of a part discarded after a record failure carries a deadline.
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -45,11 +39,10 @@ func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 		}, nil).
 		AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).
+		Return(nil, errors.New("db error")).
 		AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		Return(nil).
-		AnyTimes()
+	multipartStubs(t, store)
+	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
@@ -59,6 +52,6 @@ func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	}
 
 	if hadDeadline, _ := be.LastDelete(); !hadDeadline {
-		t.Error("part-cleanup DeleteObject should be invoked with a deadline-bound ctx (deleteWithTimeout)")
+		t.Error("part-cleanup DeleteObject should be invoked with a deadline-bound ctx")
 	}
 }

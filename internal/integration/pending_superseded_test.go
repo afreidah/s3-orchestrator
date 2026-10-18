@@ -39,7 +39,7 @@ func TestInt_PendingIntent_ClearedByOverwritingWrite(t *testing.T) {
 		BackendName: "minio-2",
 		SizeBytes:   42,
 	}
-	if _, err := testStore.InsertPendingIfFits(ctx, intent); err != nil {
+	if _, err := testStore.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -66,6 +66,9 @@ func TestInt_PendingIntent_ClearedByOverwritingWrite(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("write did not report the superseded intent's bytes: %+v", displaced)
+	}
+	if got := queryCleanupQueueCount(t, "minio-2"); got != 1 {
+		t.Errorf("minio-2 cleanup_queue rows = %d, want 1 (queued with the write)", got)
 	}
 
 	if got := queryObjectCopies(t, key); got != 1 {

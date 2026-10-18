@@ -422,7 +422,7 @@ func TestObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/replicated", "backend-b"), 0); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/replicated", "backend-b"), 0, ""); err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
 
@@ -435,7 +435,7 @@ func TestObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	}
 
 	// Removing what is now the last copy takes them.
-	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/replicated", "backend-a"), 0); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, "bucket/replicated", "backend-a"), 0, ""); err != nil {
 		t.Fatalf("DeleteObjectLocation (last): %v", err)
 	}
 	got, err = s.GetObjectTags(ctx, "bucket/replicated")

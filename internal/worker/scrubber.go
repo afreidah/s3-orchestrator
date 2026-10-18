@@ -49,7 +49,7 @@ import (
 type ScrubberStore interface {
 	core.IntegrityStore
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
-	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocation, id *core.ObjectIdentity) error
 	UpdateCopyMetadata(ctx context.Context, loc *core.ObjectLocation, p *core.CopyPatch) error
@@ -405,22 +405,20 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 	return true, nil
 }
 
-// discardCopy removes a copy's ledger row and quota, then deletes its bytes or
-// queues them for cleanup. Without the row removal the replicator still counts
-// the copy and never rebuilds the object. A copy a client overwrite or delete
-// replaced since it was read is left alone: that write already queued the
-// discarded bytes.
+// discardCopy removes a copy's ledger row and quota and queues its bytes in
+// one transaction, then settles the cleanup. Without the row removal the
+// replicator still counts the copy and never rebuilds the object. A copy a
+// client overwrite or delete replaced since it was read is left alone: that
+// write already queued the discarded bytes.
 func (s *Scrubber) discardCopy(ctx context.Context, loc *core.ObjectLocation, reason string) error {
-	removed, err := s.store.DeleteObjectLocation(ctx, loc, 0)
+	removed, err := s.store.DeleteObjectLocation(ctx, loc, 0, reason)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return nil
 	case err != nil:
 		return err
 	}
-	if be, err := s.deps.GetBackend(loc.BackendName); err == nil {
-		s.placement.DeleteOrEnqueue(ctx, be, removed.Cleanup(loc.ObjectKey, reason))
-	}
+	s.placement.Settle(ctx, removed)
 	audit.Log(ctx, "integrity.copy_discarded",
 		slog.String("key", loc.ObjectKey),
 		slog.String("backend", loc.BackendName),

@@ -152,7 +152,7 @@ func BenchmarkQuotaClaim_HasRoom(b *testing.B) {
 			intentID := fmt.Sprintf("bench-claim-%d-%d", g, i)
 			i++
 
-			admitted, err := s.InsertPendingIfFits(ctx, benchPendingObject(intentID, benchClaimBackend))
+			admitted, err := s.InsertPendingIfFits(ctx, benchPendingObject(intentID, benchClaimBackend), core.AcceptForWrite)
 			if err != nil {
 				b.Errorf("InsertPendingIfFits: %v", err)
 				return
@@ -187,7 +187,7 @@ func BenchmarkQuotaClaim_AtCeiling(b *testing.B) {
 			intentID := fmt.Sprintf("bench-full-%d-%d", g, i)
 			i++
 
-			admitted, err := s.InsertPendingIfFits(ctx, benchPendingObject(intentID, benchFullBackend))
+			admitted, err := s.InsertPendingIfFits(ctx, benchPendingObject(intentID, benchFullBackend), core.AcceptForWrite)
 			if err != nil {
 				b.Errorf("InsertPendingIfFits: %v", err)
 				return

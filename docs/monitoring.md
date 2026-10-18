@@ -131,7 +131,7 @@ tracking, rate limiting & rejections, rebalancer, drain & lifecycle,
 cleanup queue & audit, encryption, object data cache, integrity
 verification, Redis, over-replication cleanup, pending PUT intents,
 authentication (streaming SigV4), worker health, event notifications,
-cleanup DLQ & enqueue failures, edge cases & admin ops, degraded-mode
+cleanup DLQ & retries, edge cases & admin ops, degraded-mode
 hardening, compression, fleet, and data path details.
 
 With more than one instance, panels show the fleet: request and worker
@@ -217,15 +217,14 @@ Key metrics to alert on:
 | `s3o_admission_rejections_total` | Requests rejected at the hard admission limit |
 | `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
-| `s3o_cleanup_queue_depth` | Alert when consistently > 0 - orphaned objects are failing cleanup |
+| `s3o_cleanup_queue_depth` | Alert when consistently > 0 - orphaned objects are failing cleanup. Rows the request path is settling show up briefly |
 | `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries - graduated to the DLQ |
 | `s3o_cleanup_dlq_depth` | Alert when > 0 - at least one unrecoverable orphan needs operator action |
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
-| `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a worker died mid-process or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
-| `s3o_cleanup_enqueue_failures_total{backend,reason,stage}` | Alert on any non-zero rate of `stage="enqueue"` - backend object exists with no `cleanup_queue` row (orphan-leak risk). Pivot via the matching `storage.OrphanEnqueueFailed` audit event for backend/key/size, then run `POST /admin/api/reconcile` after DB recovery |
+| `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a process died before settling the rows it queued, or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type - useful for detecting unusual activity |
-| `s3o_pending_intents_enqueued_total` | Rate of PUT intents inserted (write-path PUT-before-COMMIT pattern). Should track the PutObject rate closely; a sustained gap suggests the pending pattern is bypassed |
-| `s3o_pending_intents_resolved_total{status}` | Pending intents resolved by status (`committed` = atomic commit happy path, `promoted` = reaper found backend object and promoted the intent, `dropped` = reaper found HEAD 404 and dropped the intent, `ambiguous` = HEAD failed for non-404 reasons, `already_resolved` = race). A sustained `ambiguous` rate means the reaper cannot reach the backend |
+| `s3o_pending_intents_enqueued_total` | Rate of intents inserted. Every write claims its target with one before its bytes land: PUTs and their extra copies, replicas, moves, rewrites and multipart parts |
+| `s3o_pending_intents_resolved_total{status}` | Pending intents resolved by status (`committed` = atomic commit happy path, `promoted` = reaper found backend object and promoted the intent, `dropped` = reaper found HEAD 404 and dropped the intent, `superseded` = a newer write committed first and the intent's bytes were queued for deletion, `companion_kept` / `companion_discarded` = an extra-copy intent kept because a recorded copy sits at its path or discarded with its bytes, `ambiguous` = HEAD failed for non-404 reasons, `already_resolved` = race). A sustained `ambiguous` rate means the reaper cannot reach the backend |
 | `s3o_pending_intents_depth` | Current unresolved intents. Alert when consistently above the `batch_size` of the reaper - the reaper is not keeping up |
 | `s3o_drain_active` | Number of backends with a drain in progress, set from the drain records on each drain worker tick; 0 means no drains are running. Page on `s3o_drain_active > 0 for 6h` (drain stuck) |
 | `s3o_write_target_refused_total` | PutObject attempts aborted because the backend was cordoned or started draining mid-write. Any non-zero rate is benign (the orchestrator recovers automatically) but a sustained rate suggests longer-than-expected gaps between `EligibleForWrite` and the backend PUT - typically very large objects against a backend whose state just changed |
@@ -262,7 +261,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_manager_duration_seconds` | Histogram | operation, backend | Manager latency |
 | `s3o_quota_bytes_used` | Gauge | backend | Current bytes used |
 | `s3o_quota_bytes_limit` | Gauge | backend | Quota limit |
-| `s3o_quota_orphan_bytes` | Gauge | backend | Bytes reserved by pending cleanup items |
+| `s3o_quota_orphan_bytes` | Gauge | backend | Bytes the backend's `cleanup_queue` and `cleanup_dlq` rows still have to delete |
 | `s3o_quota_bytes_available` | Gauge | backend | Remaining space (limit - used - orphan) |
 | `s3o_quota_claims_declined_total` | Counter | backend | Writes a backend refused for want of room |
 | `s3o_objects_count` | Gauge | backend | Stored object count |
@@ -306,16 +305,15 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits. `operation` covers the client paths plus `rebalance` (moves not planned) and `scrub` (copies deferred) |
-| `s3o_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
-| `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/success_absent/retry/exhausted) |
-| `s3o_cleanup_queue_depth` | Gauge | - | Current pending items in the cleanup queue |
+| `s3o_cleanup_queue_enqueued_total` | Counter | reason | Rows queued for deletion, by reason |
+| `s3o_cleanup_queue_processed_total` | Counter | status | Rows settled on the request path or by the worker (success/success_absent/retry/exhausted) |
+| `s3o_cleanup_queue_depth` | Gauge | - | Current rows in the cleanup queue, including rows being settled |
 | `s3o_cleanup_queue_stale_claims_recovered_total` | Counter | backend | Cleanup_queue rows whose stale claim was reclaimed by a later worker tick |
 | `s3o_cleanup_dlq_depth` | Gauge | - | Unrecoverable orphans waiting in the cleanup dead-letter table |
 | `s3o_cleanup_dlq_enqueued_total` | Counter | backend | Cleanup rows graduated to the dead-letter after exhausting retries |
-| `s3o_cleanup_enqueue_failures_total` | Counter | backend, reason, stage | Cleanup-queue enqueue attempts that failed after a successful backend write (orphan risk) |
-| `s3o_pending_intents_enqueued_total` | Counter | - | In-flight PUT intents inserted before the backend write |
-| `s3o_pending_intents_resolved_total` | Counter | status | Pending PUT intents resolved by status (committed, promoted, dropped, ambiguous, already_resolved) |
-| `s3o_pending_intents_depth` | Gauge | - | Current number of unresolved pending PUT intents |
+| `s3o_pending_intents_enqueued_total` | Counter | - | Intents inserted before a write's bytes land |
+| `s3o_pending_intents_resolved_total` | Counter | status | Pending intents resolved by status (committed, promoted, dropped, superseded, companion_kept, companion_discarded, ambiguous, already_resolved) |
+| `s3o_pending_intents_depth` | Gauge | - | Current number of unresolved pending intents |
 | `s3o_rate_limit_rejections_total` | Counter | - | Requests rejected by per-IP rate limiting |
 | `s3o_cors_preflight_total` | Counter | result | Browser CORS preflights by outcome (allowed, rejected). A preflight is answered before the S3 handler, so it appears in no other request metric |
 | `s3o_admission_rejections_total` | Counter | - | Requests rejected by server-level admission control |
@@ -417,15 +415,15 @@ Key audit events:
 | `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
-| `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
+| `cleanup_queue.processed` | Cleanup queue | Queued bytes deleted and the row retired, on the request path or by the worker |
 | `cleanup_queue.already_absent` | Cleanup queue | Backend DELETE returned 404 - the object is already gone. Row dropped as idempotent success instead of retrying nine more times |
-| `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a different worker tick (typical after a process crash or rolling-deploy overlap) |
+| `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a worker tick (typical after a process died before settling the rows it queued) |
 | `cleanup_queue.exhausted_to_dlq` | Cleanup queue | Row graduated to `cleanup_dlq` after exhausting retries |
 | `over_replication.start`, `over_replication.complete`, `over_replication.remove` | Over-replication cleaner | Surplus replica removal cycle; `.remove` carries the per-copy decision |
 | `pending_reaper.promoted` | Pending reaper | The reaper HEADed the backend, found the object, and promoted the pending intent into a committed `object_locations` row |
 | `pending_reaper.dropped` | Pending reaper | The reaper HEADed the backend and got 404. No orphan exists; the intent row is dropped |
-| `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it |
-| `storage.OrphanEnqueueFailed` | Coordinator | The cleanup-queue enqueue path itself failed after a successful backend write (DB outage). Carries backend / key / size / stage so an operator can reconcile manually once DB connectivity returns |
+| `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it. The intent's bytes are queued for deletion |
+| `pending_reaper.companion_kept`, `pending_reaper.companion_discarded` | Pending reaper | An extra-copy intent (extra PUT copy, replica, move, rewrite or part) settled without being promoted: kept when a recorded copy sits at its path, otherwise discarded with its bytes queued for deletion |
 | `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
 | `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, and the panic value. The matching error-level slog entry carries the captured stack trace |
 

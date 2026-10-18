@@ -799,18 +799,11 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 
 	// Seed an object_locations row pointing at a key that was never
 	// uploaded to the backend, plus a cleanup_queue entry for the same
-	// key+backend with a corresponding orphan_bytes credit.
+	// key+backend, whose size counts as orphan bytes.
 	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: staleKey, Size: sizeBytes, Copies: []core.ObjectCopy{{Backend: backend}}}); err != nil {
 		t.Fatalf("seed RecordObject: %v", err)
 	}
-	if err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: backend, ObjectKey: staleKey, StorageKey: staleKey, Reason: "test-seed", SizeBytes: sizeBytes,
-	}); err != nil {
-		t.Fatalf("seed EnqueueCleanup: %v", err)
-	}
-	if err := testStore.IncrementOrphanBytes(ctx, backend, sizeBytes); err != nil {
-		t.Fatalf("seed IncrementOrphanBytes: %v", err)
-	}
+	seedCleanupRow(t, backend, staleKey, "test-seed", sizeBytes)
 
 	// Sanity check the seed landed.
 	if got := queryObjectCopies(t, strings.TrimPrefix(staleKey, virtualBucket+"/")); got != 1 {
@@ -842,25 +835,25 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 		t.Errorf("cleanup_queue rows after reconcile = %d, want 0", got)
 	}
 	if got := queryOrphanBytes(t, backend); got != 0 {
-		t.Errorf("orphan_bytes after reconcile = %d, want 0 (decremented in step with sweep)", got)
+		t.Errorf("orphan_bytes after reconcile = %d, want 0 (swept rows stop counting)", got)
 	}
 }
 
-// TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndDecrementsOrphan
-// drives the Postgres SweepStaleCleanupQueueRows method directly against
-// the real DB to confirm matching rows are deleted and orphan_bytes is
-// decremented by their summed size. Mirrors the SQLite-side unit test.
-func TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndDecrementsOrphan(t *testing.T) {
+// TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndRetiresOrphan
+// drives the Postgres SweepStaleCleanupQueueRows method directly against the
+// real DB to confirm matching rows are deleted and their bytes stop counting
+// as orphan bytes. Mirrors the SQLite-side unit test.
+func TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndRetiresOrphan(t *testing.T) {
 	resetState(t)
 	ctx := context.Background()
 	const backend = "minio-1"
 
 	key := internalKey(uniqueKey(t, "sweep-direct-match"))
-	mustEnqueueWithSize(t, ctx, backend, key, "test", 100)
-	mustEnqueueWithSize(t, ctx, backend, key, "retry", 200)
-	mustEnqueueWithSize(t, ctx, backend, internalKey(uniqueKey(t, "sweep-direct-other")), "test", 50)
-	if err := testStore.IncrementOrphanBytes(ctx, backend, 350); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
+	seedCleanupRow(t, backend, key, "test", 100)
+	seedCleanupRow(t, backend, key, "retry", 200)
+	seedCleanupRow(t, backend, internalKey(uniqueKey(t, "sweep-direct-other")), "test", 50)
+	if got := queryOrphanBytes(t, backend); got != 350 {
+		t.Fatalf("seed: orphan_bytes = %d, want 350", got)
 	}
 
 	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, key, backend)
@@ -886,9 +879,7 @@ func TestSweepStaleCleanupQueueRows_PostgresDirect_NoMatchIsNoOp(t *testing.T) {
 	ctx := context.Background()
 	const backend = "minio-1"
 
-	if err := testStore.IncrementOrphanBytes(ctx, backend, 100); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
+	seedCleanupRow(t, backend, internalKey(uniqueKey(t, "sweep-direct-kept")), "test", 100)
 	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, internalKey("nonexistent"), backend)
 	if err != nil {
 		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
@@ -909,8 +900,8 @@ func TestSweepStaleCleanupQueueRows_PostgresDirect_OnlyThisBackend(t *testing.T)
 	ctx := context.Background()
 
 	key := internalKey(uniqueKey(t, "sweep-direct-isolation"))
-	mustEnqueueWithSize(t, ctx, "minio-1", key, "test", 100)
-	mustEnqueueWithSize(t, ctx, "minio-2", key, "test", 200)
+	seedCleanupRow(t, "minio-1", key, "test", 100)
+	seedCleanupRow(t, "minio-2", key, "test", 200)
 
 	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, key, "minio-1")
 	if err != nil {
@@ -921,18 +912,6 @@ func TestSweepStaleCleanupQueueRows_PostgresDirect_OnlyThisBackend(t *testing.T)
 	}
 	if got := queryCleanupQueueCount(t, "minio-2"); got != 1 {
 		t.Errorf("minio-2 cleanup_queue rows = %d, want 1 (preserved)", got)
-	}
-}
-
-// mustEnqueueWithSize seeds a cleanup_queue row with the given size,
-// failing the test on error. Extracted to keep the per-case test bodies
-// short and readable.
-func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason string, size int64) {
-	t.Helper()
-	if err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-		BackendName: backend, ObjectKey: key, StorageKey: key, Reason: reason, SizeBytes: size,
-	}); err != nil {
-		t.Fatalf("EnqueueCleanup(%s, %s, size=%d): %v", backend, key, size, err)
 	}
 }
 
@@ -2942,8 +2921,9 @@ func TestStore_DeleteObject_NotFound(t *testing.T) {
 	}
 }
 
-// TestStore_PlaceCopy_MoveRaceSafe moves a copy and then replays the same
-// move, which must be declined as ErrCopyChanged without touching quotas.
+// TestStore_PlaceCopy_MoveRaceSafe moves a copy and then replays the move from
+// the same source under a fresh intent, which must be declined as
+// ErrCopyChanged without touching quotas and must queue the intent's bytes.
 func TestStore_PlaceCopy_MoveRaceSafe(t *testing.T) {
 	ctx := context.Background()
 
@@ -2955,18 +2935,22 @@ func TestStore_PlaceCopy_MoveRaceSafe(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
+	src := storetest.LocationOn(t, testStore, key, "minio-1")
 	move := &core.Placement{
-		Source:       storetest.LocationOn(t, testStore, key, "minio-1"),
-		Target:       "minio-2",
-		StorageKey:   key + "!m",
+		Source:       src,
+		Intent:       claimCopyIntent(t, ctx, key, "minio-2", 100),
 		RemoveSource: true,
+		Reasons:      core.MoveReasons{Orphan: "test_orphan", SourceDelete: "test_source_delete"},
 	}
-	size, err := testStore.PlaceCopy(ctx, move)
+	size, cleanup, err := testStore.PlaceCopy(ctx, move)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if size != 100 {
 		t.Errorf("moved size = %d, want 100", size)
+	}
+	if len(cleanup) != 1 || cleanup[0].BackendName != "minio-1" || cleanup[0].Reason != "test_source_delete" {
+		t.Errorf("move cleanup = %+v, want the source copy queued on minio-1", cleanup)
 	}
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
@@ -2976,8 +2960,13 @@ func TestStore_PlaceCopy_MoveRaceSafe(t *testing.T) {
 		t.Errorf("minio-2 after move = %d, want 100", used)
 	}
 
-	if _, err = testStore.PlaceCopy(ctx, move); !errors.Is(err, core.ErrCopyChanged) {
+	move.Intent = claimCopyIntent(t, ctx, key, "minio-3", 100)
+	_, cleanup, err = testStore.PlaceCopy(ctx, move)
+	if !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("second PlaceCopy err = %v, want ErrCopyChanged (source gone)", err)
+	}
+	if len(cleanup) != 1 || cleanup[0].BackendName != "minio-3" || cleanup[0].Reason != "test_orphan" {
+		t.Errorf("refused cleanup = %+v, want the intent's bytes queued on minio-3", cleanup)
 	}
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
@@ -3135,9 +3124,7 @@ func TestStore_PlaceCopy_StaleReplicaSourceDeclined(t *testing.T) {
 	}
 
 	src := storetest.LocationOn(t, testStore, key, "minio-1")
-	if _, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-2", StorageKey: key + "!r"}); err != nil {
-		t.Fatalf("PlaceCopy: %v", err)
-	}
+	placeReplica(t, ctx, key, "minio-1", "minio-2")
 	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
 		t.Errorf("minio-2 after replica = %d, want 100", used)
 	}
@@ -3150,7 +3137,7 @@ func TestStore_PlaceCopy_StaleReplicaSourceDeclined(t *testing.T) {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
 
-	_, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Target: "minio-3", StorageKey: key + "!r"})
+	_, _, err := testStore.PlaceCopy(ctx, &core.Placement{Source: src, Intent: claimCopyIntent(t, ctx, key, "minio-3", 100)})
 	if !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("stale PlaceCopy err = %v, want ErrCopyChanged (source replaced)", err)
 	}
@@ -3165,7 +3152,7 @@ func TestStore_RecordPart_InvalidPartNumber(t *testing.T) {
 	resetState(t)
 
 	for _, pn := range []int{0, -1, 10001, 1 << 20} {
-		err := testStore.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-invalid", PartNumber: pn, ETag: "\"etag\"", SizeBytes: 100})
+		_, err := testStore.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-invalid", PartNumber: pn, ETag: "\"etag\"", SizeBytes: 100})
 		if err == nil {
 			t.Errorf("RecordPart(%d) should fail, got nil", pn)
 		}

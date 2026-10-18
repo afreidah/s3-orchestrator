@@ -203,10 +203,10 @@ func (mr *MockObjectStoreMockRecorder) CountObjectsByPrefix(ctx, prefix any) *go
 }
 
 // DeleteObject mocks base method.
-func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -219,25 +219,25 @@ func (mr *MockObjectStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
-	ret0, _ := ret[0].(core.DeletedCopy)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockObjectStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockObjectStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
-	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -370,12 +370,13 @@ func (mr *MockObjectStoreMockRecorder) ListedPathStates(ctx, arg1, paths any) *g
 }
 
 // PlaceCopy mocks base method.
-func (m *MockObjectStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+func (m *MockObjectStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
 	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].([]core.CleanupItem)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // PlaceCopy indicates an expected call of PlaceCopy.
@@ -385,10 +386,10 @@ func (mr *MockObjectStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2

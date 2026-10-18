@@ -57,7 +57,7 @@ func raceFleet(t *testing.T) (*Coordinator, *sqlite.Store, *backendtest.InMemory
 	t.Helper()
 	ctx := context.Background()
 
-	store, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
+	store, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil, "test-instance")
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -219,6 +219,10 @@ func TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact(t *testing.T) {
 	// committed, both companions resolved.
 	if depth, derr := store.PendingDepth(ctx); derr != nil || depth != 0 {
 		t.Errorf("pending intents = %d (err %v), want none left", depth, derr)
+	}
+	// Every cleanup row the two commits and the discard queued was settled.
+	if depth, derr := store.CleanupQueueDepth(ctx); derr != nil || depth != 0 {
+		t.Errorf("cleanup rows = %d (err %v), want every queued row settled", depth, derr)
 	}
 }
 

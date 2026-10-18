@@ -24,6 +24,8 @@ import (
 // pages through them 400 at a time. Every part must come back exactly once, in
 // order, across pages that report truncation until the last.
 func TestListParts_SDKPaginatorSeesEveryPartOnce(t *testing.T) {
+	// Every part claims room on the upload's backend, so start from empty ones.
+	resetState(t)
 	client := newS3Client(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "list-parts-paging")

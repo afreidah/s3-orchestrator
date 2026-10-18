@@ -4,11 +4,11 @@
 // Author: Alex Freidah
 //
 // Covers the scrubber's verify-and-repair path: hash matches accept the
-// copy, mismatches enqueue cleanup with reason integrity_scrub_failed,
-// backend errors are tolerated and counted, empty batches no-op, and the
-// backfill path computes-then-stores hashes for objects predating the
-// content_hash column. The mismatch enqueue is the load-bearing assertion
-// because it is how silent corruption gets surfaced.
+// copy, mismatches drop the row and settle the cleanup it queued under reason
+// integrity_scrub_failed, backend errors are tolerated and counted, empty
+// batches no-op, and the backfill path computes-then-stores hashes for
+// objects predating the content_hash column. The mismatch cleanup is the
+// load-bearing assertion because it is how silent corruption gets surfaced.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -41,6 +41,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
+
+// reasonScrubFailed is the cleanup reason a copy failing its hash check is
+// queued under.
+const reasonScrubFailed = "integrity_scrub_failed"
 
 // hashString reports whether h string.
 func hashString(s string) string {
@@ -109,9 +113,9 @@ func TestScrub_HashMismatch(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "badhash"},
 	}
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/key1", reasonScrubFailed, int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
 		Size: 11,
@@ -483,17 +487,17 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 }
 
 // TestPurgeUnreadable_DiscardsEachCopy verifies each unreadable copy has its
-// bytes deleted or queued and its row removed, and the list reports the total.
+// row removed and the cleanup its removal queued settled, and the list reports
+// the total.
 func TestPurgeUnreadable_DiscardsEachCopy(t *testing.T) {
 	t.Parallel()
-	s, ops, pl, be, ms := setupScrubber(t)
+	s, _, pl, _, ms := setupScrubber(t)
 	ms.unreadable = []core.ObjectLocation{
 		{ObjectKey: "bucket/a", BackendName: "b1", SizeBytes: 508, Encrypted: true},
 		{ObjectKey: "bucket/b", BackendName: "b1", SizeBytes: 102, Encrypted: true},
 	}
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/a", "unreadable_purged", int64(508)))
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/b", "unreadable_purged", int64(102)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/a", "unreadable_purged", int64(508)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/b", "unreadable_purged", int64(102)))
 
 	copies, total, err := s.ListUnreadable(context.Background(), 1)
 	if err != nil || len(copies) != 1 || total != 2 {
@@ -599,9 +603,9 @@ func TestScrub_DiscardedCopyDropsItsLocation(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "expected-hash"},
 	}
-	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
+	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/key1", reasonScrubFailed, int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,
@@ -751,7 +755,7 @@ func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader("hello")),
 			Size: 5,
 		}, func() {}, nil)
-	placement.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), cleanupOn("b1", "bucket/rotted")).AnyTimes()
+	placement.EXPECT().Settle(gomock.Any(), cleanupOn("b1", "bucket/rotted")).AnyTimes()
 
 	var statuses []string
 	sum := s.Scrub(context.Background(), 10, "", func(step progress.Step) {
@@ -980,7 +984,7 @@ func TestScrubKey_ReportsEachCopySeparately(t *testing.T) {
 				Size: 11,
 			}, context.CancelFunc(func() {}), nil
 		}).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), cleanupOn("b2", "bucket/k")).AnyTimes()
+	pl.EXPECT().Settle(gomock.Any(), cleanupOn("b2", "bucket/k")).AnyTimes()
 
 	results, err := s.ScrubKey(context.Background(), "bucket/k")
 	if err != nil {

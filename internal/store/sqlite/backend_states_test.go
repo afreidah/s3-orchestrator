@@ -11,12 +11,10 @@ package sqlite
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // drainBackendName is the backend every drain test drains.
@@ -44,7 +42,7 @@ func admits(t *testing.T, s *Store, backend, intentID string) bool {
 	t.Helper()
 	ok, err := s.InsertPendingIfFits(context.Background(), &core.PendingObject{
 		IntentID: intentID, ObjectKey: "drain/" + intentID, BackendName: backend, SizeBytes: 1,
-	})
+	}, core.AcceptForWrite)
 	if err != nil {
 		t.Fatalf("InsertPendingIfFits: %v", err)
 	}
@@ -165,8 +163,9 @@ func TestDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	}
 }
 
-// TestDrainRecord_RefusesReplicaTarget verifies a placement, the other
-// admission path, refuses a draining target and records nothing there.
+// TestDrainRecord_RefusesReplicaTarget verifies the claim a replica takes on
+// its target before copying refuses a draining backend, so nothing is
+// recorded there.
 func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -177,11 +176,12 @@ func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustStartDrain(t, s, "backend-b")
-	_, err := s.PlaceCopy(ctx, &core.Placement{
-		Source: storetest.LocationOn(t, s, key, "backend-a"), Target: "backend-b", StorageKey: key + "!r",
-	})
-	if !errors.Is(err, core.ErrTargetRefused) {
-		t.Errorf("PlaceCopy onto a draining backend = %v; want ErrTargetRefused", err)
+	fits, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
+		IntentID: "intent-replica", ObjectKey: key, StorageKey: key + "!r",
+		BackendName: "backend-b", SizeBytes: 1, Role: core.PendingRoleCompanion,
+	}, core.AcceptForWrite)
+	if err != nil || fits {
+		t.Errorf("replica claim on a draining backend = %v, %v; want refused", fits, err)
 	}
 	if locs, err := s.GetAllObjectLocations(ctx, key); err != nil || len(locs) != 1 {
 		t.Errorf("copies after a refused placement = %+v, %v; want only the source", locs, err)

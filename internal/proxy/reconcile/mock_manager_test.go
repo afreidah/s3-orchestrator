@@ -44,18 +44,18 @@ func (m *MockStores) EXPECT() *MockStoresMockRecorder {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockStores) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (m *MockStores) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
-	ret0, _ := ret[0].(core.DeletedCopy)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockStoresMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
+func (mr *MockStoresMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockStores)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockStores)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
 }
 
 // GetAllObjectLocations mocks base method.

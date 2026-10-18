@@ -306,7 +306,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	// not a figure held in memory. Registered before the permissive defaults so
 	// this is the expectation the claim matches.
 	ts, _, _ := newTestServerWithQuota(t, nil, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
+		m.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
@@ -850,8 +850,8 @@ func TestDelete_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.DeletedCopy{
-				{BackendName: "b1", SizeBytes: 2},
+			Return([]core.CleanupItem{
+				{ID: 1, BackendName: "b1", ObjectKey: "mybucket/testkey", SizeBytes: 2},
 			}, core.QuotaDeltas{"b1": -2}, nil).AnyTimes()
 	})
 
@@ -861,6 +861,9 @@ func TestDelete_Success(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if _, ok := backend.CopyOf("mybucket/testkey"); ok {
+		t.Error("queued copy was not settled off the backend")
 	}
 }
 
@@ -886,23 +889,27 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 // DELETE OBJECTS (BATCH)
 // -------------------------------------------------------------------------
 
+// batchDeleteOnB1 stubs DeleteObjectsBatch with every key holding one
+// one-byte copy on b1, queued for cleanup.
+func batchDeleteOnB1(_ context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+	items := make([]core.CleanupItem, 0, len(keys))
+	deltas := core.QuotaDeltas{}
+	for i, k := range keys {
+		items = append(items, core.CleanupItem{ID: int64(i + 1), BackendName: "b1", ObjectKey: k, SizeBytes: 1})
+		deltas.Add("b1", -1)
+	}
+	return items, deltas, nil
+}
+
 // TestDeleteObjects_Success verifies the delete objects success contract.
 // Asserts that status = , want 200.
 func TestDeleteObjects_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
+			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
-				out := make(map[string][]core.DeletedCopy, len(keys))
-				deltas := core.QuotaDeltas{}
-				for _, k := range keys {
-					out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
-					deltas.Add("b1", -1)
-				}
-				return out, deltas, nil
-			}).AnyTimes()
+			DoAndReturn(batchDeleteOnB1).AnyTimes()
 	})
 
 	backend.Objects["mybucket/key1"] = backendtest.Object{Data: []byte("a")}
@@ -930,17 +937,9 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
+			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
-				out := make(map[string][]core.DeletedCopy, len(keys))
-				deltas := core.QuotaDeltas{}
-				for _, k := range keys {
-					out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
-					deltas.Add("b1", -1)
-				}
-				return out, deltas, nil
-			}).AnyTimes()
+			DoAndReturn(batchDeleteOnB1).AnyTimes()
 	})
 
 	body := strings.NewReader(`<Delete><Quiet>true</Quiet><Object><Key>key1</Key></Object></Delete>`)

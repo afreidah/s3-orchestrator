@@ -81,6 +81,38 @@ func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipart
 	return result.RowsAffected(), nil
 }
 
+const deleteMultipartParts = `-- name: DeleteMultipartParts :many
+DELETE FROM multipart_parts
+WHERE upload_id = $1
+RETURNING part_number, size_bytes, storage_key
+`
+
+type DeleteMultipartPartsRow struct {
+	PartNumber int32
+	SizeBytes  int64
+	StorageKey *string
+}
+
+func (q *Queries) DeleteMultipartParts(ctx context.Context, uploadID string) ([]DeleteMultipartPartsRow, error) {
+	rows, err := q.db.Query(ctx, deleteMultipartParts, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeleteMultipartPartsRow{}
+	for rows.Next() {
+		var i DeleteMultipartPartsRow
+		if err := rows.Scan(&i.PartNumber, &i.SizeBytes, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteMultipartUpload = `-- name: DeleteMultipartUpload :exec
 DELETE FROM multipart_uploads
 WHERE upload_id = $1
@@ -137,8 +169,35 @@ func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetM
 	return i, err
 }
 
+const getPartForUpdate = `-- name: GetPartForUpdate :one
+SELECT part_number, size_bytes, storage_key
+FROM multipart_parts
+WHERE upload_id = $1 AND part_number = $2
+FOR UPDATE
+`
+
+type GetPartForUpdateParams struct {
+	UploadID   string
+	PartNumber int32
+}
+
+type GetPartForUpdateRow struct {
+	PartNumber int32
+	SizeBytes  int64
+	StorageKey *string
+}
+
+// The part a re-upload of its number is about to replace, locked so the
+// replacement and the cleanup of the old bytes commit together.
+func (q *Queries) GetPartForUpdate(ctx context.Context, arg GetPartForUpdateParams) (GetPartForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getPartForUpdate, arg.UploadID, arg.PartNumber)
+	var i GetPartForUpdateRow
+	err := row.Scan(&i.PartNumber, &i.SizeBytes, &i.StorageKey)
+	return i, err
+}
+
 const getParts = `-- name: GetParts :many
-SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
 FROM multipart_parts
 WHERE upload_id = $1
 ORDER BY part_number
@@ -153,6 +212,7 @@ type GetPartsRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	StorageKey    *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -174,6 +234,7 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.StorageKey,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -232,7 +293,7 @@ func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMult
 }
 
 const listParts = `-- name: ListParts :many
-SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
 FROM multipart_parts
 WHERE upload_id = $1
   AND part_number > $2
@@ -255,6 +316,7 @@ type ListPartsRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	StorageKey    *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -278,6 +340,7 @@ func (q *Queries) ListParts(ctx context.Context, arg ListPartsParams) ([]ListPar
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.StorageKey,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -288,6 +351,21 @@ func (q *Queries) ListParts(ctx context.Context, arg ListPartsParams) ([]ListPar
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockMultipartUpload = `-- name: LockMultipartUpload :one
+SELECT backend_name FROM multipart_uploads
+WHERE upload_id = $1
+FOR UPDATE
+`
+
+// Taken before the parts are removed, so a part recorded concurrently waits on
+// the upload row and then finds it gone rather than landing unseen.
+func (q *Queries) LockMultipartUpload(ctx context.Context, uploadID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockMultipartUpload, uploadID)
+	var backend_name string
+	err := row.Scan(&backend_name)
+	return backend_name, err
 }
 
 const scanMultipartUploads = `-- name: ScanMultipartUploads :many
@@ -355,10 +433,10 @@ func (q *Queries) ScanMultipartUploads(ctx context.Context, arg ScanMultipartUpl
 }
 
 const upsertPart = `-- name: UpsertPart :exec
-INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 ON CONFLICT (upload_id, part_number) DO UPDATE SET
-    etag = $3, plaintext_etag = $4, size_bytes = $5, encrypted = $6, encryption_key = $7, key_id = $8, plaintext_size = $9, created_at = NOW()
+    etag = $3, plaintext_etag = $4, size_bytes = $5, encrypted = $6, encryption_key = $7, key_id = $8, plaintext_size = $9, storage_key = $10, created_at = NOW()
 `
 
 type UpsertPartParams struct {
@@ -371,6 +449,7 @@ type UpsertPartParams struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	StorageKey    *string
 }
 
 func (q *Queries) UpsertPart(ctx context.Context, arg UpsertPartParams) error {
@@ -384,6 +463,7 @@ func (q *Queries) UpsertPart(ctx context.Context, arg UpsertPartParams) error {
 		arg.EncryptionKey,
 		arg.KeyID,
 		arg.PlaintextSize,
+		arg.StorageKey,
 	)
 	return err
 }

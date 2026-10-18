@@ -581,11 +581,11 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		SrcBackend:  srcBackend,
 		DestBackend: destBackend,
 		DestName:    move.ToBackend,
-		Reasons:     writepath.RebalanceMoveReasons,
+		Profile:     writepath.RebalanceMove,
 	})
 	if err != nil {
 		if core.PlacementDeclined(err) {
-			r.log.InfoContext(ctx, "object changed or target refused it, cleaned up",
+			r.log.InfoContext(ctx, "object changed or target refused it, its copy queued for cleanup",
 				"key", key, "to", move.ToBackend, "reason", err)
 			return false
 		}

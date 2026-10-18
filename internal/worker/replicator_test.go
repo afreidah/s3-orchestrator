@@ -409,6 +409,28 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	if ms.staleDeleted != 1 {
 		t.Errorf("staleDeleted = %d, want 1", ms.staleDeleted)
 	}
+	if len(ms.deleteReasons) != 1 || ms.deleteReasons[0] != "" {
+		t.Errorf("delete reasons = %q, want one empty reason so nothing is queued", ms.deleteReasons)
+	}
+}
+
+// TestPruneStaleSource_KeepsTheRowOnFailure verifies a stale-row removal that
+// the store declines or fails leaves the row in place without aborting.
+func TestPruneStaleSource_KeepsTheRowOnFailure(t *testing.T) {
+	t.Parallel()
+	for _, delErr := range []error{core.ErrCopyChanged, errors.New("db down")} {
+		t.Run(delErr.Error(), func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ms := &mockMetadataStore{deleteLocationErr: delErr}
+			r := newTestReplicator(newMockOps(ctrl), NewMockPlacement(ctrl), ms)
+
+			r.pruneStaleSource(context.Background(), &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1"})
+			if ms.staleDeleted != 0 {
+				t.Errorf("staleDeleted = %d, want 0", ms.staleDeleted)
+			}
+		})
+	}
 }
 
 // TestCopyToReplica_AllSourcesFail verifies the copy to replica all sources fail path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
@@ -515,21 +537,57 @@ func TestCopyToReplica_UntypedErrorRetriesNextSource(t *testing.T) {
 	}
 }
 
-// TestCleanupOrphan_DelegatesToDeleteOrEnqueue verifies the cleanup orphan delegates to delete or enqueue path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
-func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
-	t.Parallel()
+// declinedClaimReplicator builds a replicator whose only target, b2, declines
+// the claim with claimErr, so a test can assert how the attempt is tallied.
+// Nothing is copied or placed: the unset gomock expectations assert it.
+func declinedClaimReplicator(t *testing.T, claimErr error) *Replicator {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
+	expectFleet(ops, map[string]backend.ObjectBackend{"b1": backendtest.NewMockObjectBackend(ctrl)})
+	gomock.InOrder(
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"b2"}),
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			DoAndReturn(func(_ int64, excl map[string]bool) []string {
+				if !excl["b2"] {
+					t.Error("must exclude b2 after its claim was declined")
+				}
+				return nil
+			}),
+	)
+	pl.EXPECT().ClaimCopyTarget(gomock.Any(), intentOn("b2", "key1"), core.AcceptForWrite).Return(claimErr)
+	return newTestReplicator(ops, pl, &mockMetadataStore{})
+}
 
-	be := backendtest.NewMockObjectBackend(ctrl)
+// TestReplicateObject_ClaimRefusedExcludesTarget verifies a target that has no
+// room for the replica is dropped without counting an error.
+func TestReplicateObject_ClaimRefusedExcludesTarget(t *testing.T) {
+	t.Parallel()
+	r := declinedClaimReplicator(t, core.ErrTargetRefused)
+	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
 
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "key1", writepath.ReplicationOrphanReasons.Orphan, int64(100)))
+	out := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	if out.Created != 0 || out.RecordErrors != 0 || out.CopyErrors != 0 {
+		t.Errorf("outcome = %+v, want nothing created and no errors", out)
+	}
+}
 
-	r := newTestReplicator(ops, pl, ms)
-	r.CleanupOrphan(context.Background(), "b1", "key1", "key1", 100)
+// TestReplicateObject_ClaimErrorCountsARecordError verifies a claim that fails
+// for any reason but a refusal drops the target and counts a record error.
+func TestReplicateObject_ClaimErrorCountsARecordError(t *testing.T) {
+	t.Parallel()
+	r := declinedClaimReplicator(t, errors.New("db down"))
+	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
+
+	before := promtest.ToFloat64(telemetry.ReplicationErrorsTotal)
+	out := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	if out.Created != 0 || out.RecordErrors != 1 {
+		t.Errorf("outcome = %+v, want one record error", out)
+	}
+	if got := promtest.ToFloat64(telemetry.ReplicationErrorsTotal) - before; got < 1 {
+		t.Errorf("ReplicationErrorsTotal moved by %v, want at least 1", got)
+	}
 }
 
 // TestReplicate_FactorOne_Noop verifies the replicate factor one noop contract.
@@ -587,7 +645,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ms := &mockMetadataStore{placeCopySize: 50}
-	placed := placeThroughStore(pl, ms)
+	placeThroughStore(pl, ms)
 
 	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"b2"})
 	expectFleet(ops, map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe})
@@ -611,17 +669,15 @@ func TestReplicateObject_Success(t *testing.T) {
 	if p.Source == nil || p.Source.BackendName != "b1" || p.Source.StorageKey != "key1!on-b1" {
 		t.Errorf("placement source = %+v, want the b1 copy the pass read", p.Source)
 	}
-	if p.Target != "b2" || p.StorageKey == "" || p.RemoveSource {
-		t.Errorf("placement = target %q storage key %q remove %v, want b2, a minted key, and the source kept",
-			p.Target, p.StorageKey, p.RemoveSource)
+	if p.Intent == nil || p.Intent.BackendName != "b2" || p.Intent.StorageKey == "" || p.RemoveSource {
+		t.Fatalf("placement = %+v, want an intent on b2 with a minted key, and the source kept", p)
 	}
-	if p.Form != nil {
-		t.Errorf("placement form = %+v, want nil for a verbatim replica", p.Form)
+	if p.Intent.Role != core.PendingRoleCompanion || p.Intent.SizeBytes != 50 {
+		t.Errorf("intent = %+v, want a companion claim of 50 bytes", p.Intent)
 	}
-	got := (*placed)[0]
-	if got.dest != dstBe || got.written != 50 || got.reasons != writepath.ReplicationOrphanReasons {
-		t.Errorf("PlaceOrCleanup got dest %v written %d reasons %+v, want the b2 client, 50 and the replication reasons",
-			got.dest, got.written, got.reasons)
+	if p.Reformed || p.Reasons != writepath.ReplicationReasons {
+		t.Errorf("placement reformed %v reasons %+v, want a verbatim replica under the replication reasons",
+			p.Reformed, p.Reasons)
 	}
 }
 
@@ -669,8 +725,8 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	ops.EXPECT().GetBackend("fail").Return(failBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{src: srcBe, dst: failBe}).
 		Return(int64(0), &backend.CopyError{Phase: backend.CopyPhaseWrite, Err: errors.New("put object failed: 413 EntityTooLarge")})
-	// The failed copy may have left bytes on "fail", so its path is cleaned up.
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), failBe, cleanupOf("fail", "key1", writepath.ReplicationOrphanReasons.Orphan, int64(50)))
+	// The failed copy may have left bytes on "fail", so its intent is discarded.
+	pl.EXPECT().Discard(gomock.Any(), intentOn("fail", "key1"), writepath.ReplicationReasons.Orphan)
 
 	// "ok" backend: succeeds
 	ops.EXPECT().GetBackend("ok").Return(okBe, nil)
@@ -694,8 +750,8 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 }
 
 // TestReplicateObject_PlaceCopyErrorExcludesTarget pins that a placement that
-// errors counts as a record error and drops the target, leaving the cleanup
-// of the written bytes to PlaceOrCleanup.
+// errors counts as a record error and drops the target, leaving the written
+// bytes to the placement and the reaper.
 func TestReplicateObject_PlaceCopyErrorExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -706,7 +762,7 @@ func TestReplicateObject_PlaceCopyErrorExcludesTarget(t *testing.T) {
 	failBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ms := &mockMetadataStore{placeCopyErr: errors.New("db down")}
-	placed := placeThroughStore(pl, ms)
+	placeThroughStore(pl, ms)
 
 	expectFleet(ops, map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe,
@@ -736,15 +792,15 @@ func TestReplicateObject_PlaceCopyErrorExcludesTarget(t *testing.T) {
 	if outcome.RecordErrors != 1 {
 		t.Errorf("RecordErrors = %d, want 1", outcome.RecordErrors)
 	}
-	if len(*placed) != 1 || (*placed)[0].dest != failBe || (*placed)[0].written != 50 {
-		t.Errorf("PlaceOrCleanup calls = %+v, want one for the fail client at 50 bytes", *placed)
+	if len(ms.placements) != 1 || ms.placements[0].Intent.BackendName != "fail" {
+		t.Errorf("placements = %+v, want one on the fail backend", ms.placements)
 	}
 }
 
 // TestReplicateObject_DeclinedPlacementExcludesTarget pins that a placement
 // declined because the source changed or the target refused counts as
 // superseded and drops the target, leaving the cleanup of the written bytes to
-// PlaceOrCleanup.
+// the placement.
 func TestReplicateObject_DeclinedPlacementExcludesTarget(t *testing.T) {
 	t.Parallel()
 	for _, declined := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {

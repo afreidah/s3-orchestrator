@@ -22,7 +22,6 @@ type BackendQuota struct {
 	BackendName string
 	BytesLimit  int64
 	UpdatedAt   pgtype.Timestamptz
-	OrphanBytes int64
 }
 
 type BackendQuotaStripe struct {
@@ -122,6 +121,7 @@ type MultipartPart struct {
 	KeyID         *string
 	PlaintextSize *int64
 	PlaintextEtag *string
+	StorageKey    *string
 }
 
 type MultipartUpload struct {

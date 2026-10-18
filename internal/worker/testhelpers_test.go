@@ -16,6 +16,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -71,20 +71,30 @@ func withCleanupPaths(rows []core.CleanupItem) []core.CleanupItem {
 // MATCHERS
 // -------------------------------------------------------------------------
 
-// cleanupOf matches an enqueued cleanup by backend, object key, reason, and
-// size. The storage path is not matched, since workers mint it randomly.
+// cleanupOf matches a settled batch of exactly one queued cleanup by backend,
+// object key, reason, and size. The storage path is not matched, since
+// workers mint it randomly.
 func cleanupOf(backendName, objectKey, reason string, size int64) gomock.Matcher {
-	return gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == backendName && c.ObjectKey == objectKey &&
-			c.Reason == reason && c.SizeBytes == size
+	return gomock.Cond(func(items []core.CleanupItem) bool {
+		return len(items) == 1 && items[0].BackendName == backendName &&
+			items[0].ObjectKey == objectKey && items[0].Reason == reason &&
+			items[0].SizeBytes == size
 	})
 }
 
-// cleanupOn matches an enqueued cleanup by backend and object alone, for tests
-// whose subject is that a cleanup happened at all.
+// cleanupOn matches a settled batch of exactly one queued cleanup by backend
+// and object alone, for tests whose subject is that a cleanup happened at all.
 func cleanupOn(backendName, objectKey string) gomock.Matcher {
-	return gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == backendName && c.ObjectKey == objectKey
+	return gomock.Cond(func(items []core.CleanupItem) bool {
+		return len(items) == 1 && items[0].BackendName == backendName &&
+			items[0].ObjectKey == objectKey
+	})
+}
+
+// intentOn matches a copy intent by its target backend and object key.
+func intentOn(backendName, objectKey string) gomock.Matcher {
+	return gomock.Cond(func(p *core.PendingObject) bool {
+		return p.BackendName == backendName && p.ObjectKey == objectKey
 	})
 }
 
@@ -138,25 +148,28 @@ func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator
 	return NewReplicator(ReplicatorDeps{Ops: ops, Placement: pl, Store: store})
 }
 
-// placedCopy is one recorded PlaceOrCleanup call: the backend handed for the
-// cleanup, the bytes the caller wrote, and the cleanup reasons it chose.
-type placedCopy struct {
-	dest    backend.ObjectBackend
-	written int64
-	reasons writepath.OrphanReasons
+// admitClaims has pl accept every copy-target claim, recording each intent
+// claimed. The returned slice pointer collects every claim.
+func admitClaims(pl *MockPlacement) *[]*core.PendingObject {
+	claims := &[]*core.PendingObject{}
+	pl.EXPECT().ClaimCopyTarget(gomock.Any(), gomock.Any(), core.AcceptForWrite).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) error {
+			*claims = append(*claims, p)
+			return nil
+		}).AnyTimes()
+	return claims
 }
 
-// placeThroughStore has pl's PlaceOrCleanup record its placement on ms, the way
-// the coordinator places through the store, and answer with ms's configured
-// size or error. The returned slice pointer collects every call.
-func placeThroughStore(pl *MockPlacement, ms *mockMetadataStore) *[]placedCopy {
-	calls := &[]placedCopy{}
-	pl.EXPECT().PlaceOrCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, p *core.Placement, dest backend.ObjectBackend, written int64, reasons writepath.OrphanReasons) (int64, error) {
-			*calls = append(*calls, placedCopy{dest: dest, written: written, reasons: reasons})
-			return ms.PlaceCopy(ctx, p)
+// placeThroughStore has pl accept every claim and place through ms, the way the
+// coordinator places through the store, answering with ms's configured size or
+// error. Every placement is recorded on ms.placements.
+func placeThroughStore(pl *MockPlacement, ms *mockMetadataStore) {
+	admitClaims(pl)
+	pl.EXPECT().Place(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, p *core.Placement) (int64, error) {
+			placed, _, err := ms.PlaceCopy(ctx, p)
+			return placed, err
 		}).AnyTimes()
-	return calls
 }
 
 // -------------------------------------------------------------------------
@@ -209,6 +222,7 @@ type mockMetadataStore struct {
 	markScrubbedErr     error
 	hashPatchErr        error
 	deletedLocations    []string
+	deleteReasons       []string
 	deleteLocationErr   error
 	ledgerErr           error
 	ledger              core.LedgerStats
@@ -228,6 +242,7 @@ type mockMetadataStore struct {
 	removedCopySize     int64
 	removeExcessNoOp    bool
 	removeExcessErr     error
+	removeExcessFailKey string
 	objectsByBackend    map[string][]core.ObjectLocation
 	staleDeleted        int
 
@@ -238,7 +253,7 @@ type mockMetadataStore struct {
 	deletedPendingIDs []string
 	promotedPending   []core.PendingObject
 	promoteResult     core.PendingPromoteResult
-	promoteDisplaced  []core.DeletedCopy
+	promoteCleanup    []core.CleanupItem
 	promoteDeltas     core.QuotaDeltas
 	promoteErr        error
 	pendingDepthVal   int64
@@ -436,12 +451,12 @@ func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.Qu
 
 // PlaceCopy records the placement on mockMetadataStore and returns the
 // test-set size, or the test-set error in its place.
-func (m *mockMetadataStore) PlaceCopy(_ context.Context, p *core.Placement) (int64, error) {
+func (m *mockMetadataStore) PlaceCopy(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	m.placements = append(m.placements, *p)
 	if m.placeCopyErr != nil {
-		return 0, m.placeCopyErr
+		return 0, nil, m.placeCopyErr
 	}
-	return m.placeCopySize, nil
+	return m.placeCopySize, nil, nil
 }
 
 // GetOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
@@ -504,24 +519,47 @@ func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, 
 // absorbed the excess, or the seeded removeExcessErr when the test drives a
 // refusal. Any other removal records the copy and reports it removed at its
 // own size, as the store does when the copy is unchanged, or returns
-// deleteLocationErr.
-func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+// deleteLocationErr. A removal queues one cleanup row under reason, and none
+// when reason is empty. Every reason passed is recorded on deleteReasons.
+func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
+	m.deleteReasons = append(m.deleteReasons, reason)
 	if keepAtLeast > 0 {
 		switch {
+		case loc.ObjectKey == m.removeExcessFailKey:
+			return nil, errRemoveExcessFailed
 		case m.removeExcessErr != nil:
-			return core.DeletedCopy{}, m.removeExcessErr
+			return nil, m.removeExcessErr
 		case m.removeExcessNoOp:
-			return core.DeletedCopy{}, core.ErrCopyNotExcess
+			return nil, core.ErrCopyNotExcess
 		}
 		m.removedCopies++
-		return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: m.removedCopySize}, nil
+		return queuedCleanup(loc, reason, m.removedCopySize), nil
 	}
 	if m.deleteLocationErr != nil {
-		return core.DeletedCopy{}, m.deleteLocationErr
+		return nil, m.deleteLocationErr
 	}
 	m.staleDeleted++
 	m.deletedLocations = append(m.deletedLocations, loc.ObjectKey+"@"+loc.BackendName)
-	return core.DeletedCopy{BackendName: loc.BackendName, StorageKey: loc.StorageKey, SizeBytes: loc.SizeBytes}, nil
+	return queuedCleanup(loc, reason, loc.SizeBytes), nil
+}
+
+// errRemoveExcessFailed is the store error a surplus-copy removal of
+// removeExcessFailKey fails with.
+var errRemoveExcessFailed = errors.New("remove excess copy failed")
+
+// queuedCleanup is the cleanup row a removal of loc queues under reason, or
+// nothing when reason is empty, as the store does.
+func queuedCleanup(loc *core.ObjectLocation, reason string, size int64) []core.CleanupItem {
+	if reason == "" {
+		return nil
+	}
+	return []core.CleanupItem{{
+		BackendName: loc.BackendName,
+		ObjectKey:   loc.ObjectKey,
+		StorageKey:  loc.StorageKey,
+		Reason:      reason,
+		SizeBytes:   size,
+	}}
 }
 
 // --- PendingStore stubs ---
@@ -544,11 +582,11 @@ func (m *mockMetadataStore) DeletePending(_ context.Context, intentID string) er
 // resolution outcome. The captured slice lets tests verify the reaper
 // passed is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.CleanupItem, core.QuotaDeltas, error) {
 	if p != nil {
 		m.promotedPending = append(m.promotedPending, *p)
 	}
-	return m.promoteResult, m.promoteDisplaced, m.promoteDeltas, m.promoteErr
+	return m.promoteResult, m.promoteCleanup, m.promoteDeltas, m.promoteErr
 }
 
 // PendingDepth returns the configured depth value (defaults to 0).

@@ -44,34 +44,41 @@ var (
 	alsoOnB2 = []string{"b1", "b2"}
 )
 
+// drainedCleanupID is the id of the cleanup row the drained copy's removal
+// queues.
+const drainedCleanupID = 41
+
 // removesDrainedCopy has the conditional removal drop the drained copy and
-// report its path and size.
+// queue its bytes under the drain's source-delete reason.
 func removesDrainedCopy(store *storetest.MockMetadataStore) {
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).
-		Return(core.DeletedCopy{BackendName: "b1", StorageKey: "key1", SizeBytes: 4}, nil).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1, writepath.DrainMove.Reasons.SourceDelete).
+		Return([]core.CleanupItem{{
+			ID: drainedCleanupID, BackendName: "b1", ObjectKey: "key1", StorageKey: "key1",
+			Reason: writepath.DrainMove.Reasons.SourceDelete, SizeBytes: 4,
+		}}, nil).AnyTimes()
 }
 
-// captureEnqueue records the reason of every cleanup row enqueued.
-func captureEnqueue(store *storetest.MockMetadataStore) *[]string {
+// captureCompleted records the id of every cleanup row retired.
+func captureCompleted(store *storetest.MockMetadataStore) *[]int64 {
 	var (
-		mu      sync.Mutex
-		reasons []string
+		mu  sync.Mutex
+		ids []int64
 	)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, c *core.CleanupRequest) error {
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64) error {
 			mu.Lock()
 			defer mu.Unlock()
-			reasons = append(reasons, c.Reason)
+			ids = append(ids, id)
 			return nil
 		}).AnyTimes()
-	return &reasons
+	return &ids
 }
 
 // newDrainStore returns a SQLite store that knows the named backends.
 func newDrainStore(t *testing.T, backends ...string) *sqlite.Store {
 	t.Helper()
 	ctx := context.Background()
-	s, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
+	s, err := sqlite.NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil, "test-instance")
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -127,7 +134,8 @@ func startDrain(t *testing.T, s *sqlite.Store, backend string) {
 // -------------------------------------------------------------------------
 
 // TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy verifies an object another
-// backend also holds loses only its copy on the draining backend.
+// backend also holds loses only its copy on the draining backend, and that the
+// cleanup row its removal queued is settled.
 func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
@@ -135,6 +143,7 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	removesDrainedCopy(store)
+	completed := captureCompleted(store)
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
@@ -143,6 +152,9 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 	}
 	if src.Has("key1") {
 		t.Error("the draining backend still holds its copy")
+	}
+	if len(*completed) != 1 || (*completed)[0] != drainedCleanupID {
+		t.Errorf("retired cleanup rows %v, want the drained copy's row", *completed)
 	}
 }
 
@@ -156,12 +168,12 @@ func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
 	dst := backendtest.NewInMemory()
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).Return(core.DeletedCopy{}, core.ErrCopyNotExcess)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1, gomock.Any()).Return(nil, core.ErrCopyNotExcess)
 	moves := 0
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, *core.Placement) (int64, error) {
+		DoAndReturn(func(context.Context, *core.Placement) (int64, []core.CleanupItem, error) {
 			moves++
-			return 4, nil
+			return 4, nil, nil
 		}).AnyTimes()
 	storetest.Permissive(store)
 
@@ -183,7 +195,7 @@ func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
 	src.Objects["key1"] = backendtest.Object{Data: []byte("data")}
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1).Return(core.DeletedCopy{}, core.ErrCopyHoldsOnlyDEK)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), drainedObject(), 1, gomock.Any()).Return(nil, core.ErrCopyHoldsOnlyDEK)
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
@@ -207,9 +219,9 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	var placed core.Placement
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.Placement) (int64, error) {
+		DoAndReturn(func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 			placed = *p
-			return 4, nil
+			return 4, nil, nil
 		}).AnyTimes()
 	storetest.Permissive(store)
 
@@ -218,52 +230,85 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	if !d.drainOne(context.Background(), src, "b1", obj, onlyOnB1) {
 		t.Fatal("drainOne failed to move the only copy")
 	}
-	if placed.Source != obj || placed.Target != "b2" || !placed.RemoveSource {
-		t.Errorf("placement = source %+v target %q remove %v, want the drained copy moved to b2",
-			placed.Source, placed.Target, placed.RemoveSource)
+	if placed.Source != obj || placed.Intent == nil || placed.Intent.BackendName != "b2" || !placed.RemoveSource {
+		t.Fatalf("placement = %+v, want the drained copy moved to b2", placed)
 	}
-	if placed.StorageKey == "" || placed.StorageKey == "key1" || !dst.Has(placed.StorageKey) {
-		t.Errorf("copy placed at path %q; the destination must hold the bytes at a fresh path", placed.StorageKey)
+	if placed.Reasons != writepath.DrainMove.Reasons {
+		t.Errorf("placement reasons = %+v, want the drain's", placed.Reasons)
+	}
+	path := placed.Intent.StorageKey
+	if path == "" || path == "key1" || !dst.Has(path) {
+		t.Errorf("copy placed at path %q; the destination must hold the bytes at a fresh path", path)
 	}
 }
 
-// TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft verifies a move whose
-// placement fails, or is declined because the object changed or the target
-// refused it, queues the destination copy for cleanup under the drain's own
-// reasons.
-func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
+// TestDrainOne_RefusedMove_SettlesTheCopyItLeft verifies a move whose placement
+// is declined because the object changed or the target refused it settles the
+// cleanup row the refusal queued, so the destination copy is deleted.
+func TestDrainOne_RefusedMove_SettlesTheCopyItLeft(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		moved  int64
-		err    error
-		reason string
-	}{
-		{"placement fails", 0, errors.New("serialization failure"), "drain_orphan"},
-		{"object changed", 0, core.ErrCopyChanged, "drain_stale_orphan"},
-		{"target refused", 0, core.ErrTargetRefused, "drain_stale_orphan"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, refusal := range []error{core.ErrCopyChanged, core.ErrTargetRefused} {
+		t.Run(refusal.Error(), func(t *testing.T) {
 			t.Parallel()
 			src := backendtest.NewInMemory()
 			src.Objects["key1"] = backendtest.Object{Data: []byte("abcd"), ContentType: "text/plain"}
 			dst := backendtest.NewInMemory()
-			dst.DeleteErr = errors.New("backend down")
 
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
+			var path string
 			store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-				Return(tc.moved, tc.err).AnyTimes()
-			reasons := captureEnqueue(store)
+				DoAndReturn(func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
+					path = p.Intent.StorageKey
+					return 0, []core.CleanupItem{{
+						ID: drainedCleanupID, BackendName: "b2", ObjectKey: "key1", StorageKey: path,
+						Reason: p.Reasons.Orphan, SizeBytes: 4,
+					}}, refusal
+				})
+			completed := captureCompleted(store)
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
 			if d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
 				t.Fatal("drainOne reported success")
 			}
-			if len(*reasons) != 1 || (*reasons)[0] != tc.reason {
-				t.Errorf("enqueued %v, want one %s row", *reasons, tc.reason)
+			if dst.Has(path) {
+				t.Error("the refused copy is still on the destination")
+			}
+			if len(*completed) != 1 || (*completed)[0] != drainedCleanupID {
+				t.Errorf("retired cleanup rows %v, want the refused copy's row", *completed)
 			}
 		})
+	}
+}
+
+// TestDrainOne_PlacementError_LeavesTheCopyForTheReaper verifies a placement
+// that fails outright queues nothing, so the destination copy stays under its
+// intent for the pending reaper to resolve.
+func TestDrainOne_PlacementError_LeavesTheCopyForTheReaper(t *testing.T) {
+	t.Parallel()
+	src := backendtest.NewInMemory()
+	src.Objects["key1"] = backendtest.Object{Data: []byte("abcd"), ContentType: "text/plain"}
+	dst := backendtest.NewInMemory()
+
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	var path string
+	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
+			path = p.Intent.StorageKey
+			return 0, nil, errors.New("serialization failure")
+		})
+	completed := captureCompleted(store)
+	storetest.Permissive(store)
+
+	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
+	if d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
+		t.Fatal("drainOne reported success")
+	}
+	if !dst.Has(path) {
+		t.Error("the unplaced copy was deleted; the reaper resolves it through its intent")
+	}
+	if len(*completed) != 0 {
+		t.Errorf("retired cleanup rows %v, want none", *completed)
 	}
 }
 
@@ -277,8 +322,8 @@ func TestDrainOne_Failures(t *testing.T) {
 		setup  func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend
 	}{
 		{"dropping the drained row fails", alsoOnB2, func(store *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
-			store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(core.DeletedCopy{}, errors.New("db error")).AnyTimes()
+			store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil, errors.New("db error")).AnyTimes()
 			return map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}
 		}},
 		{"no destination", onlyOnB1, func(_ *storetest.MockMetadataStore, src *backendtest.InMemory) map[string]backend.ObjectBackend {
@@ -354,8 +399,8 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 	if !d.moveOff(context.Background(), src, "src", obj) {
 		t.Fatal("moveOff reported failure")
 	}
-	if got == nil || got.Reasons != writepath.DrainMoveReasons || got.Source != obj || got.DestName != "dest" {
-		t.Errorf("move request = %+v, want src -> dest under DrainMoveReasons", got)
+	if got == nil || got.Profile != writepath.DrainMove || got.Source != obj || got.DestName != "dest" {
+		t.Errorf("move request = %+v, want src -> dest under the DrainMove profile", got)
 	}
 }
 
@@ -415,7 +460,7 @@ func TestDrain_WaitsForAnUploadAdmittedBeforeTheDrain(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := newDrainStore(t, "b1", "b2")
-	if ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "in-flight", ObjectKey: "bkt/k", BackendName: "b1", SizeBytes: 1}); err != nil || !ok {
+	if ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "in-flight", ObjectKey: "bkt/k", BackendName: "b1", SizeBytes: 1}, core.AcceptForWrite); err != nil || !ok {
 		t.Fatalf("InsertPendingIfFits = %v, %v", ok, err)
 	}
 	startDrain(t, store, "b1")

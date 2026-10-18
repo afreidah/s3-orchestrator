@@ -3082,7 +3082,7 @@
       "targets": [
         {
           "expr": "sum by (reason) (rate(s3o_cleanup_queue_enqueued_total[5m]))",
-          "legendFormat": "enqueued {{reason}}"
+          "legendFormat": "queued {{reason}}"
         },
         {
           "expr": "sum by (status) (rate(s3o_cleanup_queue_processed_total[5m]))",
@@ -4773,7 +4773,7 @@
     {
       "type": "row",
       "id": 96,
-      "title": "Cleanup DLQ & Enqueue Failures",
+      "title": "Cleanup DLQ & Retries",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -4826,7 +4826,7 @@
     {
       "type": "timeseries",
       "id": 99,
-      "title": "Cleanup enqueue failures (untracked-orphan risk)",
+      "title": "Cleanup deletes failing (retry / exhausted)",
       "gridPos": {
         "x": 0,
         "y": 278,
@@ -4839,8 +4839,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (backend, stage) (rate(s3o_cleanup_enqueue_failures_total[5m]))",
-          "legendFormat": "{{backend}} {{stage}}"
+          "expr": "sum by (status) (rate(s3o_cleanup_queue_processed_total{status=~\"retry|exhausted\"}[5m]))",
+          "legendFormat": "{{status}}"
         }
       ]
     },

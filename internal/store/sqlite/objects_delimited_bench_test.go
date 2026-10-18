@@ -25,7 +25,7 @@ import (
 func newBenchStore(b *testing.B) *Store {
 	b.Helper()
 	ctx := context.Background()
-	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
+	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil, testInstanceID)
 	if err != nil {
 		b.Fatalf("NewStore: %v", err)
 	}

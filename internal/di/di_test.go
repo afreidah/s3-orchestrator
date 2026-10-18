@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -163,11 +164,14 @@ func TestProvideRateLimiter(t *testing.T) {
 	rl.Close()
 }
 
+// testInstanceID is the instance id openStore stamps on cleanup rows it claims.
+const testInstanceID = "di-test"
+
 // TestOpenStore_InvalidDriver covers the default branch of openStore's
 // driver-dispatch switch.
 func TestOpenStore_InvalidDriver(t *testing.T) {
 	t.Parallel()
-	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"}, nil)
+	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"}, nil, testInstanceID)
 	if err == nil {
 		t.Fatal("expected error for unsupported driver, got nil")
 	}
@@ -181,7 +185,7 @@ func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	cs, err := openStore(context.Background(), &config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   ":memory:",
-	}, nil)
+	}, nil, testInstanceID)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
@@ -219,6 +223,7 @@ func TestProvideMetadataStore_SQLiteInMemory(t *testing.T) {
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
 	})
 	do.ProvideValue[*breaker.CircuitBreaker](inj, nil)
+	do.ProvideValue(inj, instanceid.ID(testInstanceID))
 	cs, err := provideMetadataStore(inj)
 	if err != nil {
 		t.Fatalf("ProvideMetadataStore: %v", err)
@@ -245,7 +250,7 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 		User:     "nope",
 		Password: "nope",
 		SSLMode:  "disable",
-	}, nil)
+	}, nil, testInstanceID)
 	if err == nil {
 		t.Fatal("expected error connecting to unreachable postgres, got nil")
 	}

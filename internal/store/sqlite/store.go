@@ -34,10 +34,11 @@ import (
 type Store struct {
 	core.TxOps
 
-	db    dbAPI
-	rawDB *sql.DB
-	cb    *breaker.CircuitBreaker
-	mu    sync.Mutex // advisory lock emulation for single-instance
+	db         dbAPI
+	rawDB      *sql.DB
+	cb         *breaker.CircuitBreaker
+	mu         sync.Mutex // advisory lock emulation for single-instance
+	instanceID string
 }
 
 // -------------------------------------------------------------------------
@@ -47,8 +48,9 @@ type Store struct {
 // NewStore opens a SQLite database at the configured path, applies pragmas
 // for WAL mode and foreign key enforcement, and runs migrations. When cb
 // is non-nil, every statement the store fires goes through PreCheck/
-// PostCheck. Pass nil to skip CB wrapping (test fixtures).
-func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (*Store, error) {
+// PostCheck. Pass nil to skip CB wrapping (test fixtures). instanceID claims
+// the cleanup rows this process's transactions queue.
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker, instanceID string) (*Store, error) {
 	db, err := sql.Open("sqlite", dbCfg.Path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -76,7 +78,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 
-	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb}
+	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb, instanceID: instanceID}
 	s.TxOps = core.NewTxOps(s)
 	if err := s.RunMigrations(ctx); err != nil {
 		db.Close()
@@ -106,7 +108,7 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 // otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
 	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
-		return fn(ctx, &sqliteTxAdapter{q: tx})
+		return fn(ctx, &sqliteTxAdapter{q: tx, instanceID: s.instanceID})
 	})
 }
 

@@ -315,14 +315,15 @@ func otherCopyBackend(backends []string, srcName string) string {
 }
 
 // dropDrainedCopy removes the draining backend's copy of an object another
-// backend also held when the page was looked up: the row first, then the
-// bytes. The removal re-reads the copies under the key lock and removes this
+// backend also held when the page was looked up: the row goes and its bytes are
+// queued in one transaction, then deleted. The removal re-reads the copies
+// under the key lock and removes this
 // one only while another remains, so a lookup that went stale during the page
 // cannot cost the last copy. If the other copy is gone, the object is moved
 // off instead. A copy that holds the only usable encryption key is kept, and
 // one a client overwrote since the page was read is left for the next pass.
 func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
-	removed, err := d.store.DeleteObjectLocation(ctx, obj, 1)
+	removed, err := d.store.DeleteObjectLocation(ctx, obj, 1, writepath.DrainMove.Reasons.SourceDelete)
 	switch {
 	case errors.Is(err, core.ErrCopyNotExcess):
 		return d.moveOff(ctx, src, srcName, obj)
@@ -337,7 +338,7 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend
 			"key", obj.ObjectKey, "backend", srcName, logfmt.Err(err))
 		return false
 	}
-	d.placement.DeleteOrEnqueue(ctx, src, removed.Cleanup(obj.ObjectKey, "drain_source_delete"))
+	d.placement.Settle(ctx, removed)
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
 		slog.String("removed_from", srcName),
@@ -359,7 +360,7 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 		SrcBackend:  src,
 		DestBackend: dest,
 		DestName:    destName,
-		Reasons:     writepath.DrainMoveReasons,
+		Profile:     writepath.DrainMove,
 	})
 	if err != nil {
 		if !core.PlacementDeclined(err) {

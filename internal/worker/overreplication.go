@@ -45,8 +45,11 @@ import (
 type OverReplicationCleanerStore interface {
 	core.ReplicationStore
 	core.QuotaStore
-	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error)
+	DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error)
 }
+
+// reasonOverReplication labels the cleanup of an excess copy's bytes.
+const reasonOverReplication = "over_replication"
 
 // OverReplicationCleaner removes excess copies of objects that exceed the
 // configured replication factor.
@@ -285,11 +288,11 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		}
 		victim := scored[i].loc
 
-		// Remove metadata first so the replicator never sees a ghost copy; a
-		// failed backend delete goes to the cleanup queue. A concurrent delete
-		// or earlier tick may have absorbed the excess, or a client overwrite
-		// replaced the victim; either is skipped.
-		dropped, err := c.store.DeleteObjectLocation(ctx, &victim, factor)
+		// The row goes and its bytes are queued in one transaction, so the
+		// replicator never sees a ghost copy. A concurrent delete or earlier
+		// tick may have absorbed the excess, or a client overwrite replaced the
+		// victim; either is skipped.
+		dropped, err := c.store.DeleteObjectLocation(ctx, &victim, factor, reasonOverReplication)
 		switch {
 		case errors.Is(err, core.ErrCopyNotExcess), errors.Is(err, core.ErrCopyChanged):
 			continue
@@ -312,16 +315,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			failures++
 			continue
 		}
-		be, err := c.ops.GetBackend(victim.BackendName)
-		if err != nil {
-			c.log.WarnContext(ctx, "backend not found",
-				"key", key, "backend", victim.BackendName)
-			telemetry.OverReplicationErrorsTotal.Inc()
-			failures++
-			continue
-		}
-
-		c.placement.DeleteOrEnqueue(ctx, be, dropped.Cleanup(key, "over_replication"))
+		c.placement.Settle(ctx, dropped)
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

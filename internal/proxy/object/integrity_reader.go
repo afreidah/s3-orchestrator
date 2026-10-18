@@ -6,7 +6,7 @@
 // VerifyingReader wraps a backend response body with a streaming
 // SHA-256 computation. The GET path enables it on Close when an
 // expected content_hash is known (integrity.VerifyOnRead) so a hash
-// mismatch triggers cleanup of the bad copy via DeleteOrEnqueue.
+// mismatch drops the bad copy's row and queues its bytes for cleanup.
 // -------------------------------------------------------------------------------
 
 package object

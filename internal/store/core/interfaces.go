@@ -43,21 +43,25 @@ import (
 // computed outranks what a backend reports. UpdateCopyMetadata writes a patch
 // to the copy loc names, or returns ErrCopyChanged when a newer write replaced
 // it.
+//
+// Every method that stops recording a copy queues the deletion of its bytes in
+// the same transaction and returns the queued rows, claimed by this instance,
+// for the caller to settle.
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
-	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error)
-	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, QuotaDeltas, error)
-	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, QuotaDeltas, error)
+	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]CleanupItem, QuotaDeltas, error)
+	DeleteObject(ctx context.Context, key string) ([]CleanupItem, QuotaDeltas, error)
+	DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, QuotaDeltas, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int, after SizeCursor) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
-	PlaceCopy(ctx context.Context, p *Placement) (int64, error)
+	PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]PathState, error)
-	DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int) (DeletedCopy, error)
+	DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error)
 	RecordObjectIdentity(ctx context.Context, loc *ObjectLocation, id *ObjectIdentity) error
 	UpdateCopyMetadata(ctx context.Context, loc *ObjectLocation, p *CopyPatch) error
 }
@@ -82,14 +86,17 @@ type QuotaStore interface {
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
-// MultipartStore defines multipart upload lifecycle operations.
+// MultipartStore defines multipart upload lifecycle operations. RecordPart
+// clears the part's intent and queues the bytes of a part it replaced, and
+// DeleteMultipartUpload queues every part's bytes under reason in the
+// transaction that removes the upload; both return the queued rows.
 type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) (bool, error)
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
-	RecordPart(ctx context.Context, p *RecordPartParams) error
+	RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error)
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]MultipartPart, error)
-	DeleteMultipartUpload(ctx context.Context, uploadID string) error
+	DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]CleanupItem, error)
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 	ScanMultipartUploads(ctx context.Context, filter MultipartUploadFilter, limit int, afterUploadID string) ([]MultipartUpload, error)
@@ -125,26 +132,25 @@ type ReplicationStore interface {
 	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
 }
 
-// CleanupStore defines cleanup queue and orphan byte tracking operations.
+// CleanupStore defines the cleanup queue lifecycle. Rows are queued by the
+// transactions that stop recording bytes; a backend's orphan bytes are the sum
+// of its queued and dead-lettered rows.
 //
 // GetPendingCleanups is a read-only snapshot for display; the worker uses
 // ClaimPendingCleanups, which reserves a disjoint batch per instance. A row is
 // eligible when its claim is absent or older than graceCutoff, and such
-// reclaimed rows come back with Reclaimed set. CompleteCleanupItem deletes the
-// row and decrements orphan_bytes, and never decrements twice for one row.
-// RetryCleanupItem clears the claim so the row is eligible again after backoff.
+// reclaimed rows come back with Reclaimed set. CompleteCleanupItem retires a
+// row whose bytes are gone. RetryCleanupItem clears the claim so the row is
+// eligible again after backoff.
 //
-// MoveCleanupToDLQ leaves orphan_bytes alone because the bytes are still on the
-// backend; RequeueCleanupDLQ sends rows back with fresh attempts. An empty
+// RequeueCleanupDLQ sends dead-lettered rows back with fresh attempts. An empty
 // backend in the DLQ calls means every backend.
 type CleanupStore interface {
-	EnqueueCleanup(ctx context.Context, c *CleanupRequest) error
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
 	ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]CleanupItem, error)
 	CompleteCleanupItem(ctx context.Context, id int64) error
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
-	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error)
 
 	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
@@ -158,12 +164,17 @@ type CleanupStore interface {
 // successful commit; the pending reaper resolves intents left behind by
 // a failed commit so a DB outage between PUT and RecordObject cannot
 // silently destroy the prior copy of an overwritten key.
+//
+// InsertPendingIfFits admits the intent on a backend whose flags all fall
+// within accepts. DiscardPending drops an intent whose upload will not be
+// recorded and queues its bytes under reason.
 type PendingStore interface {
-	InsertPendingIfFits(ctx context.Context, p *PendingObject) (bool, error)
+	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
 	DeletePending(ctx context.Context, intentID string) error
+	DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error)
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
-	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error)
-	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error)
+	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error)
+	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, QuotaDeltas, error)
 	PendingDepth(ctx context.Context) (int64, error)
 	DeletePendingByBackend(ctx context.Context, backendName string) error
 }

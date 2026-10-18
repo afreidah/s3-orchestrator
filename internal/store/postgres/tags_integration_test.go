@@ -334,7 +334,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-b"), 0); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-b"), 0, ""); err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
 	got, err := s.GetObjectTags(ctx, key)
@@ -345,7 +345,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 		t.Errorf("removing one replica cleared the object's tags: %v", names)
 	}
 
-	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-a"), 0); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, storetest.LocationOn(t, s, key, "backend-a"), 0, ""); err != nil {
 		t.Fatalf("DeleteObjectLocation (last): %v", err)
 	}
 	assertNoTags(t, s, key, "tags survived the last copy")

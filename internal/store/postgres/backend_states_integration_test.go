@@ -15,7 +15,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -61,7 +60,7 @@ func pgAdmits(t *testing.T, s *Store, backend, intentID string) bool {
 	id := uniqueKey(t, intentID)
 	ok, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: id, ObjectKey: id, BackendName: backend, SizeBytes: 1,
-	})
+	}, core.AcceptForWrite)
 	if err != nil {
 		t.Fatalf("InsertPendingIfFits: %v", err)
 	}
@@ -204,18 +203,21 @@ func TestPgDrainRecord_ClearReopensTheBackend(t *testing.T) {
 	}
 }
 
-// TestPgDrainRecord_RefusesReplicaTarget verifies a placement, the other
-// admission path, refuses a draining target and records nothing there.
+// TestPgDrainRecord_RefusesReplicaTarget verifies a replica's claim refuses a
+// draining target even under the rewrite mask, so nothing is copied there.
 func TestPgDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	s := adapterPgStore(t)
 	target := drainBackend(t, s)
 	key := pgRecordOn(t, s, "backend-a", "k")
 	pgStartDrain(t, s, target)
-	if _, err := s.PlaceCopy(context.Background(), replicaOf(t, s, key, target, "backend-a")); !errors.Is(err, core.ErrTargetRefused) {
-		t.Errorf("PlaceCopy onto a draining backend = %v; want ErrTargetRefused", err)
-	}
-	if locs, err := s.GetAllObjectLocations(context.Background(), key); err != nil || len(locs) != 1 {
-		t.Errorf("copies after a refused placement = %+v, %v; want only the source", locs, err)
+	for _, accepts := range []core.BackendFlags{core.AcceptForWrite, core.AcceptForRewrite} {
+		fits, err := s.InsertPendingIfFits(context.Background(), &core.PendingObject{
+			IntentID: key + "/" + accepts.String(), ObjectKey: key, StorageKey: key + "!r",
+			BackendName: target, SizeBytes: 1, Role: core.PendingRoleCompanion,
+		}, accepts)
+		if err != nil || fits {
+			t.Errorf("claim onto a draining backend under %s = %v, %v; want declined", accepts, fits, err)
+		}
 	}
 }
 
@@ -281,7 +283,7 @@ func TestPgCompleteDrain_WaitsForAnUploadAdmittedBefore(t *testing.T) {
 	id := uniqueKey(t, "in-flight")
 	if ok, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: id, ObjectKey: id, BackendName: backend, SizeBytes: 1,
-	}); err != nil || !ok {
+	}, core.AcceptForWrite); err != nil || !ok {
 		t.Fatalf("InsertPendingIfFits = %v, %v; want admitted before the drain", ok, err)
 	}
 	pgStartDrain(t, s, backend)
@@ -308,7 +310,7 @@ func TestPgCompleteDrain_WaitsForAMultipartUpload(t *testing.T) {
 	}); err != nil || !created {
 		t.Fatalf("CreateMultipartUpload = %v, %v; want created before the drain", created, err)
 	}
-	t.Cleanup(func() { _ = s.DeleteMultipartUpload(context.Background(), uploadID) })
+	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason) })
 	pgStartDrain(t, s, backend)
 
 	if pgCompletes(t, s, backend) {

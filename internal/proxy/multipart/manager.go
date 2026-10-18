@@ -260,25 +260,40 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", err
 	}
 
-	// Store part under a temp key
-	partKey := multipartPartKey(uploadID, partNumber)
+	// The part claims the upload's backend before its bytes land, as every
+	// write claims its target, and writes a path of its own, so a re-upload of
+	// this number never shares bytes with the part it replaces.
+	intent := writepath.NewCopyIntent(core.PartPath(uploadID, partNumber), mu.BackendName, uploadSize, form)
+	if err := mp.coord.ClaimCopyTarget(ctx, intent, core.AcceptForPart); err != nil {
+		observe.RecordSpanError(span, err)
+		if errors.Is(err, core.ErrTargetRefused) {
+			return "", core.ErrInsufficientStorage
+		}
+		return "", err
+	}
 	bctx, bcancel := mp.core.WithTimeout(ctx)
 	defer bcancel()
-	storedETag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
+	storedETag, err := be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
 		mp.core.Acct().APICall(s3op.UploadPart, mu.BackendName) // API call was made even on failure
+		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
 	plaintextETag := etag.Hex(partDigest)
-	if err := mp.stores.RecordPart(ctx, &core.RecordPartParams{
+	replaced, err := mp.stores.RecordPart(ctx, &core.RecordPartParams{
 		UploadID: uploadID, PartNumber: partNumber, ETag: storedETag,
-		PlaintextETag: plaintextETag, SizeBytes: uploadSize, Form: form,
-	}); err != nil {
-		mp.log.ErrorContext(ctx, "recordPart failed, cleaning up part object",
+		PlaintextETag: plaintextETag, SizeBytes: uploadSize, Form: form, Intent: intent,
+	})
+	// A part replaced by this one, or this one when its intent was lost, was
+	// queued by the record's transaction.
+	mp.coord.Settle(ctx, replaced)
+	if err != nil {
+		mp.log.ErrorContext(ctx, "recordPart failed, discarding part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		mp.coord.RecoverFromRecordFailure(ctx, be, partCleanup(mu.BackendName, partKey, "orphan_part_record_failed", uploadSize))
+		mp.core.Acct().APICall(s3op.UploadPart, mu.BackendName) // the PUT that succeeded
+		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
@@ -444,35 +459,6 @@ func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.Multipart
 	return out, ciphertextSize, form, nil
 }
 
-// partCleanup describes one part object for the cleanup paths. A part is
-// already stored under a path unique to its upload and number, so it is its own
-// storage key and needs no per-write suffix; the object key is the same string
-// because a part is not an object any client can name.
-func partCleanup(backendName, partKey, reason string, size int64) *core.CleanupRequest {
-	return &core.CleanupRequest{
-		BackendName: backendName,
-		ObjectKey:   partKey,
-		StorageKey:  partKey,
-		Reason:      reason,
-		SizeBytes:   size,
-	}
-}
-
-// deleteParts removes an upload's part objects in as few backend requests as
-// the backend allows, queueing any it cannot remove for retry.
-func (mp *Manager) deleteParts(ctx context.Context, mu *core.MultipartUpload, parts []core.MultipartPart, reason string) {
-	reqs := make([]*core.CleanupRequest, len(parts))
-	for i := range parts {
-		reqs[i] = partCleanup(mu.BackendName, multipartPartKey(mu.UploadID, parts[i].PartNumber), reason, parts[i].SizeBytes)
-	}
-	mp.coord.DeleteAllOrEnqueue(ctx, reqs)
-}
-
-// multipartPartKey returns the temporary object key for a multipart part.
-func multipartPartKey(uploadID string, partNumber int) string {
-	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
-}
-
 // fetchScopedUpload looks up the multipart upload and verifies it belongs to
 // the (bucket, key) the request URL implies. Missing and out-of-scope rows
 // return the same NoSuchUpload error, so callers cannot probe for upload IDs
@@ -590,19 +576,15 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 		return err
 	}
 
-	parts, err := mp.stores.GetParts(ctx, uploadID)
+	// The upload and its parts go and the parts' bytes are queued in one
+	// transaction, so an abort that dies before the deletes run leaves them
+	// to the cleanup worker rather than on the backend with nothing naming them.
+	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonAbortPart)
 	if err != nil {
-		observe.RecordSpanError(span, err)
-		return fmt.Errorf("failed to get parts for abort: %w", err)
-	}
-
-	mp.deleteParts(ctx, mu, parts, "abort_part_cleanup")
-
-	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		observe.RecordSpanError(span, err)
 		return err
 	}
-
+	mp.coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 
 	// 1 abort API call. The part deletes are charged where they are sent.
@@ -612,6 +594,14 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil
 }
+
+// The cleanup-queue reasons for the parts an abort and a completion remove,
+// and for a part upload that was never recorded.
+const (
+	reasonAbortPart      = "abort_part_cleanup"
+	reasonCompletePart   = "complete_part_cleanup"
+	reasonPartUnrecorded = "orphan_part_record_failed"
+)
 
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
@@ -847,7 +837,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// Only now is the object durably committed, so the source parts are safe
 	// to drop. Every failure path above returns with the parts and the upload
 	// row intact, leaving the completion retryable.
-	mp.cleanupCompletedUpload(ctx, span, mu, uploadID, parts)
+	mp.cleanupCompletedUpload(ctx, span, uploadID)
 
 	// Assembly spends egress equal to the parts and ingress equal to the result.
 	// Each Egress records its own API call for a part GET; the part deletes are
@@ -899,15 +889,17 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 	}, nil
 }
 
-// cleanupCompletedUpload removes the part objects, the multipart_uploads row and
-// the cached DEK of a durably committed upload. Call it only after the commit:
-// on a failure path it would destroy the parts a retry needs. Each step is best
-// effort and does not stop the rest.
-func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
-	mp.deleteParts(ctx, mu, parts, "complete_part_cleanup")
-	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
+// cleanupCompletedUpload removes the multipart_uploads row, queueing its parts'
+// bytes in the same transaction, then deletes them and drops the cached DEK of
+// a durably committed upload. Call it only after the commit: on a failure path
+// it would destroy the parts a retry needs. A removal that fails leaves the
+// upload to the stale-multipart sweep, which aborts it.
+func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, uploadID string) {
+	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonCompletePart)
+	if err != nil {
 		span.RecordError(err)
 	}
+	mp.coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 }
 
@@ -1092,7 +1084,7 @@ func (mp *Manager) streamOnePart(
 	uploadID string,
 	part *core.MultipartPart,
 ) error {
-	partKey := multipartPartKey(uploadID, part.PartNumber)
+	partKey := part.Path(uploadID)
 	bctx, bcancel := mp.core.WithTimeout(ctx)
 	defer bcancel()
 

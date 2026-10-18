@@ -64,6 +64,27 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Cleanup queued in the transaction that removes a copy ([#1715](https://github.com/afreidah/s3-orchestrator/issues/1715), v0.162.10)**
+
+Every transaction that stops recording bytes now inserts their `cleanup_queue` rows before it commits, claimed by the instance that ran it. That covers deletes, overwrites, moves, integrity failures, over-replication removal, multipart abort and completion, and discarded intents. After the commit the same instance deletes the bytes and settles each row: retired on success or a 404, retried with backoff on failure, dead-lettered after 10 attempts. Deletes used to run first and queue a row only when they failed, so a database error at that point left bytes on a backend with no row. A process that dies before settling leaves its rows claimed, and the cleanup worker reclaims them after `cleanup_queue.claim_grace_period`. Every write, not only a PUT, now claims its target with a pending intent before its bytes land.
+
+Migrations:
+
+- **00040 (SQLite 0027)** drops `backend_quotas.orphan_bytes` and recreates the `backend_capacity` view, which now sums `size_bytes` over the backend's `cleanup_queue` and `cleanup_dlq` rows.
+- **00041 (SQLite 0028)** adds a nullable `storage_key` column to `multipart_parts`.
+
+**Operator action items after upgrade:**
+
+- **Orphan bytes are derived from the queue.** Admission, the quota stats, `s3o_quota_orphan_bytes`, the dashboard and the admin API all report the sum of the backend's queued and dead-lettered rows, so the figure may step at upgrade where the old counter had drifted. Writing off a DLQ row frees its bytes; there is no counter to adjust.
+- **`s3o_cleanup_enqueue_failures_total` and the `storage.OrphanEnqueueFailed` audit event are removed.** Drop alerts on them.
+- **`s3o_cleanup_queue_enqueued_total` counts every row queued for deletion**, not only failed deletes, so its rate rises to track deletes and overwrites. `s3o_cleanup_queue_processed_total` counts rows settled on the request path as well as by the worker, and `s3o_cleanup_queue_depth` briefly includes rows being settled.
+- **Cleanup reasons changed.** `delete_failed` and `batch_delete_failed` are replaced by `object_deleted`. `rebalance_stale_orphan`, `drain_stale_orphan`, `rewrite_stale_orphan` and `replication_stale_orphan` are gone; a refused placement queues under the matching `*_orphan` reason. `orphan_record_failed` is gone: a PUT or CopyObject whose commit fails leaves its intent for the pending reaper. `part_replaced` is new.
+- **A rewrite needs room for a full new copy** beside the old one until the old one is deleted. In-place rewrites used to be admitted on their growth only, so a nearly full backend may now skip copies a pass used to convert.
+- **Replicas, moves, rewrites and multipart parts claim their target with an intent.** A replica or move is refused by a backend without room for it, and the replicator's claim covers each copy, so concurrent copies cannot overfill a target. Parts are admitted against the upload backend's room, and a part refused for room fails with 507. A cordoned backend still takes rewrites of its own copies and parts of uploads started before the cordon; a draining backend takes neither.
+- **Multipart parts get their own paths.** Each part upload writes `__multipart/<upload_id>/<part>!<id>`, and recording it queues the bytes of any part of the same number it replaced (reason `part_replaced`). Parts recorded before the upgrade stay at `__multipart/<upload_id>/<part>` and are read and cleaned up from there.
+- **The pending reaper deletes the bytes of an intent a newer committed copy superseded**, which used to be left on the backend. Companion intents (extra PUT copies, replicas, moves, rewrites, parts) are discarded unless a recorded copy sits at their path, so a copy that died mid-transfer is cleaned up rather than kept.
+- **DeleteObjects clears in-flight intents** for the keys it removes, as DeleteObject does.
+
 **Rewrite passes go through the placement step ([#1714](https://github.com/afreidah/s3-orchestrator/issues/1714), v0.162.9)**
 
 The compress, decompress, encrypt and decrypt passes no longer overwrite a copy in place. Each rewritten copy is written to a new path on the same backend and recorded only while the copy the pass read is still the one recorded; the old bytes are deleted after. A reader no longer sees bytes in a form the row does not describe, and a client overwrite during a pass is never marked as converted.

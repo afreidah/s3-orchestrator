@@ -37,19 +37,41 @@ import (
 // assert on.
 type multipartCalls struct {
 	mu                 sync.Mutex
+	nextID             int64
+	uploads            map[string]seededUpload
 	create             []core.CreateMultipartUploadParams
 	deleteMultipartHit bool
+	deleteReasons      []string
+	discarded          []core.CleanupItem
+	retried            []int64
 	recordPart         []multipartPartCall
 	recordObject       []multipartObjectCall
-	enqueue            []core.CleanupItem
-	incrementOrphan    []orphanBytesEntry
 }
 
-// orphanBytesEntry is one IncrementOrphanBytes call: which backend was
-// charged and for how many bytes.
-type orphanBytesEntry struct {
-	backendName string
-	sizeBytes   int64
+// seededUpload is the upload row and parts the DeleteMultipartUpload stub
+// queues for deletion, as the store would from its own rows.
+type seededUpload struct {
+	backend string
+	parts   []core.MultipartPart
+}
+
+// seed registers an upload's backend and parts with the stubs.
+func (c *multipartCalls) seed(uploadID, backendName string, parts []core.MultipartPart) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uploads == nil {
+		c.uploads = map[string]seededUpload{}
+	}
+	c.uploads[uploadID] = seededUpload{backend: backendName, parts: parts}
+}
+
+// queued builds one cleanup row, giving it the next row id. The caller holds
+// c.mu.
+func (c *multipartCalls) queued(backendName, path, reason string, size int64) core.CleanupItem {
+	c.nextID++
+	return core.CleanupItem{
+		ID: c.nextID, BackendName: backendName, ObjectKey: path, StorageKey: path, Reason: reason, SizeBytes: size,
+	}
 }
 
 type multipartPartCall struct {
@@ -58,6 +80,7 @@ type multipartPartCall struct {
 	etag       string
 	sizeBytes  int64
 	form       *core.StoredForm
+	storageKey string
 }
 
 type multipartObjectCall struct {
@@ -76,28 +99,68 @@ func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *co
 	}
 }
 
-func stubDeleteMultipart(c *multipartCalls) func(context.Context, string) error {
-	return func(_ context.Context, _ string) error {
+// stubDeleteMultipart removes a seeded upload and returns a cleanup row for
+// each of its parts, queued under reason, as the store's transaction does.
+func stubDeleteMultipart(c *multipartCalls) func(context.Context, string, string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.deleteMultipartHit = true
+		c.deleteReasons = append(c.deleteReasons, reason)
+		up, ok := c.uploads[uploadID]
+		if !ok {
+			return nil, nil
+		}
+		delete(c.uploads, uploadID)
+		rows := make([]core.CleanupItem, len(up.parts))
+		for i := range up.parts {
+			rows[i] = c.queued(up.backend, up.parts[i].Path(uploadID), reason, up.parts[i].SizeBytes)
+		}
+		return rows, nil
+	}
+}
+
+// stubDiscardPending drops an intent and returns the cleanup row for its
+// bytes, as the store does for an intent it still holds.
+func stubDiscardPending(c *multipartCalls) func(context.Context, *core.PendingObject, string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		row := c.queued(p.BackendName, p.StorageKey, reason, p.SizeBytes)
+		c.discarded = append(c.discarded, row)
+		return []core.CleanupItem{row}, nil
+	}
+}
+
+// stubRetryCleanup records the rows the settler sent back for retry.
+func stubRetryCleanup(c *multipartCalls) func(context.Context, int64, time.Duration, string) error {
+	return func(_ context.Context, id int64, _ time.Duration, _ string) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.retried = append(c.retried, id)
 		return nil
 	}
 }
 
-func stubRecordPart(c *multipartCalls, err error) func(context.Context, *core.RecordPartParams) error {
-	return func(_ context.Context, p *core.RecordPartParams) error {
+// stubRecordPart records the part, returning replaced as the cleanup rows the
+// record's transaction queued, and err.
+func stubRecordPart(c *multipartCalls, replaced []core.CleanupItem, err error) func(context.Context, *core.RecordPartParams) ([]core.CleanupItem, error) {
+	return func(_ context.Context, p *core.RecordPartParams) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordPart = append(c.recordPart, multipartPartCall{
+		call := multipartPartCall{
 			uploadID: p.UploadID, partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.SizeBytes, form: p.Form,
-		})
-		return err
+		}
+		if p.Intent != nil {
+			call.storageKey = p.Intent.StorageKey
+		}
+		c.recordPart = append(c.recordPart, call)
+		return replaced, err
 	}
 }
 
-func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		backend := req.Copies[0].Backend
@@ -105,27 +168,6 @@ func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.
 			Key: req.Key, Backend: backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 		})
 		return nil, core.QuotaDeltas{backend: req.Size}, err
-	}
-}
-
-func stubMultipartEnqueue(c *multipartCalls) func(context.Context, *core.CleanupRequest) error {
-	return func(_ context.Context, req *core.CleanupRequest) error {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
-			Reason: req.Reason, SizeBytes: req.SizeBytes,
-		})
-		return nil
-	}
-}
-
-func stubIncrementOrphan(c *multipartCalls) func(context.Context, string, int64) error {
-	return func(_ context.Context, backend string, size int64) error {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.incrementOrphan = append(c.incrementOrphan, orphanBytesEntry{backendName: backend, sizeBytes: size})
-		return nil
 	}
 }
 
@@ -138,16 +180,16 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 	c := &multipartCalls{}
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubCreateMultipart(c, nil)).AnyTimes()
-	store.EXPECT().DeleteMultipartUpload(gomock.Any(), gomock.Any()).
+	store.EXPECT().DeleteMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubDeleteMultipart(c)).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubRecordPart(c, nil)).AnyTimes()
+		DoAndReturn(stubRecordPart(c, nil, nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordObject(c, nil)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubIncrementOrphan(c)).AnyTimes()
+	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDiscardPending(c)).AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubRetryCleanup(c)).AnyTimes()
 	return c
 }
 
@@ -188,7 +230,7 @@ func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 	// Declared before the permissive defaults so this is the expectation the
 	// claim matches: the backend declines, which is how one without room
 	// reports itself now that the headroom test lives in the insert.
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, nil).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
@@ -281,6 +323,7 @@ func completeStoreSetup(t *testing.T, mu *core.MultipartUpload, parts []core.Mul
 		store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	}
 	c := multipartStubs(t, store)
+	c.seed(mu.UploadID, mu.BackendName, parts)
 	storetest.Permissive(store)
 	return store, c
 }
@@ -436,7 +479,7 @@ func putParts(t *testing.T, be *backendtest.InMemory, n int) []core.MultipartPar
 	t.Helper()
 	parts := make([]core.MultipartPart, n)
 	for i := range parts {
-		_, _ = be.PutObject(context.Background(), multipartPartKey("upload-1", i+1), bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+		_, _ = be.PutObject(context.Background(), core.PartPath("upload-1", i+1), bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 		parts[i] = core.MultipartPart{PartNumber: i + 1, ETag: fmt.Sprintf("e%d", i+1), SizeBytes: 3, CreatedAt: time.Now()}
 	}
 	return parts
@@ -482,7 +525,7 @@ func TestCompleteMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
 		t.Errorf("batch calls = %d, want one for all three parts", be.BatchDeleteCalls)
 	}
 	for _, p := range parts {
-		if be.Has(multipartPartKey("upload-1", p.PartNumber)) {
+		if be.Has(p.Path("upload-1")) {
 			t.Errorf("part %d still on the backend", p.PartNumber)
 		}
 	}
@@ -504,23 +547,32 @@ func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 	}
 }
 
-// TestAbortMultipartUpload_GetPartsError surfaces the parts-fetch
-// failure.
-func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
+// TestAbortMultipartUpload_DeleteUploadError surfaces a failed upload removal
+// and leaves the part bytes alone, since nothing queued them.
+func TestAbortMultipartUpload_DeleteUploadError(t *testing.T) {
 	t.Parallel()
-	store, _ := completeStoreSetup(t,
-		&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
-		nil, errors.New("db error"))
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
+	be := backendtest.NewInMemory()
+	parts := putParts(t, be, 1)
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
+	store.EXPECT().DeleteMultipartUpload(gomock.Any(), "upload-1", reasonAbortPart).
+		Return(nil, errors.New("db error"))
+	storetest.Permissive(store)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if err := mgr.AbortMultipartUpload(context.Background(), "multi", "key", "upload-1"); err == nil {
-		t.Fatal("expected error from GetParts failure")
+		t.Fatal("expected error from DeleteMultipartUpload failure")
+	}
+	if !be.Has(parts[0].Path("upload-1")) {
+		t.Error("part bytes must stay when the upload row could not be removed")
 	}
 }
 
-// TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup pins the
-// orphan-cleanup branch when the be delete fails during abort.
-func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
+// TestAbortMultipartUpload_PartDeleteFails_RetriesRow asserts a part whose
+// delete fails during abort keeps its queued row, sent back for retry.
+func TestAbortMultipartUpload_PartDeleteFails_RetriesRow(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.DeleteErr = errors.New("be timeout")
@@ -538,11 +590,11 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 		t.Fatalf("AbortMultipartUpload: %v", err)
 	}
 
-	if len(c.enqueue) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
+	if len(c.retried) != 1 {
+		t.Fatalf("retried rows = %v, want the one part", c.retried)
 	}
-	if c.enqueue[0].Reason != "abort_part_cleanup" {
-		t.Errorf("expected reason=abort_part_cleanup, got %q", c.enqueue[0].Reason)
+	if len(c.deleteReasons) != 1 || c.deleteReasons[0] != reasonAbortPart {
+		t.Errorf("delete reasons = %v, want [%s]", c.deleteReasons, reasonAbortPart)
 	}
 }
 
@@ -689,9 +741,9 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	}
 }
 
-// TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup asserts a
-// per-part delete failure enqueues a complete_part_cleanup row.
-func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
+// TestCompleteMultipartUpload_PartDeleteFails_RetriesRow asserts a per-part
+// delete failure keeps the complete_part_cleanup row, sent back for retry.
+func TestCompleteMultipartUpload_PartDeleteFails_RetriesRow(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	ctx := context.Background()
@@ -712,11 +764,11 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if len(c.enqueue) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
+	if len(c.retried) != 1 {
+		t.Fatalf("retried rows = %v, want the one part", c.retried)
 	}
-	if c.enqueue[0].Reason != "complete_part_cleanup" {
-		t.Errorf("expected reason=complete_part_cleanup, got %q", c.enqueue[0].Reason)
+	if len(c.deleteReasons) != 1 || c.deleteReasons[0] != reasonCompletePart {
+		t.Errorf("delete reasons = %v, want [%s]", c.deleteReasons, reasonCompletePart)
 	}
 }
 
@@ -791,7 +843,8 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).AnyTimes()
+		Return(nil, errors.New("db error")).AnyTimes()
+	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -802,29 +855,29 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	if be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("orphaned part should be deleted from be")
 	}
+	if len(c.discarded) != 1 || c.discarded[0].Reason != reasonPartUnrecorded {
+		t.Errorf("discarded = %+v, want one %s row", c.discarded, reasonPartUnrecorded)
+	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
 
-// TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup asserts the
-// fallback enqueue when both the record and the cleanup delete fail.
-func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
+// TestUploadPart_RecordPartFails_DeleteFails_RetriesRow asserts the discarded
+// part's row is sent back for retry when its delete fails too, so the bytes
+// stay named by the queue.
+func TestUploadPart_RecordPartFails_DeleteFails_RetriesRow(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.DeleteErr = errors.New("be timeout")
 
-	c := &multipartCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
-	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubIncrementOrphan(c)).AnyTimes()
+		Return(nil, errors.New("db error")).AnyTimes()
+	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -833,17 +886,14 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 		t.Fatal("expected error from RecordPart failure")
 	}
 
-	if len(c.enqueue) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
+	if len(c.discarded) != 1 {
+		t.Fatalf("discarded = %+v, want one row", c.discarded)
 	}
-	if c.enqueue[0].Reason != "orphan_part_record_failed" {
-		t.Errorf("reason = %q, want orphan_part_record_failed", c.enqueue[0].Reason)
+	if got := c.discarded[0]; got.Reason != reasonPartUnrecorded || got.SizeBytes != 4 {
+		t.Errorf("discarded row = %+v, want %s for 4 bytes", got, reasonPartUnrecorded)
 	}
-	if len(c.incrementOrphan) != 1 {
-		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.incrementOrphan))
-	}
-	if c.incrementOrphan[0].sizeBytes != 4 {
-		t.Errorf("orphan bytes = %d, want 4", c.incrementOrphan[0].sizeBytes)
+	if len(c.retried) != 1 || c.retried[0] != c.discarded[0].ID {
+		t.Errorf("retried = %v, want the discarded row %d", c.retried, c.discarded[0].ID)
 	}
 }
 
@@ -926,9 +976,8 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 		Return([]core.MultipartUpload{{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}}, nil)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
-		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 1}}, nil).AnyTimes()
-	multipartStubs(t, store)
+	c := multipartStubs(t, store)
+	c.seed("stale-1", "b1", []core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 1}})
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -973,8 +1022,9 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 }
 
-// TestUploadPart_BackendFailure_StillRecordsUsage pins a single API
-// call is recorded even when the be PUT fails.
+// TestUploadPart_BackendFailure_StillRecordsUsage pins that a failed part PUT
+// is still charged, and that its intent is discarded so whatever the PUT left
+// is deleted.
 func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -984,7 +1034,7 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	multipartStubs(t, store)
+	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -992,8 +1042,14 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4); err == nil {
 		t.Fatal("expected error from be failure")
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
-		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
+	if len(c.recordPart) != 0 {
+		t.Errorf("RecordPart calls = %d, want none after a failed PUT", len(c.recordPart))
+	}
+	if len(c.discarded) != 1 || c.discarded[0].Reason != reasonPartUnrecorded {
+		t.Errorf("discarded = %+v, want one %s row", c.discarded, reasonPartUnrecorded)
+	}
+	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+		t.Errorf("apiRequests = %d, want 2 (failed PUT + discard delete)", got)
 	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
@@ -1064,9 +1120,8 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 		}, nil)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
-		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 1}}, nil).AnyTimes()
-	multipartStubs(t, store)
+	c := multipartStubs(t, store)
+	c.seed("up-1", "b1", []core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 1}})
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -1252,13 +1307,14 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 			}, nil
 		}).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.RecordPartParams) error {
+		DoAndReturn(func(_ context.Context, p *core.RecordPartParams) ([]core.CleanupItem, error) {
 			partsCallsMu.Lock()
 			defer partsCallsMu.Unlock()
 			partsCalls = append(partsCalls, multipartPartCall{
 				uploadID: p.UploadID, partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.SizeBytes, form: p.Form,
+				storageKey: p.Intent.StorageKey,
 			})
-			return nil
+			return nil, nil
 		}).AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string) ([]core.MultipartPart, error) {
@@ -1269,7 +1325,8 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 				out[i] = core.MultipartPart{
 					PartNumber:    pc.partNumber,
 					ETag:          pc.etag,
-					SizeBytes:     int64(backendObjectSize(be, "__multipart/"+pc.uploadID+"/"+itoa(pc.partNumber))),
+					SizeBytes:     int64(backendObjectSize(be, pc.storageKey)),
+					StorageKey:    pc.storageKey,
 					Encrypted:     true,
 					EncryptionKey: pc.form.EncryptionKey,
 					KeyID:         pc.form.KeyID,
@@ -1296,30 +1353,6 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "k", uploadID, partsOf(1, 2)); err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
-}
-
-// itoa returns the base-10 string for a small int. Avoids importing
-// strconv just for this single call.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [12]byte
-	i := len(b)
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if negative {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }
 
 // TestUnwrapUploadDEK_NoEncryptionMetadata covers the guardrail when

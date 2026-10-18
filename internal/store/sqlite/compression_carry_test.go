@@ -133,7 +133,7 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		SizeBytes:   4096,
 		StoredForm:  *compressedForm(),
 	}
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
@@ -164,7 +164,7 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 		SizeBytes:   4096,
 		StoredForm:  *compressedForm(),
 	}
-	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
@@ -390,10 +390,7 @@ func TestListCopiesByForm_CandidatesPageByCursor(t *testing.T) {
 func rewriteForm(t *testing.T, s *Store, key string, form *core.StoredForm, size int64) {
 	t.Helper()
 	src := storetest.LocationOn(t, s, key, "backend-a")
-	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source: src, Target: "backend-a", StorageKey: src.StorageKey + "!rw",
-		RemoveSource: true, Form: form, Size: size,
-	}); err != nil {
+	if _, err := reformInPlace(t, s, src, src.StorageKey+"!rw", form, size); err != nil {
 		t.Fatalf("PlaceCopy(%s): %v", key, err)
 	}
 }

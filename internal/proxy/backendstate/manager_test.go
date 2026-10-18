@@ -56,7 +56,7 @@ func TestStartDrain_RecordsAndRefusesWrites(t *testing.T) {
 	if !p.Active || p.State != "draining" {
 		t.Errorf("progress = %+v, want an active draining record", p)
 	}
-	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
+	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1}, core.AcceptForWrite)
 	if err != nil || ok {
 		t.Errorf("admission on the draining backend = %v, %v; want refused", ok, err)
 	}
@@ -99,7 +99,7 @@ func TestCancelDrain_ClearsTheRecord(t *testing.T) {
 	if p, err := mgr.GetDrainProgress(ctx, "b1"); err != nil || p.State != "" || p.Active {
 		t.Errorf("progress after cancel = %+v, %v; want no record", p, err)
 	}
-	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
+	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1}, core.AcceptForWrite)
 	if err != nil || !ok {
 		t.Errorf("admission after cancel = %v, %v; want accepted", ok, err)
 	}
@@ -178,7 +178,7 @@ func TestCordon_HoldsWritesAndSurvivesADrain(t *testing.T) {
 	if f := mgr.Flags("b1"); f != core.FlagCordoned || !f.AcceptedBy(core.AcceptForReconcile) {
 		t.Errorf("flags after cordon = %s, want cordoned and reconcilable", f)
 	}
-	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1})
+	ok, err := store.InsertPendingIfFits(ctx, &core.PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b1", SizeBytes: 1}, core.AcceptForWrite)
 	if err != nil || ok {
 		t.Errorf("admission on the cordoned backend = %v, %v; want refused", ok, err)
 	}

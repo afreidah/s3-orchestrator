@@ -23,12 +23,12 @@ import (
 // PROMOTE PENDING
 // -------------------------------------------------------------------------
 
-// promoteOutcome carries the resolution result and any displaced copies
-// out of the transactional body so the caller can fan out cleanups.
+// promoteOutcome carries the resolution result and the cleanup rows it queued
+// out of the transactional body so the caller can settle them.
 type promoteOutcome struct {
-	result    PendingPromoteResult
-	displaced []DeletedCopy
-	deltas    QuotaDeltas
+	result  PendingPromoteResult
+	cleanup []CleanupItem
+	deltas  QuotaDeltas
 }
 
 // promotePendingTx is the transactional body of PromotePending. The
@@ -58,11 +58,14 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 		return resolveCompanion(ctx, tx, p, existing)
 	}
 
+	// The bytes are on the backend, since the reaper only promotes after its
+	// probe found them, and a newer copy means nothing will ever record them.
 	if intentSuperseded(existing, p.CreatedAt) {
-		if err := tx.DeletePending(ctx, p.IntentID); err != nil {
-			return promoteOutcome{}, fmt.Errorf("delete superseded pending row: %w", err)
+		cleanup, err := dropIntent(ctx, tx, p, CleanupReasonSupersededIntent)
+		if err != nil {
+			return promoteOutcome{}, err
 		}
-		return promoteOutcome{result: PendingPromoteSuperseded}, nil
+		return promoteOutcome{result: PendingPromoteSuperseded, cleanup: cleanup}, nil
 	}
 
 	return commitPromotion(ctx, tx, p, existing)
@@ -89,7 +92,11 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
 	}
-	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced, deltas: deltas}, nil
+	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonOverwritten, displaced)
+	if err != nil {
+		return promoteOutcome{}, err
+	}
+	return promoteOutcome{result: PendingPromoteCommitted, cleanup: cleanup, deltas: deltas}, nil
 }
 
 // resolveCompanion settles a companion-copy intent left by a process that died
@@ -97,23 +104,19 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 // replication worker rebuilds the copy from a committed one. The bytes are
 // kept only when a copy is already recorded at this intent's own path.
 func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
-	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
-		return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
-	}
 	for _, ec := range existing {
 		if ec.BackendName == p.BackendName && ec.StorageKey == p.StorageKey {
+			if err := tx.DeletePending(ctx, p.IntentID); err != nil {
+				return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
+			}
 			return promoteOutcome{result: PendingPromoteCompanionKept}, nil
 		}
 	}
-	return promoteOutcome{
-		result: PendingPromoteCompanionDiscarded,
-		displaced: []DeletedCopy{{
-			BackendName: p.BackendName,
-			StorageKey:  p.StorageKey,
-			SizeBytes:   p.SizeBytes,
-			Reason:      CleanupReasonCompanionDiscarded,
-		}},
-	}, nil
+	cleanup, err := dropIntent(ctx, tx, p, CleanupReasonCompanionDiscarded)
+	if err != nil {
+		return promoteOutcome{}, err
+	}
+	return promoteOutcome{result: PendingPromoteCompanionDiscarded, cleanup: cleanup}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -124,9 +127,9 @@ func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, exist
 // transactional body, shaped like promoteOutcome so both resolution paths hand
 // their caller the same three things.
 type companionOutcome struct {
-	result    CompanionCommitResult
-	displaced []DeletedCopy
-	deltas    QuotaDeltas
+	result  CompanionCommitResult
+	cleanup []CleanupItem
+	deltas  QuotaDeltas
 }
 
 // commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
@@ -141,7 +144,7 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 		return companionOutcome{}, err
 	}
 	if !claimed {
-		return discardUntrustedCopy(p), nil
+		return discardUntrustedCopy(ctx, tx, p)
 	}
 	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
@@ -157,19 +160,15 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	return companionOutcome{result: CompanionCopyCommitted, deltas: deltas}, nil
 }
 
-// discardUntrustedCopy resolves an upload overtaken by a newer write by
-// deleting its bytes, which sit at a path no other write shares. Nothing is
-// debited because the bytes were never recorded.
-func discardUntrustedCopy(p *PendingObject) companionOutcome {
-	return companionOutcome{
-		result: CompanionCopyUntrusted,
-		displaced: []DeletedCopy{{
-			BackendName: p.BackendName,
-			StorageKey:  p.StorageKey,
-			SizeBytes:   p.SizeBytes,
-			Reason:      CleanupReasonCompanionUntrusted,
-		}},
+// discardUntrustedCopy resolves an upload overtaken by a newer write by queueing
+// its bytes, which sit at a path no other write shares. Nothing is debited
+// because the bytes were never recorded.
+func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
+	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonCompanionUntrusted, []removedCopy{intentBytes(p, "")})
+	if err != nil {
+		return companionOutcome{}, err
 	}
+	return companionOutcome{result: CompanionCopyUntrusted, cleanup: cleanup}, nil
 }
 
 // clearSupersededIntents removes every intent for the key except keep, and
@@ -180,17 +179,17 @@ func discardUntrustedCopy(p *PendingObject) companionOutcome {
 // this write also landed on, since they sit at a different path. keep holds
 // this write's own uploads still in flight; their surviving rows are what
 // their later commit reads as proof that nothing newer touched the key.
-func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep, committing []string) ([]DeletedCopy, error) {
+func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep, committing []string) ([]removedCopy, error) {
 	cleared, err := tx.ClearPendingForKey(ctx, key, keep)
 	if err != nil {
 		return nil, fmt.Errorf("clear superseded intents: %w", err)
 	}
-	stale := make([]DeletedCopy, 0, len(cleared))
+	stale := make([]removedCopy, 0, len(cleared))
 	for _, si := range cleared {
 		if slices.Contains(committing, si.IntentID) {
 			continue
 		}
-		stale = append(stale, DeletedCopy{
+		stale = append(stale, removedCopy{
 			BackendName: si.BackendName,
 			StorageKey:  si.StorageKey,
 			SizeBytes:   si.SizeBytes,
@@ -201,11 +200,9 @@ func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep,
 }
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
-// per-backend negative deltas in the supplied map, which the caller applies to
-// the byte counter once the transaction has committed. Every copy is returned
-// as a DeletedCopy so the caller can enqueue its bytes for physical cleanup,
-// each one naming the path it occupies.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
+// per-backend negative deltas in the supplied map. Every copy's bytes are
+// returned for the caller to queue, each one naming the path it occupies.
+func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas QuotaDeltas) ([]removedCopy, error) {
 	if len(existing) == 0 {
 		return nil, nil
 	}
@@ -215,5 +212,5 @@ func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing
 	for _, ec := range existing {
 		deltas.Add(ec.BackendName, -ec.SizeBytes)
 	}
-	return displacedFromExisting(existing), nil
+	return removedFromExisting(existing), nil
 }

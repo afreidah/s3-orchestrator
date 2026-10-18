@@ -57,7 +57,7 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // orchestrator.
 func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materializedCopyContext, etag string) (string, error) {
 	const operation = s3op.CopyObject
-	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, req.span, &core.RecordObjectRequest{
 		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
 		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID, StorageKey: req.destStorageKey}},
 	}); err != nil {
@@ -80,7 +80,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 // and the caller must not fall back.
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = s3op.CopyObject
-	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, req.span, &core.RecordObjectRequest{
 		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
 		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID, StorageKey: req.destStorageKey}},
 	}); err != nil {
@@ -104,8 +104,8 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext
 // DeleteObject: operation-completion accounting (pinned to the first
 // copy's backend for label stability), completion observability, and
 // cache invalidation. Per-backend DELETE API-call accounting is owned
-// by DeleteOrEnqueue so this helper does NOT call APICall.
-func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.DeletedCopy, start time.Time) {
+// by the cleanup settler so this helper does NOT call APICall.
+func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.CleanupItem, start time.Time) {
 	const operation = s3op.DeleteObject
 	if len(copies) > 0 {
 		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
@@ -118,7 +118,7 @@ func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key strin
 // DeleteObjects: operation-completion accounting (empty backend label
 // because the batch spans many), per-key tally span attributes, and
 // completion observability. Per-key API-call accounting is owned by
-// DeleteOrEnqueue inside the fanout.
+// the cleanup settler.
 func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, results []DeleteObjectResult, start time.Time) {
 	const operation = s3op.DeleteObjects
 	successCount, errorCount := tallyDeleteResults(results)

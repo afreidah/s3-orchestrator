@@ -49,8 +49,8 @@ func TestClaimWriteCopies_ClaimsOnePerIntent(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 
 	var claimed []string
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
 			claimed = append(claimed, p.BackendName)
 			return true, nil
 		}).Times(2)
@@ -79,8 +79,8 @@ func TestClaimWriteCopies_SkipsABackendWithoutRoom(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
 
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
 			return p.BackendName != "b2", nil
 		}).Times(3)
 
@@ -102,7 +102,7 @@ func TestClaimWriteCopies_FewerBackendsThanCopies(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
 
 	coord := newCoordinatorWithStore(store)
 
@@ -121,7 +121,7 @@ func TestClaimWriteCopies_NoCandidateFits(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(false, nil).Times(2)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).Times(2)
 
 	coord := newCoordinatorWithStore(store)
 
@@ -138,7 +138,7 @@ func TestClaimWriteCopies_FirstClaimErrorFailsTheWrite(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, errors.New("db down")).Times(1)
 
 	coord := newCoordinatorWithStore(store)
@@ -164,8 +164,8 @@ func TestClaimWriteCopies_LaterClaimErrorKeepsWhatItHas(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 
 	gomock.InOrder(
-		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(true, nil),
-		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(false, errors.New("db down")),
+		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil),
+		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, errors.New("db down")),
 	)
 
 	coord := newCoordinatorWithStore(store)
@@ -230,11 +230,12 @@ func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		Return(core.CompanionCopyUntrusted,
-			[]core.DeletedCopy{{
-				BackendName: "b2", StorageKey: "k!loser",
+			[]core.CleanupItem{{
+				ID: 7, BackendName: "b2", ObjectKey: "k", StorageKey: "k!loser",
 				SizeBytes: 4096, Reason: core.CleanupReasonCompanionUntrusted,
 			}},
 			nil, nil)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(7)).Return(nil)
 
 	be := backendtest.NewInMemory()
 	for _, path := range []string{"k!loser", "k!winner"} {
@@ -257,7 +258,7 @@ func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 		t.Error("the untrusted copy's bytes are still on the backend")
 	}
 	if !be.HasCopyOf("k!winner") {
-		t.Error("the discard deleted the committed copy's bytes, which is issue #1527")
+		t.Error("the discard deleted the committed copy's bytes")
 	}
 }
 

@@ -92,7 +92,7 @@ func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	if len(displaced) != 2 {
 		t.Fatalf("expected both cleared intents' bytes, got %+v", displaced)
 	}
-	byBackend := map[string]DeletedCopy{}
+	byBackend := map[string]CleanupItem{}
 	for _, dc := range displaced {
 		byBackend[dc.BackendName] = dc
 		if dc.Reason != CleanupReasonSupersededIntent {
@@ -139,7 +139,7 @@ func TestRecordObject_OvertakenWriteRecordsNothing(t *testing.T) {
 	if len(stub.inserted) != 0 || len(stub.ops) != 0 || len(deltas) != 0 || len(stub.cleared) != 0 {
 		t.Errorf("overtaken write changed the key: rows=%v ops=%+v deltas=%v cleared=%v", stub.inserted, stub.ops, deltas, stub.cleared)
 	}
-	want := []DeletedCopy{{BackendName: "b1", StorageKey: "k!mine", SizeBytes: 100, Reason: CleanupReasonSupersededIntent}}
+	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!mine", SizeBytes: 100, Reason: CleanupReasonSupersededIntent}}
 	if !slices.Equal(displaced, want) {
 		t.Errorf("displaced = %+v, want %+v", displaced, want)
 	}
@@ -164,7 +164,7 @@ func TestDeleteObject_ClearsIntents(t *testing.T) {
 	if !stub.cleared {
 		t.Fatal("expected the delete to clear the key's intents")
 	}
-	if !slices.ContainsFunc(displaced, func(dc DeletedCopy) bool {
+	if !slices.ContainsFunc(displaced, func(dc CleanupItem) bool {
 		return dc.BackendName == "b2" && dc.Reason == CleanupReasonSupersededIntent
 	}) {
 		t.Errorf("expected the stale intent's bytes handed back, got %+v", displaced)
@@ -314,7 +314,7 @@ func TestRecordObject_NoCopies(t *testing.T) {
 // assert on.
 func runDeleteLocation(stub *excessTxStub, key, backend string) error {
 	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
-	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
+	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, "")
 	return err
 }
 
@@ -386,6 +386,263 @@ func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 		t.Errorf("quota applied despite the tag clear failing: %v", stub.ops)
 	}
 }
+
+// batchIntentStub is a batch whose keys each hold one in-flight intent, so a
+// test can see the batch clear them the way a single delete does.
+type batchIntentStub struct {
+	*batchTxStub
+
+	clearErr error
+	cleared  []string
+}
+
+// ClearPendingForKey reports one stale intent per key, on b9 at the key's own
+// intent path.
+func (s *batchIntentStub) ClearPendingForKey(_ context.Context, key string, _ []string) ([]SupersededIntent, error) {
+	if s.clearErr != nil {
+		return nil, s.clearErr
+	}
+	s.cleared = append(s.cleared, key)
+	return []SupersededIntent{{IntentID: "i-" + key, BackendName: "b9", StorageKey: key + "!inflight", SizeBytes: 5}}, nil
+}
+
+// TestDeleteObjectsBatch_ClearsIntentsAndQueues verifies the batch clears each
+// removed key's intents and queues, per key in sorted order, the copies'
+// bytes as deleted and the intents' bytes as superseded.
+func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
+	t.Parallel()
+	stub := &batchIntentStub{batchTxStub: newBatchStub(&batchTxStub{keyed: []KeyedExistingCopy{
+		{ObjectKey: "k2", BackendName: "b1", StorageKey: "k2!a", SizeBytes: 20},
+		{ObjectKey: "k1", BackendName: "b1", StorageKey: "k1!a", SizeBytes: 10},
+	}})}
+	cleanup, deltas, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, []string{"k2", "k1", "missing"})
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch: %v", err)
+	}
+	if !slices.Equal(stub.cleared, []string{"k1", "k2"}) {
+		t.Errorf("cleared intents for %v, want each removed key in order", stub.cleared)
+	}
+	want := []CleanupItem{
+		{BackendName: "b1", ObjectKey: "k1", StorageKey: "k1!a", Reason: CleanupReasonDeleted, SizeBytes: 10},
+		{BackendName: "b9", ObjectKey: "k1", StorageKey: "k1!inflight", Reason: CleanupReasonSupersededIntent, SizeBytes: 5},
+		{BackendName: "b1", ObjectKey: "k2", StorageKey: "k2!a", Reason: CleanupReasonDeleted, SizeBytes: 20},
+		{BackendName: "b9", ObjectKey: "k2", StorageKey: "k2!inflight", Reason: CleanupReasonSupersededIntent, SizeBytes: 5},
+	}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+	if deltas["b1"] != -30 {
+		t.Errorf("deltas = %+v, want b1 -30", deltas)
+	}
+}
+
+// TestDeleteObjectsBatch_FailuresRollBack verifies a failed intent clear or
+// queue insert surfaces with no cleanup rows handed back.
+func TestDeleteObjectsBatch_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	keyed := []KeyedExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}}
+	cases := map[string]TxAdapter{
+		"intent clear": &batchIntentStub{batchTxStub: newBatchStub(&batchTxStub{keyed: keyed}), clearErr: sentinel},
+		"queue":        &queueRecorder{TxAdapter: newBatchStub(&batchTxStub{keyed: keyed}), err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cleanup, _, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: tx}, []string{"k1"})
+			if !errors.Is(err, sentinel) || cleanup != nil {
+				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
+			}
+		})
+	}
+}
+
+// TestDeleteObjectsBatch_NothingToDelete verifies an empty key list or keys
+// that hold nothing queue nothing.
+func TestDeleteObjectsBatch_NothingToDelete(t *testing.T) {
+	t.Parallel()
+	stub := newBatchStub(&batchTxStub{})
+	for _, keys := range [][]string{nil, {"missing"}} {
+		cleanup, deltas, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, keys)
+		if err != nil || cleanup != nil || deltas != nil {
+			t.Errorf("keys %v: cleanup=%+v deltas=%+v err=%v, want nothing", keys, cleanup, deltas, err)
+		}
+	}
+}
+
+// TestDeleteObject_QueuesEveryCopy verifies a delete queues each copy's bytes
+// at its own path under the deleted reason, and reports a key with no copies
+// as not found.
+func TestDeleteObject_QueuesEveryCopy(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
+		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 20},
+	}})
+	cleanup, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	want := []CleanupItem{
+		{BackendName: "b1", ObjectKey: "k", StorageKey: "k!a", Reason: CleanupReasonDeleted, SizeBytes: 10},
+		{BackendName: "b2", ObjectKey: "k", StorageKey: "k!b", Reason: CleanupReasonDeleted, SizeBytes: 20},
+	}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+
+	empty := newExcessStub(&excessTxStub{})
+	if _, _, err := DeleteObject(context.Background(), &stubRunner{tx: empty}, "k"); !errors.Is(err, ErrObjectNotFound) {
+		t.Errorf("err = %v, want ErrObjectNotFound", err)
+	}
+}
+
+// TestDeleteObject_FailuresRollBack verifies a failed read, row delete, stripe
+// charge or queue insert surfaces with no cleanup rows handed back.
+func TestDeleteObject_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	existing := []ExistingCopy{{BackendName: "b1", SizeBytes: 10}}
+	cases := map[string]TxAdapter{
+		"read":          newExcessStub(&excessTxStub{existingErr: sentinel}),
+		"row delete":    &copyDeleteFailStub{quotaTxStub: &quotaTxStub{existingCopies: existing}, err: sentinel},
+		"stripe charge": newExcessStub(&excessTxStub{quotaTxStub: &quotaTxStub{adjustErr: sentinel}, existing: existing}),
+		"queue":         &queueRecorder{TxAdapter: newExcessStub(&excessTxStub{existing: existing}), err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cleanup, _, err := DeleteObject(context.Background(), &stubRunner{tx: tx}, "k")
+			if !errors.Is(err, sentinel) || cleanup != nil {
+				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
+			}
+		})
+	}
+}
+
+// copyDeleteFailStub fails the statement that removes a key's copies, for the
+// write and delete paths that clear a whole copy set.
+type copyDeleteFailStub struct {
+	*quotaTxStub
+	err error
+}
+
+// DeleteObjectCopies fails with the seeded error, leaving the copy set
+// untouched.
+func (s *copyDeleteFailStub) DeleteObjectCopies(context.Context, string) error { return s.err }
+
+// TestRecordObject_QueuesDisplacedCopies verifies an overwrite queues every
+// prior copy's bytes as overwrite-displaced alongside the superseded intents.
+func TestRecordObject_QueuesDisplacedCopies(t *testing.T) {
+	t.Parallel()
+	stub := &intentClearingTxStub{
+		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", StorageKey: "k!old", SizeBytes: 10}}},
+		pending:     []SupersededIntent{{IntentID: "stale", BackendName: "b2", StorageKey: "k!stale", SizeBytes: 7}},
+	}
+	cleanup, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	want := []CleanupItem{
+		{BackendName: "b1", ObjectKey: "k", StorageKey: "k!old", Reason: CleanupReasonOverwritten, SizeBytes: 10},
+		{BackendName: "b2", ObjectKey: "k", StorageKey: "k!stale", Reason: CleanupReasonSupersededIntent, SizeBytes: 7},
+	}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestRecordObject_FailuresRollBack verifies each step of a commit carries its
+// failure out with no cleanup rows handed back.
+func TestRecordObject_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	existing := []ExistingCopy{{BackendName: "b1", SizeBytes: 10}}
+	cases := map[string]TxAdapter{
+		"key lock":      &quotaTxStub{keyLockErr: sentinel},
+		"claim":         &claimFailStub{quotaTxStub: &quotaTxStub{}, err: sentinel},
+		"read":          &quotaTxStub{existingErr: sentinel},
+		"copy delete":   &copyDeleteFailStub{quotaTxStub: &quotaTxStub{existingCopies: existing}, err: sentinel},
+		"insert":        &insertFailStub{quotaTxStub: &quotaTxStub{}, err: sentinel},
+		"stripe charge": &quotaTxStub{adjustErr: sentinel},
+		"queue":         &queueRecorder{TxAdapter: &quotaTxStub{existingCopies: existing}, err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cleanup, _, err := RecordObject(context.Background(), &stubRunner{tx: tx}, &RecordObjectRequest{
+				Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
+			})
+			if !errors.Is(err, sentinel) || cleanup != nil {
+				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
+			}
+		})
+	}
+}
+
+// TestRecordObject_OvertakenFailuresRollBack verifies an overtaken write that
+// cannot drop its intent or queue its bytes fails rather than committing a
+// half-resolved discard.
+func TestRecordObject_OvertakenFailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	cases := map[string]TxAdapter{
+		"intent delete": &overtakenDeleteFailStub{err: sentinel},
+		"queue":         &queueRecorder{TxAdapter: &overtakenTxStub{multiCopyTxStub: newMultiCopyStub(nil)}, err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := RecordObject(context.Background(), &stubRunner{tx: tx}, &RecordObjectRequest{
+				Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
+			})
+			if !errors.Is(err, sentinel) {
+				t.Errorf("err = %v, want the %s failure", err, name)
+			}
+		})
+	}
+}
+
+// claimFailStub fails every intent claim, so a write cannot tell whether it
+// was overtaken.
+type claimFailStub struct {
+	*quotaTxStub
+	err error
+}
+
+// ClaimPending fails with the seeded error rather than reporting the intent
+// held or gone.
+func (s *claimFailStub) ClaimPending(context.Context, string) (bool, error) { return false, s.err }
+
+// insertFailStub fails every location insert, for the commit paths that
+// record a copy.
+type insertFailStub struct {
+	*quotaTxStub
+	err error
+}
+
+// InsertObjectLocation fails with the seeded error, so no copy is
+// recorded.
+func (s *insertFailStub) InsertObjectLocation(context.Context, *ObjectLocation) error { return s.err }
+
+// overtakenDeleteFailStub is an overtaken key whose intent delete fails, so
+// the discard of the losing write rolls back.
+type overtakenDeleteFailStub struct {
+	noopTxAdapter
+	err error
+}
+
+// ClaimPending reports the intent gone, as it is for a write a newer one
+// overtook.
+func (*overtakenDeleteFailStub) ClaimPending(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+// DeletePending fails with the seeded error, so the overtaken write cannot
+// drop its intent.
+func (s *overtakenDeleteFailStub) DeletePending(context.Context, string) error { return s.err }
 
 // TestRecordObject_ClearsTagsOnWrite verifies a write resets the key's tag
 // set. A PUT is a full replacement, so the object landing here starts with no
@@ -470,25 +727,49 @@ func TestDeleteObject_TagClearError(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectLocation_ReportsLockedSize verifies the copy is deleted and
-// the bytes reported are the ones on the locked row, not a caller-supplied
-// figure: the caller debits the backend by exactly what it removed.
-func TestDeleteObjectLocation_ReportsLockedSize(t *testing.T) {
+// TestDeleteObjectLocation_QueuesLockedSize verifies the copy is deleted and
+// the bytes queued are the ones on the locked row, not a caller-supplied
+// figure, under the caller's reason.
+func TestDeleteObjectLocation_QueuesLockedSize(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 100},
+		{BackendName: "b1", StorageKey: "k!1", SizeBytes: 100},
 		{BackendName: "b2", SizeBytes: 200},
 	}})
-	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", SizeBytes: 1}
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
+	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!1", SizeBytes: 1}
+	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, "scrub")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
 		t.Errorf("expected b1 deleted, got %v", stub.deleted)
 	}
-	if removed.SizeBytes != 100 {
-		t.Errorf("removed = %d, want 100 (the locked row's size)", removed.SizeBytes)
+	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!1", Reason: "scrub", SizeBytes: 100}}
+	if !slices.Equal(removed, want) {
+		t.Errorf("queued = %+v, want %+v", removed, want)
+	}
+	if len(stub.ops) != 1 || stub.ops[0].delta != -100 {
+		t.Errorf("debit = %+v, want -100 on b1", stub.ops)
+	}
+}
+
+// TestDeleteObjectLocation_EmptyReasonQueuesNothing verifies a caller that
+// already knows the bytes are gone removes only the row: the quota still moves
+// but no cleanup row is queued.
+func TestDeleteObjectLocation_EmptyReasonQueuesNothing(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}})
+	queuer := &queueRecorder{TxAdapter: stub}
+	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1"}
+	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: queuer}, loc, 0, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if removed != nil || len(queuer.queued) != 0 {
+		t.Errorf("queued = %+v / %+v, want nothing", removed, queuer.queued)
+	}
+	if len(stub.deleted) != 1 || len(stub.ops) != 1 {
+		t.Errorf("expected the row removed and debited, got deleted=%v ops=%v", stub.deleted, stub.ops)
 	}
 }
 
@@ -600,11 +881,11 @@ func TestDeleteObjectLocation_KeepsOverwrittenCopy(t *testing.T) {
 		{BackendName: "b1", StorageKey: "k!new", SizeBytes: 200},
 	}})
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old"}
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0)
+	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, CleanupReasonDeleted)
 	if !errors.Is(err, ErrCopyChanged) {
 		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
-	if removed != (DeletedCopy{}) {
+	if removed != nil {
 		t.Errorf("removed = %+v, want nothing reported", removed)
 	}
 	if len(stub.deleted) != 0 || len(stub.ops) != 0 || len(stub.tagsCleared) != 0 {

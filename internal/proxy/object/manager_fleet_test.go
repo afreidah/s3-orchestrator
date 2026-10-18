@@ -48,12 +48,14 @@ import (
 // real insert makes: a backend is out of room when the database says so, not
 // when an in-memory figure does.
 type objectsCalls struct {
-	mu             sync.Mutex
-	recordObject   []objRecordCall
-	insertPending  []core.PendingObject
-	companionCopy  []core.PendingObject
-	enqueueCleanup []core.CleanupItem
-	full           map[string]bool
+	mu            sync.Mutex
+	nextID        int64
+	recordObject  []objRecordCall
+	insertPending []core.PendingObject
+	companionCopy []core.PendingObject
+	discarded     []core.CleanupItem
+	retried       []int64
+	full          map[string]bool
 }
 
 type objRecordCall struct {
@@ -70,15 +72,23 @@ type objRecordCall struct {
 func (c *objectsCalls) snapshot() ([]objRecordCall, []core.PendingObject, []core.CleanupItem) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return slices.Clone(c.recordObject), slices.Clone(c.companionCopy), slices.Clone(c.enqueueCleanup)
+	return slices.Clone(c.recordObject), slices.Clone(c.companionCopy), slices.Clone(c.discarded)
+}
+
+// retriedRows copies the ids of the cleanup rows the settler sent back for
+// retry.
+func (c *objectsCalls) retriedRows() []int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.retried)
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		backend := req.Copies[0].Backend
@@ -93,8 +103,8 @@ func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.Recor
 // stubObjCommitCompanion records an extra copy committing after the response
 // and reports it as recorded, which is what the store does while the intent is
 // still there.
-func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
-	return func(_ context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
+	return func(_ context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.companionCopy = append(c.companionCopy, *p)
@@ -104,8 +114,8 @@ func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.Pending
 
 // stubObjInsertPending records the claim and admits it unless the test declared
 // that backend full, which is how the real insert reports one without room.
-func stubObjInsertPending(c *objectsCalls, err error) func(context.Context, *core.PendingObject) (bool, error) {
-	return func(_ context.Context, p *core.PendingObject) (bool, error) {
+func stubObjInsertPending(c *objectsCalls, err error) func(context.Context, *core.PendingObject, core.BackendFlags) (bool, error) {
+	return func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if err != nil {
@@ -119,14 +129,28 @@ func stubObjInsertPending(c *objectsCalls, err error) func(context.Context, *cor
 	}
 }
 
-func stubObjEnqueue(c *objectsCalls) func(context.Context, *core.CleanupRequest) error {
-	return func(_ context.Context, req *core.CleanupRequest) error {
+// stubObjDiscard drops an intent and returns the cleanup row for its bytes, as
+// the store does for an intent it still holds.
+func stubObjDiscard(c *objectsCalls) func(context.Context, *core.PendingObject, string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.enqueueCleanup = append(c.enqueueCleanup, core.CleanupItem{
-			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
-			Reason: req.Reason, SizeBytes: req.SizeBytes,
-		})
+		c.nextID++
+		row := core.CleanupItem{
+			ID: c.nextID, BackendName: p.BackendName, ObjectKey: p.ObjectKey, StorageKey: p.StorageKey,
+			Reason: reason, SizeBytes: p.SizeBytes,
+		}
+		c.discarded = append(c.discarded, row)
+		return []core.CleanupItem{row}, nil
+	}
+}
+
+// stubObjRetry records the rows the settler sent back for retry.
+func stubObjRetry(c *objectsCalls) func(context.Context, int64, time.Duration, string) error {
+	return func(_ context.Context, id int64, _ time.Duration, _ string) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.retried = append(c.retried, id)
 		return nil
 	}
 }
@@ -137,12 +161,14 @@ func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 	c := &objectsCalls{}
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, nil)).AnyTimes()
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjCommitCompanion(c)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
+	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjDiscard(c)).AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjRetry(c)).AnyTimes()
 	return c
 }
 
@@ -204,7 +230,7 @@ func listObjectsDelimitedStore(t *testing.T, resp *core.ListDelimitedResult, err
 }
 
 // deleteObjectStore wires a DeleteObject response.
-func deleteObjectStore(t *testing.T, resp []core.DeletedCopy, err error) *storetest.MockMetadataStore {
+func deleteObjectStore(t *testing.T, resp []core.CleanupItem, err error) *storetest.MockMetadataStore {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
@@ -279,7 +305,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	// TestPutObject_DrainRace_AllBackendsDraining.
 	drained := backendtest.NewInMemory()
 	healthy := backendtest.NewInMemory()
-	store, _ := eligibleStore(t)
+	store, c := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": drained, "b2": healthy}, &fleetOpts{Order: []string{"b1", "b2"}})
 	mgr.Runtime.SetStateChecker(&flippingDrainChecker{backend: "b1"})
 
@@ -292,7 +318,14 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 		t.Error("expected non-empty etag from the failover backend")
 	}
 	if drained.HasCopyOf("mykey") {
-		t.Error("draining backend still holds the orphaned bytes; RecoverFromRecordFailure did not delete")
+		t.Error("draining backend still holds the orphaned bytes; the discard did not delete them")
+	}
+	_, _, discarded := c.snapshot()
+	if len(discarded) != 1 || discarded[0].BackendName != "b1" || discarded[0].Reason != reasonWriteTargetRefused {
+		t.Errorf("discarded = %+v, want one %s row on b1", discarded, reasonWriteTargetRefused)
+	}
+	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+		t.Errorf("b1 apiRequests = %d, want 2 (refused PUT + discard delete)", got)
 	}
 	if !healthy.HasCopyOf("mykey") {
 		t.Error("healthy backend did not receive the failed-over write")
@@ -322,7 +355,7 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 		t.Fatal("expected error when every backend flipped to draining mid-write")
 	}
 	if drainedA.HasCopyOf("mykey") || drainedB.HasCopyOf("mykey") {
-		t.Error("orphaned bytes left on a draining backend; RecoverFromRecordFailure did not delete")
+		t.Error("orphaned bytes left on a draining backend; the discard did not delete them")
 	}
 }
 
@@ -563,10 +596,9 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
+	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -588,8 +620,6 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	}
 }
 
-// TestPutObject_RecordFailure_LegacyPath asserts that with the pending
-// store nil, the legacy delete-on-failure path runs.
 // errReader is an io.Reader that always returns the configured error.
 type errReader struct{ err error }
 
@@ -1230,7 +1260,7 @@ func TestDeleteObject_Success(t *testing.T) {
 	be := backendtest.NewInMemory()
 	_, _ = be.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
-	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
+	store := deleteObjectStore(t, deletedRows("del-key", "b1"), nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if err := mgr.DeleteObject(context.Background(), "del-key"); err != nil {
@@ -1264,18 +1294,32 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 	}
 }
 
-// stubBatchDelete returns a DoAndReturn that drives DeleteObjectsBatch.
-func stubBatchDelete(fn func(keys []string) (map[string][]core.DeletedCopy, error)) func(context.Context, []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
-	return func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
-		copies, err := fn(keys)
+// stubBatchDelete returns a DoAndReturn that drives DeleteObjectsBatch: every
+// key held one byte on backendName, and the batch queues a cleanup row for it.
+func stubBatchDelete(backendName string) func(context.Context, []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+	return func(_ context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+		rows := make([]core.CleanupItem, len(keys))
 		deltas := make(core.QuotaDeltas)
-		for _, perKey := range copies {
-			for _, dc := range perKey {
-				deltas.Add(dc.BackendName, -dc.SizeBytes)
+		for i, k := range keys {
+			rows[i] = core.CleanupItem{
+				ID: int64(i + 1), BackendName: backendName, ObjectKey: k, Reason: core.CleanupReasonDeleted, SizeBytes: 1,
 			}
+			deltas.Add(backendName, -1)
 		}
-		return copies, deltas, err
+		return rows, deltas, nil
 	}
+}
+
+// deletedRows returns the cleanup rows a delete of key queues, one per
+// backend that held a two-byte copy.
+func deletedRows(key string, backends ...string) []core.CleanupItem {
+	rows := make([]core.CleanupItem, len(backends))
+	for i, name := range backends {
+		rows[i] = core.CleanupItem{
+			ID: int64(i + 1), BackendName: name, ObjectKey: key, Reason: core.CleanupReasonDeleted, SizeBytes: 2,
+		}
+	}
+	return rows
 }
 
 // TestDeleteObjects_AllSuccess pins the per-key all-success path.
@@ -1290,13 +1334,7 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubBatchDelete(func(keys []string) (map[string][]core.DeletedCopy, error) {
-			out := make(map[string][]core.DeletedCopy, len(keys))
-			for _, k := range keys {
-				out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
-			}
-			return out, nil
-		})).AnyTimes()
+		DoAndReturn(stubBatchDelete("b1")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -1356,9 +1394,10 @@ func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	}
 }
 
-// TestDeleteObjects_BackendFailureEnqueuesCleanup pins that be
-// failures during batch delete enqueue cleanup rows.
-func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
+// TestDeleteObjects_BackendFailureRetriesRows pins that backend failures
+// during a batch delete send the queued rows back for retry and do not fail
+// the keys.
+func TestDeleteObjects_BackendFailureRetriesRows(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.DeleteErr = errors.New("be down")
@@ -1367,13 +1406,7 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	c := objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubBatchDelete(func(keys []string) (map[string][]core.DeletedCopy, error) {
-			out := make(map[string][]core.DeletedCopy, len(keys))
-			for _, k := range keys {
-				out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
-			}
-			return out, nil
-		})).AnyTimes()
+		DoAndReturn(stubBatchDelete("b1")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -1386,13 +1419,8 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 		}
 	}
 
-	if len(c.enqueueCleanup) != 2 {
-		t.Fatalf("expected 2 enqueue calls, got %d", len(c.enqueueCleanup))
-	}
-	for _, e := range c.enqueueCleanup {
-		if e.Reason != "batch_delete_failed" {
-			t.Errorf("expected reason=batch_delete_failed, got %q", e.Reason)
-		}
+	if got := c.retriedRows(); len(got) != 2 {
+		t.Fatalf("retried rows = %v, want both queued rows", got)
 	}
 }
 
@@ -1415,13 +1443,7 @@ func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubBatchDelete(func(keys []string) (map[string][]core.DeletedCopy, error) {
-			out := make(map[string][]core.DeletedCopy, len(keys))
-			for _, k := range keys {
-				out[k] = []core.DeletedCopy{{BackendName: "ghost", SizeBytes: 1}}
-			}
-			return out, nil
-		})).AnyTimes()
+		DoAndReturn(stubBatchDelete("ghost")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
@@ -1448,14 +1470,14 @@ func TestDeleteObject_RecordsOneAPICallPerCopy(t *testing.T) {
 		_, _ = b.PutObject(context.Background(), "k", bytes.NewReader([]byte("rm")), 2, "", nil)
 	}
 
-	store := deleteObjectStore(t, []core.DeletedCopy{
-		{BackendName: "b1", SizeBytes: 2},
-		{BackendName: "b2", SizeBytes: 2},
-	}, nil)
+	store := deleteObjectStore(t, deletedRows("k", "b1", "b2"), nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be1, "b2": be2}, nil)
 
 	if err := mgr.DeleteObject(context.Background(), "k"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
+	}
+	if be1.HasCopyOf("k") || be2.HasCopyOf("k") {
+		t.Error("both queued copies should be deleted by the settle")
 	}
 
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
@@ -1480,13 +1502,7 @@ func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubBatchDelete(func(keys []string) (map[string][]core.DeletedCopy, error) {
-			out := make(map[string][]core.DeletedCopy, len(keys))
-			for _, k := range keys {
-				out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
-			}
-			return out, nil
-		})).AnyTimes()
+		DoAndReturn(stubBatchDelete("b1")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -1569,7 +1585,8 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 
 // TestCopyObject_RecordFailureSurfaces asserts that when the destination PUT
 // succeeds but the metadata commit fails, CopyObject returns the error rather
-// than reporting success.
+// than reporting success, and leaves the copied bytes under their intent for
+// the pending reaper to resolve.
 func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1580,17 +1597,21 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
-	// RecordObject returns an error -> RecordObjectOrCleanup wraps + recovers + returns.
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
+	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when destination record fails")
+	}
+	if len(c.recordObject) != 1 || c.recordObject[0].Key != "dst" {
+		t.Errorf("RecordObject calls = %+v, want one for dst", c.recordObject)
+	}
+	if !be.HasCopyOf("dst") {
+		t.Error("copied bytes should stay for the reaper to resolve")
 	}
 }
 
@@ -1656,6 +1677,39 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	}
 	if puttedBody {
 		t.Error("PutObject ran; fast path should have skipped materialize+PUT")
+	}
+}
+
+// TestCopyObject_NativeRecordFailure_NoFallback asserts a native copy whose
+// commit fails surfaces the error without falling back to a materialized copy,
+// and leaves the copied bytes under their intent for the reaper.
+func TestCopyObject_NativeRecordFailure_NoFallback(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+	be.CopyEnabled = true
+	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+
+	c := &objectsCalls{}
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
+	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	storetest.Permissive(store)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
+		t.Fatal("expected error when the native copy's record fails")
+	}
+	if got := be.CopyCallCount(); got != 1 {
+		t.Errorf("native copyCalls = %d, want 1", got)
+	}
+	if len(c.recordObject) != 1 {
+		t.Errorf("RecordObject calls = %d, want 1 (no materialized fallback)", len(c.recordObject))
+	}
+	if !be.HasCopyOf("dst") {
+		t.Error("copied bytes should stay for the reaper to resolve")
 	}
 }
 
@@ -2118,7 +2172,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	_, _ = be.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
-	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
+	store := deleteObjectStore(t, deletedRows("del-key", "b1"), nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	mgr.LocationCache().Set("del-key", "b1")
@@ -2224,7 +2278,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": requestCapped(t, 1, 1, 1),
 	}
-	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
+	store := deleteObjectStore(t, deletedRows("del-key", "b1"), nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{UsageLimits: limits})
 
 	alreadySpent(mgr, "b1", 100, 100, 100)
@@ -2628,10 +2682,7 @@ func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 	b1 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "", nil)
 
-	store := deleteObjectStore(t, []core.DeletedCopy{
-		{BackendName: "gone-backend", SizeBytes: 4},
-		{BackendName: "b1", SizeBytes: 4},
-	}, nil)
+	store := deleteObjectStore(t, deletedRows("key", "gone-backend", "b1"), nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, nil)
 
 	if err := mgr.DeleteObject(context.Background(), "key"); err != nil {

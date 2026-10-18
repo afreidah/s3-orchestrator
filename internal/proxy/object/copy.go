@@ -170,7 +170,6 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 
 	return o.finalizeMaterializedCopy(ctx, &materializedCopyContext{
 		span:            span,
-		destBackend:     destBackend,
 		sourceKey:       sourceKey,
 		destKey:         destKey,
 		destStorageKey:  intent.StorageKey,
@@ -266,7 +265,6 @@ type materializedCopyContext struct {
 	destStorageKey string
 
 	span            trace.Span
-	destBackend     s3be.ObjectBackend
 	sourceKey       string
 	destKey         string
 	srcBackendName  string

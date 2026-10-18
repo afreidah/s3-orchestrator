@@ -305,9 +305,9 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 }
 
 // TestExecuteOneMove_Success verifies that the rebalancer dispatches a
-// single MoveObject call to the shared primitive (#924) on the happy
-// path. ExecuteOneMove no longer issues StreamCopy / DeleteOrEnqueue
-// directly - the writepath.Coordinator owns those.
+// single MoveObject call to the shared primitive on the happy path, under
+// the rebalancer's move profile; the writepath.Coordinator owns the copy
+// and the cleanup.
 func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -336,8 +336,8 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	if got == nil {
 		t.Fatal("MoveObject was not called")
 	}
-	if got.Reasons != writepath.RebalanceMoveReasons {
-		t.Errorf("MoveRequest.Reasons = %+v, want RebalanceMoveReasons", got.Reasons)
+	if got.Profile != writepath.RebalanceMove {
+		t.Errorf("MoveRequest.Profile = %+v, want RebalanceMove", got.Profile)
 	}
 	if got.Source != move.Source || got.SrcBackend != srcBe || got.DestBackend != dstBe || got.DestName != "b2" {
 		t.Errorf("MoveRequest = %+v, want the planned source copy moved b1 -> b2", got)

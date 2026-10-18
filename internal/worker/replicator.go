@@ -312,19 +312,19 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			break
 		}
 
-		// No capacity claim is held across the copy: PlaceCopy inserts the
-		// row only if the target still has room, so a failed attempt has
-		// nothing to give back. The target path is minted first so the verify
-		// read, the record, and every cleanup address the same bytes.
-		targetStorageKey := writepath.NewStorageKey(key)
-		sourceLoc, err := r.CopyToReplica(ctx, key, targetStorageKey, existingCopies, target)
+		intent, claimed := r.claimReplicaTarget(ctx, key, target, sizeEstimate, &out)
+		if !claimed {
+			exclusion[target] = true
+			continue
+		}
+		sourceLoc, err := r.CopyToReplica(ctx, key, intent.StorageKey, existingCopies, target)
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
 			// A copy can fail after its bytes reached the target, and no row
 			// will ever record them. The path is this attempt's own, so
 			// removing it cannot touch anything else.
-			r.CleanupOrphan(ctx, target, key, targetStorageKey, sizeEstimate)
+			r.placement.Discard(ctx, intent, writepath.ReplicationReasons.Orphan)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			out.CopyErrors++
@@ -334,26 +334,24 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 
 		// Checked before the row exists, so a copy that disagrees with its
 		// source never counts toward the replication factor.
-		if !r.admitVerifiedReplica(ctx, key, target, targetStorageKey, sourceLoc, &out) {
+		if !r.admitVerifiedReplica(ctx, intent, sourceLoc, &out) {
 			exclusion[target] = true
 			continue
 		}
 
-		// A placement that records nothing has the replica's bytes removed by
-		// PlaceOrCleanup, so each failure only has to be tallied here. The
-		// target resolved for the copy, so it is registered.
-		targetBackend := r.ops.Backends()[target]
-		recordedSize, err := r.placement.PlaceOrCleanup(ctx, &core.Placement{
-			Source:     sourceLoc,
-			Target:     target,
-			StorageKey: targetStorageKey,
-		}, targetBackend, transferredSize, writepath.ReplicationOrphanReasons)
+		// A placement that records nothing queues the replica's bytes in the
+		// same transaction, so each failure only has to be tallied here.
+		recordedSize, err := r.placement.Place(ctx, &core.Placement{
+			Source:  sourceLoc,
+			Intent:  intent,
+			Reasons: writepath.ReplicationReasons,
+		})
 		switch {
 		case core.PlacementDeclined(err):
 			// The source copy was deleted or overwritten during replication,
-			// or the target filled up or took a copy while the bytes were in
-			// flight, so this target is out of the running.
-			r.log.InfoContext(ctx, "replica not recorded, cleaned up orphan",
+			// or the target took a copy while the bytes were in flight, so
+			// this target is out of the running.
+			r.log.InfoContext(ctx, "replica not recorded, its bytes queued for cleanup",
 				"key", key, "target", target, "reason", err)
 			exclusion[target] = true
 			out.Superseded++
@@ -387,6 +385,27 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	}
 
 	return out
+}
+
+// claimReplicaTarget claims target for one replica attempt before the copy, as
+// a client write claims its backend, so the bytes count against its room while
+// they are in flight and an attempt that dies mid-copy leaves the reaper an
+// intent to resolve. The intent's path is what the verify read, the record,
+// and every cleanup address. A refused claim is a full target, not an error;
+// anything else is tallied as a record error on out.
+func (r *Replicator) claimReplicaTarget(ctx context.Context, key, target string, size int64, out *ReplicationOutcome) (*core.PendingObject, bool) {
+	intent := writepath.NewCopyIntent(key, target, size, nil)
+	err := r.placement.ClaimCopyTarget(ctx, intent, core.AcceptForWrite)
+	if err == nil {
+		return intent, true
+	}
+	r.log.InfoContext(ctx, "replica target declined the claim",
+		"key", key, "target", target, "reason", err)
+	if !errors.Is(err, core.ErrTargetRefused) {
+		telemetry.ReplicationErrorsTotal.Inc()
+		out.RecordErrors++
+	}
+	return nil, false
 }
 
 // reportObjectOutcome logs one warning for an object that did not reach the
@@ -526,9 +545,9 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 // backend reported its bytes missing. A row a client overwrite replaced since
 // the scan is left alone, since the missing bytes were never its own.
 // Logging-only on DB failure: a stuck stale row is preferable to aborting the
-// replication pass.
+// replication pass. No cleanup is queued, since the bytes are already gone.
 func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocation) {
-	_, delErr := r.store.DeleteObjectLocation(ctx, loc, 0)
+	_, delErr := r.store.DeleteObjectLocation(ctx, loc, 0, "")
 	switch {
 	case errors.Is(delErr, core.ErrCopyChanged):
 		return
@@ -539,24 +558,6 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, loc *core.ObjectLocat
 	}
 	r.log.InfoContext(ctx, "removed stale metadata entry",
 		"key", loc.ObjectKey, "backend", loc.BackendName)
-}
-
-// CleanupOrphan deletes the bytes this replication attempt wrote when the DB
-// record was not created (e.g. source was deleted during replication). It
-// deletes only the path the attempt wrote, so an existing copy on the target
-// is kept.
-func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storageKey string, sizeBytes int64) {
-	be, ok := r.ops.Backends()[backendName]
-	if !ok {
-		return
-	}
-	r.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
-		BackendName: backendName,
-		ObjectKey:   key,
-		StorageKey:  storageKey,
-		Reason:      writepath.ReplicationOrphanReasons.Orphan,
-		SizeBytes:   sizeBytes,
-	})
 }
 
 // UnhealthyBackends returns the backends that have refused reads for at least

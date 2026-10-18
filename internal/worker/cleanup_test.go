@@ -3,12 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Covers the cleanup-worker decision tree against a mock store and mock
-// backends: successful retry, transient failure with retry scheduled,
+// Covers the cleanup worker's claim-and-settle tick against a mock store and
+// mock backends: successful retry, transient failure with retry scheduled,
 // admission rejection, missing-backend completion, the exhaustion path
-// that graduates rows to cleanup_dlq, and the DLQ-move-failure tolerance
-// path. Also pins the exponential-backoff curve produced by
-// CleanupBackoff across attempt counts.
+// that graduates rows to cleanup_dlq, the DLQ-move-failure tolerance
+// path, claim batching, and stale-claim recovery.
 // -------------------------------------------------------------------------------
 
 package worker

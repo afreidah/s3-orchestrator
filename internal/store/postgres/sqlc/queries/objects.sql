@@ -99,14 +99,6 @@ SELECT * FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
 
--- name: BackendAdmits :one
--- Judged against backend_capacity, the view every admission test reads, with
--- the same accept mask a PUT is admitted under.
-SELECT ((flags & ~(@accepts::bigint)) = 0
-        AND (available_bytes IS NULL OR available_bytes >= @size_bytes::bigint))::boolean AS admits
-FROM backend_capacity
-WHERE backend_name = @backend_name;
-
 -- name: DeleteObjectFromBackend :exec
 DELETE FROM object_locations
 WHERE object_key = $1 AND backend_name = $2;

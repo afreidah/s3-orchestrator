@@ -16,6 +16,8 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,16 +33,12 @@ import (
 type cleanupTxStub struct {
 	noopTxAdapter
 
-	getRow             CleanupQueueRow
-	getRowErr          error
-	insertedDLQ        []CleanupQueueRow
-	insertDLQErr       error
-	deletedID          int64
-	deleteErr          error
-	decrementOrphans   []int64
-	sumDeleteRowCount  int64
-	sumDeleteTotalSize int64
-	sumDeleteErr       error
+	getRow       CleanupQueueRow
+	getRowErr    error
+	insertedDLQ  []CleanupQueueRow
+	insertDLQErr error
+	deletedID    int64
+	deleteErr    error
 }
 
 // GetCleanupQueueRow is a no-op stub on cleanupTxStub so the type satisfies the
@@ -72,18 +70,24 @@ func (t *cleanupTxStub) DeleteCleanupItem(_ context.Context, id int64) error {
 	return nil
 }
 
-// SumAndDeleteCleanupQueueRows is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) SumAndDeleteCleanupQueueRows(_ context.Context, _, _ string) (int64, int64, error) {
-	return t.sumDeleteRowCount, t.sumDeleteTotalSize, t.sumDeleteErr
+// queueRecorder wraps a TxAdapter and records every cleanup row the
+// transaction queues, numbering them from 1, or fails the insert when err is
+// set.
+type queueRecorder struct {
+	TxAdapter
+
+	queued []CleanupRequest
+	err    error
 }
 
-// DecrementOrphanBytes records the debit, which is what the DLQ move is
-// expected to make against the orphan counter.
-func (t *cleanupTxStub) DecrementOrphanBytes(_ context.Context, _ string, delta int64) error {
-	t.decrementOrphans = append(t.decrementOrphans, delta)
-	return nil
+// InsertCleanup records the request and hands back its position as the id,
+// or fails with the seeded error.
+func (q *queueRecorder) InsertCleanup(_ context.Context, c *CleanupRequest) (int64, error) {
+	if q.err != nil {
+		return 0, q.err
+	}
+	q.queued = append(q.queued, *c)
+	return int64(len(q.queued)), nil
 }
 
 // stubRunner runs the supplied closure synchronously against the TxAdapter it
@@ -111,7 +115,7 @@ func runWithCleanup(t *testing.T, stub TxAdapter, fn func(Runner) error) {
 // -------------------------------------------------------------------------
 
 // TestMoveCleanupToDLQ_HappyPath asserts the move reads the row, inserts it
-// into the DLQ, deletes the queue row, and never touches orphan_bytes.
+// into the DLQ and deletes the queue row.
 func TestMoveCleanupToDLQ_HappyPath(t *testing.T) {
 	t.Parallel()
 	stub := &cleanupTxStub{
@@ -149,9 +153,6 @@ func TestMoveCleanupToDLQ_HappyPath(t *testing.T) {
 	}
 	if stub.deletedID != 42 {
 		t.Errorf("expected DeleteCleanupItem(42), got id=%d", stub.deletedID)
-	}
-	if len(stub.decrementOrphans) != 0 {
-		t.Errorf("orphan_bytes must NOT be decremented on DLQ move; got %v", stub.decrementOrphans)
 	}
 }
 
@@ -218,5 +219,164 @@ func TestMoveCleanupToDLQ_InsertFailureDoesNotDeleteRow(t *testing.T) {
 	}
 	if stub.deletedID != 0 {
 		t.Errorf("DeleteCleanupItem must not run on insert failure; got id=%d", stub.deletedID)
+	}
+}
+
+// TestMoveCleanupToDLQ_SurfacesErrors verifies a failed row read or queue
+// delete is reported rather than read as a row already gone.
+func TestMoveCleanupToDLQ_SurfacesErrors(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("boom")
+	for name, stub := range map[string]*cleanupTxStub{
+		"read":   {getRowErr: sentinel},
+		"delete": {getRow: CleanupQueueRow{ID: 3}, deleteErr: sentinel},
+	} {
+		moved, err := MoveCleanupToDLQ(context.Background(), &stubRunner{tx: stub}, 3, "")
+		if !errors.Is(err, sentinel) || moved {
+			t.Errorf("%s: moved=%v err=%v, want the failure", name, moved, err)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// ENQUEUE REMOVED
+// -------------------------------------------------------------------------
+
+// TestEnqueueRemoved_QueuesEachCopy verifies every removed copy becomes one
+// queued row carrying the id the insert returned, its own reason when it has
+// one and the transaction's otherwise.
+func TestEnqueueRemoved_QueuesEachCopy(t *testing.T) {
+	t.Parallel()
+	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}}
+	items, err := enqueueRemoved(context.Background(), queuer, "k", CleanupReasonDeleted, []removedCopy{
+		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
+		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 20, Reason: CleanupReasonSupersededIntent},
+	})
+	if err != nil {
+		t.Fatalf("enqueueRemoved: %v", err)
+	}
+	want := []CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "k", StorageKey: "k!a", Reason: CleanupReasonDeleted, SizeBytes: 10},
+		{ID: 2, BackendName: "b2", ObjectKey: "k", StorageKey: "k!b", Reason: CleanupReasonSupersededIntent, SizeBytes: 20},
+	}
+	if !slices.Equal(items, want) {
+		t.Errorf("items = %+v, want %+v", items, want)
+	}
+	if len(queuer.queued) != 2 {
+		t.Errorf("queued %d rows, want 2", len(queuer.queued))
+	}
+}
+
+// TestEnqueueRemoved_NothingRemoved verifies an empty set queues nothing and
+// returns nil.
+func TestEnqueueRemoved_NothingRemoved(t *testing.T) {
+	t.Parallel()
+	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}}
+	items, err := enqueueRemoved(context.Background(), queuer, "k", CleanupReasonDeleted, nil)
+	if err != nil || items != nil || len(queuer.queued) != 0 {
+		t.Errorf("items=%+v err=%v queued=%v, want nothing", items, err, queuer.queued)
+	}
+}
+
+// TestEnqueueRemoved_InsertFailure verifies a row that cannot be queued fails
+// the call, naming the backend, so the transaction rolls back rather than
+// committing a removal whose bytes nothing names.
+func TestEnqueueRemoved_InsertFailure(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("insert failed")
+	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}, err: sentinel}
+	items, err := enqueueRemoved(context.Background(), queuer, "k", CleanupReasonDeleted, []removedCopy{{BackendName: "b1"}})
+	if !errors.Is(err, sentinel) || items != nil {
+		t.Fatalf("items=%+v err=%v, want the insert failure", items, err)
+	}
+	if !strings.Contains(err.Error(), "b1") {
+		t.Errorf("err = %v, want it to name the backend", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// DISCARD PENDING
+// -------------------------------------------------------------------------
+
+// discardTxStub drives DiscardPending: it decides whether the intent is still
+// held and records the intents it deletes.
+type discardTxStub struct {
+	noopTxAdapter
+
+	lost      bool
+	claimErr  error
+	lockErr   error
+	deleteErr error
+	deleted   []string
+}
+
+func (s *discardTxStub) AcquireKeyLock(context.Context, string) error { return s.lockErr }
+
+func (s *discardTxStub) ClaimPending(context.Context, string) (bool, error) {
+	return !s.lost, s.claimErr
+}
+
+func (s *discardTxStub) DeletePending(_ context.Context, intentID string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deleted = append(s.deleted, intentID)
+	return nil
+}
+
+// discardedIntent is the upload a write gave up on after its bytes landed
+// on b1.
+func discardedIntent() *PendingObject {
+	return &PendingObject{IntentID: "i-9", ObjectKey: "k", BackendName: "b1", StorageKey: "k!i-9", SizeBytes: 42}
+}
+
+// TestDiscardPending_DropsAndQueues verifies a held intent is deleted and its
+// bytes queued under the caller's reason.
+func TestDiscardPending_DropsAndQueues(t *testing.T) {
+	t.Parallel()
+	stub := &discardTxStub{}
+	cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: stub}, discardedIntent(), "put_failed")
+	if err != nil {
+		t.Fatalf("DiscardPending: %v", err)
+	}
+	if !slices.Equal(stub.deleted, []string{"i-9"}) {
+		t.Errorf("deleted = %v, want the discarded intent", stub.deleted)
+	}
+	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!i-9", Reason: "put_failed", SizeBytes: 42}}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestDiscardPending_IntentAlreadyGone verifies an intent someone else already
+// resolved queues nothing, since whoever removed it queued its bytes.
+func TestDiscardPending_IntentAlreadyGone(t *testing.T) {
+	t.Parallel()
+	stub := &discardTxStub{lost: true}
+	cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: stub}, discardedIntent(), "put_failed")
+	if err != nil || cleanup != nil || len(stub.deleted) != 0 {
+		t.Errorf("cleanup=%+v err=%v deleted=%v, want nothing", cleanup, err, stub.deleted)
+	}
+}
+
+// TestDiscardPending_FailuresRollBack verifies each step's failure surfaces
+// with nothing queued.
+func TestDiscardPending_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	cases := map[string]TxAdapter{
+		"key lock": &discardTxStub{lockErr: sentinel},
+		"claim":    &discardTxStub{claimErr: sentinel},
+		"delete":   &discardTxStub{deleteErr: sentinel},
+		"queue":    &queueRecorder{TxAdapter: &discardTxStub{}, err: sentinel},
+	}
+	for name, tx := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: tx}, discardedIntent(), "put_failed")
+			if !errors.Is(err, sentinel) || cleanup != nil {
+				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
+			}
+		})
 	}
 }

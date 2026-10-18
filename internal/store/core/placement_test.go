@@ -3,12 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// A placement records bytes copied from a source copy, so it commits only
-// while that source is still the copy the caller read, the target holds no
-// other copy and admits the bytes. A verbatim copy repeats every column of the
-// source, including the write time and the compression probe; a transformed
-// one carries its new form and size. A move removes the source row in the same
-// transaction, and a rewrite moves the copy onto its own backend.
+// A placement records bytes copied from a source copy to the path its intent
+// claimed, so it commits only while the intent is still held, the source is
+// still the copy the caller read, and the target holds no other copy. A
+// refusal still commits: it drops the intent and queues the copied bytes. A
+// verbatim copy repeats every column of the source; a reformed one carries the
+// intent's form and size. A move removes the source row and queues its bytes
+// in the same transaction, and a rewrite moves the copy onto its own backend.
 // -------------------------------------------------------------------------------
 
 package core
@@ -22,30 +23,32 @@ import (
 	"time"
 )
 
+const (
+	placeOrphanReason = "test_orphan"
+	placeSourceReason = "test_source_delete"
+	placeIntentID     = "i-place"
+	placeDestPath     = "k!dest"
+)
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
 // placeTxStub serves one locked source row and records what the placement
-// writes, the admission it asked for, and the order of its row writes.
+// writes, the intents it deletes, and the order of its row writes.
 type placeTxStub struct {
 	*quotaTxStub
-	existing  []ExistingCopy
-	src       *ObjectLocation
-	refuses   bool
-	admitErr  error
-	insertErr error
-	inserted  []*ObjectLocation
-	deleted   []string
-	admits    []admitCall
-	steps     []string
-}
-
-// admitCall is one recorded BackendAdmits question.
-type admitCall struct {
-	backend string
-	size    int64
-	accepts BackendFlags
+	existing       []ExistingCopy
+	src            *ObjectLocation
+	lost           bool
+	claimErr       error
+	lockErr        error
+	deletePendErr  error
+	insertErr      error
+	inserted       []*ObjectLocation
+	deleted        []string
+	deletedIntents []string
+	steps          []string
 }
 
 // newPlaceStub builds a stub holding src as the only copy, recorded at the
@@ -62,21 +65,30 @@ func newPlaceStub(src *ObjectLocation) *placeTxStub {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
+// ClaimPending reports the intent held unless the stub says a client write
+// already cleared it.
+func (s *placeTxStub) ClaimPending(context.Context, string) (bool, error) {
+	return !s.lost, s.claimErr
+}
+
+// DeletePending records the intent the placement cleared, or fails with the
+// seeded error.
+func (s *placeTxStub) DeletePending(_ context.Context, intentID string) error {
+	if s.deletePendErr != nil {
+		return s.deletePendErr
+	}
+	s.deletedIntents = append(s.deletedIntents, intentID)
+	return nil
+}
+
 // GetExistingCopiesForUpdate serves the seeded copy set.
 func (s *placeTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
-	return s.existing, nil
+	return s.existing, s.existingErr
 }
 
 // LockObjectOnBackend serves the seeded source row.
 func (s *placeTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
-	return s.src, s.src != nil, nil
-}
-
-// BackendAdmits records the question and refuses every write when the stub is
-// set to.
-func (s *placeTxStub) BackendAdmits(_ context.Context, backend string, size int64, accepts BackendFlags) (bool, error) {
-	s.admits = append(s.admits, admitCall{backend: backend, size: size, accepts: accepts})
-	return !s.refuses, s.admitErr
+	return s.src, s.src != nil, s.lockErr
 }
 
 // InsertObjectLocation records the destination row, or fails the placement.
@@ -120,15 +132,41 @@ func placedSource() *ObjectLocation {
 	}
 }
 
-// runPlace places the stub's source on b2 at k!dest.
-func runPlace(stub *placeTxStub, move bool) (int64, error) {
-	read := *stub.src
-	return PlaceCopy(context.Background(), &stubRunner{tx: stub}, &Placement{
+// placeIntent is the claim a placement of key k holds on backend for size
+// bytes at path.
+func placeIntent(backend, path string, size int64) *PendingObject {
+	return &PendingObject{IntentID: placeIntentID, ObjectKey: "k", BackendName: backend, StorageKey: path, SizeBytes: size}
+}
+
+// placeReasons labels the bytes a test placement queues, so a test can tell
+// the orphan rows from the source-delete rows.
+func placeReasons() MoveReasons {
+	return MoveReasons{Orphan: placeOrphanReason, SourceDelete: placeSourceReason}
+}
+
+// runPlaceOn runs a placement of src under intent against tx, as a move or a
+// replica and with or without reformed bytes.
+func runPlaceOn(tx TxAdapter, src *ObjectLocation, intent *PendingObject, move, reformed bool) (int64, []CleanupItem, error) {
+	read := *src
+	return PlaceCopy(context.Background(), &stubRunner{tx: tx}, &Placement{
 		Source:       &read,
-		Target:       "b2",
-		StorageKey:   "k!dest",
+		Intent:       intent,
 		RemoveSource: move,
+		Reformed:     reformed,
+		Reasons:      placeReasons(),
 	})
+}
+
+// runPlace places the stub's source verbatim on b2 at k!dest, as a move when
+// move is set.
+func runPlace(stub *placeTxStub, move bool) (int64, []CleanupItem, error) {
+	return runPlaceOn(stub, stub.src, placeIntent("b2", placeDestPath, stub.src.SizeBytes), move, false)
+}
+
+// orphanedIntent is the cleanup row a refused placement queues for the bytes
+// it copied to b2.
+func orphanedIntent(reason string) []CleanupItem {
+	return []CleanupItem{{BackendName: "b2", ObjectKey: "k", StorageKey: placeDestPath, Reason: reason, SizeBytes: 4096}}
 }
 
 // -------------------------------------------------------------------------
@@ -136,23 +174,24 @@ func runPlace(stub *placeTxStub, move bool) (int64, error) {
 // -------------------------------------------------------------------------
 
 // TestPlaceCopy_ReplicaCarriesEveryColumn verifies the destination row is the
-// source row at a new address: the stored form, identity, probe and write time
-// all ride across, and only the target is charged.
+// source row at the intent's address: the stored form, identity, probe and
+// write time all ride across, only the target is charged, the intent is
+// cleared, and nothing is queued.
 func TestPlaceCopy_ReplicaCarriesEveryColumn(t *testing.T) {
 	t.Parallel()
 	stub := newPlaceStub(placedSource())
 
-	placed, err := runPlace(stub, false)
+	placed, cleanup, err := runPlace(stub, false)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
-	if placed != 4096 {
-		t.Errorf("placed %d bytes, want 4096", placed)
+	if placed != 4096 || cleanup != nil {
+		t.Errorf("placed %d bytes, cleanup %+v; want 4096 and none", placed, cleanup)
 	}
 	if len(stub.inserted) != 1 {
 		t.Fatalf("inserted %d rows, want 1", len(stub.inserted))
 	}
-	want := stub.src.CopyAt("b2", "k!dest")
+	want := stub.src.CopyAt("b2", placeDestPath)
 	got := stub.inserted[0]
 	if got.BackendName != want.BackendName || got.StorageKey != want.StorageKey ||
 		!got.CreatedAt.Equal(want.CreatedAt) || got.KeyID != want.KeyID ||
@@ -166,18 +205,38 @@ func TestPlaceCopy_ReplicaCarriesEveryColumn(t *testing.T) {
 	if len(stub.ops) != 1 || stub.ops[0] != (quotaOp{backend: "b2", delta: 4096}) {
 		t.Errorf("quota ops = %v, want b2 +4096 only", stub.ops)
 	}
-	if want := []admitCall{{backend: "b2", size: 4096, accepts: AcceptForWrite}}; !slices.Equal(stub.admits, want) {
-		t.Errorf("admits = %+v, want %+v", stub.admits, want)
+	if !slices.Equal(stub.deletedIntents, []string{placeIntentID}) {
+		t.Errorf("deleted intents = %v, want the placement's own", stub.deletedIntents)
 	}
 }
 
-// TestPlaceCopy_MoveRemovesTheSource verifies a move deletes the source row
-// and moves its bytes between the two backends in the same transaction.
+// TestPlaceCopy_VerbatimIgnoresTheIntentForm verifies a placement that did not
+// reform the bytes records the source's form and size, whatever the intent
+// carries.
+func TestPlaceCopy_VerbatimIgnoresTheIntentForm(t *testing.T) {
+	t.Parallel()
+	stub := newPlaceStub(placedSource())
+	intent := placeIntent("b2", placeDestPath, 1)
+	intent.StoredForm = *rewrittenForm()
+
+	if _, _, err := runPlaceOn(stub, stub.src, intent, false, false); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	if got := stub.inserted[0]; got.SizeBytes != 4096 || got.KeyID != "config-0" {
+		t.Errorf("inserted %+v, want the source's form at 4096 bytes", got)
+	}
+}
+
+// TestPlaceCopy_MoveRemovesTheSource verifies a move deletes the source row,
+// moves its bytes between the two backends, and queues the source's bytes
+// under the source-delete reason in the same transaction.
 func TestPlaceCopy_MoveRemovesTheSource(t *testing.T) {
 	t.Parallel()
 	stub := newPlaceStub(placedSource())
+	queuer := &queueRecorder{TxAdapter: stub}
 
-	if _, err := runPlace(stub, true); err != nil {
+	_, cleanup, err := runPlaceOn(queuer, stub.src, placeIntent("b2", placeDestPath, 4096), true, false)
+	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
@@ -190,87 +249,141 @@ func TestPlaceCopy_MoveRemovesTheSource(t *testing.T) {
 	if got["b1"] != -4096 || got["b2"] != 4096 {
 		t.Errorf("quota deltas = %v, want b1 -4096 and b2 +4096", got)
 	}
+	want := []CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "k", StorageKey: "k!src", Reason: placeSourceReason, SizeBytes: 4096}}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
 }
 
 // TestPlaceCopy_ReplacedSourceIsChanged verifies a source a newer write
-// replaced, or one that is gone, records nothing: the bytes the caller copied
-// are the old object's.
+// replaced, or one that is gone, records nothing but commits the refusal: the
+// intent is dropped and the bytes the caller copied are queued as orphans.
 func TestPlaceCopy_ReplacedSourceIsChanged(t *testing.T) {
 	t.Parallel()
-	cases := map[string][]ExistingCopy{
-		"replaced": {{BackendName: "b1", StorageKey: "k!newer", SizeBytes: 10}},
-		"gone":     nil,
+	cases := map[string]func(*placeTxStub){
+		"replaced": func(s *placeTxStub) {
+			s.existing = []ExistingCopy{{BackendName: "b1", StorageKey: "k!newer", SizeBytes: 10}}
+		},
+		"gone":                   func(s *placeTxStub) { s.existing = nil },
+		"row lock finds nothing": func(s *placeTxStub) { s.src = nil },
 	}
-	for name, existing := range cases {
+	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			stub := newPlaceStub(placedSource())
-			stub.existing = existing
+			src := *stub.src
+			mutate(stub)
 
-			_, err := runPlace(stub, true)
+			_, cleanup, err := runPlaceOn(stub, &src, placeIntent("b2", placeDestPath, 4096), true, false)
 			if !errors.Is(err, ErrCopyChanged) {
 				t.Fatalf("error = %v, want ErrCopyChanged", err)
 			}
-			if len(stub.inserted) != 0 || len(stub.deleted) != 0 || len(stub.ops) != 0 {
-				t.Errorf("stub mutated: inserted=%d deleted=%v ops=%v", len(stub.inserted), stub.deleted, stub.ops)
-			}
+			assertRefusalCommitted(t, stub, cleanup)
 		})
 	}
 }
 
-// TestPlaceCopy_TargetRefuses verifies a target that already holds a copy, or
-// does not admit the bytes, records nothing.
-func TestPlaceCopy_TargetRefuses(t *testing.T) {
-	t.Parallel()
-	holds := newPlaceStub(placedSource())
-	holds.existing = append(holds.existing, ExistingCopy{BackendName: "b2", StorageKey: "k!other", SizeBytes: 4096})
-	full := newPlaceStub(placedSource())
-	full.refuses = true
+// assertRefusalCommitted checks a refused placement wrote no row and moved no
+// quota, but dropped its intent and queued the copied bytes as orphans.
+func assertRefusalCommitted(t *testing.T, stub *placeTxStub, cleanup []CleanupItem) {
+	t.Helper()
+	if len(stub.inserted) != 0 || len(stub.deleted) != 0 || len(stub.ops) != 0 {
+		t.Errorf("stub mutated: inserted=%d deleted=%v ops=%v", len(stub.inserted), stub.deleted, stub.ops)
+	}
+	if !slices.Equal(stub.deletedIntents, []string{placeIntentID}) {
+		t.Errorf("deleted intents = %v, want the refused placement's", stub.deletedIntents)
+	}
+	if want := orphanedIntent(placeOrphanReason); !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
 
-	for name, stub := range map[string]*placeTxStub{"holds a copy": holds, "refuses admission": full} {
+// TestPlaceCopy_TargetHoldsACopy verifies a target that already holds a copy
+// is refused, and the refusal commits with the copied bytes queued.
+func TestPlaceCopy_TargetHoldsACopy(t *testing.T) {
+	t.Parallel()
+	stub := newPlaceStub(placedSource())
+	stub.existing = append(stub.existing, ExistingCopy{BackendName: "b2", StorageKey: "k!other", SizeBytes: 4096})
+
+	_, cleanup, err := runPlace(stub, true)
+	if !errors.Is(err, ErrTargetRefused) {
+		t.Fatalf("error = %v, want ErrTargetRefused", err)
+	}
+	assertRefusalCommitted(t, stub, cleanup)
+}
+
+// TestPlaceCopy_LostIntentQueuesItsBytes verifies a placement whose intent a
+// client write already cleared records nothing, leaves the intent alone, and
+// queues its bytes as a superseded intent's.
+func TestPlaceCopy_LostIntentQueuesItsBytes(t *testing.T) {
+	t.Parallel()
+	stub := newPlaceStub(placedSource())
+	stub.lost = true
+	stub.existingErr = errors.New("must not read the copy set")
+
+	_, cleanup, err := runPlace(stub, true)
+	if !errors.Is(err, ErrCopyChanged) {
+		t.Fatalf("error = %v, want ErrCopyChanged", err)
+	}
+	if len(stub.deletedIntents) != 0 || len(stub.steps) != 0 || len(stub.ops) != 0 {
+		t.Errorf("stub mutated: intents=%v steps=%v ops=%v", stub.deletedIntents, stub.steps, stub.ops)
+	}
+	if want := orphanedIntent(CleanupReasonSupersededIntent); !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	}
+}
+
+// TestPlaceCopy_FailuresRollBack verifies a failure at any step surfaces as
+// itself, with no cleanup rows handed back, since the transaction rolls back.
+func TestPlaceCopy_FailuresRollBack(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("step failed")
+	cases := map[string]func(*placeTxStub){
+		"key lock":       func(s *placeTxStub) { s.keyLockErr = sentinel },
+		"claim":          func(s *placeTxStub) { s.claimErr = sentinel },
+		"copy set read":  func(s *placeTxStub) { s.existingErr = sentinel },
+		"source lock":    func(s *placeTxStub) { s.lockErr = sentinel },
+		"intent delete":  func(s *placeTxStub) { s.deletePendErr = sentinel },
+		"insert":         func(s *placeTxStub) { s.insertErr = sentinel },
+		"stripe charge":  func(s *placeTxStub) { s.adjustErr = sentinel },
+		"refusal delete": func(s *placeTxStub) { s.existing = nil; s.deletePendErr = sentinel },
+	}
+	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := runPlace(stub, true)
-			if !errors.Is(err, ErrTargetRefused) {
-				t.Fatalf("error = %v, want ErrTargetRefused", err)
+			stub := newPlaceStub(placedSource())
+			mutate(stub)
+			placed, cleanup, err := runPlace(stub, true)
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("error = %v, want the step failure", err)
 			}
-			if len(stub.inserted) != 0 || len(stub.deleted) != 0 || len(stub.ops) != 0 {
-				t.Errorf("stub mutated: inserted=%d deleted=%v ops=%v", len(stub.inserted), stub.deleted, stub.ops)
+			if placed != 0 || cleanup != nil {
+				t.Errorf("placed %d, cleanup %+v; want nothing on a rollback", placed, cleanup)
 			}
 		})
 	}
 }
 
-// TestPlaceCopy_InsertFailureChargesNothing verifies a failed insert surfaces
-// before any quota moves, so the transaction rolls back the source delete with
-// nothing charged.
-func TestPlaceCopy_InsertFailureChargesNothing(t *testing.T) {
+// TestPlaceCopy_QueueFailureRollsBack verifies a cleanup row that cannot be
+// queued fails the placement on every path that queues one.
+func TestPlaceCopy_QueueFailureRollsBack(t *testing.T) {
 	t.Parallel()
-	sentinel := errors.New("insert failed")
-	stub := newPlaceStub(placedSource())
-	stub.insertErr = sentinel
-
-	if _, err := runPlace(stub, true); !errors.Is(err, sentinel) {
-		t.Fatalf("error = %v, want the insert failure", err)
+	sentinel := errors.New("queue failed")
+	cases := map[string]func(*placeTxStub){
+		"move source": func(*placeTxStub) {},
+		"refusal":     func(s *placeTxStub) { s.existing = nil },
+		"lost intent": func(s *placeTxStub) { s.lost = true },
 	}
-	if len(stub.ops) != 0 {
-		t.Errorf("quota ops = %v, want none", stub.ops)
-	}
-}
-
-// TestPlaceCopy_AdmissionErrorSurfaces verifies a failed admission read
-// surfaces as itself, not as a refusal, and writes nothing.
-func TestPlaceCopy_AdmissionErrorSurfaces(t *testing.T) {
-	t.Parallel()
-	sentinel := errors.New("capacity read failed")
-	stub := newPlaceStub(placedSource())
-	stub.admitErr = sentinel
-
-	if _, err := runPlace(stub, true); !errors.Is(err, sentinel) {
-		t.Fatalf("error = %v, want the admission failure", err)
-	}
-	if len(stub.steps) != 0 || len(stub.ops) != 0 {
-		t.Errorf("stub mutated: steps=%v ops=%v", stub.steps, stub.ops)
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stub := newPlaceStub(placedSource())
+			mutate(stub)
+			queuer := &queueRecorder{TxAdapter: stub, err: sentinel}
+			if _, _, err := runPlaceOn(queuer, stub.src, placeIntent("b2", placeDestPath, 4096), true, false); !errors.Is(err, sentinel) {
+				t.Fatalf("error = %v, want the queue failure", err)
+			}
+		})
 	}
 }
 
@@ -290,29 +403,23 @@ func rewrittenForm() *StoredForm {
 	}
 }
 
-// runRewrite places the stub's source back on its own backend at k!new with
-// form and size.
-func runRewrite(stub *placeTxStub, form *StoredForm, size int64, move bool) (int64, error) {
-	read := *stub.src
-	return PlaceCopy(context.Background(), &stubRunner{tx: stub}, &Placement{
-		Source:       &read,
-		Target:       read.BackendName,
-		StorageKey:   "k!new",
-		RemoveSource: move,
-		Form:         form,
-		Size:         size,
-	})
+// reformedIntent is a claim on backend at k!new for bytes a rewrite reformed
+// to 1600 bytes in rewrittenForm.
+func reformedIntent(backend string) *PendingObject {
+	intent := placeIntent(backend, "k!new", 1600)
+	intent.StoredForm = *rewrittenForm()
+	return intent
 }
 
 // TestPlaceCopy_InPlaceRewriteReplacesTheForm verifies a rewrite on the
 // source's own backend deletes the read row before inserting the new one,
-// which carries the new form and size, keeps the source's hash and write
-// time, and drops the compression probe.
+// which carries the intent's form and size, keeps the source's hash and write
+// time, and drops the compression probe. The old bytes are queued.
 func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
 	t.Parallel()
 	stub := newPlaceStub(placedSource())
 
-	placed, err := runRewrite(stub, rewrittenForm(), 1600, true)
+	placed, cleanup, err := runPlaceOn(stub, stub.src, reformedIntent("b1"), true, true)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
@@ -344,92 +451,48 @@ func TestPlaceCopy_InPlaceRewriteReplacesTheForm(t *testing.T) {
 	if len(net) != 1 || net["b1"] != 1600-4096 {
 		t.Errorf("quota deltas = %v, want b1 moved by %d", net, 1600-4096)
 	}
-}
-
-// TestPlaceCopy_InPlaceAdmitsOnlyTheGrowth verifies a rewrite asks the backend
-// for the bytes it adds, nothing for one that shrinks, and accepts a cordoned
-// backend, while a move to another backend asks for every byte in full
-// service.
-func TestPlaceCopy_InPlaceAdmitsOnlyTheGrowth(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		size int64
-		want admitCall
-	}{
-		{"grows", 5000, admitCall{backend: "b1", size: 5000 - 4096, accepts: AcceptForRewrite}},
-		{"shrinks", 1000, admitCall{backend: "b1", size: 0, accepts: AcceptForRewrite}},
+	if len(cleanup) != 1 || cleanup[0].StorageKey != "k!src" || cleanup[0].Reason != placeSourceReason {
+		t.Errorf("cleanup = %+v, want the old bytes at k!src", cleanup)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			stub := newPlaceStub(placedSource())
-			if _, err := runRewrite(stub, rewrittenForm(), tc.size, true); err != nil {
-				t.Fatalf("PlaceCopy: %v", err)
-			}
-			if !slices.Equal(stub.admits, []admitCall{tc.want}) {
-				t.Errorf("admits = %+v, want %+v", stub.admits, tc.want)
-			}
-		})
-	}
-
-	t.Run("refused growth records nothing", func(t *testing.T) {
-		t.Parallel()
-		stub := newPlaceStub(placedSource())
-		stub.refuses = true
-		if _, err := runRewrite(stub, rewrittenForm(), 5000, true); !errors.Is(err, ErrTargetRefused) {
-			t.Fatalf("error = %v, want ErrTargetRefused", err)
-		}
-		if len(stub.steps) != 0 || len(stub.ops) != 0 {
-			t.Errorf("stub mutated: steps=%v ops=%v", stub.steps, stub.ops)
-		}
-	})
 }
 
 // TestPlaceCopy_InPlaceWithoutRemoveIsRefused verifies a placement onto the
-// source's own backend that keeps the source is refused before the key is
-// even locked, since a key holds one copy per backend.
+// source's own backend that keeps the source is refused, since a key holds one
+// copy per backend, and the refusal queues the copied bytes.
 func TestPlaceCopy_InPlaceWithoutRemoveIsRefused(t *testing.T) {
 	t.Parallel()
 	stub := newPlaceStub(placedSource())
-	stub.keyLockErr = errors.New("must not lock")
 
-	if _, err := runRewrite(stub, rewrittenForm(), 1600, false); !errors.Is(err, ErrTargetRefused) {
+	_, cleanup, err := runPlaceOn(stub, stub.src, reformedIntent("b1"), false, true)
+	if !errors.Is(err, ErrTargetRefused) {
 		t.Fatalf("error = %v, want ErrTargetRefused", err)
 	}
-	if len(stub.steps) != 0 || len(stub.admits) != 0 {
-		t.Errorf("stub touched: steps=%v admits=%v", stub.steps, stub.admits)
+	if len(stub.steps) != 0 || len(stub.ops) != 0 {
+		t.Errorf("stub touched: steps=%v ops=%v", stub.steps, stub.ops)
+	}
+	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!new", Reason: placeOrphanReason, SizeBytes: 1600}}
+	if !slices.Equal(cleanup, want) {
+		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
 	}
 }
 
-// TestPlaceCopy_FormOnAnotherBackend verifies a transformed copy placed on a
+// TestPlaceCopy_FormOnAnotherBackend verifies a reformed copy placed on a
 // different backend is still refused when that backend holds a copy, and
-// otherwise carries the new form at its full size.
+// otherwise carries the new form at its new size.
 func TestPlaceCopy_FormOnAnotherBackend(t *testing.T) {
 	t.Parallel()
-	place := func(stub *placeTxStub) (int64, error) {
-		read := *stub.src
-		return PlaceCopy(context.Background(), &stubRunner{tx: stub}, &Placement{
-			Source: &read, Target: "b2", StorageKey: "k!dest", RemoveSource: true,
-			Form: rewrittenForm(), Size: 1600,
-		})
-	}
-
 	holds := newPlaceStub(placedSource())
 	holds.existing = append(holds.existing, ExistingCopy{BackendName: "b2", StorageKey: "k!other", SizeBytes: 4096})
-	if _, err := place(holds); !errors.Is(err, ErrTargetRefused) {
+	if _, _, err := runPlaceOn(holds, holds.src, reformedIntent("b2"), true, true); !errors.Is(err, ErrTargetRefused) {
 		t.Fatalf("error = %v, want ErrTargetRefused", err)
 	}
 
 	stub := newPlaceStub(placedSource())
-	if _, err := place(stub); err != nil {
+	if _, _, err := runPlaceOn(stub, stub.src, reformedIntent("b2"), true, true); err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
-	if want := []admitCall{{backend: "b2", size: 1600, accepts: AcceptForWrite}}; !slices.Equal(stub.admits, want) {
-		t.Errorf("admits = %+v, want %+v", stub.admits, want)
-	}
-	if got := stub.inserted[0]; got.SizeBytes != 1600 || got.KeyID != "config-1" {
-		t.Errorf("inserted %+v, want the new form at 1600 bytes", got)
+	if got := stub.inserted[0]; got.SizeBytes != 1600 || got.KeyID != "config-1" || got.BackendName != "b2" {
+		t.Errorf("inserted %+v, want the new form on b2 at 1600 bytes", got)
 	}
 }
 

@@ -36,16 +36,18 @@ type sqlQuerier interface {
 }
 
 // sqliteTxAdapter implements core.TxAdapter over a sqlQuerier, which is a
-// *sql.Tx everywhere except direct.
+// *sql.Tx everywhere except direct. instanceID is the claim stamped on the
+// cleanup rows it queues.
 type sqliteTxAdapter struct {
-	q sqlQuerier
+	q          sqlQuerier
+	instanceID string
 }
 
 // direct returns an adapter over the store's own db, outside any
 // transaction. Store methods that run one statement delegate to it so each
 // statement has one implementation.
 func (s *Store) direct() *sqliteTxAdapter {
-	return &sqliteTxAdapter{q: s.db}
+	return &sqliteTxAdapter{q: s.db, instanceID: s.instanceID}
 }
 
 // AcquireKeyLock is a silent no-op on SQLite. The engine serializes
@@ -442,47 +444,26 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 	return true, nil
 }
 
-// BackendAdmits reports whether a backend accepts a write of size more bytes
-// while carrying only flags within accepts, judged against backend_capacity,
-// the view every admission test reads.
-func (a *sqliteTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64, accepts core.BackendFlags) (bool, error) {
-	var fits bool
-	if err := a.q.QueryRowContext(ctx, `
-		SELECT (flags & ~?) = 0 AND (available_bytes IS NULL OR available_bytes >= ?)
-		FROM backend_capacity
-		WHERE backend_name = ?`, accepts, size, backendName).Scan(&fits); err != nil {
-		return false, fmt.Errorf("check backend headroom: %w", err)
-	}
-	return fits, nil
-}
-
 // -------------------------------------------------------------------------
 // CLEANUP TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// SumAndDeleteCleanupQueueRows deletes every cleanup_queue row for
-// (storageKey, backend) and returns the count and total size of those rows.
-func (a *sqliteTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, int64, error) {
-	var totalBytes sql.NullInt64
-	var rowCount int64
-	if err := a.q.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*)
-		 FROM cleanup_queue
-		 WHERE storage_key = ? AND backend_name = ?`,
-		storageKey, backend,
-	).Scan(&totalBytes, &rowCount); err != nil {
-		return 0, 0, fmt.Errorf("sum cleanup queue size: %w", err)
+// InsertCleanup queues c's bytes for deletion, claimed by this instance, and
+// returns the row's id. Times are written in RFC3339Nano, the format the claim
+// compares against.
+func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (int64, error) {
+	stamp := now()
+	res, err := a.q.ExecContext(ctx,
+		`INSERT INTO cleanup_queue
+		   (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry, claimed_at, claimed_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.BackendName, c.ObjectKey, core.StoragePath(c.ObjectKey, c.StorageKey), c.Reason, c.SizeBytes,
+		stamp, stamp, stamp, nullableString(a.instanceID),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert cleanup row: %w", err)
 	}
-	if rowCount == 0 {
-		return 0, 0, nil
-	}
-	if _, err := a.q.ExecContext(ctx,
-		`DELETE FROM cleanup_queue WHERE storage_key = ? AND backend_name = ?`,
-		storageKey, backend,
-	); err != nil {
-		return 0, 0, fmt.Errorf("delete cleanup queue rows: %w", err)
-	}
-	return rowCount, totalBytes.Int64, nil
+	return res.LastInsertId()
 }
 
 // GetCleanupQueueRow returns the full payload of a cleanup_queue row by
@@ -515,9 +496,8 @@ func (a *sqliteTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (cor
 	return row, nil
 }
 
-// InsertCleanupDLQ inserts row into cleanup_dlq. Bytes are not
-// reconciled here because the underlying object is still on the backend;
-// orphan_bytes accounting stays untouched on the move.
+// InsertCleanupDLQ inserts row into cleanup_dlq, where its bytes still count
+// as the backend's orphans.
 func (a *sqliteTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
 	firstEnqueued := formatTime(row.CreatedAt)
 	if row.CreatedAt.IsZero() {
@@ -572,19 +552,6 @@ func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName str
 	return nil
 }
 
-// DecrementOrphanBytes debits delta bytes from the backend's
-// orphan_bytes counter (clamped at zero).
-func (a *sqliteTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error {
-	now := now()
-	if _, err := a.q.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
-		WHERE backend_name = ?`, delta, now, backendName); err != nil {
-		return fmt.Errorf("decrement orphan bytes: %w", err)
-	}
-	return nil
-}
-
 // AllBackendBytesUsed returns each backend's striped byte total, keyed by
 // backend name. Clamped at zero on the sum rather than per stripe, because an
 // individual stripe is signed and may sit negative while the total is right.
@@ -635,6 +602,105 @@ func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName s
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// MULTIPART TX OPERATIONS
+// -------------------------------------------------------------------------
+
+// DeleteMultipartUpload removes an upload's parts and then the upload, and
+// returns the upload's backend with the parts removed. SQLite serializes
+// writers, so no part can be recorded between the read and the delete. An
+// upload already gone returns no parts.
+func (a *sqliteTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) (string, []core.MultipartPart, error) {
+	var backendName string
+	err := a.q.QueryRowContext(ctx,
+		`SELECT backend_name FROM multipart_uploads WHERE upload_id = ?`, uploadID,
+	).Scan(&backendName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("read multipart upload: %w", err)
+	}
+	rows, err := a.q.QueryContext(ctx,
+		`DELETE FROM multipart_parts WHERE upload_id = ? RETURNING part_number, size_bytes, storage_key`, uploadID)
+	if err != nil {
+		return "", nil, fmt.Errorf("delete multipart parts: %w", err)
+	}
+	parts, err := collectRows(rows, "multipart parts", scanPartLocation)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := a.q.ExecContext(ctx, `DELETE FROM multipart_uploads WHERE upload_id = ?`, uploadID); err != nil {
+		return "", nil, fmt.Errorf("delete multipart upload: %w", err)
+	}
+	return backendName, parts, nil
+}
+
+// UpsertPart records a part at its intent's path and returns the part of that
+// number it replaced, or nil when there was none. SQLite serializes writers,
+// so the row read is the one the write replaces.
+func (a *sqliteTxAdapter) UpsertPart(ctx context.Context, p *core.RecordPartParams) (*core.MultipartPart, error) {
+	rows, err := a.q.QueryContext(ctx,
+		`SELECT part_number, size_bytes, storage_key FROM multipart_parts WHERE upload_id = ? AND part_number = ?`,
+		p.UploadID, p.PartNumber)
+	if err != nil {
+		return nil, fmt.Errorf("read replaced part: %w", err)
+	}
+	prev, err := collectRows(rows, "replaced part", scanPartLocation)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		encrypted     bool
+		encryptionKey []byte
+		keyID         *string
+		plaintextSize *int64
+	)
+	if p.Form != nil && p.Form.Encrypted {
+		encrypted = true
+		encryptionKey = p.Form.EncryptionKey
+		keyID = &p.Form.KeyID
+		plaintextSize = &p.Form.PlaintextSize
+	}
+	if _, err := a.q.ExecContext(ctx,
+		`INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (upload_id, part_number) DO UPDATE SET
+		     etag = excluded.etag,
+		     plaintext_etag = excluded.plaintext_etag,
+		     size_bytes = excluded.size_bytes,
+		     encrypted = excluded.encrypted,
+		     encryption_key = excluded.encryption_key,
+		     key_id = excluded.key_id,
+		     plaintext_size = excluded.plaintext_size,
+		     storage_key = excluded.storage_key,
+		     created_at = excluded.created_at`,
+		p.UploadID, p.PartNumber, p.ETag, nullableString(p.PlaintextETag), p.SizeBytes,
+		encrypted, encryptionKey, keyID, plaintextSize, nullableString(p.Intent.StorageKey), now(),
+	); err != nil {
+		return nil, fmt.Errorf("record part: %w", err)
+	}
+	if len(prev) == 0 {
+		return nil, nil
+	}
+	return &prev[0], nil
+}
+
+// scanPartLocation reads a part's number, size and storage path, the columns a
+// part's cleanup needs.
+func scanPartLocation(rows *sql.Rows) (core.MultipartPart, error) {
+	var (
+		p          core.MultipartPart
+		storageKey sql.NullString
+	)
+	if err := rows.Scan(&p.PartNumber, &p.SizeBytes, &storageKey); err != nil {
+		return core.MultipartPart{}, fmt.Errorf("scan part location: %w", err)
+	}
+	p.StorageKey = nullStringValue(storageKey)
+	return p, nil
 }
 
 // Compile-time check that *sqliteTxAdapter satisfies core.TxAdapter.

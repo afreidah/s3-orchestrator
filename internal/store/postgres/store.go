@@ -59,6 +59,8 @@ type Store struct {
 	queries *db.Queries
 	cb      *breaker.CircuitBreaker
 	connStr string
+
+	instanceID string
 }
 
 // -------------------------------------------------------------------------
@@ -68,8 +70,10 @@ type Store struct {
 // NewStore creates a new PostgreSQL store connection using pgxpool.
 // When cb is non-nil, every sqlc query (pool-bound or tx-bound) flows
 // through it via wrapDBTX. Pass nil to skip CB wrapping (test fixtures,
-// migration runners).
-func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (*Store, error) {
+// migration runners). instanceID claims the cleanup rows this process's
+// transactions queue, so the cleanup worker leaves them to it until the claim
+// grace period passes.
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker, instanceID string) (*Store, error) {
 	host := net.JoinHostPort(dbCfg.Host, strconv.Itoa(dbCfg.Port))
 	connStr := dbCfg.ConnectionString()
 	cfg, err := pgxpool.ParseConfig(connStr)
@@ -101,10 +105,11 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 	}
 
 	s := &Store{
-		pool:    pool,
-		queries: db.New(wrapDBTX(pool, cb)),
-		cb:      cb,
-		connStr: connStr,
+		pool:       pool,
+		queries:    db.New(wrapDBTX(pool, cb)),
+		cb:         cb,
+		connStr:    connStr,
+		instanceID: instanceID,
 	}
 	s.TxOps = core.NewTxOps(s)
 	return s, nil
@@ -155,7 +160,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 39
+const ExpectedSchemaVersion = 41
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -210,7 +215,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	adapter := &pgTxAdapter{q: db.New(wrapDBTX(tx, s.cb))}
+	adapter := &pgTxAdapter{q: db.New(wrapDBTX(tx, s.cb)), instanceID: s.instanceID}
 	if err := fn(ctx, adapter); err != nil {
 		return err
 	}

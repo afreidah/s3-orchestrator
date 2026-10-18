@@ -55,9 +55,7 @@ func resetCleanupTablesPg(t *testing.T, s *Store) {
 // mustEnqueuePg enqueues one cleanup row under a fresh key, failing on error.
 func mustEnqueuePg(t *testing.T, s *Store, backend string, size int64) {
 	t.Helper()
-	if err := s.EnqueueCleanup(context.Background(), cleanupOf(backend, uniqueKey(t, "dlq"), "delete_failed", size)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueCleanup(t, s, cleanupOf(backend, uniqueKey(t, "dlq"), "delete_failed", size))
 }
 
 // assertBackendADLQRow asserts a dead-lettered row carries backend-a's fields
@@ -125,10 +123,9 @@ func TestStoreInt_RequeueCleanupDLQ_MovesRowsBack(t *testing.T) {
 	// same key and the count has to be kept separately from the name.
 	const rows = 3
 	key := uniqueKey(t, "requeue")
+	resetCleanupTablesPg(t, s)
 	for range rows {
-		if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "delete_failed", 256)); err != nil {
-			t.Fatalf("EnqueueCleanup: %v", err)
-		}
+		queueCleanup(t, s, cleanupOf("backend-a", key, "delete_failed", 256))
 	}
 	dlqAllPg(t, s, "backend unavailable")
 

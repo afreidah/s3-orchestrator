@@ -68,12 +68,13 @@ func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	r := newResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
+	id := r.ResolveNamed[instanceid.ID]("InstanceID")
 	if r.err != nil {
 		return nil, r.err
 	}
 	ctx := context.Background()
 
-	cs, err := openStore(ctx, &cfg.Database, cb)
+	cs, err := openStore(ctx, &cfg.Database, cb, id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -107,20 +108,22 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 // openStore dispatches store construction to the configured driver. The
 // shared *breaker.CircuitBreaker is threaded through so every SQL
 // statement (pool-bound or tx-bound) gets PreCheck/PostCheck protection
-// at the driver chokepoint.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (metadataStore, error) {
+// at the driver chokepoint. instanceID claims the cleanup rows the engine's
+// transactions queue.
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker, instanceID string) (metadataStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
-		return postgres.NewStore(ctx, dbCfg, cb)
+		return postgres.NewStore(ctx, dbCfg, cb, instanceID)
 	case "sqlite":
-		return sqlitestore.NewStore(ctx, dbCfg, cb)
+		return sqlitestore.NewStore(ctx, dbCfg, cb, instanceID)
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
 	}
 }
 
 // ProvideInstanceID resolves a stable per-process identifier used as the
-// claimed_by stamp on cleanup_queue rows. The identifier is generated once
+// claimed_by stamp on cleanup_queue rows, both those the store's transactions
+// queue and those the cleanup worker claims. The identifier is generated once
 // at first invoke and reused everywhere the value is needed.
 func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
 	return instanceid.New()

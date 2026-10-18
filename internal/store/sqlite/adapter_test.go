@@ -80,7 +80,7 @@ func seedPendingIntent(t *testing.T, s *Store, intentID, key, backendName string
 	p := core.PendingObject{
 		IntentID: intentID, ObjectKey: key, BackendName: backendName, SizeBytes: size,
 	}
-	if _, err := s.InsertPendingIfFits(context.Background(), &p); err != nil {
+	if _, err := s.InsertPendingIfFits(context.Background(), &p, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPendingIfFits(%s): %v", intentID, err)
 	}
 }
@@ -144,7 +144,7 @@ func TestAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-1", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
@@ -183,7 +183,7 @@ func TestInsertPending_NullableFieldsOmitted(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-2", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 5,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	var keyID, plaintext, hash any
@@ -206,7 +206,7 @@ func TestAdapter_DeletePending_RemovesRow(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-3", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
@@ -466,50 +466,26 @@ func TestAdapter_InsertObjectLocationIfNotExists_SkipsWhenPresent(t *testing.T) 
 // CLEANUP TX
 // -------------------------------------------------------------------------
 
-// TestAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals
-// verifies the sum-then-delete returns the row count and total bytes
-// of the rows it removed.
-func TestAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals(t *testing.T) {
+// TestAdapter_InsertCleanup_DefaultsPathToObjectKey verifies a request
+// with no storage key queues the object key as the path, the location of a
+// copy written before each write had its own path.
+func TestAdapter_InsertCleanup_DefaultsPathToObjectKey(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/k")
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/k") // second row, same key+backend
-
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		count, total, err := a.SumAndDeleteCleanupQueueRows(ctx, "bucket/k", "backend-a")
+		id, err := a.InsertCleanup(ctx, &core.CleanupRequest{
+			BackendName: "backend-a", ObjectKey: "bucket/legacy", Reason: "test", SizeBytes: 1,
+		})
 		if err != nil {
-			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
+			t.Fatalf("InsertCleanup: %v", err)
 		}
-		if count != 2 || total != 512 {
-			t.Errorf("count=%d total=%d, want 2 and 512", count, total)
-		}
-		// Confirm the rows are gone.
-		var n int64
-		if err := a.q.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM cleanup_queue WHERE object_key = ? AND backend_name = ?`,
-			"bucket/k", "backend-a",
-		).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		if n != 0 {
-			t.Errorf("expected 0 rows after sweep, got %d", n)
-		}
-	})
-}
-
-// TestAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero verifies
-// the sum-then-delete returns (0, 0, nil) when no matching rows exist.
-func TestAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		count, total, err := a.SumAndDeleteCleanupQueueRows(context.Background(), "bucket/missing", "backend-a")
+		row, err := a.GetCleanupQueueRow(ctx, id)
 		if err != nil {
-			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
+			t.Fatalf("GetCleanupQueueRow: %v", err)
 		}
-		if count != 0 || total != 0 {
-			t.Errorf("count=%d total=%d, want 0 and 0", count, total)
+		if row.StorageKey != "bucket/legacy" {
+			t.Errorf("storage key = %q, want the object key", row.StorageKey)
 		}
 	})
 }
@@ -723,66 +699,61 @@ func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16)
 	return used
 }
 
-// TestAdapter_BackendAdmits_CountsOrphanBytes asserts bytes awaiting physical
+// claimFits reports whether backend-a admits an intent of size bytes under
+// accepts, recording the intent when it does.
+func claimFits(t *testing.T, s *Store, intentID string, size int64, accepts core.BackendFlags) bool {
+	t.Helper()
+	fits, err := s.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID: intentID, ObjectKey: "bucket/" + intentID, BackendName: "backend-a", SizeBytes: size,
+	}, accepts)
+	if err != nil {
+		t.Fatalf("InsertPendingIfFits(%s): %v", intentID, err)
+	}
+	return fits
+}
+
+// TestAdmission_CountsQueuedCleanupBytes asserts bytes awaiting physical
 // cleanup still occupy the backend, since they stay on disk until the cleanup
 // lands.
-func TestAdapter_BackendAdmits_CountsOrphanBytes(t *testing.T) {
+func TestAdmission_CountsQueuedCleanupBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_limit = 1000, orphan_bytes = 50 WHERE backend_name = ?`,
-		"backend-a"); err != nil {
+		`UPDATE backend_quotas SET bytes_limit = 1000 WHERE backend_name = ?`, "backend-a"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	seedBytesUsed(t, s, "backend-a", 900)
+	queueCleanup(t, s, "backend-a", "bucket/orphan", 50)
 
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		// 900 stored + 50 orphaned leaves 50 free.
-		fits, err := a.BackendAdmits(ctx, "backend-a", 100, core.AcceptForWrite)
-		if err != nil {
-			t.Fatalf("BackendAdmits: %v", err)
-		}
-		if fits {
-			t.Error("admitted 100 bytes into 50 of room; orphan bytes were not counted")
-		}
-		fits, err = a.BackendAdmits(ctx, "backend-a", 50, core.AcceptForWrite)
-		if err != nil {
-			t.Fatalf("BackendAdmits: %v", err)
-		}
-		if !fits {
-			t.Error("refused 50 bytes that fit the remaining room exactly")
-		}
-	})
+	// 900 stored + 50 queued for deletion leaves 50 free.
+	if claimFits(t, s, "too-big", 100, core.AcceptForWrite) {
+		t.Error("admitted 100 bytes into 50 of room; queued cleanup bytes were not counted")
+	}
+	if !claimFits(t, s, "exact", 50, core.AcceptForWrite) {
+		t.Error("refused 50 bytes that fit the remaining room exactly")
+	}
 }
 
-// TestAdapter_BackendAdmits_UnlimitedAlwaysFits asserts a zero bytes_limit
-// means no enforcement, which is how the schema spells unlimited.
-func TestAdapter_BackendAdmits_UnlimitedAlwaysFits(t *testing.T) {
+// TestAdmission_UnlimitedAlwaysFits asserts a zero bytes_limit means no
+// enforcement, which is how the schema spells unlimited.
+func TestAdmission_UnlimitedAlwaysFits(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(context.Background(),
 		`UPDATE backend_quotas SET bytes_limit = 0 WHERE backend_name = ?`, "backend-a"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	seedBytesUsed(t, s, "backend-a", 1<<40)
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		fits, err := a.BackendAdmits(ctx, "backend-a", 1<<30, core.AcceptForWrite)
-		if err != nil {
-			t.Fatalf("BackendAdmits: %v", err)
-		}
-		if !fits {
-			t.Error("an unlimited backend refused a write")
-		}
-	})
+	if !claimFits(t, s, "huge", 1<<30, core.AcceptForWrite) {
+		t.Error("an unlimited backend refused a write")
+	}
 }
 
-// TestAdapter_BackendAdmits_AcceptsMask asserts a backend carrying a flag is
-// admitted only when the caller's mask accepts that flag: a cordon passes the
-// rewrite mask and fails the write mask, and a drain fails both.
-func TestAdapter_BackendAdmits_AcceptsMask(t *testing.T) {
+// TestAdmission_AcceptsMask asserts a backend carrying a flag is admitted
+// only when the caller's mask accepts that flag: a cordon passes the rewrite
+// and part masks and fails the write mask, and a drain fails all of them.
+func TestAdmission_AcceptsMask(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name      string
@@ -792,25 +763,20 @@ func TestAdapter_BackendAdmits_AcceptsMask(t *testing.T) {
 	}{
 		{"cordoned for a write", core.FlagCordoned, core.AcceptForWrite, false},
 		{"cordoned for a rewrite", core.FlagCordoned, core.AcceptForRewrite, true},
+		{"cordoned for a part", core.FlagCordoned, core.AcceptForPart, true},
 		{"draining for a rewrite", core.FlagDraining, core.AcceptForRewrite, false},
+		{"draining for a part", core.FlagDraining, core.AcceptForPart, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
-			ctx := context.Background()
-			if _, err := s.SetBackendFlag(ctx, "backend-a", tc.flag); err != nil {
+			if _, err := s.SetBackendFlag(context.Background(), "backend-a", tc.flag); err != nil {
 				t.Fatalf("SetBackendFlag: %v", err)
 			}
-			withAdapter(t, s, func(a *sqliteTxAdapter) {
-				fits, err := a.BackendAdmits(ctx, "backend-a", 1, tc.accepts)
-				if err != nil {
-					t.Fatalf("BackendAdmits: %v", err)
-				}
-				if fits != tc.wantAdmit {
-					t.Errorf("BackendAdmits = %v, want %v", fits, tc.wantAdmit)
-				}
-			})
+			if got := claimFits(t, s, "masked", 1, tc.accepts); got != tc.wantAdmit {
+				t.Errorf("admitted = %v, want %v", got, tc.wantAdmit)
+			}
 		})
 	}
 }
@@ -914,44 +880,6 @@ func TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero(t *testing.T) {
 	})
 }
 
-// TestAdapter_DecrementOrphanBytes_SubtractsAndClamps verifies the
-// orphan_bytes decrement subtracts and clamps at zero.
-func TestAdapter_DecrementOrphanBytes_SubtractsAndClamps(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 1000); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
-	}
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.DecrementOrphanBytes(ctx, "backend-a", 600); err != nil {
-			t.Fatalf("DecrementOrphanBytes: %v", err)
-		}
-		var orphans int64
-		if err := a.q.QueryRowContext(ctx,
-			`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-		).Scan(&orphans); err != nil {
-			t.Fatalf("query: %v", err)
-		}
-		if orphans != 400 {
-			t.Errorf("orphan_bytes=%d, want 400", orphans)
-		}
-		// Over-decrement should clamp at zero.
-		if err := a.DecrementOrphanBytes(ctx, "backend-a", 9999); err != nil {
-			t.Fatalf("DecrementOrphanBytes(over): %v", err)
-		}
-		if err := a.q.QueryRowContext(ctx,
-			`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-		).Scan(&orphans); err != nil {
-			t.Fatalf("query: %v", err)
-		}
-		if orphans != 0 {
-			t.Errorf("orphan_bytes=%d after over-decrement, want 0 (clamped)", orphans)
-		}
-	})
-}
-
 // -------------------------------------------------------------------------
 // COMPILE-TIME ASSERTIONS
 // -------------------------------------------------------------------------
@@ -968,6 +896,7 @@ func TestAdapter_SatisfiesCoreInterfaces(t *testing.T) {
 		var _ core.ObjectsTxAdapter = a
 		var _ core.CleanupTxAdapter = a
 		var _ core.QuotaTxAdapter = a
+		var _ core.MultipartTxAdapter = a
 		var _ core.TxAdapter = a
 		_ = time.Now() // silence unused import when other helpers change
 	})

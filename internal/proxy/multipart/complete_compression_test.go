@@ -105,7 +105,7 @@ func completeWithParts(t *testing.T, opts *fleetOpts, bodies [][]byte) assembled
 	parts := make([]core.MultipartPart, len(bodies))
 	numbers := make([]int, len(bodies))
 	for i, body := range bodies {
-		key := multipartPartKey(mpUploadID, i+1)
+		key := core.PartPath(mpUploadID, i+1)
 		if _, err := be.PutObject(ctx, key, bytes.NewReader(body), int64(len(body)),
 			"application/octet-stream", nil); err != nil {
 			t.Fatalf("seed part %d: %v", i+1, err)
@@ -308,7 +308,7 @@ func TestComplete_EncodeFailureLeavesUploadRetryable(t *testing.T) {
 	ctx := context.Background()
 	be := backendtest.NewInMemory()
 	body := compressiblePart(mpChunk)
-	partKey := multipartPartKey(mpUploadID, 1)
+	partKey := core.PartPath(mpUploadID, 1)
 	if _, err := be.PutObject(ctx, partKey, bytes.NewReader(body), int64(len(body)),
 		"application/octet-stream", nil); err != nil {
 		t.Fatalf("seed part: %v", err)

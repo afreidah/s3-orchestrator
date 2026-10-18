@@ -123,7 +123,7 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			key:  "bucket/record-clear",
 			write: func(t *testing.T, s *Store, key string) {
 				intent := pendingFixture("intent-x", key)
-				if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
+				if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 					t.Fatalf("InsertPendingIfFits: %v", err)
 				}
 				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
@@ -185,7 +185,7 @@ func TestPendingPromote_PreservesRepresentation(t *testing.T) {
 		CompressionFormatVersion: form.CompressionFormatVersion,
 		LogicalSize:              form.LogicalSize,
 	}
-	if _, err := s.InsertPendingIfFits(ctx, intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 

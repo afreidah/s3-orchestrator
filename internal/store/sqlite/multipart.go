@@ -87,52 +87,10 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 // PARTS
 // -------------------------------------------------------------------------
 
-// RecordPart records a completed part for a multipart upload. Re-uploading the
-// same part number updates the existing row (ON CONFLICT DO UPDATE).
-func (s *Store) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
-	if p.PartNumber < 1 || p.PartNumber > 10000 {
-		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", p.PartNumber)
-	}
-
-	now := now()
-
-	var (
-		encrypted     bool
-		encryptionKey []byte
-		keyID         *string
-		plaintextSize *int64
-	)
-	if p.Form != nil && p.Form.Encrypted {
-		encrypted = true
-		encryptionKey = p.Form.EncryptionKey
-		keyID = &p.Form.KeyID
-		plaintextSize = &p.Form.PlaintextSize
-	}
-
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (upload_id, part_number) DO UPDATE SET
-		     etag = excluded.etag,
-		     plaintext_etag = excluded.plaintext_etag,
-		     size_bytes = excluded.size_bytes,
-		     encrypted = excluded.encrypted,
-		     encryption_key = excluded.encryption_key,
-		     key_id = excluded.key_id,
-		     plaintext_size = excluded.plaintext_size,
-		     created_at = excluded.created_at`,
-		p.UploadID, p.PartNumber, p.ETag, nullableString(p.PlaintextETag), p.SizeBytes, encrypted, encryptionKey, keyID, plaintextSize, now,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to record part: %w", err)
-	}
-	return nil
-}
-
 // GetParts returns all parts for a multipart upload, ordered by part number.
 func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
 		 FROM multipart_parts
 		 WHERE upload_id = ?
 		 ORDER BY part_number`,
@@ -148,7 +106,7 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 // part number.
 func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
 		 FROM multipart_parts
 		 WHERE upload_id = ? AND part_number > ?
 		 ORDER BY part_number
@@ -165,15 +123,17 @@ func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit
 // and ListParts share.
 func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 	var (
-		p         core.MultipartPart
-		ptETag    sql.NullString
-		keyID     sql.NullString
-		ptSize    sql.NullInt64
-		createdAt string
+		p          core.MultipartPart
+		ptETag     sql.NullString
+		keyID      sql.NullString
+		ptSize     sql.NullInt64
+		storageKey sql.NullString
+		createdAt  string
 	)
-	if err := rows.Scan(&p.PartNumber, &p.ETag, &ptETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &createdAt); err != nil {
+	if err := rows.Scan(&p.PartNumber, &p.ETag, &ptETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &storageKey, &createdAt); err != nil {
 		return core.MultipartPart{}, fmt.Errorf("failed to scan part: %w", err)
 	}
+	p.StorageKey = nullStringValue(storageKey)
 	p.PlaintextETag = nullStringValue(ptETag)
 	p.KeyID = nullStringValue(keyID)
 	p.PlaintextSize = nullInt64Value(ptSize)
@@ -188,20 +148,6 @@ func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 // -------------------------------------------------------------------------
 // DELETION AND LISTING
 // -------------------------------------------------------------------------
-
-// DeleteMultipartUpload removes a multipart upload and its parts. Parts are
-// deleted first to satisfy foreign key constraints, then the upload row.
-func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM multipart_parts WHERE upload_id = ?`, uploadID); err != nil {
-			return fmt.Errorf("failed to delete parts: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM multipart_uploads WHERE upload_id = ?`, uploadID); err != nil {
-			return fmt.Errorf("failed to delete multipart upload: %w", err)
-		}
-		return nil
-	})
-}
 
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.

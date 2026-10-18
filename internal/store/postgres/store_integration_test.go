@@ -359,7 +359,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
-		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
 		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
@@ -419,7 +419,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
-		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
 		}
 		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
@@ -709,7 +709,7 @@ func seedMultipartUpload(t *testing.T, s *Store, contentType string, metadata ma
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	t.Cleanup(func() { _ = s.DeleteMultipartUpload(context.Background(), uploadID) })
+	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason) })
 	return uploadID, key
 }
 
@@ -735,18 +735,125 @@ func TestStoreInt_RecordPartAndGetParts(t *testing.T) {
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
 	ctx := context.Background()
 
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "etag-1", SizeBytes: 1024, Form: nil}); err != nil {
-		t.Fatalf("RecordPart(1): %v", err)
-	}
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 2, ETag: "etag-2", SizeBytes: 2048, Form: nil}); err != nil {
-		t.Fatalf("RecordPart(2): %v", err)
-	}
+	mustRecordPart(t, s, uploadID, 1, "etag-1", 1024, nil)
+	mustRecordPart(t, s, uploadID, 2, "etag-2", 2048, nil)
 	parts, err := s.GetParts(ctx, uploadID)
 	if err != nil {
 		t.Fatalf("GetParts: %v", err)
 	}
 	if len(parts) != 2 || parts[0].PartNumber != 1 || parts[1].PartNumber != 2 {
 		t.Errorf("parts ordering or count wrong: %+v", parts)
+	}
+	if want := partPathFor(uploadID, 1, "etag-1"); parts[0].Path(uploadID) != want {
+		t.Errorf("part 1 path = %q, want the intent's %q", parts[0].Path(uploadID), want)
+	}
+}
+
+// testAbortReason is the label the tests remove an upload's parts under.
+const testAbortReason = "test_abort"
+
+// partPathFor is the path a test upload of part n carrying etag writes.
+func partPathFor(uploadID string, n int, etag string) string {
+	return core.PartPath(uploadID, n) + "!" + etag
+}
+
+// partIntent claims the upload's backend for part n, as UploadPart does
+// before writing it.
+func partIntent(t *testing.T, s *Store, uploadID string, n int, etag string, size int64) *core.PendingObject {
+	t.Helper()
+	path := partPathFor(uploadID, n, etag)
+	p := &core.PendingObject{
+		IntentID: path, ObjectKey: core.PartPath(uploadID, n), StorageKey: path,
+		BackendName: "backend-a", SizeBytes: size, Role: core.PendingRoleCompanion,
+	}
+	if fits, err := s.InsertPendingIfFits(context.Background(), p, core.AcceptForPart); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(part %d) = %v, %v; want admitted", n, fits, err)
+	}
+	return p
+}
+
+// mustRecordPart claims an intent for part n and records the part under it,
+// returning the cleanup rows the record queued.
+func mustRecordPart(t *testing.T, s *Store, uploadID string, n int, etag string, size int64, form *core.StoredForm) []core.CleanupItem {
+	t.Helper()
+	cleanup, err := s.RecordPart(context.Background(), &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: n, ETag: etag, SizeBytes: size, Form: form,
+		Intent: partIntent(t, s, uploadID, n, etag, size),
+	})
+	if err != nil {
+		t.Fatalf("RecordPart(%d): %v", n, err)
+	}
+	return cleanup
+}
+
+// TestStoreInt_RecordPart_ReplacedPartIsQueued verifies a re-upload of a part
+// number clears its intent and queues the replaced part's bytes at that
+// part's own path.
+func TestStoreInt_RecordPart_ReplacedPartIsQueued(t *testing.T) {
+	s := adapterPgStore(t)
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+
+	if first := mustRecordPart(t, s, uploadID, 1, "a", 100, nil); len(first) != 0 {
+		t.Fatalf("first upload queued %+v, want nothing", first)
+	}
+	cleanup := mustRecordPart(t, s, uploadID, 1, "b", 200, nil)
+	assertQueued(t, s, cleanup, "backend-a", partPathFor(uploadID, 1, "a"), core.CleanupReasonPartReplaced)
+	if cleanup[0].SizeBytes != 100 {
+		t.Errorf("queued %d bytes, want the replaced part's 100", cleanup[0].SizeBytes)
+	}
+	if pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE intent_id = $1`, partPathFor(uploadID, 1, "b")) != 0 {
+		t.Errorf("the recorded part's intent is still held")
+	}
+}
+
+// TestStoreInt_RecordPart_LostIntentQueuesTheUpload verifies a part whose
+// intent was resolved while it uploaded is refused with ErrIntentLost, is not
+// recorded, and has its bytes queued as a superseded intent's.
+func TestStoreInt_RecordPart_LostIntentQueuesTheUpload(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	intent := partIntent(t, s, uploadID, 1, "lost", 64)
+	if err := s.DeletePending(ctx, intent.IntentID); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+
+	cleanup, err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "lost", SizeBytes: 64, Intent: intent})
+	if !errors.Is(err, core.ErrIntentLost) {
+		t.Fatalf("RecordPart = %v, want ErrIntentLost", err)
+	}
+	assertQueued(t, s, cleanup, "backend-a", intent.StorageKey, core.CleanupReasonSupersededIntent)
+	if parts, err := s.GetParts(ctx, uploadID); err != nil || len(parts) != 0 {
+		t.Errorf("parts = %+v, %v; want none recorded", parts, err)
+	}
+}
+
+// TestStoreInt_DeleteMultipartUpload_QueuesEveryPart verifies removing an
+// upload queues each part's bytes at its own path under the caller's reason,
+// and a second removal queues nothing.
+func TestStoreInt_DeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	mustRecordPart(t, s, uploadID, 1, "a", 10, nil)
+	mustRecordPart(t, s, uploadID, 2, "b", 20, nil)
+
+	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason)
+	if err != nil {
+		t.Fatalf("DeleteMultipartUpload: %v", err)
+	}
+	paths := map[string]int64{}
+	for _, c := range cleanup {
+		if c.Reason != testAbortReason || c.BackendName != "backend-a" {
+			t.Errorf("row = %+v, want backend-a under %s", c, testAbortReason)
+		}
+		paths[c.StorageKey] = c.SizeBytes
+	}
+	if len(paths) != 2 || paths[partPathFor(uploadID, 1, "a")] != 10 || paths[partPathFor(uploadID, 2, "b")] != 20 {
+		t.Errorf("queued paths = %v, want both parts at their own paths", paths)
+	}
+	if again, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason); err != nil || len(again) != 0 {
+		t.Errorf("second DeleteMultipartUpload = %+v, %v; want nothing", again, err)
 	}
 }
 
@@ -759,9 +866,7 @@ func TestStoreInt_ListPartsPagesAfterMarker(t *testing.T) {
 	ctx := context.Background()
 
 	for _, n := range []int{5, 1, 3, 2, 4} {
-		if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: n, ETag: "e", SizeBytes: 1}); err != nil {
-			t.Fatalf("RecordPart(%d): %v", n, err)
-		}
+		mustRecordPart(t, s, uploadID, n, "e", 1, nil)
 	}
 
 	for _, tc := range []struct {
@@ -862,10 +967,10 @@ func TestStoreInt_ScanMultipartUploads(t *testing.T) {
 // validation branch.
 func TestStoreInt_RecordPart_RejectsInvalidPartNumber(t *testing.T) {
 	s := adapterPgStore(t)
-	if err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 0, ETag: "x"}); err == nil {
+	if _, err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 0, ETag: "x"}); err == nil {
 		t.Error("expected error for partNumber=0")
 	}
-	if err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 100001, ETag: "x"}); err == nil {
+	if _, err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 100001, ETag: "x"}); err == nil {
 		t.Error("expected error for partNumber>10000")
 	}
 }
@@ -883,13 +988,11 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	defer func() { _ = s.DeleteMultipartUpload(ctx, uploadID) }()
+	defer func() { _, _ = s.DeleteMultipartUpload(ctx, uploadID, testAbortReason) }()
 	form := &core.StoredForm{
 		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 50,
 	}
-	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "etag", SizeBytes: 1024, Form: form}); err != nil {
-		t.Fatalf("RecordPart: %v", err)
-	}
+	mustRecordPart(t, s, uploadID, 1, "etag", 1024, form)
 	parts, err := s.GetParts(ctx, uploadID)
 	if err != nil {
 		t.Fatalf("GetParts: %v", err)
@@ -1029,7 +1132,7 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 	primary := core.PendingObject{IntentID: uniqueKey(t, "primary"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1024}
 	companion := core.PendingObject{IntentID: uniqueKey(t, "companion"), ObjectKey: key, BackendName: "backend-c", SizeBytes: 1024, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&primary, &companion} {
-		if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+		if fits, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil || !fits {
 			t.Fatalf("InsertPendingIfFits %s: fits=%v err=%v", p.IntentID, fits, err)
 		}
 		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
@@ -1131,16 +1234,14 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 // CLEANUP QUEUE
 // -------------------------------------------------------------------------
 
-// TestStoreInt_CleanupQueueLifecycle covers EnqueueCleanup,
-// GetPendingCleanups, RetryCleanupItem, CompleteCleanupItem,
-// CleanupQueueDepth, and IncrementOrphanBytes.
+// TestStoreInt_CleanupQueueLifecycle covers a queued row through
+// GetPendingCleanups, RetryCleanupItem, CompleteCleanupItem and
+// CleanupQueueDepth.
 func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueCleanup(t, s, cleanupOf("backend-a", key, "test", 256))
 
 	depth, err := s.CleanupQueueDepth(ctx)
 	if err != nil {
@@ -1150,7 +1251,9 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 		t.Errorf("expected depth>=1, got %d", depth)
 	}
 
-	pending, err := s.GetPendingCleanups(ctx, 100)
+	// The whole queue rather than a page, since the shared fixture holds rows
+	// earlier tests queued ahead of this one.
+	pending, err := s.GetPendingCleanups(ctx, 1<<20)
 	if err != nil {
 		t.Fatalf("GetPendingCleanups: %v", err)
 	}
@@ -1171,8 +1274,8 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	if err := s.CompleteCleanupItem(ctx, item.ID); err != nil {
 		t.Fatalf("CompleteCleanupItem: %v", err)
 	}
-	if err := s.IncrementOrphanBytes(ctx, "backend-a", 1024); err != nil {
-		t.Fatalf("IncrementOrphanBytes: %v", err)
+	if pgCount(t, s, `SELECT COUNT(*) FROM cleanup_queue WHERE id = $1`, item.ID) != 0 {
+		t.Errorf("completed row still queued")
 	}
 }
 
@@ -1208,7 +1311,7 @@ func seedIntentPg(t *testing.T, s *Store, key string) {
 		StorageKey:  key,
 		BackendName: "backend-a",
 		SizeBytes:   1,
-	})
+	}, core.AcceptForWrite)
 	if err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits(%s): fits=%v, err=%v", key, fits, err)
 	}
@@ -1218,21 +1321,9 @@ func seedIntentPg(t *testing.T, s *Store, key string) {
 // row to the DLQ, leaving rows from other tests in the queue.
 func deadLetterPg(t *testing.T, s *Store, key string) {
 	t.Helper()
-	ctx := context.Background()
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 1)); err != nil {
-		t.Fatalf("EnqueueCleanup(%s): %v", key, err)
-	}
-	pending, err := s.GetPendingCleanups(ctx, 10000)
-	if err != nil {
-		t.Fatalf("GetPendingCleanups: %v", err)
-	}
-	for i := range pending {
-		if pending[i].StorageKey != key {
-			continue
-		}
-		if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, "gave up"); err != nil {
-			t.Fatalf("MoveCleanupToDLQ: %v", err)
-		}
+	id := queueCleanup(t, s, cleanupOf("backend-a", key, "test", 1))
+	if _, err := s.MoveCleanupToDLQ(context.Background(), id, "gave up"); err != nil {
+		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
 }
 
@@ -1256,9 +1347,7 @@ func TestStoreInt_ListedPathStates(t *testing.T) {
 		}
 	}
 	for _, key := range []string{queued, both, intentAndQueued} {
-		if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 1)); err != nil {
-			t.Fatalf("EnqueueCleanup(%s): %v", key, err)
-		}
+		queueCleanup(t, s, cleanupOf("backend-a", key, "test", 1))
 	}
 
 	got, err := s.ListedPathStates(ctx, "backend-a", []string{rec, intentOnly, intentAndQueued, queued, dlq, both, other, absent})
@@ -1287,9 +1376,7 @@ func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 	ctx := context.Background()
 	key := t.Name() + "/deleted"
 
-	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "delete_failed", 500)); err != nil {
-		t.Fatalf("EnqueueCleanup: %v", err)
-	}
+	queueCleanup(t, s, cleanupOf("backend-a", key, "delete_failed", 500))
 
 	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 500})
 	if err != nil {
@@ -1329,7 +1416,7 @@ func TestStoreInt_ImportSuppressedByInFlightIntent(t *testing.T) {
 		BackendName: "backend-a",
 		SizeBytes:   500,
 	}
-	if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+	if fits, err := s.InsertPendingIfFits(ctx, p, core.AcceptForWrite); err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits: fits=%v err=%v", fits, err)
 	}
 
@@ -1556,10 +1643,24 @@ func TestStoreInt_DeleteObjectsBatch_EmptyInput(t *testing.T) {
 	}
 }
 
+// deletedByKey groups a delete's cleanup rows into the backends queued per
+// object key, failing any row not queued as a deleted object's.
+func deletedByKey(t *testing.T, rows []core.CleanupItem) map[string][]string {
+	t.Helper()
+	queued := map[string][]string{}
+	for _, c := range rows {
+		if c.Reason != core.CleanupReasonDeleted {
+			t.Errorf("row %+v queued under %q, want %q", c, c.Reason, core.CleanupReasonDeleted)
+		}
+		queued[c.ObjectKey] = append(queued[c.ObjectKey], c.BackendName)
+	}
+	return queued
+}
+
 // TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas
 // verifies the single-tx batch removes every supplied key's rows,
 // decrements each affected backend's quota by the summed size, and
-// returns per-key displaced copies for cleanup.
+// returns the cleanup rows it queued for every removed copy.
 func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1583,14 +1684,15 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
-	if len(got[k1]) != 2 {
-		t.Errorf("%s should have 2 displaced copies, got %v", k1, got[k1])
+	queued := deletedByKey(t, got)
+	if len(queued[k1]) != 2 {
+		t.Errorf("%s should have 2 queued copies, got %v", k1, queued[k1])
 	}
-	if len(got[k2]) != 1 || got[k2][0].BackendName != "backend-a" {
-		t.Errorf("%s displaced copy mismatch: %v", k2, got[k2])
+	if len(queued[k2]) != 1 || queued[k2][0] != "backend-a" {
+		t.Errorf("%s queued copy mismatch: %v", k2, queued[k2])
 	}
-	if _, ok := got[missing]; ok {
-		t.Errorf("missing key must not be in result map: %v", got)
+	if _, ok := queued[missing]; ok {
+		t.Errorf("missing key must queue nothing: %v", got)
 	}
 
 	for _, k := range []string{k1, k2} {

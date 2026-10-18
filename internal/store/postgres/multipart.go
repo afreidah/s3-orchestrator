@@ -147,33 +147,6 @@ func toMultipartUpload(r *multipartRow) (core.MultipartUpload, error) {
 // PARTS
 // -------------------------------------------------------------------------
 
-// RecordPart records a completed part for a multipart upload.
-// S3 spec requires part numbers between 1 and 10000.
-func (s *Store) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
-	if p.PartNumber < 1 || p.PartNumber > 10000 {
-		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", p.PartNumber)
-	}
-	params := db.UpsertPartParams{
-		UploadID:   p.UploadID,
-		PartNumber: int32(p.PartNumber),
-		Etag:       p.ETag,
-		SizeBytes:  p.SizeBytes,
-	}
-	if p.PlaintextETag != "" {
-		params.PlaintextEtag = &p.PlaintextETag
-	}
-	if p.Form != nil && p.Form.Encrypted {
-		params.Encrypted = true
-		params.EncryptionKey = p.Form.EncryptionKey
-		params.KeyID = &p.Form.KeyID
-		params.PlaintextSize = &p.Form.PlaintextSize
-	}
-	if err := s.queries.UpsertPart(ctx, params); err != nil {
-		return fmt.Errorf("failed to record part: %w", err)
-	}
-	return nil
-}
-
 // GetParts returns all parts for a multipart upload, ordered by part number.
 func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	rows, err := s.queries.GetParts(ctx, uploadID)
@@ -215,6 +188,7 @@ func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
 		ETag:          r.Etag,
 		PlaintextETag: derefStr(r.PlaintextEtag),
 		SizeBytes:     r.SizeBytes,
+		StorageKey:    derefStr(r.StorageKey),
 		CreatedAt:     r.CreatedAt.Time,
 	}
 }
@@ -222,15 +196,6 @@ func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
 // -------------------------------------------------------------------------
 // DELETION, LISTING, COUNTS
 // -------------------------------------------------------------------------
-
-// DeleteMultipartUpload removes a multipart upload and its parts (cascading).
-func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
-	err := s.queries.DeleteMultipartUpload(ctx, uploadID)
-	if err != nil {
-		return fmt.Errorf("failed to delete multipart upload: %w", err)
-	}
-	return nil
-}
 
 // collectMultipartUploads is the shared row->core.MultipartUpload
 // pipeline used by every slice-returning multipart query. Each

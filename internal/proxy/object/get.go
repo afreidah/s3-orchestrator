@@ -183,7 +183,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, 0, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, br); err != nil {
+	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, br); err != nil {
 		_ = r.Body.Close()
 		cancel()
 		return fail, 0, err
@@ -247,7 +247,6 @@ func (o *Manager) buildPlaintextReader(
 	r *s3be.GetObjectResult,
 	loc *core.ObjectLocation,
 	key, beName string,
-	backend s3be.ObjectBackend,
 	br backendRange,
 ) error {
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
@@ -255,7 +254,7 @@ func (o *Manager) buildPlaintextReader(
 			return err
 		}
 	}
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend, br.header != "")
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, br.header != "")
 	return nil
 }
 
@@ -272,7 +271,6 @@ func (o *Manager) maybeWrapIntegrityReader(
 	r *s3be.GetObjectResult,
 	loc *core.ObjectLocation,
 	key, beName string,
-	backend s3be.ObjectBackend,
 	partial bool,
 ) {
 	icfg := o.integrityCfg.Load()
@@ -292,19 +290,19 @@ func (o *Manager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.dropCorruptedLocation(ctx, loc, backend)
+		o.dropCorruptedLocation(ctx, loc)
 	})
 	r.Body = vr
 }
 
-// dropCorruptedLocation removes the ledger row for a copy discarded on read,
-// then deletes its bytes or queues them for cleanup. Without the row removal
-// the replicator still counts the copy and never rebuilds the object, leaving
-// it below its replication factor until a reconcile sweeps the stale row. A
-// copy a client overwrite or delete replaced mid-read is left alone: that
-// write already queued the discarded bytes.
-func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation, backend s3be.ObjectBackend) {
-	removed, err := o.stores.DeleteObjectLocation(ctx, loc, 0)
+// dropCorruptedLocation removes the ledger row for a copy discarded on read and
+// queues its bytes in one transaction, then settles the cleanup. Without the
+// row removal the replicator still counts the copy and never rebuilds the
+// object, leaving it below its replication factor until a reconcile sweeps the
+// stale row. A copy a client overwrite or delete replaced mid-read is left
+// alone: that write already queued the discarded bytes.
+func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
+	removed, err := o.stores.DeleteObjectLocation(ctx, loc, 0, reasonIntegrityFailed)
 	switch {
 	case errors.Is(err, core.ErrCopyChanged):
 		return
@@ -313,9 +311,12 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLoc
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return
 	}
-	o.coord.DeleteOrEnqueue(ctx, backend, removed.Cleanup(loc.ObjectKey, "integrity_failed"))
+	o.coord.Settle(ctx, removed)
 	o.cache.Delete(loc.ObjectKey)
 }
+
+// reasonIntegrityFailed labels the cleanup of a copy a read found corrupt.
+const reasonIntegrityFailed = "integrity_failed"
 
 // applyStoredIdentity replaces the serving copy's ETag and content type with
 // the object's stored identity. The backend reports a digest of the bytes it

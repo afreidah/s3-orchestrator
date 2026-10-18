@@ -4,10 +4,11 @@
 // Author: Alex Freidah
 //
 // Drives PlaceCopy against a real PostgreSQL: a placement commits only while
-// the source is still the copy the caller read and the target admits the
-// bytes, a move carries every column of the source row, and a refused
-// placement leaves rows and quotas as they were. The database is shared across
-// tests, so each test places between backends of its own.
+// its intent is held and the source is still the copy the caller read, a move
+// carries every column of the source row and queues the source's bytes, and a
+// refused placement leaves rows and quotas as they were while queueing the
+// bytes the caller copied. The database is shared across tests, so each test
+// places between backends of its own.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -33,6 +34,9 @@ const (
 	movedSuffix       = "!m"
 	replicaSuffix     = "!r"
 )
+
+// The reasons a test placement queues bytes under.
+var testMoveReasons = core.MoveReasons{Orphan: "test_orphan", SourceDelete: "test_source_delete"}
 
 // -------------------------------------------------------------------------
 // INTERNALS
@@ -74,10 +78,19 @@ func (f *placementFixture) recordWrite(t *testing.T, suffix string, size int64) 
 	}
 }
 
-// place runs PlaceCopy from source onto the target at the path suffix names.
-func (f *placementFixture) place(source *core.ObjectLocation, suffix string, removeSource bool) (int64, error) {
+// claim claims the target for a copy of source written at the path suffix
+// names, the way a copy's caller claims before writing.
+func (f *placementFixture) claim(t *testing.T, source *core.ObjectLocation, suffix string) *core.PendingObject {
+	t.Helper()
+	return claimCopyIntent(t, f.s, f.key, f.dst, f.key+suffix, source.SizeBytes)
+}
+
+// place claims the target and runs PlaceCopy from source onto it at the path
+// suffix names.
+func (f *placementFixture) place(t *testing.T, source *core.ObjectLocation, suffix string, removeSource bool) (int64, []core.CleanupItem, error) {
+	t.Helper()
 	return f.s.PlaceCopy(context.Background(), &core.Placement{
-		Source: source, Target: f.dst, StorageKey: f.key + suffix, RemoveSource: removeSource,
+		Source: source, Intent: f.claim(t, source, suffix), RemoveSource: removeSource, Reasons: testMoveReasons,
 	})
 }
 
@@ -116,12 +129,37 @@ func (f *placementFixture) assertDeclined(t *testing.T, err, want error, before 
 	}
 }
 
+// assertQueued checks the placement returned exactly one cleanup row, for
+// the bytes at path on backend under reason, and that the row was committed.
+func assertQueued(t *testing.T, s *Store, cleanup []core.CleanupItem, backend, path, reason string) {
+	t.Helper()
+	if len(cleanup) != 1 {
+		t.Fatalf("cleanup = %+v, want one row", cleanup)
+	}
+	got := cleanup[0]
+	if got.BackendName != backend || got.StorageKey != path || got.Reason != reason {
+		t.Errorf("cleanup = %s/%s (%s), want %s/%s (%s)", got.BackendName, got.StorageKey, got.Reason, backend, path, reason)
+	}
+	if n := pgCount(t, s, `SELECT COUNT(*) FROM cleanup_queue WHERE id = $1`, got.ID); n != 1 {
+		t.Errorf("cleanup row %d committed %d times, want 1", got.ID, n)
+	}
+}
+
+// assertIntentGone checks the placement cleared its intent.
+func assertIntentGone(t *testing.T, s *Store, p *core.PendingObject) {
+	t.Helper()
+	if pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE intent_id = $1`, p.IntentID) != 0 {
+		t.Errorf("intent %s still recorded", p.IntentID)
+	}
+}
+
 // -------------------------------------------------------------------------
 // DECLINED PLACEMENTS
 // -------------------------------------------------------------------------
 
 // TestPgPlaceCopy_ReplacedSourceIsCopyChanged verifies a move whose source a
-// newer write replaced between the read and the placement records nothing.
+// newer write replaced between the read and the placement records nothing and
+// queues the copied bytes under the orphan reason.
 func TestPgPlaceCopy_ReplacedSourceIsCopyChanged(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
 	f.recordWrite(t, firstWriteSuffix, 100)
@@ -129,41 +167,73 @@ func TestPgPlaceCopy_ReplacedSourceIsCopyChanged(t *testing.T) {
 	f.recordWrite(t, secondWriteSuffix, 200)
 	before := f.copies(t)
 
-	_, err := f.place(read, movedSuffix, true)
+	_, cleanup, err := f.place(t, read, movedSuffix, true)
 	f.assertDeclined(t, err, core.ErrCopyChanged, before, 200, 0)
+	assertQueued(t, f.s, cleanup, f.dst, f.key+movedSuffix, testMoveReasons.Orphan)
 }
 
 // TestPgPlaceCopy_SourceGoneIsCopyChanged verifies a placement whose source
-// row no longer exists records nothing.
+// row no longer exists records nothing and queues the copied bytes.
 func TestPgPlaceCopy_SourceGoneIsCopyChanged(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
-	gone := &core.ObjectLocation{ObjectKey: f.key, BackendName: f.src, StorageKey: f.key + firstWriteSuffix}
+	gone := &core.ObjectLocation{ObjectKey: f.key, BackendName: f.src, StorageKey: f.key + firstWriteSuffix, SizeBytes: 10}
 
-	_, err := f.place(gone, replicaSuffix, false)
+	_, cleanup, err := f.place(t, gone, replicaSuffix, false)
 	f.assertDeclined(t, err, core.ErrCopyChanged, nil, 0, 0)
+	assertQueued(t, f.s, cleanup, f.dst, f.key+replicaSuffix, testMoveReasons.Orphan)
 }
 
 // TestPgPlaceCopy_TargetHoldingCopyIsRefused verifies a placement onto a
-// backend that already holds a copy of the key records nothing.
+// backend that already holds a copy of the key records nothing, drops its
+// intent, and queues the copied bytes.
 func TestPgPlaceCopy_TargetHoldingCopyIsRefused(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
 	f.recordWrite(t, firstWriteSuffix, 100)
 	mustRecordReplica(t, f.s, f.key, f.dst, f.src)
 	before := f.copies(t)
+	src := storetest.LocationOn(t, f.s, f.key, f.src)
+	intent := f.claim(t, src, movedSuffix)
 
-	_, err := f.place(storetest.LocationOn(t, f.s, f.key, f.src), movedSuffix, true)
+	_, cleanup, err := f.s.PlaceCopy(context.Background(), &core.Placement{
+		Source: src, Intent: intent, RemoveSource: true, Reasons: testMoveReasons,
+	})
 	f.assertDeclined(t, err, core.ErrTargetRefused, before, 100, 100)
+	assertQueued(t, f.s, cleanup, f.dst, f.key+movedSuffix, testMoveReasons.Orphan)
+	assertIntentGone(t, f.s, intent)
 }
 
-// TestPgPlaceCopy_TargetOverQuotaIsRefused verifies a placement onto a backend
-// without room for the source's bytes records nothing.
-func TestPgPlaceCopy_TargetOverQuotaIsRefused(t *testing.T) {
-	f := newPlacementFixture(t, 50)
+// TestPgPlaceCopy_LostIntentQueuesSupersededBytes verifies a placement whose
+// intent a client write cleared mid-copy records nothing and queues the
+// copied bytes as a superseded intent's.
+func TestPgPlaceCopy_LostIntentQueuesSupersededBytes(t *testing.T) {
+	f := newPlacementFixture(t, 1<<30)
 	f.recordWrite(t, firstWriteSuffix, 100)
 	before := f.copies(t)
+	src := storetest.LocationOn(t, f.s, f.key, f.src)
+	intent := f.claim(t, src, replicaSuffix)
+	if err := f.s.DeletePending(context.Background(), intent.IntentID); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
 
-	_, err := f.place(storetest.LocationOn(t, f.s, f.key, f.src), replicaSuffix, false)
-	f.assertDeclined(t, err, core.ErrTargetRefused, before, 100, 0)
+	_, cleanup, err := f.s.PlaceCopy(context.Background(), &core.Placement{Source: src, Intent: intent, Reasons: testMoveReasons})
+	f.assertDeclined(t, err, core.ErrCopyChanged, before, 100, 0)
+	assertQueued(t, f.s, cleanup, f.dst, f.key+replicaSuffix, core.CleanupReasonSupersededIntent)
+}
+
+// TestPgPlaceCopy_TargetOverQuotaIsRefusedAtTheClaim verifies a target
+// without room for the source's bytes declines the intent, so the copy is
+// never written and nothing needs placing.
+func TestPgPlaceCopy_TargetOverQuotaIsRefusedAtTheClaim(t *testing.T) {
+	f := newPlacementFixture(t, 50)
+	f.recordWrite(t, firstWriteSuffix, 100)
+
+	fits, err := f.s.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID: uniqueKey(t, "intent"), ObjectKey: f.key, StorageKey: f.key + replicaSuffix,
+		BackendName: f.dst, SizeBytes: 100, Role: core.PendingRoleCompanion,
+	}, core.AcceptForWrite)
+	if err != nil || fits {
+		t.Fatalf("InsertPendingIfFits = %v, %v; want declined", fits, err)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -172,8 +242,9 @@ func TestPgPlaceCopy_TargetOverQuotaIsRefused(t *testing.T) {
 
 // TestPgPlaceCopy_MoveCarriesTheSourceRow verifies a move lands the source
 // row on the target unchanged but for backend and path, removes the source
-// row, and moves the bytes between the backends' counts. Last-Modified
-// surviving the move is the reason created_at is carried rather than stamped.
+// row and queues its bytes, and moves the bytes between the backends' counts.
+// Last-Modified surviving the move is the reason created_at is carried rather
+// than stamped.
 func TestPgPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
 	ctx := context.Background()
@@ -189,13 +260,14 @@ func TestPgPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	}
 	src := storetest.LocationOn(t, f.s, f.key, f.src)
 
-	moved, err := f.place(src, movedSuffix, true)
+	moved, cleanup, err := f.place(t, src, movedSuffix, true)
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	if moved != 100 {
 		t.Errorf("moved = %d, want 100", moved)
 	}
+	assertQueued(t, f.s, cleanup, f.src, f.key+firstWriteSuffix, testMoveReasons.SourceDelete)
 
 	got := readBackOne(t, f.s, f.key)
 	if got.BackendName != f.dst || got.StorageKey != f.key+movedSuffix {
@@ -220,19 +292,22 @@ func TestPgPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 }
 
 // TestPgPlaceCopy_ReplicaKeepsTheSource verifies a placement without
-// RemoveSource adds the copy and leaves the source row and its bytes alone.
+// RemoveSource adds the copy, clears its intent, queues nothing, and leaves
+// the source row and its bytes alone.
 func TestPgPlaceCopy_ReplicaKeepsTheSource(t *testing.T) {
 	f := newPlacementFixture(t, 1<<30)
 	f.recordWrite(t, firstWriteSuffix, 100)
 	src := storetest.LocationOn(t, f.s, f.key, f.src)
+	intent := f.claim(t, src, replicaSuffix)
 
-	placed, err := f.place(src, replicaSuffix, false)
+	placed, cleanup, err := f.s.PlaceCopy(context.Background(), &core.Placement{Source: src, Intent: intent, Reasons: testMoveReasons})
 	if err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
-	if placed != 100 {
-		t.Errorf("placed = %d, want 100", placed)
+	if placed != 100 || len(cleanup) != 0 {
+		t.Errorf("placed = %d with cleanup %+v, want 100 and none", placed, cleanup)
 	}
+	assertIntentGone(t, f.s, intent)
 
 	if kept := storetest.LocationOn(t, f.s, f.key, f.src); kept.StorageKey != src.StorageKey {
 		t.Errorf("source storage key = %q, want %q", kept.StorageKey, src.StorageKey)

@@ -124,7 +124,7 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 				intentID := uniqueKey(t, "intent")
 				if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 					IntentID: intentID, ObjectKey: key, BackendName: "backend-a", SizeBytes: 1024,
-				}); err != nil {
+				}, core.AcceptForWrite); err != nil {
 					t.Fatalf("InsertPendingIfFits: %v", err)
 				}
 				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
@@ -187,7 +187,7 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 		CompressionFormatVersion: form.CompressionFormatVersion,
 		LogicalSize:              form.LogicalSize,
 	}
-	if _, err := s.InsertPendingIfFits(ctx, intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, intent, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, key) }()

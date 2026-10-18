@@ -64,15 +64,11 @@ func TestBackendFilter_UnknownBackendSelectsNothing(t *testing.T) {
 
 // encryptInPlace places loc back on its own backend as an encrypted copy, the
 // way an encryption pass records the bytes it rewrote.
-func encryptInPlace(s *Store, loc *core.ObjectLocation) (int64, error) {
-	return s.PlaceCopy(context.Background(), &core.Placement{
-		Source:       loc,
-		Target:       loc.BackendName,
-		StorageKey:   loc.StorageKey + "!enc",
-		RemoveSource: true,
-		Form:         &core.StoredForm{Encrypted: true, EncryptionKey: []byte("k"), KeyID: "test-key", PlaintextSize: loc.SizeBytes},
-		Size:         loc.SizeBytes + 100,
-	})
+func encryptInPlace(t *testing.T, s *Store, loc *core.ObjectLocation) (int64, error) {
+	t.Helper()
+	return reformInPlace(t, s, loc, loc.StorageKey+"!enc",
+		&core.StoredForm{Encrypted: true, EncryptionKey: []byte("k"), KeyID: "test-key", PlaintextSize: loc.SizeBytes},
+		loc.SizeBytes+100)
 }
 
 // TestConversionRace_RefusesAChangedCopy pins that a rewrite placed against a
@@ -102,7 +98,7 @@ func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
 		t.Fatalf("RecordObject (client write): %v", err)
 	}
 
-	if _, err := encryptInPlace(s, read); !errors.Is(err, core.ErrCopyChanged) {
+	if _, err := encryptInPlace(t, s, read); !errors.Is(err, core.ErrCopyChanged) {
 		t.Fatalf("PlaceCopy = %v, want ErrCopyChanged", err)
 	}
 
@@ -129,7 +125,7 @@ func TestConversionRace_ConvertsAnUnchangedCopy(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if _, err := encryptInPlace(s, storetest.LocationOn(t, s, key, "backend-a")); err != nil {
+	if _, err := encryptInPlace(t, s, storetest.LocationOn(t, s, key, "backend-a")); err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}
 	got := storetest.LocationOn(t, s, key, "backend-a")

@@ -42,35 +42,43 @@ type placeCopyTracker struct {
 	err   error
 }
 
-// stubPlaceCopy returns a DoAndReturn capturing into pt.
-func stubPlaceCopy(pt *placeCopyTracker) func(context.Context, *core.Placement) (int64, error) {
-	return func(_ context.Context, p *core.Placement) (int64, error) {
+// stubPlaceCopy returns a DoAndReturn capturing into pt. A refusal queues the
+// replica's bytes under the placement's orphan reason, as the store does; any
+// other error queues nothing.
+func stubPlaceCopy(pt *placeCopyTracker) func(context.Context, *core.Placement) (int64, []core.CleanupItem, error) {
+	return func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 		pt.mu.Lock()
 		defer pt.mu.Unlock()
 		pt.calls = append(pt.calls, *p)
-		if pt.err != nil {
-			return 0, pt.err
+		switch {
+		case core.PlacementDeclined(pt.err):
+			return 0, []core.CleanupItem{{
+				ID: replicaCleanupID, BackendName: p.Intent.BackendName, ObjectKey: p.Intent.ObjectKey,
+				StorageKey: p.Intent.StorageKey, Reason: p.Reasons.Orphan, SizeBytes: p.Intent.SizeBytes,
+			}}, pt.err
+		case pt.err != nil:
+			return 0, nil, pt.err
 		}
-		return pt.size, nil
+		return pt.size, nil, nil
 	}
 }
 
-// replicatorEnqueueTracker captures EnqueueCleanup calls during a
+// replicaCleanupID is the id of the cleanup row a refused replica queues.
+const replicaCleanupID = 9
+
+// replicatorCompleteTracker captures CompleteCleanupItem calls during a
 // replicator test.
-type replicatorEnqueueTracker struct {
-	mu    sync.Mutex
-	calls []core.CleanupItem
+type replicatorCompleteTracker struct {
+	mu  sync.Mutex
+	ids []int64
 }
 
-// stubReplicatorEnqueue returns a DoAndReturn for EnqueueCleanup.
-func stubReplicatorEnqueue(et *replicatorEnqueueTracker) func(context.Context, *core.CleanupRequest) error {
-	return func(_ context.Context, req *core.CleanupRequest) error {
-		et.mu.Lock()
-		defer et.mu.Unlock()
-		et.calls = append(et.calls, core.CleanupItem{
-			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
-			Reason: req.Reason, SizeBytes: req.SizeBytes,
-		})
+// stubReplicatorComplete returns a DoAndReturn for CompleteCleanupItem.
+func stubReplicatorComplete(ct *replicatorCompleteTracker) func(context.Context, int64) error {
+	return func(_ context.Context, id int64) error {
+		ct.mu.Lock()
+		defer ct.mu.Unlock()
+		ct.ids = append(ct.ids, id)
 		return nil
 	}
 }
@@ -206,82 +214,104 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 }
 
 // TestReplicate_FullTargetRecordsNoCopy asserts a target without room produces
-// no copy: the placement refuses the target even though ranking proposed the
-// backend, and the written bytes go to the cleanup queue.
+// no copy: the claim refuses the target even though ranking proposed the
+// backend, so nothing is copied to it.
 func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
-	// Every target refuses, which is how a full backend reports itself.
-	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
-		Return(int64(0), core.ErrTargetRefused).AnyTimes()
+	// Every target declines the claim, which is how a full backend reports itself.
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(false, nil).AnyTimes()
 	storetest.Permissive(store)
 
 	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("0123456789")), 10, "text/plain", nil)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{
-		"b1": src, "b2": backendtest.NewInMemory(),
-	}, &fleetOpts{Order: []string{"b1", "b2"}})
+	dst := backendtest.NewInMemory()
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst},
+		&fleetOpts{Order: []string{"b1", "b2"}})
 
 	out, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
 	if out.CopiesCreated != 0 {
-		t.Errorf("created %d copies, want 0 when every target declines the row", out.CopiesCreated)
+		t.Errorf("outcome = %+v, want no copies and no errors when every target declines the claim", out)
+	}
+	if len(dst.Objects) != 0 {
+		t.Errorf("target holds %d objects, want nothing copied to a declined target", len(dst.Objects))
 	}
 }
 
-// TestReplicate_UnrecordedReplicaEnqueuesWithReplicationReasons verifies the
-// bytes of a replica no row records are queued for cleanup under the
-// replication reasons when the target refuses to delete them: the stale reason
-// for a declined placement and the plain orphan reason for a failed one, each
-// at the size the copy wrote.
-func TestReplicate_UnrecordedReplicaEnqueuesWithReplicationReasons(t *testing.T) {
+// TestReplicate_RefusedReplicaIsSettled verifies a replica whose placement is
+// refused is placed under the replication reasons and has the cleanup row the
+// refusal queued settled, so its bytes leave the target.
+func TestReplicate_RefusedReplicaIsSettled(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name   string
-		err    error
-		reason string
-	}{
-		{"declined", core.ErrTargetRefused, writepath.ReplicationOrphanReasons.StaleOrphan},
-		{"failed", errors.New("db error"), writepath.ReplicationOrphanReasons.Orphan},
+	src := backendtest.NewInMemory()
+	_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	dst := backendtest.NewInMemory()
+
+	pt := &placeCopyTracker{err: core.ErrTargetRefused}
+	ct := &replicatorCompleteTracker{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	replicateSuccessStubs(store,
+		[]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, pt)
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubReplicatorComplete(ct)).AnyTimes()
+	storetest.Permissive(store)
+
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst},
+		&fleetOpts{Order: []string{"b1", "b2"}})
+	if _, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil); err != nil {
+		t.Fatalf("Replicate: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			src := backendtest.NewInMemory()
-			_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-			dst := backendtest.NewInMemory()
-			dst.DeleteErr = errors.New("delete failed")
 
-			et := &replicatorEnqueueTracker{}
-			ctrl := gomock.NewController(t)
-			store := storetest.NewMockMetadataStore(ctrl)
-			replicateSuccessStubs(store,
-				[]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}},
-				&placeCopyTracker{err: tc.err})
-			store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-				DoAndReturn(stubReplicatorEnqueue(et)).AnyTimes()
-			storetest.Permissive(store)
+	if len(pt.calls) != 1 || pt.calls[0].Reasons != writepath.ReplicationReasons {
+		t.Fatalf("placements = %+v, want one under the replication reasons", pt.calls)
+	}
+	if dst.Has(pt.calls[0].Intent.StorageKey) {
+		t.Error("the refused replica is still on the target")
+	}
+	if len(ct.ids) != 1 || ct.ids[0] != replicaCleanupID {
+		t.Errorf("retired cleanup rows %v, want the refused replica's row", ct.ids)
+	}
+}
 
-			w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst},
-				&fleetOpts{Order: []string{"b1", "b2"}})
-			if _, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil); err != nil {
-				t.Fatalf("Replicate: %v", err)
-			}
+// TestReplicate_CopyFailureDiscardsTheIntent verifies a replica whose copy
+// fails has its intent discarded under the replication orphan reason.
+func TestReplicate_CopyFailureDiscardsTheIntent(t *testing.T) {
+	t.Parallel()
+	src := backendtest.NewInMemory()
+	_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	dst := backendtest.NewInMemory()
+	dst.PutErr = errors.New("put failed")
 
-			et.mu.Lock()
-			defer et.mu.Unlock()
-			if len(et.calls) != 1 {
-				t.Fatalf("enqueued %d cleanups, want 1", len(et.calls))
-			}
-			if got := et.calls[0]; got.BackendName != "b2" || got.Reason != tc.reason || got.SizeBytes != 4 {
-				t.Errorf("cleanup = %+v, want b2 %s at 4 bytes", got, tc.reason)
-			}
+	var reasons []string
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	replicateSuccessStubs(store,
+		[]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, &placeCopyTracker{})
+	store.EXPECT().DiscardPending(gomock.Any(), intentOn("b2", "key1"), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *core.PendingObject, reason string) ([]core.CleanupItem, error) {
+			reasons = append(reasons, reason)
+			return nil, nil
 		})
+	storetest.Permissive(store)
+
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst},
+		&fleetOpts{Order: []string{"b1", "b2"}})
+	out, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if out.CopiesCreated != 0 {
+		t.Errorf("created %d copies, want 0 when the copy fails", out.CopiesCreated)
+	}
+	if len(reasons) != 1 || reasons[0] != writepath.ReplicationReasons.Orphan {
+		t.Errorf("discard reasons = %v, want one %s", reasons, writepath.ReplicationReasons.Orphan)
 	}
 }
 
@@ -342,58 +372,10 @@ func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 	}
 }
 
-// TestCleanupOrphan_Success deletes an orphan from the source backend.
-func TestCleanupOrphan_Success(t *testing.T) {
-	t.Parallel()
-	b1 := backendtest.NewInMemory()
-	_, _ = b1.PutObject(context.Background(), "orphan", bytes.NewReader([]byte("x")), 1, "", nil)
-
-	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
-
-	w.CleanupOrphan(context.Background(), "b1", "orphan", "orphan", 1)
-	if b1.HasCopyOf("orphan") {
-		t.Error("expected orphan to be deleted")
-	}
-}
-
-// TestCleanupOrphan_BackendNotFound asserts the no-op on a missing
-// backend.
-func TestCleanupOrphan_BackendNotFound(t *testing.T) {
-	t.Parallel()
-	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
-
-	w.CleanupOrphan(context.Background(), "unknown", "orphan", "orphan", 1)
-}
-
-// TestCleanupOrphan_DeleteFailure_EnqueuesCleanup asserts a backend
-// delete failure enqueues a replication_orphan cleanup row.
-func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
-	t.Parallel()
-	b1 := backendtest.NewInMemory()
-	b1.DeleteErr = errors.New("delete failed")
-
-	et := &replicatorEnqueueTracker{}
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
-		DoAndReturn(stubReplicatorEnqueue(et)).AnyTimes()
-	storetest.Permissive(store)
-
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
-
-	w.CleanupOrphan(context.Background(), "b1", "orphan", "orphan", 1)
-
-	if len(et.calls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(et.calls))
-	}
-	if et.calls[0].Reason != writepath.ReplicationOrphanReasons.Orphan {
-		t.Errorf("expected reason=%s, got %q", writepath.ReplicationOrphanReasons.Orphan, et.calls[0].Reason)
-	}
-}
-
-// TestReplicate_PlaceCopyFails_CleansUpOrphan asserts the
-// orphan-cleanup branch when PlaceCopy returns an error.
-func TestReplicate_PlaceCopyFails_CleansUpOrphan(t *testing.T) {
+// TestReplicate_PlaceCopyFails_LeavesReplicaForReaper asserts a placement that
+// fails outright queues nothing, so the replica stays under its intent for the
+// pending reaper to resolve.
+func TestReplicate_PlaceCopyFails_LeavesReplicaForReaper(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 	b2 := backendtest.NewInMemory()
@@ -419,8 +401,8 @@ func TestReplicate_PlaceCopyFails_CleansUpOrphan(t *testing.T) {
 	if sum.CopiesCreated != 0 {
 		t.Errorf("expected 0 created (record failed), got %d", sum.CopiesCreated)
 	}
-	if b2.HasCopyOf("key1") {
-		t.Error("orphan should have been cleaned up from b2")
+	if !b2.HasCopyOf("key1") {
+		t.Error("the unplaced replica was deleted; its intent leaves it to the reaper")
 	}
 }
 
@@ -609,9 +591,9 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	if len(rt.calls) != 1 {
 		t.Fatalf("expected 1 PlaceCopy call, got %d", len(rt.calls))
 	}
-	if got := rt.calls[0]; got.Source.BackendName != "b2" || got.Target != "b3" || got.RemoveSource {
+	if got := rt.calls[0]; got.Source.BackendName != "b2" || got.Intent.BackendName != "b3" || got.RemoveSource {
 		t.Errorf("placement = source %q target %q remove %v, want b2 (healthy) -> b3 keeping the source",
-			got.Source.BackendName, got.Target, got.RemoveSource)
+			got.Source.BackendName, got.Intent.BackendName, got.RemoveSource)
 	}
 }
 

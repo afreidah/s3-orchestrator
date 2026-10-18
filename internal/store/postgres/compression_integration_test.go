@@ -203,10 +203,18 @@ func assertWalkedEachOnce(t *testing.T, seen map[string]int, total int) {
 // records it.
 func rewriteInPlace(t *testing.T, s *Store, key string, form *core.StoredForm, size int64) {
 	t.Helper()
+	ctx := context.Background()
 	src := storetest.LocationOn(t, s, key, "backend-a")
-	if _, err := s.PlaceCopy(context.Background(), &core.Placement{
-		Source: src, Target: "backend-a", StorageKey: src.StorageKey + "!rw",
-		RemoveSource: true, Form: form, Size: size,
+	intent := &core.PendingObject{
+		StoredForm: *form, IntentID: core.StoragePath(key, src.StorageKey) + "!rw", ObjectKey: key,
+		StorageKey: core.StoragePath(key, src.StorageKey) + "!rw", BackendName: "backend-a",
+		SizeBytes: size, Role: core.PendingRoleCompanion,
+	}
+	if fits, err := s.InsertPendingIfFits(ctx, intent, core.AcceptForRewrite); err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits = %v, %v; want admitted", fits, err)
+	}
+	if _, _, err := s.PlaceCopy(ctx, &core.Placement{
+		Source: src, Intent: intent, RemoveSource: true, Reformed: true,
 	}); err != nil {
 		t.Fatalf("PlaceCopy: %v", err)
 	}

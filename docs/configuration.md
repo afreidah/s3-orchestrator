@@ -507,60 +507,48 @@ cleanup_queue:
 
 `multipart_stale_timeout` is consumed by the hourly `CleanupStaleMultipartUploads` sweep - uploads that have been open longer than this are aborted, their parts deleted from the backend, and the multipart rows removed. The default 24h matches the AWS S3 SDK's default abort behavior; lower it on backends with tight free-tier headroom to recover quota faster.
 
-When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, drainer, replicator, the bulk rewrite passes), the failed deletion is automatically enqueued for retry.
+Every transaction that stops recording bytes (a delete, an overwrite, a move removing its source, an integrity failure, over-replication removal, a multipart abort or completion, a discarded intent, a refused placement) queues their deletion as `cleanup_queue` rows in the same transaction, already claimed by the instance running it. After the commit that instance deletes the bytes right away and settles each row: retired when the delete succeeds or returns 404, retried with backoff when it fails.
 
-Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup the row is removed and `orphan_bytes` is decremented in a single atomic CTE; a worker crash between the two operations cannot leave the counter inconsistent.
+Each row carries the bytes' `size_bytes`. A backend's orphan bytes are the sum of `size_bytes` over its `cleanup_queue` and `cleanup_dlq` rows, computed by the `backend_capacity` view, so write admission and replica target selection account for space that is not yet released. Nothing maintains a counter.
 
-**Per-row claim pattern.** Every row carries `claimed_at` and `claimed_by` columns. When a worker tick fetches a batch it stamps each row with the current instance's identifier and timestamp, gated by `FOR UPDATE SKIP LOCKED` (Postgres) or SQLite's intrinsic single-writer serialisation. Two instances ticking concurrently always see disjoint row sets, so a connection death or rolling-deploy overlap that would otherwise let two workers process the same row is now structurally impossible. A claim older than `claim_grace_period` (default 5m) is reclaimable so a worker that died mid-process does not leave the row stuck; reclaims emit `s3o_cleanup_queue_stale_claims_recovered_total` and a `cleanup_queue.claim_recovered` audit event.
+**Per-row claim pattern.** Every row carries `claimed_at` and `claimed_by` columns. A row queued by a transaction is claimed by that instance from the start. When a worker tick fetches a batch it stamps each row with the current instance's identifier and timestamp, gated by `FOR UPDATE SKIP LOCKED` (Postgres) or SQLite's single-writer serialisation, so two instances ticking concurrently always see disjoint row sets. `claim_grace_period` (default 5m) is how old a claim must be before the worker reclaims it, so a process that died before settling its rows does not leave them stuck; reclaims emit `s3o_cleanup_queue_stale_claims_recovered_total` and a `cleanup_queue.claim_recovered` audit event. Set it above the longest a single settle can take.
 
-The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). The bytes are still on disk, so they stay counted as orphan bytes while the DLQ row exists. The DLQ entry retains the full row payload (key, storage key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
 
 **Monitoring:**
 
-- `s3o_cleanup_queue_depth` staying elevated - orphaned objects are accumulating in the active queue.
+- `s3o_cleanup_queue_depth` staying elevated - orphaned objects are accumulating in the active queue. The gauge briefly includes rows the request path is settling.
+- `s3o_cleanup_queue_enqueued_total{reason}` - every row queued for deletion, by reason. It tracks the delete and overwrite rate.
+- `s3o_cleanup_queue_processed_total{status}` - rows settled, on the request path and by the worker.
 - `s3o_cleanup_queue_processed_total{status="exhausted"}` - counter increments each time an item exhausts retries.
 - `s3o_cleanup_queue_processed_total{status="success_absent"}` - counter increments each time a backend DELETE returned 404 and the row was dropped as idempotent success (the backend already agrees the object is gone). A sustained rate here is benign and just means upstream PUTs are silently failing somewhere; spikes are worth correlating with backend health.
-- `s3o_cleanup_queue_stale_claims_recovered_total{backend}` - non-zero rate means a worker died mid-process or the grace period is too short for realistic worst-case processing time.
+- `s3o_cleanup_queue_stale_claims_recovered_total{backend}` - non-zero rate means a process died before settling its rows or the grace period is too short for realistic worst-case processing time.
 - `s3o_cleanup_dlq_depth > 0` - the DLQ holds at least one unrecoverable orphan; alerting here gives operators a direct signal instead of a counter delta.
 - `s3o_cleanup_dlq_enqueued_total{backend}` - rate of graduations per backend; a single backend dominating means that backend's delete path is broken.
-- `s3o_cleanup_enqueue_failures_total{backend,reason,stage}` - orphan-leak blind spot signal. The cleanup-queue itself is durable, but its *enqueue* path is best-effort: when a backend write succeeds and the DB is then unreachable, the orphan cannot be recorded in `cleanup_queue` and the only signal is this counter plus the matching `storage.OrphanEnqueueFailed` audit event. `stage="enqueue"` is the worst case (the cleanup-queue worker will never see this orphan); `stage="orphan_bytes"` means the row landed but the quota counter drifts. See the runbook below.
 - `s3o_quota_orphan_bytes` - elevated values mean backends have significant physically unreleased space (DLQ entries are the long-tail contributors).
 
-**Untracked-orphan recovery (cleanup enqueue failed during DB outage).** A non-zero rate of `s3o_cleanup_enqueue_failures_total{stage="enqueue"}` means at least one orphan exists on a backend with no `cleanup_queue` row. The cleanup-queue worker will not retry it; the storage will leak until reconciled. Recovery workflow:
-
-1. Query the audit log for `event="storage.OrphanEnqueueFailed"` to enumerate the specific backend/key/size of each affected orphan during the outage window.
-2. Once DB connectivity is restored, run `POST /admin/api/reconcile[?backend=name]`. The reconciler walks each backend's actual key list against `object_locations` using a bounded-memory sorted-merge and imports S3-only keys back onto the ledger, so the leaked bytes are accounted against the backend's quota again. It does not delete them - reconcile adopts, it does not clean. Use step 3 below or the manual workflow to remove objects you do not want. This is the same diff machinery that runs on the nightly reconcile interval.
-3. If the audit log indicates more than a handful of failures, target the reconciler at the affected backends specifically rather than waiting for the next scheduled scan.
-
-`stage="orphan_bytes"` failures do not need step 2 - the `cleanup_queue` row landed and the worker will eventually delete the object. The quota counter drift is reset when `backend_quotas.orphan_bytes` is reconciled against `cleanup_queue` (a periodic safety pass; not yet automated).
-
-**Manual cleanup:** Inspect DLQ entries and resolve them deliberately. The bytes are still on the backend, so the workflow is *delete the object out-of-band, then write off the row + adjust orphan_bytes by the row's size*:
+**Manual cleanup:** Inspect DLQ entries and resolve them deliberately. The bytes are still on the backend, so the workflow is *delete the object out-of-band, then write off the row*. Removing the row releases its bytes from the backend's orphan bytes:
 
 ```sql
 -- View unrecoverable orphans needing manual intervention
-SELECT id, original_id, backend_name, object_key, reason, attempts,
+SELECT id, original_id, backend_name, object_key, storage_key, reason, attempts,
        size_bytes, first_enqueued_at, moved_at, last_error
 FROM cleanup_dlq
 ORDER BY moved_at;
 
 -- After confirming the object is gone (manual S3 delete, reconciler sweep, etc.):
-BEGIN;
-UPDATE backend_quotas
-   SET orphan_bytes = GREATEST(0, orphan_bytes - (SELECT size_bytes FROM cleanup_dlq WHERE id = 42))
- WHERE backend_name = (SELECT backend_name FROM cleanup_dlq WHERE id = 42);
 DELETE FROM cleanup_dlq WHERE id = 42;
-COMMIT;
 
 -- Or, to push a DLQ entry back through automatic retry (e.g. after fixing the backend):
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
-SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, storage_key, reason, size_bytes, NOW(), 0, last_error
   FROM cleanup_dlq WHERE id = 42;
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 
 ### write_path
 
-The write path can run in two modes. **Direct mode** (`enabled: false`) writes to the backend and commits the metadata immediately afterward; a crash between the two leaks bytes onto the backend with no DB record. **Pending-intent mode** (`enabled: true`, the default) inserts a row into `pending_objects` *before* the backend PUT and atomically deletes that row when the metadata commits - so a crash between the PUT and the commit leaves a recoverable intent the background reaper can resolve.
+Every write claims its target by inserting a row into `pending_objects` *before* its bytes land, and the transaction that records the copy deletes that row. That covers client PUTs and their extra copies, replicas, drain and rebalance moves, the rewrite passes and multipart parts. The insert admits the bytes against the backend's room, and a crash between the upload and the commit leaves a recoverable intent the background reaper can resolve. Intents cannot be turned off.
 
 ```yaml
 write_path:
@@ -579,18 +567,17 @@ write_path:
 - **HEAD 200** -> the backend received the bytes. Promote the intent to a committed `object_locations` row (`pending_reaper.promoted` audit event).
 - **HEAD 404** -> the backend never received the bytes. Drop the intent (`pending_reaper.dropped` audit event). No orphan exists.
 - **Non-404 HEAD error** -> leave the intent for the next tick. A sustained backend reachability problem here surfaces as `s3o_pending_intents_resolved_total{status="ambiguous"}`.
-- **A later write for the same key already committed** -> drop the intent as superseded (`pending_reaper.superseded`).
+- **A later write for the same key already committed** -> drop the intent as superseded and queue its bytes for deletion under reason `superseded_intent` (`pending_reaper.superseded`).
+- **A companion intent** (an extra PUT copy, a replica, a move, a rewrite or a multipart part) is never promoted. It is kept when a recorded copy sits at its path (`pending_reaper.companion_kept`); otherwise its bytes are queued for deletion under reason `companion_discarded` (`pending_reaper.companion_discarded`).
 
 **Why `min_age` matters.** The reaper must not race the foreground write path; if `min_age` is too short the reaper can interrogate an intent whose backend PUT is still in flight and either prematurely commit it or churn `ambiguous` resolutions. The 5-minute default is generous; lower it only if you have measured the p99 PUT duration and accept the operational tradeoff.
 
 **Monitoring:**
 
-- `s3o_pending_intents_enqueued_total` - should track the PutObject rate closely.
-- `s3o_pending_intents_resolved_total{status}` - `committed` is the happy path (synchronous commit succeeded); `promoted` + `dropped` are reaper resolutions; `ambiguous` is the alert.
+- `s3o_pending_intents_enqueued_total` - intents inserted, by every write that claims a target: PUTs, extra copies, replicas, moves, rewrites and parts.
+- `s3o_pending_intents_resolved_total{status}` - `committed` is the happy path (synchronous commit succeeded); `promoted`, `dropped`, `superseded`, `companion_kept` and `companion_discarded` are reaper resolutions; `ambiguous` is the alert.
 - `s3o_pending_intents_depth` - gauge of unresolved intents. Alert when consistently above `batch_size` - the reaper is not keeping up (raise `batch_size`, lower `reaper_tick`, or add concurrency).
-- Audit events: `pending_reaper.promoted` / `pending_reaper.dropped` / `pending_reaper.superseded`.
-
-**When to disable.** Don't, unless you are running an embedded SQLite single-instance demo and trust the OS to flush. The pattern adds one DB write per PUT (cheap) and saves you from one entire class of write-path crash leak.
+- Audit events: `pending_reaper.promoted` / `pending_reaper.dropped` / `pending_reaper.superseded` / `pending_reaper.companion_kept` / `pending_reaper.companion_discarded`.
 
 ### rate_limit
 
@@ -730,7 +717,7 @@ lifecycle:
 - The cutoff is measured from the object's creation time, not from when a tag was applied, so tagging an object older than the window makes it eligible immediately. See [Cleanup and lifecycle](cleanup-and-lifecycle.md#age-is-measured-from-object-creation).
 - Omit the `lifecycle` section or leave `rules` empty to disable lifecycle entirely.
 - Rules are evaluated every hour by a background worker with an advisory lock.
-- Deletions go through the standard `DeleteObject` path - all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
+- Deletions go through the standard `DeleteObject` path - all copies removed, quotas decremented, and the bytes queued in the cleanup queue and deleted after the commit.
 - Hot-reloadable via `SIGHUP`.
 
 ### encryption

@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Provides MetadataStore methods for the cleanup retry queue: enqueue failed
-// operations, fetch pending items with backoff-aware scheduling, and update
-// attempt counts or mark items as completed. Also manages orphan_bytes tracking
-// on backend_quotas for bytes pending physical deletion.
+// Provides MetadataStore methods for the cleanup queue: claim queued rows with
+// backoff-aware scheduling, retire them once their bytes are gone, and update
+// attempt counts for a retry. Rows are queued by the transactions that stop
+// recording bytes, through the tx adapter.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -26,21 +26,6 @@ import (
 // -------------------------------------------------------------------------
 // QUEUE LIFECYCLE
 // -------------------------------------------------------------------------
-
-// EnqueueCleanup adds a failed cleanup operation to the retry queue.
-func (s *Store) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
-	err := s.queries.EnqueueCleanup(ctx, db.EnqueueCleanupParams{
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  core.StoragePath(c.ObjectKey, c.StorageKey),
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to enqueue cleanup: %w", err)
-	}
-	return nil
-}
 
 // GetPendingCleanups returns a read-only snapshot of pending cleanup rows.
 // Used by the admin endpoint to render the queue. The cleanup worker uses
@@ -102,14 +87,10 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	return mapSlice(rows, claimedItemFromRow), nil
 }
 
-// CompleteCleanupItem deletes a processed row and decrements its backend's
-// orphan_bytes by the row's size in one statement. It is idempotent: a row
-// already gone decrements nothing.
+// CompleteCleanupItem retires a row whose bytes are gone. A row already
+// retired is a no-op.
 func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
-	if err := s.queries.CompleteCleanupItem(ctx, id); err != nil {
-		return fmt.Errorf("failed to complete cleanup item: %w", err)
-	}
-	return nil
+	return s.direct().DeleteCleanupItem(ctx, id)
 }
 
 // RetryCleanupItem increments the attempt counter, schedules the next retry,
@@ -162,20 +143,20 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 }
 
 // -------------------------------------------------------------------------
-// ORPHAN BYTES AND SWEEPS
+// SWEEPS
 // -------------------------------------------------------------------------
 
-// IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
-// Called when a physical delete fails and is enqueued for retry.
-func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	err := s.queries.IncrementOrphanBytes(ctx, db.IncrementOrphanBytesParams{
-		Amount:      amount,
-		BackendName: backendName,
+// SweepStaleCleanupQueueRows drops the queued cleanups for a path reconcile
+// found missing from the backend, and returns how many went.
+func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
+	n, err := s.queries.DeleteCleanupQueueByKey(ctx, db.DeleteCleanupQueueByKeyParams{
+		StorageKey:  storageKey,
+		BackendName: backend,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to increment orphan bytes: %w", err)
+		return 0, fmt.Errorf("sweep stale cleanup rows: %w", err)
 	}
-	return nil
+	return n, nil
 }
 
 // -------------------------------------------------------------------------

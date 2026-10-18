@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -57,11 +56,7 @@ func TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce(t *testing.T) {
 
 	for i := range rows {
 		key := internalKey(fmt.Sprintf("concurrent-cleanup-%d-%s", i, uniqueKey(t, "race")))
-		if err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
-			BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "concurrency_test",
-		}); err != nil {
-			t.Fatalf("EnqueueCleanup %d: %v", i, err)
-		}
+		seedCleanupRow(t, backend, key, "concurrency_test", 0)
 	}
 
 	// Bring up K-1 aux workers; the bundled testWorkers.CleanupWorker

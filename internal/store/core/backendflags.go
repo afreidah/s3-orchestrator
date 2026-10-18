@@ -48,11 +48,13 @@ const DrainFlags = FlagDraining | FlagDrained | FlagDrainFailed
 // destinations - which is nothing. AcceptForReconcile lets a cordoned backend
 // be reconciled, since only a drain is moving its rows off. AcceptForRewrite
 // lets a cordoned backend have a copy it holds rewritten in place, which adds
-// no copy to it.
+// no copy to it. AcceptForPart lets an upload started before a cordon keep
+// taking parts, since they finish an object the backend already took on.
 const (
 	AcceptForWrite     BackendFlags = 0
 	AcceptForReconcile              = FlagCordoned
 	AcceptForRewrite                = FlagCordoned
+	AcceptForPart                   = FlagCordoned
 )
 
 // backendFlagNames pairs each flag with its name, in the order a rendered set

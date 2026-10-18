@@ -201,14 +201,15 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 	)
 	switch cfg.Database.Driver {
 	case "postgres":
-		s, openErr := postgres.NewStore(ctx, &cfg.Database, nil)
+		// An import removes no copies, so it queues no cleanup to claim.
+		s, openErr := postgres.NewStore(ctx, &cfg.Database, nil, "")
 		if openErr != nil {
 			err = openErr
 		} else {
 			objects, adminDB = s, s
 		}
 	case "sqlite":
-		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database, nil)
+		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database, nil, "")
 		if openErr != nil {
 			err = openErr
 		} else {

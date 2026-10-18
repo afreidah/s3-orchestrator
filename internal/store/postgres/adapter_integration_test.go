@@ -37,6 +37,10 @@ import (
 // SHARED CONTAINER FIXTURE
 // -------------------------------------------------------------------------
 
+// pgFixtureInstance is the instance id the shared store stamps on the cleanup
+// rows its transactions queue.
+const pgFixtureInstance = "pg-fixture"
+
 // The lazily started Postgres testcontainer shared by the whole suite.
 var (
 	pgFixtureOnce sync.Once
@@ -92,7 +96,7 @@ func adapterPgStore(tb testing.TB) *Store {
 			SSLMode:  "disable",
 			MaxConns: 16,
 			MinConns: 1,
-		}, nil)
+		}, nil, pgFixtureInstance)
 		if err != nil {
 			pgFixtureErr = fmt.Errorf("NewStore: %w", err)
 			return
@@ -131,7 +135,7 @@ func withPgAdapter(t *testing.T, s *Store, fn func(*pgTxAdapter)) {
 		t.Fatalf("Begin: %v", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	fn(&pgTxAdapter{q: s.queries.WithTx(tx)})
+	fn(&pgTxAdapter{q: s.queries.WithTx(tx), instanceID: s.instanceID})
 }
 
 // uniqueKey returns a key prefixed with the test name so suites can
@@ -142,18 +146,36 @@ func uniqueKey(t *testing.T, suffix string) string {
 	return t.Name() + "/" + suffix
 }
 
+// claimCopyIntent claims target for a copy of key written at storageKey, the
+// way a copy's caller claims its target before writing, and fails the test
+// unless the backend admits the bytes.
+func claimCopyIntent(t *testing.T, s *Store, key, target, storageKey string, size int64) *core.PendingObject {
+	t.Helper()
+	p := &core.PendingObject{
+		IntentID: storageKey + "@" + target, ObjectKey: key, StorageKey: storageKey,
+		BackendName: target, SizeBytes: size, Role: core.PendingRoleCompanion,
+	}
+	fits, err := s.InsertPendingIfFits(context.Background(), p, core.AcceptForWrite)
+	if err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits(%s on %s): fits=%v err=%v", storageKey, target, fits, err)
+	}
+	return p
+}
+
 // replicaOf describes a replica of the copy of key on source placed onto
-// target, stored at a path of its own the way the replicator stores one.
+// target, stored at a path of its own under an intent claimed for it, the way
+// the replicator places one.
 func replicaOf(t *testing.T, s *Store, key, target, source string) *core.Placement {
 	t.Helper()
-	return &core.Placement{Source: storetest.LocationOn(t, s, key, source), Target: target, StorageKey: key + "!r"}
+	src := storetest.LocationOn(t, s, key, source)
+	return &core.Placement{Source: src, Intent: claimCopyIntent(t, s, key, target, key+"!r", src.SizeBytes)}
 }
 
 // mustRecordReplica places a replica of the copy of key on source onto
 // target, failing the test on error.
 func mustRecordReplica(t *testing.T, s *Store, key, target, source string) {
 	t.Helper()
-	if _, err := s.PlaceCopy(context.Background(), replicaOf(t, s, key, target, source)); err != nil {
+	if _, _, err := s.PlaceCopy(context.Background(), replicaOf(t, s, key, target, source)); err != nil {
 		t.Fatalf("PlaceCopy(%s, %s): %v", key, target, err)
 	}
 }
@@ -161,6 +183,36 @@ func mustRecordReplica(t *testing.T, s *Store, key, target, source string) {
 // cleanupOf describes a cleanup row for bytes stored at the object's key.
 func cleanupOf(backend, key, reason string, size int64) *core.CleanupRequest {
 	return &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: reason, SizeBytes: size}
+}
+
+// queueCleanup commits a cleanup row the way a copy-removing transaction
+// queues one, claimed by the fixture's instance, and returns its id.
+func queueCleanup(t *testing.T, s *Store, c *core.CleanupRequest) int64 {
+	t.Helper()
+	id, err := s.direct().InsertCleanup(context.Background(), c)
+	if err != nil {
+		t.Fatalf("InsertCleanup(%s): %v", c.ObjectKey, err)
+	}
+	return id
+}
+
+// releaseClaim clears a queued row's claim, as a retry does, so the next
+// claim takes it as a fresh row.
+func releaseClaim(t *testing.T, s *Store, id int64) {
+	t.Helper()
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE cleanup_queue SET claimed_at = NULL, claimed_by = NULL WHERE id = $1`, id,
+	); err != nil {
+		t.Fatalf("release claim %d: %v", id, err)
+	}
+}
+
+// queueUnclaimed commits a cleanup row with no claim on it.
+func queueUnclaimed(t *testing.T, s *Store, c *core.CleanupRequest) int64 {
+	t.Helper()
+	id := queueCleanup(t, s, c)
+	releaseClaim(t, s, id)
+	return id
 }
 
 // -------------------------------------------------------------------------
@@ -190,7 +242,7 @@ func TestPgAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
 	intentID := uniqueKey(t, "intent")
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
@@ -240,7 +292,7 @@ func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
 		PlaintextSize: 180,
 		ContentHash:   "abc123",
 	}
-	if _, err := s.InsertPendingIfFits(ctx, &want); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &want, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
@@ -280,7 +332,7 @@ func TestPgInsertPending_NullableFieldsOmitted(t *testing.T) {
 	intentID := uniqueKey(t, "intent")
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 5,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
@@ -310,7 +362,7 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 	intentID := uniqueKey(t, "intent")
 	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
-	}); err != nil {
+	}, core.AcceptForWrite); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
@@ -556,44 +608,164 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 // CLEANUP TX
 // -------------------------------------------------------------------------
 
-// TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals
-// verifies the sum-then-delete returns the row count and total bytes
-// of the rows it removed.
-func TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals(t *testing.T) {
+// TestPgAdapter_InsertCleanup_ClaimsRowForInstance verifies a queued row is
+// stamped with the adapter's instance and a claim time, stored at the copy's
+// own path, and returned by id.
+func TestPgAdapter_InsertCleanup_ClaimsRowForInstance(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	req := cleanupOf("backend-a", key, "test", 256)
-	if err := s.EnqueueCleanup(ctx, req); err != nil {
-		t.Fatalf("EnqueueCleanup(1): %v", err)
-	}
-	if err := s.EnqueueCleanup(ctx, req); err != nil {
-		t.Fatalf("EnqueueCleanup(2): %v", err)
-	}
-
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		count, total, err := a.SumAndDeleteCleanupQueueRows(ctx, key, "backend-a")
+		id, err := a.InsertCleanup(ctx, &core.CleanupRequest{
+			BackendName: "backend-a", ObjectKey: key, StorageKey: key + "!w1", Reason: "test", SizeBytes: 256,
+		})
 		if err != nil {
-			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
+			t.Fatalf("InsertCleanup: %v", err)
 		}
-		if count != 2 || total != 512 {
-			t.Errorf("count=%d total=%d, want 2 and 512", count, total)
+		row, err := a.GetCleanupQueueRow(ctx, id)
+		if err != nil {
+			t.Fatalf("GetCleanupQueueRow: %v", err)
+		}
+		if row.StorageKey != key+"!w1" || row.ObjectKey != key || row.SizeBytes != 256 || row.Reason != "test" {
+			t.Errorf("row = %+v, want the queued request's fields", row)
 		}
 	})
 }
 
-// TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero
-// verifies the sum-then-delete returns (0, 0, nil) when no matching
-// rows exist.
-func TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero(t *testing.T) {
+// TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey verifies a copy
+// stored at the object's own key is queued at that key.
+func TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		id, err := a.InsertCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, Reason: "test", SizeBytes: 1})
+		if err != nil {
+			t.Fatalf("InsertCleanup: %v", err)
+		}
+		row, err := a.GetCleanupQueueRow(ctx, id)
+		if err != nil {
+			t.Fatalf("GetCleanupQueueRow: %v", err)
+		}
+		if row.StorageKey != key {
+			t.Errorf("StorageKey = %q, want the object key %q", row.StorageKey, key)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// MULTIPART TX
+// -------------------------------------------------------------------------
+
+// partParams describes part n of uploadID written at storageKey.
+func partParams(uploadID string, n int, storageKey, etag string, size int64) *core.RecordPartParams {
+	return &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: n, ETag: etag, SizeBytes: size,
+		Intent: &core.PendingObject{BackendName: "backend-a", StorageKey: storageKey},
+	}
+}
+
+// TestPgAdapter_UpsertPart_ReturnsReplacedPart verifies the first upload of a
+// part number replaces nothing, and a re-upload returns the part it replaced
+// with that part's path while the new path is stored.
+func TestPgAdapter_UpsertPart_ReturnsReplacedPart(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		replaced, err := a.UpsertPart(ctx, partParams(uploadID, 1, "path-1", "e1", 100))
+		if err != nil || replaced != nil {
+			t.Fatalf("UpsertPart(first) = %+v, %v; want nil, nil", replaced, err)
+		}
+		replaced, err = a.UpsertPart(ctx, partParams(uploadID, 1, "path-2", "e2", 200))
+		if err != nil {
+			t.Fatalf("UpsertPart(second): %v", err)
+		}
+		if replaced == nil || replaced.StorageKey != "path-1" || replaced.SizeBytes != 100 || replaced.PartNumber != 1 {
+			t.Errorf("replaced = %+v, want part 1 at path-1 with 100 bytes", replaced)
+		}
+	})
+}
+
+// TestPgAdapter_UpsertPart_StoresStorageKey verifies a recorded part reads back
+// with the path its upload wrote.
+func TestPgAdapter_UpsertPart_StoresStorageKey(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	if err := s.WithTx(ctx, func(ctx context.Context, tx core.TxAdapter) error {
+		_, err := tx.UpsertPart(ctx, partParams(uploadID, 3, "part-path", "e", 64))
+		return err
+	}); err != nil {
+		t.Fatalf("UpsertPart: %v", err)
+	}
+	parts, err := s.GetParts(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].StorageKey != "part-path" {
+		t.Fatalf("parts = %+v, want one part at part-path", parts)
+	}
+	if got := parts[0].Path(uploadID); got != "part-path" {
+		t.Errorf("Path = %q, want part-path", got)
+	}
+}
+
+// TestPgAdapter_DeleteMultipartUpload_ReturnsBackendAndParts verifies removing
+// an upload returns its backend and every part with its path, and leaves no
+// upload or part rows behind.
+func TestPgAdapter_DeleteMultipartUpload_ReturnsBackendAndParts(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		for n, path := range map[int]string{1: "p1", 2: ""} {
+			if _, err := a.UpsertPart(ctx, partParams(uploadID, n, path, "e", int64(n*10))); err != nil {
+				t.Fatalf("UpsertPart(%d): %v", n, err)
+			}
+		}
+		backend, parts, err := a.DeleteMultipartUpload(ctx, uploadID)
+		if err != nil {
+			t.Fatalf("DeleteMultipartUpload: %v", err)
+		}
+		if backend != "backend-a" {
+			t.Errorf("backend = %q, want backend-a", backend)
+		}
+		assertRemovedParts(t, parts)
+		if again, left, err := a.DeleteMultipartUpload(ctx, uploadID); err != nil || again != "" || left != nil {
+			t.Errorf("second delete = %q, %+v, %v; want nothing", again, left, err)
+		}
+	})
+}
+
+// assertRemovedParts checks the removed parts are part 1 at p1 and part 2 at
+// its fixed path, each sized ten bytes per part number.
+func assertRemovedParts(t *testing.T, parts []core.MultipartPart) {
+	t.Helper()
+	if len(parts) != 2 {
+		t.Fatalf("removed %d parts, want 2", len(parts))
+	}
+	keys := map[int]string{}
+	for i := range parts {
+		p := &parts[i]
+		keys[p.PartNumber] = p.StorageKey
+		if p.SizeBytes != int64(p.PartNumber*10) {
+			t.Errorf("part %d size = %d, want %d", p.PartNumber, p.SizeBytes, p.PartNumber*10)
+		}
+	}
+	if keys[1] != "p1" || keys[2] != "" {
+		t.Errorf("storage keys = %v, want 1:p1 and 2 empty", keys)
+	}
+}
+
+// TestPgAdapter_DeleteMultipartUpload_MissingUploadReturnsNothing verifies an
+// upload already gone returns no backend and no parts.
+func TestPgAdapter_DeleteMultipartUpload_MissingUploadReturnsNothing(t *testing.T) {
 	s := adapterPgStore(t)
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		count, total, err := a.SumAndDeleteCleanupQueueRows(context.Background(), uniqueKey(t, "missing"), "backend-a")
-		if err != nil {
-			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
-		}
-		if count != 0 || total != 0 {
-			t.Errorf("count=%d total=%d, want 0 and 0", count, total)
+		backend, parts, err := a.DeleteMultipartUpload(context.Background(), uniqueKey(t, "missing"))
+		if err != nil || backend != "" || parts != nil {
+			t.Errorf("DeleteMultipartUpload = %q, %+v, %v; want empty", backend, parts, err)
 		}
 	})
 }
@@ -651,18 +823,6 @@ func TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped(t *testing.T)
 		// A stripe clamped at zero would leave the total unchanged.
 		if got := pgBytesUsed(t, ctx, a, "backend-a") - before; got != -400 {
 			t.Errorf("total moved by %d, want -400 from a stripe allowed to go negative", got)
-		}
-	})
-}
-
-// TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero verifies the
-// orphan_bytes decrement returns nil even when the counter is at
-// zero (the SQL clamps via MAX(0, ...)).
-func TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero(t *testing.T) {
-	s := adapterPgStore(t)
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.DecrementOrphanBytes(context.Background(), "backend-a", 9999); err != nil {
-			t.Errorf("DecrementOrphanBytes: %v", err)
 		}
 	})
 }

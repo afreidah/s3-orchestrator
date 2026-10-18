@@ -3,9 +3,10 @@
 --
 -- Author: Alex Freidah
 --
--- sqlc-input definitions for backend_quotas - the per-backend bytes_limit and
--- orphan_bytes counters - and backend_quota_stripes, which holds the stored
--- byte total split across rows so concurrent writers do not contend on one.
+-- sqlc-input definitions for backend_quotas - the per-backend bytes_limit - and
+-- backend_quota_stripes, which holds the stored byte total split across rows so
+-- concurrent writers do not contend on one. Orphan bytes are read from
+-- backend_capacity, which sums the cleanup rows still to delete.
 --
 -- A backend's byte total is always SUM(bytes_used) over its stripes, never a
 -- single row, and the clamp at zero belongs on that sum: a stripe is signed and
@@ -32,17 +33,13 @@ ON CONFLICT (backend_name, stripe_id) DO UPDATE
 SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used;
 
 -- name: GetAllQuotaStats :many
-SELECT q.backend_name,
-       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
-       q.bytes_limit,
-       q.orphan_bytes,
+SELECT c.backend_name,
+       c.bytes_used,
+       c.bytes_limit,
+       c.orphan_bytes,
        q.updated_at
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT backend_name, SUM(bytes_used) AS bytes_used
-    FROM backend_quota_stripes
-    GROUP BY backend_name
-) s ON s.backend_name = q.backend_name;
+FROM backend_capacity c
+JOIN backend_quotas q ON q.backend_name = c.backend_name;
 
 -- name: LedgerGroups :many
 -- The ledger in one grouped pass, by backend, stored form and managed flag, so
@@ -64,16 +61,6 @@ GROUP BY backend_name, form, managed;
 SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
 GROUP BY backend_name;
-
--- name: IncrementOrphanBytes :exec
-UPDATE backend_quotas
-SET orphan_bytes = orphan_bytes + @amount, updated_at = NOW()
-WHERE backend_name = @backend_name;
-
--- name: DecrementOrphanBytes :exec
-UPDATE backend_quotas
-SET orphan_bytes = GREATEST(0, orphan_bytes - @amount), updated_at = NOW()
-WHERE backend_name = @backend_name;
 
 -- name: SumObjectSizesByBackend :many
 -- Authoritative per-backend byte total from the object ledger. Used by usage

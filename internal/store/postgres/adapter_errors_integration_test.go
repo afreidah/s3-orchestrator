@@ -36,7 +36,7 @@ func closedPgAdapter(t *testing.T, s *Store) *pgTxAdapter {
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatalf("Rollback: %v", err)
 	}
-	return &pgTxAdapter{q: s.queries.WithTx(tx)}
+	return &pgTxAdapter{q: s.queries.WithTx(tx), instanceID: s.instanceID}
 }
 
 // -------------------------------------------------------------------------
@@ -136,24 +136,36 @@ func TestPgAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 	}
 }
 
-// TestPgAdapterErr_BackendAdmits verifies the admission-probe error
-// is wrapped.
-func TestPgAdapterErr_BackendAdmits(t *testing.T) {
+// -------------------------------------------------------------------------
+// CLEANUP TX ERRORS
+// -------------------------------------------------------------------------
+
+// TestPgAdapterErr_InsertCleanup verifies the insert error is wrapped.
+func TestPgAdapterErr_InsertCleanup(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, err := a.BackendAdmits(context.Background(), "backend-b", 1, core.AcceptForWrite); err == nil {
+	if _, err := a.InsertCleanup(context.Background(), cleanupOf("backend-a", "k", "test", 1)); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }
 
 // -------------------------------------------------------------------------
-// CLEANUP TX ERRORS
+// MULTIPART TX ERRORS
 // -------------------------------------------------------------------------
 
-// TestPgAdapterErr_SumAndDeleteCleanupQueueRows verifies the sum-step
-// error is wrapped.
-func TestPgAdapterErr_SumAndDeleteCleanupQueueRows(t *testing.T) {
+// TestPgAdapterErr_UpsertPart verifies the replaced-part lock error is
+// wrapped.
+func TestPgAdapterErr_UpsertPart(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, _, err := a.SumAndDeleteCleanupQueueRows(context.Background(), "k", "backend-a"); err == nil {
+	if _, err := a.UpsertPart(context.Background(), partParams("u", 1, "p", "e", 1)); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
+// TestPgAdapterErr_DeleteMultipartUpload verifies the upload lock error is
+// wrapped rather than read as an upload already gone.
+func TestPgAdapterErr_DeleteMultipartUpload(t *testing.T) {
+	a := closedPgAdapter(t, adapterPgStore(t))
+	if _, _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }
@@ -166,15 +178,6 @@ func TestPgAdapterErr_SumAndDeleteCleanupQueueRows(t *testing.T) {
 func TestPgAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
 	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestPgAdapterErr_DecrementOrphanBytes verifies the Exec error is
-// wrapped.
-func TestPgAdapterErr_DecrementOrphanBytes(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	if err := a.DecrementOrphanBytes(context.Background(), "backend-a", 100); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

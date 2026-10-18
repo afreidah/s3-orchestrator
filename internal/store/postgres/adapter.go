@@ -28,16 +28,17 @@ import (
 // -------------------------------------------------------------------------
 
 // pgTxAdapter implements core.TxAdapter over a sqlc Queries scoped to a
-// transaction.
+// transaction. instanceID is the claim stamped on the cleanup rows it queues.
 type pgTxAdapter struct {
-	q *db.Queries
+	q          *db.Queries
+	instanceID string
 }
 
 // direct returns an adapter over the store's own Queries, outside any
 // transaction. Store methods that run one statement delegate to it so each
 // statement has one implementation.
 func (s *Store) direct() *pgTxAdapter {
-	return &pgTxAdapter{q: s.queries}
+	return &pgTxAdapter{q: s.queries, instanceID: s.instanceID}
 }
 
 // AcquireKeyLock takes a transaction-scoped advisory lock keyed by
@@ -143,23 +144,6 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
 	return &toWholeObjectLocations([]db.ObjectLocation{row})[0], true, nil
-}
-
-// BackendAdmits reports whether a backend accepts a write of size more bytes
-// while carrying only flags within accepts.
-func (a *pgTxAdapter) BackendAdmits(ctx context.Context, backendName string, size int64, accepts core.BackendFlags) (bool, error) {
-	admits, err := a.q.BackendAdmits(ctx, db.BackendAdmitsParams{
-		Accepts:     int64(accepts),
-		SizeBytes:   size,
-		BackendName: backendName,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("check backend admission: %w", err)
-	}
-	return admits, nil
 }
 
 // ListedPathStates reports what the ledger says about each listed path on the
@@ -303,27 +287,21 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 // CLEANUP TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// SumAndDeleteCleanupQueueRows deletes every cleanup_queue row for the
-// (storageKey, backend) pair and returns the count and total size of the
-// rows that existed prior to the delete.
-func (a *pgTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, int64, error) {
-	sum, err := a.q.SumCleanupQueueSizeByKey(ctx, db.SumCleanupQueueSizeByKeyParams{
-		StorageKey:  storageKey,
-		BackendName: backend,
+// InsertCleanup queues c's bytes for deletion, claimed by this instance, and
+// returns the row's id.
+func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (int64, error) {
+	id, err := a.q.InsertCleanup(ctx, db.InsertCleanupParams{
+		BackendName: c.BackendName,
+		ObjectKey:   c.ObjectKey,
+		StorageKey:  core.StoragePath(c.ObjectKey, c.StorageKey),
+		Reason:      c.Reason,
+		SizeBytes:   c.SizeBytes,
+		ClaimedBy:   strPtr(a.instanceID),
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("sum cleanup queue size: %w", err)
+		return 0, fmt.Errorf("insert cleanup row: %w", err)
 	}
-	if sum.RowCount == 0 {
-		return 0, 0, nil
-	}
-	if _, err := a.q.DeleteCleanupQueueByKey(ctx, db.DeleteCleanupQueueByKeyParams{
-		StorageKey:  storageKey,
-		BackendName: backend,
-	}); err != nil {
-		return 0, 0, fmt.Errorf("delete cleanup queue rows: %w", err)
-	}
-	return sum.RowCount, sum.TotalBytes, nil
+	return id, nil
 }
 
 // GetCleanupQueueRow returns the full payload of a single cleanup_queue
@@ -353,9 +331,8 @@ func (a *pgTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.Cl
 	return out, nil
 }
 
-// InsertCleanupDLQ inserts row into cleanup_dlq. Bytes are not
-// reconciled here because the underlying object is still on the backend;
-// orphan_bytes accounting stays intentionally untouched on the move.
+// InsertCleanupDLQ inserts row into cleanup_dlq, where its bytes still count
+// as the backend's orphans.
 func (a *pgTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
 	lastErr := strPtr(row.LastError)
 	firstEnqueuedAt := pgtype.Timestamptz{Valid: false}
@@ -405,18 +382,6 @@ func (a *pgTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string,
 	return nil
 }
 
-// DecrementOrphanBytes debits delta bytes from the backend's
-// orphan_bytes counter (clamped at zero by the SQL).
-func (a *pgTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error {
-	if err := a.q.DecrementOrphanBytes(ctx, db.DecrementOrphanBytesParams{
-		Amount:      delta,
-		BackendName: backendName,
-	}); err != nil {
-		return fmt.Errorf("decrement orphan bytes: %w", err)
-	}
-	return nil
-}
-
 // AllBackendBytesUsed returns the current bytes_used for every
 // backend_quotas row, keyed by backend name.
 func (a *pgTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
@@ -450,6 +415,69 @@ func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName strin
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// MULTIPART TX OPERATIONS
+// -------------------------------------------------------------------------
+
+// DeleteMultipartUpload locks the upload row, removes its parts and then the
+// upload, and returns the upload's backend with the parts removed. An upload
+// already gone returns no parts.
+func (a *pgTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) (string, []core.MultipartPart, error) {
+	backendName, err := a.q.LockMultipartUpload(ctx, uploadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("lock multipart upload: %w", err)
+	}
+	rows, err := a.q.DeleteMultipartParts(ctx, uploadID)
+	if err != nil {
+		return "", nil, fmt.Errorf("delete multipart parts: %w", err)
+	}
+	if err := a.q.DeleteMultipartUpload(ctx, uploadID); err != nil {
+		return "", nil, fmt.Errorf("delete multipart upload: %w", err)
+	}
+	parts := make([]core.MultipartPart, len(rows))
+	for i, r := range rows {
+		parts[i] = core.MultipartPart{PartNumber: int(r.PartNumber), SizeBytes: r.SizeBytes, StorageKey: derefStr(r.StorageKey)}
+	}
+	return backendName, parts, nil
+}
+
+// UpsertPart records a part at its intent's path and returns the part of that
+// number it replaced, locked before the write, or nil when there was none.
+func (a *pgTxAdapter) UpsertPart(ctx context.Context, p *core.RecordPartParams) (*core.MultipartPart, error) {
+	var replaced *core.MultipartPart
+	prev, err := a.q.GetPartForUpdate(ctx, db.GetPartForUpdateParams{
+		UploadID:   p.UploadID,
+		PartNumber: int32(p.PartNumber), //nolint:gosec // G115: RecordPart bounds the part number to 1..10000
+	})
+	switch {
+	case err == nil:
+		replaced = &core.MultipartPart{PartNumber: int(prev.PartNumber), SizeBytes: prev.SizeBytes, StorageKey: derefStr(prev.StorageKey)}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return nil, fmt.Errorf("lock replaced part: %w", err)
+	}
+	params := db.UpsertPartParams{
+		UploadID:      p.UploadID,
+		PartNumber:    int32(p.PartNumber), //nolint:gosec // G115: RecordPart bounds the part number to 1..10000
+		Etag:          p.ETag,
+		PlaintextEtag: strPtr(p.PlaintextETag),
+		SizeBytes:     p.SizeBytes,
+		StorageKey:    strPtr(p.Intent.StorageKey),
+	}
+	if p.Form != nil && p.Form.Encrypted {
+		params.Encrypted = true
+		params.EncryptionKey = p.Form.EncryptionKey
+		params.KeyID = &p.Form.KeyID
+		params.PlaintextSize = &p.Form.PlaintextSize
+	}
+	if err := a.q.UpsertPart(ctx, params); err != nil {
+		return nil, fmt.Errorf("record part: %w", err)
+	}
+	return replaced, nil
 }
 
 // Compile-time check that *pgTxAdapter satisfies core.TxAdapter.

@@ -13,6 +13,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -76,26 +77,33 @@ func StoragePath(objectKey, storageKey string) string {
 	return storageKey
 }
 
+// PartPath returns the path a multipart upload's part is stored at. A part is
+// not an object any client can name, so the path is also the object key its
+// cleanup rows carry.
+func PartPath(uploadID string, partNumber int) string {
+	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
+}
+
 // -------------------------------------------------------------------------
-// COPY-DISPLACEMENT HELPER
+// COPY-REMOVAL HELPER
 // -------------------------------------------------------------------------
 
-// displacedFromExisting returns the cleanup list for an overwritten copy set.
-// Every copy is displaced, including those on backends the new write lands on,
-// because the new write uses its own path and the old bytes stay behind.
-func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
+// removedFromExisting returns the bytes a removed copy set leaves to delete.
+// Every copy goes, including those on backends an overwrite lands on, because
+// the new write uses its own path and the old bytes stay behind.
+func removedFromExisting(existing []ExistingCopy) []removedCopy {
 	if len(existing) == 0 {
 		return nil
 	}
-	displaced := make([]DeletedCopy, 0, len(existing))
+	removed := make([]removedCopy, 0, len(existing))
 	for _, ec := range existing {
-		displaced = append(displaced, DeletedCopy{
+		removed = append(removed, removedCopy{
 			BackendName: ec.BackendName,
 			StorageKey:  ec.StorageKey,
 			SizeBytes:   ec.SizeBytes,
 		})
 	}
-	return displaced
+	return removed
 }
 
 // LocationOn returns the copy in locs held on backendName, or nil when there is

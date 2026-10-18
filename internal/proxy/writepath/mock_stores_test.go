@@ -88,11 +88,11 @@ func (mr *MockCoordinatorStoresMockRecorder) CleanupQueueDepth(ctx any) *gomock.
 }
 
 // CommitCompanionCopy mocks base method.
-func (m *MockCoordinatorStores) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockCoordinatorStores) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CommitCompanionCopy", ctx, p)
 	ret0, _ := ret[0].(core.CompanionCommitResult)
-	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret1, _ := ret[1].([]core.CleanupItem)
 	ret2, _ := ret[2].(core.QuotaDeltas)
 	ret3, _ := ret[3].(error)
 	return ret0, ret1, ret2, ret3
@@ -149,10 +149,10 @@ func (mr *MockCoordinatorStoresMockRecorder) CreateMultipartUpload(ctx, params a
 }
 
 // DeleteObject mocks base method.
-func (m *MockCoordinatorStores) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockCoordinatorStores) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -165,25 +165,25 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObject(ctx, key any) *gomock.
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int) (core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, loc *core.ObjectLocation, keepAtLeast int, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast)
-	ret0, _ := ret[0].(core.DeletedCopy)
+	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, loc, keepAtLeast, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
-func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockCoordinatorStores) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockCoordinatorStores) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
-	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -223,18 +223,19 @@ func (mr *MockCoordinatorStoresMockRecorder) DeletePendingByBackend(ctx, backend
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePendingByBackend", reflect.TypeOf((*MockCoordinatorStores)(nil).DeletePendingByBackend), ctx, backendName)
 }
 
-// EnqueueCleanup mocks base method.
-func (m *MockCoordinatorStores) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
+// DiscardPending mocks base method.
+func (m *MockCoordinatorStores) DiscardPending(ctx context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, c)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "DiscardPending", ctx, p, reason)
+	ret0, _ := ret[0].([]core.CleanupItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// EnqueueCleanup indicates an expected call of EnqueueCleanup.
-func (mr *MockCoordinatorStoresMockRecorder) EnqueueCleanup(ctx, c any) *gomock.Call {
+// DiscardPending indicates an expected call of DiscardPending.
+func (mr *MockCoordinatorStoresMockRecorder) DiscardPending(ctx, p, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCoordinatorStores)(nil).EnqueueCleanup), ctx, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscardPending", reflect.TypeOf((*MockCoordinatorStores)(nil).DiscardPending), ctx, p, reason)
 }
 
 // GetAllObjectLocations mocks base method.
@@ -327,33 +328,19 @@ func (mr *MockCoordinatorStoresMockRecorder) ImportObject(ctx, req any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockCoordinatorStores)(nil).ImportObject), ctx, req)
 }
 
-// IncrementOrphanBytes mocks base method.
-func (m *MockCoordinatorStores) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrementOrphanBytes", ctx, backendName, amount)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// IncrementOrphanBytes indicates an expected call of IncrementOrphanBytes.
-func (mr *MockCoordinatorStoresMockRecorder) IncrementOrphanBytes(ctx, backendName, amount any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementOrphanBytes", reflect.TypeOf((*MockCoordinatorStores)(nil).IncrementOrphanBytes), ctx, backendName, amount)
-}
-
 // InsertPendingIfFits mocks base method.
-func (m *MockCoordinatorStores) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
+func (m *MockCoordinatorStores) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p)
+	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p, accepts)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // InsertPendingIfFits indicates an expected call of InsertPendingIfFits.
-func (mr *MockCoordinatorStoresMockRecorder) InsertPendingIfFits(ctx, p any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) InsertPendingIfFits(ctx, p, accepts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockCoordinatorStores)(nil).InsertPendingIfFits), ctx, p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockCoordinatorStores)(nil).InsertPendingIfFits), ctx, p, accepts)
 }
 
 // ListBackendQuotaUsage mocks base method.
@@ -492,12 +479,13 @@ func (mr *MockCoordinatorStoresMockRecorder) PendingDepth(ctx any) *gomock.Call 
 }
 
 // PlaceCopy mocks base method.
-func (m *MockCoordinatorStores) PlaceCopy(ctx context.Context, p *core.Placement) (int64, error) {
+func (m *MockCoordinatorStores) PlaceCopy(ctx context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PlaceCopy", ctx, p)
 	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].([]core.CleanupItem)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // PlaceCopy indicates an expected call of PlaceCopy.
@@ -507,11 +495,11 @@ func (mr *MockCoordinatorStoresMockRecorder) PlaceCopy(ctx, p any) *gomock.Call 
 }
 
 // PromotePending mocks base method.
-func (m *MockCoordinatorStores) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockCoordinatorStores) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PromotePending", ctx, p)
 	ret0, _ := ret[0].(core.PendingPromoteResult)
-	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret1, _ := ret[1].([]core.CleanupItem)
 	ret2, _ := ret[2].(core.QuotaDeltas)
 	ret3, _ := ret[3].(error)
 	return ret0, ret1, ret2, ret3
@@ -539,10 +527,10 @@ func (mr *MockCoordinatorStoresMockRecorder) ReconcileUsage(ctx any) *gomock.Cal
 }
 
 // RecordObject mocks base method.
-func (m *MockCoordinatorStores) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+func (m *MockCoordinatorStores) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
-	ret0, _ := ret[0].([]core.DeletedCopy)
+	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(core.QuotaDeltas)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2

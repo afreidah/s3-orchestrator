@@ -90,7 +90,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     '    CBW -->|ok| OK_W[200 OK]:::success',
     '    CBR -->|failover| CBR',
     '    CBR -->|ok| OK_R[200 / 206]:::success',
-    '    CBD -->|ok, or enqueued for retry| OK_D[204]:::success',
+    '    CBD -->|ok, or left queued for retry| OK_D[204]:::success',
     '    classDef start fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
     '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
     '    classDef process fill:#1c2128,stroke:#8b949e,color:#e6edf3',
@@ -256,7 +256,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     DEL: {
       title: 'DeleteObject',
       badge: 'write', badgeText: 'write operation',
-      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>Deletes the metadata rows first, then removes <b>every</b> copy through <code>DeleteAllOrEnqueue</code>: one delete per backend, batched when a backend holds several paths, the backends in parallel.</p><p>A copy whose backend delete fails, or whose backend circuit is open, is enqueued to the <code>cleanup_queue</code> for retry with exponential backoff (1m to 24h, max 10 attempts). The client still gets 204.</p>'
+      body: '<p>Idempotent delete per S3 spec &mdash; deleting a non-existent key succeeds silently.</p><p>One transaction deletes the metadata rows, clears the key\'s in-flight intents and queues <b>every</b> copy\'s bytes in <code>cleanup_queue</code> with reason <code>object_deleted</code>. After the commit the copies are deleted: one delete per backend, batched when a backend holds several paths, the backends in parallel. DeleteObjects does the same for every key in the batch.</p><p>A copy whose backend delete fails, or whose backend circuit is open, stays queued for retry with exponential backoff (1m to 24h, max 10 attempts). The client still gets 204.</p>'
     },
     CBW: {
       title: 'Circuit Breaker (Write)',
@@ -271,7 +271,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     CBD: {
       title: 'Circuit Breaker (Delete)',
       badge: 'cb', badgeText: 'circuit breaker',
-      body: '<p>Same circuit breaker as writes. A backend failure or open circuit does not fail the delete: the copy is enqueued to the <code>cleanup_queue</code> for later retry and the client gets 204.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Same circuit breaker as writes. A backend failure or open circuit does not fail the delete: the copy\'s row, queued in <code>cleanup_queue</code> before the delete was sent, is left for a later retry and the client gets 204.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     R502W: {
       title: '502 Bad Gateway (Write)',

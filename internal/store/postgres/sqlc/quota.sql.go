@@ -33,22 +33,6 @@ func (q *Queries) AdjustQuotaStripe(ctx context.Context, arg AdjustQuotaStripePa
 	return err
 }
 
-const decrementOrphanBytes = `-- name: DecrementOrphanBytes :exec
-UPDATE backend_quotas
-SET orphan_bytes = GREATEST(0, orphan_bytes - $1), updated_at = NOW()
-WHERE backend_name = $2
-`
-
-type DecrementOrphanBytesParams struct {
-	Amount      int64
-	BackendName string
-}
-
-func (q *Queries) DecrementOrphanBytes(ctx context.Context, arg DecrementOrphanBytesParams) error {
-	_, err := q.db.Exec(ctx, decrementOrphanBytes, arg.Amount, arg.BackendName)
-	return err
-}
-
 const deleteQuota = `-- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1
 `
@@ -90,17 +74,13 @@ func (q *Queries) GetActiveMultipartCountsByBackend(ctx context.Context) ([]GetA
 }
 
 const getAllQuotaStats = `-- name: GetAllQuotaStats :many
-SELECT q.backend_name,
-       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
-       q.bytes_limit,
-       q.orphan_bytes,
+SELECT c.backend_name,
+       c.bytes_used,
+       c.bytes_limit,
+       c.orphan_bytes,
        q.updated_at
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT backend_name, SUM(bytes_used) AS bytes_used
-    FROM backend_quota_stripes
-    GROUP BY backend_name
-) s ON s.backend_name = q.backend_name
+FROM backend_capacity c
+JOIN backend_quotas q ON q.backend_name = c.backend_name
 `
 
 type GetAllQuotaStatsRow struct {
@@ -135,22 +115,6 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, 
 		return nil, err
 	}
 	return items, nil
-}
-
-const incrementOrphanBytes = `-- name: IncrementOrphanBytes :exec
-UPDATE backend_quotas
-SET orphan_bytes = orphan_bytes + $1, updated_at = NOW()
-WHERE backend_name = $2
-`
-
-type IncrementOrphanBytesParams struct {
-	Amount      int64
-	BackendName string
-}
-
-func (q *Queries) IncrementOrphanBytes(ctx context.Context, arg IncrementOrphanBytesParams) error {
-	_, err := q.db.Exec(ctx, incrementOrphanBytes, arg.Amount, arg.BackendName)
-	return err
 }
 
 const ledgerGroups = `-- name: LedgerGroups :many
@@ -333,9 +297,10 @@ type UpsertQuotaLimitParams struct {
 //
 // Author: Alex Freidah
 //
-// sqlc-input definitions for backend_quotas - the per-backend bytes_limit and
-// orphan_bytes counters - and backend_quota_stripes, which holds the stored
-// byte total split across rows so concurrent writers do not contend on one.
+// sqlc-input definitions for backend_quotas - the per-backend bytes_limit - and
+// backend_quota_stripes, which holds the stored byte total split across rows so
+// concurrent writers do not contend on one. Orphan bytes are read from
+// backend_capacity, which sums the cleanup rows still to delete.
 //
 // A backend's byte total is always SUM(bytes_used) over its stripes, never a
 // single row, and the clamp at zero belongs on that sum: a stripe is signed and

@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -418,8 +419,8 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 	// elsewhere.
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	// The bytes that failed the check are removed from the target.
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, cleanupOn("b2", "bucket/key1"))
+	// The intent whose bytes failed the check is discarded.
+	pl.EXPECT().Discard(gomock.Any(), intentOn("b2", "bucket/key1"), writepath.ReplicationReasons.Orphan)
 
 	copies := []core.ObjectLocation{*sourceRow(hashString(verifyOnBody))}
 	out := r.ReplicateObject(context.Background(), "bucket/key1", copies, 1)
