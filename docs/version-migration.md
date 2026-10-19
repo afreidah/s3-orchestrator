@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Covering indexes for the capacity sums ([#1717](https://github.com/afreidah/s3-orchestrator/issues/1717), v0.162.12)**
+
+`backend_capacity` sums `size_bytes` per backend over `cleanup_queue`, `cleanup_dlq` and `pending_objects` on every admission check and quota read. The `(backend_name, storage_key)` index on each table now carries `size_bytes` too, so those sums can run from the index instead of reading the table.
+
+Migrations:
+
+- **00042 (SQLite 0029)** rebuilds the three indexes. Postgres builds each new index `CONCURRENTLY` before dropping the old one, so writes are not blocked, and renames it to the old name.
+
 **Cleanup rows settle only under their claim ([#1716](https://github.com/afreidah/s3-orchestrator/issues/1716), v0.162.11)**
 
 Retiring, retrying and dead-lettering a `cleanup_queue` row now match the claim the row was read under, so an instance whose claim aged out and was taken over by another can no longer settle the row a second time, count an attempt against it, or dead-letter it early. The rows a settle retires are retired in one statement, so a request that displaced several copies commits once for all of them rather than once per row. No migration.

@@ -161,25 +161,5 @@ func dropListingRows(t *testing.T, s *Store) {
 // explainListing returns the plan for one page of the prefix listing.
 func explainListing(ctx context.Context, t *testing.T, s *Store) string {
 	t.Helper()
-	rows, err := s.pool.Query(ctx,
-		`EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF) `+listPlanQuery,
-		listPlanPrefix, "", 1000)
-	if err != nil {
-		t.Fatalf("explain: %v", err)
-	}
-	defer rows.Close()
-
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			t.Fatalf("scan plan: %v", err)
-		}
-		plan.WriteString(line)
-		plan.WriteString("\n")
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
-	return plan.String()
+	return explainPlan(ctx, t, s.pool, "ANALYZE, BUFFERS, COSTS OFF, TIMING OFF", listPlanQuery, listPlanPrefix, "", 1000)
 }

@@ -209,8 +209,9 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_claim
     ON cleanup_queue(next_retry, created_at) WHERE attempts < 10;
 
+-- size_bytes rides last so backend_capacity's orphan sum runs from the index.
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_backend_storage_key
-    ON cleanup_queue(backend_name, storage_key);
+    ON cleanup_queue(backend_name, storage_key, size_bytes);
 
 -- Dead-letter for cleanup_queue rows that exhausted their retry budget
 -- without ever succeeding at the physical backend delete. The bytes are
@@ -232,7 +233,7 @@ CREATE TABLE IF NOT EXISTS cleanup_dlq (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cleanup_dlq_backend_storage_key
-    ON cleanup_dlq(backend_name, storage_key);
+    ON cleanup_dlq(backend_name, storage_key, size_bytes);
 
 -- Durable webhook notification delivery queue.
 CREATE TABLE IF NOT EXISTS notification_outbox (
@@ -290,8 +291,9 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_created
 CREATE INDEX IF NOT EXISTS idx_pending_objects_key
     ON pending_objects(object_key);
 
+-- size_bytes rides last so backend_capacity's in-flight sum runs from the index.
 CREATE INDEX IF NOT EXISTS idx_pending_objects_backend_storage_key
-    ON pending_objects(backend_name, storage_key);
+    ON pending_objects(backend_name, storage_key, size_bytes);
 
 -- S3 object tags, keyed by object rather than by copy so replicas of a key
 -- cannot disagree about the set. Rows rather than a JSON column because
@@ -419,4 +421,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (28);
+INSERT INTO schema_version (version) VALUES (29);

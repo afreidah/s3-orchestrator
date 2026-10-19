@@ -1887,28 +1887,14 @@ func TestStoreInt_ScrubQueue_IndexMatchesQuery(t *testing.T) {
 		t.Fatalf("disabling seqscan: %v", err)
 	}
 
-	rows, err := conn.Query(ctx, `EXPLAIN (COSTS OFF)
+	plan := explainPlan(ctx, t, conn.Conn(), "COSTS OFF", `
 		SELECT object_key FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
 		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
 		LIMIT 100`)
-	if err != nil {
-		t.Fatalf("EXPLAIN: %v", err)
-	}
-	defer rows.Close()
-
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			t.Fatalf("scanning plan: %v", err)
-		}
-		plan.WriteString(line)
-		plan.WriteString("\n")
-	}
-	if !strings.Contains(plan.String(), "idx_object_locations_scrub_queue") {
+	if !strings.Contains(plan, "idx_object_locations_scrub_queue") {
 		t.Errorf("the scrub queue index cannot serve the candidate query, so the "+
-			"ORDER BY and the index expression have drifted apart:\n%s", plan.String())
+			"ORDER BY and the index expression have drifted apart:\n%s", plan)
 	}
 }
 
