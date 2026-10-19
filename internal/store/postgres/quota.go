@@ -89,6 +89,18 @@ func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaU
 	return usage, nil
 }
 
+// ReconcileUsage brings each backend's striped total to its ledger sum in one
+// statement and returns the drifted backends' applied deltas; see the query.
+func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.queries.ReconcileUsage(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile usage: %w", err)
+	}
+	return totalsByBackend(rows, func(r db.ReconcileUsageRow) (string, int64) {
+		return r.BackendName, r.Delta
+	}), nil
+}
+
 // LedgerStats returns every per-backend ledger figure from one grouped pass
 // over object_locations, folded by core.
 func (s *Store) LedgerStats(ctx context.Context) (core.LedgerStats, error) {

@@ -852,14 +852,20 @@ func TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	})
 }
 
-// pgBytesUsed reads a backend's striped byte total through the adapter.
+// pgBytesUsed reads a backend's striped byte total inside the adapter's
+// transaction, from backend_capacity as the quota stats read it.
 func pgBytesUsed(t *testing.T, ctx context.Context, a *pgTxAdapter, backend string) int64 {
 	t.Helper()
-	totals, err := a.AllBackendBytesUsed(ctx)
+	rows, err := a.q.GetAllQuotaStats(ctx)
 	if err != nil {
-		t.Fatalf("AllBackendBytesUsed: %v", err)
+		t.Fatalf("GetAllQuotaStats: %v", err)
 	}
-	return totals[backend]
+	for _, r := range rows {
+		if r.BackendName == backend {
+			return r.BytesUsed
+		}
+	}
+	return 0
 }
 
 // TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped asserts a

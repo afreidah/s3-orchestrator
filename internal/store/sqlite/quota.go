@@ -69,6 +69,50 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 	})
 }
 
+// ReconcileUsage brings each backend's striped total to the ledger's sum of its
+// copies and returns the difference applied, for the backends that had drifted.
+// The difference is added to stripe zero rather than written over the total,
+// and the read and the writes share one transaction, which SQLite serializes
+// against every other write. A backend with no copies left is brought to zero.
+func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
+	var drift map[string]int64
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		a := &sqliteTxAdapter{q: tx}
+		rows, err := tx.QueryContext(ctx, `
+			WITH ledger AS (
+				SELECT backend_name, SUM(size_bytes) AS total
+				FROM object_locations
+				GROUP BY backend_name
+			),
+			striped AS (
+				SELECT q.backend_name, COALESCE(SUM(s.bytes_used), 0) AS total
+				FROM backend_quotas q
+				LEFT JOIN backend_quota_stripes s ON s.backend_name = q.backend_name
+				GROUP BY q.backend_name
+			)
+			SELECT st.backend_name, COALESCE(l.total, 0) - st.total
+			FROM striped st
+			LEFT JOIN ledger l ON l.backend_name = st.backend_name
+			WHERE COALESCE(l.total, 0) <> st.total`)
+		if err != nil {
+			return fmt.Errorf("read usage drift: %w", err)
+		}
+		if drift, err = collectMap(rows, "usage drift", scanNameValue); err != nil {
+			return err
+		}
+		for backend, delta := range drift {
+			if err := a.AdjustQuotaStripe(ctx, backend, 0, delta); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return drift, nil
+}
+
 // ListBackendQuotaUsage returns each backend's ceiling and the byte totals a
 // write is judged against, for the quota tracker's baseline refresh. The figures
 // come from backend_capacity, the same view admission tests against.

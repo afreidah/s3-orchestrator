@@ -22,6 +22,21 @@ import (
 // PENDING ORCHESTRATION
 // -------------------------------------------------------------------------
 
+// InsertPendingIfFits claims the bytes p will occupy on its backend and records
+// the intent, reporting false when the backend has no room or carries a flag
+// outside accepts. The room check reads the snapshot its own statement starts
+// with, so two claims checked at once would each miss the other's bytes. The
+// backend lock taken first, in its own statement, makes the check see every
+// claim committed before it on a backend with a ceiling.
+func InsertPendingIfFits(ctx context.Context, runner Runner, p *PendingObject, accepts BackendFlags) (bool, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
+		if err := tx.AcquireBackendLock(ctx, p.BackendName); err != nil {
+			return false, err
+		}
+		return tx.InsertPendingIfFits(ctx, p, accepts)
+	})
+}
+
 // PromotePending resolves a pending intent transactionally. The pending row is
 // locked first so two reapers cannot promote the same intent. A location row
 // newer than the intent makes it Superseded, and a row that vanished before

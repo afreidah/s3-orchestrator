@@ -28,12 +28,9 @@ import (
 // InsertPendingIfFits claims the bytes and records the intent in one statement,
 // so admission and the durable record of it cannot disagree. Reports false when
 // the backend had no room or carries a flag outside accepts, which is the
-// caller's cue to try the next candidate.
-//
-// The headroom is read inside the statement rather than from a snapshot: every
-// instance's committed bytes, orphans, and writes in progress are rows here, so
-// two instances admitting at once are judged against the same totals.
-func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
+// caller's cue to try the next candidate. SQLite serializes writers, so the
+// headroom it reads already counts every claim committed before it.
+func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
 	keyID := nullableString(p.KeyID)
 	plaintextSize := nullableInt64(p.PlaintextSize)
 	contentHash := nullableString(p.ContentHash)
@@ -41,7 +38,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, 
 	if p.Encrypted {
 		encrypted = 1
 	}
-	return s.execChanged(ctx, "insert pending object",
+	return a.execChanged(ctx, "insert pending object",
 		// created_at is set here rather than left to the column default: the
 		// default renders milliseconds while every other write renders
 		// nanoseconds, and the reaper's min-age check compares the two as text.

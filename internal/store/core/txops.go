@@ -93,10 +93,10 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 	return DeleteMultipartUpload(ctx, o.runner, uploadID, reason)
 }
 
-// ReconcileUsage recomputes bytes_used per backend from the location rows,
-// correcting drift in the incrementally maintained counter.
-func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
-	return ReconcileUsage(ctx, o.runner)
+// InsertPendingIfFits admits an intent on its backend, serialized against the
+// backend's other claims when it has a byte ceiling.
+func (o TxOps) InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error) {
+	return InsertPendingIfFits(ctx, o.runner, p, accepts)
 }
 
 // PromotePending resolves a surviving PUT intent into a committed location.

@@ -62,29 +62,47 @@ SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
 GROUP BY backend_name;
 
--- name: SumObjectSizesByBackend :many
--- Authoritative per-backend byte total from the object ledger. Used by usage
--- reconciliation to recompute bytes_used, which is otherwise an incrementally
--- maintained counter that drifts if any mutation path misses an adjustment.
-SELECT backend_name, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
-FROM object_locations
-GROUP BY backend_name;
-
--- name: SetBackendBytesUsed :exec
--- Replaces a backend's byte total with an authoritative recomputed value by
--- collapsing it onto stripe zero and clearing the rest. Reconciliation is the
--- one caller: it has recomputed the total from the ledger, so the distribution
--- that produced the old value carries no information worth preserving.
-WITH cleared AS (
-    UPDATE backend_quota_stripes
-    SET bytes_used = 0
-    WHERE backend_name = @backend_name AND stripe_id <> 0
-    RETURNING 1
+-- name: ReconcileUsage :many
+-- Brings each backend's striped total to the ledger's sum of its copies and
+-- returns the difference applied, for the backends that had drifted. Both sums
+-- are read from the one snapshot this statement takes, and the difference is
+-- added to stripe zero rather than written over the total, so a write that
+-- commits alongside keeps its own adjustment on whichever stripe it charged. A
+-- backend with no copies left is brought to zero. The insert is a writable CTE,
+-- which Postgres runs whether or not the outer select reads it.
+WITH ledger AS (
+    SELECT backend_name, SUM(size_bytes) AS total
+    FROM object_locations
+    GROUP BY backend_name
+),
+striped AS (
+    SELECT q.backend_name, COALESCE(SUM(s.bytes_used), 0) AS total
+    FROM backend_quotas q
+    LEFT JOIN backend_quota_stripes s ON s.backend_name = q.backend_name
+    GROUP BY q.backend_name
+),
+drift AS (
+    SELECT st.backend_name, (COALESCE(l.total, 0) - st.total)::bigint AS delta
+    FROM striped st
+    LEFT JOIN ledger l ON l.backend_name = st.backend_name
+    WHERE COALESCE(l.total, 0) <> st.total
+),
+applied AS (
+    INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+    SELECT backend_name, 0, delta FROM drift
+    ON CONFLICT (backend_name, stripe_id) DO UPDATE
+    SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
 )
-INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-VALUES (@backend_name, 0, @bytes_used)
-ON CONFLICT (backend_name, stripe_id) DO UPDATE
-SET bytes_used = EXCLUDED.bytes_used;
+SELECT backend_name, delta FROM drift;
+
+-- name: LockBackendForClaim :exec
+-- Serializes the claims on one backend for the rest of the transaction, so
+-- the room check that follows sees every claim committed before it. Only a
+-- backend with a byte ceiling is locked: a claim on an unlimited one cannot
+-- overrun anything, and leaving it unlocked keeps its claims concurrent.
+SELECT pg_advisory_xact_lock(@lock_space::int, hashtext(backend_name))
+FROM backend_quotas
+WHERE backend_name = @backend_name AND bytes_limit > 0;
 
 -- name: ListBackendQuotaUsage :many
 -- Every backend's ceiling and what occupies it: the striped byte total, orphans

@@ -569,6 +569,19 @@ func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16)
 	return used
 }
 
+// capacityBytesUsed reads a backend's striped total from backend_capacity
+// inside the adapter's transaction, clamped the way admission reads it.
+func capacityBytesUsed(t *testing.T, a *sqliteTxAdapter, backend string) int64 {
+	t.Helper()
+	var used int64
+	if err := a.q.QueryRowContext(context.Background(),
+		`SELECT bytes_used FROM backend_capacity WHERE backend_name = ?`, backend,
+	).Scan(&used); err != nil {
+		t.Fatalf("read capacity of %s: %v", backend, err)
+	}
+	return used
+}
+
 // claimFits reports whether backend-a admits an intent of size bytes under
 // accepts, recording the intent when it does.
 func claimFits(t *testing.T, s *Store, intentID string, size int64, accepts core.BackendFlags) bool {
@@ -690,12 +703,8 @@ func TestAdapter_AdjustQuotaStripe_StripesAreIndependent(t *testing.T) {
 		if got := stripeBytes(t, a, "backend-a", 5); got != 200 {
 			t.Errorf("stripe 5 = %d, want only its own 200", got)
 		}
-		totals, err := a.AllBackendBytesUsed(ctx)
-		if err != nil {
-			t.Fatalf("AllBackendBytesUsed: %v", err)
-		}
-		if totals["backend-a"] != 600 {
-			t.Errorf("total = %d, want 600 (100+200+300)", totals["backend-a"])
+		if got := capacityBytesUsed(t, a, "backend-a"); got != 600 {
+			t.Errorf("total = %d, want 600 (100+200+300)", got)
 		}
 	})
 }
@@ -719,20 +728,16 @@ func TestAdapter_AdjustQuotaStripe_NegativeStripeClampsOnlyTheTotal(t *testing.T
 		if got := stripeBytes(t, a, "backend-a", 6); got != -400 {
 			t.Errorf("stripe 6 = %d, want -400 held unclamped", got)
 		}
-		totals, err := a.AllBackendBytesUsed(ctx)
-		if err != nil {
-			t.Fatalf("AllBackendBytesUsed: %v", err)
-		}
-		if totals["backend-a"] != 600 {
-			t.Errorf("total = %d, want 600 (1000 - 400)", totals["backend-a"])
+		if got := capacityBytesUsed(t, a, "backend-a"); got != 600 {
+			t.Errorf("total = %d, want 600 (1000 - 400)", got)
 		}
 	})
 }
 
-// TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero asserts a total
-// driven below zero by stale sizes reads as zero, because a negative counter
-// would over-admit every later write.
-func TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero(t *testing.T) {
+// TestAdapter_CapacityClampsNegativeTotalAtZero asserts a total driven below
+// zero by stale sizes reads as zero, because a negative counter would
+// over-admit every later write.
+func TestAdapter_CapacityClampsNegativeTotalAtZero(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -740,12 +745,8 @@ func TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero(t *testing.T) {
 		if err := a.AdjustQuotaStripe(ctx, "backend-a", 2, -750); err != nil {
 			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
-		totals, err := a.AllBackendBytesUsed(ctx)
-		if err != nil {
-			t.Fatalf("AllBackendBytesUsed: %v", err)
-		}
-		if totals["backend-a"] != 0 {
-			t.Errorf("total = %d, want 0 (clamped)", totals["backend-a"])
+		if got := capacityBytesUsed(t, a, "backend-a"); got != 0 {
+			t.Errorf("total = %d, want 0 (clamped)", got)
 		}
 	})
 }

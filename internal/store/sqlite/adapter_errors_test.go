@@ -51,6 +51,29 @@ func TestAdapterErr_ClaimPending(t *testing.T) {
 	}
 }
 
+// TestAdapterErr_InsertPendingIfFits verifies the Exec error is wrapped and
+// the claim reports no room.
+func TestAdapterErr_InsertPendingIfFits(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	fits, err := a.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID: "i", ObjectKey: "k", BackendName: "backend-a", StorageKey: "k", SizeBytes: 1,
+	}, core.AcceptForWrite)
+	if err == nil || fits {
+		t.Errorf("InsertPendingIfFits = %v, %v; want false and an error from the closed tx", fits, err)
+	}
+}
+
+// TestAdapter_AcquireBackendLockIsNoop verifies the backend lock touches no
+// statement, so it succeeds even on a closed transaction.
+func TestAdapter_AcquireBackendLockIsNoop(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if err := a.AcquireBackendLock(context.Background(), "backend-a"); err != nil {
+		t.Errorf("AcquireBackendLock: %v", err)
+	}
+}
+
 // TestAdapterErr_DeletePending verifies the Exec error is wrapped.
 func TestAdapterErr_DeletePending(t *testing.T) {
 	t.Parallel()
@@ -203,33 +226,6 @@ func TestAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
 	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestAdapterErr_AllBackendBytesUsed verifies the Query error is wrapped.
-func TestAdapterErr_AllBackendBytesUsed(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.AllBackendBytesUsed(context.Background()); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestAdapterErr_SumObjectSizesByBackend verifies the Query error is wrapped.
-func TestAdapterErr_SumObjectSizesByBackend(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.SumObjectSizesByBackend(context.Background()); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestAdapterErr_SetBackendBytesUsed verifies the Exec error is wrapped.
-func TestAdapterErr_SetBackendBytesUsed(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	if err := a.SetBackendBytesUsed(context.Background(), "backend-a", 100); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

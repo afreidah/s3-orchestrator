@@ -35,3 +35,11 @@ const (
 	LockMigrations       int64 = 1012 // schema migrations at startup
 	LockFleetSnapshot    int64 = 1013 // fleet-wide gauge and status recompute
 )
+
+// LockSpaceBackendClaim is the namespace of the transaction-scoped lock a claim
+// takes on a backend with a byte ceiling, so concurrent claims are judged
+// against each other's bytes. It is the first half of Postgres's two-key lock
+// form, which never collides with the single-key locks above or the per-object
+// key lock. The value is stable across releases for the same reason the IDs
+// above are.
+const LockSpaceBackendClaim int32 = 1

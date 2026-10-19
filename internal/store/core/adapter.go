@@ -26,7 +26,10 @@ import (
 
 // TxAdapter is the per-engine transactional seam a core operation receives from
 // Runner.WithTx. AcquireKeyLock takes a Postgres advisory lock on a hash of the
-// key; SQLite no-ops it because the engine already serializes writers.
+// key. AcquireBackendLock takes one on the backend, in LockSpaceBackendClaim,
+// only when the backend has a byte ceiling, since a claim on an unlimited
+// backend cannot overrun it. SQLite no-ops both because the engine already
+// serializes writers.
 type TxAdapter interface {
 	PendingTxAdapter
 	ObjectsTxAdapter
@@ -36,6 +39,7 @@ type TxAdapter interface {
 	MultipartTxAdapter
 
 	AcquireKeyLock(ctx context.Context, objectKey string) error
+	AcquireBackendLock(ctx context.Context, backendName string) error
 }
 
 // -------------------------------------------------------------------------
@@ -46,8 +50,11 @@ type TxAdapter interface {
 // table. ClaimPending reports false when another worker already resolved the
 // intent. ClearPendingForKey deletes every intent for the key except keep and
 // returns what it removed so the bytes can be cleaned up, including intents on
-// a backend the caller is writing to.
+// a backend the caller is writing to. InsertPendingIfFits records the intent
+// only while the backend has room for it and carries no flag outside accepts,
+// judged in the statement against backend_capacity.
 type PendingTxAdapter interface {
+	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 	DeletePending(ctx context.Context, intentID string) error
 	ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]SupersededIntent, error)
@@ -142,9 +149,4 @@ type TagsTxAdapter interface {
 // for AdjustQuotaStripe with StripeFor.
 type QuotaTxAdapter interface {
 	AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error
-
-	AllBackendBytesUsed(ctx context.Context) (map[string]int64, error)     // the striped total per backend
-	SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) // the ledger truth it is diffed against
-
-	SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error
 }

@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic coverage for promotion and intentSuperseded. The per-engine
-// adapter layers only need integration coverage that the right values reach
-// these helpers.
+// Engine-agnostic coverage for the pending claim, promotion, and
+// intentSuperseded. The per-engine adapter layers only need integration
+// coverage that the right values reach these helpers.
 // -------------------------------------------------------------------------------
 
 package core
@@ -673,6 +673,104 @@ func TestCommitCompanionCopy_RollsBackOnAFailedStep(t *testing.T) {
 			}
 			if len(displaced) != 0 {
 				t.Errorf("displaced %+v on a failed commit, want nothing deleted", displaced)
+			}
+		})
+	}
+}
+
+// -------------------------------------------------------------------------
+// PENDING CLAIM
+// -------------------------------------------------------------------------
+
+// claimTxStub records the order a claim touches the transaction in and what
+// reached the insert, and answers the insert with a seeded result.
+type claimTxStub struct {
+	noopTxAdapter
+
+	fits      bool
+	lockErr   error
+	insertErr error
+
+	ops         []string
+	lockedName  string
+	insertedID  string
+	accepted    BackendFlags
+	insertCalls int
+}
+
+func (s *claimTxStub) AcquireBackendLock(_ context.Context, backendName string) error {
+	s.ops = append(s.ops, "backend_lock")
+	s.lockedName = backendName
+	return s.lockErr
+}
+
+func (s *claimTxStub) InsertPendingIfFits(_ context.Context, p *PendingObject, accepts BackendFlags) (bool, error) {
+	s.ops = append(s.ops, "insert")
+	s.insertCalls++
+	s.insertedID = p.IntentID
+	s.accepted = accepts
+	return s.fits, s.insertErr
+}
+
+// claimIntent is the intent every claim test admits.
+func claimIntent() *PendingObject {
+	return &PendingObject{IntentID: "i-1", ObjectKey: "k", BackendName: "b1", SizeBytes: 100}
+}
+
+// TestInsertPendingIfFits_LocksBackendBeforeInsert verifies the backend lock is
+// taken on the intent's backend before the insert, and the insert receives the
+// intent and the accepted flags unchanged.
+func TestInsertPendingIfFits_LocksBackendBeforeInsert(t *testing.T) {
+	t.Parallel()
+	stub := &claimTxStub{fits: true}
+	fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite|FlagCordoned)
+	if err != nil || !fits {
+		t.Fatalf("InsertPendingIfFits = %v, %v; want fits", fits, err)
+	}
+	if want := []string{"backend_lock", "insert"}; !slices.Equal(stub.ops, want) {
+		t.Errorf("ops = %v, want %v", stub.ops, want)
+	}
+	if stub.lockedName != "b1" || stub.insertedID != "i-1" {
+		t.Errorf("locked %q, inserted %q; want b1 and i-1", stub.lockedName, stub.insertedID)
+	}
+	if stub.accepted != AcceptForWrite|FlagCordoned {
+		t.Errorf("accepts = %v, want %v", stub.accepted, AcceptForWrite|FlagCordoned)
+	}
+}
+
+// TestInsertPendingIfFits_LockErrorSkipsInsert verifies a failed backend lock
+// surfaces verbatim and no intent is recorded.
+func TestInsertPendingIfFits_LockErrorSkipsInsert(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("lock timeout")
+	stub := &claimTxStub{fits: true, lockErr: sentinel}
+	fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite)
+	if !errors.Is(err, sentinel) || fits {
+		t.Errorf("InsertPendingIfFits = %v, %v; want false and the lock error", fits, err)
+	}
+	if stub.insertCalls != 0 {
+		t.Errorf("insert ran %d times after a failed lock, want 0", stub.insertCalls)
+	}
+}
+
+// TestInsertPendingIfFits_ReturnsInsertOutcome verifies the insert's answer is
+// what the claim reports: no room is false without an error, and a failed
+// insert surfaces its error.
+func TestInsertPendingIfFits_ReturnsInsertOutcome(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("insert failed")
+	for name, stub := range map[string]*claimTxStub{
+		"no room":       {fits: false},
+		"insert failed": {insertErr: sentinel},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite)
+			if fits {
+				t.Errorf("fits = true, want false")
+			}
+			if !errors.Is(err, stub.insertErr) {
+				t.Errorf("err = %v, want %v", err, stub.insertErr)
 			}
 		})
 	}

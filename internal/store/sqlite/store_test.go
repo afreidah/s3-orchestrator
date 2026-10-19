@@ -1919,42 +1919,179 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 	}
 }
 
-// TestReconcileUsage_CorrectsDrift records objects so the ledger total is
-// known, corrupts the bytes_used counter, and verifies ReconcileUsage restores
-// it to SUM(object_locations.size_bytes) and reports the applied delta.
-func TestReconcileUsage_CorrectsDrift(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+// seedStripes replaces a backend's stripe rows with the given per-stripe
+// values, so a test controls exactly what the striped total reads.
+func seedStripes(t *testing.T, s *Store, backend string, stripes map[int16]int64) {
+	t.Helper()
 	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/k2", "backend-a", 250)
-
-	// Spread the corruption across two stripes so the reconcile has to collapse
-	// them, not just overwrite the one it happens to read. The stripes the
-	// records charged are cleared first, so the corrupted figure is the whole
-	// of what the counter reports.
-	if _, err := s.rawDB.ExecContext(ctx,
-		`DELETE FROM backend_quota_stripes WHERE backend_name = 'backend-a'`); err != nil {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM backend_quota_stripes WHERE backend_name = ?`, backend); err != nil {
 		t.Fatalf("clear stripes: %v", err)
 	}
-	if _, err := s.rawDB.ExecContext(ctx,
-		`INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-		 VALUES ('backend-a', 0, 99999), ('backend-a', 7, 12345)`,
-	); err != nil {
-		t.Fatalf("corrupt bytes_used: %v", err)
+	for stripe, used := range stripes {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used) VALUES (?, ?, ?)`,
+			backend, stripe, used); err != nil {
+			t.Fatalf("seed stripe %d: %v", stripe, err)
+		}
 	}
+}
 
-	adj, err := s.ReconcileUsage(ctx)
+// rawStripe reads one stripe's value, or zero when the row does not exist.
+// Unlike quotaBytesUsed it applies no clamp.
+func rawStripe(t *testing.T, s *Store, backend string, stripe int16) int64 {
+	t.Helper()
+	var used int64
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(SUM(bytes_used), 0) FROM backend_quota_stripes WHERE backend_name = ? AND stripe_id = ?`,
+		backend, stripe,
+	).Scan(&used); err != nil {
+		t.Fatalf("read stripe %d: %v", stripe, err)
+	}
+	return used
+}
+
+// rawStripeSum reads a backend's striped total without the clamp, which is
+// the figure reconcile makes equal to the ledger.
+func rawStripeSum(t *testing.T, s *Store, backend string) int64 {
+	t.Helper()
+	var used int64
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(SUM(bytes_used), 0) FROM backend_quota_stripes WHERE backend_name = ?`, backend,
+	).Scan(&used); err != nil {
+		t.Fatalf("read stripe total: %v", err)
+	}
+	return used
+}
+
+// mustReconcile runs ReconcileUsage and fails the test on an error.
+func mustReconcile(t *testing.T, s *Store) map[string]int64 {
+	t.Helper()
+	adj, err := s.ReconcileUsage(context.Background())
 	if err != nil {
 		t.Fatalf("ReconcileUsage: %v", err)
 	}
+	return adj
+}
 
-	if got := quotaBytesUsed(t, s, "backend-a"); got != 350 {
-		t.Errorf("bytes_used = %d, want 350 (ledger truth)", got)
+// TestReconcileUsage_CorrectsDriftAdditively skews a backend's counter across
+// several stripes and verifies reconcile adds the difference to stripe zero,
+// leaving the other stripes as they were, so the total equals the ledger.
+func TestReconcileUsage_CorrectsDriftAdditively(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/k2", "backend-a", 250)
+	seedStripes(t, s, "backend-a", map[int16]int64{0: 1000, 3: -200, 7: 450})
+
+	adj := mustReconcile(t, s)
+
+	if want := (map[string]int64{"backend-a": 350 - 1250}); !maps.Equal(adj, want) {
+		t.Errorf("adjustments = %v, want %v", adj, want)
 	}
-	if want := int64(350 - (99999 + 12345)); adj["backend-a"] != want {
-		t.Errorf("adjustment = %d, want %d (both corrupted stripes collapsed)", adj["backend-a"], want)
+	if got := rawStripeSum(t, s, "backend-a"); got != 350 {
+		t.Errorf("striped total = %d, want the ledger's 350", got)
+	}
+	if got := rawStripe(t, s, "backend-a", 0); got != 100 {
+		t.Errorf("stripe 0 = %d, want 1000 - 900", got)
+	}
+	if rawStripe(t, s, "backend-a", 3) != -200 || rawStripe(t, s, "backend-a", 7) != 450 {
+		t.Error("stripes other than zero changed, want them left as they were")
+	}
+}
+
+// TestReconcileUsage_NoDriftReturnsEmpty verifies counters that already agree
+// with the ledger are neither reported nor rewritten.
+func TestReconcileUsage_NoDriftReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/k2", "backend-b", 40)
+
+	if adj := mustReconcile(t, s); len(adj) != 0 {
+		t.Errorf("adjustments = %v, want none", adj)
+	}
+	if rawStripeSum(t, s, "backend-a") != 100 || rawStripeSum(t, s, "backend-b") != 40 {
+		t.Error("an agreeing counter changed")
+	}
+}
+
+// TestReconcileUsage_BackendWithoutCopiesGoesToZero verifies a backend with no
+// ledger rows is brought to zero from either side: a positive total spread over
+// stripes and a negative one.
+func TestReconcileUsage_BackendWithoutCopiesGoesToZero(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedStripes(t, s, "backend-a", map[int16]int64{2: 300, 9: 200})
+	seedStripes(t, s, "backend-b", map[int16]int64{5: -80})
+
+	adj := mustReconcile(t, s)
+
+	if want := (map[string]int64{"backend-a": -500, "backend-b": 80}); !maps.Equal(adj, want) {
+		t.Errorf("adjustments = %v, want %v", adj, want)
+	}
+	for _, backend := range []string{"backend-a", "backend-b"} {
+		if got := rawStripeSum(t, s, backend); got != 0 {
+			t.Errorf("%s striped total = %d, want 0", backend, got)
+		}
+	}
+}
+
+// TestReconcileUsage_LaterWriteKeepsItsAdjustment verifies a write that
+// charges its stripe after a reconcile keeps that charge, so the total still
+// equals the ledger and the next reconcile finds nothing to correct.
+func TestReconcileUsage_LaterWriteKeepsItsAdjustment(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	seedStripes(t, s, "backend-a", map[int16]int64{0: 60, 4: 80})
+
+	if want := (map[string]int64{"backend-a": -40}); !maps.Equal(mustReconcile(t, s), want) {
+		t.Fatalf("first reconcile did not apply %v", want)
+	}
+	mustRecordObject(t, s, "bucket/k2", "backend-a", 200)
+
+	if got := rawStripeSum(t, s, "backend-a"); got != 300 {
+		t.Errorf("striped total = %d, want the ledger's 300", got)
+	}
+	if adj := mustReconcile(t, s); len(adj) != 0 {
+		t.Errorf("second reconcile applied %v, want nothing", adj)
+	}
+}
+
+// TestReconcileUsage_StripeWriteFailureRollsBack verifies a failed correction
+// surfaces and leaves every counter as it was.
+func TestReconcileUsage_StripeWriteFailureRollsBack(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedStripes(t, s, "backend-a", map[int16]int64{0: 70, 6: 30})
+	for _, event := range []string{"INSERT", "UPDATE"} {
+		if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_stripe_`+event+` BEFORE `+event+
+			` ON backend_quota_stripes BEGIN SELECT RAISE(ABORT, 'stripe write rejected'); END`); err != nil {
+			t.Fatalf("create %s trigger: %v", event, err)
+		}
+	}
+
+	if _, err := s.ReconcileUsage(ctx); err == nil {
+		t.Fatal("expected the rejected stripe write to surface")
+	}
+	if got := rawStripeSum(t, s, "backend-a"); got != 100 {
+		t.Errorf("striped total = %d, want the untouched 100", got)
+	}
+}
+
+// TestReconcileUsage_ReadFailureSurfaces verifies a failure reading the drift
+// is returned rather than reported as no drift.
+func TestReconcileUsage_ReadFailureSurfaces(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if _, err := s.db.ExecContext(context.Background(), `DROP TABLE backend_quota_stripes`); err != nil {
+		t.Fatalf("drop stripes: %v", err)
+	}
+	if adj, err := s.ReconcileUsage(context.Background()); err == nil {
+		t.Errorf("ReconcileUsage = %v, nil; want the read error", adj)
 	}
 }
 

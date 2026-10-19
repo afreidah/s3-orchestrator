@@ -77,9 +77,11 @@ type TagStore interface {
 }
 
 // QuotaStore defines the byte-counter reads and writes. Placement decisions use
-// the in-memory tracker, not these rows. ReconcileUsage recomputes the counter
-// from SUM(object_locations.size_bytes) and returns the nonzero per-backend
-// deltas (truth - previous) it applied.
+// the in-memory tracker, not these rows. ReconcileUsage brings each backend's
+// striped total to SUM(object_locations.size_bytes), read from one snapshot,
+// by adding the difference rather than overwriting the total, so a write that
+// commits alongside keeps its own adjustment. It returns the nonzero
+// per-backend deltas (truth - previous) it applied.
 type QuotaStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	ListBackendQuotaUsage(ctx context.Context) ([]BackendQuotaUsage, error)

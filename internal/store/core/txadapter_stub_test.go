@@ -19,9 +19,9 @@ import "context"
 // -------------------------------------------------------------------------
 
 // noopTxAdapter satisfies TxAdapter with zero values throughout, except that
-// every pending intent claims, as it does for a write nothing overtook, and a
-// queued cleanup row comes back carrying its request's fields. Embed
-// it, then override the methods a test actually exercises.
+// every pending intent fits and claims, as it does for a write nothing
+// overtook, and a queued cleanup row comes back carrying its request's fields.
+// Embed it, then override the methods a test actually exercises.
 type noopTxAdapter struct{}
 
 // Compile-time check that embedding this is enough to be a TxAdapter.
@@ -32,6 +32,12 @@ var _ TxAdapter = (*noopTxAdapter)(nil)
 // -------------------------------------------------------------------------
 
 func (*noopTxAdapter) AcquireKeyLock(context.Context, string) error { return nil }
+
+func (*noopTxAdapter) AcquireBackendLock(context.Context, string) error { return nil }
+
+func (*noopTxAdapter) InsertPendingIfFits(context.Context, *PendingObject, BackendFlags) (bool, error) {
+	return true, nil
+}
 
 func (*noopTxAdapter) ClaimPending(context.Context, string) (bool, error) { return true, nil }
 
@@ -98,13 +104,3 @@ func (*noopTxAdapter) DeleteObjectTags(context.Context, string) error { return n
 func (*noopTxAdapter) DeleteObjectTagsForKeys(context.Context, []string) error { return nil }
 
 func (*noopTxAdapter) AdjustQuotaStripe(context.Context, string, int16, int64) error { return nil }
-
-func (*noopTxAdapter) AllBackendBytesUsed(context.Context) (map[string]int64, error) {
-	return nil, nil
-}
-
-func (*noopTxAdapter) SumObjectSizesByBackend(context.Context) (map[string]int64, error) {
-	return nil, nil
-}
-
-func (*noopTxAdapter) SetBackendBytesUsed(context.Context, string, int64) error { return nil }

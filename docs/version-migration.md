@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Serialized admission and single-snapshot usage reconcile ([#1718](https://github.com/afreidah/s3-orchestrator/issues/1718), v0.162.13)**
+
+A write's claim on a backend with a byte ceiling now takes a transaction-scoped lock on that backend before its room check, so claims made at once from any instance are judged against each other's bytes. Without it, two claims could each see the room the other was about to take and together overrun the ceiling. A backend with no ceiling takes no lock. Usage reconcile now reads the stripe totals and the ledger sums from one snapshot and adds each backend's difference to its stripes rather than writing over the total, so a write committing while it runs is no longer lost or counted twice. No migration.
+
+**Operator action items after upgrade:**
+
+- **Claims on a backend with a ceiling serialize.** Each holds the backend's lock until its commit, which bounds that backend's claim rate by commit latency and adds a round trip or two to each claim. Backends without a ceiling are unaffected.
+
 **Covering indexes for the capacity sums ([#1717](https://github.com/afreidah/s3-orchestrator/issues/1717), v0.162.12)**
 
 `backend_capacity` sums `size_bytes` per backend over `cleanup_queue`, `cleanup_dlq` and `pending_objects` on every admission check and quota read. The `(backend_name, storage_key)` index on each table now carries `size_bytes` too, so those sums can run from the index instead of reading the table.

@@ -40,7 +40,7 @@ func closedPgAdapter(t *testing.T, s *Store) *pgTxAdapter {
 }
 
 // -------------------------------------------------------------------------
-// AcquireKeyLock
+// LOCK ERRORS
 // -------------------------------------------------------------------------
 
 // TestPgAdapterErr_AcquireKeyLock verifies the Exec error is wrapped.
@@ -51,9 +51,29 @@ func TestPgAdapterErr_AcquireKeyLock(t *testing.T) {
 	}
 }
 
+// TestPgAdapterErr_AcquireBackendLock verifies the Exec error is wrapped.
+func TestPgAdapterErr_AcquireBackendLock(t *testing.T) {
+	a := closedPgAdapter(t, adapterPgStore(t))
+	if err := a.AcquireBackendLock(context.Background(), "backend-a"); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
 // -------------------------------------------------------------------------
 // PENDING TX ERRORS
 // -------------------------------------------------------------------------
+
+// TestPgAdapterErr_InsertPendingIfFits verifies the Exec error is wrapped and
+// the claim reports no room.
+func TestPgAdapterErr_InsertPendingIfFits(t *testing.T) {
+	a := closedPgAdapter(t, adapterPgStore(t))
+	fits, err := a.InsertPendingIfFits(context.Background(), &core.PendingObject{
+		IntentID: "i", ObjectKey: "k", BackendName: "backend-a", StorageKey: "k", SizeBytes: 1,
+	}, core.AcceptForWrite)
+	if err == nil || fits {
+		t.Errorf("InsertPendingIfFits = %v, %v; want false and an error from the closed tx", fits, err)
+	}
+}
 
 // TestPgAdapterErr_ClaimPending verifies an underlying DB error is
 // wrapped (and is not the benign pgx.ErrNoRows path).
@@ -178,30 +198,6 @@ func TestPgAdapterErr_DeleteMultipartUpload(t *testing.T) {
 func TestPgAdapterErr_AdjustQuotaStripe(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
 	if err := a.AdjustQuotaStripe(context.Background(), "backend-a", 0, 100); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestPgAdapterErr_AllBackendBytesUsed verifies the Query error is wrapped.
-func TestPgAdapterErr_AllBackendBytesUsed(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, err := a.AllBackendBytesUsed(context.Background()); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestPgAdapterErr_SumObjectSizesByBackend verifies the Query error is wrapped.
-func TestPgAdapterErr_SumObjectSizesByBackend(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, err := a.SumObjectSizesByBackend(context.Background()); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestPgAdapterErr_SetBackendBytesUsed verifies the Exec error is wrapped.
-func TestPgAdapterErr_SetBackendBytesUsed(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	if err := a.SetBackendBytesUsed(context.Background(), "backend-a", 100); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

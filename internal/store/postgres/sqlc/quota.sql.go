@@ -217,57 +217,75 @@ func (q *Queries) ListBackendQuotaUsage(ctx context.Context) ([]ListBackendQuota
 	return items, nil
 }
 
-const setBackendBytesUsed = `-- name: SetBackendBytesUsed :exec
-WITH cleared AS (
-    UPDATE backend_quota_stripes
-    SET bytes_used = 0
-    WHERE backend_name = $1 AND stripe_id <> 0
-    RETURNING 1
-)
-INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-VALUES ($1, 0, $2)
-ON CONFLICT (backend_name, stripe_id) DO UPDATE
-SET bytes_used = EXCLUDED.bytes_used
+const lockBackendForClaim = `-- name: LockBackendForClaim :exec
+SELECT pg_advisory_xact_lock($1::int, hashtext(backend_name))
+FROM backend_quotas
+WHERE backend_name = $2 AND bytes_limit > 0
 `
 
-type SetBackendBytesUsedParams struct {
+type LockBackendForClaimParams struct {
+	LockSpace   int32
 	BackendName string
-	BytesUsed   int64
 }
 
-// Replaces a backend's byte total with an authoritative recomputed value by
-// collapsing it onto stripe zero and clearing the rest. Reconciliation is the
-// one caller: it has recomputed the total from the ledger, so the distribution
-// that produced the old value carries no information worth preserving.
-func (q *Queries) SetBackendBytesUsed(ctx context.Context, arg SetBackendBytesUsedParams) error {
-	_, err := q.db.Exec(ctx, setBackendBytesUsed, arg.BackendName, arg.BytesUsed)
+// Serializes the claims on one backend for the rest of the transaction, so
+// the room check that follows sees every claim committed before it. Only a
+// backend with a byte ceiling is locked: a claim on an unlimited one cannot
+// overrun anything, and leaving it unlocked keeps its claims concurrent.
+func (q *Queries) LockBackendForClaim(ctx context.Context, arg LockBackendForClaimParams) error {
+	_, err := q.db.Exec(ctx, lockBackendForClaim, arg.LockSpace, arg.BackendName)
 	return err
 }
 
-const sumObjectSizesByBackend = `-- name: SumObjectSizesByBackend :many
-SELECT backend_name, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
-FROM object_locations
-GROUP BY backend_name
+const reconcileUsage = `-- name: ReconcileUsage :many
+WITH ledger AS (
+    SELECT backend_name, SUM(size_bytes) AS total
+    FROM object_locations
+    GROUP BY backend_name
+),
+striped AS (
+    SELECT q.backend_name, COALESCE(SUM(s.bytes_used), 0) AS total
+    FROM backend_quotas q
+    LEFT JOIN backend_quota_stripes s ON s.backend_name = q.backend_name
+    GROUP BY q.backend_name
+),
+drift AS (
+    SELECT st.backend_name, (COALESCE(l.total, 0) - st.total)::bigint AS delta
+    FROM striped st
+    LEFT JOIN ledger l ON l.backend_name = st.backend_name
+    WHERE COALESCE(l.total, 0) <> st.total
+),
+applied AS (
+    INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+    SELECT backend_name, 0, delta FROM drift
+    ON CONFLICT (backend_name, stripe_id) DO UPDATE
+    SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
+)
+SELECT backend_name, delta FROM drift
 `
 
-type SumObjectSizesByBackendRow struct {
+type ReconcileUsageRow struct {
 	BackendName string
-	TotalBytes  int64
+	Delta       int64
 }
 
-// Authoritative per-backend byte total from the object ledger. Used by usage
-// reconciliation to recompute bytes_used, which is otherwise an incrementally
-// maintained counter that drifts if any mutation path misses an adjustment.
-func (q *Queries) SumObjectSizesByBackend(ctx context.Context) ([]SumObjectSizesByBackendRow, error) {
-	rows, err := q.db.Query(ctx, sumObjectSizesByBackend)
+// Brings each backend's striped total to the ledger's sum of its copies and
+// returns the difference applied, for the backends that had drifted. Both sums
+// are read from the one snapshot this statement takes, and the difference is
+// added to stripe zero rather than written over the total, so a write that
+// commits alongside keeps its own adjustment on whichever stripe it charged. A
+// backend with no copies left is brought to zero. The insert is a writable CTE,
+// which Postgres runs whether or not the outer select reads it.
+func (q *Queries) ReconcileUsage(ctx context.Context) ([]ReconcileUsageRow, error) {
+	rows, err := q.db.Query(ctx, reconcileUsage)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SumObjectSizesByBackendRow{}
+	items := []ReconcileUsageRow{}
 	for rows.Next() {
-		var i SumObjectSizesByBackendRow
-		if err := rows.Scan(&i.BackendName, &i.TotalBytes); err != nil {
+		var i ReconcileUsageRow
+		if err := rows.Scan(&i.BackendName, &i.Delta); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

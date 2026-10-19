@@ -516,55 +516,9 @@ func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName str
 	return nil
 }
 
-// AllBackendBytesUsed returns each backend's striped byte total, keyed by
-// backend name. Clamped at zero on the sum rather than per stripe, because an
-// individual stripe is signed and may sit negative while the total is right.
-func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
-	// Driven from backend_quotas rather than the stripes: a backend that has
-	// never been charged has no stripe rows, and reconciliation has to see it
-	// at zero to correct it rather than skipping it entirely.
-	rows, err := a.q.QueryContext(ctx, `
-		SELECT q.backend_name, COALESCE(MAX(0, s.bytes_used), 0)
-		FROM backend_quotas q
-		LEFT JOIN (
-			SELECT backend_name, SUM(bytes_used) AS bytes_used
-			FROM backend_quota_stripes
-			GROUP BY backend_name
-		) s ON s.backend_name = q.backend_name`)
-	if err != nil {
-		return nil, fmt.Errorf("read all bytes_used: %w", err)
-	}
-	return collectMap(rows, "bytes_used", scanNameValue)
-}
-
-// SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
-// object_locations ledger, keyed by backend name.
-func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) {
-	rows, err := a.q.QueryContext(ctx,
-		`SELECT backend_name, COALESCE(SUM(size_bytes), 0) FROM object_locations GROUP BY backend_name`)
-	if err != nil {
-		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
-	}
-	return collectMap(rows, "object size sums", scanNameValue)
-}
-
-// SetBackendBytesUsed replaces a backend's byte total with the authoritative
-// recomputed value, collapsing it onto stripe zero and clearing the rest. The
-// distribution that produced the old value carries no information once the
-// total has been recomputed from the ledger.
-func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
-	if _, err := a.q.ExecContext(ctx, `
-		UPDATE backend_quota_stripes SET bytes_used = 0
-		WHERE backend_name = ? AND stripe_id <> 0`, backendName); err != nil {
-		return fmt.Errorf("clear quota stripes: %w", err)
-	}
-	if _, err := a.q.ExecContext(ctx, `
-		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
-		VALUES (?, 0, ?)
-		ON CONFLICT (backend_name, stripe_id) DO UPDATE
-		SET bytes_used = excluded.bytes_used`, backendName, value); err != nil {
-		return fmt.Errorf("set backend bytes_used: %w", err)
-	}
+// AcquireBackendLock is a no-op on SQLite: the engine serializes writers, so a
+// claim's room check already sees every claim committed before it.
+func (a *sqliteTxAdapter) AcquireBackendLock(_ context.Context, _ string) error {
 	return nil
 }
 

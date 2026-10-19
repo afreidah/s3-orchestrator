@@ -81,8 +81,8 @@ func TestTxOps_ResolutionMethods(t *testing.T) {
 	ctx := context.Background()
 	ops := noopTxOps()
 	intent := &PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b2"}
-	if _, err := ops.ReconcileUsage(ctx); err != nil {
-		t.Errorf("ReconcileUsage: %v", err)
+	if fits, err := ops.InsertPendingIfFits(ctx, intent, 0); err != nil || !fits {
+		t.Errorf("InsertPendingIfFits = %v, %v; want fits", fits, err)
 	}
 	if got, _, _, err := ops.PromotePending(ctx, intent); err != nil || got != PendingPromoteCommitted {
 		t.Errorf("PromotePending = %v, %v; want committed", got, err)

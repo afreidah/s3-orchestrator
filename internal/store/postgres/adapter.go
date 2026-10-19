@@ -329,39 +329,29 @@ func (a *pgTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string,
 	return nil
 }
 
-// AllBackendBytesUsed returns the current bytes_used for every
-// backend_quotas row, keyed by backend name.
-func (a *pgTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
-	rows, err := a.q.GetAllQuotaStats(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read all quota stats: %w", err)
-	}
-	return totalsByBackend(rows, func(r db.GetAllQuotaStatsRow) (string, int64) {
-		return r.BackendName, r.BytesUsed
-	}), nil
-}
-
-// SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
-// object_locations ledger, keyed by backend name.
-func (a *pgTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) {
-	rows, err := a.q.SumObjectSizesByBackend(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
-	}
-	return totalsByBackend(rows, func(r db.SumObjectSizesByBackendRow) (string, int64) {
-		return r.BackendName, r.TotalBytes
-	}), nil
-}
-
-// SetBackendBytesUsed overwrites bytes_used with the authoritative value.
-func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
-	if err := a.q.SetBackendBytesUsed(ctx, db.SetBackendBytesUsedParams{
-		BytesUsed:   value,
+// AcquireBackendLock serializes the claims on a backend with a byte ceiling
+// for the rest of the transaction; an unlimited backend takes no lock.
+func (a *pgTxAdapter) AcquireBackendLock(ctx context.Context, backendName string) error {
+	if err := a.q.LockBackendForClaim(ctx, db.LockBackendForClaimParams{
+		LockSpace:   core.LockSpaceBackendClaim,
 		BackendName: backendName,
 	}); err != nil {
-		return fmt.Errorf("set backend bytes_used: %w", err)
+		return fmt.Errorf("acquire backend claim lock: %w", err)
 	}
 	return nil
+}
+
+// InsertPendingIfFits claims the bytes and records the intent in one statement,
+// so admission and the durable record of it cannot disagree. Reports false when
+// the backend had no room or carries a flag outside accepts, which is the
+// caller's cue to try the next candidate.
+//
+// Called before the backend upload, so a metadata commit failure cannot
+// silently destroy the prior copy of an overwritten key, and so the bytes are
+// occupying the backend for every instance for as long as the write runs.
+func (a *pgTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
+	n, err := a.q.InsertPendingObjectIfFits(ctx, pendingInsertParams(p, accepts))
+	return changed(n, err, "insert pending object")
 }
 
 // -------------------------------------------------------------------------
