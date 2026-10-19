@@ -130,25 +130,26 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// backend, try a server-side copy. Once the bytes have landed its result
 	// is final, even a metadata failure, because falling back would copy them
 	// a second time.
+	cc := &copyContext{
+		span:            span,
+		destBackend:     destBackend,
+		sourceKey:       sourceKey,
+		srcBackendName:  destBackendName,
+		destKey:         destKey,
+		destStorageKey:  intent.StorageKey,
+		destBackendName: destBackendName,
+		size:            size,
+		contentType:     contentType,
+		metadata:        metadata,
+		srcForm:         srcForm,
+		identity:        srcIdentity,
+		tags:            tags,
+		intentID:        intentID,
+		start:           start,
+	}
 	if sameBackendCopyEligible(locations, destBackendName) {
-		req := &nativeCopyContext{
-			span:            span,
-			destBackend:     destBackend,
-			sourceKey:       sourceKey,
-			srcStorageKey:   sameBackendStoragePath(locations, destBackendName, sourceKey),
-			destKey:         destKey,
-			destStorageKey:  intent.StorageKey,
-			destBackendName: destBackendName,
-			size:            size,
-			contentType:     contentType,
-			metadata:        metadata,
-			srcForm:         srcForm,
-			identity:        srcIdentity,
-			tags:            tags,
-			intentID:        intentID,
-			start:           start,
-		}
-		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
+		cc.srcStorageKey = sameBackendStoragePath(locations, destBackendName, sourceKey)
+		if etag, handled, nerr := o.tryNativeCopy(ctx, cc); handled {
 			return etag, nerr
 		}
 	}
@@ -168,20 +169,8 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 
-	return o.finalizeMaterializedCopy(ctx, &materializedCopyContext{
-		span:            span,
-		sourceKey:       sourceKey,
-		destKey:         destKey,
-		destStorageKey:  intent.StorageKey,
-		srcBackendName:  src.sourceBackend,
-		destBackendName: destBackendName,
-		size:            size,
-		srcForm:         srcForm,
-		identity:        srcIdentity,
-		tags:            tags,
-		intentID:        intentID,
-		start:           start,
-	}, etag)
+	cc.srcBackendName = src.sourceBackend
+	return o.finalizeCopy(ctx, cc, etag, false)
 }
 
 // -------------------------------------------------------------------------
@@ -260,33 +249,18 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 // TYPES
 // -------------------------------------------------------------------------
 
-// materializedCopyContext is what the stream-through copy's finalizer needs.
-type materializedCopyContext struct {
-	destStorageKey string
-
-	span            trace.Span
-	sourceKey       string
-	destKey         string
-	srcBackendName  string
-	destBackendName string
-	size            int64
-	srcForm         *core.StoredForm
-	identity        *core.ObjectIdentity
-	tags            []core.Tag
-	intentID        string
-	start           time.Time
-}
-
-// nativeCopyContext is the per-operation state shared by tryNativeCopy,
-// probeDestAfterAmbiguousCopy and finalizeNativeCopy.
-type nativeCopyContext struct {
-	srcStorageKey  string
-	destStorageKey string
-
+// copyContext is one CopyObject's state, shared by both copy paths and their
+// finalizer. srcBackendName is the backend the bytes are read from: the
+// destination itself for a server-side copy, and the materialized source
+// otherwise. srcStorageKey is set only for a server-side copy.
+type copyContext struct {
 	span            trace.Span
 	destBackend     s3be.ObjectBackend
 	sourceKey       string
+	srcStorageKey   string
+	srcBackendName  string
 	destKey         string
+	destStorageKey  string
 	destBackendName string
 	size            int64
 	contentType     string
@@ -310,7 +284,7 @@ type nativeCopyContext struct {
 // A non-capability error HEAD-probes the destination first, because a backend
 // can complete the copy and still lose the response. A native copy is charged
 // as one API call with no egress or ingress.
-func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
+func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, bool, error) {
 	copier, ok := req.destBackend.(s3be.Copier)
 	if !ok {
 		return "", false, nil
@@ -319,7 +293,8 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 	defer ccancel()
 	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.destStorageKey, req.contentType, req.metadata)
 	if err == nil {
-		return o.finalizeNativeCopy(ctx, req, etag)
+		etag, err = o.finalizeCopy(ctx, req, etag, true)
+		return etag, true, err
 	}
 	if errors.Is(err, s3be.ErrCopyNotSupported) {
 		return "", false, nil
@@ -329,7 +304,8 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 	// server-side; treat it as success and run the same post-success
 	// path. Otherwise fall back to materialized copy.
 	if recoveredETag, ok := o.probeDestAfterAmbiguousCopy(ctx, req, err); ok {
-		return o.finalizeNativeCopy(ctx, req, recoveredETag)
+		etag, err = o.finalizeCopy(ctx, req, recoveredETag, true)
+		return etag, true, err
 	}
 	o.log.WarnContext(ctx, "native copy failed, falling back to materialized copy",
 		"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName, "error", err)
@@ -340,7 +316,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 // to tell a lost response from a failed copy. It returns (etag, true) when the
 // destination exists with the expected size, and ("", false) otherwise so the
 // caller falls back. HEAD errors other than 404 are logged as warnings.
-func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
+func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *copyContext, origErr error) (string, bool) {
 	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destStorageKey)
 	base := []any{
 		"source_key", req.sourceKey,

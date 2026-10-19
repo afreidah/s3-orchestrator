@@ -171,7 +171,7 @@ s3-orchestrator admin cache-flush
 # Inspect cache size and entry count
 s3-orchestrator admin cache-stats
 
-# Drop a single key from the cache
+# Drop every cached copy of one key
 s3-orchestrator admin cache-invalidate -key bucket/path/object.txt
 
 # Drop every cached key under a prefix

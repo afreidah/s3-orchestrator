@@ -207,7 +207,6 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		Coord:        coord,
 		Stores:       store,
 		Encryptor:    opts.Encryptor,
-		ObjectCache:  opts.ObjectCache,
 		DEKCacheTTL:  dekCacheTTL,
 		IntegrityCfg: integrityCfg,
 	})

@@ -31,7 +31,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -80,7 +79,6 @@ type Manager struct {
 	encryptor          *encryption.Encryptor
 	codec              Codec
 	compression        config.CompressionConfig
-	objectCache        objcache.ObjectCache
 	dekCache           *syncutil.TTLCache[string, []byte]
 	integrityCfg       *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
 	enforceMinPartSize bool                                           // reject non-final parts below the S3 5 MiB floor
@@ -102,7 +100,6 @@ func New(deps *Deps) *Manager {
 		encryptor:          deps.Encryptor,
 		codec:              deps.Codec,
 		compression:        deps.Compression,
-		objectCache:        deps.ObjectCache,
 		dekCache:           syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
 		integrityCfg:       deps.IntegrityCfg,
 		enforceMinPartSize: deps.EnforceMinPartSize,
@@ -112,9 +109,9 @@ func New(deps *Deps) *Manager {
 
 // Deps groups the multipart manager's constructor parameters: backend
 // runtime, shared write coordinator, store surface, optional encryption /
-// compression / object cache, the DEK-cache TTL, and the shared integrity
-// config. Codec is supplied whether or not Compression.Enabled, matching the
-// object manager: an assembled object is encoded only when both are set.
+// compression, the DEK-cache TTL, and the shared integrity config. Codec is
+// supplied whether or not Compression.Enabled, matching the object manager:
+// an assembled object is encoded only when both are set.
 type Deps struct {
 	Core         Runtime
 	Coord        *writepath.Coordinator
@@ -122,7 +119,6 @@ type Deps struct {
 	Encryptor    *encryption.Encryptor // nil when encryption is disabled
 	Codec        Codec                 // nil when no codec is configured
 	Compression  config.CompressionConfig
-	ObjectCache  objcache.ObjectCache // nil when object caching is disabled
 	DEKCacheTTL  time.Duration
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
 
@@ -133,13 +129,6 @@ type Deps struct {
 func (mp *Manager) Close() {
 	if mp.dekCache != nil {
 		mp.dekCache.Close()
-	}
-}
-
-// invalidateCache removes a key from the object data cache if caching is enabled.
-func (mp *Manager) invalidateCache(key string) {
-	if mp.objectCache != nil {
-		mp.objectCache.Invalidate(key)
 	}
 }
 
@@ -849,7 +838,6 @@ func (mp *Manager) completeMultipartUploadLocked(
 	mp.core.Acct().Ingress(s3op.PutObject, mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
-	mp.invalidateCache(mu.ObjectKey)
 	return identity.ETag, nil
 }
 

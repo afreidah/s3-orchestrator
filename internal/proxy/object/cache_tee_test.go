@@ -5,9 +5,9 @@
 //
 // Pins the streaming-cache contract: clean EOF at the expected size invokes
 // the finalizer; any other termination (early Close, short read, backend
-// overshoot, mid-read error) drops the buffer and never calls back. These
-// tests guard against regressions in #654 - the OOM bug from io.ReadAll
-// before the size check.
+// overshoot, mid-read error) drops the buffer and never calls back. The
+// buffer never grows past the announced size, so a lying backend cannot
+// make the tee hold more than the cache admitted.
 // -------------------------------------------------------------------------------
 
 package object
@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/iotest"
 )
 
 // -------------------------------------------------------------------------
@@ -66,6 +67,30 @@ func TestCacheTeeBody_CleanEOF_FinalizesAtExactSize(t *testing.T) {
 	}
 	if !bytes.Equal(got, src) {
 		t.Fatalf("finalizer got %q, want %q", got, src)
+	}
+}
+
+// TestCacheTeeBody_CompletesOnce verifies reads past EOF and a later Close
+// never hand the buffer over a second time, including when the body returns
+// its last bytes and EOF from the same Read.
+func TestCacheTeeBody_CompletesOnce(t *testing.T) {
+	t.Parallel()
+	src := []byte("hello world")
+	calls := 0
+	body := io.NopCloser(iotest.DataErrReader(bytes.NewReader(src)))
+	tee := newCacheTeeBody(body, int64(len(src)), func([]byte) { calls++ })
+
+	if _, err := io.ReadAll(tee); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if n, err := tee.Read(make([]byte, 4)); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("Read after EOF = %d, %v; want 0, EOF", n, err)
+	}
+	if err := tee.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("finalizer calls = %d, want 1", calls)
 	}
 }
 
@@ -133,6 +158,28 @@ func TestCacheTeeBody_Overshoot_AbandonsCache(t *testing.T) {
 	}
 	if !bytes.Equal(out, src) {
 		t.Fatalf("ReadAll = %q, want %q (consumer must still receive every byte)", out, src)
+	}
+	if called {
+		t.Fatal("finalizer invoked despite overshoot")
+	}
+}
+
+// TestCacheTeeBody_OvershootAfterFullBuffer_AbandonsCache verifies a body that
+// reaches the announced size and then keeps going is abandoned too, even though
+// the buffer held exactly the expected bytes for a moment.
+func TestCacheTeeBody_OvershootAfterFullBuffer_AbandonsCache(t *testing.T) {
+	t.Parallel()
+	src := []byte("hello world")
+	called := false
+	body := io.NopCloser(iotest.OneByteReader(bytes.NewReader(src)))
+	tee := newCacheTeeBody(body, 5, func([]byte) { called = true })
+
+	out, err := io.ReadAll(tee)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(out, src) {
+		t.Fatalf("ReadAll = %q, want %q", out, src)
 	}
 	if called {
 		t.Fatal("finalizer invoked despite overshoot")

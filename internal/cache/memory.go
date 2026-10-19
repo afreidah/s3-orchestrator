@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
@@ -121,14 +122,7 @@ func (c *MemoryCache) Admit(size int64) bool {
 // to a silent no-op if even after evicting every existing entry the new
 // entry cannot fit (e.g. metadata pushed it over MaxSize).
 func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
-	entry := &Entry{
-		Data:         data,
-		ContentType:  meta.ContentType,
-		ETag:         meta.ETag,
-		LastModified: meta.LastModified,
-		Metadata:     meta.Metadata,
-		TagCount:     meta.TagCount,
-	}
+	entry := &Entry{Data: data, EntryMeta: meta}
 	entrySize := entry.Size()
 
 	c.mu.Lock()
@@ -162,27 +156,31 @@ func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
 	c.updateGauges()
 }
 
-// Invalidate removes a single key from the cache.
+// Invalidate removes every entry stored for one object key: the entry under
+// the bare key and those under the key plus internalkey.WriteSeparator, which
+// is where each write of the key stores its bytes.
 func (c *MemoryCache) Invalidate(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if elem, ok := c.items[key]; ok {
-		c.removeLocked(elem)
-	}
+	copies := key + internalkey.WriteSeparator
+	c.removeMatching(func(k string) bool { return k == key || strings.HasPrefix(k, copies) })
 }
 
 // InvalidatePrefix removes every entry whose key starts with prefix and
-// returns the number of entries dropped. Walks the items map (O(n)) so
-// callers should expect cost proportional to cache size, not match
-// count. Holds c.mu for the duration to keep map iteration safe.
+// returns the number of entries dropped.
 func (c *MemoryCache) InvalidatePrefix(prefix string) int {
+	return c.removeMatching(func(k string) bool { return strings.HasPrefix(k, prefix) })
+}
+
+// removeMatching removes every entry whose key match accepts and returns the
+// number dropped. Walks the items map (O(n)) so callers should expect cost
+// proportional to cache size, not match count. Holds c.mu for the duration to
+// keep map iteration safe.
+func (c *MemoryCache) removeMatching(match func(key string) bool) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	matches := make([]*list.Element, 0)
 	for k, elem := range c.items {
-		if strings.HasPrefix(k, prefix) {
+		if match(k) {
 			matches = append(matches, elem)
 		}
 	}

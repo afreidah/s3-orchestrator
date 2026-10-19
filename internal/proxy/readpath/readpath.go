@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Orchestrates the read protocol on behalf of object.Manager:
-//   - happy path: resolve all object_locations rows for the key, try each
-//     backend in stored order until one succeeds.
+//   - happy path: take the object_locations rows the caller looked up and
+//     try each backend in stored order until one succeeds.
 //   - DB-unavailable path: fall back to a broadcast over every configured
 //     backend (sequential or parallel per configuration), remembering the
 //     winner in the in-memory location cache for the next degraded read.
@@ -82,18 +82,10 @@ func NoopCleanup() {
 	// meant to be a noop function
 }
 
-// FailoverStores is the narrow persistence surface read failover needs: object
-// location lookups for the normal DB-backed path. Declared locally so
-// readpath does not pull in the full MetadataStore.
-type FailoverStores interface {
-	core.ObjectStore
-}
-
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
 	core                 ReadRuntime
-	stores               FailoverStores
 	broadcaster          *Broadcaster // degraded-mode fan-out; used only on DB outage
 	degradedReadsEnabled bool         // false fails a degraded read fast instead of broadcasting
 	log                  *slog.Logger
@@ -103,7 +95,6 @@ type Failover struct {
 // degraded-mode flags are named fields so call sites can't transpose them.
 type FailoverDeps struct {
 	Core                         ReadRuntime
-	Stores                       FailoverStores
 	Cache                        LocationCache
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
@@ -116,11 +107,9 @@ type FailoverDeps struct {
 func New(deps *FailoverDeps) *Failover {
 	must.NotNil("deps", deps)
 	must.NotNil("Core", deps.Core)
-	must.NotNil("Stores", deps.Stores)
 	must.NotNil("Cache", deps.Cache)
 	return &Failover{
 		core:                 deps.Core,
-		stores:               deps.Stores,
 		degradedReadsEnabled: deps.DegradedReadsEnabled,
 		log:                  slog.Default().With(logfmt.Component("readpath")),
 		broadcaster: &Broadcaster{
@@ -146,12 +135,13 @@ type readOp struct {
 	span      trace.Span
 }
 
-// Read runs the full read-with-failover protocol: starts the span,
-// resolves all locations for the key, and tries each backend in turn. On
+// Read runs the read-with-failover protocol over the caller's location lookup:
+// it starts the span and tries each backend in turn. The caller looks the key
+// up so it can answer from the rows before any backend is touched. On
 // core.ErrDBUnavailable it enters degraded mode and delegates to the
 // broadcaster (unless degraded reads are disabled). Returns the winning
 // backend name and any error.
-func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, key string, probe Probe[T]) (T, string, error) {
+func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, key string, locations []core.ObjectLocation, err error, probe Probe[T]) (T, string, error) {
 	var zero T
 	start := time.Now()
 
@@ -161,7 +151,6 @@ func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, ke
 	defer span.End()
 	op := readOp{operation: operation, key: key, start: start, span: span}
 
-	locations, err := core.ClientLocations(f.stores.GetAllObjectLocations(ctx, key))
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			observe.MarkSpanError(span, "object not found")

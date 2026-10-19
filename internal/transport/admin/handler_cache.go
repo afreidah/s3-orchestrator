@@ -81,7 +81,7 @@ func (h *Handler) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handleCacheInvalidateKey drops a single key from the cache. The key
+// handleCacheInvalidateKey drops every cached copy of one object key. The key
 // is taken from the URL path, supporting embedded slashes via the
 // `{key...}` wildcard pattern. Always returns 200 - Invalidate is a
 // no-op for unknown keys, matching the cache's own contract.

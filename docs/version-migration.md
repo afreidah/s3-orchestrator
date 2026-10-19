@@ -64,6 +64,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Object cache keyed by storage path ([#1720](https://github.com/afreidah/s3-orchestrator/issues/1720), v0.162.14)**
+
+The object data cache now keys entries by the storage path of the copy they hold rather than by object key, and a GET looks the key up in the database before checking it. Every write stores its bytes under a new path, so an overwrite, delete or copy on any instance makes the old entry unreachable without invalidating anything. A slow read of an old version can no longer leave its bytes cached under the key. A HEAD that falls through to a backend now does one location lookup instead of two. No migration.
+
+**Operator action items after upgrade:**
+
+- **A cache hit costs one location lookup.** It still skips the backend call and egress.
+- **The cache is not consulted while the database is unavailable.** Degraded reads go to the backends as uncached reads do.
+- **`cache.ttl` no longer bounds staleness.** It bounds how long entries for overwritten objects hold memory; a lower value is no longer needed for read-after-write consistency across instances.
+- **Admin `cache-invalidate -key` drops every cached copy of the key.**
+
 **Serialized admission and single-snapshot usage reconcile ([#1718](https://github.com/afreidah/s3-orchestrator/issues/1718), v0.162.13)**
 
 A write's claim on a backend with a byte ceiling now takes a transaction-scoped lock on that backend before its room check, so claims made at once from any instance are judged against each other's bytes. Without it, two claims could each see the room the other was about to take and together overrun the ceiling. A backend with no ceiling takes no lock. Usage reconcile now reads the stripe totals and the ledger sums from one snapshot and adds each backend's difference to its stripes rather than writing over the total, so a write committing while it runs is no longer lost or counted twice. No migration.

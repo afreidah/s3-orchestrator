@@ -46,7 +46,8 @@ import (
 // fails. When the object is encrypted, the response body is transparently
 // decrypted and the reported size reflects the original plaintext size.
 func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetResult, error) {
-	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader); ok {
+	locs, lookupErr := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
+	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader, locs); ok {
 		return cached, nil
 	}
 
@@ -57,8 +58,8 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	// one fetches whole chunks.
 	var selfMetered atomic.Bool
 	var wireBytes atomic.Int64
-	var tagCount atomic.Int64
-	result, backendName, err := o.failover.Read(ctx, "GetObject", key,
+	var served atomic.Pointer[core.ObjectLocation]
+	result, backendName, err := o.failover.Read(ctx, "GetObject", key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
 			if err != nil {
@@ -70,7 +71,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 			res, wire, err := o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
 			if err == nil {
 				wireBytes.Store(wire)
-				tagCount.Store(int64(loc.TagCount))
+				served.Store(loc)
 				applyStoredIdentity(res.Value, loc)
 			}
 			return res, err
@@ -85,28 +86,37 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
 
 	// The count came with the location rows. A degraded read has no rows and
-	// reports zero, which leaves the tagging-count header off. The cache entry
-	// carries it so a later hit can answer without the store.
-	tags := int(tagCount.Load())
-	if err := o.populateObjectCache(key, rangeHeader, result, tags); err != nil {
-		return nil, err
+	// reports zero, which leaves the tagging-count header off. It also fills no
+	// cache entry: a parallel broadcast can have several probes succeed, so the
+	// stored location need not be the one whose bytes were returned.
+	loc := served.Load()
+	if lookupErr == nil {
+		o.populateObjectCache(core.StoragePath(key, loc.StorageKey), rangeHeader, result)
 	}
-	return &GetResult{GetObjectResult: result, TagCount: tags}, nil
+	return &GetResult{GetObjectResult: result, TagCount: loc.TagCount}, nil
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// tryGetObjectCache returns a synthesized GetObjectResult when the object
-// data cache holds a non-range hit for this key. ok=false signals that the
-// caller must read from a backend.
-func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*GetResult, bool) {
+// tryGetObjectCache returns a synthesized GetObjectResult when the object data
+// cache holds a non-range hit for one of the key's copies. Entries are keyed
+// by storage path, which a write never reuses, so a hit is always the current
+// version without any invalidation. No rows, as on a store outage, is never a
+// hit. ok=false signals that the caller must read from a backend.
+func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string, locs []core.ObjectLocation) (*GetResult, bool) {
 	if o.objectCache == nil || rangeHeader != "" {
 		return nil, false
 	}
-	entry, ok := o.objectCache.Get(key)
-	if !ok {
+	var entry *objcache.Entry
+	for i := range locs {
+		if e, ok := o.objectCache.Get(core.StoragePath(key, locs[i].StorageKey)); ok {
+			entry = e
+			break
+		}
+	}
+	if entry == nil {
 		return nil, false
 	}
 	pobserve.GetCompleted(ctx, key, "cache", int64(len(entry.Data)))
@@ -119,7 +129,7 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 			LastModified: entry.LastModified,
 			Metadata:     entry.Metadata,
 		},
-		TagCount: entry.TagCount,
+		TagCount: tagCountOf(locs),
 	}, true
 }
 
@@ -334,31 +344,27 @@ func applyStoredIdentity(res *s3be.GetObjectResult, loc *core.ObjectLocation) {
 }
 
 // populateObjectCache tees the response body into a pre-sized buffer as it
-// streams to the client, handing the buffer to the cache only on a clean read
-// of exactly result.Size bytes. An early disconnect, a mid-stream error or a
-// short read leaves the cache untouched.
+// streams to the client, handing the buffer to the cache under the serving
+// copy's storage path only on a clean read of exactly result.Size bytes. An
+// early disconnect, a mid-stream error or a short read leaves the cache
+// untouched.
 //
 // A disabled cache, a ranged request, a non-positive Content-Length or a size
 // over the per-entry admission limit all skip the tee entirely, so the body
 // streams through with no proxy-side buffering.
-func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult, tagCount int) error {
-	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
-		return nil
-	}
-	if !o.objectCache.Admit(result.Size) {
-		return nil
+func (o *Manager) populateObjectCache(path, rangeHeader string, result *s3be.GetObjectResult) {
+	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 || !o.objectCache.Admit(result.Size) {
+		return
 	}
 	meta := objcache.EntryMeta{
 		ContentType:  result.ContentType,
 		ETag:         result.ETag,
 		LastModified: result.LastModified,
 		Metadata:     result.Metadata,
-		TagCount:     tagCount,
 	}
 	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
-		o.objectCache.PutBytes(key, data, meta)
+		o.objectCache.PutBytes(path, data, meta)
 	})
-	return nil
 }
 
 // verifyStoredEnvelope checks the returned bytes against the row's encrypted

@@ -24,7 +24,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -62,7 +61,6 @@ type fleetOpts struct {
 	Encryptor          *encryption.Encryptor    // turns on at-rest encryption for the upload
 	Codec              Codec                    // with Compression below, encodes the assembled object
 	Compression        config.CompressionConfig //
-	ObjectCache        objcache.ObjectCache     // attaches a cache so completion-time invalidation runs
 	AdmissionSem       chan struct{}            // bounds concurrent backend writes, for admission tests
 	BackendTimeout     time.Duration            // overrides the per-call bound; defaults to fleetTimeout
 	EnforceMinPartSize bool                     // turns on the S3 5 MiB non-final part floor
@@ -126,7 +124,6 @@ func newFleet(
 		Encryptor:          opts.Encryptor,
 		Codec:              opts.Codec,
 		Compression:        opts.Compression,
-		ObjectCache:        opts.ObjectCache,
 		DEKCacheTTL:        fleetDEKTTL,
 		IntegrityCfg:       integrity,
 		EnforceMinPartSize: opts.EnforceMinPartSize,

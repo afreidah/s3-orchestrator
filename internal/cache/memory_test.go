@@ -199,6 +199,33 @@ func TestMemoryCache_Invalidate(t *testing.T) {
 	c.Invalidate("nonexistent")
 }
 
+// TestMemoryCache_InvalidateDropsEveryStoragePath verifies invalidating an
+// object key drops the bare key and every write's storage path under it, and
+// leaves keys that only share a prefix with it alone.
+func TestMemoryCache_InvalidateDropsEveryStoragePath(t *testing.T) {
+	t.Parallel()
+	c := newTestCache(t, 1024, 512, time.Minute)
+	for _, k := range []string{"key", "key!w1", "key!w2", "key2", "keyX!w1", "other!key"} {
+		admitAndPut(t, c, k, []byte("data"), EntryMeta{})
+	}
+
+	c.Invalidate("key")
+
+	for _, k := range []string{"key", "key!w1", "key!w2"} {
+		if _, ok := c.Get(k); ok {
+			t.Errorf("%q survived invalidating its object key", k)
+		}
+	}
+	for _, k := range []string{"key2", "keyX!w1", "other!key"} {
+		if _, ok := c.Get(k); !ok {
+			t.Errorf("%q was dropped, but belongs to another object", k)
+		}
+	}
+	if got := c.Stats().Entries; got != 3 {
+		t.Errorf("entries = %d, want 3", got)
+	}
+}
+
 // TestMemoryCache_OverwriteExisting verifies the memory cache overwrite existing contract.
 // Asserts that Put v1:.
 func TestMemoryCache_OverwriteExisting(t *testing.T) {

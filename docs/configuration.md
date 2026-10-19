@@ -875,9 +875,9 @@ cache:
 
 - `max_size` - total memory the cache may consume. Size this based on available container memory after accounting for the Go heap, connection pools, and streaming buffers. A good starting point is 10-25% of the container's memory allocation.
 - `max_object_size` - objects larger than this are never admitted to the cache. Prevents a single large object from evicting many smaller frequently-accessed objects. Set this below the typical "hot" object size in your workload.
-- `ttl` - maximum time an entry stays cached before automatic expiry. In multi-instance deployments, this bounds how stale a cached object can be when writes happen on another instance. Lower values reduce staleness at the cost of more backend requests.
+- `ttl` - maximum time an entry stays cached before automatic expiry. It bounds how long an entry for an overwritten or deleted object holds memory; it does not bound staleness, because such an entry is never served.
 
-Cache entries are automatically invalidated on PutObject, DeleteObject, CopyObject, DeleteObjects, and CompleteMultipartUpload. Range requests bypass the cache on miss but are served from cache on hit.
+Entries are keyed by the storage path of the copy they hold, and each write stores its bytes under a new path, so no write has to invalidate anything and a write on one instance is seen by every other. A hit costs one location lookup in the database. Range requests bypass the cache.
 
 **When to enable:**
 - Read-heavy workloads where the same objects are fetched repeatedly (thumbnails, config files, assets)

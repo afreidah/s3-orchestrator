@@ -71,7 +71,7 @@ type fleetOpts struct {
 	Encryptor      *encryption.Encryptor       // turns on at-rest encryption
 	Codec          Codec                       // with Compression below, turns on at-rest compression
 	Compression    config.CompressionConfig
-	ObjectCache    objcache.ObjectCache // attaches a cache so read-through and invalidation run
+	ObjectCache    objcache.ObjectCache // attaches a cache so reads fill and hit it
 	CacheTTL       time.Duration        // overrides the location-cache window, for the expiry tests
 	Draining       []string             // backends the runtime should report as draining
 	CopiesPerWrite int                  // above 1, a PUT places its copies itself instead of leaving them to the replicator

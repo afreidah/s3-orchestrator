@@ -129,7 +129,6 @@ func New(d *Deps) *Manager {
 		integrityCfg:      d.IntegrityCfg,
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.Core,
-			Stores:                       d.Stores,
 			Cache:                        d.LocationCache,
 			ParallelBroadcast:            d.ParallelBroadcast,
 			DegradedBroadcastParallelism: d.DegradedBroadcastParallelism,
@@ -137,17 +136,6 @@ func New(d *Deps) *Manager {
 			BackendTimeout:               d.BackendTimeout,
 		}),
 		log: slog.Default().With(logfmt.Component("object")),
-	}
-}
-
-// invalidateObjectCaches drops both the location cache entry (key ->
-// backend placement) and the object data cache entry. Every successful
-// mutation must clear both; pairing them here keeps a future caller
-// from silently invalidating one and leaving the other stale.
-func (o *Manager) invalidateObjectCaches(key string) {
-	o.cache.Delete(key)
-	if o.objectCache != nil {
-		o.objectCache.Invalidate(key)
 	}
 }
 

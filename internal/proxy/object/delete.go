@@ -104,9 +104,9 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		return results
 	}
 	// A key that held no copies was already gone (not-found is silent
-	// success), so its cache entries are also stale and worth flushing.
+	// success), so its location hint is also stale and worth dropping.
 	for _, key := range keys {
-		o.invalidateObjectCaches(key)
+		o.cache.Delete(key)
 	}
 	o.coord.Settle(ctx, cleanup)
 

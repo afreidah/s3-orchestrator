@@ -23,6 +23,8 @@ import "time"
 // admitted entry may still be silently dropped if larger entries have taken
 // the capacity.
 //
+// Keys are storage paths, which no write reuses, so no write has to invalidate
+// anything. Invalidate takes an object key and drops all of its storage paths.
 // An empty prefix passed to InvalidatePrefix matches every entry; callers that
 // mean to empty the cache should call Clear so the metric records that.
 type ObjectCache interface {
@@ -39,17 +41,12 @@ type ObjectCache interface {
 // TYPES
 // -------------------------------------------------------------------------
 
-// Entry holds a cached object's data and metadata. TagCount rides along
-// because a cache hit answers the whole GET without consulting the metadata
-// store, and the tagging-count header would otherwise be missing from exactly
-// the responses the cache serves. Tag writes invalidate the entry.
+// Entry holds the bytes stored at one storage path and the response metadata
+// the backend served them with. A storage path is never rewritten, so an
+// entry stays correct for as long as it is cached.
 type Entry struct {
-	Data         []byte
-	ContentType  string
-	ETag         string
-	LastModified time.Time
-	Metadata     map[string]string
-	TagCount     int
+	Data []byte
+	EntryMeta
 }
 
 // Size returns the approximate memory footprint of this entry in bytes.
@@ -69,7 +66,6 @@ type EntryMeta struct {
 	ETag         string
 	LastModified time.Time
 	Metadata     map[string]string
-	TagCount     int
 }
 
 // Stats reports current cache utilization. Hits and Misses are lifetime

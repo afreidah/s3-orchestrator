@@ -46,15 +46,15 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
 (function() {
   var diagramSrc = [
     'flowchart TD',
-    '    GET([GetObject<br>Request]):::entry --> DCACHE{Object Data<br>Cache?}:::decision',
-    '',
-    '    DCACHE -->|hit| CACHESTREAM[Return Cached<br>Response]:::success',
-    '    CACHESTREAM --> STREAM',
-    '    DCACHE -->|miss or range req| DBLOOKUP[DB Lookup:<br>GetAllObjectLocations]:::storage',
+    '    GET([GetObject<br>Request]):::entry --> DBLOOKUP[DB Lookup:<br>GetAllObjectLocations]:::storage',
     '',
     '    DBLOOKUP -->|not found| R404[404 Not<br>Found]:::reject',
     '    DBLOOKUP -->|DB unavailable| CACHE{Location<br>Cache?}:::decision',
-    '    DBLOOKUP -->|ok| COPIES[Iterate Copies<br>with Failover]:::process',
+    '    DBLOOKUP -->|ok| DCACHE{Object Data<br>Cache?}:::decision',
+    '',
+    '    DCACHE -->|hit on a copy\'s path| CACHESTREAM[Return Cached<br>Response]:::success',
+    '    CACHESTREAM --> STREAM',
+    '    DCACHE -->|miss or range req| COPIES[Iterate Copies<br>with Failover]:::process',
     '',
     '    CACHE -->|hit: cached backend| DLOC[Find Newest Copy,<br>Check Stored Form]:::process',
     '    CACHE -->|miss or fail| FANOUT[Broadcast to<br>All Backends]:::process',
@@ -156,12 +156,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     DCACHE: {
       title: 'Object Data Cache Lookup',
       badge: 'decision', badgeText: 'cache check',
-      body: '<p>When the object data cache is enabled (<code>cache.enabled: true</code>), full GET requests (non-range) check the in-memory LRU cache first.</p><p>On <b>cache hit</b>: returns the cached body, content type, ETag, and metadata immediately without any backend I/O. No API call or egress is consumed.</p><p>On <b>cache miss</b> or <b>range request</b>: proceeds to the normal DB lookup path. Range requests always bypass the cache.</p><p class="ac-metric">Metrics: s3o_cache_hits_total, s3o_cache_misses_total</p>'
+      body: '<p>When the object data cache is enabled (<code>cache.enabled: true</code>), a full GET (non-range) checks the in-memory LRU cache for the storage path of each copy the lookup returned. Every write stores its bytes under a new path, so an entry under a path the rows name is always the current version, on every instance, with no invalidation.</p><p>On <b>cache hit</b>: returns the cached body, content type, ETag, and metadata without any backend I/O. No API call or egress is consumed.</p><p>On <b>cache miss</b> or <b>range request</b>: fails over across the copies. A degraded read has no rows and never checks the cache.</p><p class="ac-metric">Metrics: s3o_cache_hits_total, s3o_cache_misses_total</p>'
     },
     CACHESTREAM: {
       title: 'Return Cached Response',
       badge: 'success', badgeText: 'cache hit',
-      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached, plus the tag count that fills <code>x-amz-tagging-count</code>.</p><p>The count rides on the entry because a hit reaches no database at all, which would otherwise leave the header off exactly the responses the cache serves. A tag write drops the entry, so the next read counts again.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. The <code>storage.GetObject</code> audit event is emitted with <code>backend=cache</code>. The handler then evaluates conditional headers and streams the body.</p>'
+      body: '<p>Serves the object directly from the in-memory cache. The response includes the metadata (content type, ETag, user metadata) captured when the copy was cached, and the tag count from the location rows, which fills <code>x-amz-tagging-count</code>.</p><p>Avoids backend API calls, egress charges and decryption overhead. The <code>storage.GetObject</code> audit event is emitted with <code>backend=cache</code>. The handler then evaluates conditional headers and streams the body.</p>'
     },
     DBLOOKUP: {
       title: 'DB Lookup: GetAllObjectLocations',
@@ -316,7 +316,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHEPUT: {
       title: 'Attach Cache Tee',
       badge: 'process', badgeText: 'cache store',
-      body: '<p>The body is wrapped in <code>newCacheTeeBody</code>, which copies bytes into a pre-sized buffer as they stream to the client. Only a clean read of exactly the expected size calls <code>objectCache.PutBytes()</code>, storing the data, content type, ETag, user metadata, and tag count. A client disconnect, a mid-stream error or a short read caches nothing.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
+      body: '<p>The body is wrapped in <code>newCacheTeeBody</code>, which copies bytes into a pre-sized buffer as they stream to the client. Only a clean read of exactly the expected size calls <code>objectCache.PutBytes()</code>, storing the data, content type, ETag and user metadata under the serving copy\'s storage path. A client disconnect, a mid-stream error or a short read caches nothing.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
     },
     METRICS: {
       title: 'Charge Egress, Metrics & Audit',

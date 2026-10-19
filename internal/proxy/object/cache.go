@@ -78,98 +78,56 @@ func (c *LocationCache) Close() {
 	c.cache.Close()
 }
 
-// errCacheSinkOverflow is returned by cacheSink.Write when the caller
-// tries to push past the pre-sized capacity. Surfaced to cacheTeeBody so
-// it can mark the entry abandoned and stop teeing without aborting the
-// underlying read.
-var errCacheSinkOverflow = errors.New("cache tee: backend returned more bytes than announced size")
-
-// cacheSink is a write-only buffer with a fixed capacity. Writes past
-// the cap return errCacheSinkOverflow and the sink keeps the bytes it
-// already accumulated for inspection by the tee.
-type cacheSink struct {
-	buf []byte
-	cap int
-}
-
-// newCacheSink allocates a sink that can hold up to cap bytes. The
-// backing slice is pre-allocated at full capacity to avoid append-time
-// growth amortization while the response is streaming.
-func newCacheSink(c int) *cacheSink {
-	return &cacheSink{buf: make([]byte, 0, c), cap: c}
-}
-
-// Write appends p to the sink. Returns errCacheSinkOverflow when the
-// addition would push past cap; in that case nothing is appended.
-func (s *cacheSink) Write(p []byte) (int, error) {
-	if len(s.buf)+len(p) > s.cap {
-		return 0, errCacheSinkOverflow
-	}
-	s.buf = append(s.buf, p...)
-	return len(p), nil
-}
-
-// bytes returns the accumulated buffer. Callers must not mutate the
-// returned slice; ownership transfers when the tee invokes its
-// finalizer at clean EOF.
-func (s *cacheSink) bytes() []byte { return s.buf }
-
-// cacheTeeBody copies bytes into a fixed-capacity sink as they flow to the
-// consumer, and calls onComplete once, only when the read reaches EOF after
-// exactly expected bytes. Any other ending (Close before EOF, a mid-stream
-// error, a short read, sink overflow) drops the buffer.
+// cacheTeeBody copies bytes into a buffer pre-sized to expected as they flow
+// to the consumer, and calls onComplete once, only when the read reaches EOF
+// after exactly expected bytes. Any other ending (Close before EOF, a
+// mid-stream error, a short read, an overshoot) drops the buffer, which is
+// what a nil buf records.
 type cacheTeeBody struct {
 	io.ReadCloser
-	sink       *cacheSink
+	buf        []byte
 	expected   int64
-	bytesRead  int64
 	onComplete func(data []byte)
-	abandoned  bool
 	finalized  bool
 }
 
-// newCacheTeeBody constructs a teeing wrapper sized to expected bytes.
-// onComplete is invoked at most once, after a clean EOF read of exactly
-// expected bytes; the byte slice handed to it is owned by the callback
-// and freed by the caller.
+// newCacheTeeBody constructs a teeing wrapper sized to expected bytes, which
+// the caller guarantees is positive. onComplete is invoked at most once, and
+// the byte slice handed to it is owned by the callback.
 func newCacheTeeBody(body io.ReadCloser, expected int64, onComplete func(data []byte)) *cacheTeeBody {
 	return &cacheTeeBody{
 		ReadCloser: body,
-		sink:       newCacheSink(int(expected)),
+		buf:        make([]byte, 0, expected),
 		expected:   expected,
 		onComplete: onComplete,
 	}
 }
 
-// Read forwards to the underlying body and copies returned bytes into
-// the sink. Surfaces sink overflow as "abandoned" without propagating
-// the error to the consumer (the consumer's stream is the source of
-// truth; cache population is best-effort). Finalizes on clean EOF.
+// Read forwards to the underlying body and copies returned bytes into the
+// buffer. A backend overshooting its Content-Length abandons the copy without
+// failing the read, since the consumer's stream is the source of truth and
+// cache population is best-effort. Finalizes on clean EOF.
 func (t *cacheTeeBody) Read(p []byte) (int, error) {
 	n, err := t.ReadCloser.Read(p)
-	if n > 0 && !t.abandoned {
-		if _, werr := t.sink.Write(p[:n]); werr != nil {
-			// Backend overshooting Content-Length - abandon caching but
-			// keep streaming to the consumer.
-			t.abandoned = true
-			t.sink.buf = nil
+	if n > 0 && t.buf != nil {
+		if int64(len(t.buf)+n) > t.expected {
+			t.buf = nil
 		} else {
-			t.bytesRead += int64(n)
+			t.buf = append(t.buf, p[:n]...)
 		}
 	}
-	if errors.Is(err, io.EOF) && !t.abandoned && !t.finalized && t.bytesRead == t.expected {
-		t.onComplete(t.sink.bytes())
+	if errors.Is(err, io.EOF) && t.buf != nil && !t.finalized && int64(len(t.buf)) == t.expected {
+		t.onComplete(t.buf)
 		t.finalized = true
 	}
 	return n, err
 }
 
-// Close forwards to the underlying body. If Close arrives before EOF
-// the read is considered abandoned and the sink contents are dropped.
+// Close forwards to the underlying body. If Close arrives before EOF the read
+// is considered abandoned and the buffer is dropped.
 func (t *cacheTeeBody) Close() error {
 	if !t.finalized {
-		t.abandoned = true
-		t.sink.buf = nil
+		t.buf = nil
 	}
 	return t.ReadCloser.Close()
 }

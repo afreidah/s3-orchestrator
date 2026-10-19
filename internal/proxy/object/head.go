@@ -32,12 +32,12 @@ import (
 // reported so the next HEAD can skip the backend. The reported size is the size
 // the client wrote, even when the stored bytes are encrypted or compressed.
 func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, error) {
-	locs := o.locationsForHead(ctx, key)
+	locs, lookupErr := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
 	if res, ok := o.headFromMetadata(ctx, key, locs); ok {
 		return res, nil
 	}
 
-	result, backendName, err := o.failover.Read(ctx, "HeadObject", key,
+	result, backendName, err := o.failover.Read(ctx, "HeadObject", key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
 			if !o.core.Usage().WithinLimits(beName, headObjectOp, 0, 0) {
@@ -98,16 +98,6 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// locationsForHead reads the rows a HEAD needs in one lookup. A store error
-// returns no rows, since the backend path repeats the lookup and reports it.
-func (o *Manager) locationsForHead(ctx context.Context, key string) []core.ObjectLocation {
-	locs, err := core.ClientLocations(o.stores.GetAllObjectLocations(ctx, key))
-	if err != nil {
-		return nil
-	}
-	return locs
-}
 
 // tagCountOf reports the key's tag count from its location rows, which all
 // carry the same value. No rows reports zero, which leaves the tagging-count

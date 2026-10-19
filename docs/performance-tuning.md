@@ -587,4 +587,4 @@ GOMEMLIMIT=$(( (1024 - 256) * 90 / 100 ))MiB   # ~691 MiB for Go heap
 
 ### Multi-Instance Staleness
 
-The cache is per-instance and not shared. In multi-instance deployments, a write on instance A does not invalidate the cached copy on instance B. The `ttl` setting bounds how long a stale entry can be served - lower TTL values reduce the staleness window at the cost of more backend requests after expiry. For workloads that require strict read-after-write consistency across instances, either disable the cache or set a very low TTL.
+The cache is per-instance and not shared, but it never serves a stale object. Entries are keyed by the storage path of the copy they came from, and every write stores its bytes under a new path. A GET looks the key up in the database first and only checks the cache for the paths the current rows name, so after a write on any instance the old entry is unreachable. A hit therefore costs one location lookup but no backend call. While the database is unavailable the cache is not consulted. The `ttl` setting bounds memory held by entries no row names any more, not staleness.

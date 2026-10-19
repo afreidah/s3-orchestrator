@@ -209,7 +209,7 @@ The gray background workers run only when the process starts in `worker` or `all
     DCACHE: {
       title: 'Object Data Cache',
       badge: 'storage', badgeText: 'optional',
-      body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>On <b>cache hit</b>: returns the cached body immediately &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response for future reads. Range requests always bypass the cache.</p><p>Automatically invalidated on PutObject, DeleteObject, CopyObject, and CompleteMultipartUpload.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
+      body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>Entries are keyed by the storage path of the copy they came from. A GET looks up the key\'s location rows first and checks the cache for the paths they name.</p><p>On <b>cache hit</b>: returns the cached body &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response under the serving copy\'s path. Range requests always bypass the cache.</p><p>Every write stores its bytes under a new path, so no write invalidates anything and an overwritten object\'s entry is never reached again, on any instance.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
     },
     COMP: {
       title: 'Compression Layer',

@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Integration tests for the in-memory object data cache. Verifies cache hits,
-// misses, invalidation on writes, and correct data round-tripping through the
-// cache layer with real MinIO backends and PostgreSQL.
+// misses, that an overwrite or delete is never answered from bytes cached for
+// an earlier write, and correct data round-tripping through the cache layer
+// with real MinIO backends and PostgreSQL.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -157,14 +158,14 @@ func TestCache_HitOnSecondRead(t *testing.T) {
 	}
 }
 
-// TestCache_InvalidateOnPut verifies that a PutObject invalidates any cached
-// entry for that key, so a subsequent GET returns the new data rather than
-// stale cached content.
-func TestCache_InvalidateOnPut(t *testing.T) {
+// TestCache_OverwriteServesTheNewVersion verifies a GET after an overwrite
+// returns the new data even though the earlier write's bytes are still cached,
+// because the new write stores its bytes under a new storage path.
+func TestCache_OverwriteServesTheNewVersion(t *testing.T) {
 	env := setupCacheEnv(t)
 	ctx := context.Background()
 
-	key := uniqueKey(t, "cache-invalidate-put")
+	key := uniqueKey(t, "cache-overwrite")
 	v1 := []byte("version one")
 	v2 := []byte("version two  -  different content")
 
@@ -190,7 +191,7 @@ func TestCache_InvalidateOnPut(t *testing.T) {
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	// PUT v2  -  should invalidate cache
+	// PUT v2 leaves v1's entry in place under v1's storage path
 	_, err = env.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
@@ -212,18 +213,18 @@ func TestCache_InvalidateOnPut(t *testing.T) {
 	got, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if !bytes.Equal(got, v2) {
-		t.Errorf("expected v2 after PUT invalidation, got %d bytes (want %d)", len(got), len(v2))
+		t.Errorf("expected v2 after the overwrite, got %d bytes (want %d)", len(got), len(v2))
 	}
 }
 
-// TestCache_InvalidateOnDelete verifies that a DeleteObject removes the
-// cached entry, so the cache entry count drops to zero and a subsequent
-// GET returns a 404 rather than stale cached data.
-func TestCache_InvalidateOnDelete(t *testing.T) {
+// TestCache_DeleteIsNeverServedFromCache verifies a GET after a DeleteObject
+// returns a 404 even though the deleted object's bytes are still cached,
+// because no location row names their storage path any more.
+func TestCache_DeleteIsNeverServedFromCache(t *testing.T) {
 	env := setupCacheEnv(t)
 	ctx := context.Background()
 
-	key := uniqueKey(t, "cache-invalidate-del")
+	key := uniqueKey(t, "cache-delete")
 	body := []byte("delete me after caching")
 
 	_, err := env.client.PutObject(ctx, &s3.PutObjectInput{
@@ -251,7 +252,6 @@ func TestCache_InvalidateOnDelete(t *testing.T) {
 		t.Fatal("expected 1 cache entry before delete")
 	}
 
-	// DELETE  -  should invalidate cache
 	_, err = env.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -260,11 +260,7 @@ func TestCache_InvalidateOnDelete(t *testing.T) {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	if env.cache.Stats().Entries != 0 {
-		t.Error("expected 0 cache entries after delete")
-	}
-
-	// GET should now return 404
+	// The entry outlives the delete; the GET must still 404
 	_, err = env.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),

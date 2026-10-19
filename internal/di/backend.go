@@ -361,7 +361,6 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 		Encryptor:          d.enc,
 		Codec:              codec,
 		Compression:        d.cfg.Compression,
-		ObjectCache:        resolveOptionalCache(i),
 		DEKCacheTTL:        dekCacheTTL,
 		IntegrityCfg:       d.integrityCfg,
 		EnforceMinPartSize: d.cfg.WritePath.Multipart.IsMinPartSizeEnforced(),
