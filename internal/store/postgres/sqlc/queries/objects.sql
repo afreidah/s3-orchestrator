@@ -52,7 +52,7 @@ LIMIT sqlc.arg(row_limit);
 -- ListObjectsByBackendKeyAsc returns rows for a backend in ascending
 -- storage_key order, starting strictly after the supplied cursor. Used by
 -- ReconcileBackend to drive a bounded-memory sorted-merge join against an S3
--- ListObjects walk. Pass '' as the cursor on the first call.
+-- ListObjects walk. Pass an empty cursor on the first call.
 --
 -- It walks storage_key rather than object_key because a backend lists the paths
 -- it holds, and a per-write copy's path is not its object key. Walking by

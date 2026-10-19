@@ -135,11 +135,15 @@ func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, inst
 // SETTLING
 // -------------------------------------------------------------------------
 
+// deleteClaimedCleanup removes one cleanup row while the claim the settler
+// read still holds it, for both a completed row and one moved to the DLQ.
+const deleteClaimedCleanup = `DELETE FROM cleanup_queue WHERE id = ? AND claimed_at = ? AND COALESCE(claimed_by, '') = ?`
+
 // claimArgs returns the arguments of the claim condition every settle write
-// ends with, `id = ? AND claimed_at = ? AND COALESCE(claimed_by, ”) = ?`, so
-// it acts on a row only while the claim the settler read still holds it. An
-// item with no claim matches no row, since every row a settle reaches was
-// claimed when it was read.
+// ends with, the same one deleteClaimedCleanup spells out, so it acts on a row
+// only while the claim the settler read still holds it. An item with no claim
+// matches no row, since every row a settle reaches was claimed when it was
+// read.
 func claimArgs(item *core.CleanupItem) []any {
 	if item.Claim == nil {
 		return []any{item.ID, "", ""}
@@ -158,9 +162,7 @@ func (s *Store) CompleteCleanupItems(ctx context.Context, items []core.CleanupIt
 	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
 		a := &sqliteTxAdapter{q: tx}
 		for i := range items {
-			done, err := a.execChanged(ctx, "complete cleanup item",
-				`DELETE FROM cleanup_queue WHERE id = ? AND claimed_at = ? AND COALESCE(claimed_by, '') = ?`,
-				claimArgs(&items[i])...)
+			done, err := a.execChanged(ctx, "complete cleanup item", deleteClaimedCleanup, claimArgs(&items[i])...)
 			if err != nil {
 				return err
 			}
@@ -223,7 +225,7 @@ func (s *Store) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, la
 		 FROM cleanup_queue
 		 WHERE id = ? AND claimed_at = ? AND COALESCE(claimed_by, '') = ?`,
 		append([]any{lastError}, match...),
-		`DELETE FROM cleanup_queue WHERE id = ? AND claimed_at = ? AND COALESCE(claimed_by, '') = ?`,
+		deleteClaimedCleanup,
 		match,
 	)
 	return n > 0, err
