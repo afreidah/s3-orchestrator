@@ -526,20 +526,6 @@ func (mr *MockMetadataStoreMockRecorder) DeletePending(ctx, intentID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePending", reflect.TypeOf((*MockMetadataStore)(nil).DeletePending), ctx, intentID)
 }
 
-// DeletePendingByBackend mocks base method.
-func (m *MockMetadataStore) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeletePendingByBackend", ctx, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeletePendingByBackend indicates an expected call of DeletePendingByBackend.
-func (mr *MockMetadataStoreMockRecorder) DeletePendingByBackend(ctx, backendName any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePendingByBackend", reflect.TypeOf((*MockMetadataStore)(nil).DeletePendingByBackend), ctx, backendName)
-}
-
 // DeleteUser mocks base method.
 func (m *MockMetadataStore) DeleteUser(ctx context.Context, id string) error {
 	m.ctrl.T.Helper()

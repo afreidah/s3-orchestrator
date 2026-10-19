@@ -205,36 +205,6 @@ func TestPending_GetStaleHonoursLimit(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// DeletePendingByBackend
-// -------------------------------------------------------------------------
-
-// TestPending_DeleteByBackend verifies a backend-scoped purge removes only
-// the matching backend's intents.
-func TestPending_DeleteByBackend(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	a := pendingFixture("a", "k-a")
-	a.BackendName = "backend-a"
-	b := pendingFixture("b", "k-b")
-	b.BackendName = "backend-b"
-	for _, p := range []core.PendingObject{a, b} {
-		if _, err := s.InsertPendingIfFits(ctx, &p, core.AcceptForWrite); err != nil {
-			t.Fatalf("InsertPending: %v", err)
-		}
-	}
-
-	if err := s.DeletePendingByBackend(ctx, "backend-a"); err != nil {
-		t.Fatalf("DeletePendingByBackend: %v", err)
-	}
-	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
-	if len(stale) != 1 || stale[0].BackendName != "backend-b" {
-		t.Errorf("after backend-a purge: %+v, want only backend-b", stale)
-	}
-}
-
-// -------------------------------------------------------------------------
 // PromotePending  -  three resolution branches
 // -------------------------------------------------------------------------
 

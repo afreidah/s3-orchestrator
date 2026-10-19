@@ -41,21 +41,23 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := s.queries.WithTx(tx)
-
-	if err := qtx.DeleteCleanupQueueByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("failed to delete cleanup queue: %w", err)
+	steps := []struct {
+		what string
+		run  func(context.Context, string) error
+	}{
+		{"cleanup queue", qtx.DeleteCleanupQueueByBackend},
+		{"cleanup DLQ", qtx.DeleteCleanupDLQByBackend},
+		{"pending objects", qtx.DeletePendingObjectsByBackend},
+		{"multipart uploads", qtx.DeleteMultipartUploadsByBackend},
+		{"object locations", qtx.DeleteObjectLocationsByBackend},
+		{"usage records", qtx.DeleteUsageByBackend},
+		{"pool usage records", qtx.DeletePoolUsageByBackend},
+		{"quota", qtx.DeleteQuota},
 	}
-	if err := qtx.DeleteMultipartUploadsByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("failed to delete multipart uploads: %w", err)
-	}
-	if err := qtx.DeleteObjectLocationsByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("failed to delete object locations: %w", err)
-	}
-	if err := qtx.DeleteUsageByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("failed to delete usage records: %w", err)
-	}
-	if err := qtx.DeleteQuota(ctx, backendName); err != nil {
-		return fmt.Errorf("failed to delete quota: %w", err)
+	for _, step := range steps {
+		if err := step.run(ctx, backendName); err != nil {
+			return fmt.Errorf("failed to delete %s: %w", step.what, err)
+		}
 	}
 
 	return tx.Commit(ctx)

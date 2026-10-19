@@ -444,10 +444,13 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		stmts := []string{
 			`DELETE FROM cleanup_queue WHERE backend_name = ?`,
+			`DELETE FROM cleanup_dlq WHERE backend_name = ?`,
+			`DELETE FROM pending_objects WHERE backend_name = ?`,
 			`DELETE FROM multipart_parts WHERE upload_id IN (SELECT upload_id FROM multipart_uploads WHERE backend_name = ?)`,
 			`DELETE FROM multipart_uploads WHERE backend_name = ?`,
 			`DELETE FROM object_locations WHERE backend_name = ?`,
 			`DELETE FROM backend_usage WHERE backend_name = ?`,
+			`DELETE FROM backend_request_usage WHERE backend_name = ?`,
 			`DELETE FROM backend_quotas WHERE backend_name = ?`,
 		}
 		for _, stmt := range stmts {

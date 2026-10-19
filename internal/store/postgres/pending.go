@@ -59,16 +59,6 @@ func (s *Store) PendingDepth(ctx context.Context) (int64, error) {
 	return depth, nil
 }
 
-// DeletePendingByBackend removes every intent for a backend. Called during
-// drain finalization and admin remove so abandoned intents do not block
-// the FK-cascade delete of the backend's row in backend_quotas.
-func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	if err := s.queries.DeletePendingObjectsByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("delete pending objects by backend: %w", err)
-	}
-	return nil
-}
-
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------

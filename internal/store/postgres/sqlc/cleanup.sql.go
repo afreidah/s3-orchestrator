@@ -170,6 +170,15 @@ func (q *Queries) CountPendingCleanups(ctx context.Context, maxAttempts int32) (
 	return count, err
 }
 
+const deleteCleanupDLQByBackend = `-- name: DeleteCleanupDLQByBackend :exec
+DELETE FROM cleanup_dlq WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteCleanupDLQByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteCleanupDLQByBackend, backendName)
+	return err
+}
+
 const deleteCleanupQueueByBackend = `-- name: DeleteCleanupQueueByBackend :exec
 DELETE FROM cleanup_queue WHERE backend_name = $1
 `

@@ -64,6 +64,10 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Removing a backend clears every table that references it ([#1738](https://github.com/afreidah/s3-orchestrator/issues/1738), v0.162.18)**
+
+`admin remove-backend` failed on a foreign key when the backend had request-pool usage, pending write intents or dead-lettered cleanups, because those rows were left behind when its `backend_quotas` row was deleted. Any backend that ever charged a request pool hit this. The removal now deletes those rows in the same transaction. No migration.
+
 **verify_on_read compares only complete downloads ([#1740](https://github.com/afreidah/s3-orchestrator/issues/1740), v0.162.17)**
 
 With `integrity.verify_on_read` enabled, a GET compared the hash of whatever it had streamed whenever the body was closed, including a download cut short by `backend_timeout` or by a client disconnecting. The prefix never matched, so a healthy copy was dropped and its bytes queued for deletion; with a replication factor of 1 the object was lost. The hash is now compared only after the whole object has been delivered. No migration.

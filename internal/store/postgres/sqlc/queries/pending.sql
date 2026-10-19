@@ -76,8 +76,6 @@ LIMIT @max_keys;
 SELECT COUNT(*)::bigint FROM pending_objects;
 
 -- name: DeletePendingObjectsByBackend :exec
--- Used during backend remove/drain finalization so abandoned intents do not
--- outlive their backend's row in backend_quotas (FK cascade safety).
 DELETE FROM pending_objects WHERE backend_name = $1;
 
 -- name: LockPendingForUpdate :one

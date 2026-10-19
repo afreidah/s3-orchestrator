@@ -18,8 +18,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // drainBackend registers a backend unique to the test and clears its drain
@@ -380,4 +383,43 @@ func TestPgBackendFlags_CordonAndDrainAreIndependent(t *testing.T) {
 	if d := pgDrainFor(t, s, backend); d.Flags != core.FlagDraining {
 		t.Errorf("after uncordoning: %s, want draining only", d.Flags)
 	}
+}
+
+// TestPgDeleteBackendData verifies that removing a backend clears its row from
+// every table that references backend_quotas and leaves other backends alone.
+func TestPgDeleteBackendData(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	removed, kept := uniqueKey(t, "removed"), uniqueKey(t, "kept")
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: removed, QuotaBytes: 1 << 30},
+		{Name: kept, QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	t.Cleanup(func() { _ = s.DeleteBackendData(context.Background(), kept) })
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT conrelid::regclass::text FROM pg_constraint
+		WHERE contype = 'f' AND confrelid = 'backend_quotas'::regclass`)
+	if err != nil {
+		t.Fatalf("read foreign keys: %v", err)
+	}
+	referencing, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read foreign keys: %v", err)
+	}
+
+	storetest.CheckBackendRemoval(t, storetest.BackendRemoval{
+		Referencing: referencing,
+		Exec: func(query, backend string) error {
+			_, err := s.pool.Exec(ctx, query, backend)
+			return err
+		},
+		Count: func(query, backend string) (n int64, err error) {
+			err = s.pool.QueryRow(ctx, query, backend).Scan(&n)
+			return n, err
+		},
+		Remove: func(backend string) error { return s.DeleteBackendData(ctx, backend) },
+	}, removed, kept)
 }

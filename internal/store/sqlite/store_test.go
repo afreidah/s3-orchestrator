@@ -13,6 +13,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"maps"
@@ -2692,24 +2693,37 @@ func TestWithAdvisoryLock_DeadlinePropagated(t *testing.T) {
 // BACKEND LIFECYCLE
 // -------------------------------------------------------------------------
 
-// TestDeleteBackendData verifies the delete backend data contract.
-// Asserts that DeleteBackendData:.
+// TestDeleteBackendData verifies that removing a backend clears its row from
+// every table that references backend_quotas and leaves other backends alone.
 func TestDeleteBackendData(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
-	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
-
-	if err := s.DeleteBackendData(ctx, "backend-a"); err != nil {
-		t.Fatalf("DeleteBackendData: %v", err)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+		WHERE m.type = 'table' AND f."table" = 'backend_quotas'`)
+	if err != nil {
+		t.Fatalf("read foreign keys: %v", err)
+	}
+	referencing, err := collectRows(rows, "foreign keys", func(r *sql.Rows) (string, error) {
+		var name string
+		err := r.Scan(&name)
+		return name, err
+	})
+	if err != nil {
+		t.Fatalf("read foreign keys: %v", err)
 	}
 
-	count, _, _ := s.BackendObjectStats(ctx, "backend-a")
-	if count != 0 {
-		t.Errorf("expected 0 objects after delete, got %d", count)
-	}
+	storetest.CheckBackendRemoval(t, storetest.BackendRemoval{
+		Referencing: referencing,
+		Exec: func(query, backend string) error {
+			_, err := s.db.ExecContext(ctx, query, backend)
+			return err
+		},
+		Count:  func(query, backend string) (int64, error) { return s.countRows(ctx, "rows", query, backend) },
+		Remove: func(backend string) error { return s.DeleteBackendData(ctx, backend) },
+	}, "backend-a", "backend-b")
 }
 
 // -------------------------------------------------------------------------

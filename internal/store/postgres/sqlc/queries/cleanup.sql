@@ -137,6 +137,9 @@ DELETE FROM cleanup_queue WHERE backend_name = $1;
 DELETE FROM cleanup_queue
 WHERE storage_key = $1 AND backend_name = $2;
 
+-- name: DeleteCleanupDLQByBackend :exec
+DELETE FROM cleanup_dlq WHERE backend_name = $1;
+
 -- name: CountCleanupDLQ :one
 -- Returns the current depth of the cleanup_dlq table for the dashboard
 -- and the cleanup_dlq_depth gauge.

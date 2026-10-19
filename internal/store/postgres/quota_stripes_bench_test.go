@@ -53,12 +53,18 @@ const benchObjectSize = 1 << 10
 // seeded: two with room to spare and one whose ceiling is a single byte, so a
 // claim against it always declines.
 //
-// Leftover intents from an earlier run are cleared, because a pending row
+// Rows from an earlier run are cleared first, because a leftover pending row
 // holds its bytes against the headroom the claim benchmark measures.
 func benchQuotaStore(b *testing.B) *Store {
 	b.Helper()
 	s := adapterPgStore(b)
 	ctx := b.Context()
+
+	for _, backend := range []string{benchChargeBackend, benchClaimBackend, benchFullBackend} {
+		if err := s.DeleteBackendData(ctx, backend); err != nil {
+			b.Fatalf("DeleteBackendData(%s): %v", backend, err)
+		}
+	}
 
 	err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
 		{Name: benchChargeBackend, QuotaBytes: 1 << 50},
@@ -67,12 +73,6 @@ func benchQuotaStore(b *testing.B) *Store {
 	})
 	if err != nil {
 		b.Fatalf("SyncQuotaLimits: %v", err)
-	}
-
-	for _, backend := range []string{benchClaimBackend, benchFullBackend} {
-		if err := s.DeletePendingByBackend(ctx, backend); err != nil {
-			b.Fatalf("DeletePendingByBackend(%s): %v", backend, err)
-		}
 	}
 	return s
 }

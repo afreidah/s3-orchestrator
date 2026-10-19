@@ -87,8 +87,6 @@ const deletePendingObjectsByBackend = `-- name: DeletePendingObjectsByBackend :e
 DELETE FROM pending_objects WHERE backend_name = $1
 `
 
-// Used during backend remove/drain finalization so abandoned intents do not
-// outlive their backend's row in backend_quotas (FK cascade safety).
 func (q *Queries) DeletePendingObjectsByBackend(ctx context.Context, backendName string) error {
 	_, err := q.db.Exec(ctx, deletePendingObjectsByBackend, backendName)
 	return err

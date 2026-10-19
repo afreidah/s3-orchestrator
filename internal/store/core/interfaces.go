@@ -184,7 +184,6 @@ type PendingStore interface {
 	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error)
 	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, QuotaDeltas, error)
 	PendingDepth(ctx context.Context) (int64, error)
-	DeletePendingByBackend(ctx context.Context, backendName string) error
 }
 
 // IntegrityStore defines content hash verification operations. The scrub

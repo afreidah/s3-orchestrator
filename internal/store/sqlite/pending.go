@@ -138,15 +138,3 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 func (s *Store) PendingDepth(ctx context.Context) (int64, error) {
 	return s.countRows(ctx, "pending objects", `SELECT COUNT(*) FROM pending_objects`)
 }
-
-// DeletePendingByBackend removes every intent for a backend. Used during
-// backend drain finalization so abandoned intents do not block the
-// FK-protected delete of the backend's row in backend_quotas.
-func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE backend_name = ?`, backendName,
-	); err != nil {
-		return fmt.Errorf("delete pending objects by backend: %w", err)
-	}
-	return nil
-}
