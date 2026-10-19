@@ -64,12 +64,12 @@ func captureCompleted(store *storetest.MockMetadataStore) *[]int64 {
 		mu  sync.Mutex
 		ids []int64
 	)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64) error {
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, items []core.CleanupItem) ([]int64, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			ids = append(ids, id)
-			return nil
+			ids = append(ids, cleanupIDs(items)...)
+			return cleanupIDs(items), nil
 		}).AnyTimes()
 	return &ids
 }

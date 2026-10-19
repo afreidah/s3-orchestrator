@@ -43,18 +43,20 @@ type Deleter interface {
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 }
 
-// Store is the cleanup queue surface the settler writes outcomes to.
+// Store is the cleanup queue surface the settler writes outcomes to. Each write
+// matches the claim the row was read under and reports a lost claim, so an
+// instance whose claim was taken over cannot settle the row again.
 type Store interface {
-	CompleteCleanupItem(ctx context.Context, id int64) error
-	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
-	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
+	CompleteCleanupItems(ctx context.Context, items []core.CleanupItem) ([]int64, error)
+	RetryCleanupItem(ctx context.Context, item *core.CleanupItem, backoff time.Duration, lastError string) (bool, error)
+	MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, lastError string) (bool, error)
 }
 
-// Deps groups the settler's constructor parameters. Concurrency bounds both the
-// backends deleted from at once and the rows settled at once. Admit, when set,
-// wraps each backend's delete so a background caller can take an admission
-// slot; a backend it declines is left unsettled for a later attempt. Name
-// labels the cycle log line; an empty Name settles without one.
+// Deps groups the settler's constructor parameters. Concurrency bounds the
+// backends deleted from at once. Admit, when set, wraps each backend's delete
+// so a background caller can take an admission slot; a backend it declines is
+// left unsettled for a later attempt. Name labels the cycle log line; an empty
+// Name settles without one.
 type Deps struct {
 	Deleter     Deleter
 	Store       Store
@@ -91,22 +93,15 @@ func New(d Deps) *Settler {
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// maxAttempts is the retry ceiling. The 1-minute starting backoff doubled 10
-// times yields ~17 hours of total retry runway, which is enough to bridge the
-// longest realistic backend outages. Beyond that the row graduates to
-// cleanup_dlq for operator action.
-const maxAttempts = 10
-
-// logMsgCompleteFailed is the error log message emitted when retiring a row
-// fails, shared by every path that retires one.
-const logMsgCompleteFailed = "failed to complete cleanup item"
-
 // The statuses a settled row reports, which label CleanupQueueProcessedTotal.
+// statusClaimLost is a row another instance took over before this one could
+// settle it; its new holder settles it.
 const (
 	statusSuccess   = "success"
 	statusAbsent    = "success_absent"
 	statusRetry     = "retry"
 	statusExhausted = "exhausted"
+	statusClaimLost = "claim_lost"
 )
 
 // -------------------------------------------------------------------------
@@ -130,28 +125,41 @@ func Backoff(attempts int32) time.Duration {
 // key: the row names the bytes one write put on the backend, and a later write
 // of the same object has its own bytes this must not reach.
 //
-// The outcomes are written on a context the caller's cancellation does not
-// reach, so a client that hangs up after its transaction committed still
-// leaves each row settled or retried rather than claimed until the grace
-// period passes.
+// Every row whose bytes are gone is retired in one store call, so a settle
+// costs one commit however many rows it retires; retries and dead-letter moves
+// are written per row. The outcomes are written on a context the caller's
+// cancellation does not reach, so a client that hangs up after its transaction
+// committed still leaves each row settled or retried rather than claimed until
+// the grace period passes.
 func (s *Settler) Settle(ctx context.Context, items []core.CleanupItem) batch.Summary {
 	if len(items) == 0 {
 		return batch.Summary{}
 	}
+	start := time.Now()
 	deleted := s.deleteAll(ctx, items)
-	settleCtx := context.WithoutCancel(ctx)
-	var runLog *slog.Logger
-	if s.name != "" {
-		runLog = s.log
-	}
-	runner := batch.Runner[core.CleanupItem]{Name: s.name, Log: runLog, Concurrency: s.concurrency}
-	return runner.Run(settleCtx, items, func(ctx context.Context, item core.CleanupItem) batch.ItemResult {
-		d, attempted := deleted[item.ID]
-		if !attempted {
-			return batch.ItemResult{} // admission declined its backend; the row waits for a later attempt
+	ctx = context.WithoutCancel(ctx)
+
+	// A row whose backend admission declined keeps the zero result, a skip,
+	// and waits for a later attempt.
+	results := make([]batch.ItemResult, len(items))
+	var gone []int
+	for i := range items {
+		d, attempted := deleted[items[i].ID]
+		switch {
+		case !attempted:
+		case d.gone():
+			gone = append(gone, i)
+		default:
+			results[i] = s.fail(ctx, &items[i], d.err)
 		}
-		return s.settle(ctx, &item, d)
-	})
+	}
+	s.retire(ctx, items, gone, deleted, results)
+
+	sum := batch.Tally(results, start)
+	if s.name != "" {
+		batch.LogCycle(ctx, s.log, s.name, sum)
+	}
+	return sum
 }
 
 // -------------------------------------------------------------------------
@@ -163,6 +171,26 @@ func (s *Settler) Settle(ctx context.Context, items []core.CleanupItem) batch.Su
 type deletion struct {
 	err            error
 	unknownBackend bool
+}
+
+// gone reports whether the row's bytes need no further delete: the delete
+// landed, the backend already agrees they are absent, or the backend is no
+// longer registered and so cannot hold an orphan the fleet knows about.
+func (d deletion) gone() bool {
+	return d.unknownBackend || d.err == nil || backend.IsNotFound(d.err)
+}
+
+// outcome is how a gone row is reported once retired: its status and the
+// audit event that records it, none for a backend no longer registered.
+func (d deletion) outcome() (status, auditEvent string) {
+	switch {
+	case d.unknownBackend:
+		return statusSuccess, ""
+	case d.err == nil:
+		return statusSuccess, "cleanup_queue.processed"
+	default:
+		return statusAbsent, "cleanup_queue.already_absent"
+	}
 }
 
 // deleteAll deletes every row's bytes, one batched delete per backend, each
@@ -209,71 +237,92 @@ func (s *Settler) deleteAll(ctx context.Context, items []core.CleanupItem) map[i
 	return deleted
 }
 
-// settle gives one row its outcome from deleting its bytes: retired, retried,
-// or graduated to the DLQ. A 404 means the backend already agrees the bytes
-// are gone, and a backend no longer registered cannot hold an orphan the fleet
-// knows about, so both retire the row.
-func (s *Settler) settle(ctx context.Context, item *core.CleanupItem, d deletion) batch.ItemResult {
-	switch {
-	case d.unknownBackend:
-		s.log.WarnContext(ctx, "backend not found, removing item",
-			"backend", item.BackendName, "key", item.ObjectKey)
-		s.complete(ctx, item, statusSuccess, "")
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: statusSuccess}
-	case d.err == nil:
-		s.complete(ctx, item, statusSuccess, "cleanup_queue.processed")
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: statusSuccess}
-	case backend.IsNotFound(d.err):
-		s.complete(ctx, item, statusAbsent, "cleanup_queue.already_absent")
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: statusAbsent}
-	}
-
-	attempts := item.Attempts + 1
-	if attempts >= maxAttempts {
-		s.exhaust(ctx, item, attempts, d.err)
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusExhausted}
-	}
-	s.retry(ctx, item, d.err)
-	return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusRetry}
-}
-
-// complete retires a row whose bytes are gone, counts it under status, and
-// records auditEvent when one is named.
-func (s *Settler) complete(ctx context.Context, item *core.CleanupItem, status, auditEvent string) {
-	if err := s.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		s.log.ErrorContext(ctx, logMsgCompleteFailed, slog.Int64("cleanup_id", item.ID), "error", err)
-	}
-	telemetry.CleanupQueueProcessedTotal.WithLabelValues(status).Inc()
-	if auditEvent == "" {
+// retire retires every gone row in one store call and reports each: retired
+// rows under their deletion's status and audit event, rows whose claim was
+// taken over as lost. A failed call leaves the rows claimed, so the cleanup
+// worker takes them over after the grace period and finds the bytes absent.
+func (s *Settler) retire(ctx context.Context, items []core.CleanupItem, gone []int, deleted map[int64]deletion, results []batch.ItemResult) {
+	if len(gone) == 0 {
 		return
 	}
-	audit.Log(ctx, auditEvent,
-		slog.String("key", item.ObjectKey),
-		slog.String("backend", item.BackendName),
-		slog.String("reason", item.Reason),
-		slog.Int("attempt", int(item.Attempts+1)),
-	)
+	retiring := make([]core.CleanupItem, len(gone))
+	for j, i := range gone {
+		retiring[j] = items[i]
+	}
+	retired, err := s.store.CompleteCleanupItems(ctx, retiring)
+	if err != nil {
+		s.log.ErrorContext(ctx, "failed to complete cleanup items", slog.Int("rows", len(retiring)), "error", err)
+		return
+	}
+	for _, i := range gone {
+		item := &items[i]
+		if !slices.Contains(retired, item.ID) {
+			results[i] = s.lost(ctx, item)
+			continue
+		}
+		d := deleted[item.ID]
+		if d.unknownBackend {
+			s.log.WarnContext(ctx, "backend not found, removing item",
+				"backend", item.BackendName, "key", item.ObjectKey)
+		}
+		status, auditEvent := d.outcome()
+		results[i] = s.retired(ctx, item, status, auditEvent)
+	}
+}
+
+// retired counts a row retired under status and records auditEvent when one
+// is named.
+func (s *Settler) retired(ctx context.Context, item *core.CleanupItem, status, auditEvent string) batch.ItemResult {
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues(status).Inc()
+	if auditEvent != "" {
+		audit.Log(ctx, auditEvent,
+			slog.String("key", item.ObjectKey),
+			slog.String("backend", item.BackendName),
+			slog.String("reason", item.Reason),
+			slog.Int("attempt", int(item.Attempts+1)),
+		)
+	}
+	return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: status}
+}
+
+// fail settles a row whose delete failed: retried while its budget lasts,
+// graduated to the DLQ once it is spent.
+func (s *Settler) fail(ctx context.Context, item *core.CleanupItem, delErr error) batch.ItemResult {
+	attempts := item.Attempts + 1
+	if attempts >= core.MaxCleanupAttempts {
+		return s.exhaust(ctx, item, attempts, delErr)
+	}
+	return s.retry(ctx, item, delErr)
+}
+
+// lost reports a row whose claim another instance took over before this one
+// settled it. The new holder settles it, so this one leaves it alone.
+func (s *Settler) lost(ctx context.Context, item *core.CleanupItem) batch.ItemResult {
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusClaimLost).Inc()
+	s.log.InfoContext(ctx, "cleanup row claimed by another instance, leaving it",
+		slog.Int64("cleanup_id", item.ID), slog.String("backend", item.BackendName))
+	return batch.ItemResult{Outcome: batch.ItemSkipped, Status: statusClaimLost}
 }
 
 // exhaust moves a row whose retries are spent into the dead-letter queue, with
 // an audit entry and a CleanupExhausted event so operators can investigate.
-func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts int32, delErr error) {
-	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusExhausted).Inc()
+func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts int32, delErr error) batch.ItemResult {
 	s.log.ErrorContext(ctx, "max attempts reached, moving to DLQ",
 		slog.String("key", item.ObjectKey),
 		slog.String("backend", item.BackendName),
 		slog.Int("attempts", int(attempts)),
 		slog.Int64("size_bytes", item.SizeBytes),
 		"error", delErr)
-	moved, err := s.store.MoveCleanupToDLQ(ctx, item.ID, delErr.Error())
+	moved, err := s.store.MoveCleanupToDLQ(ctx, item, delErr.Error())
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to move cleanup item to DLQ",
 			slog.Int64("cleanup_id", item.ID), "error", err)
-		return
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusExhausted}
 	}
 	if !moved {
-		return
+		return s.lost(ctx, item)
 	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusExhausted).Inc()
 	telemetry.CleanupDLQEnqueuedTotal.WithLabelValues(item.BackendName).Inc()
 	audit.Log(ctx, "cleanup_queue.exhausted_to_dlq",
 		slog.String("key", item.ObjectKey),
@@ -291,13 +340,20 @@ func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts 
 		"size_bytes": item.SizeBytes,
 		"last_error": delErr.Error(),
 	})
+	return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusExhausted}
 }
 
 // retry stamps the next retry deadline on a row still within its budget and
 // releases its claim.
-func (s *Settler) retry(ctx context.Context, item *core.CleanupItem, delErr error) {
-	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusRetry).Inc()
-	if err := s.store.RetryCleanupItem(ctx, item.ID, Backoff(item.Attempts), delErr.Error()); err != nil {
+func (s *Settler) retry(ctx context.Context, item *core.CleanupItem, delErr error) batch.ItemResult {
+	retried, err := s.store.RetryCleanupItem(ctx, item, Backoff(item.Attempts), delErr.Error())
+	if err != nil {
 		s.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
+		return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusRetry}
 	}
+	if !retried {
+		return s.lost(ctx, item)
+	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues(statusRetry).Inc()
+	return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusRetry}
 }

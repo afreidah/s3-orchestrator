@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Cleanup rows settle only under their claim ([#1716](https://github.com/afreidah/s3-orchestrator/issues/1716), v0.162.11)**
+
+Retiring, retrying and dead-lettering a `cleanup_queue` row now match the claim the row was read under, so an instance whose claim aged out and was taken over by another can no longer settle the row a second time, count an attempt against it, or dead-letter it early. The rows a settle retires are retired in one statement, so a request that displaced several copies commits once for all of them rather than once per row. No migration.
+
+**Operator action items after upgrade:**
+
+- **New status `claim_lost` on `s3o_cleanup_queue_processed_total`.** It counts rows another instance took over before this one settled them; the new holder settles them. A sustained rate means settles are taking longer than `cleanup_queue.claim_grace_period`.
+
 **Cleanup queued in the transaction that removes a copy ([#1715](https://github.com/afreidah/s3-orchestrator/issues/1715), v0.162.10)**
 
 Every transaction that stops recording bytes now inserts their `cleanup_queue` rows before it commits, claimed by the instance that ran it. That covers deletes, overwrites, moves, integrity failures, over-replication removal, multipart abort and completion, and discarded intents. After the commit the same instance deletes the bytes and settles each row: retired on success or a 404, retried with backoff on failure, dead-lettered after 10 attempts. Deletes used to run first and queue a row only when they failed, so a database error at that point left bytes on a backend with no row. A process that dies before settling leaves its rows claimed, and the cleanup worker reclaims them after `cleanup_queue.claim_grace_period`. Every write, not only a PUT, now claims its target with a pending intent before its bytes land.

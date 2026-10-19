@@ -134,7 +134,7 @@ func TestDropCorruptedLocation_RemovesRowAndCachedLocation(t *testing.T) {
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), loc, 0, reasonIntegrityFailed).
 		Return(integrityRows(key, beName), nil).Times(1)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil).Times(1)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Len(1)).Return([]int64{1}, nil).Times(1)
 	storetest.Permissive(store)
 
 	be := seededBackend(t, key)

@@ -33,8 +33,8 @@ func dlqAllPg(t *testing.T, s *Store, lastError string) {
 		t.Fatalf("GetPendingCleanups: %v", err)
 	}
 	for i := range pending {
-		if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, lastError); err != nil {
-			t.Fatalf("MoveCleanupToDLQ: %v", err)
+		if moved, err := s.MoveCleanupToDLQ(ctx, &pending[i], lastError); err != nil || !moved {
+			t.Fatalf("MoveCleanupToDLQ(%d) = %v, %v; want true", pending[i].ID, moved, err)
 		}
 	}
 }

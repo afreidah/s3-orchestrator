@@ -66,20 +66,21 @@ func stubPlaceCopy(pt *placeCopyTracker) func(context.Context, *core.Placement) 
 // replicaCleanupID is the id of the cleanup row a refused replica queues.
 const replicaCleanupID = 9
 
-// replicatorCompleteTracker captures CompleteCleanupItem calls during a
-// replicator test.
+// replicatorCompleteTracker captures the rows CompleteCleanupItems retired
+// during a replicator test.
 type replicatorCompleteTracker struct {
 	mu  sync.Mutex
 	ids []int64
 }
 
-// stubReplicatorComplete returns a DoAndReturn for CompleteCleanupItem.
-func stubReplicatorComplete(ct *replicatorCompleteTracker) func(context.Context, int64) error {
-	return func(_ context.Context, id int64) error {
+// stubReplicatorComplete returns a DoAndReturn for CompleteCleanupItems that
+// retires every row it is handed.
+func stubReplicatorComplete(ct *replicatorCompleteTracker) func(context.Context, []core.CleanupItem) ([]int64, error) {
+	return func(_ context.Context, items []core.CleanupItem) ([]int64, error) {
 		ct.mu.Lock()
 		defer ct.mu.Unlock()
-		ct.ids = append(ct.ids, id)
-		return nil
+		ct.ids = append(ct.ids, cleanupIDs(items)...)
+		return cleanupIDs(items), nil
 	}
 }
 
@@ -259,7 +260,7 @@ func TestReplicate_RefusedReplicaIsSettled(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	replicateSuccessStubs(store,
 		[]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, pt)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubReplicatorComplete(ct)).AnyTimes()
 	storetest.Permissive(store)
 

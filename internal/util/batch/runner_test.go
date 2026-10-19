@@ -3,16 +3,21 @@
 //
 // Author: Alex Freidah
 //
-// Covers tallying sequentially and concurrently, and a cancelled context
-// dispatching nothing while Planned still reflects the input.
+// Covers tallying sequentially and concurrently, a cancelled context
+// dispatching nothing while Planned still reflects the input, Tally over
+// gathered results, and the cycle log line.
 // -------------------------------------------------------------------------------
 
 package batch
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestRunner_Run_Tallies verifies sequential tallying of mixed outcomes.
@@ -74,5 +79,76 @@ func TestRunner_Run_CancelledCtx(t *testing.T) {
 	}
 	if sum.Planned != 3 {
 		t.Errorf("Planned = %d, want 3 (it reflects the input, not what ran)", sum.Planned)
+	}
+}
+
+// TestTally_CountsEachOutcome verifies Tally folds gathered results into the
+// same counts a Runner reports and times them from start.
+func TestTally_CountsEachOutcome(t *testing.T) {
+	t.Parallel()
+	start := time.Now().Add(-time.Second)
+	sum := Tally([]ItemResult{
+		{Outcome: ItemSucceeded},
+		{Outcome: ItemFailed},
+		{Outcome: ItemFailed},
+		{},
+	}, start)
+	want := Summary{Planned: 4, Attempted: 3, Succeeded: 1, Failed: 2, Skipped: 1}
+	got := sum
+	got.Duration = 0
+	if got != want {
+		t.Errorf("summary = %+v, want %+v", got, want)
+	}
+	if sum.Duration < time.Second {
+		t.Errorf("Duration = %v, want it measured from start", sum.Duration)
+	}
+}
+
+// TestTally_Empty verifies no results tally to an empty summary.
+// Only the duration is set.
+func TestTally_Empty(t *testing.T) {
+	t.Parallel()
+	sum := Tally(nil, time.Now())
+	if sum.Planned != 0 || sum.Attempted != 0 || sum.Skipped != 0 {
+		t.Errorf("summary = %+v, want nothing counted", sum)
+	}
+}
+
+// TestLogCycle_WritesOneLine verifies LogCycle emits the named cycle line with
+// the summary's counts and outcome.
+func TestLogCycle_WritesOneLine(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	LogCycle(context.Background(), log, "sweep", Summary{Planned: 2, Attempted: 2, Succeeded: 1, Failed: 1})
+	out := buf.String()
+	for _, want := range []string{`msg="sweep cycle complete"`, "planned=2", "succeeded=1", "failed=1", "skipped=0", "outcome=" + OutcomePartial} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q missing %q", out, want)
+		}
+	}
+	if strings.Count(out, "\n") != 1 {
+		t.Errorf("log %q, want exactly one line", out)
+	}
+}
+
+// TestLogCycle_NilLogger verifies a nil logger emits nothing and does not
+// panic.
+func TestLogCycle_NilLogger(t *testing.T) {
+	t.Parallel()
+	LogCycle(context.Background(), nil, "sweep", Summary{Planned: 1})
+}
+
+// TestRunner_Run_LogsCycle verifies a Runner with a logger reports its cycle
+// through LogCycle.
+func TestRunner_Run_LogsCycle(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewTextHandler(&buf, nil)), Concurrency: 1}
+	runner.Run(context.Background(), []int{1}, func(context.Context, int) ItemResult {
+		return ItemResult{Outcome: ItemSucceeded}
+	})
+	if !strings.Contains(buf.String(), `msg="test cycle complete"`) {
+		t.Errorf("log %q, want the cycle line", buf.String())
 	}
 }

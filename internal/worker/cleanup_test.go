@@ -139,6 +139,7 @@ func claimingStore(t *testing.T, next func(limit int) []core.CleanupItem) (*stor
 			claims.Add(1)
 			return withCleanupPaths(next(limit)), nil
 		}).AnyTimes()
+	settlesCleanups(store)
 	storetest.Permissive(store)
 	return store, &claims
 }
@@ -246,8 +247,11 @@ func TestProcessCleanupQueue_BatchesRowsPerBackend(t *testing.T) {
 	if sum.Succeeded != 1 || sum.Failed != 1 {
 		t.Errorf("succeeded=%d failed=%d, want 1/1", sum.Succeeded, sum.Failed)
 	}
-	if len(ms.completedIDs) != 1 || ms.completedIDs[0] != 1 {
-		t.Errorf("completed = %v, want only row 1", ms.completedIDs)
+	if len(ms.completedItems) != 1 || ms.completedItems[0].ID != 1 {
+		t.Fatalf("completed = %+v, want only row 1", ms.completedItems)
+	}
+	if c := ms.completedItems[0].Claim; c == nil || c.By != "test-instance" {
+		t.Errorf("completed row claim = %+v, want the worker's claim", c)
 	}
 }
 

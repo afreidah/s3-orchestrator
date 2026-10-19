@@ -188,8 +188,8 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// cleanupQueueItems maps the store rows onto the shared wire type. The claim
-// pointers flatten to omitted fields so an unclaimed row does not emit nulls.
+// cleanupQueueItems maps the store rows onto the shared wire type. An unclaimed
+// row leaves the claim fields out, so it does not emit nulls.
 func cleanupQueueItems(items []core.CleanupItem) []adminapi.CleanupQueueItem {
 	out := make([]adminapi.CleanupQueueItem, 0, len(items))
 	for i := range items {
@@ -200,10 +200,10 @@ func cleanupQueueItems(items []core.CleanupItem) []adminapi.CleanupQueueItem {
 			Reason:    items[i].Reason,
 			SizeBytes: items[i].SizeBytes,
 			Attempts:  items[i].Attempts,
-			ClaimedAt: items[i].ClaimedAt,
 		}
-		if items[i].ClaimedBy != nil {
-			item.ClaimedBy = *items[i].ClaimedBy
+		if c := items[i].Claim; c != nil {
+			at := c.At
+			item.ClaimedAt, item.ClaimedBy = &at, c.By
 		}
 		out = append(out, item)
 	}

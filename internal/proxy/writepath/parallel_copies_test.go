@@ -230,12 +230,9 @@ func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		Return(core.CompanionCopyUntrusted,
-			[]core.CleanupItem{{
-				ID: 7, BackendName: "b2", ObjectKey: "k", StorageKey: "k!loser",
-				SizeBytes: 4096, Reason: core.CleanupReasonCompanionUntrusted,
-			}},
+			[]core.CleanupItem{cleanupRow(7, "b2", "k!loser", core.CleanupReasonCompanionUntrusted, 4096)},
 			nil, nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(7)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(7)).DoAndReturn(retireAll)
 
 	be := backendtest.NewInMemory()
 	for _, path := range []string{"k!loser", "k!winner"} {

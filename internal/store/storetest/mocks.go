@@ -176,18 +176,19 @@ func (mr *MockMetadataStoreMockRecorder) CommitCompanionCopy(ctx, p any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitCompanionCopy", reflect.TypeOf((*MockMetadataStore)(nil).CommitCompanionCopy), ctx, p)
 }
 
-// CompleteCleanupItem mocks base method.
-func (m *MockMetadataStore) CompleteCleanupItem(ctx context.Context, id int64) error {
+// CompleteCleanupItems mocks base method.
+func (m *MockMetadataStore) CompleteCleanupItems(ctx context.Context, items []core.CleanupItem) ([]int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CompleteCleanupItem", ctx, id)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "CompleteCleanupItems", ctx, items)
+	ret0, _ := ret[0].([]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// CompleteCleanupItem indicates an expected call of CompleteCleanupItem.
-func (mr *MockMetadataStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomock.Call {
+// CompleteCleanupItems indicates an expected call of CompleteCleanupItems.
+func (mr *MockMetadataStoreMockRecorder) CompleteCleanupItems(ctx, items any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).CompleteCleanupItem), ctx, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItems", reflect.TypeOf((*MockMetadataStore)(nil).CompleteCleanupItems), ctx, items)
 }
 
 // CompleteDrain mocks base method.
@@ -1151,18 +1152,18 @@ func (mr *MockMetadataStoreMockRecorder) MarkDrainFailed(ctx, backendName, reaso
 }
 
 // MoveCleanupToDLQ mocks base method.
-func (m *MockMetadataStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
+func (m *MockMetadataStore) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveCleanupToDLQ", ctx, id, lastError)
+	ret := m.ctrl.Call(m, "MoveCleanupToDLQ", ctx, item, lastError)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MoveCleanupToDLQ indicates an expected call of MoveCleanupToDLQ.
-func (mr *MockMetadataStoreMockRecorder) MoveCleanupToDLQ(ctx, id, lastError any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) MoveCleanupToDLQ(ctx, item, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockMetadataStore)(nil).MoveCleanupToDLQ), ctx, id, lastError)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockMetadataStore)(nil).MoveCleanupToDLQ), ctx, item, lastError)
 }
 
 // NotificationQueueDepth mocks base method.
@@ -1332,17 +1333,18 @@ func (mr *MockMetadataStoreMockRecorder) RequeueCleanupDLQ(ctx, backend any) *go
 }
 
 // RetryCleanupItem mocks base method.
-func (m *MockMetadataStore) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
+func (m *MockMetadataStore) RetryCleanupItem(ctx context.Context, item *core.CleanupItem, backoff time.Duration, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RetryCleanupItem", ctx, id, backoff, lastError)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "RetryCleanupItem", ctx, item, backoff, lastError)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RetryCleanupItem indicates an expected call of RetryCleanupItem.
-func (mr *MockMetadataStoreMockRecorder) RetryCleanupItem(ctx, id, backoff, lastError any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RetryCleanupItem(ctx, item, backoff, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).RetryCleanupItem), ctx, id, backoff, lastError)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).RetryCleanupItem), ctx, item, backoff, lastError)
 }
 
 // RetryNotification mocks base method.

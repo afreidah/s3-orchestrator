@@ -96,15 +96,11 @@ type ObjectsTxAdapter interface {
 // -------------------------------------------------------------------------
 
 // CleanupTxAdapter exposes the transactional operations on the cleanup_queue
-// table that core orchestration needs; single-statement operations live on
+// table that core orchestration needs; the settle operations live on
 // CleanupStore. InsertCleanup queues a row claimed by this instance and
-// returns its id. InsertCleanupDLQ keeps the queue row's id and created_at so
-// an operator can tell how long the cleanup was outstanding.
+// returns it, claim included.
 type CleanupTxAdapter interface {
-	InsertCleanup(ctx context.Context, c *CleanupRequest) (int64, error)
-	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
-	InsertCleanupDLQ(ctx context.Context, row *CleanupQueueRow) error // pointer: the row payload is 112 bytes
-	DeleteCleanupItem(ctx context.Context, id int64) error
+	InsertCleanup(ctx context.Context, c *CleanupRequest) (CleanupItem, error)
 }
 
 // -------------------------------------------------------------------------

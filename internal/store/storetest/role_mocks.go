@@ -422,18 +422,19 @@ func (mr *MockCleanupStoreMockRecorder) CleanupQueueDepth(ctx any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockCleanupStore)(nil).CleanupQueueDepth), ctx)
 }
 
-// CompleteCleanupItem mocks base method.
-func (m *MockCleanupStore) CompleteCleanupItem(ctx context.Context, id int64) error {
+// CompleteCleanupItems mocks base method.
+func (m *MockCleanupStore) CompleteCleanupItems(ctx context.Context, items []core.CleanupItem) ([]int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CompleteCleanupItem", ctx, id)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "CompleteCleanupItems", ctx, items)
+	ret0, _ := ret[0].([]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// CompleteCleanupItem indicates an expected call of CompleteCleanupItem.
-func (mr *MockCleanupStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomock.Call {
+// CompleteCleanupItems indicates an expected call of CompleteCleanupItems.
+func (mr *MockCleanupStoreMockRecorder) CompleteCleanupItems(ctx, items any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockCleanupStore)(nil).CompleteCleanupItem), ctx, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItems", reflect.TypeOf((*MockCleanupStore)(nil).CompleteCleanupItems), ctx, items)
 }
 
 // GetPendingCleanups mocks base method.
@@ -467,18 +468,18 @@ func (mr *MockCleanupStoreMockRecorder) ListCleanupDLQ(ctx, backend, limit any) 
 }
 
 // MoveCleanupToDLQ mocks base method.
-func (m *MockCleanupStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
+func (m *MockCleanupStore) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveCleanupToDLQ", ctx, id, lastError)
+	ret := m.ctrl.Call(m, "MoveCleanupToDLQ", ctx, item, lastError)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MoveCleanupToDLQ indicates an expected call of MoveCleanupToDLQ.
-func (mr *MockCleanupStoreMockRecorder) MoveCleanupToDLQ(ctx, id, lastError any) *gomock.Call {
+func (mr *MockCleanupStoreMockRecorder) MoveCleanupToDLQ(ctx, item, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockCleanupStore)(nil).MoveCleanupToDLQ), ctx, id, lastError)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveCleanupToDLQ", reflect.TypeOf((*MockCleanupStore)(nil).MoveCleanupToDLQ), ctx, item, lastError)
 }
 
 // RequeueCleanupDLQ mocks base method.
@@ -497,17 +498,18 @@ func (mr *MockCleanupStoreMockRecorder) RequeueCleanupDLQ(ctx, backend any) *gom
 }
 
 // RetryCleanupItem mocks base method.
-func (m *MockCleanupStore) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
+func (m *MockCleanupStore) RetryCleanupItem(ctx context.Context, item *core.CleanupItem, backoff time.Duration, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RetryCleanupItem", ctx, id, backoff, lastError)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "RetryCleanupItem", ctx, item, backoff, lastError)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RetryCleanupItem indicates an expected call of RetryCleanupItem.
-func (mr *MockCleanupStoreMockRecorder) RetryCleanupItem(ctx, id, backoff, lastError any) *gomock.Call {
+func (mr *MockCleanupStoreMockRecorder) RetryCleanupItem(ctx, item, backoff, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryCleanupItem", reflect.TypeOf((*MockCleanupStore)(nil).RetryCleanupItem), ctx, id, backoff, lastError)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryCleanupItem", reflect.TypeOf((*MockCleanupStore)(nil).RetryCleanupItem), ctx, item, backoff, lastError)
 }
 
 // SweepStaleCleanupQueueRows mocks base method.

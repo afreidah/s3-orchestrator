@@ -1235,8 +1235,8 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestStoreInt_CleanupQueueLifecycle covers a queued row through
-// GetPendingCleanups, RetryCleanupItem, CompleteCleanupItem and
-// CleanupQueueDepth.
+// GetPendingCleanups, RetryCleanupItem, a fresh claim, CompleteCleanupItems
+// and CleanupQueueDepth.
 func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -1268,11 +1268,19 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 		t.Fatalf("cleanup row for %s not found", key)
 	}
 
-	if err := s.RetryCleanupItem(ctx, item.ID, time.Second, "transient"); err != nil {
-		t.Fatalf("RetryCleanupItem: %v", err)
+	if ok, err := s.RetryCleanupItem(ctx, &item, -time.Second, "transient"); err != nil || !ok {
+		t.Fatalf("RetryCleanupItem = %v, %v; want true", ok, err)
 	}
-	if err := s.CompleteCleanupItem(ctx, item.ID); err != nil {
-		t.Fatalf("CompleteCleanupItem: %v", err)
+	claimed := findByID(mustClaim(t, s, pgFixtureInstance, time.Now()), item.ID)
+	if claimed == nil {
+		t.Fatalf("retried row %d not claimable", item.ID)
+	}
+	retired, err := s.CompleteCleanupItems(ctx, []core.CleanupItem{*claimed})
+	if err != nil {
+		t.Fatalf("CompleteCleanupItems: %v", err)
+	}
+	if !slices.Equal(retired, []int64{item.ID}) {
+		t.Errorf("retired = %v, want [%d]", retired, item.ID)
 	}
 	if pgCount(t, s, `SELECT COUNT(*) FROM cleanup_queue WHERE id = $1`, item.ID) != 0 {
 		t.Errorf("completed row still queued")
@@ -1321,9 +1329,9 @@ func seedIntentPg(t *testing.T, s *Store, key string) {
 // row to the DLQ, leaving rows from other tests in the queue.
 func deadLetterPg(t *testing.T, s *Store, key string) {
 	t.Helper()
-	id := queueCleanup(t, s, cleanupOf("backend-a", key, "test", 1))
-	if _, err := s.MoveCleanupToDLQ(context.Background(), id, "gave up"); err != nil {
-		t.Fatalf("MoveCleanupToDLQ: %v", err)
+	item := queueCleanup(t, s, cleanupOf("backend-a", key, "test", 1))
+	if moved, err := s.MoveCleanupToDLQ(context.Background(), &item, "gave up"); err != nil || !moved {
+		t.Fatalf("MoveCleanupToDLQ = %v, %v; want true", moved, err)
 	}
 }
 

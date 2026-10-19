@@ -19,7 +19,8 @@ import "context"
 // -------------------------------------------------------------------------
 
 // noopTxAdapter satisfies TxAdapter with zero values throughout, except that
-// every pending intent claims, as it does for a write nothing overtook. Embed
+// every pending intent claims, as it does for a write nothing overtook, and a
+// queued cleanup row comes back carrying its request's fields. Embed
 // it, then override the methods a test actually exercises.
 type noopTxAdapter struct{}
 
@@ -72,7 +73,15 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) InsertCleanup(context.Context, *CleanupRequest) (int64, error) { return 0, nil }
+func (*noopTxAdapter) InsertCleanup(_ context.Context, c *CleanupRequest) (CleanupItem, error) {
+	return CleanupItem{
+		BackendName: c.BackendName,
+		ObjectKey:   c.ObjectKey,
+		StorageKey:  c.StorageKey,
+		Reason:      c.Reason,
+		SizeBytes:   c.SizeBytes,
+	}, nil
+}
 
 func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*MultipartPart, error) {
 	return nil, nil
@@ -81,14 +90,6 @@ func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*Multipart
 func (*noopTxAdapter) DeleteMultipartUpload(context.Context, string) (string, []MultipartPart, error) {
 	return "", nil, nil
 }
-
-func (*noopTxAdapter) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
-	return CleanupQueueRow{}, nil
-}
-
-func (*noopTxAdapter) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
-
-func (*noopTxAdapter) DeleteCleanupItem(context.Context, int64) error { return nil }
 
 func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) error { return nil }
 

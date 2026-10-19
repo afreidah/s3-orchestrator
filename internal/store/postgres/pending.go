@@ -38,10 +38,7 @@ import (
 // occupying the backend for every instance for as long as the write runs.
 func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
 	n, err := s.queries.InsertPendingObjectIfFits(ctx, pendingInsertParams(p, accepts))
-	if err != nil {
-		return false, fmt.Errorf("insert pending object: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "insert pending object")
 }
 
 // DeletePending removes a pending intent. Called by the write path on a

@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -200,9 +201,8 @@ type mockMetadataStore struct {
 	core.LifecycleAdmin
 	core.NotificationOutbox
 	pendingCleanups     []core.CleanupItem
-	completedIDs        []int64
+	completedItems      []core.CleanupItem
 	dlqMoves            []dlqMoveCall
-	moveDLQResult       bool
 	moveDLQErr          error
 	dlqDepthVal         int64
 	dlqDepthErr         error
@@ -271,23 +271,29 @@ func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]core
 }
 
 // ClaimPendingCleanups is a stub on mockMetadataStore; mirrors
-// GetPendingCleanups so existing fixtures exercise the worker's claim path
-// without per-test plumbing.
-func (m *mockMetadataStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
-	return withCleanupPaths(m.pendingCleanups), nil
+// GetPendingCleanups, stamping each row with the caller's claim the way the
+// store does.
+func (m *mockMetadataStore) ClaimPendingCleanups(_ context.Context, _ int, instanceID string, _ time.Time) ([]core.CleanupItem, error) {
+	items := withCleanupPaths(m.pendingCleanups)
+	for i := range items {
+		if items[i].Claim == nil {
+			items[i].Claim = &core.CleanupClaim{At: time.Now(), By: instanceID}
+		}
+	}
+	return items, nil
 }
 
-// CompleteCleanupItem is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) CompleteCleanupItem(_ context.Context, id int64) error {
-	m.completedIDs = append(m.completedIDs, id)
-	return nil
+// CompleteCleanupItems is a stub on mockMetadataStore; records the items and
+// reports every one retired.
+func (m *mockMetadataStore) CompleteCleanupItems(_ context.Context, items []core.CleanupItem) ([]int64, error) {
+	m.completedItems = append(m.completedItems, items...)
+	return cleanupIDs(items), nil
 }
 
-// RetryCleanupItem is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) RetryCleanupItem(_ context.Context, _ int64, _ time.Duration, _ string) error {
-	return nil
+// RetryCleanupItem is a stub on mockMetadataStore; reports the claim held so
+// the retry lands.
+func (m *mockMetadataStore) RetryCleanupItem(_ context.Context, _ *core.CleanupItem, _ time.Duration, _ string) (bool, error) {
+	return true, nil
 }
 
 // CleanupQueueDepth is a stub on mockMetadataStore; returns either the test-set
@@ -305,16 +311,32 @@ type dlqMoveCall struct {
 
 // MoveCleanupToDLQ is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) MoveCleanupToDLQ(_ context.Context, id int64, lastError string) (bool, error) {
-	m.dlqMoves = append(m.dlqMoves, dlqMoveCall{id: id, lastError: lastError})
+func (m *mockMetadataStore) MoveCleanupToDLQ(_ context.Context, item *core.CleanupItem, lastError string) (bool, error) {
+	m.dlqMoves = append(m.dlqMoves, dlqMoveCall{id: item.ID, lastError: lastError})
 	if m.moveDLQErr != nil {
 		return false, m.moveDLQErr
 	}
-	if !m.moveDLQResult {
-		// Default to true so the happy path requires no per-test setup.
-		return true, nil
+	return true, nil
+}
+
+// cleanupIDs returns the id of each item in order.
+func cleanupIDs(items []core.CleanupItem) []int64 {
+	ids := make([]int64, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
 	}
-	return m.moveDLQResult, nil
+	return ids
+}
+
+// settlesCleanups has store retire, retry, and dead-letter every row it is
+// handed, as it does for rows still held under their claim.
+func settlesCleanups(store *storetest.MockMetadataStore) {
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, items []core.CleanupItem) ([]int64, error) {
+			return cleanupIDs(items), nil
+		}).AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+	store.EXPECT().MoveCleanupToDLQ(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 }
 
 // CleanupDLQDepth is a stub on mockMetadataStore; returns either the test-set

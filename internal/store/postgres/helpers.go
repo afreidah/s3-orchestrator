@@ -12,6 +12,9 @@
 package postgres
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -21,6 +24,25 @@ import (
 // -------------------------------------------------------------------------
 // NULLABLE CONVERSIONS
 // -------------------------------------------------------------------------
+
+// timestamptzPtr returns a *time.Time for a sqlc-emitted pgtype.Timestamptz,
+// or nil when the column was NULL.
+func timestamptzPtr(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
+}
+
+// changed reports whether an :execrows write touched a row, for the
+// conditional writes whose outcome is the answer. what prefixes the failure.
+func changed(n int64, err error, what string) (bool, error) {
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", what, err)
+	}
+	return n > 0, nil
+}
 
 // strPtr returns a pointer to s when non-empty, nil otherwise.
 func strPtr(s string) *string {

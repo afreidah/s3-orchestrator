@@ -3,12 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic tests for the multi-step cleanup_queue / cleanup_dlq flows
-// that live in core/cleanup.go. The stub TxAdapter records every transactional
-// call so each test can assert the precise sequence and ensure quota state is
-// (or is not) touched as the design intends. The single-tx Runner used here is
-// the same canonical helper in core/runner_test.go - operations either commit
-// fully or surface the error to the caller.
+// Engine-agnostic tests for the cleanup_queue flows that live in
+// core/cleanup.go. The stub TxAdapter records every transactional call so each
+// test can assert the precise sequence. The single-tx Runner used here runs
+// the transaction body directly, so operations either commit fully or surface
+// the error to the caller.
 // -------------------------------------------------------------------------------
 
 package core
@@ -16,6 +15,7 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,68 +26,33 @@ import (
 // CLEANUP TX STUB
 // -------------------------------------------------------------------------
 
-// cleanupTxStub is a minimal TxAdapter that records the cleanup-table
-// operations relevant to MoveCleanupToDLQ. Every other TxAdapter method
-// is implemented as a no-op so the stub satisfies the parent interface
-// without a per-test fixture for unrelated tables.
-type cleanupTxStub struct {
-	noopTxAdapter
-
-	getRow       CleanupQueueRow
-	getRowErr    error
-	insertedDLQ  []CleanupQueueRow
-	insertDLQErr error
-	deletedID    int64
-	deleteErr    error
-}
-
-// GetCleanupQueueRow is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) GetCleanupQueueRow(_ context.Context, _ int64) (CleanupQueueRow, error) {
-	return t.getRow, t.getRowErr
-}
-
-// InsertCleanupDLQ is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) InsertCleanupDLQ(_ context.Context, row *CleanupQueueRow) error {
-	if t.insertDLQErr != nil {
-		return t.insertDLQErr
-	}
-	t.insertedDLQ = append(t.insertedDLQ, *row)
-	return nil
-}
-
-// DeleteCleanupItem is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) DeleteCleanupItem(_ context.Context, id int64) error {
-	if t.deleteErr != nil {
-		return t.deleteErr
-	}
-	t.deletedID = id
-	return nil
-}
-
 // queueRecorder wraps a TxAdapter and records every cleanup row the
-// transaction queues, numbering them from 1, or fails the insert when err is
-// set.
+// transaction queues, numbering them from 1 and stamping claim on each, or
+// fails the insert when err is set.
 type queueRecorder struct {
 	TxAdapter
 
 	queued []CleanupRequest
+	claim  *CleanupClaim
 	err    error
 }
 
-// InsertCleanup records the request and hands back its position as the id,
-// or fails with the seeded error.
-func (q *queueRecorder) InsertCleanup(_ context.Context, c *CleanupRequest) (int64, error) {
+// InsertCleanup records the request and hands back the queued row with its
+// position as the id and the recorder's claim, or fails with the seeded error.
+func (q *queueRecorder) InsertCleanup(_ context.Context, c *CleanupRequest) (CleanupItem, error) {
 	if q.err != nil {
-		return 0, q.err
+		return CleanupItem{}, q.err
 	}
 	q.queued = append(q.queued, *c)
-	return int64(len(q.queued)), nil
+	return CleanupItem{
+		ID:          int64(len(q.queued)),
+		BackendName: c.BackendName,
+		ObjectKey:   c.ObjectKey,
+		StorageKey:  c.StorageKey,
+		Reason:      c.Reason,
+		SizeBytes:   c.SizeBytes,
+		Claim:       q.claim,
+	}, nil
 }
 
 // stubRunner runs the supplied closure synchronously against the TxAdapter it
@@ -101,153 +66,17 @@ func (r *stubRunner) WithTx(ctx context.Context, fn func(ctx context.Context, tx
 	return fn(ctx, r.tx)
 }
 
-// runWithCleanup executes fn against a stubRunner wrapping stub. Any
-// error fn returns is bubbled to t.Fatalf.
-func runWithCleanup(t *testing.T, stub TxAdapter, fn func(Runner) error) {
-	t.Helper()
-	if err := fn(&stubRunner{tx: stub}); err != nil {
-		t.Fatalf("runWithCleanup: %v", err)
-	}
-}
-
-// -------------------------------------------------------------------------
-// MOVE CLEANUP TO DLQ
-// -------------------------------------------------------------------------
-
-// TestMoveCleanupToDLQ_HappyPath asserts the move reads the row, inserts it
-// into the DLQ and deletes the queue row.
-func TestMoveCleanupToDLQ_HappyPath(t *testing.T) {
-	t.Parallel()
-	stub := &cleanupTxStub{
-		getRow: CleanupQueueRow{
-			ID:          42,
-			BackendName: "b1",
-			ObjectKey:   "stale.bin",
-			Reason:      "delete_failed",
-			SizeBytes:   2048,
-			Attempts:    10,
-			CreatedAt:   time.Now().Add(-2 * time.Hour),
-			LastError:   "earlier error",
-		},
-	}
-	runWithCleanup(t, stub, func(r Runner) error {
-		moved, err := MoveCleanupToDLQ(context.Background(), r, 42, "permanent failure")
-		if err != nil {
-			t.Fatalf("MoveCleanupToDLQ: %v", err)
-		}
-		if !moved {
-			t.Errorf("expected moved=true")
-		}
-		return nil
-	})
-
-	if len(stub.insertedDLQ) != 1 {
-		t.Fatalf("expected one DLQ insert, got %d", len(stub.insertedDLQ))
-	}
-	got := stub.insertedDLQ[0]
-	if got.ID != 42 {
-		t.Errorf("DLQ row.ID=%d, want 42", got.ID)
-	}
-	if got.LastError != "permanent failure" {
-		t.Errorf("DLQ row.LastError=%q, want %q", got.LastError, "permanent failure")
-	}
-	if stub.deletedID != 42 {
-		t.Errorf("expected DeleteCleanupItem(42), got id=%d", stub.deletedID)
-	}
-}
-
-// TestMoveCleanupToDLQ_AlreadyGone asserts that moving a row that no
-// longer exists is a benign no-op - returns (false, nil) without an
-// insert or delete - so a concurrent finaliser race never corrupts the
-// queue.
-func TestMoveCleanupToDLQ_AlreadyGone(t *testing.T) {
-	t.Parallel()
-	stub := &cleanupTxStub{getRowErr: ErrCleanupItemNotFound}
-	runWithCleanup(t, stub, func(r Runner) error {
-		moved, err := MoveCleanupToDLQ(context.Background(), r, 1, "")
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
-		if moved {
-			t.Errorf("expected moved=false when row missing")
-		}
-		return nil
-	})
-	if len(stub.insertedDLQ) != 0 {
-		t.Errorf("DLQ insert must not happen when row missing")
-	}
-}
-
-// TestMoveCleanupToDLQ_PreservesOriginalLastErrorWhenNoneSupplied
-// asserts that a caller passing an empty last_error keeps the queue
-// row's existing last_error so DLQ entries carry the most useful
-// failure context, not an empty string.
-func TestMoveCleanupToDLQ_PreservesOriginalLastErrorWhenNoneSupplied(t *testing.T) {
-	t.Parallel()
-	stub := &cleanupTxStub{
-		getRow: CleanupQueueRow{
-			ID:        7,
-			LastError: "boom",
-		},
-	}
-	runWithCleanup(t, stub, func(r Runner) error {
-		_, err := MoveCleanupToDLQ(context.Background(), r, 7, "")
-		return err
-	})
-	if len(stub.insertedDLQ) != 1 || stub.insertedDLQ[0].LastError != "boom" {
-		t.Errorf("DLQ row must preserve original LastError; got %#v", stub.insertedDLQ)
-	}
-}
-
-// TestMoveCleanupToDLQ_InsertFailureDoesNotDeleteRow asserts that if
-// the DLQ insert fails the queue row is NOT deleted - so the next
-// retry tick still finds the row to graduate. Without this guarantee a
-// transient insert failure would silently drop the orphan record.
-func TestMoveCleanupToDLQ_InsertFailureDoesNotDeleteRow(t *testing.T) {
-	t.Parallel()
-	stub := &cleanupTxStub{
-		getRow:       CleanupQueueRow{ID: 99},
-		insertDLQErr: errors.New("boom"),
-	}
-	runner := &stubRunner{tx: stub}
-	moved, err := MoveCleanupToDLQ(context.Background(), runner, 99, "")
-	if err == nil {
-		t.Fatalf("expected error from insert failure")
-	}
-	if moved {
-		t.Errorf("expected moved=false on insert failure")
-	}
-	if stub.deletedID != 0 {
-		t.Errorf("DeleteCleanupItem must not run on insert failure; got id=%d", stub.deletedID)
-	}
-}
-
-// TestMoveCleanupToDLQ_SurfacesErrors verifies a failed row read or queue
-// delete is reported rather than read as a row already gone.
-func TestMoveCleanupToDLQ_SurfacesErrors(t *testing.T) {
-	t.Parallel()
-	sentinel := errors.New("boom")
-	for name, stub := range map[string]*cleanupTxStub{
-		"read":   {getRowErr: sentinel},
-		"delete": {getRow: CleanupQueueRow{ID: 3}, deleteErr: sentinel},
-	} {
-		moved, err := MoveCleanupToDLQ(context.Background(), &stubRunner{tx: stub}, 3, "")
-		if !errors.Is(err, sentinel) || moved {
-			t.Errorf("%s: moved=%v err=%v, want the failure", name, moved, err)
-		}
-	}
-}
-
 // -------------------------------------------------------------------------
 // ENQUEUE REMOVED
 // -------------------------------------------------------------------------
 
 // TestEnqueueRemoved_QueuesEachCopy verifies every removed copy becomes one
-// queued row carrying the id the insert returned, its own reason when it has
-// one and the transaction's otherwise.
+// queued row exactly as the insert returned it, claim included, with its own
+// reason when it has one and the transaction's otherwise.
 func TestEnqueueRemoved_QueuesEachCopy(t *testing.T) {
 	t.Parallel()
-	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}}
+	claim := &CleanupClaim{At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), By: "inst-1"}
+	queuer := &queueRecorder{TxAdapter: &noopTxAdapter{}, claim: claim}
 	items, err := enqueueRemoved(context.Background(), queuer, "k", CleanupReasonDeleted, []removedCopy{
 		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
 		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 20, Reason: CleanupReasonSupersededIntent},
@@ -256,10 +85,10 @@ func TestEnqueueRemoved_QueuesEachCopy(t *testing.T) {
 		t.Fatalf("enqueueRemoved: %v", err)
 	}
 	want := []CleanupItem{
-		{ID: 1, BackendName: "b1", ObjectKey: "k", StorageKey: "k!a", Reason: CleanupReasonDeleted, SizeBytes: 10},
-		{ID: 2, BackendName: "b2", ObjectKey: "k", StorageKey: "k!b", Reason: CleanupReasonSupersededIntent, SizeBytes: 20},
+		{ID: 1, BackendName: "b1", ObjectKey: "k", StorageKey: "k!a", Reason: CleanupReasonDeleted, SizeBytes: 10, Claim: claim},
+		{ID: 2, BackendName: "b2", ObjectKey: "k", StorageKey: "k!b", Reason: CleanupReasonSupersededIntent, SizeBytes: 20, Claim: claim},
 	}
-	if !slices.Equal(items, want) {
+	if !reflect.DeepEqual(items, want) {
 		t.Errorf("items = %+v, want %+v", items, want)
 	}
 	if len(queuer.queued) != 2 {

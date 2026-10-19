@@ -926,9 +926,9 @@ func TestImportObject_SuppressedByDeadLetteredCleanup(t *testing.T) {
 		backend = "backend-a"
 	)
 
-	id := queueCleanup(t, s, backend, key, 500)
-	if _, err := s.MoveCleanupToDLQ(ctx, id, "gave up"); err != nil {
-		t.Fatalf("MoveCleanupToDLQ: %v", err)
+	item := queueCleanup(t, s, backend, key, 500)
+	if moved, err := s.MoveCleanupToDLQ(ctx, &item, "gave up"); err != nil || !moved {
+		t.Fatalf("MoveCleanupToDLQ = %v, %v", moved, err)
 	}
 
 	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: backend, Size: 500})
@@ -1986,9 +1986,13 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 		t.Errorf("key = %q", items[0].ObjectKey)
 	}
 
-	// Complete it
-	if err := s.CompleteCleanupItem(ctx, items[0].ID); err != nil {
-		t.Fatalf("CompleteCleanupItem: %v", err)
+	// The claim read back from the row settles it.
+	retired, err := s.CompleteCleanupItems(ctx, items)
+	if err != nil {
+		t.Fatalf("CompleteCleanupItems: %v", err)
+	}
+	if len(retired) != 1 || retired[0] != items[0].ID {
+		t.Errorf("retired = %v, want [%d]", retired, items[0].ID)
 	}
 
 	depth, _ = s.CleanupQueueDepth(ctx)
@@ -1997,18 +2001,18 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 	}
 }
 
-// TestCleanupQueue_Retry verifies the cleanup queue retry contract.
-// Asserts that RetryCleanupItem:.
+// TestCleanupQueue_Retry verifies a retry with a future backoff takes the
+// row out of the pending set until the backoff elapses.
 func TestCleanupQueue_Retry(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/retry")
+	queueCleanup(t, s, "backend-a", "bucket/retry", cleanupRowSize)
 
 	items, _ := s.GetPendingCleanups(ctx, 10)
-	if err := s.RetryCleanupItem(ctx, items[0].ID, time.Hour, "connection refused"); err != nil {
-		t.Fatalf("RetryCleanupItem: %v", err)
+	if held, err := s.RetryCleanupItem(ctx, &items[0], time.Hour, "connection refused"); err != nil || !held {
+		t.Fatalf("RetryCleanupItem = %v, %v", held, err)
 	}
 
 	// Should not be pending (next_retry is in the future)
@@ -3545,29 +3549,26 @@ func TestListCopiesByForm_EncryptedRowCarriesPlaintextSize(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestStore_MoveCleanupToDLQ_GraduatesQueueRow asserts MoveCleanupToDLQ moves
-// the queue row into cleanup_dlq with its key, size, backend, and last_error,
-// and its bytes still count as the backend's orphans.
+// the queue row into cleanup_dlq with its id, key, size, backend, created_at,
+// and the new last_error, and its bytes still count as the backend's orphans.
 func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/doomed")
+	item := queueCleanup(t, s, "backend-a", "bucket/doomed", cleanupRowSize)
+	id := item.ID
 
-	// Stamp a last_error and look up the queue row id.
+	// Stamp an earlier last_error and a distinct created_at to show the move
+	// replaces the one and keeps the other.
+	createdAt := formatTime(time.Now().Add(-2 * time.Hour))
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE cleanup_queue SET last_error = ? WHERE object_key = ?`,
-		"earlier transient", "bucket/doomed",
+		`UPDATE cleanup_queue SET last_error = ?, created_at = ? WHERE id = ?`,
+		"earlier transient", createdAt, id,
 	); err != nil {
-		t.Fatalf("set last_error: %v", err)
-	}
-	var id int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM cleanup_queue WHERE object_key = ?`, "bucket/doomed",
-	).Scan(&id); err != nil {
-		t.Fatalf("lookup id: %v", err)
+		t.Fatalf("stamp row: %v", err)
 	}
 
-	moved, err := s.MoveCleanupToDLQ(ctx, id, "permanent failure")
+	moved, err := s.MoveCleanupToDLQ(ctx, &item, "permanent failure")
 	if err != nil {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
@@ -3607,6 +3608,15 @@ func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 		t.Errorf("DLQ row mismatch: orig=%d backend=%q key=%q reason=%q size=%d err=%q",
 			dlqOriginal, dlqBackend, dlqKey, dlqReason, dlqSize, dlqLastError)
 	}
+	var firstEnqueued string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT first_enqueued_at FROM cleanup_dlq WHERE original_id = ?`, id,
+	).Scan(&firstEnqueued); err != nil {
+		t.Fatalf("probe first_enqueued_at: %v", err)
+	}
+	if firstEnqueued != createdAt {
+		t.Errorf("first_enqueued_at = %q, want the queue row's created_at %q", firstEnqueued, createdAt)
+	}
 
 	// The backend object is still on disk and the DLQ flow is not a
 	// write-off, so its bytes still count.
@@ -3616,12 +3626,13 @@ func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 }
 
 // TestStore_MoveCleanupToDLQ_MissingRowReturnsFalse asserts a no-op
-// move on a non-existent id - the documented contract for a benign
-// concurrent finaliser race.
+// move on a non-existent id, the outcome when another settle already
+// retired the row.
 func TestStore_MoveCleanupToDLQ_MissingRowReturnsFalse(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	moved, err := s.MoveCleanupToDLQ(context.Background(), 99999, "irrelevant")
+	item := core.CleanupItem{ID: 99999, Claim: &core.CleanupClaim{At: time.Now(), By: testInstanceID}}
+	moved, err := s.MoveCleanupToDLQ(context.Background(), &item, "irrelevant")
 	if err != nil {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
@@ -3646,25 +3657,13 @@ func TestStore_CleanupDLQDepth_CountsRows(t *testing.T) {
 	}
 
 	// Seed two queue rows then graduate them both.
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/k1")
-	mustEnqueueCleanup(t, s, "backend-a", "bucket/k2")
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM cleanup_queue ORDER BY id`)
-	if err != nil {
-		t.Fatalf("query ids: %v", err)
+	items := []core.CleanupItem{
+		queueCleanup(t, s, "backend-a", "bucket/k1", cleanupRowSize),
+		queueCleanup(t, s, "backend-a", "bucket/k2", cleanupRowSize),
 	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			t.Fatalf("scan: %v", err)
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	for _, id := range ids {
-		if _, err := s.MoveCleanupToDLQ(ctx, id, ""); err != nil {
-			t.Fatalf("MoveCleanupToDLQ(%d): %v", id, err)
+	for i := range items {
+		if moved, err := s.MoveCleanupToDLQ(ctx, &items[i], ""); err != nil || !moved {
+			t.Fatalf("MoveCleanupToDLQ(%d) = %v, %v", items[i].ID, moved, err)
 		}
 	}
 

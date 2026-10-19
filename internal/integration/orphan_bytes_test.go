@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -217,7 +218,8 @@ func TestOrphanBytes_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 		t.Fatalf("set last_error: %v", err)
 	}
 
-	moved, err := testStore.MoveCleanupToDLQ(ctx, id, "permanent failure")
+	item := claimSeededCleanupRow(t, ctx, id)
+	moved, err := testStore.MoveCleanupToDLQ(ctx, &item, "permanent failure")
 	if err != nil {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
@@ -264,6 +266,23 @@ func TestOrphanBytes_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 	}
 }
 
+// claimSeededCleanupRow claims the seeded row with id the way the cleanup
+// worker does and returns it with the claim it was stamped with.
+func claimSeededCleanupRow(t *testing.T, ctx context.Context, id int64) core.CleanupItem {
+	t.Helper()
+	items, err := testStore.ClaimPendingCleanups(ctx, 1000, "orphan-test", time.Now())
+	if err != nil {
+		t.Fatalf("ClaimPendingCleanups: %v", err)
+	}
+	for i := range items {
+		if items[i].ID == id {
+			return items[i]
+		}
+	}
+	t.Fatalf("seeded cleanup row %d was not claimed", id)
+	return core.CleanupItem{}
+}
+
 // TestOrphanBytes_MoveCleanupToDLQ_MissingRowIsNoOp is one of the sub-cases extracted from the
 // original mega-TestOrphanBytes; behaviour is preserved.
 func TestOrphanBytes_MoveCleanupToDLQ_MissingRowIsNoOp(t *testing.T) {
@@ -273,7 +292,8 @@ func TestOrphanBytes_MoveCleanupToDLQ_MissingRowIsNoOp(t *testing.T) {
 	_ = ctx
 
 	resetState(t)
-	moved, err := testStore.MoveCleanupToDLQ(ctx, 999999, "irrelevant")
+	missing := &core.CleanupItem{ID: 999999, Claim: &core.CleanupClaim{At: time.Now(), By: "orphan-test"}}
+	moved, err := testStore.MoveCleanupToDLQ(ctx, missing, "irrelevant")
 	if err != nil {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}

@@ -81,9 +81,6 @@ func TestTxOps_ResolutionMethods(t *testing.T) {
 	ctx := context.Background()
 	ops := noopTxOps()
 	intent := &PendingObject{IntentID: "i", ObjectKey: "k", BackendName: "b2"}
-	if moved, err := ops.MoveCleanupToDLQ(ctx, 1, ""); err != nil || !moved {
-		t.Errorf("MoveCleanupToDLQ = %v, %v; want moved", moved, err)
-	}
 	if _, err := ops.ReconcileUsage(ctx); err != nil {
 		t.Errorf("ReconcileUsage: %v", err)
 	}

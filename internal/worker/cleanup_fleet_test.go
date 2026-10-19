@@ -36,6 +36,7 @@ import (
 type cleanupCalls struct {
 	mu       sync.Mutex
 	complete []int64
+	claims   []*core.CleanupClaim
 	retry    []retryRecord
 	dlq      []dlqRecord
 }
@@ -79,25 +80,28 @@ func claimOnce(store *storetest.MockMetadataStore, items []core.CleanupItem) {
 func stubProcessQueue(t *testing.T, store *storetest.MockMetadataStore, calls *cleanupCalls, items []core.CleanupItem) {
 	t.Helper()
 	claimOnce(store, items)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64) error {
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, items []core.CleanupItem) ([]int64, error) {
 			calls.mu.Lock()
 			defer calls.mu.Unlock()
-			calls.complete = append(calls.complete, id)
-			return nil
+			for i := range items {
+				calls.complete = append(calls.complete, items[i].ID)
+				calls.claims = append(calls.claims, items[i].Claim)
+			}
+			return cleanupIDs(items), nil
 		}).AnyTimes()
 	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64, backoff time.Duration, lastError string) error {
+		DoAndReturn(func(_ context.Context, item *core.CleanupItem, backoff time.Duration, lastError string) (bool, error) {
 			calls.mu.Lock()
 			defer calls.mu.Unlock()
-			calls.retry = append(calls.retry, retryRecord{id: id, backoff: backoff, lastError: lastError})
-			return nil
+			calls.retry = append(calls.retry, retryRecord{id: item.ID, backoff: backoff, lastError: lastError})
+			return true, nil
 		}).AnyTimes()
 	store.EXPECT().MoveCleanupToDLQ(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64, lastError string) (bool, error) {
+		DoAndReturn(func(_ context.Context, item *core.CleanupItem, lastError string) (bool, error) {
 			calls.mu.Lock()
 			defer calls.mu.Unlock()
-			calls.dlq = append(calls.dlq, dlqRecord{id: id, lastError: lastError})
+			calls.dlq = append(calls.dlq, dlqRecord{id: item.ID, lastError: lastError})
 			return true, nil
 		}).AnyTimes()
 }
@@ -114,9 +118,10 @@ func TestProcessCleanupQueue_DeletesTheBytesAndRetiresTheRow(t *testing.T) {
 	_, _ = be.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	calls := &cleanupCalls{}
+	claim := &core.CleanupClaim{At: time.Now(), By: "test-instance"}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	stubProcessQueue(t, store, calls, []core.CleanupItem{
-		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", SizeBytes: 1},
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", SizeBytes: 1, Claim: claim},
 	})
 	storetest.Permissive(store)
 
@@ -129,7 +134,10 @@ func TestProcessCleanupQueue_DeletesTheBytesAndRetiresTheRow(t *testing.T) {
 		t.Error("the queued bytes are still on the backend")
 	}
 	if len(calls.complete) != 1 || calls.complete[0] != 1 {
-		t.Errorf("completed = %v, want row 1", calls.complete)
+		t.Fatalf("completed = %v, want row 1", calls.complete)
+	}
+	if calls.claims[0] != claim {
+		t.Errorf("completed under claim %+v, want the claim the row was handed out with", calls.claims[0])
 	}
 }
 
@@ -209,9 +217,10 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_OutcomeWriteErrors verifies a failed outcome write is
-// logged without changing what the delete decided: a retired row still counts
-// as settled and a retried one as failed.
+// TestProcessCleanupQueue_OutcomeWriteErrors verifies a failed outcome write
+// is logged and does not fail the tick: a row whose retirement failed stays
+// claimed and is not counted as settled, and a retried row still counts as
+// failed.
 func TestProcessCleanupQueue_OutcomeWriteErrors(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -222,11 +231,11 @@ func TestProcessCleanupQueue_OutcomeWriteErrors(t *testing.T) {
 		failed    int
 	}{
 		{"complete fails", nil, func(store *storetest.MockMetadataStore) {
-			store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Return(errors.New("db error")).AnyTimes()
-		}, 1, 0},
+			store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).Return(nil, errors.New("db error")).AnyTimes()
+		}, 0, 0},
 		{"retry fails", errors.New("be down"), func(store *storetest.MockMetadataStore) {
 			store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(errors.New("db error on retry")).AnyTimes()
+				Return(false, errors.New("db error on retry")).AnyTimes()
 		}, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

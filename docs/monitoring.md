@@ -219,6 +219,7 @@ Key metrics to alert on:
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
 | `s3o_cleanup_queue_depth` | Alert when consistently > 0 - orphaned objects are failing cleanup. Rows the request path is settling show up briefly |
 | `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries - graduated to the DLQ |
+| `s3o_cleanup_queue_processed_total{status="claim_lost"}` | Rows another instance took over before this one settled them. A sustained rate means settles take longer than `cleanup_queue.claim_grace_period` |
 | `s3o_cleanup_dlq_depth` | Alert when > 0 - at least one unrecoverable orphan needs operator action |
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
 | `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a process died before settling the rows it queued, or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
@@ -306,7 +307,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits. `operation` covers the client paths plus `rebalance` (moves not planned) and `scrub` (copies deferred) |
 | `s3o_cleanup_queue_enqueued_total` | Counter | reason | Rows queued for deletion, by reason |
-| `s3o_cleanup_queue_processed_total` | Counter | status | Rows settled on the request path or by the worker (success/success_absent/retry/exhausted) |
+| `s3o_cleanup_queue_processed_total` | Counter | status | Rows settled on the request path or by the worker (success/success_absent/retry/exhausted/claim_lost) |
 | `s3o_cleanup_queue_depth` | Gauge | - | Current rows in the cleanup queue, including rows being settled |
 | `s3o_cleanup_queue_stale_claims_recovered_total` | Counter | backend | Cleanup_queue rows whose stale claim was reclaimed by a later worker tick |
 | `s3o_cleanup_dlq_depth` | Gauge | - | Unrecoverable orphans waiting in the cleanup dead-letter table |

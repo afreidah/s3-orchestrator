@@ -19,18 +19,16 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// dlqAll moves every currently-pending cleanup row into the DLQ, stamping
-// lastError, so a test can seed the dead-letter table from enqueued rows.
+// dlqAll claims every currently-pending cleanup row and moves it into the
+// DLQ, stamping lastError, so a test can seed the dead-letter table from
+// enqueued rows.
 func dlqAll(t *testing.T, s *Store, lastError string) {
 	t.Helper()
 	ctx := context.Background()
-	pending, err := s.GetPendingCleanups(ctx, 100)
-	if err != nil {
-		t.Fatalf("GetPendingCleanups: %v", err)
-	}
-	for i := range pending {
-		if _, err := s.MoveCleanupToDLQ(ctx, pending[i].ID, lastError); err != nil {
-			t.Fatalf("MoveCleanupToDLQ: %v", err)
+	claimed := claimAll(t, s, takeoverInstance)
+	for i := range claimed {
+		if moved, err := s.MoveCleanupToDLQ(ctx, &claimed[i], lastError); err != nil || !moved {
+			t.Fatalf("MoveCleanupToDLQ = %v, %v", moved, err)
 		}
 	}
 }

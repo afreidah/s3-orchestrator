@@ -76,15 +76,40 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 		Duration:  time.Since(start),
 	}
 	sum.Attempted = sum.Succeeded + sum.Failed
-	if r.Log != nil {
-		r.Log.InfoContext(ctx, r.Name+" cycle complete",
-			"planned", sum.Planned,
-			"succeeded", sum.Succeeded,
-			"failed", sum.Failed,
-			"skipped", sum.Skipped,
-			"outcome", sum.Outcome(),
-			"duration", sum.Duration,
-		)
-	}
+	LogCycle(ctx, r.Log, r.Name, sum)
 	return sum
+}
+
+// Tally folds per-item results gathered without a Runner into a Summary,
+// timed from start, for a caller that decides its items in phases of its own.
+func Tally(results []ItemResult, start time.Time) Summary {
+	sum := Summary{Planned: len(results), Duration: time.Since(start)}
+	for _, res := range results {
+		switch res.Outcome {
+		case ItemSucceeded:
+			sum.Succeeded++
+		case ItemFailed:
+			sum.Failed++
+		case ItemSkipped:
+			sum.Skipped++
+		}
+	}
+	sum.Attempted = sum.Succeeded + sum.Failed
+	return sum
+}
+
+// LogCycle emits the one "<name> cycle complete" line every batch reports. A
+// nil log emits nothing.
+func LogCycle(ctx context.Context, log *slog.Logger, name string, sum Summary) {
+	if log == nil {
+		return
+	}
+	log.InfoContext(ctx, name+" cycle complete",
+		"planned", sum.Planned,
+		"succeeded", sum.Succeeded,
+		"failed", sum.Failed,
+		"skipped", sum.Skipped,
+		"outcome", sum.Outcome(),
+		"duration", sum.Duration,
+	)
 }

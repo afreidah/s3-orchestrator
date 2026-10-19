@@ -146,12 +146,12 @@ func stubObjDiscard(c *objectsCalls) func(context.Context, *core.PendingObject, 
 }
 
 // stubObjRetry records the rows the settler sent back for retry.
-func stubObjRetry(c *objectsCalls) func(context.Context, int64, time.Duration, string) error {
-	return func(_ context.Context, id int64, _ time.Duration, _ string) error {
+func stubObjRetry(c *objectsCalls) func(context.Context, *core.CleanupItem, time.Duration, string) (bool, error) {
+	return func(_ context.Context, item *core.CleanupItem, _ time.Duration, _ string) (bool, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.retried = append(c.retried, id)
-		return nil
+		c.retried = append(c.retried, item.ID)
+		return true, nil
 	}
 }
 

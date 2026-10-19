@@ -137,23 +137,29 @@ type ReplicationStore interface {
 // of its queued and dead-lettered rows.
 //
 // GetPendingCleanups is a read-only snapshot for display; the worker uses
-// ClaimPendingCleanups, which reserves a disjoint batch per instance. A row is
-// eligible when its claim is absent or older than graceCutoff, and such
-// reclaimed rows come back with Reclaimed set. CompleteCleanupItem retires a
-// row whose bytes are gone. RetryCleanupItem clears the claim so the row is
-// eligible again after backoff.
+// ClaimPendingCleanups, which reserves a disjoint batch per instance and
+// returns each row with the claim it stamped. A row is eligible when its claim
+// is absent or older than graceCutoff, and such reclaimed rows come back with
+// Reclaimed set.
+//
+// The settle writes act only on a row still held under the item's claim, so an
+// instance whose claim aged out and was taken over cannot settle the row again.
+// CompleteCleanupItems retires the rows whose bytes are gone in one statement
+// and returns the ids it retired. RetryCleanupItem schedules the next attempt
+// and releases the claim, and MoveCleanupToDLQ graduates an exhausted row; both
+// report false for a lost claim.
 //
 // RequeueCleanupDLQ sends dead-lettered rows back with fresh attempts. An empty
 // backend in the DLQ calls means every backend.
 type CleanupStore interface {
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
 	ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]CleanupItem, error)
-	CompleteCleanupItem(ctx context.Context, id int64) error
-	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
+	CompleteCleanupItems(ctx context.Context, items []CleanupItem) ([]int64, error)
+	RetryCleanupItem(ctx context.Context, item *CleanupItem, backoff time.Duration, lastError string) (bool, error)
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error)
 
-	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
+	MoveCleanupToDLQ(ctx context.Context, item *CleanupItem, lastError string) (bool, error)
 	CleanupDLQDepth(ctx context.Context) (int64, error)                                      // also refreshes the cleanup_dlq_depth gauge
 	ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]CleanupDLQItem, error) // newest graduation first
 	RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error)

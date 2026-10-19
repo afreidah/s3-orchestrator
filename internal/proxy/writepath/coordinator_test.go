@@ -135,9 +135,40 @@ func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 	}
 }
 
-// cleanupRow builds one queued cleanup row for the settle paths.
+// rowClaim is the claim every cleanupRow is queued under, so the settle paths
+// can show the claim reaches the store unchanged.
+var rowClaim = &core.CleanupClaim{At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), By: "inst-1"}
+
+// cleanupRow builds one queued cleanup row for the settle paths, held under
+// rowClaim.
 func cleanupRow(id int64, backendName, path, reason string, size int64) core.CleanupItem {
-	return core.CleanupItem{ID: id, BackendName: backendName, ObjectKey: "k", StorageKey: path, Reason: reason, SizeBytes: size}
+	return core.CleanupItem{ID: id, BackendName: backendName, ObjectKey: "k", StorageKey: path, Reason: reason, SizeBytes: size, Claim: rowClaim}
+}
+
+// retiring matches one CompleteCleanupItems batch holding exactly the rows
+// with ids, in order, each still carrying the claim it was queued under.
+func retiring(ids ...int64) gomock.Matcher {
+	return gomock.Cond(func(items []core.CleanupItem) bool {
+		if len(items) != len(ids) {
+			return false
+		}
+		for i := range items {
+			if items[i].ID != ids[i] || items[i].Claim != rowClaim {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// retireAll answers CompleteCleanupItems by retiring every row it was handed,
+// as the store does when no other instance took a claim over.
+func retireAll(_ context.Context, items []core.CleanupItem) ([]int64, error) {
+	ids := make([]int64, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	return ids, nil
 }
 
 // copyIntentOn matches the companion intent a move claims on target for size
@@ -180,7 +211,7 @@ func TestMoveObject_ClaimsThenCopiesThenPlaces(t *testing.T) {
 	gomock.InOrder(claim, get)
 	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written, RebalanceMove.Reasons)).
 		Return(int64(4), []core.CleanupItem{cleanupRow(11, sourceName, srcPath, RebalanceMove.Reasons.SourceDelete, 4)}, nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(11)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(11)).DoAndReturn(retireAll)
 
 	coord, counters := newMoveCoordinator(sourceName, src, destName, dest, store)
 	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
@@ -262,7 +293,7 @@ func TestMoveObject_CopyFailureDiscardsTheClaim(t *testing.T) {
 		DoAndReturn(func(_ context.Context, p *core.PendingObject, reason string) ([]core.CleanupItem, error) {
 			return []core.CleanupItem{cleanupRow(5, destName, p.StorageKey, reason, 4)}, nil
 		})
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(5)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(5)).DoAndReturn(retireAll)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
@@ -290,7 +321,7 @@ func TestMoveObject_RefusedPlacementSettlesTheOrphan(t *testing.T) {
 				DoAndReturn(func(_ context.Context, p *core.Placement) (int64, []core.CleanupItem, error) {
 					return 0, []core.CleanupItem{cleanupRow(9, destName, p.Intent.StorageKey, p.Reasons.Orphan, 4)}, declined
 				})
-			store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(9)).Return(nil)
+			store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(9)).DoAndReturn(retireAll)
 
 			coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 			_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
@@ -366,7 +397,7 @@ func TestMoveObject_ReformInPlace(t *testing.T) {
 		return p.Intent.BackendName == sourceName && p.Source.BackendName == sourceName && p.RemoveSource &&
 			p.Reformed && p.Intent.StorageKey == *written && *written != srcPath && p.Intent.SizeBytes == 2
 	})).Return(int64(2), []core.CleanupItem{cleanupRow(3, sourceName, srcPath, RewriteMove.Reasons.SourceDelete, 4)}, nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(3)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(3)).DoAndReturn(retireAll)
 
 	coord := newCoordinatorWithBackend(sourceName, be, store)
 	var seen string
@@ -472,7 +503,7 @@ func TestSettle_CountsEachRowUnderItsReason(t *testing.T) {
 	be := backendtest.NewInMemory()
 	be.Objects["k!a"] = backendtest.Object{}
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Return(nil).Times(3)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(1, 2, 3)).DoAndReturn(retireAll)
 
 	beforeA := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonA))
 	beforeB := promtest.ToFloat64(telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reasonB))
@@ -515,7 +546,7 @@ func TestDiscard_SettlesWhatTheDiscardQueued(t *testing.T) {
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().DiscardPending(gomock.Any(), p, "discard_reason").
 		Return([]core.CleanupItem{cleanupRow(4, "b1", p.StorageKey, "discard_reason", 4)}, nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(4)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(4)).DoAndReturn(retireAll)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
 	coord.Discard(context.Background(), p, "discard_reason")
@@ -617,7 +648,7 @@ func TestPlace_SettlesAndReturnsWhatPlaceCopyReturned(t *testing.T) {
 			p := &core.Placement{Intent: NewCopyIntent("k", "b1", 4, nil), Reasons: ReplicationReasons}
 			store.EXPECT().PlaceCopy(gomock.Any(), p).
 				Return(int64(9), []core.CleanupItem{cleanupRow(2, "b1", "k!queued", ReplicationReasons.Orphan, 4)}, placeErr)
-			store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(2)).Return(nil)
+			store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(2)).DoAndReturn(retireAll)
 
 			coord := newCoordinatorWithBackend("b1", be, store)
 			placed, err := coord.Place(context.Background(), p)
@@ -819,8 +850,7 @@ func TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced(t *testing.T
 		cleanupRow(1, "old", "k!replaced", core.CleanupReasonOverwritten, 50),
 		cleanupRow(2, "stale", "k!superseded", core.CleanupReasonSupersededIntent, 70),
 	}, nil, nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(2)).Return(nil)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(1, 2)).DoAndReturn(retireAll)
 	events := recordAuditEvents(t)
 
 	coord := newCoordinatorWith2Backends("old", old, "stale", stale, store)

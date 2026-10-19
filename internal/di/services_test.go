@@ -224,7 +224,7 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	mock.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.CleanupItem{{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0}}, nil).AnyTimes()
-	mock.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil).AnyTimes()
+	mock.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Len(1)).Return([]int64{1}, nil).AnyTimes()
 	storetest.Permissive(mock)
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{

@@ -169,19 +169,10 @@ func (s *Store) countRows(ctx context.Context, what, query string, args ...any) 
 	return count, nil
 }
 
-// execChanged runs a write and reports whether it changed any row, for the
-// conditional inserts and updates whose outcome is the answer. what prefixes
-// either failure.
+// execChanged runs a write outside any transaction and reports whether it
+// changed any row; see sqliteTxAdapter.execChanged.
 func (s *Store) execChanged(ctx context.Context, what, query string, args ...any) (bool, error) {
-	res, err := s.db.ExecContext(ctx, query, args...)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", what, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", what, err)
-	}
-	return n > 0, nil
+	return s.direct().execChanged(ctx, what, query, args...)
 }
 
 // collectMap is collectRows for the queries that come back keyed - one row per

@@ -38,10 +38,7 @@ func (s *Store) SetBackendFlag(ctx context.Context, backendName string, flag cor
 	n, err := s.queries.SetBackendFlag(ctx, db.SetBackendFlagParams{
 		BackendName: backendName, Flag: int64(flag),
 	})
-	if err != nil {
-		return false, fmt.Errorf("set backend flag: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "set backend flag")
 }
 
 // ClearBackendFlags clears the given flags on the backend. Reports false when
@@ -50,10 +47,7 @@ func (s *Store) ClearBackendFlags(ctx context.Context, backendName string, flags
 	n, err := s.queries.ClearBackendFlags(ctx, db.ClearBackendFlagsParams{
 		BackendName: backendName, ClearFlags: int64(flags),
 	})
-	if err != nil {
-		return false, fmt.Errorf("clear backend flags: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "clear backend flags")
 }
 
 // StartDrain starts a drain of the backend, or restarts a failed one, keeping
@@ -66,10 +60,7 @@ func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error
 		DrainFlags:  int64(core.DrainFlags),
 		Busy:        int64(core.FlagDraining | core.FlagDrained),
 	})
-	if err != nil {
-		return false, fmt.Errorf("start drain: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "start drain")
 }
 
 // AddDrainedObjects adds moved to the count of objects a drain in progress has
@@ -109,20 +100,14 @@ func (s *Store) CompleteDrain(ctx context.Context, backendName string) (bool, er
 		DrainFlags:  int64(core.DrainFlags),
 		Drained:     int64(core.FlagDrained),
 	})
-	if err != nil {
-		return false, fmt.Errorf("complete drain: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "complete drain")
 }
 
 // ClearBackendState deletes the backend's state record, which removing the
 // backend does. Reports whether there was one.
 func (s *Store) ClearBackendState(ctx context.Context, backendName string) (bool, error) {
 	n, err := s.queries.ClearBackendState(ctx, backendName)
-	if err != nil {
-		return false, fmt.Errorf("clear backend state: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "clear backend state")
 }
 
 // backendStateFromRow converts a sqlc backend_states row to the core type.

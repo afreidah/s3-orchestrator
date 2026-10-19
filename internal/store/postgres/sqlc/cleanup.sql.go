@@ -16,30 +16,32 @@ WITH candidate AS (
     SELECT cq.id, (cq.claimed_at IS NOT NULL)::boolean AS reclaimed
     FROM cleanup_queue cq
     WHERE cq.next_retry <= NOW()
-      AND cq.attempts < 10
+      AND cq.attempts < $1::int
       AND (cq.claimed_at IS NULL OR cq.claimed_at < $2::timestamptz)
     ORDER BY cq.next_retry ASC, cq.created_at ASC
-    LIMIT $1
+    LIMIT $3
     FOR UPDATE SKIP LOCKED
 ),
 claimed AS (
     UPDATE cleanup_queue cq
     SET claimed_at = NOW(),
-        claimed_by = $3::text
+        claimed_by = $4::text
     FROM candidate c
     WHERE cq.id = c.id
-    RETURNING cq.id, cq.backend_name, cq.object_key, cq.storage_key, cq.reason, cq.attempts, cq.size_bytes
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.storage_key, cq.reason, cq.attempts, cq.size_bytes,
+              cq.claimed_at, cq.claimed_by
 )
 SELECT cl.id, cl.backend_name, cl.object_key, cl.storage_key, cl.reason, cl.attempts, cl.size_bytes,
-       c.reclaimed
+       cl.claimed_at, cl.claimed_by, c.reclaimed
 FROM claimed cl
 JOIN candidate c ON cl.id = c.id
 ORDER BY cl.id
 `
 
 type ClaimPendingCleanupsParams struct {
-	Limit       int32
+	MaxAttempts int32
 	GraceCutoff pgtype.Timestamptz
+	RowLimit    int32
 	ClaimedBy   string
 }
 
@@ -51,6 +53,8 @@ type ClaimPendingCleanupsRow struct {
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
+	ClaimedAt   pgtype.Timestamptz
+	ClaimedBy   *string
 	Reclaimed   bool
 }
 
@@ -60,13 +64,19 @@ type ClaimPendingCleanupsRow struct {
 // sets. A row is eligible if it has never been claimed (claimed_at IS
 // NULL) or its claim has aged past the grace cutoff (claimed_at <
 // @grace_cutoff). The reclaimed projection lets the worker increment
-// s3o_cleanup_queue_stale_claims_recovered_total per recovered row.
+// s3o_cleanup_queue_stale_claims_recovered_total per recovered row, and the
+// claim it stamped comes back so every settle write can match it.
 //
 // The order matches idx_cleanup_queue_claim, so the scan stops at the limit
 // instead of sorting every due row. A new row's next_retry is its enqueue
 // time, so first attempts still run oldest first.
 func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingCleanupsParams) ([]ClaimPendingCleanupsRow, error) {
-	rows, err := q.db.Query(ctx, claimPendingCleanups, arg.Limit, arg.GraceCutoff, arg.ClaimedBy)
+	rows, err := q.db.Query(ctx, claimPendingCleanups,
+		arg.MaxAttempts,
+		arg.GraceCutoff,
+		arg.RowLimit,
+		arg.ClaimedBy,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +92,53 @@ func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingClea
 			&i.Reason,
 			&i.Attempts,
 			&i.SizeBytes,
+			&i.ClaimedAt,
+			&i.ClaimedBy,
 			&i.Reclaimed,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const completeCleanupItems = `-- name: CompleteCleanupItems :many
+DELETE FROM cleanup_queue cq
+WHERE (cq.id, cq.claimed_at, COALESCE(cq.claimed_by, '')) IN (
+    SELECT unnest($1::bigint[]), unnest($2::timestamptz[]), unnest($3::text[])
+)
+RETURNING cq.id
+`
+
+type CompleteCleanupItemsParams struct {
+	Ids        []int64
+	ClaimedAts []pgtype.Timestamptz
+	ClaimedBys []string
+}
+
+// Retires the rows whose bytes are gone, each only while it is still held
+// under the claim the settler read, and returns the ids it retired. One
+// statement for a whole settle, so a request that displaced several copies
+// commits once. A row whose claim aged out and was taken over is left for its
+// new holder.
+// The three arrays are zipped by unnesting them side by side.
+func (q *Queries) CompleteCleanupItems(ctx context.Context, arg CompleteCleanupItemsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, completeCleanupItems, arg.Ids, arg.ClaimedAts, arg.ClaimedBys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -108,25 +160,14 @@ func (q *Queries) CountCleanupDLQ(ctx context.Context) (int64, error) {
 }
 
 const countPendingCleanups = `-- name: CountPendingCleanups :one
-SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10
+SELECT COUNT(*) FROM cleanup_queue WHERE attempts < $1::int
 `
 
-func (q *Queries) CountPendingCleanups(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countPendingCleanups)
+func (q *Queries) CountPendingCleanups(ctx context.Context, maxAttempts int32) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingCleanups, maxAttempts)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
-}
-
-const deleteCleanupItem = `-- name: DeleteCleanupItem :exec
-DELETE FROM cleanup_queue WHERE id = $1
-`
-
-// Retires a row whose bytes are gone, and removes a row graduating to the DLQ.
-// Deleting a row a previous claim already retired is a no-op.
-func (q *Queries) DeleteCleanupItem(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deleteCleanupItem, id)
-	return err
 }
 
 const deleteCleanupQueueByBackend = `-- name: DeleteCleanupQueueByBackend :exec
@@ -161,54 +202,19 @@ func (q *Queries) DeleteCleanupQueueByKey(ctx context.Context, arg DeleteCleanup
 	return result.RowsAffected(), nil
 }
 
-const getCleanupQueueRow = `-- name: GetCleanupQueueRow :one
-SELECT id, backend_name, object_key, storage_key, reason, size_bytes,
-       attempts, created_at, last_error
-FROM cleanup_queue
-WHERE id = $1
-`
-
-type GetCleanupQueueRowRow struct {
-	ID          int64
-	BackendName string
-	ObjectKey   string
-	StorageKey  string
-	Reason      string
-	SizeBytes   int64
-	Attempts    int32
-	CreatedAt   pgtype.Timestamptz
-	LastError   *string
-}
-
-// Fetches a single cleanup_queue row by id along with the columns the
-// DLQ insert needs (backend, key, reason, size, attempts, created_at,
-// last_error). Used inside MoveCleanupToDLQ so the row contents survive
-// the queue->DLQ move.
-func (q *Queries) GetCleanupQueueRow(ctx context.Context, id int64) (GetCleanupQueueRowRow, error) {
-	row := q.db.QueryRow(ctx, getCleanupQueueRow, id)
-	var i GetCleanupQueueRowRow
-	err := row.Scan(
-		&i.ID,
-		&i.BackendName,
-		&i.ObjectKey,
-		&i.StorageKey,
-		&i.Reason,
-		&i.SizeBytes,
-		&i.Attempts,
-		&i.CreatedAt,
-		&i.LastError,
-	)
-	return i, err
-}
-
 const getPendingCleanups = `-- name: GetPendingCleanups :many
 SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
-       claimed_at, claimed_by
+       claimed_at, claimed_by, FALSE::boolean AS reclaimed
 FROM cleanup_queue
-WHERE next_retry <= NOW() AND attempts < 10
+WHERE next_retry <= NOW() AND attempts < $1::int
 ORDER BY next_retry ASC, created_at ASC
-LIMIT $1
+LIMIT $2
 `
+
+type GetPendingCleanupsParams struct {
+	MaxAttempts int32
+	RowLimit    int32
+}
 
 type GetPendingCleanupsRow struct {
 	ID          int64
@@ -220,15 +226,17 @@ type GetPendingCleanupsRow struct {
 	SizeBytes   int64
 	ClaimedAt   pgtype.Timestamptz
 	ClaimedBy   *string
+	Reclaimed   bool
 }
 
 // Read-only listing for the admin endpoint and operator visibility. The
 // worker uses ClaimPendingCleanups instead, which also stamps the row.
 // claimed_at and claimed_by are projected so the admin view can render
 // which rows are currently held by a worker. Ordered like the claim, so the
-// listing shows rows in the order the worker will take them.
-func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPendingCleanupsRow, error) {
-	rows, err := q.db.Query(ctx, getPendingCleanups, limit)
+// listing shows rows in the order the worker will take them. Selects the same
+// columns as ClaimPendingCleanups so both map through one converter.
+func (q *Queries) GetPendingCleanups(ctx context.Context, arg GetPendingCleanupsParams) ([]GetPendingCleanupsRow, error) {
+	rows, err := q.db.Query(ctx, getPendingCleanups, arg.MaxAttempts, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +254,7 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 			&i.SizeBytes,
 			&i.ClaimedAt,
 			&i.ClaimedBy,
+			&i.Reclaimed,
 		); err != nil {
 			return nil, err
 		}
@@ -261,7 +270,7 @@ const insertCleanup = `-- name: InsertCleanup :one
 
 INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, claimed_at, claimed_by)
 VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-RETURNING id
+RETURNING id, claimed_at
 `
 
 type InsertCleanupParams struct {
@@ -271,6 +280,11 @@ type InsertCleanupParams struct {
 	Reason      string
 	SizeBytes   int64
 	ClaimedBy   *string
+}
+
+type InsertCleanupRow struct {
+	ID        int64
+	ClaimedAt pgtype.Timestamptz
 }
 
 // -----------------------------------------------------------------------------
@@ -288,7 +302,7 @@ type InsertCleanupParams struct {
 // instance never settles becomes reclaimable after the grace period.
 // storage_key is what is deleted; object_key rides along so an operator reading
 // the queue still sees which object the bytes belonged to.
-func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) (int64, error) {
+func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) (InsertCleanupRow, error) {
 	row := q.db.QueryRow(ctx, insertCleanup,
 		arg.BackendName,
 		arg.ObjectKey,
@@ -297,47 +311,9 @@ func (q *Queries) InsertCleanup(ctx context.Context, arg InsertCleanupParams) (i
 		arg.SizeBytes,
 		arg.ClaimedBy,
 	)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
-}
-
-const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec
-INSERT INTO cleanup_dlq (
-    original_id, backend_name, object_key, storage_key, reason, size_bytes,
-    attempts, first_enqueued_at, last_error
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-`
-
-type InsertCleanupDLQParams struct {
-	OriginalID      int64
-	BackendName     string
-	ObjectKey       string
-	StorageKey      string
-	Reason          string
-	SizeBytes       int64
-	Attempts        int32
-	FirstEnqueuedAt pgtype.Timestamptz
-	LastError       *string
-}
-
-// Inserts an exhausted cleanup_queue row into the dead-letter table.
-// The original_id retains the queue row's id for forensic correlation;
-// first_enqueued_at carries the original created_at so the DLQ entry
-// remembers how long the cleanup was outstanding.
-func (q *Queries) InsertCleanupDLQ(ctx context.Context, arg InsertCleanupDLQParams) error {
-	_, err := q.db.Exec(ctx, insertCleanupDLQ,
-		arg.OriginalID,
-		arg.BackendName,
-		arg.ObjectKey,
-		arg.StorageKey,
-		arg.Reason,
-		arg.SizeBytes,
-		arg.Attempts,
-		arg.FirstEnqueuedAt,
-		arg.LastError,
-	)
-	return err
+	var i InsertCleanupRow
+	err := row.Scan(&i.ID, &i.ClaimedAt)
+	return i, err
 }
 
 const listCleanupDLQ = `-- name: ListCleanupDLQ :many
@@ -399,6 +375,50 @@ func (q *Queries) ListCleanupDLQ(ctx context.Context, arg ListCleanupDLQParams) 
 	return items, nil
 }
 
+const moveCleanupToDLQ = `-- name: MoveCleanupToDLQ :execrows
+WITH moved AS (
+    DELETE FROM cleanup_queue cq
+    WHERE cq.id = $2
+      AND cq.claimed_at = $3
+      AND COALESCE(cq.claimed_by, '') = $4::text
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.storage_key, cq.reason, cq.size_bytes,
+              cq.attempts, cq.created_at
+)
+INSERT INTO cleanup_dlq (
+    original_id, backend_name, object_key, storage_key, reason, size_bytes,
+    attempts, first_enqueued_at, last_error
+)
+SELECT m.id, m.backend_name, m.object_key, m.storage_key, m.reason, m.size_bytes,
+       m.attempts, m.created_at, $1::text
+FROM moved m
+`
+
+type MoveCleanupToDLQParams struct {
+	LastError string
+	ID        int64
+	ClaimedAt pgtype.Timestamptz
+	ClaimedBy string
+}
+
+// Graduates an exhausted row to the dead-letter table in one statement,
+// matching the claim the settler read so a lost holder cannot dead-letter a
+// row its new holder is still working. original_id keeps the queue row's id
+// for forensic correlation, and first_enqueued_at its created_at, so the DLQ
+// entry remembers how long the cleanup was outstanding. The bytes still count
+// as the backend's orphans while the row is dead-lettered.
+func (q *Queries) MoveCleanupToDLQ(ctx context.Context, arg MoveCleanupToDLQParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveCleanupToDLQ,
+		arg.LastError,
+		arg.ID,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requeueCleanupDLQ = `-- name: RequeueCleanupDLQ :execrows
 WITH moved AS (
     DELETE FROM cleanup_dlq
@@ -423,7 +443,7 @@ func (q *Queries) RequeueCleanupDLQ(ctx context.Context, backend string) (int64,
 	return result.RowsAffected(), nil
 }
 
-const updateCleanupRetry = `-- name: UpdateCleanupRetry :exec
+const updateCleanupRetry = `-- name: UpdateCleanupRetry :execrows
 UPDATE cleanup_queue
 SET attempts = attempts + 1,
     next_retry = NOW() + $1::interval,
@@ -431,19 +451,32 @@ SET attempts = attempts + 1,
     claimed_at = NULL,
     claimed_by = NULL
 WHERE id = $3
+  AND claimed_at = $4
+  AND COALESCE(claimed_by, '') = $5::text
 `
 
 type UpdateCleanupRetryParams struct {
 	Backoff   pgtype.Interval
 	LastError *string
 	ID        int64
+	ClaimedAt pgtype.Timestamptz
+	ClaimedBy string
 }
 
 // Schedules a retry by advancing next_retry, recording the error, and
 // clearing the claim so the row is immediately re-eligible for the next
-// worker tick (the previous claim is what gated this retry from running
-// twice within the grace window).
-func (q *Queries) UpdateCleanupRetry(ctx context.Context, arg UpdateCleanupRetryParams) error {
-	_, err := q.db.Exec(ctx, updateCleanupRetry, arg.Backoff, arg.LastError, arg.ID)
-	return err
+// worker tick. Matches the claim the settler read, so a holder that lost the
+// row cannot count an attempt against it.
+func (q *Queries) UpdateCleanupRetry(ctx context.Context, arg UpdateCleanupRetryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateCleanupRetry,
+		arg.Backoff,
+		arg.LastError,
+		arg.ID,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

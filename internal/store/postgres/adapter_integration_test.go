@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"github.com/jackc/pgx/v5"
@@ -186,14 +188,24 @@ func cleanupOf(backend, key, reason string, size int64) *core.CleanupRequest {
 }
 
 // queueCleanup commits a cleanup row the way a copy-removing transaction
-// queues one, claimed by the fixture's instance, and returns its id.
-func queueCleanup(t *testing.T, s *Store, c *core.CleanupRequest) int64 {
+// queues one, claimed by the fixture's instance, and returns the row with its
+// claim.
+func queueCleanup(t *testing.T, s *Store, c *core.CleanupRequest) core.CleanupItem {
 	t.Helper()
-	id, err := s.direct().InsertCleanup(context.Background(), c)
+	item, err := s.direct().InsertCleanup(context.Background(), c)
 	if err != nil {
 		t.Fatalf("InsertCleanup(%s): %v", c.ObjectKey, err)
 	}
-	return id
+	return item
+}
+
+// dropCleanupRows deletes the queued rows with ids whatever claim holds them,
+// so a test does not leave rows behind in the shared fixture.
+func dropCleanupRows(t *testing.T, s *Store, ids ...int64) {
+	t.Helper()
+	if _, err := s.pool.Exec(context.Background(), `DELETE FROM cleanup_queue WHERE id = ANY($1)`, ids); err != nil {
+		t.Fatalf("drop cleanup rows %v: %v", ids, err)
+	}
 }
 
 // releaseClaim clears a queued row's claim, as a retry does, so the next
@@ -210,7 +222,7 @@ func releaseClaim(t *testing.T, s *Store, id int64) {
 // queueUnclaimed commits a cleanup row with no claim on it.
 func queueUnclaimed(t *testing.T, s *Store, c *core.CleanupRequest) int64 {
 	t.Helper()
-	id := queueCleanup(t, s, c)
+	id := queueCleanup(t, s, c).ID
 	releaseClaim(t, s, id)
 	return id
 }
@@ -608,28 +620,78 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 // CLEANUP TX
 // -------------------------------------------------------------------------
 
+// txCleanupRow reads the queued row with id inside the adapter's transaction,
+// failing the test when the row is not there.
+func txCleanupRow(t *testing.T, a *pgTxAdapter, id int64) core.CleanupItem {
+	t.Helper()
+	rows, err := a.q.GetPendingCleanups(context.Background(), db.GetPendingCleanupsParams{
+		MaxAttempts: core.MaxCleanupAttempts, RowLimit: math.MaxInt32,
+	})
+	if err != nil {
+		t.Fatalf("GetPendingCleanups: %v", err)
+	}
+	for i := range rows {
+		if rows[i].ID == id {
+			return cleanupItemFromRow(&rows[i])
+		}
+	}
+	t.Fatalf("cleanup row %d not queued", id)
+	return core.CleanupItem{}
+}
+
 // TestPgAdapter_InsertCleanup_ClaimsRowForInstance verifies a queued row is
 // stamped with the adapter's instance and a claim time, stored at the copy's
-// own path, and returned by id.
+// own path, and returned with the claim the row holds.
 func TestPgAdapter_InsertCleanup_ClaimsRowForInstance(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		id, err := a.InsertCleanup(ctx, &core.CleanupRequest{
+		item, err := a.InsertCleanup(ctx, &core.CleanupRequest{
 			BackendName: "backend-a", ObjectKey: key, StorageKey: key + "!w1", Reason: "test", SizeBytes: 256,
 		})
 		if err != nil {
 			t.Fatalf("InsertCleanup: %v", err)
 		}
-		row, err := a.GetCleanupQueueRow(ctx, id)
-		if err != nil {
-			t.Fatalf("GetCleanupQueueRow: %v", err)
-		}
+		row := txCleanupRow(t, a, item.ID)
 		if row.StorageKey != key+"!w1" || row.ObjectKey != key || row.SizeBytes != 256 || row.Reason != "test" {
 			t.Errorf("row = %+v, want the queued request's fields", row)
 		}
+		if item.Claim == nil || row.Claim == nil {
+			t.Fatalf("claims = returned %+v, stored %+v; want both set", item.Claim, row.Claim)
+		}
+		if !item.Claim.At.Equal(row.Claim.At) || item.Claim.By != pgFixtureInstance || row.Claim.By != pgFixtureInstance {
+			t.Errorf("returned claim %+v, stored claim %+v; want the same stamp by %q", *item.Claim, *row.Claim, pgFixtureInstance)
+		}
+		if item.StorageKey != row.StorageKey || item.BackendName != row.BackendName || item.SizeBytes != row.SizeBytes {
+			t.Errorf("returned item %+v, want the stored row's fields %+v", item, row)
+		}
 	})
+}
+
+// TestPgAdapter_InsertCleanup_NoInstanceClaimsWithEmptyBy verifies a process
+// with no instance id still stamps a claim time, and the claim it returns
+// has an empty By.
+func TestPgAdapter_InsertCleanup_NoInstanceClaimsWithEmptyBy(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
+	item, err := a.InsertCleanup(ctx, cleanupOf("backend-a", uniqueKey(t, "k"), "test", 1))
+	if err != nil {
+		t.Fatalf("InsertCleanup: %v", err)
+	}
+	row := txCleanupRow(t, a, item.ID)
+	if item.Claim == nil || item.Claim.By != "" || item.Claim.At.IsZero() {
+		t.Fatalf("claim = %+v, want a stamped claim with empty By", item.Claim)
+	}
+	if row.Claim == nil || row.Claim.By != "" || !row.Claim.At.Equal(item.Claim.At) {
+		t.Errorf("stored claim = %+v, want %+v", row.Claim, *item.Claim)
+	}
 }
 
 // TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey verifies a copy
@@ -639,16 +701,12 @@ func TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		id, err := a.InsertCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, Reason: "test", SizeBytes: 1})
+		item, err := a.InsertCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, Reason: "test", SizeBytes: 1})
 		if err != nil {
 			t.Fatalf("InsertCleanup: %v", err)
 		}
-		row, err := a.GetCleanupQueueRow(ctx, id)
-		if err != nil {
-			t.Fatalf("GetCleanupQueueRow: %v", err)
-		}
-		if row.StorageKey != key {
-			t.Errorf("StorageKey = %q, want the object key %q", row.StorageKey, key)
+		if row := txCleanupRow(t, a, item.ID); row.StorageKey != key || item.StorageKey != key {
+			t.Errorf("StorageKey = stored %q, returned %q; want the object key %q", row.StorageKey, item.StorageKey, key)
 		}
 	})
 }

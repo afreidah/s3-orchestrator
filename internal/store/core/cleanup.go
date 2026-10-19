@@ -17,7 +17,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
@@ -36,18 +35,11 @@ func enqueueRemoved(ctx context.Context, tx TxAdapter, objectKey, reason string,
 	items := make([]CleanupItem, 0, len(removed))
 	for _, d := range removed {
 		c := d.request(objectKey, reason)
-		id, err := tx.InsertCleanup(ctx, c)
+		item, err := tx.InsertCleanup(ctx, c)
 		if err != nil {
 			return nil, fmt.Errorf("queue cleanup on %s: %w", c.BackendName, err)
 		}
-		items = append(items, CleanupItem{
-			ID:          id,
-			BackendName: c.BackendName,
-			ObjectKey:   c.ObjectKey,
-			StorageKey:  c.StorageKey,
-			Reason:      c.Reason,
-			SizeBytes:   c.SizeBytes,
-		})
+		items = append(items, item)
 	}
 	return items, nil
 }
@@ -86,34 +78,4 @@ func dropIntent(ctx context.Context, tx TxAdapter, p *PendingObject, reason stri
 		return nil, fmt.Errorf("delete discarded intent: %w", err)
 	}
 	return enqueueRemoved(ctx, tx, p.ObjectKey, reason, []removedCopy{intentBytes(p, "")})
-}
-
-// -------------------------------------------------------------------------
-// MOVE CLEANUP TO DLQ
-// -------------------------------------------------------------------------
-
-// MoveCleanupToDLQ atomically moves a cleanup_queue row whose retry budget is
-// spent into cleanup_dlq. It returns false when no row exists for id, which
-// means a concurrent finaliser already removed it. The bytes still count as
-// the backend's orphans while the row is dead-lettered.
-func MoveCleanupToDLQ(ctx context.Context, runner Runner, id int64, lastError string) (bool, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
-		row, err := tx.GetCleanupQueueRow(ctx, id)
-		if err != nil {
-			if errors.Is(err, ErrCleanupItemNotFound) {
-				return false, nil
-			}
-			return false, err
-		}
-		if lastError != "" {
-			row.LastError = lastError
-		}
-		if err := tx.InsertCleanupDLQ(ctx, &row); err != nil {
-			return false, err
-		}
-		if err := tx.DeleteCleanupItem(ctx, id); err != nil {
-			return false, err
-		}
-		return true, nil
-	})
 }

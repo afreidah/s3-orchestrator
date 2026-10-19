@@ -422,10 +422,10 @@ type CleanupRequest struct {
 }
 
 // CleanupItem represents a pending cleanup operation in the retry queue. The
-// worker deletes StorageKey; ObjectKey names the object for display.
-// ClaimedAt and ClaimedBy are nil when no worker has held the row. Reclaimed is
-// set only by ClaimPendingCleanups, when the claim recovered a row whose
-// previous claim aged past the grace cutoff.
+// worker deletes StorageKey; ObjectKey names the object for display. Claim is
+// nil when no instance holds the row. Reclaimed is set only by
+// ClaimPendingCleanups, when the claim recovered a row whose previous claim
+// aged past the grace cutoff.
 type CleanupItem struct {
 	ID          int64
 	BackendName string
@@ -434,25 +434,24 @@ type CleanupItem struct {
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
-	ClaimedAt   *time.Time
-	ClaimedBy   *string
+	Claim       *CleanupClaim
 	Reclaimed   bool `json:"-"`
 }
 
-// CleanupQueueRow is the full payload of a single cleanup_queue row,
-// returned by GetCleanupQueueRow inside the move-to-DLQ transaction so
-// every column the DLQ insert needs travels with one read.
-type CleanupQueueRow struct {
-	ID          int64
-	BackendName string
-	ObjectKey   string
-	StorageKey  string
-	Reason      string
-	SizeBytes   int64
-	Attempts    int32
-	CreatedAt   time.Time
-	LastError   string
+// CleanupClaim is the hold one instance has on a cleanup row: when it was
+// stamped and by which instance, empty for a process that has no instance id.
+// Every write that settles a row matches it, so an instance whose claim aged
+// out and was reclaimed by another cannot settle the row a second time.
+type CleanupClaim struct {
+	At time.Time
+	By string
 }
+
+// MaxCleanupAttempts is the retry ceiling. The 1-minute starting backoff
+// doubled 10 times yields ~17 hours of total retry runway, which is enough to
+// bridge the longest realistic backend outages. A row whose next attempt would
+// reach it graduates to cleanup_dlq for operator action.
+const MaxCleanupAttempts = 10
 
 // CleanupDLQItem is a dead-lettered cleanup row surfaced for operator
 // inspection: an object whose backend delete never succeeded within the

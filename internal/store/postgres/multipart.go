@@ -63,10 +63,7 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		Tagging:       strPtr(core.EncodeTags(params.Tags)),
 		Accepts:       int64(core.AcceptForWrite),
 	})
-	if err != nil {
-		return false, fmt.Errorf("failed to create multipart upload: %w", err)
-	}
-	return n > 0, nil
+	return changed(n, err, "failed to create multipart upload")
 }
 
 // nilIfEmptyBytes returns nil when b is zero-length so the column lands

@@ -362,23 +362,6 @@ func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]Exi
 	return t.existingCopies, t.existingErr
 }
 
-// GetCleanupQueueRow is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
-	return CleanupQueueRow{}, nil
-}
-
-// InsertCleanupDLQ is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
-
-// DeleteCleanupItem is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error { return nil }
-
 // ListedPathStates reports every path as pending cleanup when the fixture was
 // primed with one, so an import can be driven down the ordinary path, the
 // suppressed path, or the error path.

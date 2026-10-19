@@ -58,19 +58,23 @@ func settleStore(t *testing.T, extra func(*storetest.MockMetadataStore)) (*store
 	c := &settleCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	extra(store)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64) error {
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, items []core.CleanupItem) ([]int64, error) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.completed = append(c.completed, id)
-			return nil
+			ids := make([]int64, len(items))
+			for i := range items {
+				ids[i] = items[i].ID
+			}
+			c.completed = append(c.completed, ids...)
+			return ids, nil
 		}).AnyTimes()
 	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id int64, _ time.Duration, _ string) error {
+		DoAndReturn(func(_ context.Context, item *core.CleanupItem, _ time.Duration, _ string) (bool, error) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.retried = append(c.retried, id)
-			return nil
+			c.retried = append(c.retried, item.ID)
+			return true, nil
 		}).AnyTimes()
 	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, *core.PendingObject, string) ([]core.CleanupItem, error) {

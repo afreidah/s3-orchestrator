@@ -93,12 +93,6 @@ func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason strin
 	return DeleteMultipartUpload(ctx, o.runner, uploadID, reason)
 }
 
-// MoveCleanupToDLQ graduates an exhausted cleanup row to the dead-letter
-// queue for operator triage.
-func (o TxOps) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
-	return MoveCleanupToDLQ(ctx, o.runner, id, lastError)
-}
-
 // ReconcileUsage recomputes bytes_used per backend from the location rows,
 // correcting drift in the incrementally maintained counter.
 func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {

@@ -43,8 +43,8 @@ func (e *S3Error) Error() string {
 // broadcast fallback on reads, 503 on writes. ErrCopyHoldsOnlyDEK and
 // ErrEncryptionFlagMismatch mean an object's copies disagree about how they
 // are stored; callers skip the object and surface it for repair rather than
-// guessing. ErrCleanupItemNotFound and ErrCopyChanged are benign no-ops: another
-// worker resolved the row, or a client rewrote the key mid-pass. ErrCopyNotExcess
+// guessing. ErrCopyChanged is a benign no-op: a client rewrote the key
+// mid-pass. ErrCopyNotExcess
 // refuses a surplus-copy removal once the object is back at its target count.
 // ErrTargetRefused declines a placement whose target already holds a copy or
 // does not admit the bytes. ErrIntentLost refuses a write whose intent was
@@ -56,7 +56,6 @@ var (
 	ErrDBUnavailable          = errors.New("database unavailable")
 	ErrCopyHoldsOnlyDEK       = errors.New("copy holds the only usable encryption key for this object")
 	ErrEncryptionFlagMismatch = errors.New("stored bytes disagree with the object's encryption flag")
-	ErrCleanupItemNotFound    = errors.New("cleanup queue row not found")
 	ErrNoCopiesToRecord       = errors.New("record object request names no copies")
 	ErrCopyChanged            = errors.New("copy changed since the pass read it")
 	ErrCopyNotExcess          = errors.New("object holds no surplus copy to remove")

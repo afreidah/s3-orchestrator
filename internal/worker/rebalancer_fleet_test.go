@@ -51,12 +51,12 @@ const rebalCleanupID = 7
 // -------------------------------------------------------------------------
 
 // stubRebalRetry returns a DoAndReturn that captures into rr.
-func stubRebalRetry(rr *rebalRetries) func(context.Context, int64, time.Duration, string) error {
-	return func(_ context.Context, id int64, _ time.Duration, _ string) error {
+func stubRebalRetry(rr *rebalRetries) func(context.Context, *core.CleanupItem, time.Duration, string) (bool, error) {
+	return func(_ context.Context, item *core.CleanupItem, _ time.Duration, _ string) (bool, error) {
 		rr.mu.Lock()
 		defer rr.mu.Unlock()
-		rr.ids = append(rr.ids, id)
-		return nil
+		rr.ids = append(rr.ids, item.ID)
+		return true, nil
 	}
 }
 

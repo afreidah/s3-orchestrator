@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
@@ -207,8 +208,9 @@ func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
+	body := w.Body.String()
 	var resp adminapi.CleanupQueueResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Depth != 2 || len(resp.Items) != 1 {
@@ -223,8 +225,29 @@ func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 		t.Errorf("item = %+v, want %+v", got, want)
 	}
 	// An unclaimed row must not emit null claim fields.
-	if body := w.Body.String(); strings.Contains(body, "claimed_at") || strings.Contains(body, "claimed_by") {
+	if strings.Contains(body, "claimed_at") || strings.Contains(body, "claimed_by") {
 		t.Errorf("unclaimed item emitted claim fields: %s", body)
+	}
+}
+
+// TestCleanupQueueItems_MapsTheClaim verifies a claimed row reports when and
+// by which instance it was claimed, as a copy the row's claim cannot alias.
+func TestCleanupQueueItems_MapsTheClaim(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	claim := &core.CleanupClaim{At: at, By: "inst-1"}
+	got := cleanupQueueItems([]core.CleanupItem{{ID: 7, Claim: claim}, {ID: 8}})
+	if len(got) != 2 {
+		t.Fatalf("got %d items, want 2", len(got))
+	}
+	if got[0].ClaimedAt == nil || !got[0].ClaimedAt.Equal(at) || got[0].ClaimedBy != "inst-1" {
+		t.Errorf("claimed item = %+v, want claimed at %v by inst-1", got[0], at)
+	}
+	if got[0].ClaimedAt == &claim.At {
+		t.Error("ClaimedAt aliases the store row's claim")
+	}
+	if got[1].ClaimedAt != nil || got[1].ClaimedBy != "" {
+		t.Errorf("unclaimed item = %+v, want no claim fields", got[1])
 	}
 }
 

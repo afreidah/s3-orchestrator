@@ -34,7 +34,7 @@ func TestSettle_FleetRetiresDeletedRows(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil).Times(1)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(1)).DoAndReturn(retireAll).Times(1)
 	storetest.Permissive(store)
 
 	be := backendtest.NewInMemory()
@@ -55,8 +55,10 @@ func TestSettle_FleetRetriesAFailedDelete(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().RetryCleanupItem(gomock.Any(), int64(1), cleanup.Backoff(2), gomock.Any()).Return(nil).Times(1)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Times(0)
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Cond(func(item *core.CleanupItem) bool {
+		return item.ID == 1 && item.Claim == rowClaim
+	}), cleanup.Backoff(2), gomock.Any()).Return(true, nil).Times(1)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).Times(0)
 	storetest.Permissive(store)
 
 	be := backendtest.NewInMemory()
@@ -78,7 +80,7 @@ func TestSettle_FleetRetiresRowsOnAnUnknownBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().CompleteCleanupItem(gomock.Any(), int64(8)).Return(nil).Times(1)
+	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(8)).DoAndReturn(retireAll).Times(1)
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{fleetBackend: backendtest.NewInMemory()}, nil)

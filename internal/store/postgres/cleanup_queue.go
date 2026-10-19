@@ -31,35 +31,20 @@ import (
 // Used by the admin endpoint to render the queue. The cleanup worker uses
 // ClaimPendingCleanups instead, which atomically stamps claim columns.
 func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
-	rows, err := s.queries.GetPendingCleanups(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
+	rows, err := s.queries.GetPendingCleanups(ctx, db.GetPendingCleanupsParams{
+		MaxAttempts: core.MaxCleanupAttempts,
+		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending cleanups: %w", err)
 	}
-
 	return mapSlice(rows, cleanupItemFromRow), nil
 }
 
-// cleanupItemFromRow converts a sqlc GetPendingCleanups row to the
-// core.CleanupItem shape consumed by the admin endpoint.
+// cleanupItemFromRow converts a cleanup queue row to the core.CleanupItem shape.
+// ClaimPendingCleanups selects the same columns, so its rows convert here too.
 func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
-	return core.CleanupItem{
-		ID:          r.ID,
-		BackendName: r.BackendName,
-		ObjectKey:   r.ObjectKey,
-		StorageKey:  r.StorageKey,
-		Reason:      r.Reason,
-		Attempts:    r.Attempts,
-		SizeBytes:   r.SizeBytes,
-		ClaimedAt:   timestamptzPtr(r.ClaimedAt),
-		ClaimedBy:   r.ClaimedBy,
-	}
-}
-
-// claimedItemFromRow converts a sqlc ClaimPendingCleanups row to the
-// core.CleanupItem shape, carrying the reclaimed flag the worker uses to
-// drive the stale-claim recovery metric.
-func claimedItemFromRow(r *db.ClaimPendingCleanupsRow) core.CleanupItem {
-	return core.CleanupItem{
+	item := core.CleanupItem{
 		ID:          r.ID,
 		BackendName: r.BackendName,
 		ObjectKey:   r.ObjectKey,
@@ -69,58 +54,96 @@ func claimedItemFromRow(r *db.ClaimPendingCleanupsRow) core.CleanupItem {
 		SizeBytes:   r.SizeBytes,
 		Reclaimed:   r.Reclaimed,
 	}
+	if r.ClaimedAt.Valid {
+		item.Claim = &core.CleanupClaim{At: r.ClaimedAt.Time, By: derefStr(r.ClaimedBy)}
+	}
+	return item
 }
 
 // ClaimPendingCleanups atomically reserves a batch of cleanup rows for the
-// calling instance using FOR UPDATE SKIP LOCKED. See the SQL definition for
-// the eligibility rules; this method is the only path the cleanup worker
-// should use to fetch pending rows.
+// calling instance using FOR UPDATE SKIP LOCKED, returning each with the claim
+// it stamped. See the SQL definition for the eligibility rules; this method is
+// the only path the cleanup worker should use to fetch pending rows.
 func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
 	rows, err := s.queries.ClaimPendingCleanups(ctx, db.ClaimPendingCleanupsParams{
-		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		MaxAttempts: core.MaxCleanupAttempts,
 		GraceCutoff: pgtype.Timestamptz{Time: graceCutoff, Valid: true},
+		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 		ClaimedBy:   instanceID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to claim pending cleanups: %w", err)
 	}
-	return mapSlice(rows, claimedItemFromRow), nil
+	return mapSlice(rows, func(r *db.ClaimPendingCleanupsRow) core.CleanupItem {
+		return cleanupItemFromRow((*db.GetPendingCleanupsRow)(r))
+	}), nil
 }
 
-// CompleteCleanupItem retires a row whose bytes are gone. A row already
-// retired is a no-op.
-func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
-	return s.direct().DeleteCleanupItem(ctx, id)
+// CompleteCleanupItems retires the rows whose bytes are gone in one statement,
+// each only while it is still held under its claim, and returns the ids it
+// retired.
+func (s *Store) CompleteCleanupItems(ctx context.Context, items []core.CleanupItem) ([]int64, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	params := db.CompleteCleanupItemsParams{
+		Ids:        make([]int64, len(items)),
+		ClaimedAts: make([]pgtype.Timestamptz, len(items)),
+		ClaimedBys: make([]string, len(items)),
+	}
+	for i := range items {
+		claim := claimOf(&items[i])
+		params.Ids[i] = items[i].ID
+		params.ClaimedAts[i] = pgtype.Timestamptz{Time: claim.At, Valid: true}
+		params.ClaimedBys[i] = claim.By
+	}
+	retired, err := s.queries.CompleteCleanupItems(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("complete cleanup items: %w", err)
+	}
+	return retired, nil
 }
 
 // RetryCleanupItem increments the attempt counter, schedules the next retry,
 // and clears the claim so the row is immediately re-eligible for the next
-// worker tick.
-func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
-	err := s.queries.UpdateCleanupRetry(ctx, db.UpdateCleanupRetryParams{
+// worker tick. Reports false when the item's claim no longer holds the row.
+func (s *Store) RetryCleanupItem(ctx context.Context, item *core.CleanupItem, backoff time.Duration, lastError string) (bool, error) {
+	claim := claimOf(item)
+	n, err := s.queries.UpdateCleanupRetry(ctx, db.UpdateCleanupRetryParams{
 		Backoff:   durationToInterval(backoff),
 		LastError: &lastError,
-		ID:        id,
+		ID:        item.ID,
+		ClaimedAt: pgtype.Timestamptz{Time: claim.At, Valid: true},
+		ClaimedBy: claim.By,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to update cleanup retry: %w", err)
-	}
-	return nil
+	return changed(n, err, "update cleanup retry")
 }
 
-// timestamptzPtr returns a *time.Time for a sqlc-emitted pgtype.Timestamptz,
-// or nil when the column was NULL.
-func timestamptzPtr(ts pgtype.Timestamptz) *time.Time {
-	if !ts.Valid {
-		return nil
+// MoveCleanupToDLQ graduates an exhausted row to cleanup_dlq in one statement.
+// Reports false when the item's claim no longer holds the row.
+func (s *Store) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, lastError string) (bool, error) {
+	claim := claimOf(item)
+	n, err := s.queries.MoveCleanupToDLQ(ctx, db.MoveCleanupToDLQParams{
+		LastError: lastError,
+		ID:        item.ID,
+		ClaimedAt: pgtype.Timestamptz{Time: claim.At, Valid: true},
+		ClaimedBy: claim.By,
+	})
+	return changed(n, err, "move cleanup row to DLQ")
+}
+
+// claimOf is the claim a settle write matches. An item with no claim matches
+// no row, since every row a settle reaches was claimed when it was read.
+func claimOf(item *core.CleanupItem) core.CleanupClaim {
+	if item.Claim == nil {
+		return core.CleanupClaim{}
 	}
-	t := ts.Time
-	return &t
+	return *item.Claim
 }
 
 // CleanupQueueDepth returns the number of items still pending in the queue.
 func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
-	count, err := s.queries.CountPendingCleanups(ctx)
+	count, err := s.queries.CountPendingCleanups(ctx, core.MaxCleanupAttempts)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count pending cleanups: %w", err)
 	}

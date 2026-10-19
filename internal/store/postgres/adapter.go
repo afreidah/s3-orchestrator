@@ -20,7 +20,6 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // -------------------------------------------------------------------------
@@ -288,81 +287,29 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 // -------------------------------------------------------------------------
 
 // InsertCleanup queues c's bytes for deletion, claimed by this instance, and
-// returns the row's id.
-func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (int64, error) {
-	id, err := a.q.InsertCleanup(ctx, db.InsertCleanupParams{
+// returns the row with the claim it was stamped with.
+func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
+	path := core.StoragePath(c.ObjectKey, c.StorageKey)
+	row, err := a.q.InsertCleanup(ctx, db.InsertCleanupParams{
 		BackendName: c.BackendName,
 		ObjectKey:   c.ObjectKey,
-		StorageKey:  core.StoragePath(c.ObjectKey, c.StorageKey),
+		StorageKey:  path,
 		Reason:      c.Reason,
 		SizeBytes:   c.SizeBytes,
 		ClaimedBy:   strPtr(a.instanceID),
 	})
 	if err != nil {
-		return 0, fmt.Errorf("insert cleanup row: %w", err)
+		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
 	}
-	return id, nil
-}
-
-// GetCleanupQueueRow returns the full payload of a single cleanup_queue
-// row by id. Inside MoveCleanupToDLQ this read carries every column the
-// DLQ insert needs in one round trip.
-func (a *pgTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.CleanupQueueRow, error) {
-	row, err := a.q.GetCleanupQueueRow(ctx, id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return core.CleanupQueueRow{}, core.ErrCleanupItemNotFound
-		}
-		return core.CleanupQueueRow{}, fmt.Errorf("get cleanup queue row: %w", err)
-	}
-	out := core.CleanupQueueRow{
+	return core.CleanupItem{
 		ID:          row.ID,
-		BackendName: row.BackendName,
-		ObjectKey:   row.ObjectKey,
-		StorageKey:  row.StorageKey,
-		Reason:      row.Reason,
-		SizeBytes:   row.SizeBytes,
-		Attempts:    row.Attempts,
-		LastError:   derefStr(row.LastError),
-	}
-	if row.CreatedAt.Valid {
-		out.CreatedAt = row.CreatedAt.Time
-	}
-	return out, nil
-}
-
-// InsertCleanupDLQ inserts row into cleanup_dlq, where its bytes still count
-// as the backend's orphans.
-func (a *pgTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
-	lastErr := strPtr(row.LastError)
-	firstEnqueuedAt := pgtype.Timestamptz{Valid: false}
-	if !row.CreatedAt.IsZero() {
-		firstEnqueuedAt = pgtype.Timestamptz{Time: row.CreatedAt, Valid: true}
-	}
-	if err := a.q.InsertCleanupDLQ(ctx, db.InsertCleanupDLQParams{
-		OriginalID:      row.ID,
-		BackendName:     row.BackendName,
-		ObjectKey:       row.ObjectKey,
-		StorageKey:      row.StorageKey,
-		Reason:          row.Reason,
-		SizeBytes:       row.SizeBytes,
-		Attempts:        row.Attempts,
-		FirstEnqueuedAt: firstEnqueuedAt,
-		LastError:       lastErr,
-	}); err != nil {
-		return fmt.Errorf("insert cleanup_dlq: %w", err)
-	}
-	return nil
-}
-
-// DeleteCleanupItem removes the cleanup_queue row by id. Used inside
-// MoveCleanupToDLQ so the queue->DLQ move is atomic with the insert
-// above.
-func (a *pgTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
-	if err := a.q.DeleteCleanupItem(ctx, id); err != nil {
-		return fmt.Errorf("delete cleanup_queue row: %w", err)
-	}
-	return nil
+		BackendName: c.BackendName,
+		ObjectKey:   c.ObjectKey,
+		StorageKey:  path,
+		Reason:      c.Reason,
+		SizeBytes:   c.SizeBytes,
+		Claim:       &core.CleanupClaim{At: row.ClaimedAt.Time, By: a.instanceID},
+	}, nil
 }
 
 // -------------------------------------------------------------------------

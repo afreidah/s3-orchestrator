@@ -13,6 +13,8 @@
 package postgres
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +95,36 @@ func TestDerefInt64(t *testing.T) {
 	n := int64(99)
 	if got := derefInt64(&n); got != 99 {
 		t.Errorf("expected 99, got %d", got)
+	}
+}
+
+// TestTimestamptzPtr verifies a NULL column converts to nil and a set
+// column to a pointer at its time.
+func TestTimestamptzPtr(t *testing.T) {
+	t.Parallel()
+	if got := timestamptzPtr(pgtype.Timestamptz{}); got != nil {
+		t.Errorf("NULL column = %v, want nil", *got)
+	}
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if got := timestamptzPtr(pgtype.Timestamptz{Time: at, Valid: true}); got == nil || !got.Equal(at) {
+		t.Errorf("set column = %v, want %v", got, at)
+	}
+}
+
+// TestChanged verifies changed reports whether a write touched a row and
+// wraps a failure with what it was doing.
+func TestChanged(t *testing.T) {
+	t.Parallel()
+	if ok, err := changed(1, nil, "x"); err != nil || !ok {
+		t.Errorf("changed(1) = %v, %v; want true, nil", ok, err)
+	}
+	if ok, err := changed(0, nil, "x"); err != nil || ok {
+		t.Errorf("changed(0) = %v, %v; want false, nil", ok, err)
+	}
+	cause := errors.New("boom")
+	ok, err := changed(3, cause, "update thing")
+	if ok || !errors.Is(err, cause) || !strings.HasPrefix(err.Error(), "update thing: ") {
+		t.Errorf("changed(err) = %v, %v; want false and an error wrapping %v prefixed by what", ok, err, cause)
 	}
 }
 
