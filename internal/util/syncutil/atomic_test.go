@@ -25,6 +25,16 @@ func TestAtomicConfig_ZeroValue(t *testing.T) {
 	}
 }
 
+// TestAtomicConfig_NilReceiverLoad verifies Load on a nil pointer returns nil
+// instead of panicking, so an optional config needs no nil check.
+func TestAtomicConfig_NilReceiverLoad(t *testing.T) {
+	t.Parallel()
+	var ac *AtomicConfig[string]
+	if got := ac.Load(); got != nil {
+		t.Errorf("Load on nil receiver = %v, want nil", got)
+	}
+}
+
 // TestAtomicConfig_StoreLoad verifies the atomic config store load contract.
 // Asserts that Load = , want pointer to 42.
 func TestAtomicConfig_StoreLoad(t *testing.T) {

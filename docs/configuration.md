@@ -838,7 +838,7 @@ integrity:
 **How it works:**
 
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
-- **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
+- **Read path (`verify_on_read`):** The hash is computed as the response streams to the client and compared only once every byte has been delivered. On a mismatch the corrupted copy is enqueued for cleanup. A download cut short, by `backend_timeout` or a client disconnect, is never compared, since a prefix of the object cannot match its hash.
 - **Replication (`verify_on_replicate`):** Each new copy is read back from its target, decoded to plaintext, and checked against the source's hash before the ledger row that makes it count toward the replication factor is written. A copy whose hash disagrees is deleted and another target is tried.
 - **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.

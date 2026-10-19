@@ -25,7 +25,11 @@ func (a *AtomicConfig[T]) Store(val *T) {
 	a.p.Store(val)
 }
 
-// Load atomically returns the current pointer, or nil if none was stored.
+// Load atomically returns the current pointer, or nil if none was stored or a
+// itself is nil, so an optional config needs no nil check before loading.
 func (a *AtomicConfig[T]) Load() *T {
+	if a == nil {
+		return nil
+	}
 	return a.p.Load()
 }

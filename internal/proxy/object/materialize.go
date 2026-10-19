@@ -5,43 +5,19 @@
 //
 // Reads a CopyObject source object from the first reachable replica into a
 // seekable body (via internal/util/materialize) so it can be handed to
-// PutObject and replayed across failover attempts. Also holds the small
-// SHA-256 helpers the PUT integrity pipeline feeds into the materialize sink.
+// PutObject and replayed across failover attempts.
 // -------------------------------------------------------------------------------
 
 package object
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
-
-// -------------------------------------------------------------------------
-// HASHING
-// -------------------------------------------------------------------------
-
-// sha256Hex returns the SHA-256 accumulated in h as a hex string. Convenience
-// for call sites that materialize a body with a streaming hasher attached.
-func sha256Hex(h hash.Hash) string {
-	if h == nil {
-		return ""
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// newSHA256 returns a fresh SHA-256 hasher. Exposed as a helper so call sites
-// do not need to import crypto/sha256 just to feed materialize.New's hasher
-// parameter.
-func newSHA256() hash.Hash {
-	return sha256.New()
-}
 
 // -------------------------------------------------------------------------
 // MATERIALIZED SOURCE

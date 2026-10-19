@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**verify_on_read compares only complete downloads ([#1740](https://github.com/afreidah/s3-orchestrator/issues/1740), v0.162.17)**
+
+With `integrity.verify_on_read` enabled, a GET compared the hash of whatever it had streamed whenever the body was closed, including a download cut short by `backend_timeout` or by a client disconnecting. The prefix never matched, so a healthy copy was dropped and its bytes queued for deletion; with a replication factor of 1 the object was lost. The hash is now compared only after the whole object has been delivered. No migration.
+
+**Operator action items after upgrade:**
+
+- **Check `s3o_integrity_errors_total{operation="read"}` from before the upgrade.** Each increment dropped a copy. Where the replication factor is above 1 the replicator rebuilt it from a sibling; with a factor of 1 the object may be gone. The error log line `integrity check failed on read` names each key.
+
 **Usage counters in one hash with a staged flush ([#1719](https://github.com/afreidah/s3-orchestrator/issues/1719), v0.162.15)**
 
 Each backend's Redis usage counters now live in one hash per month, `{prefix}:usage:{YYYY-MM}:{backend}`, holding the request and byte totals and a `pool:{name}` field per request pool. A flush renames the hash to `{prefix}:usage-staged:{YYYY-MM}:{backend}:{flushID}`, writes it to the database in one transaction that also records the flush id in the new `usage_flushes` table, and deletes the staged key after the commit. A staged key left behind is flushed again and applied once, so a lost reply no longer zeroes or double-counts a counter. The previous month is flushed as well, so charges made just before a rollover are no longer stranded. Local counters, used without Redis and during a Redis outage, are kept per month and flushed by the instance that holds them; nothing is replayed into Redis on recovery. The usage flush runs on every instance without an advisory lock. One migration (Postgres `00043`, SQLite `0030`) adds `usage_flushes`.

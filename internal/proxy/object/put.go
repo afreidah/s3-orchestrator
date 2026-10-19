@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"sync/atomic"
 	"time"
@@ -309,18 +308,14 @@ type putAttemptResult struct {
 // computed because the client is told it; the SHA-256 is empty when integrity
 // verification is disabled.
 func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
-	var hasher hash.Hash
-	icfg := o.integrityCfg.Load()
-	if icfg != nil && icfg.Enabled {
-		hasher = newSHA256()
-	}
+	hasher := o.integrityCfg.Load().Hasher()
 	etagHasher := etag.NewHasher()
 	mb, err := materialize.New(body, size, hasher, etagHasher)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, "", "", fmt.Errorf("buffer request body: %w", err)
 	}
-	return mb, etag.Hex(etagHasher), sha256Hex(hasher), nil
+	return mb, etag.Hex(etagHasher), etag.Hex(hasher), nil
 }
 
 // attemptPutOnBackend performs one backend PUT attempt: replay the prepared

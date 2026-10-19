@@ -98,7 +98,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    DECFULL --> INTEG',
     '',
     '    INTEG{Integrity<br>Verify?}:::decision',
-    '    INTEG -->|enabled, full read, hash stored| VERIFY[Wrap with<br>VerifyingReader]:::process',
+    '    INTEG -->|enabled, full read, hash stored| VERIFY[Hash on<br>Complete Read]:::process',
     '    INTEG -->|disabled, ranged or no hash| METRICS',
     '    VERIFY --> METRICS',
     '',
@@ -296,12 +296,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     INTEG: {
       title: 'Integrity Verify?',
       badge: 'decision', badgeText: 'integrity check',
-      body: '<p>Checks if <code>integrity.enabled</code> and <code>integrity.verify_on_read</code> are true, the request is not ranged, and the object has a stored content hash.</p><p>If all conditions are met, the body is wrapped with a <code>VerifyingReader</code>. If not, the body passes through directly. Ranged reads are never verified, because the stored hash covers the whole object; the scrubber covers them.</p>'
+      body: '<p>Checks if <code>integrity.enabled</code> and <code>integrity.verify_on_read</code> are true, the request is not ranged, and the object has a stored content hash.</p><p>If all conditions are met, the body is hashed as it streams. If not, the body passes through directly. Ranged reads are never verified, because the stored hash covers the whole object; the scrubber covers them.</p>'
     },
     VERIFY: {
-      title: 'Wrap with VerifyingReader',
+      title: 'Hash on Complete Read',
       badge: 'process', badgeText: 'integrity',
-      body: '<p><code>VerifyingReader</code> wraps the response body and computes SHA-256 incrementally as data streams through to the client.</p><p>When the reader reaches EOF, it compares the computed hash to the stored <code>content_hash</code>. On mismatch, <code>dropCorruptedLocation</code> drops the corrupted copy\'s location row and queues its bytes in <code>cleanup_queue</code> with reason <code>integrity_failed</code> in the same transaction, then deletes them once it commits, so the replicator rebuilds the missing copy. A copy a client overwrite or delete replaced during the read is left alone, since that write already queued the old bytes.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metric: s3o_integrity_errors_total{operation="read"} (s3o_integrity_checks_total counts only replicate and scrub checks)</p>'
+      body: '<p><code>ioutilx.TeeOnComplete</code> feeds the response body into SHA-256 as it streams through to the client, the same tee the object cache fills through.</p><p>Only when the read reaches EOF having delivered exactly the object\'s size does it compare the computed hash to the stored <code>content_hash</code>. A read cut short by <code>backend_timeout</code>, a client disconnect or a backend error compares nothing, because a prefix of the object can never match its hash. On mismatch, <code>dropCorruptedLocation</code> drops the corrupted copy\'s location row and queues its bytes in <code>cleanup_queue</code> with reason <code>integrity_failed</code> in the same transaction, then deletes them once it commits, so the replicator rebuilds the missing copy. A copy a client overwrite or delete replaced during the read is left alone, since that write already queued the old bytes.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metric: s3o_integrity_errors_total{operation="read"} (s3o_integrity_checks_total counts only replicate and scrub checks)</p>'
     },
     STREAM: {
       title: 'Handler: Conditionals, Stream to Client',
@@ -316,7 +316,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHEPUT: {
       title: 'Attach Cache Tee',
       badge: 'process', badgeText: 'cache store',
-      body: '<p>The body is wrapped in <code>newCacheTeeBody</code>, which copies bytes into a pre-sized buffer as they stream to the client. Only a clean read of exactly the expected size calls <code>objectCache.PutBytes()</code>, storing the data, content type, ETag and user metadata under the serving copy\'s storage path. A client disconnect, a mid-stream error or a short read caches nothing.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
+      body: '<p>The body is wrapped in <code>ioutilx.TeeOnComplete</code>, which copies bytes into a pre-sized buffer as they stream to the client. Only a clean read of exactly the expected size calls <code>objectCache.PutBytes()</code>, storing the data, content type, ETag and user metadata under the serving copy\'s storage path. A client disconnect, a mid-stream error or a short read caches nothing.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
     },
     METRICS: {
       title: 'Charge Egress, Metrics & Audit',

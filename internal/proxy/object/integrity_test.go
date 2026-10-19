@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Tests for content hashing and streaming verification.
+// Tests for read-time verification and the disposal of copies that fail it.
 // -------------------------------------------------------------------------------
 
 package object
@@ -14,9 +14,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"go.uber.org/mock/gomock"
 
@@ -27,6 +29,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// writtenBytes is what a client stored, and rottedBytes is what the backend
+// later returns for a copy that no longer matches the stored hash.
+const (
+	writtenBytes = "the bytes that were written"
+	rottedBytes  = "these are not the bytes that were written"
+)
+
 // hashOf is the expected-digest helper these tests compare against. Written
 // out rather than reusing production code so a bug in the hashing under test
 // cannot mask itself by producing the same wrong answer on both sides.
@@ -35,86 +44,9 @@ func hashOf(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// TestVerifyingReader_Match verifies the verifying reader match contract.
-// Asserts that Verify should pass:.
-func TestVerifyingReader_Match(t *testing.T) {
-	t.Parallel()
-	data := "test data for hashing"
-	expected := hashOf([]byte(data))
-
-	r := io.NopCloser(strings.NewReader(data))
-	vr := NewVerifyingReader(r)
-	_, _ = io.ReadAll(vr)
-
-	if err := vr.Verify(expected); err != nil {
-		t.Errorf("Verify should pass: %v", err)
-	}
-}
-
-// TestVerifyingReader_Mismatch verifies the verifying reader mismatch path by exercising io.NopCloser, strings.NewReader, io.ReadAll.
-func TestVerifyingReader_Mismatch(t *testing.T) {
-	t.Parallel()
-	r := io.NopCloser(strings.NewReader("actual data"))
-	vr := NewVerifyingReader(r)
-	_, _ = io.ReadAll(vr)
-
-	if err := vr.Verify("0000000000000000000000000000000000000000000000000000000000000000"); err == nil {
-		t.Error("Verify should fail on hash mismatch")
-	}
-}
-
-// TestVerifyingReader_EmptyExpected verifies the verifying reader empty expected contract.
-// Asserts that Verify with empty expected should pass:.
-func TestVerifyingReader_EmptyExpected(t *testing.T) {
-	t.Parallel()
-	r := io.NopCloser(strings.NewReader("any data"))
-	vr := NewVerifyingReader(r)
-	_, _ = io.ReadAll(vr)
-
-	if err := vr.Verify(""); err != nil {
-		t.Errorf("Verify with empty expected should pass: %v", err)
-	}
-}
-
-// TestVerifyingReader_OnMismatchCallback verifies the verifying reader on mismatch callback path by exercising io.NopCloser, strings.NewReader, vr.SetVerification.
-func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
-	t.Parallel()
-	r := io.NopCloser(strings.NewReader("actual data"))
-	vr := NewVerifyingReader(r)
-
-	called := false
-	vr.SetVerification("0000000000000000000000000000000000000000000000000000000000000000", func(expected, actual string) {
-		called = true
-	})
-
-	_, _ = io.ReadAll(vr)
-	_ = vr.Close()
-
-	if !called {
-		t.Error("onMismatch callback should have been called")
-	}
-}
-
-// TestVerifyingReader_OnMatchNoCallback verifies the verifying reader on match no callback path by exercising io.NopCloser, strings.NewReader, vr.SetVerification.
-func TestVerifyingReader_OnMatchNoCallback(t *testing.T) {
-	t.Parallel()
-	data := "matching data"
-	expected := hashOf([]byte(data))
-
-	r := io.NopCloser(strings.NewReader(data))
-	vr := NewVerifyingReader(r)
-
-	called := false
-	vr.SetVerification(expected, func(expected, actual string) {
-		called = true
-	})
-
-	_, _ = io.ReadAll(vr)
-	_ = vr.Close()
-
-	if called {
-		t.Error("onMismatch callback should not be called on matching hash")
-	}
+// verifyOnRead is the integrity config that turns on read-time verification.
+func verifyOnRead() *config.IntegrityConfig {
+	return &config.IntegrityConfig{Enabled: true, VerifyOnRead: true}
 }
 
 // -------------------------------------------------------------------------
@@ -197,6 +129,15 @@ func seededBackend(t *testing.T, key string) *backendtest.InMemory {
 	return be
 }
 
+// noDeleteStore returns a store mock that fails the test on any ledger delete,
+// which is how every test of a copy that must survive asserts it.
+func noDeleteStore(t *testing.T) *storetest.MockMetadataStore {
+	t.Helper()
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	return store
+}
+
 // TestDropCorruptedLocation_KeepsCacheWhenDeleteFails asserts the cache entry
 // survives a failed delete. Evicting it would advertise a removal that did not
 // happen, sending the next reader to the store to be told the copy is still
@@ -222,14 +163,17 @@ func TestDropCorruptedLocation_KeepsCacheWhenDeleteFails(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// READ-TIME VERIFICATION
+// -------------------------------------------------------------------------
+
 // TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch drives the read-path
-// detector: the body is wrapped, the mismatch surfaces when the client closes
-// it, and the bad copy loses both its bytes and its ledger row.
+// detector: the body is wrapped, the mismatch surfaces when the client reads
+// it to EOF, and the bad copy loses both its bytes and its ledger row.
 func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 	t.Parallel()
 
 	const key, beName = "bucket/rotted.txt", "b1"
-	stored := "these are not the bytes that were written"
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), 0, reasonIntegrityFailed).
@@ -238,29 +182,120 @@ func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 
 	be := seededBackend(t, key)
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnRead: true})
+	f.SetIntegrityConfig(verifyOnRead())
 
 	r := &backend.GetObjectResult{
-		Body: io.NopCloser(strings.NewReader(stored)),
-		Size: int64(len(stored)),
+		Body: io.NopCloser(strings.NewReader(rottedBytes)),
+		Size: int64(len(rottedBytes)),
 	}
 	loc := &core.ObjectLocation{
 		ObjectKey:   key,
 		BackendName: beName,
-		ContentHash: hashOf([]byte("the bytes that were written")),
+		ContentHash: hashOf([]byte(writtenBytes)),
 	}
 
 	f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
 
-	// The client still receives the bytes; verification lands on Close.
+	// The client still receives every byte; verification lands at EOF.
+	if _, err := io.ReadAll(r.Body); err != nil {
+		t.Fatalf("reading wrapped body: %v", err)
+	}
+	if be.HasCopyOf(key) {
+		t.Error("the corrupt copy's bytes should be deleted once the read completes")
+	}
+	if err := r.Body.Close(); err != nil {
+		t.Fatalf("closing wrapped body: %v", err)
+	}
+}
+
+// TestMaybeWrapIntegrityReader_GoodCopySurvivesFullRead verifies a complete
+// read of a copy that matches its stored hash leaves the copy alone.
+func TestMaybeWrapIntegrityReader_GoodCopySurvivesFullRead(t *testing.T) {
+	t.Parallel()
+
+	const key, beName = "bucket/healthy.txt", "b1"
+	store := noDeleteStore(t)
+	storetest.Permissive(store)
+
+	be := seededBackend(t, key)
+	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
+	f.SetIntegrityConfig(verifyOnRead())
+
+	r := &backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader(writtenBytes)),
+		Size: int64(len(writtenBytes)),
+	}
+	loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: hashOf([]byte(writtenBytes))}
+
+	f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+
 	if _, err := io.ReadAll(r.Body); err != nil {
 		t.Fatalf("reading wrapped body: %v", err)
 	}
 	if err := r.Body.Close(); err != nil {
 		t.Fatalf("closing wrapped body: %v", err)
 	}
-	if be.HasCopyOf(key) {
-		t.Error("the corrupt copy's bytes should be deleted by the settle")
+	if !be.HasCopyOf(key) {
+		t.Error("a healthy full read deleted the copy")
+	}
+}
+
+// TestMaybeWrapIntegrityReader_IncompleteReadKeepsCopy is the regression test
+// for downloads that stop early. A client disconnect or a backend stream that
+// fails partway hashes only a prefix, which can never match the stored hash,
+// so comparing it would destroy a healthy copy.
+func TestMaybeWrapIntegrityReader_IncompleteReadKeepsCopy(t *testing.T) {
+	t.Parallel()
+
+	const key, beName = "bucket/interrupted.txt", "b1"
+	cases := []struct {
+		name string
+		body io.Reader
+		read func(io.ReadCloser) error
+	}{
+		{
+			name: "client disconnect",
+			body: strings.NewReader(writtenBytes),
+			read: func(rc io.ReadCloser) error {
+				_, err := rc.Read(make([]byte, 4))
+				return err
+			},
+		},
+		{
+			name: "backend stream error",
+			body: io.MultiReader(strings.NewReader(writtenBytes[:4]), iotest.ErrReader(context.DeadlineExceeded)),
+			read: func(rc io.ReadCloser) error {
+				if _, err := io.ReadAll(rc); !errors.Is(err, context.DeadlineExceeded) {
+					return fmt.Errorf("read error = %w, want a deadline", err)
+				}
+				return nil
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := noDeleteStore(t)
+			storetest.Permissive(store)
+
+			be := seededBackend(t, key)
+			f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
+			f.SetIntegrityConfig(verifyOnRead())
+
+			r := &backend.GetObjectResult{Body: io.NopCloser(tc.body), Size: int64(len(writtenBytes))}
+			loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: hashOf([]byte(writtenBytes))}
+			f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+
+			if err := tc.read(r.Body); err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if err := r.Body.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			if !be.HasCopyOf(key) {
+				t.Error("an interrupted read deleted a healthy copy")
+			}
+		})
 	}
 }
 
@@ -271,23 +306,25 @@ func TestMaybeWrapIntegrityReader_LeavesBodyAlone(t *testing.T) {
 	t.Parallel()
 
 	const key, beName = "bucket/plain.txt", "b1"
+	hashed := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: "abc"}
 
 	cases := []struct {
 		name string
 		cfg  *config.IntegrityConfig
-		hash string
+		loc  *core.ObjectLocation
 	}{
-		{"integrity disabled", &config.IntegrityConfig{Enabled: false, VerifyOnRead: true}, "abc"},
-		{"verify on read off", &config.IntegrityConfig{Enabled: true, VerifyOnRead: false}, "abc"},
-		{"no stored hash", &config.IntegrityConfig{Enabled: true, VerifyOnRead: true}, ""},
+		{"no integrity config", nil, hashed},
+		{"integrity disabled", &config.IntegrityConfig{Enabled: false, VerifyOnRead: true}, hashed},
+		{"verify on read off", &config.IntegrityConfig{Enabled: true, VerifyOnRead: false}, hashed},
+		{"no stored hash", verifyOnRead(), &core.ObjectLocation{ObjectKey: key, BackendName: beName}},
+		{"no location", verifyOnRead(), nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			store := storetest.NewMockMetadataStore(gomock.NewController(t))
-			store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			store := noDeleteStore(t)
 			storetest.Permissive(store)
 
 			be := backendtest.NewInMemory()
@@ -296,15 +333,40 @@ func TestMaybeWrapIntegrityReader_LeavesBodyAlone(t *testing.T) {
 
 			body := io.NopCloser(strings.NewReader("whatever"))
 			r := &backend.GetObjectResult{Body: body, Size: 8}
-			loc := &core.ObjectLocation{ObjectKey: key, BackendName: beName, ContentHash: tc.hash}
 
-			f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, false)
+			f.maybeWrapIntegrityReader(context.Background(), r, tc.loc, key, beName, false)
 
 			if r.Body != body {
 				t.Error("response body was wrapped when no verification was possible")
 			}
 		})
 	}
+}
+
+// -------------------------------------------------------------------------
+// GET PATH
+// -------------------------------------------------------------------------
+
+// getFleet returns a fleet with verification on read whose only backend holds
+// stored at key, and whose ledger row for key carries the hash of written.
+func getFleet(t *testing.T, store *storetest.MockMetadataStore, key string, stored, written []byte) (*fleet, *backendtest.InMemory) {
+	t.Helper()
+	const beName = "b1"
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), key).Return([]core.ObjectLocation{{
+		ObjectKey:   key,
+		BackendName: beName,
+		SizeBytes:   int64(len(stored)),
+		ContentHash: hashOf(written),
+	}}, nil).AnyTimes()
+	storetest.Permissive(store)
+
+	be := backendtest.NewInMemory()
+	if _, err := be.PutObject(context.Background(), key, bytes.NewReader(stored), int64(len(stored)), "text/plain", nil); err != nil {
+		t.Fatalf("seed backend: %v", err)
+	}
+	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
+	f.SetIntegrityConfig(verifyOnRead())
+	return f, be
 }
 
 // TestGet_RangedReadDoesNotVerifyOrDestroyCopy is the regression test for a
@@ -314,26 +376,10 @@ func TestMaybeWrapIntegrityReader_LeavesBodyAlone(t *testing.T) {
 // request, and the bytes it received were correct the whole time.
 func TestGet_RangedReadDoesNotVerifyOrDestroyCopy(t *testing.T) {
 	t.Parallel()
-	const key, beName = "bucket/ranged.txt", "b1"
+	const key = "bucket/ranged.txt"
 	full := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
 
-	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	// Not AnyTimes: any delete at all is the bug.
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	store.EXPECT().GetAllObjectLocations(gomock.Any(), key).Return([]core.ObjectLocation{{
-		ObjectKey:   key,
-		BackendName: beName,
-		SizeBytes:   int64(len(full)),
-		ContentHash: hashOf(full),
-	}}, nil).AnyTimes()
-	storetest.Permissive(store)
-
-	be := backendtest.NewInMemory()
-	if _, err := be.PutObject(context.Background(), key, bytes.NewReader(full), int64(len(full)), "text/plain", nil); err != nil {
-		t.Fatalf("seed backend: %v", err)
-	}
-	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnRead: true})
+	f, be := getFleet(t, noDeleteStore(t), key, full, full)
 
 	res, err := f.GetObject(context.Background(), key, "bytes=0-9")
 	if err != nil {
@@ -355,13 +401,36 @@ func TestGet_RangedReadDoesNotVerifyOrDestroyCopy(t *testing.T) {
 	}
 }
 
+// TestGet_DisconnectedReadKeepsCopy covers a client that closes a whole-object
+// GET partway: the bytes hashed so far are a prefix, so the healthy copy must
+// survive.
+func TestGet_DisconnectedReadKeepsCopy(t *testing.T) {
+	t.Parallel()
+	const key = "bucket/disconnect.txt"
+
+	f, be := getFleet(t, noDeleteStore(t), key, []byte(writtenBytes), []byte(writtenBytes))
+
+	res, err := f.GetObject(context.Background(), key, "")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	if _, err := res.Body.Read(make([]byte, 4)); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		t.Fatalf("close body: %v", err)
+	}
+	if !be.HasCopyOf(key) {
+		t.Error("a GET closed partway deleted a healthy copy")
+	}
+}
+
 // TestGet_FullReadStillVerifies keeps the guard honest: skipping verification
 // for a partial response must not switch it off for a whole-object read, which
 // is the case the stored hash can actually validate.
 func TestGet_FullReadStillVerifies(t *testing.T) {
 	t.Parallel()
-	const key, beName = "bucket/rotted-full.txt", "b1"
-	stored := []byte("these are not the bytes that were written")
+	const key = "bucket/rotted-full.txt"
 
 	deleted := make(chan struct{}, 1)
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
@@ -370,20 +439,7 @@ func TestGet_FullReadStillVerifies(t *testing.T) {
 			deleted <- struct{}{}
 			return nil, nil
 		}).Times(1)
-	store.EXPECT().GetAllObjectLocations(gomock.Any(), key).Return([]core.ObjectLocation{{
-		ObjectKey:   key,
-		BackendName: beName,
-		SizeBytes:   int64(len(stored)),
-		ContentHash: hashOf([]byte("the bytes that were written")),
-	}}, nil).AnyTimes()
-	storetest.Permissive(store)
-
-	be := backendtest.NewInMemory()
-	if _, err := be.PutObject(context.Background(), key, bytes.NewReader(stored), int64(len(stored)), "text/plain", nil); err != nil {
-		t.Fatalf("seed backend: %v", err)
-	}
-	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: be}, nil)
-	f.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnRead: true})
+	f, _ := getFleet(t, store, key, []byte(rottedBytes), []byte(writtenBytes))
 
 	res, err := f.GetObject(context.Background(), key, "")
 	if err != nil {

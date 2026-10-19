@@ -14,8 +14,6 @@ package multipart
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -745,7 +743,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// the assembled object lands with a content_hash matching the
 	// regular PutObject path. Without this, the scrubber cannot verify
 	// multipart-completed objects.
-	hasher := mp.newIntegrityHasher()
+	hasher := mp.integrityCfg.Load().Hasher()
 	// An upload whose parts predate per-part digests has no composite, and the
 	// MD5 of the assembled bytes is the only ETag left to give it. Every other
 	// upload already knows its own and must not pay for a second pass over
@@ -891,21 +889,6 @@ func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, 
 	mp.forgetUploadDEK(uploadID)
 }
 
-// newIntegrityHasher returns a fresh SHA-256 hasher when integrity
-// verification is enabled, or nil to signal "skip hashing." Mirrors the
-// gate used by the regular PutObject path so the multipart-completed
-// object carries the same content_hash semantics.
-func (mp *Manager) newIntegrityHasher() hash.Hash {
-	if mp.integrityCfg == nil {
-		return nil
-	}
-	icfg := mp.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled {
-		return nil
-	}
-	return sha256.New()
-}
-
 // stampContentHash finalises the hasher (when one was used) and writes
 // the resulting hex digest onto form. When integrity is disabled hasher
 // is nil and the original form is returned unchanged; when form is nil
@@ -915,7 +898,7 @@ func stampContentHash(form *core.StoredForm, hasher hash.Hash) *core.StoredForm 
 	if hasher == nil {
 		return form
 	}
-	digest := hex.EncodeToString(hasher.Sum(nil))
+	digest := etag.Hex(hasher)
 	if form == nil {
 		return &core.StoredForm{ContentHash: digest}
 	}

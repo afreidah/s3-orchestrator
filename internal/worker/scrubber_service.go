@@ -39,7 +39,7 @@ func NewScrubberService(scrubber *Scrubber, locker tickrunner.AdvisoryLocker) li
 		Log:      log,
 		ShouldRun: func() bool {
 			icfg := scrubber.Config()
-			return icfg != nil && icfg.Enabled && icfg.ScrubberInterval > 0
+			return icfg.IsEnabled() && icfg.ScrubberInterval > 0
 		},
 		Work: func(ctx context.Context) error {
 			return scrubCycle(ctx, scrubber, log)

@@ -258,11 +258,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 // config falls back to the default floor rather than to no floor: an unset
 // value must not turn every pass into a full re-read of each backend.
 func (s *Scrubber) scrubbedBefore() time.Time {
-	icfg := s.Config()
-	if icfg == nil {
-		return time.Now().Add(-config.DefaultScrubberMinAge)
-	}
-	return icfg.ScrubbedBefore(time.Now())
+	return s.Config().ScrubbedBefore(time.Now())
 }
 
 // affordableBackends splits the fleet into the backends the scrubber can still

@@ -13,7 +13,9 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"hash"
 	"time"
 )
 
@@ -36,20 +38,43 @@ type IntegrityConfig struct {
 // ScrubbedBefore returns the cutoff a scrub batch selects against: a copy last
 // touched at or after it is too recently verified to be worth another read, so
 // a backend smaller than the batch is not reread in full every pass. An unset
-// floor uses the default, since a config built in code skips validation.
+// floor, or a nil config, uses the default, since a config built in code skips
+// validation and an unset value must not turn every pass into a full re-read.
 func (ic *IntegrityConfig) ScrubbedBefore(now time.Time) time.Time {
-	minAge := ic.ScrubberMinAge
-	if minAge <= 0 {
-		minAge = DefaultScrubberMinAge
+	minAge := DefaultScrubberMinAge
+	if ic != nil && ic.ScrubberMinAge > 0 {
+		minAge = ic.ScrubberMinAge
 	}
 	return now.Add(-minAge)
+}
+
+// IsEnabled reports whether integrity verification is on. A nil config, an
+// integrity section never loaded, is off, so callers need no nil check.
+func (ic *IntegrityConfig) IsEnabled() bool {
+	return ic != nil && ic.Enabled
 }
 
 // ShouldVerifyOnReplicate reports whether a new replica must be read back and
 // hash-checked before its ledger row is written. It is off unless explicitly
 // set, since verifying doubles the egress replication spends on each replica.
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
-	return ic.Enabled && ic.VerifyOnReplicate
+	return ic.IsEnabled() && ic.VerifyOnReplicate
+}
+
+// ShouldVerifyOnRead reports whether a whole-object GET hashes the bytes it
+// serves and drops a copy that does not match its stored hash.
+func (ic *IntegrityConfig) ShouldVerifyOnRead() bool {
+	return ic.IsEnabled() && ic.VerifyOnRead
+}
+
+// Hasher returns the hasher a content hash is computed in, by a write that
+// records one and a read that checks one, or nil when integrity is off, so a
+// write records no hash.
+func (ic *IntegrityConfig) Hasher() hash.Hash {
+	if !ic.IsEnabled() {
+		return nil
+	}
+	return sha256.New()
 }
 
 // setDefaultsAndValidate is a no-op when integrity is disabled.

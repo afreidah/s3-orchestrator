@@ -105,7 +105,7 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // instead of waiting.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
 	icfg := i.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled {
+	if !icfg.IsEnabled() {
 		return batch.Summary{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {
@@ -133,8 +133,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 	if key == "" {
 		return nil, ErrKeyRequired
 	}
-	icfg := i.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled {
+	if !i.integrityCfg.Load().IsEnabled() {
 		return nil, ErrIntegrityDisabled
 	}
 
@@ -155,8 +154,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // every backend. observer, when non-nil, receives a start and end step per
 // object hashed.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (BackfillResult, error) {
-	icfg := i.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled {
+	if !i.integrityCfg.Load().IsEnabled() {
 		return BackfillResult{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {

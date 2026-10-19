@@ -5,10 +5,8 @@
 //
 // GetObject orchestration: object-data cache fast path, per-backend attempt
 // callback driven by readpath.Failover, encrypted-range translation,
-// optional VerifyingReader wrapping for read-time integrity, and
-// streaming cache population on a clean read. The cache-tee body
-// implementation lives in cache.go; the verifying reader in
-// integrity_reader.go.
+// optional read-time integrity hashing, and streaming cache population
+// on a complete read. Both tee the body through ioutilx.TeeOnComplete.
 // -------------------------------------------------------------------------------
 
 package object
@@ -29,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -249,7 +248,7 @@ func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocati
 
 // buildPlaintextReader turns a backend GetObject result into the client-facing
 // plaintext stream: it decrypts in place when the object is encrypted, then
-// wraps the body in a verifying reader when read-time integrity checking is
+// hashes the body as it streams when read-time integrity checking is
 // enabled. This is the single read-path pipeline for both layers. Mutates
 // r.Body/r.Size/r.ContentRange. The caller must close r.Body on error.
 func (o *Manager) buildPlaintextReader(
@@ -268,14 +267,14 @@ func (o *Manager) buildPlaintextReader(
 	return nil
 }
 
-// maybeWrapIntegrityReader replaces r.Body with a verifying reader when
-// integrity verification is enabled and an expected content hash is
-// available. A hash mismatch logs, increments telemetry, and enqueues the
-// bad copy for cleanup.
+// maybeWrapIntegrityReader hashes r.Body as it streams when verification on
+// read is enabled and the copy has a stored hash. A complete read whose digest
+// does not match logs, counts, and drops the copy.
 //
-// A partial response is never verified: the stored hash covers the whole
-// object, so a slice cannot match and the mismatch handler would destroy a
-// healthy copy. The scrubber covers ranges by reading whole objects.
+// Only a read that delivered every byte is compared. A partial response, a
+// download cut short by the backend timeout, and a client that disconnects
+// all hash a prefix, which can never match, and comparing one would destroy a
+// healthy copy. The scrubber covers what reads leave unchecked.
 func (o *Manager) maybeWrapIntegrityReader(
 	ctx context.Context,
 	r *s3be.GetObjectResult,
@@ -284,25 +283,21 @@ func (o *Manager) maybeWrapIntegrityReader(
 	partial bool,
 ) {
 	icfg := o.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled || !icfg.VerifyOnRead || partial {
+	if partial || loc == nil || loc.ContentHash == "" || !icfg.ShouldVerifyOnRead() {
 		return
 	}
-	expectedHash := ""
-	if loc != nil {
-		expectedHash = loc.ContentHash
-	}
-	if expectedHash == "" {
-		return
-	}
-	vr := NewVerifyingReader(r.Body)
-	vr.SetVerification(expectedHash, func(expected, actual string) {
+	hasher := icfg.Hasher()
+	r.Body = ioutilx.TeeOnComplete(r.Body, r.Size, hasher, func() {
+		actual := etag.Hex(hasher)
+		if actual == loc.ContentHash {
+			return
+		}
 		o.log.ErrorContext(ctx, "integrity check failed on read",
 			"key", key, "backend", beName,
-			"expected_hash", expected, "actual_hash", actual)
+			"expected_hash", loc.ContentHash, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
 		o.dropCorruptedLocation(ctx, loc)
 	})
-	r.Body = vr
 }
 
 // dropCorruptedLocation removes the ledger row for a copy discarded on read and
@@ -362,8 +357,9 @@ func (o *Manager) populateObjectCache(path, rangeHeader string, result *s3be.Get
 		LastModified: result.LastModified,
 		Metadata:     result.Metadata,
 	}
-	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
-		o.objectCache.PutBytes(path, data, meta)
+	buf := bytes.NewBuffer(make([]byte, 0, result.Size))
+	result.Body = ioutilx.TeeOnComplete(result.Body, result.Size, buf, func() {
+		o.objectCache.PutBytes(path, buf.Bytes(), meta)
 	})
 }
 

@@ -11,6 +11,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"testing"
 	"time"
 )
@@ -39,6 +40,65 @@ func TestIntegrityConfig_ShouldVerifyOnReplicate(t *testing.T) {
 				t.Errorf("ShouldVerifyOnReplicate() = %t, want %t", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIntegrityConfig_NilSafeGates verifies every gate answers for a nil,
+// disabled and enabled config, so callers loading an unset config need no nil
+// check.
+func TestIntegrityConfig_NilSafeGates(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                         string
+		cfg                          *IntegrityConfig
+		enabled, onRead, onReplicate bool
+	}{
+		{"nil", nil, false, false, false},
+		{"disabled with flags set", &IntegrityConfig{VerifyOnRead: true, VerifyOnReplicate: true}, false, false, false},
+		{"enabled alone", &IntegrityConfig{Enabled: true}, true, false, false},
+		{"enabled with flags set", &IntegrityConfig{Enabled: true, VerifyOnRead: true, VerifyOnReplicate: true}, true, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.cfg.IsEnabled(); got != tc.enabled {
+				t.Errorf("IsEnabled() = %t, want %t", got, tc.enabled)
+			}
+			if got := tc.cfg.ShouldVerifyOnRead(); got != tc.onRead {
+				t.Errorf("ShouldVerifyOnRead() = %t, want %t", got, tc.onRead)
+			}
+			if got := tc.cfg.ShouldVerifyOnReplicate(); got != tc.onReplicate {
+				t.Errorf("ShouldVerifyOnReplicate() = %t, want %t", got, tc.onReplicate)
+			}
+			if got := tc.cfg.Hasher() != nil; got != tc.enabled {
+				t.Errorf("Hasher() non-nil = %t, want %t", got, tc.enabled)
+			}
+		})
+	}
+}
+
+// TestIntegrityConfig_HasherIsSHA256 verifies an enabled config hashes with
+// SHA-256 and hands out a fresh hasher on every call.
+func TestIntegrityConfig_HasherIsSHA256(t *testing.T) {
+	t.Parallel()
+	ic := &IntegrityConfig{Enabled: true}
+	h := ic.Hasher()
+	if h.Size() != sha256.Size {
+		t.Errorf("Hasher().Size() = %d, want %d", h.Size(), sha256.Size)
+	}
+	if h == ic.Hasher() {
+		t.Error("Hasher() returned the same hasher twice")
+	}
+}
+
+// TestIntegrityConfig_ScrubbedBeforeNilConfig verifies a nil config uses the
+// default floor instead of panicking.
+func TestIntegrityConfig_ScrubbedBeforeNilConfig(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC)
+	var ic *IntegrityConfig
+	if got, want := ic.ScrubbedBefore(now), now.Add(-DefaultScrubberMinAge); !got.Equal(want) {
+		t.Errorf("ScrubbedBefore = %v, want %v", got, want)
 	}
 }
 

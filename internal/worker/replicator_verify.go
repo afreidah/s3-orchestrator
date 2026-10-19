@@ -73,8 +73,7 @@ func (r *Replicator) admitVerifiedReplica(ctx context.Context, intent *core.Pend
 // a copy that cannot be checked is not known to be bad; backends without
 // read-after-write consistency make unreadable copies routine.
 func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey string, source *core.ObjectLocation) replicaVerdict {
-	icfg := r.integrity.Load()
-	if icfg == nil || !icfg.ShouldVerifyOnReplicate() {
+	if !r.integrity.Load().ShouldVerifyOnReplicate() {
 		return replicaNotChecked
 	}
 
