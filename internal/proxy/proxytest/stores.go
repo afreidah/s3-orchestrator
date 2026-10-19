@@ -78,7 +78,7 @@ func NewQuotaTracker(names []string, baselines map[string]core.BackendQuotaUsage
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
 	maps.Copy(primed, baselines)
-	tracker := counter.NewQuotaTracker(names)
+	tracker := counter.NewQuotaTracker()
 	tracker.SetBaselines(primed)
 	return tracker
 }
@@ -137,7 +137,6 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 			Store:             opts.Metrics,
 			Usage:             tracker,
-			BackendNames:      names,
 			ReplicationFactor: opts.ReplicationFactor,
 		}))
 	}

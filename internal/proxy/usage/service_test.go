@@ -3,10 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Covers what the service adds over the tracker and the store: the drain skip
-// applied to a flush, the reconcile forward, and the flush configuration it
-// holds for the reload hook. The nil-Drain case is the one a deployment that
-// never drains a backend runs in, so it is pinned alongside the skip.
+// Covers what the service adds over the tracker and the store: the flush and
+// reconcile forwards, the quota baseline refresh, the shared-counter check, and
+// the flush configuration it holds for the reload hook.
 // -------------------------------------------------------------------------------
 
 package usage
@@ -27,96 +26,86 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// fakeStores records the flush deltas it is handed and returns canned answers
-// for the reconcile, which is the whole persistence surface the service needs.
+// fakeStores records the usage batches it is handed and returns canned answers
+// for the reconcile and the quota read, which is the whole persistence surface
+// the service needs.
 type fakeStores struct {
-	flushed         map[string]int64
-	flushedPools    map[string]int64
-	flushErr        error
-	reconciled      map[string]int64
-	reconcileErr    error
-	reconcileCalls  int
-	quotaFlushed    map[string]int64
-	quotaFlushCalls int
-	quotaFlushErr   error
-	baselines       []core.BackendQuotaUsage
-	baselineCalls   int
-	baselineErr     error
+	applied        map[string]int64
+	applyErr       error
+	reconciled     map[string]int64
+	reconcileErr   error
+	reconcileCalls int
+	baselines      []core.BackendQuotaUsage
+	baselineCalls  int
+	baselineErr    error
 }
 
+// newFakeStores returns a store that applies every batch and holds no quota
+// rows.
 func newFakeStores() *fakeStores {
-	return &fakeStores{
-		flushed:      make(map[string]int64),
-		flushedPools: make(map[string]int64),
-		quotaFlushed: make(map[string]int64),
-	}
+	return &fakeStores{applied: make(map[string]int64)}
+}
+
+// sharedCounters is a local counter backend that also answers TakeShared, so
+// the service sees a shared backend without a Redis behind it.
+type sharedCounters struct {
+	*counter.LocalCounterBackend
 }
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-func (f *fakeStores) FlushUsageDeltas(_ context.Context, backendName, _ string, apiRequests, _, _ int64) error {
-	if f.flushErr != nil {
-		return f.flushErr
+// ApplyUsageBatch records each batch's API requests under its backend, or
+// refuses it with the seeded error.
+func (f *fakeStores) ApplyUsageBatch(_ context.Context, b *core.UsageBatch) error {
+	if f.applyErr != nil {
+		return f.applyErr
 	}
-	f.flushed[backendName] += apiRequests
+	f.applied[b.Backend] += b.APIRequests
 	return nil
 }
 
-// FlushPoolDeltas accepts the per-pool half of a flush. Recorded separately
-// from the totals because the service restores only the half that failed.
-func (f *fakeStores) FlushPoolDeltas(_ context.Context, backendName, _ string, deltas core.PoolUsage) error {
-	if f.flushErr != nil {
-		return f.flushErr
-	}
-	for pool, n := range deltas {
-		f.flushedPools[backendName+"/"+pool] += n
-	}
-	return nil
-}
-
+// ReconcileUsage counts the call and returns the seeded result.
 func (f *fakeStores) ReconcileUsage(_ context.Context) (map[string]int64, error) {
 	f.reconcileCalls++
 	return f.reconciled, f.reconcileErr
 }
 
+// GetQuotaStats answers with no stats; the service never reads them.
 func (f *fakeStores) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil
 }
 
-// FlushQuotaDeltas records the byte deltas a quota flush wrote, or refuses them
-// with the seeded error so the restore path can be driven.
-func (f *fakeStores) FlushQuotaDeltas(_ context.Context, deltas core.QuotaDeltas) error {
-	if f.quotaFlushErr != nil {
-		return f.quotaFlushErr
-	}
-	f.quotaFlushCalls++
-	for name, delta := range deltas {
-		f.quotaFlushed[name] += delta
-	}
-	return nil
-}
-
 // ListBackendQuotaUsage answers the baseline refresh with whatever the test
-// seeded, so a flush can be checked for reloading what it just wrote.
+// seeded.
 func (f *fakeStores) ListBackendQuotaUsage(_ context.Context) ([]core.BackendQuotaUsage, error) {
 	f.baselineCalls++
 	return f.baselines, f.baselineErr
+}
+
+// TakeShared reports no staged batches.
+func (sharedCounters) TakeShared(context.Context) []core.UsageBatch {
+	return nil
 }
 
 // newService wires the service over a local counter backend holding one
 // recorded API call per backend, so a flush has something to write.
 func newService(t *testing.T, stores Stores) *Service {
 	t.Helper()
+	s, _ := newServiceWithQuota(t, stores)
+	return s
+}
+
+// newServiceWithQuota is newService that also returns the quota tracker the
+// service refreshes.
+func newServiceWithQuota(t *testing.T, stores Stores) (*Service, *counter.QuotaTracker) {
+	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.Record("b1", s3op.GetObject, 0, 0)
 	tracker.Record("b2", s3op.GetObject, 0, 0)
-	return New(&Deps{
-		Usage:  tracker,
-		Quota:  counter.NewQuotaTracker([]string{"b1", "b2"}),
-		Stores: stores,
-	})
+	quota := counter.NewQuotaTracker()
+	return New(&Deps{Usage: tracker, Quota: quota, Stores: stores}), quota
 }
 
 // TestFlushUsage_WritesEveryBackend verifies a flush writes the counters of
@@ -129,28 +118,36 @@ func TestFlushUsage_WritesEveryBackend(t *testing.T) {
 	if err := s.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage: %v", err)
 	}
-	if len(stores.flushed) != 2 {
-		t.Errorf("flushed = %v, want both backends", stores.flushed)
+	if stores.applied["b1"] != 1 || stores.applied["b2"] != 1 {
+		t.Errorf("applied = %v, want one request on each backend", stores.applied)
 	}
 }
 
-// TestFlushUsage_SurfacesStoreError pins that a failing write reaches the
-// caller, which is what turns a broken flush into a logged shutdown warning
-// rather than a silent counter loss.
-func TestFlushUsage_SurfacesStoreError(t *testing.T) {
+// TestFlushUsage_SurfacesStoreErrorAndKeepsCounters pins that a failing write
+// reaches the caller and that the counters it could not write are flushed by
+// the next tick rather than lost.
+func TestFlushUsage_SurfacesStoreErrorAndKeepsCounters(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("write failed")
 	stores := newFakeStores()
-	stores.flushErr = sentinel
+	stores.applyErr = sentinel
 	s := newService(t, stores)
 
 	if err := s.FlushUsage(context.Background()); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want %v", err, sentinel)
 	}
+
+	stores.applyErr = nil
+	if err := s.FlushUsage(context.Background()); err != nil {
+		t.Fatalf("retry FlushUsage: %v", err)
+	}
+	if stores.applied["b1"] != 1 || stores.applied["b2"] != 1 {
+		t.Errorf("applied after retry = %v, want the kept request on each backend", stores.applied)
+	}
 }
 
-// TestReconcileUsage_ForwardsStoreResult covers both legs of the delegation:
-// the corrected deltas on success and the error on failure.
+// TestReconcileUsage_ForwardsStoreResult covers the corrected deltas on
+// success and the quota baselines being reloaded after them.
 func TestReconcileUsage_ForwardsStoreResult(t *testing.T) {
 	t.Parallel()
 	stores := newFakeStores()
@@ -164,20 +161,95 @@ func TestReconcileUsage_ForwardsStoreResult(t *testing.T) {
 	if got["b1"] != -42 {
 		t.Errorf("deltas = %v, want b1 = -42", got)
 	}
-	if stores.reconcileCalls != 1 {
-		t.Errorf("reconcile calls = %d, want 1", stores.reconcileCalls)
+	if stores.reconcileCalls != 1 || stores.baselineCalls != 1 {
+		t.Errorf("reconcile calls = %d, baseline reads = %d; want 1 and 1", stores.reconcileCalls, stores.baselineCalls)
 	}
 }
 
-// TestRedisCounterConfigured_LocalBackend pins the answer the flush service
-// gives when the counters are in process memory: no advisory lock is needed
-// because no other instance shares them.
+// TestReconcileUsage_Errors covers both failure legs: a reconcile error stops
+// before the refresh, and a refresh error is returned with the deltas.
+func TestReconcileUsage_Errors(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("db down")
+
+	stores := newFakeStores()
+	stores.reconcileErr = sentinel
+	if _, err := newService(t, stores).ReconcileUsage(context.Background()); !errors.Is(err, sentinel) {
+		t.Errorf("reconcile failure: err = %v, want %v", err, sentinel)
+	}
+	if stores.baselineCalls != 0 {
+		t.Errorf("baseline reads = %d after a failed reconcile, want 0", stores.baselineCalls)
+	}
+
+	stores = newFakeStores()
+	stores.reconciled = map[string]int64{"b1": 7}
+	stores.baselineErr = sentinel
+	got, err := newService(t, stores).ReconcileUsage(context.Background())
+	if !errors.Is(err, sentinel) || got["b1"] != 7 {
+		t.Errorf("refresh failure: got %v, %v; want the deltas and %v", got, err, sentinel)
+	}
+}
+
+// TestRefreshQuotaBaselines_LoadsTheRows verifies each stored row becomes the
+// tracker's baseline for its backend.
+func TestRefreshQuotaBaselines_LoadsTheRows(t *testing.T) {
+	t.Parallel()
+	stores := newFakeStores()
+	stores.baselines = []core.BackendQuotaUsage{{BackendName: "b1", BytesLimit: 1000, BytesUsed: 400}}
+	s, quota := newServiceWithQuota(t, stores)
+
+	if err := s.RefreshQuotaBaselines(context.Background()); err != nil {
+		t.Fatalf("RefreshQuotaBaselines: %v", err)
+	}
+	if got := quota.Available("b1"); got != 600 {
+		t.Errorf("b1 available = %d, want 600", got)
+	}
+	if _, ok := quota.Baseline("b2"); ok {
+		t.Error("b2 has a baseline the store never returned")
+	}
+}
+
+// TestRefreshQuotaBaselines_StoreError verifies a failed read is returned and
+// leaves the tracker as it was.
+func TestRefreshQuotaBaselines_StoreError(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("db down")
+	stores := newFakeStores()
+	stores.baselineErr = sentinel
+	s, quota := newServiceWithQuota(t, stores)
+
+	if err := s.RefreshQuotaBaselines(context.Background()); !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want %v", err, sentinel)
+	}
+	if _, ok := quota.Baseline("b1"); ok {
+		t.Error("a failed read seeded a baseline")
+	}
+}
+
+// TestRedisCounterConfigured_LocalBackend pins the answer for counters held in
+// process memory, which no other instance shares.
 func TestRedisCounterConfigured_LocalBackend(t *testing.T) {
 	t.Parallel()
 	s := newService(t, newFakeStores())
 
 	if s.RedisCounterConfigured() {
 		t.Error("RedisCounterConfigured = true for a local counter backend")
+	}
+}
+
+// TestRedisCounterConfigured_SharedBackend pins the answer for any backend
+// whose counters every instance charges.
+func TestRedisCounterConfigured_SharedBackend(t *testing.T) {
+	t.Parallel()
+	shared := sharedCounters{counter.NewLocalCounterBackend([]string{"b1"})}
+	s := New(&Deps{
+		Usage:  counter.NewUsageTracker(shared, nil),
+		Quota:  counter.NewQuotaTracker(),
+		Stores: newFakeStores(),
+	})
+
+	if !s.RedisCounterConfigured() {
+		t.Error("RedisCounterConfigured = false for a shared counter backend")
 	}
 }
 

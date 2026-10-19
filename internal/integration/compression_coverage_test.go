@@ -308,7 +308,7 @@ func TestCompression_RebalanceMovesCompressedObjectsIntact(t *testing.T) {
 		t.Fatalf("%s holds %d bytes, want the %d byte filler stored verbatim", dense, used, fillerSize)
 	}
 
-	h.flushQuota()
+	h.refreshQuota()
 	sum, err := h.workers.Rebalancer.Rebalance(ctx, config.RebalanceConfig{
 		Enabled:   true,
 		Strategy:  "pack",

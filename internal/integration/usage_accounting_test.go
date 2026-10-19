@@ -29,7 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -45,12 +44,8 @@ type usageSnapshot struct {
 // the flush drains into the database on its own schedule, and these tests are
 // asserting on what an operation charged, not on when it was persisted.
 func readUsage(rt *infra.BackendRuntime, backendName string) usageSnapshot {
-	be := rt.Usage().Backend()
-	return usageSnapshot{
-		APICalls: be.Load(backendName, counter.FieldAPIRequests),
-		Egress:   be.Load(backendName, counter.FieldEgressBytes),
-		Ingress:  be.Load(backendName, counter.FieldIngressBytes),
-	}
+	u := loadUsage(rt.Usage().Backend(), backendName)
+	return usageSnapshot{APICalls: u.APIRequests, Egress: u.EgressBytes, Ingress: u.IngressBytes}
 }
 
 // sub returns what was charged between two snapshots.
@@ -343,22 +338,24 @@ func exhaustedLimits(t *testing.T) core.UsageLimits {
 // live on the shared manager.
 func exhaustBackends(t *testing.T, names []string, limits core.UsageLimits, spent core.UsageStat) {
 	t.Helper()
+	// The pool half of the baseline is what admission judges requests on; the
+	// stat is what the usage report shows.
+	used := core.Usage{UsageStat: spent}
+	if spent.APIRequests > 0 {
+		used.Pools = core.PoolUsage{core.PoolAll: spent.APIRequests}
+	}
 	byName := make(map[string]core.UsageLimits, len(names))
+	baselines := make(map[string]core.Usage, len(names))
 	for _, name := range names {
 		byName[name] = limits
-		// The pool half of the baseline is what admission judges requests on;
-		// the stat is what the usage report shows.
-		var pools core.PoolUsage
-		if spent.APIRequests > 0 {
-			pools = core.PoolUsage{core.PoolAll: spent.APIRequests}
-		}
-		testStack.Runtime.Usage().SetBaseline(name, spent, pools)
+		baselines[name] = used
 	}
+	testStack.Runtime.Usage().SetBaselines(baselines)
 	testStack.Runtime.Usage().UpdateLimits(byName)
 
 	t.Cleanup(func() {
 		testStack.Runtime.Usage().UpdateLimits(map[string]core.UsageLimits{})
-		testStack.Runtime.Usage().ResetBaselines(allBackendOrder)
+		testStack.Runtime.Usage().SetBaselines(nil)
 		testStack.Objects.LocationCache().Clear()
 	})
 }

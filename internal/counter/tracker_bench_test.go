@@ -40,12 +40,21 @@ func benchLimits(b testing.TB) map[string]core.UsageLimits {
 	return map[string]core.UsageLimits{"oci": oci, "r2": r2}
 }
 
+// benchBaselines is the flushed usage the benchmarks judge against: some
+// requests already spent on the metered backend and its write pool.
+func benchBaselines() map[string]core.Usage {
+	return map[string]core.Usage{"oci": {
+		UsageStat: core.UsageStat{APIRequests: 1000},
+		Pools:     core.PoolUsage{"writes": 1000},
+	}}
+}
+
 // BenchmarkUsageTracker_WithinLimits measures the per-backend usage limit
 // check called on every write request via eligibleForWrite.
 func BenchmarkUsageTracker_WithinLimits(b *testing.B) {
 	cb := NewLocalCounterBackend([]string{"oci", "r2"})
 	tracker := NewUsageTracker(cb, benchLimits(b))
-	tracker.SetBaseline("oci", core.UsageStat{APIRequests: 1000}, core.PoolUsage{"writes": 1000})
+	tracker.SetBaselines(benchBaselines())
 
 	ops := []s3op.Operation{s3op.PutObject}
 	for b.Loop() {
@@ -58,7 +67,7 @@ func BenchmarkUsageTracker_WithinLimits(b *testing.B) {
 func BenchmarkUsageTracker_WithinLimits_Parallel(b *testing.B) {
 	cb := NewLocalCounterBackend([]string{"oci", "r2"})
 	tracker := NewUsageTracker(cb, benchLimits(b))
-	tracker.SetBaseline("oci", core.UsageStat{APIRequests: 1000}, core.PoolUsage{"writes": 1000})
+	tracker.SetBaselines(benchBaselines())
 
 	ops := []s3op.Operation{s3op.PutObject}
 	b.RunParallel(func(pb *testing.PB) {

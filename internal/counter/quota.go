@@ -41,7 +41,7 @@ import (
 // snapshot ranks as having no room.
 type QuotaTracker struct {
 	baseline atomic.Pointer[map[string]core.BackendQuotaUsage]
-	placed   *Registry[atomic.Int64]
+	placed   Registry[string, atomic.Int64]
 
 	writeMu sync.Mutex // serializes the copy-on-write baseline swap; readers never take it
 }
@@ -50,10 +50,9 @@ type QuotaTracker struct {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewQuotaTracker creates a tracker with an empty snapshot and a placement
-// counter per named backend.
-func NewQuotaTracker(backendNames []string) *QuotaTracker {
-	q := &QuotaTracker{placed: NewRegistry[atomic.Int64](backendNames...)}
+// NewQuotaTracker creates a tracker with an empty snapshot and no placements.
+func NewQuotaTracker() *QuotaTracker {
+	q := &QuotaTracker{}
 	empty := make(map[string]core.BackendQuotaUsage)
 	q.baseline.Store(&empty)
 	return q

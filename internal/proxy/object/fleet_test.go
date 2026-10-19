@@ -142,7 +142,7 @@ func newFleet(
 		AdmissionSem:    opts.AdmissionSem,
 	})
 	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage, BackendNames: names,
+		Store: store, Usage: usage,
 	}))
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))
@@ -187,7 +187,7 @@ func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) 
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
 	maps.Copy(primed, baselines)
-	quota := counter.NewQuotaTracker(names)
+	quota := counter.NewQuotaTracker()
 	quota.SetBaselines(primed)
 	return quota
 }

@@ -419,10 +419,12 @@ func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[str
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.UpdateLimits(limits)
+	// Byte budgets only here, so there is no pool baseline to seed.
+	baselines := make(map[string]core.Usage, len(spent))
 	for name, stat := range spent {
-		// Byte budgets only here, so there is no pool baseline to seed.
-		tracker.SetBaseline(name, stat, nil)
+		baselines[name] = core.Usage{UsageStat: stat}
 	}
+	tracker.SetBaselines(baselines)
 	return New(&Config{
 		Backends:        map[string]backend.ObjectBackend{"b1": fakeBackend{}, "b2": fakeBackend{}},
 		Order:           []string{"b1", "b2"},
@@ -530,11 +532,9 @@ type usageOf struct {
 
 // loadUsage reads backend's charges from counters.
 func loadUsage(counters *counter.LocalCounterBackend, backend string) usageOf {
-	return usageOf{
-		calls:   counters.Load(backend, counter.FieldAPIRequests),
-		egress:  counters.Load(backend, counter.FieldEgressBytes),
-		ingress: counters.Load(backend, counter.FieldIngressBytes),
-	}
+	var u core.Usage
+	counters.Load(backend, &u)
+	return usageOf{calls: u.APIRequests, egress: u.EgressBytes, ingress: u.IngressBytes}
 }
 
 // TestCore_StreamCopy_ChargesBothLegs verifies a successful copy charges the

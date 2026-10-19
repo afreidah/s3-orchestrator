@@ -5,46 +5,27 @@
 //
 // Registry holds one accumulator per key behind an RWMutex and hands the whole
 // map out in a single swap. Every in-memory counter in this package keeps its
-// per-backend state this way: the charge path takes the read lock and touches
-// an atomic, and the flush replaces the map wholesale rather than resetting
-// keys one at a time, so a charge landing mid-flush is either counted in the
-// batch that was taken or in the one that follows it, never dropped between
-// two per-key resets.
+// state this way: the charge path takes the read lock and touches an atomic,
+// and the flush replaces the map wholesale rather than resetting keys one at a
+// time, so a charge landing mid-flush is either counted in the batch that was
+// taken or in the one that follows it, never dropped between two per-key
+// resets.
 // -------------------------------------------------------------------------------
 
 package counter
 
-import (
-	"maps"
-	"sync"
-)
+import "sync"
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// Registry is a set of per-key accumulators of type T, safe for concurrent use.
-// T must be usable at its zero value, such as an atomic.Int64 or a struct of
-// them. Entries are never removed.
-type Registry[T any] struct {
+// Registry is a set of per-key accumulators of type T, safe for concurrent use
+// and ready at its zero value. T must be usable at its zero value, such as an
+// atomic.Int64 or a struct of them.
+type Registry[K comparable, T any] struct {
 	mu      sync.RWMutex
-	entries map[string]*T
-}
-
-// -------------------------------------------------------------------------
-// CONSTRUCTOR
-// -------------------------------------------------------------------------
-
-// NewRegistry creates a registry pre-populated with an accumulator for each
-// key. Pre-populating matters for the callers that treat an unknown key as a
-// charge against something that does not exist and want Peek to say so, rather
-// than silently accumulating under a name nothing will ever flush.
-func NewRegistry[T any](keys ...string) *Registry[T] {
-	entries := make(map[string]*T, len(keys))
-	for _, key := range keys {
-		entries[key] = new(T)
-	}
-	return &Registry[T]{entries: entries}
+	entries map[K]*T
 }
 
 // -------------------------------------------------------------------------
@@ -54,7 +35,7 @@ func NewRegistry[T any](keys ...string) *Registry[T] {
 // Peek returns the accumulator for key, or nil when the registry does not hold
 // one. The read path uses this so an unrecognised key is a no-op rather than an
 // allocation.
-func (r *Registry[T]) Peek(key string) *T {
+func (r *Registry[K, T]) Peek(key K) *T {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.entries[key]
@@ -62,7 +43,7 @@ func (r *Registry[T]) Peek(key string) *T {
 
 // Get returns the accumulator for key, creating it on first use. Double-checked
 // so the common case - an entry that already exists - costs a read lock.
-func (r *Registry[T]) Get(key string) *T {
+func (r *Registry[K, T]) Get(key K) *T {
 	if existing := r.Peek(key); existing != nil {
 		return existing
 	}
@@ -74,46 +55,30 @@ func (r *Registry[T]) Get(key string) *T {
 	}
 	created := new(T)
 	if r.entries == nil {
-		r.entries = make(map[string]*T)
+		r.entries = make(map[K]*T)
 	}
 	r.entries[key] = created
 	return created
 }
 
-// Keys returns the names the registry currently holds accumulators for.
-func (r *Registry[T]) Keys() []string {
+// Range calls fn for every accumulator without resetting or copying them, so
+// a reader on the request path does not allocate. fn runs under the read lock
+// and must not add keys to this registry.
+func (r *Registry[K, T]) Range(fn func(key K, entry *T)) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	keys := make([]string, 0, len(r.entries))
-	for key := range r.entries {
-		keys = append(keys, key)
+	for key, entry := range r.entries {
+		fn(key, entry)
 	}
-	return keys
 }
 
-// All returns the current accumulators without resetting them, for readers that
-// need every key in one pass. The pointers are live: a concurrent charge is
-// visible through them after this returns.
-func (r *Registry[T]) All() map[string]*T {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make(map[string]*T, len(r.entries))
-	maps.Copy(out, r.entries)
-	return out
-}
-
-// SwapAll replaces every accumulator with a fresh one and returns the old set.
-// The key set is preserved. A charge racing the swap lands in whichever map it
-// resolved to, and both are accounted for: the old one by the caller, the new
-// one by the next flush.
-func (r *Registry[T]) SwapAll() map[string]*T {
+// SwapAll empties the registry and returns the accumulators it held. A charge
+// racing the swap lands in whichever map it resolved to, and both are
+// accounted for: the old one by the caller, the new one by the next swap.
+func (r *Registry[K, T]) SwapAll() map[K]*T {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	old := r.entries
-	fresh := make(map[string]*T, len(old))
-	for key := range old {
-		fresh[key] = new(T)
-	}
-	r.entries = fresh
-	r.mu.Unlock()
+	r.entries = nil
 	return old
 }

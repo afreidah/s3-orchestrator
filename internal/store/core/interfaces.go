@@ -251,10 +251,13 @@ type BackendStateStore interface {
 	DeleteBackendData(ctx context.Context, backendName string) error
 }
 
-// UsageFlusher defines the store methods used by UsageTracker.FlushUsage.
+// UsageFlusher defines the store method the usage flush writes through.
+// ApplyUsageBatch adds a batch's totals and pools to its period's rows in one
+// transaction. A batch with an ID records it there too, and one whose ID is
+// already recorded changes nothing, so a batch found again after its commit is
+// not counted twice.
 type UsageFlusher interface {
-	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
-	FlushPoolDeltas(ctx context.Context, backendName, period string, deltas PoolUsage) error
+	ApplyUsageBatch(ctx context.Context, b *UsageBatch) error
 }
 
 // AdvisoryLocker defines the leader-election helper used by background
@@ -271,8 +274,7 @@ type DashboardStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	LedgerStats(ctx context.Context) (LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
-	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]PoolUsage, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]Usage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 }
 

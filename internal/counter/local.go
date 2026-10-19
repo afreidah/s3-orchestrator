@@ -3,15 +3,17 @@
 //
 // Author: Alex Freidah
 //
-// Implements Backend using per-backend atomic.Int64 counters stored in
-// local memory. This is the default backend when Redis is not configured. Each
-// instance maintains independent counters that are periodically flushed to
-// PostgreSQL by the usage flush service.
+// Implements Backend using atomic counters in local memory, one set per
+// backend and period. This is the default backend when Redis is not
+// configured, and the Redis backend's fallback. Each instance keeps its own
+// counters and flushes them to the database on the usage flush tick.
 // -------------------------------------------------------------------------------
 
 package counter
 
 import (
+	"context"
+	"slices"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -21,43 +23,57 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// localCounters holds atomic counters for a single backend's usage deltas.
-// Pool names come from config, so a pool's entry is created the first time
-// it is charged.
+// periodKey names one backend's counters in one period. Keying by period means
+// a charge is flushed into the month it was made in, however late the flush.
+type periodKey struct {
+	period  string
+	backend string
+}
+
+// localCounters holds atomic counters for one backend in one period. Pool
+// names come from config, so a pool's entry is created the first time it is
+// charged.
 type localCounters struct {
 	apiRequests  atomic.Int64
 	egressBytes  atomic.Int64
 	ingressBytes atomic.Int64
-	pools        Registry[atomic.Int64]
+	pools        Registry[string, atomic.Int64]
 }
 
-// poolValues reads every pool counter for this backend.
-func (c *localCounters) poolValues() map[string]int64 {
-	entries := c.pools.All()
-	if len(entries) == 0 {
-		return nil
-	}
-	out := make(map[string]int64, len(entries))
-	for name, p := range entries {
-		out[name] = p.Load()
-	}
-	return out
+// addTo adds the counters into u. Reading into a caller's value rather than
+// building a new one is what keeps a limit check from allocating.
+func (c *localCounters) addTo(u *core.Usage) {
+	u.APIRequests += c.apiRequests.Load()
+	u.EgressBytes += c.egressBytes.Load()
+	u.IngressBytes += c.ingressBytes.Load()
+	c.pools.Range(func(name string, p *atomic.Int64) {
+		u.AddPool(name, p.Load())
+	})
 }
 
-// LocalCounterBackend stores per-backend usage deltas in local atomic
-// counters. Safe for concurrent use.
+// addStat adds the request and byte totals.
+func (c *localCounters) addStat(api, egress, ingress int64) {
+	c.apiRequests.Add(api)
+	c.egressBytes.Add(egress)
+	c.ingressBytes.Add(ingress)
+}
+
+// LocalCounterBackend stores per-backend usage counters in local atomic
+// counters. A charge for a backend not named at construction is dropped, since
+// nothing would ever flush it. Safe for concurrent use.
 type LocalCounterBackend struct {
-	counters *Registry[localCounters]
+	backends []string
+	counters Registry[periodKey, localCounters]
 }
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// NewLocalCounterBackend creates a local counter backend pre-initialized with
-// the given backend names.
+// NewLocalCounterBackend creates a local counter backend for the given backend
+// names.
 func NewLocalCounterBackend(backendNames []string) *LocalCounterBackend {
-	return &LocalCounterBackend{counters: NewRegistry[localCounters](backendNames...)}
+	return &LocalCounterBackend{backends: backendNames}
 }
 
 // -------------------------------------------------------------------------
@@ -66,180 +82,55 @@ func NewLocalCounterBackend(backendNames []string) *LocalCounterBackend {
 
 // Backends returns the list of backend names this counter tracks.
 func (l *LocalCounterBackend) Backends() []string {
-	return l.counters.Keys()
+	return l.backends
 }
 
-// Add increments a single counter field for a backend.
-func (l *LocalCounterBackend) Add(backend, field string, delta int64) {
-	c := l.get(backend)
-	if c == nil {
+// Charge adds one charge to the backend's counters for the current period.
+func (l *LocalCounterBackend) Charge(backend string, c Charge) {
+	if c.empty() || !slices.Contains(l.backends, backend) {
 		return
 	}
-	switch field {
-	case FieldAPIRequests:
-		c.apiRequests.Add(delta)
-	case FieldEgressBytes:
-		c.egressBytes.Add(delta)
-	case FieldIngressBytes:
-		c.ingressBytes.Add(delta)
-	}
-}
-
-// Load returns the current value of a counter field.
-func (l *LocalCounterBackend) Load(backend, field string) int64 {
-	c := l.get(backend)
-	if c == nil {
-		return 0
-	}
-	switch field {
-	case FieldAPIRequests:
-		return c.apiRequests.Load()
-	case FieldEgressBytes:
-		return c.egressBytes.Load()
-	case FieldIngressBytes:
-		return c.ingressBytes.Load()
-	}
-	return 0
-}
-
-// Swap atomically reads and resets a counter field, returning the old value.
-func (l *LocalCounterBackend) Swap(backend, field string) int64 {
-	c := l.get(backend)
-	if c == nil {
-		return 0
-	}
-	switch field {
-	case FieldAPIRequests:
-		return c.apiRequests.Swap(0)
-	case FieldEgressBytes:
-		return c.egressBytes.Swap(0)
-	case FieldIngressBytes:
-		return c.ingressBytes.Swap(0)
-	}
-	return 0
-}
-
-// AddAll increments all three counter fields (API requests, egress, ingress) atomically.
-func (l *LocalCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
-	c := l.get(backend)
-	if c == nil {
+	lc := l.counters.Get(periodKey{period: CurrentPeriod(), backend: backend})
+	lc.addStat(c.APIRequests, c.EgressBytes, c.IngressBytes)
+	if c.PoolN <= 0 {
 		return
 	}
-	if apiReqs > 0 {
-		c.apiRequests.Add(apiReqs)
-	}
-	if egress > 0 {
-		c.egressBytes.Add(egress)
-	}
-	if ingress > 0 {
-		c.ingressBytes.Add(ingress)
+	for i := range c.Pools {
+		lc.pools.Get(c.Pools[i].Name).Add(c.PoolN)
 	}
 }
 
-// LoadAll returns all three counter values for a backend.
-func (l *LocalCounterBackend) LoadAll(backend string) LoadAllResult {
-	c := l.get(backend)
-	if c == nil {
-		return LoadAllResult{}
-	}
-	return LoadAllResult{
-		APIRequests:  c.apiRequests.Load(),
-		EgressBytes:  c.egressBytes.Load(),
-		IngressBytes: c.ingressBytes.Load(),
+// Load adds the backend's unflushed counters for the current period into u.
+func (l *LocalCounterBackend) Load(backend string, u *core.Usage) {
+	if lc := l.counters.Peek(periodKey{period: CurrentPeriod(), backend: backend}); lc != nil {
+		lc.addTo(u)
 	}
 }
 
-// SwapAll atomically reads and resets all three counter fields for a backend,
-// returning the old values. Each field is independently atomic.
-func (l *LocalCounterBackend) SwapAll(backend string) LoadAllResult {
-	c := l.get(backend)
-	if c == nil {
-		return LoadAllResult{}
-	}
-	return LoadAllResult{
-		APIRequests:  c.apiRequests.Swap(0),
-		EgressBytes:  c.egressBytes.Swap(0),
-		IngressBytes: c.ingressBytes.Swap(0),
-	}
-}
-
-// SwapAllBackends atomically reads and resets counters for every backend in
-// a single operation by swapping the entire map. Returns the old values keyed
-// by backend name. This avoids the race where per-backend SwapAll calls allow
-// concurrent Add calls to slip between swaps.
-func (l *LocalCounterBackend) SwapAllBackends() map[string]Snapshot {
+// Take empties the counters and returns them, one batch per backend and period
+// that was charged. The batches carry no ID: they exist only in this process.
+func (l *LocalCounterBackend) Take(_ context.Context) []core.UsageBatch {
 	old := l.counters.SwapAll()
-
-	result := make(map[string]Snapshot, len(old))
-	for name, c := range old {
-		result[name] = Snapshot{
-			APIRequests:  c.apiRequests.Load(),
-			EgressBytes:  c.egressBytes.Load(),
-			IngressBytes: c.ingressBytes.Load(),
-			Pools:        c.poolValues(),
+	batches := make([]core.UsageBatch, 0, len(old))
+	for k, lc := range old {
+		b := core.UsageBatch{Backend: k.backend, Period: k.period}
+		lc.addTo(&b.Usage)
+		if !b.IsZero() {
+			batches = append(batches, b)
 		}
 	}
-	return result
+	return batches
 }
 
-// AddPools increments the named pool counters for a backend.
-func (l *LocalCounterBackend) AddPools(backend string, deltas map[string]int64) {
-	c := l.get(backend)
-	if c == nil {
+// Settle puts a batch the store did not apply back into its period, so the
+// next flush carries it again.
+func (l *LocalCounterBackend) Settle(_ context.Context, b *core.UsageBatch, applied bool) {
+	if applied {
 		return
 	}
-	for name, delta := range deltas {
-		if delta > 0 {
-			c.pools.Get(name).Add(delta)
-		}
+	lc := l.counters.Get(periodKey{period: b.Period, backend: b.Backend})
+	lc.addStat(b.APIRequests, b.EgressBytes, b.IngressBytes)
+	for name, n := range b.Pools {
+		lc.pools.Get(name).Add(n)
 	}
-}
-
-// ChargePools adds n to each of the given pool counters for a backend.
-func (l *LocalCounterBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
-	c := l.get(backend)
-	if c == nil || n <= 0 {
-		return
-	}
-	for i := range pools {
-		c.pools.Get(pools[i].Name).Add(n)
-	}
-}
-
-// LoadPool returns the current count for a single pool.
-func (l *LocalCounterBackend) LoadPool(backend, pool string) int64 {
-	c := l.get(backend)
-	if c == nil {
-		return 0
-	}
-	if p := c.pools.Peek(pool); p != nil {
-		return p.Load()
-	}
-	return 0
-}
-
-// SwapPools reads and resets every pool counter for a backend.
-func (l *LocalCounterBackend) SwapPools(backend string) map[string]int64 {
-	c := l.get(backend)
-	if c == nil {
-		return nil
-	}
-	old := c.pools.SwapAll()
-	if len(old) == 0 {
-		return nil
-	}
-	out := make(map[string]int64, len(old))
-	for name, p := range old {
-		out[name] = p.Load()
-	}
-	return out
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// get returns the counters for the named backend, or nil if unknown.
-func (l *LocalCounterBackend) get(backend string) *localCounters {
-	return l.counters.Peek(backend)
 }

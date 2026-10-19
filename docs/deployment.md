@@ -168,9 +168,11 @@ Request-serving paths (PutObject, GetObject, etc.) are stateless and work correc
 
 Without Redis, each instance tracks usage counters independently in memory and flushes to PostgreSQL at the configured interval (default 30s). Between flushes, instances cannot see each other's accumulated usage, which can allow quota overshoot under high throughput.
 
-With Redis configured, all instances share the same usage counters via Redis `INCRBY`/`GET` operations. The baseline+delta formula stays the same (`DB baseline + counter + proposed`), but the counter lives in Redis instead of local memory, eliminating the cross-instance blind spot. When Redis is active, only one instance flushes counters to PostgreSQL (coordinated via advisory lock) since `GETSET` is a destructive read.
+With Redis configured, all instances share the same usage counters: one Redis hash per backend and month, holding the request and byte totals and each request pool. The baseline+delta formula stays the same (`DB baseline + counter + proposed`), but the counter lives in Redis instead of local memory, eliminating the cross-instance blind spot.
 
-A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically - same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis via an additive INCRBY pipeline before resuming shared operation. The entire local counter map is swapped atomically (single pointer swap) so no concurrent Add calls can lose deltas between the snapshot and the pipeline. Stale Redis keys from before the outage expire via TTL. Local counters are zeroed only after the pipeline commits, so a crash mid-recovery cannot lose deltas. The recovery is safe for concurrent execution by multiple instances since INCRBY is additive.
+Every instance flushes on every tick, without a lock. A flush renames each live hash to a staged key carrying a fresh flush id, writes it to the database together with that id, and deletes the staged key after the commit. A staged key left behind by a crash or a lost reply is found and flushed again by the next tick on any instance, and the recorded id keeps it from being counted twice. The previous month's hash is flushed too, so charges made just before a month rolls over land in that month.
+
+A circuit breaker monitors Redis health. If Redis becomes unavailable, charges go to local in-memory counters, kept per month, and each instance flushes its own straight to the database on the next tick. A background health probe PINGs Redis periodically and resumes shared operation once it answers. Nothing is replayed into Redis.
 
 ### Provisioning Changes
 

@@ -32,8 +32,8 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
 		ObjectCounts: map[string]int64{"b1": 7},
-		UsageStats: map[string]core.UsageStat{
-			"b1": {APIRequests: 3, EgressBytes: 20, IngressBytes: 40},
+		UsageStats: map[string]core.Usage{
+			"b1": {UsageStat: core.UsageStat{APIRequests: 3, EgressBytes: 20, IngressBytes: 40}},
 		},
 	}
 

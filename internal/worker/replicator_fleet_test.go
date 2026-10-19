@@ -23,7 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -637,13 +636,13 @@ func TestReplicate_ChargesTheBytesTheCopyMoved(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 
-	if got := fleet.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 4 {
+	if got := loadUsage(fleet.Usage().Backend(), "b2").EgressBytes; got != 4 {
 		t.Errorf("source egress = %d, want the 4 bytes read from b2", got)
 	}
-	if got := fleet.Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 4 {
+	if got := loadUsage(fleet.Usage().Backend(), "b3").IngressBytes; got != 4 {
 		t.Errorf("target ingress = %d, want the 4 bytes written to b3", got)
 	}
-	if got := fleet.Usage().Backend().Load("b1", counter.FieldEgressBytes); got != 0 {
+	if got := loadUsage(fleet.Usage().Backend(), "b1").EgressBytes; got != 0 {
 		t.Errorf("tripped b1 egress = %d, want 0", got)
 	}
 }

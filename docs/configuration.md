@@ -686,9 +686,9 @@ redis:
 - `key_prefix` - namespaces all Redis keys. Use different prefixes if multiple orchestrator deployments share one Redis instance.
 - `failure_threshold` and `open_timeout` - control the circuit breaker that falls back to local counters when Redis is unavailable.
 
-When Redis is active, the usage flush service acquires a PostgreSQL advisory lock so only one instance performs the destructive `GETSET` + flush-to-PG operation. When Redis is in fallback (or not configured), each instance flushes independently without a lock.
+Every instance runs the usage flush without a lock. Shared counters are staged under a flush id before they are written, and the database records the id with the deltas, so a batch two instances both find is applied once. Charges kept in local counters during a Redis outage are flushed by the instance that holds them.
 
-A background health probe runs every 5 seconds while the breaker is open: it PINGs Redis and, on success, syncs the accumulated local-counter deltas back via an additive INCRBY pipeline (no DEL - keys from before the outage expire via TTL) and recloses the breaker. The breaker recovery is clean: the failure counter is zeroed so the system tolerates the configured `failure_threshold` of new transient errors before tripping again. No process restart is required after a Redis outage.
+A background health probe runs every 5 seconds while the breaker is open: it PINGs Redis and, on success, recloses the breaker. The breaker recovery is clean: the failure counter is zeroed so the system tolerates the configured `failure_threshold` of new transient errors before tripping again. No process restart is required after a Redis outage.
 
 Redis is not reloadable - changing Redis settings requires a restart.
 

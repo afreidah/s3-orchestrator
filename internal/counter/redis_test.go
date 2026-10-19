@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Tests for the tryRecover path: fallback to local counters during Redis
-// outage, atomic swap of all local deltas, additive INCRBY pipeline on
-// recovery, and delta restoration on pipeline failure.
+// Tests for the constructor, shared state, the circuit breaker feed, and the
+// tryRecover path that moves the backend off its local fallback once Redis
+// answers again.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -24,72 +24,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
-
-// fakePipeliner collects pipeline commands without executing them against
-// a real Redis. Exec returns a configurable error. Pool counters live in a
-// hash per backend and period, so the pool paths record HIncrBy and HGetAll
-// rather than the string commands.
-type fakePipeliner struct {
-	redis.Pipeliner
-	incrByKeys []string
-	incrByVals []int64
-	expireKeys []string
-	execErr    error
-
-	hIncrByKeys   []string
-	hIncrByFields []string
-	hIncrByVals   []int64
-	delKeys       []string
-	hgetAll       map[string]string
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
-// HIncrBy records a pool counter increment.
-func (f *fakePipeliner) HIncrBy(_ context.Context, key, field string, val int64) *redis.IntCmd {
-	f.hIncrByKeys = append(f.hIncrByKeys, key)
-	f.hIncrByFields = append(f.hIncrByFields, field)
-	f.hIncrByVals = append(f.hIncrByVals, val)
-	return redis.NewIntCmd(context.Background())
-}
-
-// HGetAll returns the test-configured pool hash.
-func (f *fakePipeliner) HGetAll(_ context.Context, _ string) *redis.MapStringStringCmd {
-	return redis.NewMapStringStringResult(f.hgetAll, nil)
-}
-
-// Del records the keys a swap cleared.
-func (f *fakePipeliner) Del(_ context.Context, keys ...string) *redis.IntCmd {
-	f.delKeys = append(f.delKeys, keys...)
-	return redis.NewIntCmd(context.Background())
-}
-
-// IncrBy satisfies the redis pipeline interface for the fake
-// pipeliner used in this test; records the call for later
-// assertions.
-func (f *fakePipeliner) IncrBy(_ context.Context, key string, val int64) *redis.IntCmd {
-	f.incrByKeys = append(f.incrByKeys, key)
-	f.incrByVals = append(f.incrByVals, val)
-	return redis.NewIntCmd(context.Background())
-}
-
-// Expire satisfies the redis pipeline interface for the fake
-// pipeliner; records the requested TTL so the test can assert it.
-func (f *fakePipeliner) Expire(_ context.Context, key string, _ time.Duration) *redis.BoolCmd {
-	f.expireKeys = append(f.expireKeys, key)
-	return redis.NewBoolCmd(context.Background())
-}
-
-// Exec satisfies the redis pipeline interface for the fake
-// pipeliner; returns the test-configured error and slice of cmder
-// results so error-path assertions are deterministic.
-func (f *fakePipeliner) Exec(_ context.Context) ([]redis.Cmder, error) {
-	return nil, f.execErr
+// recoveringBackend builds a backend in fallback over the mock client, the
+// state tryRecover runs in.
+func recoveringBackend(mock *MockRedisClient, cb *breaker.CircuitBreaker) *RedisCounterBackend {
+	r := &RedisCounterBackend{
+		client:    mock,
+		prefix:    testPrefix,
+		local:     NewLocalCounterBackend([]string{backendB1}),
+		backends:  []string{backendB1},
+		cb:        cb,
+		stopProbe: make(chan struct{}),
+		probeDone: make(chan struct{}),
+	}
+	r.setFallback(true)
+	return r
 }
 
 // TestRedisCounterBackend_LoggerFallback pins the nil-safe behaviour
@@ -164,9 +112,12 @@ func TestNewRedisCounterBackend_UnreachableStartsInFallback(t *testing.T) {
 	if !r.inFallback() {
 		t.Fatal("backend not in fallback with Redis unreachable at startup")
 	}
-	r.Add("b1", FieldAPIRequests, 5)
-	if got := r.Load("b1", FieldAPIRequests); got != 5 {
+	r.Charge(backendB1, Charge{APIRequests: 5})
+	if got := loaded(r, backendB1).APIRequests; got != 5 {
 		t.Errorf("Load = %d from the local counters, want 5", got)
+	}
+	if got := r.TakeShared(context.Background()); got != nil {
+		t.Errorf("TakeShared in fallback = %+v, want nil", got)
 	}
 	if _, err := r.GetShared(context.Background(), "x"); !errors.Is(err, ErrSharedStateUnavailable) {
 		t.Errorf("GetShared err = %v, want ErrSharedStateUnavailable", err)
@@ -236,88 +187,25 @@ func TestRecordFailure_LogsFallbackAndPostCheckError(t *testing.T) {
 	}
 }
 
-// TestTryRecover_SyncsLocalDeltasToRedis verifies that tryRecover swaps all
-// local deltas atomically and sends them to Redis via INCRBY (no DEL).
-func TestTryRecover_SyncsLocalDeltasToRedis(t *testing.T) {
+// TestTryRecover_LeavesLocalChargesForTheFlush asserts recovery only leaves
+// fallback: the charges kept locally stay put until this instance's flush
+// takes them, and nothing is written to Redis.
+func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
 
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1", "b2"}),
-		backends:  []string{"b1", "b2"},
-		fallback:  true,
-		cb:        newTestCB(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
-
-	// Accumulate local deltas during "outage"
-	r.local.AddAll("b1", 100, 1024, 2048)
-	r.local.AddAll("b2", 50, 512, 0)
+	r := recoveringBackend(mock, newTestCB())
+	r.Charge(backendB1, Charge{APIRequests: 100, EgressBytes: 1024})
 
 	r.tryRecover()
 
-	// Local counters should be zeroed.
-	if got := r.local.Load("b1", FieldAPIRequests); got != 0 {
-		t.Errorf("b1 apiRequests after recovery = %d, want 0", got)
-	}
-	if got := r.local.Load("b2", FieldAPIRequests); got != 0 {
-		t.Errorf("b2 apiRequests after recovery = %d, want 0", got)
-	}
-
-	// Pipeline should have INCRBY calls (no DEL).
-	if len(pipe.incrByKeys) == 0 {
-		t.Fatal("expected INCRBY pipeline commands")
-	}
-
-	// Should no longer be in fallback.
 	if r.inFallback() {
 		t.Error("expected fallback to be cleared after recovery")
 	}
-}
-
-// TestTryRecover_PipelineFailure_RestoresDeltas verifies that if the Redis
-// pipeline fails, local deltas are restored so they can be retried.
-func TestTryRecover_PipelineFailure_RestoresDeltas(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{execErr: errors.New("connection reset")}
-
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
-
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
-		fallback:  true,
-		cb:        newTestCB(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
-
-	r.local.AddAll("b1", 100, 1024, 2048)
-
-	r.tryRecover()
-
-	// Deltas should be restored to local counters.
-	if got := r.local.Load("b1", FieldAPIRequests); got != 100 {
-		t.Errorf("b1 apiRequests after failed recovery = %d, want 100", got)
-	}
-	if got := r.local.Load("b1", FieldEgressBytes); got != 1024 {
-		t.Errorf("b1 egressBytes after failed recovery = %d, want 1024", got)
-	}
-
-	// Should still be in fallback.
-	if !r.inFallback() {
-		t.Error("expected fallback to remain active after pipeline failure")
+	batches := r.Take(context.Background())
+	if len(batches) != 1 || batches[0].APIRequests != 100 || batches[0].ID != "" {
+		t.Errorf("Take after recovery = %+v, want the local batch of 100 with no ID", batches)
 	}
 }
 
@@ -326,67 +214,18 @@ func TestTryRecover_PipelineFailure_RestoresDeltas(t *testing.T) {
 func TestTryRecover_PingFailure_NoOp(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
-
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("", errors.New("connection refused")))
 
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
-		fallback:  true,
-		cb:        newTestCB(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
-
-	r.local.AddAll("b1", 50, 0, 0)
+	r := recoveringBackend(mock, newTestCB())
+	r.Charge(backendB1, Charge{APIRequests: 50})
 
 	r.tryRecover()
 
-	// Local deltas should be untouched.
-	if got := r.local.Load("b1", FieldAPIRequests); got != 50 {
+	if got := loaded(r, backendB1).APIRequests; got != 50 {
 		t.Errorf("b1 apiRequests = %d, want 50 (unchanged)", got)
 	}
-
-	// Should still be in fallback.
 	if !r.inFallback() {
 		t.Error("expected fallback to remain active when ping fails")
-	}
-}
-
-// TestTryRecover_NoDEL verifies that the recovery pipeline does not contain
-// any DEL commands (INCRBY only, safe for multi-instance).
-func TestTryRecover_NoDEL(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
-	// Explicitly expect NO Del calls on the mock client.
-	// (Del would be called on the pipeline, not the client, but verify
-	// the pipeline has no Del method calls by checking only INCRBY keys.)
-
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
-		fallback:  true,
-		cb:        newTestCB(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
-
-	r.local.AddAll("b1", 10, 20, 30)
-
-	r.tryRecover()
-
-	// All pipeline commands should be INCRBY (tracked via incrByKeys).
-	// If DEL were present, it would go through a different method not tracked.
-	if len(pipe.incrByKeys) != 3 {
-		t.Errorf("expected 3 INCRBY commands (api, egress, ingress), got %d", len(pipe.incrByKeys))
 	}
 }
 
@@ -403,21 +242,9 @@ func newTestCB() *breaker.CircuitBreaker {
 func TestTryRecover_ClosesCircuitBreaker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
 
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
-		fallback:  true,
-		cb:        newTestCB(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
+	r := recoveringBackend(mock, newTestCB())
 
 	if r.cb.IsHealthy() {
 		t.Fatal("setup: breaker should be open before tryRecover")
@@ -441,10 +268,7 @@ func TestTryRecover_ClosesCircuitBreaker(t *testing.T) {
 func TestTryRecover_TolerantOfTransientErrorAfterRecovery(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
 
 	// Use a threshold of 3 so the test can prove the failure counter
 	// was reset (one post-recovery error must not trip a 3-strike
@@ -454,16 +278,7 @@ func TestTryRecover_TolerantOfTransientErrorAfterRecovery(t *testing.T) {
 		_ = cb.PostCheck(errors.New("outage"))
 	}
 
-	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
-		fallback:  true,
-		cb:        cb,
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
-	}
+	r := recoveringBackend(mock, cb)
 
 	r.tryRecover()
 

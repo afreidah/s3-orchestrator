@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Integration tests for the RedisCounterBackend against a real Redis instance.
-// Covers shared counter visibility, circuit breaker fallback to local counters,
-// and recovery with local delta sync.
+// Covers charging and reading the shared hashes, visibility across instances,
+// and staging a hash for a flush until it is settled.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // redisAddr returns the Redis address from the environment or the default.
@@ -61,68 +62,63 @@ func newTestRedisBackend(t *testing.T, backends []string) (*counter.RedisCounter
 	return rb, client
 }
 
+// loadUsage returns a backend's unflushed counters as a fresh value, for the
+// assertions that read them.
+func loadUsage(b counter.Backend, name string) core.Usage {
+	var u core.Usage
+	b.Load(name, &u)
+	return u
+}
+
 // -------------------------------------------------------------------------
 // TESTS
 // -------------------------------------------------------------------------
 
-// TestRedis_AddAndLoad verifies the redis add and load contract.
-// Asserts that b1 api_requests = , want 10.
-func TestRedis_AddAndLoad(t *testing.T) {
-	backends := []string{"b1", "b2"}
-	rb, _ := newTestRedisBackend(t, backends)
+// TestRedis_ChargeAndLoad verifies charges land in each backend's hash,
+// totals and pools alike, and read back through Load.
+func TestRedis_ChargeAndLoad(t *testing.T) {
+	rb, _ := newTestRedisBackend(t, []string{"b1", "b2"})
 
-	rb.Add("b1", counter.FieldAPIRequests, 10)
-	rb.Add("b1", counter.FieldEgressBytes, 200)
-	rb.Add("b2", counter.FieldIngressBytes, 300)
+	rb.Charge("b1", counter.Charge{APIRequests: 5, EgressBytes: 100, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 5})
+	rb.Charge("b1", counter.Charge{APIRequests: 3, EgressBytes: 50, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 3})
+	rb.Charge("b2", counter.Charge{APIRequests: 1, IngressBytes: 300})
 
-	if got := rb.Load("b1", counter.FieldAPIRequests); got != 10 {
-		t.Errorf("b1 api_requests = %d, want 10", got)
+	b1 := loadUsage(rb, "b1")
+	if b1.APIRequests != 8 || b1.EgressBytes != 150 || b1.Pools["reads"] != 8 {
+		t.Errorf("b1 = %+v, want 8 requests, 150 egress, 8 on reads", b1)
 	}
-	if got := rb.Load("b1", counter.FieldEgressBytes); got != 200 {
-		t.Errorf("b1 egress_bytes = %d, want 200", got)
-	}
-	if got := rb.Load("b2", counter.FieldIngressBytes); got != 300 {
+	if got := loadUsage(rb, "b2").IngressBytes; got != 300 {
 		t.Errorf("b2 ingress_bytes = %d, want 300", got)
 	}
 }
 
-// TestRedis_AddAllAndLoadAll verifies the redis add all and load all contract.
-// Asserts that api_requests = , want 8.
-func TestRedis_AddAllAndLoadAll(t *testing.T) {
-	backends := []string{"b1"}
-	rb, _ := newTestRedisBackend(t, backends)
+// TestRedis_TakeSharedStagesAndSettles verifies a flush takes the live hash
+// under a flush ID, finds it again until it is settled as applied, and that a
+// charge made after the take starts a fresh hash.
+func TestRedis_TakeSharedStagesAndSettles(t *testing.T) {
+	ctx := context.Background()
+	rb, _ := newTestRedisBackend(t, []string{"b1"})
+	rb.Charge("b1", counter.Charge{APIRequests: 4})
 
-	rb.AddAll("b1", 5, 100, 200)
-	rb.AddAll("b1", 3, 50, 0)
-
-	result := rb.LoadAll("b1")
-	if result.APIRequests != 8 {
-		t.Errorf("api_requests = %d, want 8", result.APIRequests)
+	batches := rb.TakeShared(ctx)
+	if len(batches) != 1 || batches[0].ID == "" || batches[0].Backend != "b1" || batches[0].APIRequests != 4 {
+		t.Fatalf("batches = %+v, want one staged b1 batch of 4 requests", batches)
 	}
-	if result.EgressBytes != 150 {
-		t.Errorf("egress_bytes = %d, want 150", result.EgressBytes)
+	if got := loadUsage(rb, "b1").APIRequests; got != 0 {
+		t.Errorf("live requests after the take = %d, want 0", got)
 	}
-	if result.IngressBytes != 200 {
-		t.Errorf("ingress_bytes = %d, want 200", result.IngressBytes)
+	rb.Charge("b1", counter.Charge{APIRequests: 2})
+
+	rb.Settle(ctx, &batches[0], false)
+	again := rb.TakeShared(ctx)
+	if len(again) != 2 {
+		t.Fatalf("second take = %+v, want the unsettled batch and the new charge", again)
 	}
-}
-
-// TestRedis_Swap verifies the redis swap contract.
-// Asserts that Swap returned , want 42.
-func TestRedis_Swap(t *testing.T) {
-	backends := []string{"b1"}
-	rb, _ := newTestRedisBackend(t, backends)
-
-	rb.Add("b1", counter.FieldAPIRequests, 42)
-
-	got := rb.Swap("b1", counter.FieldAPIRequests)
-	if got != 42 {
-		t.Errorf("Swap returned %d, want 42", got)
+	for i := range again {
+		rb.Settle(ctx, &again[i], true)
 	}
-
-	// After swap, counter should be 0
-	if v := rb.Load("b1", counter.FieldAPIRequests); v != 0 {
-		t.Errorf("after Swap, Load = %d, want 0", v)
+	if left := rb.TakeShared(ctx); len(left) != 0 {
+		t.Errorf("batches after settling = %+v, want none", left)
 	}
 }
 
@@ -150,16 +146,14 @@ func TestRedis_SharedVisibility(t *testing.T) {
 	rb2 := counter.NewRedisCounterBackend(client2, cfg, backends)
 	defer rb2.Close()
 
-	// Instance 1 writes
-	rb1.Add("b1", counter.FieldAPIRequests, 10)
-	// Instance 2 writes
-	rb2.Add("b1", counter.FieldAPIRequests, 20)
+	rb1.Charge("b1", counter.Charge{APIRequests: 10})
+	rb2.Charge("b1", counter.Charge{APIRequests: 20})
 
 	// Both should see the combined value
-	if got := rb1.Load("b1", counter.FieldAPIRequests); got != 30 {
+	if got := loadUsage(rb1, "b1").APIRequests; got != 30 {
 		t.Errorf("rb1.Load = %d, want 30", got)
 	}
-	if got := rb2.Load("b1", counter.FieldAPIRequests); got != 30 {
+	if got := loadUsage(rb2, "b1").APIRequests; got != 30 {
 		t.Errorf("rb2.Load = %d, want 30", got)
 	}
 }

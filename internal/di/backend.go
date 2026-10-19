@@ -389,16 +389,7 @@ func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
 		}
 		return counter.NewUsageTracker(rb, br.UsageLimits), nil
 	}
-	return counter.NewUsageTracker(counter.NewLocalCounterBackend(backendNamesOf(br)), br.UsageLimits), nil
-}
-
-// backendNamesOf lists the configured backend names.
-func backendNamesOf(br *BackendsResult) []string {
-	names := make([]string, 0, len(br.Backends))
-	for name := range br.Backends {
-		names = append(names, name)
-	}
-	return names
+	return counter.NewUsageTracker(counter.NewLocalCounterBackend(br.Order), br.UsageLimits), nil
 }
 
 // ProvideBackendRuntime builds the backend runtime: the fleet registry,
@@ -415,8 +406,6 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	backendNames := backendNamesOf(br)
-
 	// With Redis configured, the fleet snapshot is shared through it, the
 	// same way the usage counters are.
 	var shared metrics.SharedState
@@ -430,7 +419,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 
 	// Baselines are empty until the quota flush service primes them from
 	// backend_quotas, which it does before the listener accepts a request.
-	quota := counter.NewQuotaTracker(backendNames)
+	quota := counter.NewQuotaTracker()
 
 	rt := infra.New(&infra.Config{
 		Backends:        br.Backends,
@@ -446,7 +435,6 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	collector := metrics.New(&metrics.CollectorDeps{
 		Store:             metricsDeps,
 		Usage:             usage,
-		BackendNames:      backendNames,
 		ReplicationFactor: replicationFactorFromInjector(i),
 		Shared:            shared,
 		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,

@@ -201,6 +201,11 @@ type PendingObject struct {
 	StorageKey               string
 }
 
+type UsageFlush struct {
+	FlushID   string
+	AppliedAt pgtype.Timestamptz
+}
+
 type User struct {
 	ID        string
 	Name      string

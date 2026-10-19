@@ -1112,7 +1112,7 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	tracker.UpdateLimits(map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}})
-	tracker.SetBaseline("b1", core.UsageStat{EgressBytes: 99}, nil)
+	tracker.SetBaselines(map[string]core.Usage{"b1": {UsageStat: core.UsageStat{EgressBytes: 99}}})
 	ops.EXPECT().Usage().Return(tracker).AnyTimes()
 	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()

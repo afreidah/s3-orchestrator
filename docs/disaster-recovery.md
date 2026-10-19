@@ -238,12 +238,7 @@ A background health probe PINGs Redis every 5 seconds while the circuit is open.
 
 ### Recovery sequence
 
-When the health probe detects Redis is reachable again:
-
-1. Stale Redis keys for the current period are deleted (PG already absorbed those values via flushes during the outage)
-2. Each instance INCRBYs its unflushed local deltas to Redis (additive - safe even if instances recover at different times)
-3. Local counters are zeroed
-4. Circuit breaker closes, shared operation resumes
+When the health probe detects Redis is reachable again, the circuit breaker closes and shared operation resumes. Nothing is replayed into Redis: each instance flushes the charges it kept locally straight to the database on its next flush tick, under the month they were made in. Staged hashes a flush left in Redis before the outage are flushed by the next tick on any instance, and the flush id the database records with them keeps them from being counted twice.
 
 ### Monitoring
 

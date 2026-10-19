@@ -64,6 +64,16 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Usage counters in one hash with a staged flush ([#1719](https://github.com/afreidah/s3-orchestrator/issues/1719), v0.162.15)**
+
+Each backend's Redis usage counters now live in one hash per month, `{prefix}:usage:{YYYY-MM}:{backend}`, holding the request and byte totals and a `pool:{name}` field per request pool. A flush renames the hash to `{prefix}:usage-staged:{YYYY-MM}:{backend}:{flushID}`, writes it to the database in one transaction that also records the flush id in the new `usage_flushes` table, and deletes the staged key after the commit. A staged key left behind is flushed again and applied once, so a lost reply no longer zeroes or double-counts a counter. The previous month is flushed as well, so charges made just before a rollover are no longer stranded. Local counters, used without Redis and during a Redis outage, are kept per month and flushed by the instance that holds them; nothing is replayed into Redis on recovery. The usage flush runs on every instance without an advisory lock. One migration (Postgres `00043`, SQLite `0030`) adds `usage_flushes`.
+
+**Operator action items after upgrade:**
+
+- **Counts in the old keys are not carried over.** Whatever sits in the old `{prefix}:usage:{YYYY-MM}:{backend}:{field}` keys and `:pools` hash at upgrade time, at most one flush interval per backend, is never flushed; the keys expire on their 35-day TTL. During a rolling upgrade, charges made by instances still on the old version are lost the same way.
+- **Advisory lock 1007 is no longer taken.**
+- **New `s3o_redis_operations_total` operation labels**: `charge`, `load`, `stage`, `scan_staged`, `read_staged`, `unstage`, replacing `incrby`, `get` (for counters), `getset`, `pipeline_add`, `pipeline_load`, `pipeline_pool_add`, `hget` and `pool_swap`.
+
 **Object cache keyed by storage path ([#1720](https://github.com/afreidah/s3-orchestrator/issues/1720), v0.162.14)**
 
 The object data cache now keys entries by the storage path of the copy they hold rather than by object key, and a GET looks the key up in the database before checking it. Every write stores its bytes under a new path, so an overwrite, delete or copy on any instance makes the old entry unreachable without invalidating anything. A slow read of an old version can no longer leave its bytes cached under the key. A HEAD that falls through to a backend now does one location lookup instead of two. No migration.

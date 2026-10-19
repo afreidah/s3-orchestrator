@@ -476,7 +476,7 @@ func queryObjectBackend(t *testing.T, key string) string {
 // queryQuotaUsed returns the bytes_used value for a backend.
 func queryQuotaUsed(t *testing.T, backendName string) int64 {
 	t.Helper()
-	flushQuota(t)
+	refreshQuota(t)
 	var bytesUsed int64
 	err := testDB.QueryRow(
 		`SELECT GREATEST(0, COALESCE(SUM(bytes_used), 0)) FROM backend_quota_stripes WHERE backend_name = $1`,
@@ -704,7 +704,7 @@ var (
 )
 
 // registerStack primes a test-owned stack's quota baselines the way production
-// does at startup and makes it visible to flushQuota and refreshQuota for as
+// does at startup and makes it visible to refreshQuota for as
 // long as the test runs.
 func registerStack(t *testing.T, st *proxytest.Stack) *proxytest.Stack {
 	t.Helper()
@@ -737,19 +737,6 @@ func refreshQuota(tb testing.TB) {
 	for _, st := range quotaStacks() {
 		if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 			tb.Fatalf("refreshQuota: %v", err)
-		}
-	}
-}
-
-// flushQuota drains the in-memory byte counter into backend_quotas and
-// re-primes the baselines from the rows it wrote. bytes_used is eventually
-// consistent, so anything reading that column has to ask for the flush the
-// usage service would otherwise run on its own tick.
-func flushQuota(t *testing.T) {
-	t.Helper()
-	for _, st := range quotaStacks() {
-		if err := st.Usage.FlushQuota(context.Background()); err != nil {
-			t.Fatalf("flushQuota: %v", err)
 		}
 	}
 }

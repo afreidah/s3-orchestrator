@@ -39,8 +39,7 @@ type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
-	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error)
 	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
 }
 
@@ -49,7 +48,6 @@ type Deps interface {
 type Collector struct {
 	store             Deps
 	usage             *counter.UsageTracker
-	backendNames      []string
 	replicationFactor func() int  // returns 0 when replication is disabled
 	shared            SharedState // nil on a single instance
 	fleetInterval     time.Duration
@@ -68,7 +66,6 @@ type Collector struct {
 type CollectorDeps struct {
 	Store             Deps
 	Usage             *counter.UsageTracker
-	BackendNames      []string
 	ReplicationFactor func() int
 	Shared            SharedState
 	FleetInterval     time.Duration
@@ -80,7 +77,6 @@ func New(deps *CollectorDeps) *Collector {
 	return &Collector{
 		store:             deps.Store,
 		usage:             deps.Usage,
-		backendNames:      deps.BackendNames,
 		replicationFactor: deps.ReplicationFactor,
 		shared:            deps.Shared,
 		fleetInterval:     cmp.Or(deps.FleetInterval, config.DefaultFleetInterval),
@@ -150,18 +146,9 @@ func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
 // updateUsageGauges refreshes the monthly usage gauges and seeds the
 // usage tracker baselines used by the in-process limit checks.
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	period := counter.CurrentPeriod()
-	usage, err := mc.store.GetUsageForPeriod(ctx, period)
+	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
-		return
-	}
-	// Fetched alongside the totals rather than on its own tick: the two
-	// baselines are compared against the same counters, and seeding one
-	// without the other admits work against a budget it has already spent.
-	pools, err := mc.store.GetPoolUsageForPeriod(ctx, period)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to get request pool usage", "error", err)
 		return
 	}
 	for name := range stats {
@@ -174,23 +161,20 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 		telemetry.UsageEgressBytes.WithLabelValues(name).Set(float64(u.EgressBytes))
 		telemetry.UsageIngressBytes.WithLabelValues(name).Set(float64(u.IngressBytes))
 	}
-	// Reset all baselines first so period rollover (new month with no
-	// rows) zeroes out before the new period's values get cached.
-	mc.usage.ResetBaselines(mc.backendNames)
-	for name, u := range usage {
-		mc.usage.SetBaseline(name, u, pools[name])
-	}
-	mc.updatePoolGauges(pools)
+	// The whole map is replaced, so a new month with no rows yet starts every
+	// backend at zero.
+	mc.usage.SetBaselines(usage)
+	mc.updatePoolGauges(usage)
 }
 
 // updatePoolGauges publishes the per-pool request counts and the ceilings they
 // are judged against, so an operator can see which budget is close to
 // refusing work rather than only that the backend stopped accepting it.
-func (mc *Collector) updatePoolGauges(pools map[string]core.PoolUsage) {
+func (mc *Collector) updatePoolGauges(usage map[string]core.Usage) {
 	limits := mc.usage.GetLimits()
 	for name, lim := range limits {
 		for _, pool := range lim.Pools() {
-			telemetry.UsagePoolRequests.WithLabelValues(name, pool.Name).Set(float64(pools[name][pool.Name]))
+			telemetry.UsagePoolRequests.WithLabelValues(name, pool.Name).Set(float64(usage[name].Pools[pool.Name]))
 			telemetry.UsagePoolLimit.WithLabelValues(name, pool.Name).Set(float64(pool.Limit))
 		}
 	}

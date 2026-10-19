@@ -137,6 +137,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        TIMESTAMPTZ updated_at',
     '    }',
     '',
+    '    usage_flushes {',
+    '        TEXT flush_id PK',
+    '        TIMESTAMPTZ applied_at',
+    '    }',
+    '',
     '    cleanup_queue {',
     '        BIGSERIAL id PK',
     '        TEXT backend_name FK',
@@ -305,6 +310,16 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, period, pool) for the per-pool flush &bull; idx_backend_request_usage_period (period) for the admission baseline, which loads a whole period at once</p>' +
         '<p>Used by: <a href="../admission-control/">admission</a> (per-pool headroom), <a href="../usage-quotas/">usage reporting</a>, and the usage flush that writes the in-memory counters down.</p>' +
         '<p class="ac-metric">Metrics: s3o_usage_pool_requests{backend,pool}, s3o_usage_pool_limit{backend,pool}</p>'
+    },
+    usage_flushes: {
+      title: 'usage_flushes',
+      badge: 'core', badgeText: 'core table',
+      body: '<p>One row per shared usage batch applied to <code>backend_usage</code> and <code>backend_request_usage</code>, written in the same transaction as its deltas. A flush stages a Redis counter hash under a fresh flush id and deletes it only after the commit, so a staged hash can be found again after it was applied; its id here keeps it from being counted twice. Batches held only in one process\'s memory have no id and write no row.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">flush_id</td><td>TEXT</td><td>PRIMARY KEY; the id in the staged key\'s name</td></tr>' +
+        '<tr><td>applied_at</td><td>TIMESTAMPTZ</td><td>When the batch was applied; rows older than 40 days are pruned by the flush</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on flush_id for the insert-or-skip &bull; idx_usage_flushes_applied_at (applied_at) for the prune</p>' +
+        '<p>Used by: the usage flush (<code>ApplyUsageBatch</code>).</p>'
     },
     object_locations: {
       title: 'object_locations',
@@ -728,3 +743,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00040_derived_orphan_bytes` | Drop `backend_quotas.orphan_bytes` and recreate `backend_capacity` to sum `size_bytes` over the backend's `cleanup_queue` and `cleanup_dlq` rows. Every transaction that removes a copy queues its cleanup, so a counter would be written by every overwrite and delete |
 | `00041_multipart_part_paths` | Add nullable `storage_key` to `multipart_parts`. Each part upload writes its own path under an intent, so a re-upload of a part number never shares bytes with the part it replaces; a part with a NULL path sits at the part number's fixed path |
 | `00042_capacity_covering_indexes` | Rebuild the `(backend_name, storage_key)` indexes on `cleanup_queue`, `cleanup_dlq` and `pending_objects` with `INCLUDE (size_bytes)`, so `backend_capacity`'s orphan and in-flight sums run from the indexes. Built `CONCURRENTLY` outside a transaction; the indexes keep their names. SQLite (0029) appends `size_bytes` to the same indexes |
+| `00043_usage_flushes` | Add `usage_flushes`, one row per shared usage batch applied, written in the transaction that applies it so a staged Redis batch found again after its commit is not counted twice. SQLite (0030) creates the same table |

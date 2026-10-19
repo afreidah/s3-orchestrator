@@ -51,7 +51,7 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{name: be},
 		Usage:    usage,
-		Quota:    counter.NewQuotaTracker([]string{name}),
+		Quota:    counter.NewQuotaTracker(),
 	})
 	return New(c, store)
 }
@@ -64,7 +64,7 @@ func newCoordinatorWithStore(store CoordinatorStores) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
 		Usage:    counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil),
-		Quota:    counter.NewQuotaTracker(nil),
+		Quota:    counter.NewQuotaTracker(),
 	})
 	return New(c, store)
 }
@@ -77,6 +77,14 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 	return coord
 }
 
+// loadUsage returns a backend's unflushed counters as a fresh value, for the
+// assertions that read them.
+func loadUsage(b counter.Backend, name string) core.Usage {
+	var u core.Usage
+	b.Load(name, &u)
+	return u
+}
+
 // newMoveCoordinator is newCoordinatorWith2Backends that also returns the
 // usage counters the copy is charged to.
 func newMoveCoordinator(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store CoordinatorStores) (*Coordinator, *counter.LocalCounterBackend) {
@@ -86,7 +94,7 @@ func newMoveCoordinator(srcName string, src s3be.ObjectBackend, destName string,
 		Order:          []string{srcName, destName},
 		BackendTimeout: 5 * time.Second,
 		Usage:          counter.NewUsageTracker(counters, nil),
-		Quota:          counter.NewQuotaTracker([]string{srcName, destName}),
+		Quota:          counter.NewQuotaTracker(),
 	})
 	return New(c, store), counters
 }
@@ -221,10 +229,10 @@ func TestMoveObject_ClaimsThenCopiesThenPlaces(t *testing.T) {
 	if movedSize != 4 {
 		t.Errorf("movedSize = %d, want 4", movedSize)
 	}
-	if got := counters.Load(sourceName, counter.FieldEgressBytes); got != 4 {
+	if got := loadUsage(counters, sourceName).EgressBytes; got != 4 {
 		t.Errorf("source egress = %d, want the 4 bytes read once", got)
 	}
-	if got := counters.Load(destName, counter.FieldIngressBytes); got != 4 {
+	if got := loadUsage(counters, destName).IngressBytes; got != 4 {
 		t.Errorf("dest ingress = %d, want the 4 bytes written once", got)
 	}
 }
@@ -892,13 +900,13 @@ func TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut(t *testing.T) {
 	coord := New(infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{"new": backendtest.NewInMemory()},
 		Usage:    counter.NewUsageTracker(counters, nil),
-		Quota:    counter.NewQuotaTracker([]string{"new"}),
+		Quota:    counter.NewQuotaTracker(),
 	}), store)
 	err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq())
 	if !errors.Is(err, errDBDown) {
 		t.Fatalf("err = %v, want the store failure", err)
 	}
-	if got := counters.Load("new", counter.FieldAPIRequests); got != 1 {
+	if got := loadUsage(counters, "new").APIRequests; got != 1 {
 		t.Errorf("api calls = %d, want the one PUT charged", got)
 	}
 }

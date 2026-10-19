@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -180,43 +181,37 @@ func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 // USAGE DELTAS
 // -------------------------------------------------------------------------
 
-// FlushUsageDeltas atomically adds accumulated usage deltas to the persistent
-// usage row. Creates the row if it doesn't exist for this (backend, period).
-func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
-	now := now()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (backend_name, period) DO UPDATE SET
-			api_requests  = backend_usage.api_requests  + excluded.api_requests,
-			egress_bytes  = backend_usage.egress_bytes  + excluded.egress_bytes,
-			ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
-			updated_at    = excluded.updated_at`,
-		backendName, period, apiRequests, egressBytes, ingressBytes, now)
-	if err != nil {
-		return fmt.Errorf("failed to flush usage deltas: %w", err)
-	}
-	return nil
-}
-
-// FlushPoolDeltas adds one backend's accumulated per-pool request counts to
-// their persistent rows in one transaction. A failure writes none of them, so
-// the caller can restore every delta to the counter without double-counting.
-func (s *Store) FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error {
+// ApplyUsageBatch adds a batch's totals and pools to its period's rows in one
+// transaction. A batch with an ID records it first, and one already recorded
+// is left alone; see core.UsageFlusher.
+func (s *Store) ApplyUsageBatch(ctx context.Context, b *core.UsageBatch) error {
 	now := now()
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		for pool, requests := range deltas {
+		if fresh, err := recordUsageFlush(ctx, tx, b.ID); err != nil || !fresh {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (backend_name, period) DO UPDATE SET
+				api_requests  = backend_usage.api_requests  + excluded.api_requests,
+				egress_bytes  = backend_usage.egress_bytes  + excluded.egress_bytes,
+				ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
+				updated_at    = excluded.updated_at`,
+			b.Backend, b.Period, b.APIRequests, b.EgressBytes, b.IngressBytes, now); err != nil {
+			return fmt.Errorf("failed to flush usage deltas: %w", err)
+		}
+		for pool, requests := range b.Pools {
 			if requests == 0 {
 				continue
 			}
-			_, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
 				VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT (backend_name, period, pool) DO UPDATE SET
 					requests   = backend_request_usage.requests + excluded.requests,
 					updated_at = excluded.updated_at`,
-				backendName, period, pool, requests, now)
-			if err != nil {
+				b.Backend, b.Period, pool, requests, now); err != nil {
 				return fmt.Errorf("failed to flush pool deltas: %w", err)
 			}
 		}
@@ -224,53 +219,67 @@ func (s *Store) FlushPoolDeltas(ctx context.Context, backendName, period string,
 	})
 }
 
-// GetPoolUsageForPeriod returns every backend's per-pool request counts for
-// the given period, keyed by backend name.
-func (s *Store) GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error) {
+// usageFlushRetention is how long a shared batch's id is kept, past the 35
+// days its staged copy can live in Redis.
+const usageFlushRetention = 40 * 24 * time.Hour
+
+// recordUsageFlush records a shared batch's id and prunes old ones, reporting
+// whether the batch is new and should be applied. A batch with no id is
+// always new.
+func recordUsageFlush(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	if id == "" {
+		return true, nil
+	}
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO usage_flushes (flush_id, applied_at) VALUES (?, ?)
+		ON CONFLICT (flush_id) DO NOTHING`, id, now())
+	if err != nil {
+		return false, fmt.Errorf("record usage flush: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_flushes WHERE applied_at < ?`,
+		formatTime(time.Now().Add(-usageFlushRetention))); err != nil {
+		return false, fmt.Errorf("prune usage flushes: %w", err)
+	}
+	return true, nil
+}
+
+// GetUsageForPeriod returns every backend's totals and pool counts for the
+// given period, keyed by backend name. One query: each backend's totals row
+// joined to its pool rows, so a backend with pools repeats its totals.
+func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, pool, requests
-		FROM backend_request_usage
-		WHERE period = ?`, period)
+		SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes, p.pool, p.requests
+		FROM backend_usage u
+		LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+		WHERE u.period = ?`, period)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	usage := make(map[string]core.PoolUsage)
+	usage := make(map[string]core.Usage)
 	for rows.Next() {
 		var (
 			name     string
-			pool     string
-			requests int64
+			u        core.UsageStat
+			pool     sql.NullString
+			requests sql.NullInt64
 		)
-		if err := rows.Scan(&name, &pool, &requests); err != nil {
-			return nil, fmt.Errorf("failed to scan pool usage: %w", err)
+		if err := rows.Scan(&name, &u.APIRequests, &u.EgressBytes, &u.IngressBytes, &pool, &requests); err != nil {
+			return nil, fmt.Errorf("failed to scan usage: %w", err)
 		}
-		if usage[name] == nil {
-			usage[name] = make(core.PoolUsage)
+		entry := usage[name]
+		entry.UsageStat = u
+		if pool.Valid {
+			if entry.Pools == nil {
+				entry.Pools = make(core.PoolUsage)
+			}
+			entry.Pools[pool.String] = requests.Int64
 		}
-		usage[name][pool] = requests
+		usage[name] = entry
 	}
 	return usage, rows.Err()
-}
-
-// GetUsageForPeriod returns usage statistics for all backends in the given period.
-func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, api_requests, egress_bytes, ingress_bytes
-		FROM backend_usage
-		WHERE period = ?`, period)
-	if err != nil {
-		return nil, err
-	}
-	return collectMap(rows, "usage stats", func(rows *sql.Rows) (string, core.UsageStat, error) {
-		var (
-			name string
-			us   core.UsageStat
-		)
-		if err := rows.Scan(&name, &us.APIRequests, &us.EgressBytes, &us.IngressBytes); err != nil {
-			return "", core.UsageStat{}, fmt.Errorf("failed to scan usage stat: %w", err)
-		}
-		return name, us, nil
-	})
 }

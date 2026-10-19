@@ -76,7 +76,7 @@ func raceFleet(t *testing.T) (*Coordinator, *sqlite.Store, *backendtest.InMemory
 		Order:           names,
 		BackendTimeout:  fleetTimeout,
 		Usage:           counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil),
-		Quota:           counter.NewQuotaTracker(names),
+		Quota:           counter.NewQuotaTracker(),
 		RoutingStrategy: config.RoutingPack,
 	})
 	return New(rt, store), store, slow

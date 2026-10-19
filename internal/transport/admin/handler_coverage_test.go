@@ -68,7 +68,7 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 		BackendOrder: []string{"b1"},
 		QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		ObjectCounts: map[string]int64{"b1": 5},
-		UsageStats:   map[string]core.UsageStat{"b1": {APIRequests: 3, IngressBytes: 50, EgressBytes: 25}},
+		UsageStats:   map[string]core.Usage{"b1": {UsageStat: core.UsageStat{APIRequests: 3, IngressBytes: 50, EgressBytes: 25}}},
 		UsagePeriod:  "2026-05",
 	}, nil)
 

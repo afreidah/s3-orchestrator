@@ -71,21 +71,6 @@ func (mr *MockDepsMockRecorder) GetActiveMultipartCounts(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveMultipartCounts", reflect.TypeOf((*MockDeps)(nil).GetActiveMultipartCounts), ctx)
 }
 
-// GetPoolUsageForPeriod mocks base method.
-func (m *MockDeps) GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPoolUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.PoolUsage)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetPoolUsageForPeriod indicates an expected call of GetPoolUsageForPeriod.
-func (mr *MockDepsMockRecorder) GetPoolUsageForPeriod(ctx, period any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPoolUsageForPeriod", reflect.TypeOf((*MockDeps)(nil).GetPoolUsageForPeriod), ctx, period)
-}
-
 // GetQuotaStats mocks base method.
 func (m *MockDeps) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	m.ctrl.T.Helper()
@@ -102,10 +87,10 @@ func (mr *MockDepsMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 }
 
 // GetUsageForPeriod mocks base method.
-func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
+func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.UsageStat)
+	ret0, _ := ret[0].(map[string]core.Usage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

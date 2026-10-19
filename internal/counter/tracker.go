@@ -22,6 +22,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,29 +36,20 @@ import (
 // limits, and flushes accumulated deltas to the database. Counter storage
 // is delegated to a Backend (local atomics or shared Redis). The
 // limits and baseline maps live behind atomic.Pointer snapshots so reads
-// require no locking and writes copy-on-write.
+// require no locking; each write replaces a whole map.
 type UsageTracker struct {
-	backend      Backend
-	limits       atomic.Pointer[map[string]core.UsageLimits]
-	baseline     atomic.Pointer[map[string]core.UsageStat]
-	poolBaseline atomic.Pointer[map[string]core.PoolUsage]
-
-	writeMu sync.Mutex // serializes the copy-on-write swaps; the read path never takes it
+	backend  Backend
+	limits   atomic.Pointer[map[string]core.UsageLimits]
+	baseline atomic.Pointer[map[string]core.Usage]
 }
 
 // NewUsageTracker creates a usage tracker with the given counter backend
 // and per-backend limits. The counter backend determines whether deltas
 // are stored locally (default) or in a shared store like Redis.
 func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *UsageTracker {
-	if limits == nil {
-		limits = make(map[string]core.UsageLimits)
-	}
 	u := &UsageTracker{backend: backend}
-	u.limits.Store(&limits)
-	emptyBaseline := make(map[string]core.UsageStat)
-	u.baseline.Store(&emptyBaseline)
-	emptyPools := make(map[string]core.PoolUsage)
-	u.poolBaseline.Store(&emptyPools)
+	u.UpdateLimits(limits)
+	u.SetBaselines(nil)
 	return u
 }
 
@@ -83,19 +75,25 @@ func (u *UsageTracker) RecordAll(backendName string, ops []s3op.Operation, egres
 
 // record is the single charging path: each operation counts once per
 // repetition against the backend's request total, and once per repetition
-// against every pool that contains it.
+// against every pool that contains it, all in one charge.
 func (u *UsageTracker) record(backendName string, ops []s3op.Operation, each, egress, ingress int64) {
 	if len(ops) == 0 || each <= 0 {
 		return
 	}
-	u.backend.AddAll(backendName, int64(len(ops))*each, egress, ingress)
-
+	c := Charge{APIRequests: int64(len(ops)) * each, EgressBytes: egress, IngressBytes: ingress, PoolN: each}
 	lim := (*u.limits.Load())[backendName]
-	for _, op := range ops {
-		if pools := lim.PoolsFor(op); len(pools) > 0 {
-			u.backend.ChargePools(backendName, pools, each)
+	for i, op := range ops {
+		pools := lim.PoolsFor(op)
+		if i == 0 {
+			// The limits' own slice, so a single operation charges without
+			// allocating; Clip makes a later append copy rather than write
+			// into it.
+			c.Pools = slices.Clip(pools)
+			continue
 		}
+		c.Pools = append(c.Pools, pools...)
 	}
+	u.backend.Charge(backendName, c)
 }
 
 // poolCharge counts how many times the operations charge the named pool. A
@@ -125,61 +123,63 @@ func (u *UsageTracker) WithinLimits(backendName string, ops []s3op.Operation, eg
 
 // usageSnapshot is one consistent view of what admission is judged against:
 // the configured limits, and the flushed baselines they are compared to. The
-// three are loaded together because a decision assembled from two different
+// two are loaded together because a decision assembled from two different
 // snapshots - limits reloaded between dimensions, say - is a decision made
 // against a configuration that never existed.
 type usageSnapshot struct {
-	limits map[string]core.UsageLimits
-	stats  map[string]core.UsageStat
-	pools  map[string]core.PoolUsage
+	limits    map[string]core.UsageLimits
+	baselines map[string]core.Usage
 }
 
-// snapshot loads the three copy-on-write views in one go. Callers that check
+// snapshot loads the copy-on-write views in one go. Callers that check
 // several backends take it once so every per-backend decision sees the same
 // view and the atomic loads do not repeat per iteration.
 func (u *UsageTracker) snapshot() usageSnapshot {
-	return usageSnapshot{
-		limits: *u.limits.Load(),
-		stats:  *u.baseline.Load(),
-		pools:  *u.poolBaseline.Load(),
-	}
+	return usageSnapshot{limits: *u.limits.Load(), baselines: *u.baseline.Load()}
 }
 
-// withinLimitsSnapshot is the snapshot-aware core of WithinLimits.
+// unflushedPool recycles the values the limit checks read the unflushed
+// counters into, keeping their pool maps, so a check on every request does not
+// allocate.
+var unflushedPool = sync.Pool{New: func() any { return new(core.Usage) }}
+
+// withUsed calls fn with a backend's usage so far this period, as the flushed
+// baseline and what is charged and not yet flushed, and returns fn's answer.
+// The two are kept apart rather than summed, which would build a new pool
+// map on every call.
+func (s usageSnapshot) withUsed(backend Backend, name string, fn func(base core.Usage, cur *core.Usage) bool) bool {
+	cur := unflushedPool.Get().(*core.Usage)
+	defer unflushedPool.Put(cur)
+	cur.Reset()
+	backend.Load(name, cur)
+	return fn(s.baselines[name], cur)
+}
+
+// withinLimitsSnapshot is the snapshot-aware core of WithinLimits. A pool
+// charged by two of the operations must fit both, which is why the proposed
+// charges are folded before they are compared.
 func withinLimitsSnapshot(backend Backend, snap usageSnapshot, name string, ops []s3op.Operation, egress, ingress int64) bool {
 	lim, ok := snap.limits[name]
-	if !ok {
-		return true // no limits configured
-	}
-	if lim.Unlimited() {
+	if !ok || lim.Unlimited() {
 		return true
 	}
-
-	base := snap.stats[name]
-	cur := backend.LoadAll(name)
-
-	if lim.EgressByteLimit > 0 && base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
-		return false
-	}
-	if lim.IngressByteLimit > 0 && base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
-		return false
-	}
-	return poolsWithinLimits(backend, lim, snap.pools[name], name, ops)
+	return snap.withUsed(backend, name, func(base core.Usage, cur *core.Usage) bool {
+		if lim.EgressByteLimit > 0 && base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
+			return false
+		}
+		if lim.IngressByteLimit > 0 && base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
+			return false
+		}
+		return poolsFit(lim, ops, base, cur)
+	})
 }
 
-// poolsWithinLimits reports whether every pool the operations charge has room
-// for them. A pool charged by two of the operations must fit both, which is
-// why the proposed charges are folded before they are compared.
-func poolsWithinLimits(backend Backend, lim core.UsageLimits, base core.PoolUsage, name string, ops []s3op.Operation) bool {
+// poolsFit reports whether every bounded pool the operations charge has room
+// for them. A pool with no limit is counted and never refused.
+func poolsFit(lim core.UsageLimits, ops []s3op.Operation, base core.Usage, cur *core.Usage) bool {
 	for _, pool := range lim.Pools() {
-		if pool.Limit <= 0 {
-			continue // counted and never refused
-		}
 		charge := poolCharge(lim, ops, pool.Name)
-		if charge == 0 {
-			continue // untouched by these operations
-		}
-		if base[pool.Name]+backend.LoadPool(name, pool.Name)+charge > pool.Limit {
+		if pool.Limit > 0 && charge > 0 && base.Pools[pool.Name]+cur.Pools[pool.Name]+charge > pool.Limit {
 			return false
 		}
 	}
@@ -209,8 +209,6 @@ func (u *UsageTracker) BackendsWithinLimits(order []string, ops []s3op.Operation
 // swap. Safe to call concurrently with request handling: in-flight
 // WithinLimits calls keep using whichever snapshot they loaded.
 func (u *UsageTracker) UpdateLimits(limits map[string]core.UsageLimits) {
-	u.writeMu.Lock()
-	defer u.writeMu.Unlock()
 	cp := make(map[string]core.UsageLimits, len(limits))
 	maps.Copy(cp, limits)
 	u.limits.Store(&cp)
@@ -231,45 +229,14 @@ func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
 // BASELINE MANAGEMENT
 // -------------------------------------------------------------------------
 
-// SetBaseline updates the cached DB usage baseline for a single backend
-// via copy-on-write swap.
-func (u *UsageTracker) SetBaseline(name string, stat core.UsageStat, pools core.PoolUsage) {
-	u.writeMu.Lock()
-	defer u.writeMu.Unlock()
-
-	src := *u.baseline.Load()
-	cp := make(map[string]core.UsageStat, len(src)+1)
-	maps.Copy(cp, src)
-	cp[name] = stat
-	u.baseline.Store(&cp)
-
-	poolSrc := *u.poolBaseline.Load()
-	poolCp := make(map[string]core.PoolUsage, len(poolSrc)+1)
-	maps.Copy(poolCp, poolSrc)
-	poolCp[name] = pools
-	u.poolBaseline.Store(&poolCp)
-}
-
-// ResetBaselines zeroes out the baseline for the given backend names
-// via copy-on-write swap.
-func (u *UsageTracker) ResetBaselines(names []string) {
-	u.writeMu.Lock()
-	defer u.writeMu.Unlock()
-	src := *u.baseline.Load()
-	cp := make(map[string]core.UsageStat, len(src))
-	maps.Copy(cp, src)
-	for _, name := range names {
-		cp[name] = core.UsageStat{}
+// SetBaselines replaces every backend's flushed usage for the current period
+// in one swap. A backend absent from baselines has none, which is how a new
+// period starts at zero.
+func (u *UsageTracker) SetBaselines(baselines map[string]core.Usage) {
+	if baselines == nil {
+		baselines = make(map[string]core.Usage)
 	}
-	u.baseline.Store(&cp)
-
-	poolSrc := *u.poolBaseline.Load()
-	poolCp := make(map[string]core.PoolUsage, len(poolSrc))
-	maps.Copy(poolCp, poolSrc)
-	for _, name := range names {
-		poolCp[name] = nil
-	}
-	u.poolBaseline.Store(&poolCp)
+	u.baseline.Store(&baselines)
 }
 
 // NearLimit returns true if any backend's effective usage (baseline +
@@ -280,44 +247,28 @@ func (u *UsageTracker) ResetBaselines(names []string) {
 func (u *UsageTracker) NearLimit(threshold float64) bool {
 	snap := u.snapshot()
 	for name, lim := range snap.limits {
-		if lim.Unlimited() {
-			continue
-		}
-		base := snap.stats[name]
-		cur := u.backend.LoadAll(name)
-		if backendNearLimit(base, cur, lim, threshold) {
-			return true
-		}
-		if u.poolNearLimit(name, lim, snap.pools[name], threshold) {
+		if !lim.Unlimited() && snap.withUsed(u.backend, name, func(base core.Usage, cur *core.Usage) bool {
+			return nearLimit(base, cur, lim, threshold)
+		}) {
 			return true
 		}
 	}
 	return false
 }
 
-// backendNearLimit returns true when either byte dimension of the given
-// backend has effective usage (baseline + unflushed) at or above the
-// threshold ratio.
-func backendNearLimit(base core.UsageStat, cur LoadAllResult, lim core.UsageLimits, threshold float64) bool {
-	if lim.EgressByteLimit > 0 && float64(base.EgressBytes+cur.EgressBytes)/float64(lim.EgressByteLimit) >= threshold {
-		return true
-	}
-	if lim.IngressByteLimit > 0 && float64(base.IngressBytes+cur.IngressBytes)/float64(lim.IngressByteLimit) >= threshold {
-		return true
-	}
-	return false
-}
-
-// poolNearLimit returns true when any bounded request pool on the backend has
+// nearLimit reports whether any bounded dimension of a backend's usage has
 // reached the threshold ratio. One tight pool is enough to want a shorter
 // flush interval, since that is the budget about to start refusing work.
-func (u *UsageTracker) poolNearLimit(name string, lim core.UsageLimits, base core.PoolUsage, threshold float64) bool {
+func nearLimit(base core.Usage, cur *core.Usage, lim core.UsageLimits, threshold float64) bool {
+	reached := func(n, limit int64) bool {
+		return limit > 0 && float64(n)/float64(limit) >= threshold
+	}
+	if reached(base.EgressBytes+cur.EgressBytes, lim.EgressByteLimit) ||
+		reached(base.IngressBytes+cur.IngressBytes, lim.IngressByteLimit) {
+		return true
+	}
 	for _, pool := range lim.Pools() {
-		if pool.Limit <= 0 {
-			continue
-		}
-		used := base[pool.Name] + u.backend.LoadPool(name, pool.Name)
-		if float64(used)/float64(pool.Limit) >= threshold {
+		if reached(base.Pools[pool.Name]+cur.Pools[pool.Name], pool.Limit) {
 			return true
 		}
 	}
@@ -328,68 +279,71 @@ func (u *UsageTracker) poolNearLimit(name string, lim core.UsageLimits, base cor
 // FLUSH
 // -------------------------------------------------------------------------
 
+// periodLayout is the time layout of a usage period, one calendar month.
+const periodLayout = "2006-01"
+
+// monthCache is the formatted current month and the instant it stops being
+// current.
+type monthCache struct {
+	period string
+	until  time.Time
+}
+
+// currentMonth caches CurrentPeriod's answer, which every charge and limit
+// check asks for, so formatting it does not allocate on the request path.
+var currentMonth atomic.Pointer[monthCache]
+
 // CurrentPeriod returns the current month as "YYYY-MM" for usage
 // aggregation.
 func CurrentPeriod() string {
-	return time.Now().UTC().Format("2006-01")
+	now := time.Now()
+	if c := currentMonth.Load(); c != nil && now.Before(c.until) {
+		return c.period
+	}
+	first := monthStart(now)
+	c := &monthCache{period: first.Format(periodLayout), until: first.AddDate(0, 1, 0)}
+	currentMonth.Store(c)
+	return c.period
 }
 
-// usageFlusher is the consumer-defined slice of the metadata store
-// FlushUsage actually calls. Declared here so the counter package owns
-// its own dependency contract instead of importing a producer-side
-// type from internal/store/core.
-type usageFlusher interface {
-	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
-	FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error
+// monthStart returns the first instant of t's month in UTC.
+func monthStart(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
-// FlushUsage reads and resets the counter backend, then writes the
-// accumulated deltas to the database. Called periodically (every 30s).
-// On DB error, deltas are added back to avoid data loss.
-func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher) error {
-	period := CurrentPeriod()
+// flushPeriods returns the current and the previous month. A flush takes both,
+// so charges made just before a rollover are flushed into the month they
+// belong to after it.
+func flushPeriods() []string {
+	first := monthStart(time.Now())
+	return []string{first.Format(periodLayout), first.AddDate(0, -1, 0).Format(periodLayout)}
+}
+
+// FlushUsage writes every batch of counters the backend hands over to the
+// store: this instance's own, and with a shared backend the staged shared
+// ones too. Called on every instance on the usage flush tick. A batch the
+// store does not apply is kept by the backend for the next flush.
+func (u *UsageTracker) FlushUsage(ctx context.Context, store core.UsageFlusher) error {
+	batches := u.backend.Take(ctx)
+	if shared, ok := u.backend.(SharedBackend); ok {
+		batches = append(batches, shared.TakeShared(ctx)...)
+	}
 	var lastErr error
-
-	for _, name := range u.backend.Backends() {
-		apiReqs := u.backend.Swap(name, FieldAPIRequests)
-		egress := u.backend.Swap(name, FieldEgressBytes)
-		ingress := u.backend.Swap(name, FieldIngressBytes)
-		pools := u.backend.SwapPools(name)
-
-		if apiReqs == 0 && egress == 0 && ingress == 0 && len(pools) == 0 {
-			continue
-		}
-
-		if err := store.FlushUsageDeltas(ctx, name, period, apiReqs, egress, ingress); err != nil {
-			// Restore deltas so they aren't lost
-			u.backend.Add(name, FieldAPIRequests, apiReqs)
-			u.backend.Add(name, FieldEgressBytes, egress)
-			u.backend.Add(name, FieldIngressBytes, ingress)
-			slog.ErrorContext(ctx, "usage delta flush failed",
+	for i := range batches {
+		b := &batches[i]
+		err := store.ApplyUsageBatch(ctx, b)
+		u.backend.Settle(ctx, b, err == nil)
+		if err != nil {
+			slog.ErrorContext(ctx, "usage flush failed",
 				logfmt.Component("usage_tracker"),
-				slog.String("backend", name),
-				"error", err,
-			)
-			lastErr = err
-		}
-
-		// Flushed separately from the totals: a pool delta restored into the
-		// counter after the totals landed would be double-counted on the next
-		// pass, so each half restores only what it failed to write.
-		if len(pools) == 0 {
-			continue
-		}
-		if err := store.FlushPoolDeltas(ctx, name, period, pools); err != nil {
-			u.backend.AddPools(name, pools)
-			slog.ErrorContext(ctx, "request pool delta flush failed",
-				logfmt.Component("usage_tracker"),
-				slog.String("backend", name),
+				slog.String("backend", b.Backend),
+				slog.String("period", b.Period),
 				"error", err,
 			)
 			lastErr = err
 		}
 	}
-
 	return lastErr
 }
 

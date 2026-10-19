@@ -204,7 +204,7 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 	coord := New(infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{"b2": backendtest.NewInMemory()},
 		Usage:    usage,
-		Quota:    counter.NewQuotaTracker([]string{"b2"}),
+		Quota:    counter.NewQuotaTracker(),
 	}), store)
 
 	recorded, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2"))
@@ -214,7 +214,7 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 	if !recorded {
 		t.Error("a committed copy was not reported as recorded")
 	}
-	if got := usage.Backend().Load("b2", counter.FieldIngressBytes); got != 4096 {
+	if got := loadUsage(usage.Backend(), "b2").IngressBytes; got != 4096 {
 		t.Errorf("b2 ingress = %d, want the 4096 the copy landed", got)
 	}
 }

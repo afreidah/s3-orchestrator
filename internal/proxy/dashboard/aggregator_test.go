@@ -37,7 +37,10 @@ func TestAggregator_Success(t *testing.T) {
 
 	store := storetest.NewMockDashboardStore(ctrl)
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
-		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil)
+		Return(map[string]core.Usage{"b1": {
+			UsageStat: core.UsageStat{APIRequests: 10},
+			Pools:     core.PoolUsage{core.PoolAll: 10},
+		}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
 	fleet := newStubFleet(ctrl, &metrics.FleetSnapshot{
@@ -58,6 +61,9 @@ func TestAggregator_Success(t *testing.T) {
 
 	if data.QuotaStats["b1"].BytesUsed != 100 {
 		t.Errorf("BytesUsed = %d, want 100", data.QuotaStats["b1"].BytesUsed)
+	}
+	if u := data.UsageStats["b1"]; u.APIRequests != 10 || u.Pools[core.PoolAll] != 10 {
+		t.Errorf("UsageStats = %+v, want b1 with 10 requests on the wildcard pool", data.UsageStats)
 	}
 	if data.ObjectCounts["b1"] != 5 {
 		t.Errorf("ObjectCounts = %d, want 5", data.ObjectCounts["b1"])
@@ -92,7 +98,7 @@ func dashboardReads() []dashboardRead {
 	return []dashboardRead{
 		{"usage stats",
 			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.UsageStat{}, nil)
+				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.Usage{}, nil)
 			},
 			func(m *storetest.MockDashboardStore, err error) {
 				m.EXPECT().GetUsageForPeriod(a, a).Return(nil, err)

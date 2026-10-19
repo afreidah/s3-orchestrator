@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -469,7 +468,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.usageOf("b1").APIRequests; got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
 	}
 }
@@ -502,7 +501,7 @@ func TestAbortMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
 	if be.BatchDeleteCalls != 1 || len(be.Objects) != 0 {
 		t.Errorf("batch calls = %d, objects left = %d; want 1 and 0", be.BatchDeleteCalls, len(be.Objects))
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.usageOf("b1").APIRequests; got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 batch delete + 1 abort)", got)
 	}
 }
@@ -858,7 +857,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	if len(c.discarded) != 1 || c.discarded[0].Reason != reasonPartUnrecorded {
 		t.Errorf("discarded = %+v, want one %s row", c.discarded, reasonPartUnrecorded)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.usageOf("b1").APIRequests; got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
@@ -1014,10 +1013,10 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 
 	wantAPICalls := int64(2*3 + 1)
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != wantAPICalls {
+	if got := mgr.usageOf("b1").APIRequests; got != wantAPICalls {
 		t.Errorf("apiRequests = %d, want %d (2*N+1 where N=3)", got, wantAPICalls)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 9 {
+	if got := mgr.usageOf("b1").IngressBytes; got != 9 {
 		t.Errorf("ingressBytes = %d, want 9", got)
 	}
 }
@@ -1048,10 +1047,10 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if len(c.discarded) != 1 || c.discarded[0].Reason != reasonPartUnrecorded {
 		t.Errorf("discarded = %+v, want one %s row", c.discarded, reasonPartUnrecorded)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.usageOf("b1").APIRequests; got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (failed PUT + discard delete)", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.usageOf("b1").IngressBytes; got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }

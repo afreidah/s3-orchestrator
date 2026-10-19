@@ -3,13 +3,22 @@
 //
 // Author: Alex Freidah
 //
-// Implements Backend using Redis INCRBY/GET/GETSET for shared usage
-// counters across multiple instances. Includes a circuit breaker that falls
+// Implements SharedBackend with one Redis hash per backend and period, so every
+// instance charges the same counters. Includes a circuit breaker that falls
 // back to an embedded LocalCounterBackend when Redis is unavailable, and a
-// health probe goroutine that recovers automatically when Redis returns.
+// health probe goroutine that returns to Redis once it answers. Charges kept
+// locally are flushed by the instance that holds them, never replayed into
+// Redis.
 //
-// Redis key schema: {prefix}:usage:{YYYY-MM}:{backend}:{field}
-// Keys receive a 35-day TTL so old months auto-expire without cleanup.
+// Redis key schema:
+//   - {prefix}:usage:{YYYY-MM}:{backend} - hash of the live counters: the
+//     request and byte totals, and pool:{name} for each request pool.
+//   - {prefix}:usage-staged:{YYYY-MM}:{backend}:{flushID} - a hash taken for a
+//     flush, renamed from the live one and deleted once the store has applied
+//     it. The store records the flush ID with the deltas, so a staged hash found
+//     again after its commit is not counted twice.
+//
+// Keys receive a 35-day TTL, which a rename keeps, so abandoned keys expire.
 //
 // Also carries shared state: a value one instance computes for the whole fleet
 // and the others read, under {prefix}:shared:{name}, and change notifications
@@ -21,11 +30,15 @@ package counter
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
@@ -37,7 +50,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// keyTTL is applied to Redis counter keys on creation. Set to 35 days so
+// keyTTL is applied to Redis counter keys on every charge. Set to 35 days so
 // that keys from the previous month expire naturally.
 const keyTTL = 35 * 24 * time.Hour
 
@@ -45,9 +58,9 @@ const keyTTL = 35 * 24 * time.Hour
 // Redis while the circuit breaker is open.
 const healthProbeInterval = 5 * time.Second
 
-// opTimeout bounds individual Redis round-trip operations (GET, INCRBY,
-// EXPIRE, pipeline exec). Must be short enough that a stalled Redis can't
-// stall a request thread, but long enough to tolerate transient latency.
+// opTimeout bounds individual Redis round-trip operations. Must be short
+// enough that a stalled Redis can't stall a request thread, but long enough
+// to tolerate transient latency.
 const opTimeout = 2 * time.Second
 
 // pingTimeout bounds Redis liveness checks  -  both the initial boot-time
@@ -59,6 +72,22 @@ const pingTimeout = 5 * time.Second
 // the subscription connection fails.
 const watchRetryDelay = time.Second
 
+// scanCount is the SCAN batch hint used to find staged hashes.
+const scanCount = 100
+
+// globEscaper escapes the characters SCAN MATCH treats as a pattern, so a key
+// prefix containing one matches only itself.
+var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
+
+// Hash field names. A pool's field is its name under poolFieldPrefix, so a
+// pool cannot share a field with a total.
+const (
+	fieldAPIRequests  = "api_requests"
+	fieldEgressBytes  = "egress_bytes"
+	fieldIngressBytes = "ingress_bytes"
+	poolFieldPrefix   = "pool:"
+)
+
 // -------------------------------------------------------------------------
 // REDIS CLIENT INTERFACE
 // -------------------------------------------------------------------------
@@ -68,17 +97,15 @@ const watchRetryDelay = time.Second
 //
 //go:generate mockgen -destination=mock_redis_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter RedisClient
 type RedisClient interface {
-	IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
 	Subscribe(ctx context.Context, channels ...string) *redis.PubSub
-	GetSet(ctx context.Context, key string, value any) *redis.StringCmd
+	HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd
+	Rename(ctx context.Context, key, newkey string) *redis.StatusCmd
+	Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
-	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
-	HGet(ctx context.Context, key, field string) *redis.StringCmd
 	Ping(ctx context.Context) *redis.StatusCmd
-	Pipeline() redis.Pipeliner
 	TxPipeline() redis.Pipeliner
 	Close() error
 }
@@ -96,7 +123,7 @@ type subscription interface {
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
-// RedisCounterBackend stores per-backend usage deltas in Redis for
+// RedisCounterBackend stores per-backend usage counters in Redis for
 // cross-instance visibility. Falls back to local counters when Redis is
 // unavailable. log may be nil, so read it through logger().
 type RedisCounterBackend struct {
@@ -107,9 +134,7 @@ type RedisCounterBackend struct {
 	cb        *breaker.CircuitBreaker
 	backends  []string
 	log       *slog.Logger
-
-	fallbackMu sync.RWMutex
-	fallback   bool // currently serving from the local counters
+	fallback  atomic.Bool // currently serving from the local counters
 
 	stopProbe chan struct{}
 	probeDone chan struct{}
@@ -183,269 +208,180 @@ func (r *RedisCounterBackend) Backends() []string {
 	return r.backends
 }
 
-// Add increments a single counter field in Redis, falling back to local on error.
-func (r *RedisCounterBackend) Add(backend, field string, delta int64) {
-	if r.inFallback() {
-		r.local.Add(backend, field, delta)
+// Charge adds one charge to the backend's hash for the current period in one
+// transaction, so a failure leaves none of it applied and the charge is kept
+// locally instead. A backend not named at construction is dropped, since no
+// flush would ever stage its hash.
+func (r *RedisCounterBackend) Charge(backend string, c Charge) {
+	if c.empty() || !slices.Contains(r.backends, backend) {
 		return
 	}
-
-	key := r.key(backend, field)
+	if r.inFallback() {
+		r.local.Charge(backend, c)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
-	err := r.client.IncrBy(ctx, key, delta).Err()
-	if err != nil {
-		telemetry.RedisOperationsTotal.WithLabelValues("incrby", "error").Inc()
-		r.recordFailure(err)
-		r.local.Add(backend, field, delta)
-		return
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("incrby", "success").Inc()
-	r.notePostCheck("incrby", nil)
-
-	// Set TTL on first write (best-effort)
-	r.client.Expire(ctx, key, keyTTL)
-}
-
-// Load reads a counter field from Redis, falling back to local on error.
-func (r *RedisCounterBackend) Load(backend, field string) int64 {
-	if r.inFallback() {
-		return r.local.Load(backend, field)
-	}
-
-	key := r.key(backend, field)
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	val, err := r.client.Get(ctx, key).Int64()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		telemetry.RedisOperationsTotal.WithLabelValues("get", "error").Inc()
-		r.recordFailure(err)
-		return r.local.Load(backend, field)
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("get", "success").Inc()
-	r.notePostCheck("get", nil)
-	return val
-}
-
-// Swap atomically reads and resets a counter field via Redis GETSET.
-func (r *RedisCounterBackend) Swap(backend, field string) int64 {
-	if r.inFallback() {
-		return r.local.Swap(backend, field)
-	}
-
-	key := r.key(backend, field)
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	val, err := r.client.GetSet(ctx, key, 0).Int64()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		telemetry.RedisOperationsTotal.WithLabelValues("getset", "error").Inc()
-		r.recordFailure(err)
-		return r.local.Swap(backend, field)
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("getset", "success").Inc()
-	r.notePostCheck("getset", nil)
-	return val
-}
-
-// AddAll increments all three counter fields in a Redis pipeline.
-func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
-	if r.inFallback() {
-		r.local.AddAll(backend, apiReqs, egress, ingress)
-		return
-	}
-
-	if apiReqs <= 0 && egress <= 0 && ingress <= 0 {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	pipe := r.client.Pipeline()
-	if apiReqs > 0 {
-		k := r.key(backend, FieldAPIRequests)
-		pipe.IncrBy(ctx, k, apiReqs)
-		pipe.Expire(ctx, k, keyTTL)
-	}
-	if egress > 0 {
-		k := r.key(backend, FieldEgressBytes)
-		pipe.IncrBy(ctx, k, egress)
-		pipe.Expire(ctx, k, keyTTL)
-	}
-	if ingress > 0 {
-		k := r.key(backend, FieldIngressBytes)
-		pipe.IncrBy(ctx, k, ingress)
-		pipe.Expire(ctx, k, keyTTL)
-	}
-
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		telemetry.RedisOperationsTotal.WithLabelValues("pipeline_add", "error").Inc()
-		r.recordFailure(err)
-		r.local.AddAll(backend, apiReqs, egress, ingress)
-		return
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_add", "success").Inc()
-	r.notePostCheck("pipeline_add", nil)
-}
-
-// LoadAll reads all three counter values from Redis in a pipeline.
-func (r *RedisCounterBackend) LoadAll(backend string) LoadAllResult {
-	if r.inFallback() {
-		return r.local.LoadAll(backend)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	pipe := r.client.Pipeline()
-	apiCmd := pipe.Get(ctx, r.key(backend, FieldAPIRequests))
-	egressCmd := pipe.Get(ctx, r.key(backend, FieldEgressBytes))
-	ingressCmd := pipe.Get(ctx, r.key(backend, FieldIngressBytes))
-
-	_, err := pipe.Exec(ctx)
-	if err != nil && !isAllNil(err) {
-		telemetry.RedisOperationsTotal.WithLabelValues("pipeline_load", "error").Inc()
-		r.recordFailure(err)
-		return r.local.LoadAll(backend)
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_load", "success").Inc()
-	r.notePostCheck("pipeline_load", nil)
-
-	return LoadAllResult{
-		APIRequests:  cmdInt64(apiCmd),
-		EgressBytes:  cmdInt64(egressCmd),
-		IngressBytes: cmdInt64(ingressCmd),
-	}
-}
-
-// AddPools increments the named pool counters in one pipelined pass over the
-// backend's pool hash.
-func (r *RedisCounterBackend) AddPools(backend string, deltas map[string]int64) {
-	if len(deltas) == 0 {
-		return
-	}
-	if r.inFallback() {
-		r.local.AddPools(backend, deltas)
-		return
-	}
-	err := r.incrPools(backend, func(ctx context.Context, pipe redis.Pipeliner, key string) {
-		for pool, delta := range deltas {
-			if delta > 0 {
-				pipe.HIncrBy(ctx, key, pool, delta)
-			}
-		}
-	})
-	if err != nil {
-		r.local.AddPools(backend, deltas)
-	}
-}
-
-// ChargePools adds n to each of the given pool counters in one pipelined pass.
-func (r *RedisCounterBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
-	if len(pools) == 0 || n <= 0 {
-		return
-	}
-	if r.inFallback() {
-		r.local.ChargePools(backend, pools, n)
-		return
-	}
-	err := r.incrPools(backend, func(ctx context.Context, pipe redis.Pipeliner, key string) {
-		for i := range pools {
-			pipe.HIncrBy(ctx, key, pools[i].Name, n)
-		}
-	})
-	if err != nil {
-		r.local.ChargePools(backend, pools, n)
-	}
-}
-
-// incrPools runs the increments fill queues against the backend's pool hash in
-// one pipeline. A failure is recorded against the breaker and returned, so the
-// caller can keep the increments locally.
-func (r *RedisCounterBackend) incrPools(backend string, fill func(ctx context.Context, pipe redis.Pipeliner, key string)) error {
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	key := r.poolKey(backend)
-	pipe := r.client.Pipeline()
-	fill(ctx, pipe, key)
-	pipe.Expire(ctx, key, keyTTL)
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		telemetry.RedisOperationsTotal.WithLabelValues("pipeline_pool_add", "error").Inc()
-		r.recordFailure(err)
-		return err
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_pool_add", "success").Inc()
-	r.notePostCheck("pipeline_pool_add", nil)
-	return nil
-}
-
-// LoadPool reads one pool counter, falling back to local on error.
-func (r *RedisCounterBackend) LoadPool(backend, pool string) int64 {
-	if r.inFallback() {
-		return r.local.LoadPool(backend, pool)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	val, err := r.client.HGet(ctx, r.poolKey(backend), pool).Int64()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		telemetry.RedisOperationsTotal.WithLabelValues("hget", "error").Inc()
-		r.recordFailure(err)
-		return r.local.LoadPool(backend, pool)
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("hget", "success").Inc()
-	r.notePostCheck("hget", nil)
-	return val
-}
-
-// SwapPools reads and clears the backend's pool hash.
-//
-// Read and delete run in one transaction so a charge landing between the two
-// is not silently dropped: without it a pool increment arriving after the
-// read but before the delete would be flushed to nobody.
-func (r *RedisCounterBackend) SwapPools(backend string) map[string]int64 {
-	if r.inFallback() {
-		return r.local.SwapPools(backend)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
-	defer cancel()
-
-	key := r.poolKey(backend)
+	key := r.hashKey(CurrentPeriod(), backend)
 	tx := r.client.TxPipeline()
-	all := tx.HGetAll(ctx, key)
-	tx.Del(ctx, key)
-
-	if _, err := tx.Exec(ctx); err != nil && !isAllNil(err) {
-		telemetry.RedisOperationsTotal.WithLabelValues("pool_swap", "error").Inc()
-		r.recordFailure(err)
-		return r.local.SwapPools(backend)
+	incr := func(field string, n int64) {
+		if n > 0 {
+			tx.HIncrBy(ctx, key, field, n)
+		}
 	}
-	telemetry.RedisOperationsTotal.WithLabelValues("pool_swap", "success").Inc()
-	r.notePostCheck("pool_swap", nil)
+	incr(fieldAPIRequests, c.APIRequests)
+	incr(fieldEgressBytes, c.EgressBytes)
+	incr(fieldIngressBytes, c.IngressBytes)
+	for i := range c.Pools {
+		incr(poolFieldPrefix+c.Pools[i].Name, c.PoolN)
+	}
+	tx.Expire(ctx, key, keyTTL)
 
-	fields := all.Val()
-	if len(fields) == 0 {
+	_, err := tx.Exec(ctx)
+	if r.observe("charge", err) != nil {
+		r.local.Charge(backend, c)
+	}
+}
+
+// Load adds the backend's unflushed counters for the current period into u:
+// whatever this instance holds locally and has not flushed, plus the shared
+// hash.
+func (r *RedisCounterBackend) Load(backend string, u *core.Usage) {
+	r.local.Load(backend, u)
+	if r.inFallback() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	defer cancel()
+
+	fields, err := r.client.HGetAll(ctx, r.hashKey(CurrentPeriod(), backend)).Result()
+	if r.observe("load", err) == nil {
+		r.addFields(ctx, fields, u)
+	}
+}
+
+// Take returns the charges this instance holds locally, from a fallback or a
+// failed charge. Every instance flushes its own.
+func (r *RedisCounterBackend) Take(ctx context.Context) []core.UsageBatch {
+	return r.local.Take(ctx)
+}
+
+// TakeShared stages each backend's hash for the current and previous period
+// under a fresh flush ID, then returns every staged hash, including ones an
+// earlier flush on any instance staged and never deleted. Taking the previous
+// period is what flushes the end of a month after it has rolled over.
+func (r *RedisCounterBackend) TakeShared(ctx context.Context) []core.UsageBatch {
+	if r.inFallback() {
 		return nil
 	}
-	out := make(map[string]int64, len(fields))
-	for pool, raw := range fields {
+	r.stage(ctx)
+	return r.readStaged(ctx)
+}
+
+// Settle deletes a staged hash once the store has applied it. A staged hash
+// the store did not apply stays for the next flush; a local batch goes back
+// to the local counters.
+func (r *RedisCounterBackend) Settle(ctx context.Context, b *core.UsageBatch, applied bool) {
+	if b.ID == "" {
+		r.local.Settle(ctx, b, applied)
+		return
+	}
+	if !applied || r.inFallback() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	_ = r.observe("unstage", r.client.Del(ctx, r.stagedKey(b.Period, b.Backend, b.ID)).Err())
+}
+
+// -------------------------------------------------------------------------
+// STAGING
+// -------------------------------------------------------------------------
+
+// stage renames each live hash to a staged key. A charge landing after the
+// rename starts a fresh live hash, so nothing is lost between the two. A
+// missing hash means the backend was not charged and is skipped.
+func (r *RedisCounterBackend) stage(ctx context.Context) {
+	for _, period := range flushPeriods() {
+		for _, backend := range r.backends {
+			octx, cancel := context.WithTimeout(ctx, opTimeout)
+			err := r.client.Rename(octx, r.hashKey(period, backend), r.stagedKey(period, backend, rand.Text())).Err()
+			cancel()
+			if err != nil && strings.Contains(err.Error(), "no such key") {
+				continue
+			}
+			if r.observe("stage", err) != nil {
+				return
+			}
+		}
+	}
+}
+
+// readStaged returns a batch for every staged hash. A hash that is gone by the
+// time it is read was applied and deleted by another flush.
+func (r *RedisCounterBackend) readStaged(ctx context.Context) []core.UsageBatch {
+	var batches []core.UsageBatch
+	var cursor uint64
+	for {
+		octx, cancel := context.WithTimeout(ctx, opTimeout)
+		keys, next, err := r.client.Scan(octx, cursor, globEscaper.Replace(r.prefix)+":usage-staged:*", scanCount).Result()
+		cancel()
+		if r.observe("scan_staged", err) != nil {
+			return batches
+		}
+		for _, key := range keys {
+			if b, ok := r.readBatch(ctx, key); ok {
+				batches = append(batches, b)
+			}
+		}
+		if next == 0 {
+			return batches
+		}
+		cursor = next
+	}
+}
+
+// readBatch reads one staged hash into a batch, reporting false when the key
+// does not name a staged hash or the hash is already gone.
+func (r *RedisCounterBackend) readBatch(ctx context.Context, key string) (core.UsageBatch, bool) {
+	b, ok := r.parseStagedKey(key)
+	if !ok {
+		return b, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	fields, err := r.client.HGetAll(ctx, key).Result()
+	if r.observe("read_staged", err) != nil || len(fields) == 0 {
+		return b, false
+	}
+	r.addFields(ctx, fields, &b.Usage)
+	return b, true
+}
+
+// addFields adds a counter hash's fields into u. A field that does not parse
+// as a number is logged and skipped.
+func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]string, u *core.Usage) {
+	for field, raw := range fields {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			r.logger().WarnContext(ctx, "discarding unparseable pool counter",
-				slog.String("backend", backend), slog.String("pool", pool), slog.String("value", raw))
+			r.logger().WarnContext(ctx, "discarding unparseable usage counter",
+				slog.String("field", field), slog.String("value", raw))
 			continue
 		}
-		out[pool] = v
+		switch field {
+		case fieldAPIRequests:
+			u.APIRequests += v
+		case fieldEgressBytes:
+			u.EgressBytes += v
+		case fieldIngressBytes:
+			u.IngressBytes += v
+		default:
+			if pool, ok := strings.CutPrefix(field, poolFieldPrefix); ok {
+				u.AddPool(pool, v)
+			}
+		}
 	}
-	return out
 }
 
 // -------------------------------------------------------------------------
@@ -453,10 +389,10 @@ func (r *RedisCounterBackend) SwapPools(backend string) map[string]int64 {
 // -------------------------------------------------------------------------
 
 // healthProbe runs in a background goroutine, periodically PINGing Redis
-// while the backend is in fallback. On recovery, it syncs local deltas back
-// to Redis and resumes normal operation. It keys off the fallback flag rather
-// than the breaker, because a backend that could not reach Redis at startup
-// is in fallback without the breaker ever having opened.
+// while the backend is in fallback, and resumes normal operation once it
+// answers. It keys off the fallback flag rather than the breaker, because a
+// backend that could not reach Redis at startup is in fallback without the
+// breaker ever having opened.
 func (r *RedisCounterBackend) healthProbe() {
 	defer close(r.probeDone)
 	ticker := time.NewTicker(healthProbeInterval)
@@ -465,77 +401,22 @@ func (r *RedisCounterBackend) healthProbe() {
 	for {
 		select {
 		case <-ticker.C:
-			if !r.inFallback() {
-				continue
+			if r.inFallback() {
+				r.tryRecover()
 			}
-			r.tryRecover()
 		case <-r.stopProbe:
 			return
 		}
 	}
 }
 
-// queueReplay adds one backend's locally-buffered deltas to the recovery
-// pipeline: the three fixed counters as INCRBYs, and the pool counters as
-// HINCRBYs on the period's pool hash.
-func (r *RedisCounterBackend) queueReplay(ctx context.Context, pipe redis.Pipeliner, name, period string, d Snapshot) {
-	incr := func(field string, delta int64) {
-		if delta <= 0 {
-			return
-		}
-		k := r.keyForPeriod(name, field, period)
-		pipe.IncrBy(ctx, k, delta)
-		pipe.Expire(ctx, k, keyTTL)
-	}
-	incr(FieldAPIRequests, d.APIRequests)
-	incr(FieldEgressBytes, d.EgressBytes)
-	incr(FieldIngressBytes, d.IngressBytes)
-
-	if len(d.Pools) == 0 {
-		return
-	}
-	k := r.poolKeyForPeriod(name, period)
-	for pool, delta := range d.Pools {
-		if delta > 0 {
-			pipe.HIncrBy(ctx, k, pool, delta)
-		}
-	}
-	pipe.Expire(ctx, k, keyTTL)
-}
-
-// tryRecover PINGs Redis and, on success, atomically deletes stale keys
-// and syncs local deltas in a single pipeline, then closes the circuit
-// breaker.
+// tryRecover PINGs Redis and, on success, closes the circuit breaker and
+// leaves fallback. The charges kept locally meanwhile need nothing here: the
+// usage flush writes them to the store.
 func (r *RedisCounterBackend) tryRecover() {
-	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
-
 	if err := r.client.Ping(ctx).Err(); err != nil {
-		return
-	}
-
-	period := CurrentPeriod()
-
-	// Atomically swap the entire local counter map in one operation. This
-	// prevents the race where per-backend SwapAll calls allow concurrent
-	// Add calls to slip between swaps and lose deltas.
-	allDeltas := r.local.SwapAllBackends()
-
-	// Build a pipeline of INCRBY commands (additive, safe for concurrent
-	// execution by multiple instances). No DEL  -  stale keys from before
-	// the outage expire via TTL, and INCRBY is idempotent across instances.
-	pipe := r.client.Pipeline()
-	for name, d := range allDeltas {
-		r.queueReplay(ctx, pipe, name, period, d)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		// Pipeline failed  -  restore swapped deltas to local counters so
-		// they are retried on the next recovery attempt.
-		for name, d := range allDeltas {
-			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)
-		}
-		r.logger().WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", "error", err)
 		return
 	}
 
@@ -543,8 +424,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	// breaker never reaches HalfOpen and PostCheck(nil) would leave it open.
 	r.setFallback(false)
 	r.cb.Recover()
-
-	r.logger().InfoContext(context.Background(), "Redis counter backend recovered, local deltas synced")
+	r.logger().InfoContext(ctx, "Redis counter backend recovered")
 }
 
 // -------------------------------------------------------------------------
@@ -553,21 +433,31 @@ func (r *RedisCounterBackend) tryRecover() {
 
 // inFallback returns true when using local counters due to Redis unavailability.
 func (r *RedisCounterBackend) inFallback() bool {
-	r.fallbackMu.RLock()
-	defer r.fallbackMu.RUnlock()
-	return r.fallback
+	return r.fallback.Load()
 }
 
 // setFallback toggles fallback mode and updates the Prometheus gauge.
 func (r *RedisCounterBackend) setFallback(v bool) {
-	r.fallbackMu.Lock()
-	r.fallback = v
-	r.fallbackMu.Unlock()
+	r.fallback.Store(v)
 	if v {
 		telemetry.RedisFallbackActive.Set(1)
 	} else {
 		telemetry.RedisFallbackActive.Set(0)
 	}
+}
+
+// observe records one Redis operation's outcome on the operations metric and
+// the circuit breaker, and returns err so the caller can fall back on it.
+// redis.Nil, a key that does not exist, counts as success.
+func (r *RedisCounterBackend) observe(op string, err error) error {
+	if err != nil && !errors.Is(err, redis.Nil) {
+		telemetry.RedisOperationsTotal.WithLabelValues(op, "error").Inc()
+		r.recordFailure(err)
+		return err
+	}
+	telemetry.RedisOperationsTotal.WithLabelValues(op, "success").Inc()
+	r.notePostCheck(op, nil)
+	return nil
 }
 
 // notePostCheck feeds the operation outcome to the circuit breaker and
@@ -596,52 +486,36 @@ func (r *RedisCounterBackend) recordFailure(err error) {
 // KEY HELPERS
 // -------------------------------------------------------------------------
 
-// key returns the Redis key for a backend field in the current period.
-func (r *RedisCounterBackend) key(backend, field string) string {
-	return r.keyForPeriod(backend, field, CurrentPeriod())
+// hashKey returns the live counter hash for a backend in a period.
+func (r *RedisCounterBackend) hashKey(period, backend string) string {
+	return fmt.Sprintf("%s:usage:%s:%s", r.prefix, period, backend)
+}
+
+// stagedKey returns the key a backend's hash for a period is staged under for
+// one flush.
+func (r *RedisCounterBackend) stagedKey(period, backend, flushID string) string {
+	return fmt.Sprintf("%s:usage-staged:%s:%s:%s", r.prefix, period, backend, flushID)
+}
+
+// parseStagedKey recovers the batch a staged key names. The period has a fixed
+// width and the flush ID holds no colon, so a backend name containing one still
+// parses.
+func (r *RedisCounterBackend) parseStagedKey(key string) (core.UsageBatch, bool) {
+	rest, ok := strings.CutPrefix(key, r.prefix+":usage-staged:")
+	const periodLen = len(periodLayout)
+	if !ok || len(rest) <= periodLen+2 || rest[periodLen] != ':' {
+		return core.UsageBatch{}, false
+	}
+	sep := strings.LastIndexByte(rest, ':')
+	if sep <= periodLen+1 || sep == len(rest)-1 {
+		return core.UsageBatch{}, false
+	}
+	return core.UsageBatch{ID: rest[sep+1:], Backend: rest[periodLen+1 : sep], Period: rest[:periodLen]}, true
 }
 
 // sharedKey returns the Redis key for a named piece of shared state.
 func (r *RedisCounterBackend) sharedKey(name string) string {
 	return fmt.Sprintf("%s:shared:%s", r.prefix, name)
-}
-
-// keyForPeriod returns the Redis key for a backend field in a specific period.
-func (r *RedisCounterBackend) keyForPeriod(backend, field, period string) string {
-	return fmt.Sprintf("%s:usage:%s:%s:%s", r.prefix, period, backend, field)
-}
-
-// poolKey returns the Redis hash holding every pool counter for a backend in
-// the current period. A single hash lets a flush enumerate the pools actually
-// charged without scanning the keyspace.
-func (r *RedisCounterBackend) poolKey(backend string) string {
-	return r.poolKeyForPeriod(backend, CurrentPeriod())
-}
-
-// poolKeyForPeriod returns the pool hash key for a specific period.
-func (r *RedisCounterBackend) poolKeyForPeriod(backend, period string) string {
-	return fmt.Sprintf("%s:usage:%s:%s:pools", r.prefix, period, backend)
-}
-
-// -------------------------------------------------------------------------
-// REDIS RESULT HELPERS
-// -------------------------------------------------------------------------
-
-// cmdInt64 extracts an int64 from a Redis StringCmd, returning 0 for nil
-// (key does not exist) or parse errors.
-func cmdInt64(cmd *redis.StringCmd) int64 {
-	v, err := cmd.Int64()
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// isAllNil returns true when a pipeline error is entirely redis.Nil (all
-// keys missing). This is expected for backends with no activity in the
-// current period.
-func isAllNil(err error) bool {
-	return errors.Is(err, redis.Nil)
 }
 
 // -------------------------------------------------------------------------
@@ -660,15 +534,7 @@ func (r *RedisCounterBackend) PutShared(ctx context.Context, name string, value 
 	}
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-
-	if err := r.client.Set(ctx, r.sharedKey(name), value, ttl).Err(); err != nil {
-		telemetry.RedisOperationsTotal.WithLabelValues("set", "error").Inc()
-		r.recordFailure(err)
-		return err
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("set", "success").Inc()
-	r.notePostCheck("set", nil)
-	return nil
+	return r.observe("set", r.client.Set(ctx, r.sharedKey(name), value, ttl).Err())
 }
 
 // GetShared returns the value stored under name, or nil when there is none.
@@ -680,15 +546,8 @@ func (r *RedisCounterBackend) GetShared(ctx context.Context, name string) ([]byt
 	defer cancel()
 
 	val, err := r.client.Get(ctx, r.sharedKey(name)).Bytes()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		telemetry.RedisOperationsTotal.WithLabelValues("get", "error").Inc()
-		r.recordFailure(err)
+	if err := r.observe("get", err); err != nil {
 		return nil, err
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("get", "success").Inc()
-	r.notePostCheck("get", nil)
-	if errors.Is(err, redis.Nil) {
-		return nil, nil
 	}
 	return val, nil
 }
@@ -702,15 +561,7 @@ func (r *RedisCounterBackend) NotifyShared(ctx context.Context, channel string) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-
-	if err := r.client.Publish(ctx, r.sharedKey(channel), "changed").Err(); err != nil {
-		telemetry.RedisOperationsTotal.WithLabelValues("publish", "error").Inc()
-		r.recordFailure(err)
-		return err
-	}
-	telemetry.RedisOperationsTotal.WithLabelValues("publish", "success").Inc()
-	r.notePostCheck("publish", nil)
-	return nil
+	return r.observe("publish", r.client.Publish(ctx, r.sharedKey(channel), "changed").Err())
 }
 
 // WatchShared calls onChange for every notification on channel, and once

@@ -29,11 +29,7 @@ import (
 // trackerWith builds a tracker over the named baselines, which is the state
 // production leaves it in after a refresh.
 func trackerWith(baselines map[string]core.BackendQuotaUsage) *QuotaTracker {
-	names := make([]string, 0, len(baselines))
-	for name := range baselines {
-		names = append(names, name)
-	}
-	q := NewQuotaTracker(names)
+	q := NewQuotaTracker()
 	q.SetBaselines(baselines)
 	return q
 }

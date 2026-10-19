@@ -78,8 +78,8 @@ func (r recordingFlusher) FlushUsage(_ context.Context) error {
 	return r.err
 }
 
-func (r recordingFlusher) FlushQuota(_ context.Context) error {
-	*r.calls = append(*r.calls, "FlushQuota")
+func (r recordingFlusher) RefreshQuotaBaselines(_ context.Context) error {
+	*r.calls = append(*r.calls, "RefreshQuotaBaselines")
 	return r.err
 }
 
@@ -132,14 +132,13 @@ type neverNearLimit struct{}
 func (neverNearLimit) NearLimit(_ float64) bool { return false }
 
 // flushDeps builds the usage-flush service's dependency bag from the fixture,
-// so the tests that drive one differ only in the locker they hand it.
-func (f *servicesFixture) flushDeps(locker tickrunner.AdvisoryLocker) *UsageFlushDeps {
+// so the tests that drive one share the wiring.
+func (f *servicesFixture) flushDeps() *UsageFlushDeps {
 	return &UsageFlushDeps{
 		Flusher: f.stack.Usage,
 		Tracker: f.stack.Runtime.Usage(),
 		Fleet:   f.stack.Runtime,
 		States:  f.stack.States,
-		Locker:  locker,
 	}
 }
 
@@ -277,28 +276,25 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 }
 
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
-// order. The tick never computes the fleet snapshot; with Redis every
-// instance loads the published one whether or not it won the flush lock.
-// Without Redis the losing locker proves no lock is taken. Backend states
-// reload last regardless of the lock, and store errors never cut the tick
-// short.
+// order. Every instance flushes its counters, since the service holds no lock
+// to lose. With Redis the instance also loads the published fleet snapshot;
+// it never computes one. Store errors never cut the tick short.
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
-	single := []string{"FlushQuota", "FlushUsage", "RefreshUsageBaselines", "RefreshBackendStates"}
-	won := []string{"FlushQuota", "FlushUsage", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshBackendStates"}
+	single := []string{"RefreshQuotaBaselines", "FlushUsage", "RefreshUsageBaselines", "RefreshBackendStates"}
+	shared := []string{"RefreshQuotaBaselines", "FlushUsage", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshBackendStates"}
 
 	tests := []struct {
-		name   string
-		redis  bool
-		locker tickrunner.AdvisoryLocker
-		err    error
-		want   []string
+		name  string
+		redis bool
+		err   error
+		want  []string
 	}{
-		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines", "RefreshBackendStates"}},
-		{"redis lock won", true, acquiringLocker{}, nil, won},
-		{"no redis takes no lock", false, fakeLocker{}, nil, single},
-		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, won},
+		{"redis loads fleet state", true, nil, shared},
+		{"no redis skips fleet state", false, nil, single},
+		{"errors do not stop the tick", true, storeErr, shared},
+		{"db unavailable is quiet", false, core.ErrDBUnavailable, single},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -309,7 +305,6 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 				Tracker: neverNearLimit{},
 				Fleet:   recordingFleet{err: tt.err, calls: &calls},
 				States:  recordingStates{err: tt.err, calls: &calls},
-				Locker:  tt.locker,
 			}).(*usageFlushService)
 
 			svc.flushTick(context.Background())
@@ -333,7 +328,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		name string
 		svc  any
 	}{
-		{"UsageFlush", NewUsageFlushService(f.flushDeps(locker))},
+		{"UsageFlush", NewUsageFlushService(f.flushDeps())},
 		{"FleetSnapshot", NewFleetSnapshotService(f.stack.Runtime, locker, time.Minute)},
 		{"MultipartCleanup", multipart.NewCleanupService(f.stack.Multipart, locker, 0)},
 		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
@@ -496,7 +491,7 @@ func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
 	f.stack.Usage.SetConfig(&config.UsageFlushConfig{Interval: time.Hour})
-	svc := NewUsageFlushService(f.flushDeps(fakeLocker{}))
+	svc := NewUsageFlushService(f.flushDeps())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := svc.Run(ctx); err != nil {
@@ -578,7 +573,7 @@ func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
 	f.stack.Usage.SetConfig(&config.UsageFlushConfig{Interval: 2 * time.Millisecond})
-	svc := NewUsageFlushService(f.flushDeps(fakeLocker{}))
+	svc := NewUsageFlushService(f.flushDeps())
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_ = svc.Run(ctx)
@@ -596,7 +591,7 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 		AdaptiveEnabled:   true,
 		AdaptiveThreshold: 0.0, // always triggers the fast-interval branch
 	})
-	svc := NewUsageFlushService(f.flushDeps(fakeLocker{}))
+	svc := NewUsageFlushService(f.flushDeps())
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_ = svc.Run(ctx)
@@ -608,7 +603,7 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 func TestUsageFlushService_FlushTickOnCancelledCtx(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
-	svc := NewUsageFlushService(f.flushDeps(fakeLocker{})).(*usageFlushService)
+	svc := NewUsageFlushService(f.flushDeps()).(*usageFlushService)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	svc.flushTick(ctx)

@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
@@ -324,7 +323,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	if len(discarded) != 1 || discarded[0].BackendName != "b1" || discarded[0].Reason != reasonWriteTargetRefused {
 		t.Errorf("discarded = %+v, want one %s row on b1", discarded, reasonWriteTargetRefused)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 2 {
 		t.Errorf("b1 apiRequests = %d, want 2 (refused PUT + discard delete)", got)
 	}
 	if !healthy.HasCopyOf("mykey") {
@@ -458,16 +457,15 @@ func requestCapped(t *testing.T, api, egress, ingress int64) core.UsageLimits {
 	return lim
 }
 
-// alreadySpent seeds a period partly consumed. Both halves of the baseline are
-// set: the request total, and the wildcard pool's share of it that admission
-// actually judges against.
+// alreadySpent seeds a period partly consumed on one backend, replacing every
+// baseline. Both the request total and the wildcard pool's share of it, which
+// admission judges against, are set.
 func alreadySpent(mgr *fleet, name string, api, egress, ingress int64) {
-	stat := core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}
-	var pools core.PoolUsage
+	u := core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}}
 	if api > 0 {
-		pools = core.PoolUsage{core.PoolAll: api}
+		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}
-	mgr.Runtime.Usage().SetBaseline(name, stat, pools)
+	mgr.Runtime.Usage().SetBaselines(map[string]core.Usage{name: u})
 }
 
 // -------------------------------------------------------------------------
@@ -577,10 +575,10 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error from be failure")
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := usageOf(mgr, "b1").IngressBytes; got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }
@@ -615,7 +613,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	if c.insertPending[0].ObjectKey != "cleanup-key" || c.insertPending[0].BackendName != "b1" {
 		t.Errorf("InsertPending called with %+v", c.insertPending[0])
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (PUT only)", got)
 	}
 }
@@ -674,9 +672,9 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error when all backends fail")
 	}
-	total := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests) +
-		mgr.Runtime.Usage().Backend().Load("b2", counter.FieldAPIRequests) +
-		mgr.Runtime.Usage().Backend().Load("b3", counter.FieldAPIRequests)
+	total := usageOf(mgr, "b1").APIRequests +
+		usageOf(mgr, "b2").APIRequests +
+		usageOf(mgr, "b3").APIRequests
 	if total != 3 {
 		t.Errorf("total API requests = %d, want 3 (one per failed backend)", total)
 	}
@@ -755,16 +753,16 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := usageOf(mgr, "b1").IngressBytes; got != 0 {
 		t.Errorf("b1 ingressBytes = %d, want 0", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b2").APIRequests; got != 1 {
 		t.Errorf("b2 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b2", counter.FieldIngressBytes); got != 4 {
+	if got := usageOf(mgr, "b2").IngressBytes; got != 4 {
 		t.Errorf("b2 ingressBytes = %d, want 4", got)
 	}
 }
@@ -1480,10 +1478,10 @@ func TestDeleteObject_RecordsOneAPICallPerCopy(t *testing.T) {
 		t.Error("both queued copies should be deleted by the settle")
 	}
 
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Runtime.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+	if got := usageOf(mgr, "b2").APIRequests; got != 1 {
 		t.Errorf("b2 apiRequests = %d, want 1", got)
 	}
 }
@@ -1509,7 +1507,7 @@ func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
 
 	mgr.DeleteObjects(context.Background(), []string{"a", "b", "c"})
 
-	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 3 {
+	if got := usageOf(mgr, "b1").APIRequests; got != 3 {
 		t.Errorf("b1 apiRequests = %d, want 3 (one per key, not 2*N)", got)
 	}
 }

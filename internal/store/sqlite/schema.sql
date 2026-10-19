@@ -187,6 +187,14 @@ CREATE TABLE IF NOT EXISTS backend_request_usage (
 CREATE INDEX IF NOT EXISTS idx_backend_request_usage_period
     ON backend_request_usage(period);
 
+-- One row per shared usage batch applied above, written in the same
+-- transaction as its deltas, so a batch is never applied twice.
+CREATE TABLE IF NOT EXISTS usage_flushes (
+    flush_id   TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_usage_flushes_applied_at ON usage_flushes(applied_at);
+
 -- Queue for retrying failed backend object deletions (orphan cleanup).
 CREATE TABLE IF NOT EXISTS cleanup_queue (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,4 +429,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (29);
+INSERT INTO schema_version (version) VALUES (30);

@@ -22,7 +22,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -127,8 +126,10 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	if be.Has("obj2") {
 		t.Error("obj2 should have been deleted from S3 be")
 	}
-	if got := rt.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
-		t.Errorf("apiRequests = %d, want 2 (purge deletes)", got)
+	var u core.Usage
+	rt.Usage().Backend().Load("b1", &u)
+	if u.APIRequests != 2 {
+		t.Errorf("apiRequests = %d, want 2 (purge deletes)", u.APIRequests)
 	}
 }
 

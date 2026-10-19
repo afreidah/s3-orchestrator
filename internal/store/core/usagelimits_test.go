@@ -162,3 +162,57 @@ func TestSingleRequestPool_UnsetCapCompilesToNoPools(t *testing.T) {
 		}
 	}
 }
+
+// TestUsage_AddPool asserts the pool map is created on first use and counts
+// accumulate per pool.
+func TestUsage_AddPool(t *testing.T) {
+	t.Parallel()
+	var u Usage
+
+	u.AddPool("x", 2)
+	u.AddPool("x", 3)
+	u.AddPool("y", 1)
+
+	if u.Pools["x"] != 5 || u.Pools["y"] != 1 || len(u.Pools) != 2 {
+		t.Errorf("pools = %v, want x 5 and y 1", u.Pools)
+	}
+}
+
+// TestUsage_Reset asserts Reset zeroes the totals and pools while keeping the
+// pool map for reuse.
+func TestUsage_Reset(t *testing.T) {
+	t.Parallel()
+	u := Usage{UsageStat: UsageStat{APIRequests: 1, EgressBytes: 2, IngressBytes: 3}}
+	u.AddPool("x", 4)
+	pools := u.Pools
+
+	u.Reset()
+
+	if !u.IsZero() || len(u.Pools) != 0 {
+		t.Errorf("after Reset = %+v, want zero", u)
+	}
+	u.AddPool("y", 1)
+	if pools["y"] != 1 {
+		t.Error("Reset should keep the pool map rather than replace it")
+	}
+}
+
+// TestUsage_IsZero asserts any nonzero total or pool counts as something to
+// flush, and a pool map of zeros does not.
+func TestUsage_IsZero(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		u    Usage
+		want bool
+	}{
+		{name: "empty", u: Usage{}, want: true},
+		{name: "zero pools", u: Usage{Pools: PoolUsage{"x": 0}}, want: true},
+		{name: "egress", u: Usage{UsageStat: UsageStat{EgressBytes: 1}}},
+		{name: "pool", u: Usage{Pools: PoolUsage{"x": 0, "y": 1}}},
+	} {
+		if got := tc.u.IsZero(); got != tc.want {
+			t.Errorf("%s: IsZero() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

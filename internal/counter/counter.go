@@ -14,59 +14,58 @@ package counter
 
 //go:generate mockgen -destination=mock_counter_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter Backend
 
-import "github.com/afreidah/s3-orchestrator/internal/store/core"
+import (
+	"context"
 
-// -------------------------------------------------------------------------
-// FIELD CONSTANTS
-// -------------------------------------------------------------------------
-
-// Counter field names used as keys in Backend operations.
-const (
-	FieldAPIRequests  = "api_requests"
-	FieldEgressBytes  = "egress_bytes"
-	FieldIngressBytes = "ingress_bytes"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
 // INTERFACE
 // -------------------------------------------------------------------------
 
-// Backend abstracts the storage of per-backend usage deltas: three fixed
-// counters per backend - API requests, egress bytes, ingress bytes - plus a
-// keyed set of request pools. Implementations must be safe for concurrent use.
-// The All and Pools variants let an implementation pipeline several round
-// trips. ChargePools is the allocation-free form of AddPools for one amount
-// across several pools.
+// Backend abstracts the storage of per-backend usage counters: the request and
+// byte totals plus a keyed set of request pools, kept per backend and per
+// period. Implementations must be safe for concurrent use.
+//
+// Charge records one charge in the current period. Load adds the current
+// period's unflushed counters into u, so the limit check that calls it on
+// every request can reuse one value. Take hands this process's counters over
+// for a flush, one batch per backend and period, and Settle tells the backend
+// whether the store applied a batch; a batch that was not applied is kept and
+// flushed again.
 type Backend interface {
 	Backends() []string
-	Add(backend, field string, delta int64)
-	Load(backend, field string) int64
-	Swap(backend, field string) int64 // returns the value before the reset
+	Charge(backend string, c Charge)
+	Load(backend string, u *core.Usage)
+	Take(ctx context.Context) []core.UsageBatch
+	Settle(ctx context.Context, b *core.UsageBatch, applied bool)
+}
 
-	AddAll(backend string, apiReqs, egress, ingress int64)
-	LoadAll(backend string) LoadAllResult
-
-	AddPools(backend string, deltas map[string]int64)
-	ChargePools(backend string, pools []core.RequestPool, n int64)
-	LoadPool(backend, pool string) int64
-	SwapPools(backend string) map[string]int64 // returns the values before the reset
+// SharedBackend is a Backend whose counters also live where every instance
+// charges them. TakeShared stages those for a flush; any instance may take
+// them, because the store applies a staged batch at most once.
+type SharedBackend interface {
+	Backend
+	TakeShared(ctx context.Context) []core.UsageBatch
 }
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// LoadAllResult holds the values returned by Backend.LoadAll.
-type LoadAllResult struct {
+// Charge is what one recorded call adds: the request and byte totals, and
+// PoolN on each of Pools. A pool listed twice is charged twice.
+type Charge struct {
 	APIRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
+	Pools        []core.RequestPool
+	PoolN        int64
 }
 
-// Snapshot is one backend's unflushed counters: the three fixed dimensions
-// plus every request pool charged since the last reset. Pools are additive,
-// so their values do not sum to APIRequests.
-type Snapshot struct {
-	LoadAllResult
-	Pools map[string]int64
+// empty reports whether the charge adds nothing.
+func (c Charge) empty() bool {
+	return c.APIRequests <= 0 && c.EgressBytes <= 0 && c.IngressBytes <= 0 &&
+		(len(c.Pools) == 0 || c.PoolN <= 0)
 }

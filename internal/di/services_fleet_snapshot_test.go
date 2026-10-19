@@ -13,6 +13,8 @@ package di
 
 import (
 	"context"
+	"errors"
+	"path"
 	"sync"
 	"testing"
 	"time"
@@ -36,8 +38,9 @@ import (
 
 // memoryRedis is a counter.RedisClient over one in-memory map. Two backends
 // built on the same memoryRedis see each other's writes, the way two
-// instances pointed at one Redis do. Only the plain key operations the fleet
-// snapshot uses are implemented; the counter pipelines are never reached.
+// instances pointed at one Redis do. Only plain string keys are stored: a
+// counter hash reads as empty, and a counter charge fails so the backend
+// keeps it locally.
 type memoryRedis struct {
 	mu   sync.Mutex
 	data map[string]string
@@ -73,33 +76,71 @@ func (m *memoryRedis) Publish(context.Context, string, any) *redis.IntCmd {
 
 func (m *memoryRedis) Subscribe(context.Context, ...string) *redis.PubSub { return nil }
 
-func (m *memoryRedis) IncrBy(context.Context, string, int64) *redis.IntCmd {
-	return redis.NewIntResult(0, nil)
+func (m *memoryRedis) HGetAll(context.Context, string) *redis.MapStringStringCmd {
+	return redis.NewMapStringStringResult(map[string]string{}, nil)
 }
 
-func (m *memoryRedis) GetSet(context.Context, string, any) *redis.StringCmd {
-	return redis.NewStringResult("", redis.Nil)
+func (m *memoryRedis) Rename(_ context.Context, key, newkey string) *redis.StatusCmd {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.data[key]
+	if !ok {
+		return redis.NewStatusResult("", errors.New("ERR no such key"))
+	}
+	delete(m.data, key)
+	m.data[newkey] = v
+	return redis.NewStatusResult("OK", nil)
 }
 
-func (m *memoryRedis) Del(context.Context, ...string) *redis.IntCmd {
-	return redis.NewIntResult(0, nil)
+func (m *memoryRedis) Scan(_ context.Context, _ uint64, match string, _ int64) *redis.ScanCmd {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []string
+	for k := range m.data {
+		if ok, _ := path.Match(match, k); ok {
+			keys = append(keys, k)
+		}
+	}
+	cmd := redis.NewScanCmd(context.Background(), nil)
+	cmd.SetVal(keys, 0)
+	return cmd
 }
 
-func (m *memoryRedis) Expire(context.Context, string, time.Duration) *redis.BoolCmd {
-	return redis.NewBoolResult(true, nil)
-}
-
-func (m *memoryRedis) HGet(context.Context, string, string) *redis.StringCmd {
-	return redis.NewStringResult("", redis.Nil)
+func (m *memoryRedis) Del(_ context.Context, keys ...string) *redis.IntCmd {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, k := range keys {
+		if _, ok := m.data[k]; ok {
+			delete(m.data, k)
+			n++
+		}
+	}
+	return redis.NewIntResult(n, nil)
 }
 
 func (m *memoryRedis) Ping(context.Context) *redis.StatusCmd {
 	return redis.NewStatusResult("PONG", nil)
 }
 
-func (m *memoryRedis) Pipeline() redis.Pipeliner   { return nil }
-func (m *memoryRedis) TxPipeline() redis.Pipeliner { return nil }
+func (m *memoryRedis) TxPipeline() redis.Pipeliner { return failingPipeline{} }
 func (m *memoryRedis) Close() error                { return nil }
+
+// failingPipeline is a transaction whose Exec always fails. Only the calls a
+// counter charge makes are implemented.
+type failingPipeline struct{ redis.Pipeliner }
+
+func (failingPipeline) HIncrBy(context.Context, string, string, int64) *redis.IntCmd {
+	return redis.NewIntResult(0, nil)
+}
+
+func (failingPipeline) Expire(context.Context, string, time.Duration) *redis.BoolCmd {
+	return redis.NewBoolResult(true, nil)
+}
+
+func (failingPipeline) Exec(context.Context) ([]redis.Cmder, error) {
+	return nil, errors.New("memoryRedis does not store counter hashes")
+}
 
 // -------------------------------------------------------------------------
 // HELPERS
@@ -147,8 +188,7 @@ func fleetTick(rt *infra.BackendRuntime, locker tickrunner.AdvisoryLocker) {
 }
 
 // TestUsageFlushService_ServesPublishedFleetSnapshot computes the snapshot on
-// one instance and runs a flush tick on another that loses the flush lock,
-// both sharing a Redis. The second must then report the first's replication
+// one instance and runs a flush tick on another, both sharing a Redis. The second must then report the first's replication
 // status. Serving its own instead is how the admin API, and every client
 // behind a load balancer, saw the replication counts flip between instances.
 func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
@@ -163,7 +203,6 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 		Tracker: other.Usage(),
 		Fleet:   other,
 		States:  noStates{},
-		Locker:  fakeLocker{},
 	}).(*usageFlushService).flushTick(context.Background())
 
 	want := computer.MetricsCollector().ReplicationSnapshot(context.Background())

@@ -136,7 +136,7 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			rec, tracker := newTestRecorder(t, []string{"b1"}, map[string]core.UsageLimits{"b1": tt.limits})
-			tracker.SetBaseline("b1", tt.spent, tt.spentPools)
+			tracker.SetBaselines(map[string]core.Usage{"b1": {UsageStat: tt.spent, Pools: tt.spentPools}})
 
 			if got := rec.Allow("b1", tt.ops, tt.egress, tt.ingre); got != tt.want {
 				t.Errorf("Allow(%v, %d, %d) = %v, want %v", tt.ops, tt.egress, tt.ingre, got, tt.want)
@@ -197,14 +197,15 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 	rec.GetSuccess(s3op.GetObject, "b1", 100, time.Now())                     // class_b + metric
 	rec.OperationFailed(s3op.PutObject, "b1", time.Now(), errors.New("boom")) // class_a + metric
 
-	if got := cb.LoadPool("b1", "class_a"); got != 4 {
+	var all core.Usage
+	cb.Load("b1", &all)
+	if got := all.Pools["class_a"]; got != 4 {
 		t.Errorf("class_a = %d, want 4 (APICall, Ingress, PutSuccess, OperationFailed)", got)
 	}
-	if got := cb.LoadPool("b1", "class_b"); got != 5 {
+	if got := all.Pools["class_b"]; got != 5 {
 		t.Errorf("class_b = %d, want 5 (3 list pages, Egress, GetSuccess)", got)
 	}
 
-	all := cb.LoadAll("b1")
 	if all.APIRequests != 9 {
 		t.Errorf("api_requests = %d, want 9; every call counts toward the total", all.APIRequests)
 	}
@@ -235,8 +236,10 @@ func TestOperation_EmitsTheMetricWithoutCharging(t *testing.T) {
 	if got != string(s3op.HeadObject) {
 		t.Errorf("metric operation = %q, want HeadObject", got)
 	}
-	if n := cb.LoadAll("b1").APIRequests; n != 0 {
-		t.Errorf("api_requests = %d, want 0; Operation records no charge", n)
+	var u core.Usage
+	cb.Load("b1", &u)
+	if u.APIRequests != 0 {
+		t.Errorf("api_requests = %d, want 0; Operation records no charge", u.APIRequests)
 	}
 }
 

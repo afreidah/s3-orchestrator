@@ -384,21 +384,19 @@ func (h *harness) compressionAlgorithm(key string) string {
 	return algorithm.String
 }
 
-// flushQuota drains the in-memory byte counter into backend_quotas and
-// re-primes the baselines from the rows it wrote. bytes_used is eventually
-// consistent, so anything reading that column has to ask for the flush the
-// usage service would otherwise run on its own tick.
-func (h *harness) flushQuota() {
+// refreshQuota reloads the stack's quota baselines from backend_quotas, as
+// the usage service does on its own tick.
+func (h *harness) refreshQuota() {
 	h.t.Helper()
-	if err := h.stack.Usage.FlushQuota(context.Background()); err != nil {
-		h.t.Fatalf("flushQuota: %v", err)
+	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+		h.t.Fatalf("refreshQuota: %v", err)
 	}
 }
 
 // quotaUsed returns a backend's committed byte count.
 func (h *harness) quotaUsed(backendName string) int64 {
 	h.t.Helper()
-	h.flushQuota()
+	h.refreshQuota()
 	var used int64
 	if err := h.db.QueryRow(
 		`SELECT GREATEST(0, COALESCE(SUM(bytes_used), 0)) FROM backend_quota_stripes WHERE backend_name = $1`,

@@ -26,7 +26,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -664,10 +663,10 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
-	if got := rt.Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
+	if got := loadUsage(rt.Usage().Backend(), "src").APIRequests; got != 2 {
 		t.Errorf("src apiRequests = %d, want 2 (Egress + settled delete, no double-count)", got)
 	}
-	if got := rt.Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
+	if got := loadUsage(rt.Usage().Backend(), "dest").APIRequests; got != 1 {
 		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
 	}
 }

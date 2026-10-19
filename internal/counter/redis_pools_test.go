@@ -1,41 +1,216 @@
 // -------------------------------------------------------------------------------
-// Redis Pool Counter Tests
+// Redis Usage Hash Tests
 //
 // Author: Alex Freidah
 //
-// Per-pool request counters live in one hash per backend and period, which is
-// what lets a flush enumerate the pools actually charged without scanning the
-// keyspace. These tests pin that layout and the fallback contract every other
-// Redis path already follows: a failed command degrades to the local counters
-// rather than dropping the charge.
+// Usage counters live in one hash per backend and period, and a flush stages a
+// hash by renaming it under a flush ID before the store applies it. These
+// tests run the backend against an in-memory Redis to pin the key layout, the
+// stage-apply-delete cycle, and the fallback contract: a failed command keeps
+// the charge in the local counters rather than dropping it.
 // -------------------------------------------------------------------------------
 
 package counter
 
 import (
+	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"path"
+	"slices"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// -------------------------------------------------------------------------
-// CONSTRUCTOR
-// -------------------------------------------------------------------------
+const (
+	testPrefix   = "test"
+	stagedPrefix = "test:usage-staged:"
+)
 
-// newPoolBackend builds a Redis counter backend over the mock client, wired
-// the way the pool paths need: a local fallback and a closed breaker.
-func newPoolBackend(t *testing.T, mock *MockRedisClient) *RedisCounterBackend {
+// errRedisDown is the Redis failure the fake injects.
+var errRedisDown = errors.New("redis down")
+
+// fakeRedis is an in-memory Redis holding hashes only, enough for the usage
+// paths. Each error field, when set, fails that command.
+type fakeRedis struct {
+	RedisClient
+
+	mu        sync.Mutex
+	hashes    map[string]map[string]string
+	ttls      map[string]time.Duration
+	execErr   error
+	hgetErr   error
+	renameErr error
+	scanErr   error
+	delErr    error
+}
+
+// newFakeRedis returns an empty fake.
+func newFakeRedis() *fakeRedis {
+	return &fakeRedis{hashes: map[string]map[string]string{}, ttls: map[string]time.Duration{}}
+}
+
+// HGetAll returns a copy of the hash, or an empty map when it does not exist,
+// as Redis does.
+func (f *fakeRedis) HGetAll(_ context.Context, key string) *redis.MapStringStringCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hgetErr != nil {
+		return redis.NewMapStringStringResult(nil, f.hgetErr)
+	}
+	return redis.NewMapStringStringResult(maps.Clone(f.hashes[key]), nil)
+}
+
+// Rename moves a hash to a new key, failing as Redis does when the source is
+// missing.
+func (f *fakeRedis) Rename(_ context.Context, key, newkey string) *redis.StatusCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.renameErr != nil {
+		return redis.NewStatusResult("", f.renameErr)
+	}
+	h, ok := f.hashes[key]
+	if !ok {
+		return redis.NewStatusResult("", errors.New("ERR no such key"))
+	}
+	delete(f.hashes, key)
+	f.hashes[newkey] = h
+	return redis.NewStatusResult("OK", nil)
+}
+
+// Scan returns one matching key per call so the caller's cursor loop is
+// exercised.
+func (f *fakeRedis) Scan(_ context.Context, cursor uint64, match string, _ int64) *redis.ScanCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.scanErr != nil {
+		return redis.NewScanCmdResult(nil, 0, f.scanErr)
+	}
+	var keys []string
+	for k := range f.hashes {
+		if ok, _ := path.Match(match, k); ok {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	if cursor >= uint64(len(keys)) {
+		return redis.NewScanCmdResult(nil, 0, nil)
+	}
+	next := cursor + 1
+	if next == uint64(len(keys)) {
+		next = 0
+	}
+	return redis.NewScanCmdResult(keys[cursor:cursor+1], next, nil)
+}
+
+// Del removes the named hashes.
+func (f *fakeRedis) Del(_ context.Context, keys ...string) *redis.IntCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.delErr != nil {
+		return redis.NewIntResult(0, f.delErr)
+	}
+	var n int64
+	for _, k := range keys {
+		if _, ok := f.hashes[k]; ok {
+			delete(f.hashes, k)
+			n++
+		}
+	}
+	return redis.NewIntResult(n, nil)
+}
+
+// TxPipeline returns a transaction that applies its queued commands on Exec.
+func (f *fakeRedis) TxPipeline() redis.Pipeliner {
+	return &fakeTx{owner: f}
+}
+
+// seed sets a hash field directly, for state a test needs before it starts.
+func (f *fakeRedis) seed(key, field string, n int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hashes[key] == nil {
+		f.hashes[key] = map[string]string{}
+	}
+	f.hashes[key][field] = strconv.FormatInt(n, 10)
+}
+
+// has reports whether a key exists.
+func (f *fakeRedis) has(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.hashes[key]
+	return ok
+}
+
+// hincr is one queued HIncrBy.
+type hincr struct {
+	key, field string
+	n          int64
+}
+
+// fakeTx queues HIncrBy and Expire and applies them together on Exec, or none
+// of them when the fake's execErr is set.
+type fakeTx struct {
+	redis.Pipeliner
+
+	owner   *fakeRedis
+	incrs   []hincr
+	expires []string
+}
+
+// HIncrBy queues one field increment.
+func (t *fakeTx) HIncrBy(ctx context.Context, key, field string, n int64) *redis.IntCmd {
+	t.incrs = append(t.incrs, hincr{key: key, field: field, n: n})
+	return redis.NewIntCmd(ctx)
+}
+
+// Expire queues a TTL on the key.
+func (t *fakeTx) Expire(ctx context.Context, key string, _ time.Duration) *redis.BoolCmd {
+	t.expires = append(t.expires, key)
+	return redis.NewBoolCmd(ctx)
+}
+
+// Exec applies every queued command, or fails with none applied.
+func (t *fakeTx) Exec(_ context.Context) ([]redis.Cmder, error) {
+	f := t.owner
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.execErr != nil {
+		return nil, f.execErr
+	}
+	for _, c := range t.incrs {
+		if f.hashes[c.key] == nil {
+			f.hashes[c.key] = map[string]string{}
+		}
+		cur, _ := strconv.ParseInt(f.hashes[c.key][c.field], 10, 64)
+		f.hashes[c.key][c.field] = strconv.FormatInt(cur+c.n, 10)
+	}
+	for _, k := range t.expires {
+		f.ttls[k] = keyTTL
+	}
+	return nil, nil
+}
+
+// newHashBackend builds a Redis counter backend over the client with a local
+// fallback and a breaker that opens on the first failure.
+func newHashBackend(t *testing.T, client RedisClient, backends ...string) *RedisCounterBackend {
 	t.Helper()
+	if len(backends) == 0 {
+		backends = []string{backendB1}
+	}
 	return &RedisCounterBackend{
-		client:    mock,
-		prefix:    "test",
-		local:     NewLocalCounterBackend([]string{"b1"}),
-		backends:  []string{"b1"},
+		client:    client,
+		prefix:    testPrefix,
+		local:     NewLocalCounterBackend(backends),
+		backends:  backends,
 		cb:        newTestCB(),
 		log:       slog.Default(),
 		stopProbe: make(chan struct{}),
@@ -43,270 +218,308 @@ func newPoolBackend(t *testing.T, mock *MockRedisClient) *RedisCounterBackend {
 	}
 }
 
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
+// liveKey is the live hash for a backend in the current period.
+func liveKey(backend string) string {
+	return testPrefix + ":usage:" + CurrentPeriod() + ":" + backend
+}
 
-// TestAddPools_PipelinesOneHashPerBackend pins the key layout: every pool for
-// a backend is a field in one hash, so a flush can read them all at once.
-func TestAddPools_PipelinesOneHashPerBackend(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-	mock.EXPECT().Pipeline().Return(pipe)
-
-	r := newPoolBackend(t, mock)
-	r.AddPools("b1", map[string]int64{"class_a": 3, "class_b": 1})
-
-	if len(pipe.hIncrByKeys) != 2 {
-		t.Fatalf("HIncrBy calls = %d, want 2", len(pipe.hIncrByKeys))
+// byBackend indexes batches by backend name.
+func byBackend(batches []core.UsageBatch) map[string]core.UsageBatch {
+	out := make(map[string]core.UsageBatch, len(batches))
+	for _, b := range batches {
+		out[b.Backend] = b
 	}
-	want := r.poolKey("b1")
-	for i, key := range pipe.hIncrByKeys {
-		if key != want {
-			t.Errorf("HIncrBy[%d] key = %q, want %q", i, key, want)
+	return out
+}
+
+// TestCharge_WritesOneHashPerBackendAndPeriod pins the key layout: totals and
+// pools are fields of one hash, and the hash gets the key TTL.
+func TestCharge_WritesOneHashPerBackendAndPeriod(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+
+	r.Charge(backendB1, Charge{APIRequests: 2, IngressBytes: 512, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
+
+	h := fr.hashes[liveKey(backendB1)]
+	want := map[string]string{fieldAPIRequests: "2", fieldIngressBytes: "512", "pool:class_a": "2", "pool:class_b": "2"}
+	if !maps.Equal(h, want) {
+		t.Errorf("hash = %v, want %v; zero fields are not written", h, want)
+	}
+	if fr.ttls[liveKey(backendB1)] != keyTTL {
+		t.Errorf("TTL = %v, want %v", fr.ttls[liveKey(backendB1)], keyTTL)
+	}
+
+	r.Charge(backendB1, Charge{})
+	if got := loaded(r, backendB1); got.APIRequests != 2 || got.Pools[poolClassA] != 2 {
+		t.Errorf("Load = %+v, want 2 requests and 2 against class_a", got)
+	}
+}
+
+// TestCharge_DropsAnUnknownBackend asserts a charge for a backend not named at
+// construction reaches neither Redis nor the local counters.
+func TestCharge_DropsAnUnknownBackend(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+
+	r.Charge("unknown", Charge{APIRequests: 1})
+
+	if fr.has(liveKey("unknown")) {
+		t.Error("a charge for an unknown backend reached Redis")
+	}
+	if got := loaded(r.local, "unknown"); !got.IsZero() {
+		t.Errorf("local counters = %+v, want zero", got)
+	}
+}
+
+// TestTakeShared_EscapesGlobCharsInThePrefix asserts the SCAN pattern matches
+// the prefix literally, so a prefix holding glob characters neither matches
+// another prefix's staged hashes nor misses its own.
+func TestTakeShared_EscapesGlobCharsInThePrefix(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	r.prefix = "te*st[1]"
+	fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "own"), fieldAPIRequests, 1)
+	fr.seed("teXst1:usage-staged:"+CurrentPeriod()+":b1:other", fieldAPIRequests, 2)
+
+	batches := r.TakeShared(context.Background())
+
+	if len(batches) != 1 || batches[0].ID != "own" {
+		t.Errorf("TakeShared = %+v, want only this prefix's staged batch", batches)
+	}
+}
+
+// TestCharge_FailureKeepsTheChargeLocally asserts a failed transaction moves
+// the charge to the local counters, and Load still counts it.
+func TestCharge_FailureKeepsTheChargeLocally(t *testing.T) {
+	fr := newFakeRedis()
+	fr.execErr = errRedisDown
+	r := newHashBackend(t, fr)
+
+	r.Charge(backendB1, Charge{APIRequests: 3})
+
+	if !r.inFallback() {
+		t.Error("a failure on an open breaker should enter fallback")
+	}
+	if got := loaded(r.local, backendB1).APIRequests; got != 3 {
+		t.Errorf("local requests = %d, want 3", got)
+	}
+	if got := loaded(r, backendB1).APIRequests; got != 3 {
+		t.Errorf("Load = %d, want the local 3", got)
+	}
+}
+
+// TestLoad_AddsLocalToTheHash asserts Load is the shared hash plus what this
+// instance holds locally, and falls back to local alone on a read error.
+func TestLoad_AddsLocalToTheHash(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	r.Charge(backendB1, Charge{APIRequests: 5, Pools: poolsOf(poolClassA), PoolN: 5})
+	r.local.Charge(backendB1, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
+
+	if got := loaded(r, backendB1); got.APIRequests != 7 || got.Pools[poolClassA] != 7 {
+		t.Errorf("Load = %+v, want 7 requests and 7 against class_a", got)
+	}
+
+	fr.hgetErr = errRedisDown
+	if got := loaded(r, backendB1).APIRequests; got != 2 {
+		t.Errorf("Load on a read error = %d, want the local 2", got)
+	}
+}
+
+// TestFallback_ChargesAndLoadsLocally asserts a backend in fallback never
+// touches Redis for a charge or a load.
+func TestFallback_ChargesAndLoadsLocally(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	r.setFallback(true)
+	t.Cleanup(func() { r.setFallback(false) })
+
+	r.Charge(backendB1, Charge{APIRequests: 4})
+
+	if fr.has(liveKey(backendB1)) {
+		t.Error("a charge in fallback reached Redis")
+	}
+	if got := loaded(r, backendB1).APIRequests; got != 4 {
+		t.Errorf("Load = %d, want the local 4", got)
+	}
+}
+
+// TestTakeShared_StagesAndReturnsBatches asserts each live hash is renamed
+// under a flush ID and returned as a batch whose key parses back, including a
+// backend whose name holds a colon.
+func TestTakeShared_StagesAndReturnsBatches(t *testing.T) {
+	const colonBackend = "eu:west"
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr, backendB1, colonBackend, "idle")
+	r.Charge(backendB1, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
+	r.Charge(colonBackend, Charge{EgressBytes: 100})
+
+	batches := byBackend(r.TakeShared(context.Background()))
+
+	if len(r.Backends()) != 3 {
+		t.Errorf("Backends() = %v, want the three configured", r.Backends())
+	}
+	if len(batches) != 2 {
+		t.Fatalf("TakeShared returned %v, want b1 and eu:west", batches)
+	}
+	if b := batches[backendB1]; b.ID == "" || b.Period != CurrentPeriod() || b.APIRequests != 2 || b.Pools[poolClassA] != 2 {
+		t.Errorf("b1 batch = %+v, want an ID, the current period, and the charge", b)
+	}
+	if b := batches[colonBackend]; b.ID == "" || b.EgressBytes != 100 {
+		t.Errorf("eu:west batch = %+v, want an ID and 100 egress", b)
+	}
+	if fr.has(liveKey(backendB1)) || !fr.has(r.stagedKey(CurrentPeriod(), backendB1, batches[backendB1].ID)) {
+		t.Error("the live hash should have moved to its staged key")
+	}
+}
+
+// TestSettle_StagedBatch asserts an applied staged batch is deleted and an
+// unapplied one is returned again, with the same ID, by the next take.
+func TestSettle_StagedBatch(t *testing.T) {
+	ctx := context.Background()
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr, backendB1, "b2")
+	r.Charge(backendB1, Charge{APIRequests: 1})
+	r.Charge("b2", Charge{APIRequests: 2})
+
+	first := byBackend(r.TakeShared(ctx))
+	applied, kept := first[backendB1], first["b2"]
+	r.Settle(ctx, &applied, true)
+	r.Settle(ctx, &kept, false)
+
+	if fr.has(r.stagedKey(applied.Period, applied.Backend, applied.ID)) {
+		t.Error("an applied staged hash should be deleted")
+	}
+	again := r.TakeShared(ctx)
+	if len(again) != 1 || again[0].ID != kept.ID || again[0].APIRequests != 2 {
+		t.Errorf("second take = %+v, want only the kept b2 batch %q", again, kept.ID)
+	}
+}
+
+// TestSettle_InFallbackKeepsTheStagedHash asserts a staged hash is not
+// deleted while Redis is in fallback; a later flush finds it again.
+func TestSettle_InFallbackKeepsTheStagedHash(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	key := r.stagedKey(CurrentPeriod(), backendB1, "abc")
+	fr.seed(key, fieldAPIRequests, 1)
+	r.setFallback(true)
+	t.Cleanup(func() { r.setFallback(false) })
+
+	r.Settle(context.Background(), &core.UsageBatch{ID: "abc", Backend: backendB1, Period: CurrentPeriod()}, true)
+
+	if !fr.has(key) {
+		t.Error("the staged hash was deleted in fallback")
+	}
+}
+
+// TestSettle_LocalBatchReturnsToLocal asserts a batch with no ID is the local
+// backend's to settle.
+func TestSettle_LocalBatchReturnsToLocal(t *testing.T) {
+	r := newHashBackend(t, newFakeRedis())
+	b := core.UsageBatch{Backend: backendB1, Period: CurrentPeriod(), Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 6}}}
+
+	r.Settle(context.Background(), &b, false)
+
+	batches := r.Take(context.Background())
+	if len(batches) != 1 || batches[0].APIRequests != 6 {
+		t.Errorf("Take = %+v, want the local batch of 6", batches)
+	}
+}
+
+// TestTakeShared_TakesThePreviousMonth asserts a hash left in the previous
+// period is staged too, so the end of a month is flushed after it rolls over.
+func TestTakeShared_TakesThePreviousMonth(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	previous := flushPeriods()[1]
+	fr.seed(r.hashKey(previous, backendB1), fieldAPIRequests, 9)
+
+	batches := r.TakeShared(context.Background())
+
+	if len(batches) != 1 || batches[0].Period != previous || batches[0].APIRequests != 9 {
+		t.Errorf("TakeShared = %+v, want the %s batch of 9", batches, previous)
+	}
+}
+
+// TestTakeShared_SkipsWhatCannotBeRead asserts a malformed staged key, an
+// empty hash, and an unparseable field are skipped rather than failing the
+// take.
+func TestTakeShared_SkipsWhatCannotBeRead(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	fr.seed(stagedPrefix+"garbage", fieldAPIRequests, 1)
+	fr.hashes[r.stagedKey(CurrentPeriod(), "empty", "e1")] = map[string]string{}
+	good := r.stagedKey(CurrentPeriod(), backendB1, "g1")
+	fr.seed(good, fieldAPIRequests, 3)
+	fr.hashes[good][fieldEgressBytes] = "NaN"
+	fr.hashes[good]["unrelated"] = "5"
+
+	batches := r.TakeShared(context.Background())
+
+	if len(batches) != 1 || batches[0].ID != "g1" || batches[0].APIRequests != 3 || batches[0].EgressBytes != 0 {
+		t.Errorf("TakeShared = %+v, want only g1 with 3 requests", batches)
+	}
+}
+
+// TestTakeShared_StageErrorStillReadsStaged asserts a failed rename stops the
+// staging pass but still returns hashes already staged.
+func TestTakeShared_StageErrorStillReadsStaged(t *testing.T) {
+	fr := newFakeRedis()
+	r := newHashBackend(t, fr)
+	fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "left"), fieldAPIRequests, 4)
+	fr.renameErr = errRedisDown
+
+	batches := r.TakeShared(context.Background())
+
+	if len(batches) != 1 || batches[0].ID != "left" {
+		t.Errorf("TakeShared = %+v, want the leftover staged batch", batches)
+	}
+}
+
+// TestTakeShared_ReadErrors asserts a failed scan or hash read returns no
+// batch rather than a partial one.
+func TestTakeShared_ReadErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		inject func(*fakeRedis)
+	}{
+		{name: "scan", inject: func(f *fakeRedis) { f.scanErr = errRedisDown }},
+		{name: "hgetall", inject: func(f *fakeRedis) { f.hgetErr = errRedisDown }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := newFakeRedis()
+			r := newHashBackend(t, fr)
+			fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "s1"), fieldAPIRequests, 1)
+			tc.inject(fr)
+
+			if got := r.TakeShared(context.Background()); len(got) != 0 {
+				t.Errorf("TakeShared = %+v, want nothing", got)
+			}
+		})
+	}
+}
+
+// TestParseStagedKey covers the key shapes a scan can return: a well-formed
+// key, a backend name holding colons, and malformed keys that must not parse.
+func TestParseStagedKey(t *testing.T) {
+	r := &RedisCounterBackend{prefix: testPrefix}
+	for _, tc := range []struct {
+		key  string
+		want core.UsageBatch
+		ok   bool
+	}{
+		{key: stagedPrefix + "2026-10:b1:ID1", want: core.UsageBatch{ID: "ID1", Backend: backendB1, Period: "2026-10"}, ok: true},
+		{key: stagedPrefix + "2026-10:eu:west:1:ID2", want: core.UsageBatch{ID: "ID2", Backend: "eu:west:1", Period: "2026-10"}, ok: true},
+		{key: "other:usage-staged:2026-10:b1:ID1"},
+		{key: stagedPrefix + "2026-10"},
+		{key: stagedPrefix + "2026-10:b1:"},
+		{key: stagedPrefix + "2026-10::ID1"},
+		{key: stagedPrefix + "2026-10:b1ID"},
+	} {
+		got, ok := r.parseStagedKey(tc.key)
+		if ok != tc.ok || got.ID != tc.want.ID || got.Backend != tc.want.Backend || got.Period != tc.want.Period {
+			t.Errorf("parseStagedKey(%q) = %+v, %v; want %+v, %v", tc.key, got, ok, tc.want, tc.ok)
 		}
-	}
-	if len(pipe.expireKeys) != 1 || pipe.expireKeys[0] != want {
-		t.Errorf("expire keys = %v, want one TTL on %q", pipe.expireKeys, want)
-	}
-}
-
-// TestAddPools_EmptyDeltasTouchesRedis covers the common case of an operation
-// that charges no pool: it must not open a pipeline at all. The mock fails the
-// test if Pipeline is called, since no call is expected.
-func TestAddPools_EmptyDeltasTouchesRedis(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	r := newPoolBackend(t, NewMockRedisClient(ctrl))
-	r.AddPools("b1", nil)
-}
-
-// TestAddPools_FallsBackToLocalOnError is the durability contract: a Redis
-// failure must leave the charge in the local counters, where tryRecover
-// replays it, rather than dropping it.
-func TestAddPools_FallsBackToLocalOnError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Pipeline().Return(&fakePipeliner{execErr: errors.New("connection reset")})
-
-	r := newPoolBackend(t, mock)
-	r.AddPools("b1", map[string]int64{"class_a": 5})
-
-	if got := r.local.LoadPool("b1", "class_a"); got != 5 {
-		t.Errorf("local pool counter = %d, want 5 after the Redis write failed", got)
-	}
-}
-
-// TestChargePools_PipelinesEachPoolOnTheHash verifies ChargePools adds n to
-// every pool in one pipeline on the backend's hash, and opens none for no pools.
-func TestChargePools_PipelinesEachPoolOnTheHash(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-	mock.EXPECT().Pipeline().Return(pipe)
-
-	r := newPoolBackend(t, mock)
-	r.ChargePools("b1", nil, 1)
-	r.ChargePools("b1", []core.RequestPool{{Name: "class_a"}, {Name: "all"}}, 2)
-
-	want := r.poolKey("b1")
-	if len(pipe.hIncrByKeys) != 2 || pipe.hIncrByKeys[0] != want || pipe.hIncrByKeys[1] != want {
-		t.Errorf("HIncrBy keys = %v, want two on %q", pipe.hIncrByKeys, want)
-	}
-}
-
-// TestChargePools_FallsBackToLocal verifies a failed pipeline, and the outage
-// path that never attempts one, both leave the charge in the local counters.
-func TestChargePools_FallsBackToLocal(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Pipeline().Return(&fakePipeliner{execErr: errors.New("connection reset")})
-	pools := []core.RequestPool{{Name: "class_a"}}
-
-	r := newPoolBackend(t, mock)
-	r.ChargePools("b1", pools, 5)
-	r.setFallback(true)
-	r.ChargePools("b1", pools, 2)
-
-	if got := r.local.LoadPool("b1", "class_a"); got != 7 {
-		t.Errorf("local pool counter = %d, want 7", got)
-	}
-}
-
-// TestAddPools_UsesLocalWhileInFallback covers the outage path, where the
-// pipeline is never attempted.
-func TestAddPools_UsesLocalWhileInFallback(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	r := newPoolBackend(t, NewMockRedisClient(ctrl))
-	r.setFallback(true)
-
-	r.AddPools("b1", map[string]int64{"class_a": 2})
-	if got := r.local.LoadPool("b1", "class_a"); got != 2 {
-		t.Errorf("local pool counter = %d, want 2 while in fallback", got)
-	}
-}
-
-// TestLoadPool_ReadsTheHashField covers the admission read.
-func TestLoadPool_ReadsTheHashField(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().HGet(gomock.Any(), gomock.Any(), "class_a").
-		Return(redis.NewStringResult("42", nil))
-
-	r := newPoolBackend(t, mock)
-	if got := r.LoadPool("b1", "class_a"); got != 42 {
-		t.Errorf("LoadPool = %d, want 42", got)
-	}
-}
-
-// TestLoadPool_MissingFieldIsZero pins the first charge of a period: the field
-// does not exist yet, and redis.Nil must read as zero rather than as an error.
-func TestLoadPool_MissingFieldIsZero(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().HGet(gomock.Any(), gomock.Any(), "class_a").
-		Return(redis.NewStringResult("", redis.Nil))
-
-	r := newPoolBackend(t, mock)
-	if got := r.LoadPool("b1", "class_a"); got != 0 {
-		t.Errorf("LoadPool = %d, want 0 for a pool not yet charged", got)
-	}
-}
-
-// TestLoadPool_FallsBackToLocalOnError keeps admission answerable during an
-// outage: the local counters hold what this process has spent.
-func TestLoadPool_FallsBackToLocalOnError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().HGet(gomock.Any(), gomock.Any(), "class_a").
-		Return(redis.NewStringResult("", errors.New("connection reset")))
-
-	r := newPoolBackend(t, mock)
-	r.local.AddPools("b1", map[string]int64{"class_a": 9})
-
-	if got := r.LoadPool("b1", "class_a"); got != 9 {
-		t.Errorf("LoadPool = %d, want the local value of 9", got)
-	}
-}
-
-// TestLoadPool_UsesLocalWhileInFallback covers the short-circuit.
-func TestLoadPool_UsesLocalWhileInFallback(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	r := newPoolBackend(t, NewMockRedisClient(ctrl))
-	r.setFallback(true)
-	r.local.AddPools("b1", map[string]int64{"class_a": 4})
-
-	if got := r.LoadPool("b1", "class_a"); got != 4 {
-		t.Errorf("LoadPool = %d, want 4 while in fallback", got)
-	}
-}
-
-// TestSwapPools_ReadsAndClearsTheHash covers the flush read. The read and the
-// delete run in one transaction so a charge landing between them is not lost.
-func TestSwapPools_ReadsAndClearsTheHash(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{hgetAll: map[string]string{"class_a": "12", "class_b": "7"}}
-	mock.EXPECT().TxPipeline().Return(pipe)
-
-	r := newPoolBackend(t, mock)
-	got := r.SwapPools("b1")
-
-	if got["class_a"] != 12 || got["class_b"] != 7 {
-		t.Errorf("SwapPools = %v, want class_a 12 and class_b 7", got)
-	}
-	if len(pipe.delKeys) != 1 || pipe.delKeys[0] != r.poolKey("b1") {
-		t.Errorf("deleted keys = %v, want the backend's pool hash", pipe.delKeys)
-	}
-}
-
-// TestSwapPools_EmptyHashIsNil covers a period with no pool activity, which
-// must not flush an empty map.
-func TestSwapPools_EmptyHashIsNil(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().TxPipeline().Return(&fakePipeliner{hgetAll: map[string]string{}})
-
-	r := newPoolBackend(t, mock)
-	if got := r.SwapPools("b1"); got != nil {
-		t.Errorf("SwapPools = %v, want nil for an untouched period", got)
-	}
-}
-
-// TestSwapPools_DiscardsUnparseableValue keeps one corrupt field from failing
-// the whole flush: the rest of the backend's pools still reach the database.
-func TestSwapPools_DiscardsUnparseableValue(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().TxPipeline().Return(&fakePipeliner{
-		hgetAll: map[string]string{"class_a": "5", "class_b": "not-a-number"},
-	})
-
-	r := newPoolBackend(t, mock)
-	got := r.SwapPools("b1")
-
-	if len(got) != 1 || got["class_a"] != 5 {
-		t.Errorf("SwapPools = %v, want only the parseable pool", got)
-	}
-}
-
-// TestSwapPools_FallsBackToLocalOnError covers the outage path on the flush
-// side, where the local counters are the ones holding deltas.
-func TestSwapPools_FallsBackToLocalOnError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().TxPipeline().Return(&fakePipeliner{execErr: errors.New("connection reset")})
-
-	r := newPoolBackend(t, mock)
-	r.local.AddPools("b1", map[string]int64{"class_a": 3})
-
-	got := r.SwapPools("b1")
-	if got["class_a"] != 3 {
-		t.Errorf("SwapPools = %v, want the local deltas", got)
-	}
-	if left := r.local.LoadPool("b1", "class_a"); left != 0 {
-		t.Errorf("local pool counter = %d, want 0 after the local swap", left)
-	}
-}
-
-// TestSwapPools_UsesLocalWhileInFallback covers the short-circuit.
-func TestSwapPools_UsesLocalWhileInFallback(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	r := newPoolBackend(t, NewMockRedisClient(ctrl))
-	r.setFallback(true)
-	r.local.AddPools("b1", map[string]int64{"class_a": 6})
-
-	if got := r.SwapPools("b1"); got["class_a"] != 6 {
-		t.Errorf("SwapPools = %v, want the local deltas while in fallback", got)
-	}
-}
-
-// TestTryRecover_ReplaysPoolDeltas is the recovery contract for the pool
-// counters: deltas buffered locally during an outage have to reach Redis as
-// HINCRBYs, or a budget spent while Redis was down is spent again after it
-// comes back.
-func TestTryRecover_ReplaysPoolDeltas(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	pipe := &fakePipeliner{}
-
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-	mock.EXPECT().Pipeline().Return(pipe)
-
-	r := newPoolBackend(t, mock)
-	r.setFallback(true)
-	r.local.AddAll("b1", 4, 0, 0)
-	r.local.AddPools("b1", map[string]int64{"class_a": 4})
-
-	r.tryRecover()
-
-	if len(pipe.hIncrByFields) != 1 || pipe.hIncrByFields[0] != "class_a" {
-		t.Fatalf("replayed pool fields = %v, want [class_a]", pipe.hIncrByFields)
-	}
-	if pipe.hIncrByVals[0] != 4 {
-		t.Errorf("replayed value = %d, want 4", pipe.hIncrByVals[0])
-	}
-	if got := r.local.LoadPool("b1", "class_a"); got != 0 {
-		t.Errorf("local pool counter = %d, want 0 after replay", got)
 	}
 }

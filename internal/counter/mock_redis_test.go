@@ -75,20 +75,6 @@ func (mr *MockRedisClientMockRecorder) Del(ctx any, keys ...any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Del", reflect.TypeOf((*MockRedisClient)(nil).Del), varargs...)
 }
 
-// Expire mocks base method.
-func (m *MockRedisClient) Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Expire", ctx, key, expiration)
-	ret0, _ := ret[0].(*redis.BoolCmd)
-	return ret0
-}
-
-// Expire indicates an expected call of Expire.
-func (mr *MockRedisClientMockRecorder) Expire(ctx, key, expiration any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Expire", reflect.TypeOf((*MockRedisClient)(nil).Expire), ctx, key, expiration)
-}
-
 // Get mocks base method.
 func (m *MockRedisClient) Get(ctx context.Context, key string) *redis.StringCmd {
 	m.ctrl.T.Helper()
@@ -103,46 +89,18 @@ func (mr *MockRedisClientMockRecorder) Get(ctx, key any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockRedisClient)(nil).Get), ctx, key)
 }
 
-// GetSet mocks base method.
-func (m *MockRedisClient) GetSet(ctx context.Context, key string, value any) *redis.StringCmd {
+// HGetAll mocks base method.
+func (m *MockRedisClient) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSet", ctx, key, value)
-	ret0, _ := ret[0].(*redis.StringCmd)
+	ret := m.ctrl.Call(m, "HGetAll", ctx, key)
+	ret0, _ := ret[0].(*redis.MapStringStringCmd)
 	return ret0
 }
 
-// GetSet indicates an expected call of GetSet.
-func (mr *MockRedisClientMockRecorder) GetSet(ctx, key, value any) *gomock.Call {
+// HGetAll indicates an expected call of HGetAll.
+func (mr *MockRedisClientMockRecorder) HGetAll(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSet", reflect.TypeOf((*MockRedisClient)(nil).GetSet), ctx, key, value)
-}
-
-// HGet mocks base method.
-func (m *MockRedisClient) HGet(ctx context.Context, key, field string) *redis.StringCmd {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HGet", ctx, key, field)
-	ret0, _ := ret[0].(*redis.StringCmd)
-	return ret0
-}
-
-// HGet indicates an expected call of HGet.
-func (mr *MockRedisClientMockRecorder) HGet(ctx, key, field any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HGet", reflect.TypeOf((*MockRedisClient)(nil).HGet), ctx, key, field)
-}
-
-// IncrBy mocks base method.
-func (m *MockRedisClient) IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrBy", ctx, key, value)
-	ret0, _ := ret[0].(*redis.IntCmd)
-	return ret0
-}
-
-// IncrBy indicates an expected call of IncrBy.
-func (mr *MockRedisClientMockRecorder) IncrBy(ctx, key, value any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrBy", reflect.TypeOf((*MockRedisClient)(nil).IncrBy), ctx, key, value)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HGetAll", reflect.TypeOf((*MockRedisClient)(nil).HGetAll), ctx, key)
 }
 
 // Ping mocks base method.
@@ -159,20 +117,6 @@ func (mr *MockRedisClientMockRecorder) Ping(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ping", reflect.TypeOf((*MockRedisClient)(nil).Ping), ctx)
 }
 
-// Pipeline mocks base method.
-func (m *MockRedisClient) Pipeline() redis.Pipeliner {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Pipeline")
-	ret0, _ := ret[0].(redis.Pipeliner)
-	return ret0
-}
-
-// Pipeline indicates an expected call of Pipeline.
-func (mr *MockRedisClientMockRecorder) Pipeline() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pipeline", reflect.TypeOf((*MockRedisClient)(nil).Pipeline))
-}
-
 // Publish mocks base method.
 func (m *MockRedisClient) Publish(ctx context.Context, channel string, message any) *redis.IntCmd {
 	m.ctrl.T.Helper()
@@ -185,6 +129,34 @@ func (m *MockRedisClient) Publish(ctx context.Context, channel string, message a
 func (mr *MockRedisClientMockRecorder) Publish(ctx, channel, message any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockRedisClient)(nil).Publish), ctx, channel, message)
+}
+
+// Rename mocks base method.
+func (m *MockRedisClient) Rename(ctx context.Context, key, newkey string) *redis.StatusCmd {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Rename", ctx, key, newkey)
+	ret0, _ := ret[0].(*redis.StatusCmd)
+	return ret0
+}
+
+// Rename indicates an expected call of Rename.
+func (mr *MockRedisClientMockRecorder) Rename(ctx, key, newkey any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockRedisClient)(nil).Rename), ctx, key, newkey)
+}
+
+// Scan mocks base method.
+func (m *MockRedisClient) Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Scan", ctx, cursor, match, count)
+	ret0, _ := ret[0].(*redis.ScanCmd)
+	return ret0
+}
+
+// Scan indicates an expected call of Scan.
+func (mr *MockRedisClientMockRecorder) Scan(ctx, cursor, match, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Scan", reflect.TypeOf((*MockRedisClient)(nil).Scan), ctx, cursor, match, count)
 }
 
 // Set mocks base method.

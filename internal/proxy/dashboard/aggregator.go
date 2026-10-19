@@ -65,7 +65,7 @@ type Data struct {
 	PlaintextCopies        int64
 	CompressionStats       map[string]core.CompressionStat
 	ActiveMultipartCounts  map[string]int64
-	UsageStats             map[string]core.UsageStat
+	UsageStats             map[string]core.Usage
 	UsageLimits            map[string]core.UsageLimits
 	UsagePeriod            string
 	TopLevelEntries        *core.DirectoryListResult

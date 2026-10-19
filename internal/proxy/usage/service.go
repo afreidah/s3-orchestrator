@@ -68,7 +68,8 @@ func New(d *Deps) *Service {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// FlushUsage writes the accumulated in-memory counters to the store.
+// FlushUsage writes this instance's counters, and with Redis the staged shared
+// ones, to the store.
 func (s *Service) FlushUsage(ctx context.Context) error {
 	return s.usage.FlushUsage(ctx, s.stores)
 }
@@ -92,12 +93,6 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 // QUOTA VIEW
 // -------------------------------------------------------------------------
 
-// FlushQuota reloads the occupancy snapshot placement ranks against. Despite
-// the name nothing is written: byte counters move in the write transactions.
-func (s *Service) FlushQuota(ctx context.Context) error {
-	return s.RefreshQuotaBaselines(ctx)
-}
-
 // RefreshQuotaBaselines reloads each backend's ceiling and occupancy from the
 // store into the tracker. Called at startup before the listener opens, so the
 // first write is judged against real rows rather than an empty snapshot, and
@@ -116,10 +111,10 @@ func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
 }
 
 // RedisCounterConfigured reports whether the counters live in Redis, whatever
-// their health. The flush then holds an advisory lock even during a Redis
-// fallback, because a recovery part-way through an unlocked flush double-counts.
+// their health. The fleet snapshot and worker gauges are then shared through
+// it too.
 func (s *Service) RedisCounterConfigured() bool {
-	_, ok := s.usage.Backend().(*counter.RedisCounterBackend)
+	_, ok := s.usage.Backend().(counter.SharedBackend)
 	return ok
 }
 

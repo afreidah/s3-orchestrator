@@ -56,6 +56,20 @@ func (mr *MockMetadataStoreMockRecorder) AddDrainedObjects(ctx, backendName, mov
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddDrainedObjects", reflect.TypeOf((*MockMetadataStore)(nil).AddDrainedObjects), ctx, backendName, moved)
 }
 
+// ApplyUsageBatch mocks base method.
+func (m *MockMetadataStore) ApplyUsageBatch(ctx context.Context, b *core.UsageBatch) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ApplyUsageBatch", ctx, b)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ApplyUsageBatch indicates an expected call of ApplyUsageBatch.
+func (mr *MockMetadataStoreMockRecorder) ApplyUsageBatch(ctx, b any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyUsageBatch", reflect.TypeOf((*MockMetadataStore)(nil).ApplyUsageBatch), ctx, b)
+}
+
 // BackendObjectStats mocks base method.
 func (m *MockMetadataStore) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
 	m.ctrl.T.Helper()
@@ -555,34 +569,6 @@ func (mr *MockMetadataStoreMockRecorder) DiscardPending(ctx, p, reason any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscardPending", reflect.TypeOf((*MockMetadataStore)(nil).DiscardPending), ctx, p, reason)
 }
 
-// FlushPoolDeltas mocks base method.
-func (m *MockMetadataStore) FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushPoolDeltas", ctx, backendName, period, deltas)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FlushPoolDeltas indicates an expected call of FlushPoolDeltas.
-func (mr *MockMetadataStoreMockRecorder) FlushPoolDeltas(ctx, backendName, period, deltas any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushPoolDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushPoolDeltas), ctx, backendName, period, deltas)
-}
-
-// FlushUsageDeltas mocks base method.
-func (m *MockMetadataStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushUsageDeltas", ctx, backendName, period, apiRequests, egressBytes, ingressBytes)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FlushUsageDeltas indicates an expected call of FlushUsageDeltas.
-func (mr *MockMetadataStoreMockRecorder) FlushUsageDeltas(ctx, backendName, period, apiRequests, egressBytes, ingressBytes any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushUsageDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushUsageDeltas), ctx, backendName, period, apiRequests, egressBytes, ingressBytes)
-}
-
 // GetActiveMultipartCounts mocks base method.
 func (m *MockMetadataStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()
@@ -733,21 +719,6 @@ func (mr *MockMetadataStoreMockRecorder) GetPendingNotifications(ctx, limit any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPendingNotifications", reflect.TypeOf((*MockMetadataStore)(nil).GetPendingNotifications), ctx, limit)
 }
 
-// GetPoolUsageForPeriod mocks base method.
-func (m *MockMetadataStore) GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPoolUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.PoolUsage)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetPoolUsageForPeriod indicates an expected call of GetPoolUsageForPeriod.
-func (mr *MockMetadataStoreMockRecorder) GetPoolUsageForPeriod(ctx, period any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPoolUsageForPeriod", reflect.TypeOf((*MockMetadataStore)(nil).GetPoolUsageForPeriod), ctx, period)
-}
-
 // GetQuotaStats mocks base method.
 func (m *MockMetadataStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	m.ctrl.T.Helper()
@@ -809,10 +780,10 @@ func (mr *MockMetadataStoreMockRecorder) GetUnderReplicatedObjectsExcluding(ctx,
 }
 
 // GetUsageForPeriod mocks base method.
-func (m *MockMetadataStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
+func (m *MockMetadataStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.UsageStat)
+	ret0, _ := ret[0].(map[string]core.Usage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -126,7 +126,6 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		Tracker: rt.Usage(),
 		Fleet:   rt,
 		States:  states,
-		Locker:  locker,
 	}))
 	sm.Register("fleet-snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))

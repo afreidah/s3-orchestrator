@@ -108,7 +108,7 @@ func intentOn(backendName, objectKey string) gomock.Matcher {
 // pool deadlocks the dispatcher instead of failing the test.
 func newMockOps(ctrl *gomock.Controller) *MockOps {
 	ops := NewMockOps(ctrl)
-	ops.EXPECT().Quota().Return(counter.NewQuotaTracker(nil)).AnyTimes()
+	ops.EXPECT().Quota().Return(counter.NewQuotaTracker()).AnyTimes()
 	return ops
 }
 
@@ -527,12 +527,6 @@ func (m *mockMetadataStore) GetObjectBackendsForKeys(_ context.Context, _ []stri
 		return m.getBackendsForKeysResp, nil
 	}
 	return map[string][]string{}, nil
-}
-
-// FlushUsageDeltas is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
-	return nil
 }
 
 // DeleteObjectLocation is a stub on mockMetadataStore. A surplus-copy removal

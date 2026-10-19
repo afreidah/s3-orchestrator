@@ -81,7 +81,7 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 		Backends: backends,
 		Stores:   stores,
 		Usage:    usage,
-		Quota:    counter.NewQuotaTracker(nil),
+		Quota:    counter.NewQuotaTracker(),
 	}), stores, backends, usage
 }
 
@@ -482,7 +482,7 @@ func TestSyncBackend_RefusedWhenOutOfAPIBudget(t *testing.T) {
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
 
 	// The backend is never resolved and no page is ever charged: the refusal
 	// has to land before any of that, or it has not saved anything.
@@ -554,7 +554,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
 
 	lister := newPagedLister([][]backend.ListedObject{
 		{{Key: "vb/a", SizeBytes: 1}},
@@ -620,7 +620,7 @@ func TestReconcileBackend_RefusesAnExhaustedBackend(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister(nil), nil).AnyTimes()
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)

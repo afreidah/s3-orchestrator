@@ -25,7 +25,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -73,9 +72,12 @@ func finalizeCopyFixture(t *testing.T, store storetest.MetadataStore, native boo
 	return mgr, sr.Ended()[0], etag, err
 }
 
-// usageOf reads one usage counter for a backend.
-func usageOf(mgr *fleet, name, field string) int64 {
-	return mgr.Runtime.Usage().Backend().Load(name, field)
+// usageOf reads a backend's unflushed usage counters for the current
+// period.
+func usageOf(mgr *fleet, name string) core.Usage {
+	var u core.Usage
+	mgr.Runtime.Usage().Backend().Load(name, &u)
+	return u
 }
 
 // nativeCopyAttr reports whether the span was marked as a server-side copy.
@@ -111,10 +113,10 @@ func TestFinalizeCopy_Native(t *testing.T) {
 	if !nativeCopyAttr(span) {
 		t.Error("span not marked as a native copy")
 	}
-	if got := usageOf(mgr, "src", counter.FieldEgressBytes); got != 0 {
+	if got := usageOf(mgr, "src").EgressBytes; got != 0 {
 		t.Errorf("source egress = %d, want 0", got)
 	}
-	if got := usageOf(mgr, copyDest, counter.FieldIngressBytes); got != 0 {
+	if got := usageOf(mgr, copyDest).IngressBytes; got != 0 {
 		t.Errorf("destination ingress = %d, want 0", got)
 	}
 	if _, ok := mgr.LocationCache().Get(copyDest); ok {
@@ -134,10 +136,10 @@ func TestFinalizeCopy_Materialized(t *testing.T) {
 	if nativeCopyAttr(span) {
 		t.Error("materialized copy marked as native")
 	}
-	if got := usageOf(mgr, "src", counter.FieldEgressBytes); got != copySize {
+	if got := usageOf(mgr, "src").EgressBytes; got != copySize {
 		t.Errorf("source egress = %d, want %d", got, copySize)
 	}
-	if got := usageOf(mgr, copyDest, counter.FieldIngressBytes); got != copySize {
+	if got := usageOf(mgr, copyDest).IngressBytes; got != copySize {
 		t.Errorf("destination ingress = %d, want %d", got, copySize)
 	}
 	if _, ok := mgr.LocationCache().Get(copyDest); ok {
@@ -163,7 +165,7 @@ func TestFinalizeCopy_RecordFailure(t *testing.T) {
 		if nativeCopyAttr(span) {
 			t.Errorf("native=%v: span marked native despite the failure", native)
 		}
-		if got := usageOf(mgr, "src", counter.FieldEgressBytes); got != 0 {
+		if got := usageOf(mgr, "src").EgressBytes; got != 0 {
 			t.Errorf("native=%v: source egress = %d, want 0", native, got)
 		}
 		if _, ok := mgr.LocationCache().Get(copyDest); !ok {

@@ -177,3 +177,50 @@ type UsageStat struct {
 // keyed by pool name. Pools are additive, so these do not sum to
 // UsageStat.APIRequests and must never be presented as if they did.
 type PoolUsage map[string]int64
+
+// Usage is one backend's counters for one period: the request and byte totals
+// and every request pool charged. It is the one shape the counters, the limit
+// checks, the flush and the stored rows exchange.
+type Usage struct {
+	UsageStat
+	Pools PoolUsage
+}
+
+// Reset zeroes u for reuse, keeping its pool map's storage so refilling it
+// with the same pools does not allocate.
+func (u *Usage) Reset() {
+	u.UsageStat = UsageStat{}
+	clear(u.Pools)
+}
+
+// AddPool adds n to one pool's count, creating the pool map on first use.
+func (u *Usage) AddPool(name string, n int64) {
+	if u.Pools == nil {
+		u.Pools = make(PoolUsage)
+	}
+	u.Pools[name] += n
+}
+
+// IsZero reports whether u carries nothing to flush.
+func (u Usage) IsZero() bool {
+	if u.UsageStat != (UsageStat{}) {
+		return false
+	}
+	for _, n := range u.Pools {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// UsageBatch is one backend's counters for one period, taken for a flush. ID
+// is set for a batch staged in shared storage, which more than one flush can
+// find, so the store applies a batch with an ID at most once. A batch held
+// only in this process's memory has no ID.
+type UsageBatch struct {
+	ID      string
+	Backend string
+	Period  string
+	Usage
+}

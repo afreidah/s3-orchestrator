@@ -19,7 +19,9 @@ package counter
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -50,16 +52,17 @@ func pooled(t *testing.T, specs []core.PoolSpec, unmetered ...s3op.Operation) co
 	return lim
 }
 
-// spent seeds a period already partly consumed. Both halves of the baseline
-// are set together because that is how the collector loads them: the request
-// total for reporting, and the wildcard pool's share of it for admission.
+// spent seeds a period already partly consumed for one backend, keeping the
+// baselines already set for others. The request total and the wildcard pool's
+// share of it are set together, as the collector loads them.
 func spent(tracker *UsageTracker, name string, api, egress, ingress int64) {
-	stat := core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}
-	var pools core.PoolUsage
+	u := core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}}
 	if api > 0 {
-		pools = core.PoolUsage{core.PoolAll: api}
+		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}
-	tracker.SetBaseline(name, stat, pools)
+	baselines := maps.Clone(*tracker.baseline.Load())
+	baselines[name] = u
+	tracker.SetBaselines(baselines)
 }
 
 // reads is n GetObject operations, for the cases that care about how many
@@ -276,7 +279,10 @@ func TestWithinLimits_PoolsAreIndependent(t *testing.T) {
 			{Name: "class_b", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
 		}),
 	})
-	tracker.SetBaseline("b1", core.UsageStat{APIRequests: 10}, core.PoolUsage{"class_a": 10})
+	tracker.SetBaselines(map[string]core.Usage{"b1": {
+		UsageStat: core.UsageStat{APIRequests: 10},
+		Pools:     core.PoolUsage{"class_a": 10},
+	}})
 
 	if tracker.WithinLimits("b1", []s3op.Operation{s3op.PutObject}, 0, 0) {
 		t.Error("the write pool is spent; a write must be refused")
@@ -320,12 +326,8 @@ func TestRecord_IgnoresEmptyCharges(t *testing.T) {
 	tracker.RecordN("b1", s3op.GetObject, 0)
 	tracker.RecordN("b1", s3op.GetObject, -5)
 
-	all := backend.LoadAll("b1")
-	if all.APIRequests != 0 || all.EgressBytes != 0 || all.IngressBytes != 0 {
-		t.Errorf("counters = %+v, want all zero for empty charges", all)
-	}
-	if got := backend.LoadPool("b1", core.PoolAll); got != 0 {
-		t.Errorf("pool counter = %d, want 0", got)
+	if got := loaded(backend, "b1"); !got.IsZero() {
+		t.Errorf("counters = %+v, want all zero for empty charges", got)
 	}
 }
 
@@ -345,7 +347,7 @@ func TestWithinLimits_ZeroLimitPoolCountsWithoutRefusing(t *testing.T) {
 	if !tracker.WithinLimits("b1", reads(1), 0, 0) {
 		t.Error("a pool with no ceiling must never refuse")
 	}
-	if got := backend.LoadPool("b1", "watched"); got != 1000 {
+	if got := loaded(backend, "b1").Pools["watched"]; got != 1000 {
 		t.Errorf("pool count = %d, want 1000; an unbounded pool is still counted", got)
 	}
 	if tracker.NearLimit(0.8) {
@@ -394,10 +396,10 @@ func TestWithinLimits_UnmeteredNeverRefuses(t *testing.T) {
 	// Recorded even though unbilled: not charging an operation is not a reason
 	// to stop reporting that it happened.
 	tracker.Record("b1", s3op.DeleteObject, 0, 0)
-	if got := backend.LoadAll("b1").APIRequests; got != 2 {
+	if got := loaded(backend, "b1").APIRequests; got != 2 {
 		t.Errorf("api_requests = %d, want 2 (the write and the unmetered delete)", got)
 	}
-	if got := backend.LoadPool("b1", core.PoolAll); got != 1 {
+	if got := loaded(backend, "b1").Pools[core.PoolAll]; got != 1 {
 		t.Errorf("pool count = %d, want 1; an unmetered delete must charge no pool", got)
 	}
 }
@@ -416,13 +418,13 @@ func TestRecordAll_ChargesEachOperationsPools(t *testing.T) {
 	})
 	tracker.RecordAll("b1", []s3op.Operation{s3op.GetObject, s3op.PutObject}, 10, 20)
 
-	if got := backend.LoadPool("b1", "class_a"); got != 1 {
+	all := loaded(backend, "b1")
+	if got := all.Pools["class_a"]; got != 1 {
 		t.Errorf("class_a = %d, want 1", got)
 	}
-	if got := backend.LoadPool("b1", "class_b"); got != 1 {
+	if got := all.Pools["class_b"]; got != 1 {
 		t.Errorf("class_b = %d, want 1", got)
 	}
-	all := backend.LoadAll("b1")
 	if all.APIRequests != 2 || all.EgressBytes != 10 || all.IngressBytes != 20 {
 		t.Errorf("totals = %+v, want 2 requests / 10 egress / 20 ingress", all)
 	}
@@ -481,25 +483,49 @@ func TestGetLimits_ReturnsCopy(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// ResetBaselines
+// SetBaselines
 // -------------------------------------------------------------------------
 
-// TestResetBaselines verifies the reset baselines path by exercising tracker.SetBaseline, tracker.ResetBaselines, tracker.WithinLimits.
-func TestResetBaselines(t *testing.T) {
+// TestSetBaselines_ReplacesEveryBackend asserts a backend missing from the new
+// map starts at zero, which is how a new period with no rows clears it.
+func TestSetBaselines_ReplacesEveryBackend(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{
 		"b1": capped(t, 1000, 0, 0),
 		"b2": capped(t, 1000, 0, 0),
 	})
-	spent(tracker, "b1", 500, 0, 0)
-	spent(tracker, "b2", 500, 0, 0)
+	spent(tracker, "b1", 1000, 0, 0)
+	spent(tracker, "b2", 1000, 0, 0)
 
-	tracker.ResetBaselines([]string{"b1"})
+	tracker.SetBaselines(map[string]core.Usage{"b2": {Pools: core.PoolUsage{core.PoolAll: 1000}}})
 
-	// Both halves of the baseline have to clear: a pool count left behind
-	// would keep refusing work into the new period.
 	if !tracker.WithinLimits("b1", reads(999), 0, 0) {
-		t.Error("b1 baseline should be reset to zero")
+		t.Error("b1 is absent from the new baselines and should start at zero")
+	}
+	if tracker.WithinLimits("b2", reads(1), 0, 0) {
+		t.Error("b2 is still spent in the new baselines")
+	}
+
+	tracker.SetBaselines(nil)
+	if !tracker.WithinLimits("b2", reads(999), 0, 0) {
+		t.Error("nil baselines should clear every backend")
+	}
+}
+
+// TestNearLimit_PoolReachesThreshold asserts one tight pool is enough to want
+// a shorter flush interval, even when the byte dimensions have room.
+func TestNearLimit_PoolReachesThreshold(t *testing.T) {
+	t.Parallel()
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
+		"b1": pooled(t, []core.PoolSpec{
+			{Name: "writes", Operations: []string{string(s3op.PutObject)}, Limit: 10},
+			{Name: "reads", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
+		}),
+	})
+	tracker.RecordN("b1", s3op.PutObject, 9)
+
+	if !tracker.NearLimit(0.8) {
+		t.Error("the write pool is at 90% and should count as near its limit")
 	}
 }
 
@@ -507,94 +533,154 @@ func TestResetBaselines(t *testing.T) {
 // FlushUsage
 // -------------------------------------------------------------------------
 
-// TestFlushUsage_SwapsAndFlushes verifies the flush usage swaps and flushes contract.
-func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
+// TestFlushUsage_AppliesAndSettles asserts one batch carries the totals and
+// pools together, and a batch the store applied leaves nothing behind.
+func TestFlushUsage_AppliesAndSettles(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
 	tracker.RecordN("b1", s3op.GetObject, 10)
 	tracker.Record("b1", s3op.GetObject, 100, 50)
 
-	var flushedAPI, flushedEgress, flushedIngress int64
-	var flushedPools core.PoolUsage
-	mockFlusher := &mockUsageFlusher{
-		fn: func(_, _ string, api, eg, ing int64) error {
-			flushedAPI = api
-			flushedEgress = eg
-			flushedIngress = ing
-			return nil
-		},
-		poolFn: func(_, _ string, deltas core.PoolUsage) error {
-			flushedPools = deltas
-			return nil
-		},
-	}
-
-	err := tracker.FlushUsage(context.Background(), mockFlusher)
-	if err != nil {
+	flusher := &recordingFlusher{}
+	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if flushedAPI != 11 || flushedEgress != 100 || flushedIngress != 50 {
-		t.Errorf("flushed api=%d egress=%d ingress=%d, want 11/100/50", flushedAPI, flushedEgress, flushedIngress)
+	if len(flusher.applied) != 1 {
+		t.Fatalf("applied %d batches, want 1", len(flusher.applied))
 	}
-	if flushedPools[core.PoolAll] != 11 {
-		t.Errorf("flushed pools = %v, want 11 against %q", flushedPools, core.PoolAll)
+	b := flusher.applied[0]
+	if b.ID != "" || b.Backend != "b1" || b.Period != CurrentPeriod() {
+		t.Errorf("batch = %+v, want b1 in the current period with no ID", b)
 	}
-
-	// Counters should be zero after flush
-	all := backend.LoadAll("b1")
-	if all.APIRequests != 0 || all.EgressBytes != 0 || all.IngressBytes != 0 {
-		t.Error("counters should be zero after flush")
+	if b.APIRequests != 11 || b.EgressBytes != 100 || b.IngressBytes != 50 || b.Pools[core.PoolAll] != 11 {
+		t.Errorf("batch usage = %+v, want 11/100/50 and 11 against %q", b.Usage, core.PoolAll)
 	}
-	if got := backend.LoadPool("b1", core.PoolAll); got != 0 {
-		t.Errorf("pool counter = %d, want 0 after flush", got)
+	if got := loaded(backend, "b1"); !got.IsZero() {
+		t.Errorf("counters after flush = %+v, want zero", got)
 	}
 }
 
-// TestFlushUsage_RestoresOnError verifies the flush usage restores on error contract.
-func TestFlushUsage_RestoresOnError(t *testing.T) {
-	t.Parallel()
-	cb := NewLocalCounterBackend([]string{"b1"})
-	tracker := NewUsageTracker(cb, nil)
-	tracker.RecordN("b1", s3op.GetObject, 10)
-
-	mockFlusher := &mockUsageFlusher{fn: func(_, _ string, _, _, _ int64) error {
-		return errors.New("db down")
-	}}
-
-	err := tracker.FlushUsage(context.Background(), mockFlusher)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	// Counter should be restored
-	if cb.Load("b1", FieldAPIRequests) != 10 {
-		t.Errorf("counter should be restored after flush error, got %d", cb.Load("b1", FieldAPIRequests))
-	}
-}
-
-// TestFlushUsage_RestoresPoolsOnPoolError holds the halves apart: the totals
-// landed, so restoring them too would double-count them on the next pass.
-// Only the pool deltas that failed to write go back into the counter.
-func TestFlushUsage_RestoresPoolsOnPoolError(t *testing.T) {
+// TestFlushUsage_FailedApplyKeepsTheBatch asserts a batch the store refused
+// goes back to the counters and is carried by the next flush.
+func TestFlushUsage_FailedApplyKeepsTheBatch(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(cb, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
 	tracker.RecordN("b1", s3op.GetObject, 10)
 
-	mockFlusher := &mockUsageFlusher{
-		fn:     func(_, _ string, _, _, _ int64) error { return nil },
-		poolFn: func(_, _ string, _ core.PoolUsage) error { return errors.New("db down") },
+	if err := tracker.FlushUsage(context.Background(), &recordingFlusher{err: errDBDown}); !errors.Is(err, errDBDown) {
+		t.Fatalf("FlushUsage error = %v, want %v", err, errDBDown)
+	}
+	got := loaded(cb, "b1")
+	if got.APIRequests != 10 || got.Pools[core.PoolAll] != 10 {
+		t.Errorf("counters after a failed flush = %+v, want 10 requests and 10 against the pool", got)
 	}
 
-	if err := tracker.FlushUsage(context.Background(), mockFlusher); err == nil {
-		t.Fatal("expected error")
+	flusher := &recordingFlusher{}
+	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
+		t.Fatalf("second flush: %v", err)
 	}
-	if got := cb.Load("b1", FieldAPIRequests); got != 0 {
-		t.Errorf("api_requests = %d, want 0; the totals flushed successfully", got)
+	if len(flusher.applied) != 1 || flusher.applied[0].APIRequests != 10 {
+		t.Errorf("second flush applied %+v, want the kept batch of 10", flusher.applied)
 	}
-	if got := cb.LoadPool("b1", core.PoolAll); got != 10 {
-		t.Errorf("pool counter = %d, want 10 restored after the pool flush failed", got)
+}
+
+// TestFlushUsage_SharedBatches asserts a shared backend's staged batches are
+// flushed beside the local ones and settled with the store's answer.
+func TestFlushUsage_SharedBatches(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		err     error
+		applied bool
+	}{
+		{name: "applied", applied: true},
+		{name: "failed", err: errDBDown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			backend := newFakeShared()
+			tracker := NewUsageTracker(backend, nil)
+			tracker.RecordN("b1", s3op.GetObject, 3)
+
+			flusher := &recordingFlusher{err: tc.err}
+			if err := tracker.FlushUsage(context.Background(), flusher); !errors.Is(err, tc.err) {
+				t.Fatalf("FlushUsage error = %v, want %v", err, tc.err)
+			}
+			if len(flusher.applied) != 2 {
+				t.Fatalf("applied %d batches, want the local and the staged one", len(flusher.applied))
+			}
+			if got, ok := backend.settled[stagedBatchID]; !ok || got != tc.applied {
+				t.Errorf("staged batch settled = %v (seen %v), want %v", got, ok, tc.applied)
+			}
+			if kept := loaded(backend, "b1").APIRequests; tc.applied == (kept != 0) {
+				t.Errorf("local requests after flush = %d, applied = %v", kept, tc.applied)
+			}
+		})
+	}
+}
+
+// TestFlushUsage_PlainBackendSkipsShared asserts staged batches are taken only
+// from a backend that is a SharedBackend.
+func TestFlushUsage_PlainBackendSkipsShared(t *testing.T) {
+	t.Parallel()
+	tracker := NewUsageTracker(plainBackend{newFakeShared()}, nil)
+	tracker.RecordN("b1", s3op.GetObject, 3)
+
+	flusher := &recordingFlusher{}
+	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
+		t.Fatalf("FlushUsage: %v", err)
+	}
+	if len(flusher.applied) != 1 || flusher.applied[0].ID != "" {
+		t.Errorf("applied %+v, want only the local batch", flusher.applied)
+	}
+}
+
+// TestCurrentPeriod_RefreshesAnExpiredCache asserts a cached month past its
+// end is replaced rather than returned.
+func TestCurrentPeriod_RefreshesAnExpiredCache(t *testing.T) {
+	t.Parallel()
+	currentMonth.Store(&monthCache{period: "1999-01", until: time.Unix(0, 0)})
+
+	want := monthStart(time.Now()).Format("2006-01")
+	if got := CurrentPeriod(); got != want {
+		t.Errorf("CurrentPeriod() = %q, want %q", got, want)
+	}
+	if c := currentMonth.Load(); c.period != want || !c.until.After(time.Now()) {
+		t.Errorf("cache = %+v, want %q until a future instant", c, want)
+	}
+}
+
+// TestMonthStart asserts the first instant of the month is taken in UTC,
+// whatever zone the input is in.
+func TestMonthStart(t *testing.T) {
+	t.Parallel()
+	east := time.FixedZone("east", 5*3600)
+	for _, tc := range []struct {
+		in   time.Time
+		want string
+	}{
+		{in: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC), want: "2026-10-01T00:00:00Z"},
+		{in: time.Date(2026, 11, 1, 2, 0, 0, 0, east), want: "2026-10-01T00:00:00Z"},
+		{in: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), want: "2027-01-01T00:00:00Z"},
+	} {
+		if got := monthStart(tc.in).Format(time.RFC3339); got != tc.want {
+			t.Errorf("monthStart(%v) = %s, want %s", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestFlushPeriods_CurrentThenPrevious asserts the flush covers the current
+// month and the one before it.
+func TestFlushPeriods_CurrentThenPrevious(t *testing.T) {
+	t.Parallel()
+	periods := flushPeriods()
+	if len(periods) != 2 || periods[0] != CurrentPeriod() {
+		t.Fatalf("flushPeriods() = %v, want the current period first", periods)
+	}
+	if periods[1] >= periods[0] {
+		t.Errorf("previous period %q should sort before %q", periods[1], periods[0])
 	}
 }
 
@@ -630,26 +716,56 @@ func TestCurrentPeriod_Format(t *testing.T) {
 // Flusher double
 // -------------------------------------------------------------------------
 
-// mockUsageFlusher is a no-op flusher used by tests that exercise
-// the tracker without standing up a real database. A nil poolFn accepts
-// pool flushes silently, which is what the cases that only assert on the
-// totals want.
-type mockUsageFlusher struct {
-	fn     func(name, period string, api, egress, ingress int64) error
-	poolFn func(name, period string, deltas core.PoolUsage) error
+// stagedBatchID is the flush ID of the batch fakeShared stages.
+const stagedBatchID = "flush-1"
+
+// errDBDown is the store failure the flush tests inject.
+var errDBDown = errors.New("db down")
+
+// recordingFlusher records every batch it is handed and answers each with err.
+type recordingFlusher struct {
+	applied []core.UsageBatch
+	err     error
 }
 
-// FlushUsageDeltas records the flush call for later assertion.
-// Returns the test-configured error so the tracker's error path
-// gets exercised.
-func (m *mockUsageFlusher) FlushUsageDeltas(_ context.Context, name, period string, api, egress, ingress int64) error {
-	return m.fn(name, period, api, egress, ingress)
+// ApplyUsageBatch records the batch and returns the configured error, so the
+// tracker's settle path sees the store's answer.
+func (f *recordingFlusher) ApplyUsageBatch(_ context.Context, b *core.UsageBatch) error {
+	f.applied = append(f.applied, *b)
+	return f.err
 }
 
-// FlushPoolDeltas records the per-pool flush call.
-func (m *mockUsageFlusher) FlushPoolDeltas(_ context.Context, name, period string, deltas core.PoolUsage) error {
-	if m.poolFn == nil {
-		return nil
+// fakeShared is a SharedBackend over local counters with one staged batch. It
+// records how each staged batch was settled.
+type fakeShared struct {
+	*LocalCounterBackend
+	settled map[string]bool
+}
+
+// newFakeShared builds a fakeShared tracking backend b1.
+func newFakeShared() *fakeShared {
+	return &fakeShared{LocalCounterBackend: NewLocalCounterBackend([]string{"b1"}), settled: map[string]bool{}}
+}
+
+// TakeShared returns the one staged batch, as a shared store would after a
+// stage.
+func (f *fakeShared) TakeShared(_ context.Context) []core.UsageBatch {
+	return []core.UsageBatch{{ID: stagedBatchID, Backend: "b1", Period: CurrentPeriod(),
+		Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 7}}}}
+}
+
+// Settle records a staged batch's outcome and hands a local batch to the
+// local counters.
+func (f *fakeShared) Settle(ctx context.Context, b *core.UsageBatch, applied bool) {
+	if b.ID != "" {
+		f.settled[b.ID] = applied
+		return
 	}
-	return m.poolFn(name, period, deltas)
+	f.LocalCounterBackend.Settle(ctx, b, applied)
+}
+
+// plainBackend hides a backend's TakeShared, leaving only the Backend
+// interface.
+type plainBackend struct {
+	Backend
 }

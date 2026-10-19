@@ -50,14 +50,15 @@ const (
 // USAGE FLUSH
 // -------------------------------------------------------------------------
 
-// usageFlushService periodically flushes in-memory usage counters to the
-// database, acquiring an advisory lock only when Redis counters are active.
+// usageFlushService periodically flushes usage counters to the database on
+// every instance. No lock is needed: each instance flushes its own local
+// counters, and the store applies a staged shared batch at most once whichever
+// instance finds it.
 type usageFlushService struct {
 	flusher usageFlushOps
 	tracker nearLimitReporter
 	fleet   quotaMetricsRefresher
 	states  backendStateRefresher
-	locker  tickrunner.AdvisoryLocker
 	log     *slog.Logger
 }
 
@@ -70,7 +71,6 @@ type UsageFlushDeps struct {
 	Tracker nearLimitReporter
 	Fleet   quotaMetricsRefresher
 	States  backendStateRefresher
-	Locker  tickrunner.AdvisoryLocker
 }
 
 // NewUsageFlushService constructs the usage flush background service.
@@ -85,7 +85,6 @@ func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
 		tracker: d.Tracker,
 		fleet:   d.Fleet,
 		states:  d.States,
-		locker:  d.Locker,
 		log:     tickrunner.ComponentLogger("usage_flush"),
 	}
 }
@@ -135,27 +134,24 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 	return target
 }
 
-// flushTick runs a single flush+metrics cycle. With Redis counters only the
-// advisory lock holder performs the destructive GETSET, and every instance
-// loads the fleet snapshot and worker gauges last published. Every instance
-// then reloads its own usage baselines, or its limit checks would keep
-// admitting work against budget already spent. The fleet snapshot itself is
-// computed by the fleet snapshot service on its own cadence.
+// flushTick runs a single flush+metrics cycle on every instance. With Redis
+// counters every instance also loads the fleet snapshot and worker gauges last
+// published. Every instance then reloads its own usage baselines, or its limit
+// checks would keep admitting work against budget already spent. The fleet
+// snapshot itself is computed by the fleet snapshot service on its own
+// cadence.
 func (s *usageFlushService) flushTick(ctx context.Context) {
-	// Outside the advisory lock: the byte deltas are this instance's own, so
-	// every instance flushes its own set. Skipping them on a lost lock would
-	// leave bytes_used short of what this instance wrote.
-	if err := s.flusher.FlushQuota(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "quota flush failed", "error", err)
+	if err := s.flusher.RefreshQuotaBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "quota baseline refresh failed", "error", err)
 	}
-
+	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
+	}
 	if s.flusher.RedisCounterConfigured() {
-		s.flushFleetTick(ctx)
-	} else {
-		s.flushUsage(ctx)
+		s.loadFleetState(ctx)
 	}
 
-	// After the flush, so the lock holder's baseline includes what it wrote.
+	// After the flush, so the baseline includes what it wrote.
 	if err := s.fleet.RefreshUsageBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "usage baseline refresh failed", "error", err)
 	}
@@ -168,35 +164,14 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	}
 }
 
-// flushFleetTick is the shared-counter half of a tick: the lock holder flushes
-// the counters, and every instance loads the fleet snapshot and the worker
-// gauges, which their own lock holders published and which need not be this
-// instance or the flush lock's holder.
-func (s *usageFlushService) flushFleetTick(ctx context.Context) {
-	acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
-		func(lockCtx context.Context) error {
-			s.flushUsage(lockCtx)
-			return nil
-		})
-	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "tick failed", "error", err)
-	}
-	if !acquired {
-		s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
-	}
+// loadFleetState loads the fleet snapshot and the worker gauges, which their
+// own lock holders published and which need not be this instance.
+func (s *usageFlushService) loadFleetState(ctx context.Context) {
 	if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
 		s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
 	}
 	if err := s.fleet.LoadWorkerGauges(ctx); err != nil {
 		s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
-	}
-}
-
-// flushUsage writes the usage counters to the store. With Redis counters it
-// runs only under the advisory lock.
-func (s *usageFlushService) flushUsage(ctx context.Context) {
-	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
 	}
 }
 

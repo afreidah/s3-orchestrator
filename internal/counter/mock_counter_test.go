@@ -10,6 +10,7 @@
 package counter
 
 import (
+	context "context"
 	reflect "reflect"
 
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -40,42 +41,6 @@ func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
 }
 
-// Add mocks base method.
-func (m *MockBackend) Add(backend, field string, delta int64) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Add", backend, field, delta)
-}
-
-// Add indicates an expected call of Add.
-func (mr *MockBackendMockRecorder) Add(backend, field, delta any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Add", reflect.TypeOf((*MockBackend)(nil).Add), backend, field, delta)
-}
-
-// AddAll mocks base method.
-func (m *MockBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AddAll", backend, apiReqs, egress, ingress)
-}
-
-// AddAll indicates an expected call of AddAll.
-func (mr *MockBackendMockRecorder) AddAll(backend, apiReqs, egress, ingress any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddAll", reflect.TypeOf((*MockBackend)(nil).AddAll), backend, apiReqs, egress, ingress)
-}
-
-// AddPools mocks base method.
-func (m *MockBackend) AddPools(backend string, deltas map[string]int64) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AddPools", backend, deltas)
-}
-
-// AddPools indicates an expected call of AddPools.
-func (mr *MockBackendMockRecorder) AddPools(backend, deltas any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddPools", reflect.TypeOf((*MockBackend)(nil).AddPools), backend, deltas)
-}
-
 // Backends mocks base method.
 func (m *MockBackend) Backends() []string {
 	m.ctrl.T.Helper()
@@ -90,84 +55,52 @@ func (mr *MockBackendMockRecorder) Backends() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockBackend)(nil).Backends))
 }
 
-// ChargePools mocks base method.
-func (m *MockBackend) ChargePools(backend string, pools []core.RequestPool, n int64) {
+// Charge mocks base method.
+func (m *MockBackend) Charge(backend string, c Charge) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ChargePools", backend, pools, n)
+	m.ctrl.Call(m, "Charge", backend, c)
 }
 
-// ChargePools indicates an expected call of ChargePools.
-func (mr *MockBackendMockRecorder) ChargePools(backend, pools, n any) *gomock.Call {
+// Charge indicates an expected call of Charge.
+func (mr *MockBackendMockRecorder) Charge(backend, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChargePools", reflect.TypeOf((*MockBackend)(nil).ChargePools), backend, pools, n)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Charge", reflect.TypeOf((*MockBackend)(nil).Charge), backend, c)
 }
 
 // Load mocks base method.
-func (m *MockBackend) Load(backend, field string) int64 {
+func (m *MockBackend) Load(backend string, u *core.Usage) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Load", backend, field)
-	ret0, _ := ret[0].(int64)
-	return ret0
+	m.ctrl.Call(m, "Load", backend, u)
 }
 
 // Load indicates an expected call of Load.
-func (mr *MockBackendMockRecorder) Load(backend, field any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Load(backend, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBackend)(nil).Load), backend, field)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBackend)(nil).Load), backend, u)
 }
 
-// LoadAll mocks base method.
-func (m *MockBackend) LoadAll(backend string) LoadAllResult {
+// Settle mocks base method.
+func (m *MockBackend) Settle(ctx context.Context, b *core.UsageBatch, applied bool) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LoadAll", backend)
-	ret0, _ := ret[0].(LoadAllResult)
+	m.ctrl.Call(m, "Settle", ctx, b, applied)
+}
+
+// Settle indicates an expected call of Settle.
+func (mr *MockBackendMockRecorder) Settle(ctx, b, applied any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Settle", reflect.TypeOf((*MockBackend)(nil).Settle), ctx, b, applied)
+}
+
+// Take mocks base method.
+func (m *MockBackend) Take(ctx context.Context) []core.UsageBatch {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Take", ctx)
+	ret0, _ := ret[0].([]core.UsageBatch)
 	return ret0
 }
 
-// LoadAll indicates an expected call of LoadAll.
-func (mr *MockBackendMockRecorder) LoadAll(backend any) *gomock.Call {
+// Take indicates an expected call of Take.
+func (mr *MockBackendMockRecorder) Take(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAll", reflect.TypeOf((*MockBackend)(nil).LoadAll), backend)
-}
-
-// LoadPool mocks base method.
-func (m *MockBackend) LoadPool(backend, pool string) int64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LoadPool", backend, pool)
-	ret0, _ := ret[0].(int64)
-	return ret0
-}
-
-// LoadPool indicates an expected call of LoadPool.
-func (mr *MockBackendMockRecorder) LoadPool(backend, pool any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadPool", reflect.TypeOf((*MockBackend)(nil).LoadPool), backend, pool)
-}
-
-// Swap mocks base method.
-func (m *MockBackend) Swap(backend, field string) int64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Swap", backend, field)
-	ret0, _ := ret[0].(int64)
-	return ret0
-}
-
-// Swap indicates an expected call of Swap.
-func (mr *MockBackendMockRecorder) Swap(backend, field any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Swap", reflect.TypeOf((*MockBackend)(nil).Swap), backend, field)
-}
-
-// SwapPools mocks base method.
-func (m *MockBackend) SwapPools(backend string) map[string]int64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SwapPools", backend)
-	ret0, _ := ret[0].(map[string]int64)
-	return ret0
-}
-
-// SwapPools indicates an expected call of SwapPools.
-func (mr *MockBackendMockRecorder) SwapPools(backend any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwapPools", reflect.TypeOf((*MockBackend)(nil).SwapPools), backend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Take", reflect.TypeOf((*MockBackend)(nil).Take), ctx)
 }

@@ -50,7 +50,7 @@ func newDrainFleet(t *testing.T, store fleetStore, backends map[string]backend.O
 		Order:           names,
 		BackendTimeout:  fleetTimeout,
 		Usage:           usage,
-		Quota:           counter.NewQuotaTracker(names),
+		Quota:           counter.NewQuotaTracker(),
 		RoutingStrategy: config.RoutingPack,
 	})
 	mgr := New(rt, store, store)

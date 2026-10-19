@@ -22,10 +22,14 @@ ON CONFLICT (backend_name, period) DO UPDATE SET
     updated_at    = NOW();
 
 -- name: GetUsageForPeriod :many
--- Returns usage stats for all backends in the given period (e.g. '2026-02').
-SELECT backend_name, api_requests, egress_bytes, ingress_bytes
-FROM backend_usage
-WHERE period = @period;
+-- Returns every backend's totals for the given period (e.g. '2026-02'), joined
+-- to its pool rows, so a backend with pools repeats its totals. Every pool row
+-- has a totals row: a flush writes both in one transaction.
+SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes,
+       p.pool, p.requests
+FROM backend_usage u
+LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+WHERE u.period = @period;
 
 -- name: DeleteUsageByBackend :exec
 DELETE FROM backend_usage WHERE backend_name = $1;
@@ -40,11 +44,16 @@ ON CONFLICT (backend_name, period, pool) DO UPDATE SET
     requests   = backend_request_usage.requests + @requests,
     updated_at = NOW();
 
--- name: GetPoolUsageForPeriod :many
--- Returns every pool's request count for every backend in the given period.
-SELECT backend_name, pool, requests
-FROM backend_request_usage
-WHERE period = @period;
-
 -- name: DeletePoolUsageByBackend :exec
 DELETE FROM backend_request_usage WHERE backend_name = $1;
+
+-- name: RecordUsageFlush :execrows
+-- Records a shared batch's id in the transaction that applies it. Zero rows
+-- means the batch was already applied, and its deltas must not be added again.
+INSERT INTO usage_flushes (flush_id) VALUES (@flush_id)
+ON CONFLICT (flush_id) DO NOTHING;
+
+-- name: PruneUsageFlushes :exec
+-- Drops ids older than any batch that can still be staged, whose keys expire
+-- after 35 days.
+DELETE FROM usage_flushes WHERE applied_at < NOW() - INTERVAL '40 days';

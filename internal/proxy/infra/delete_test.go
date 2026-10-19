@@ -54,7 +54,7 @@ func TestDeleteMany_BatchesWhereSupported(t *testing.T) {
 	if mem.BatchDeleteCalls != 1 || len(mem.Objects) != 0 {
 		t.Errorf("batch calls = %d, objects left = %d; want 1 and 0", mem.BatchDeleteCalls, len(mem.Objects))
 	}
-	if got := counters.Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := loadUsage(counters, "b1").calls; got != 1 {
 		t.Errorf("API calls charged = %d, want 1", got)
 	}
 }
@@ -76,7 +76,7 @@ func TestDeleteMany_FallsBackAndRemembers(t *testing.T) {
 	if mem.BatchDeleteCalls != 0 || len(mem.Objects) != 0 {
 		t.Errorf("batch calls = %d, objects left = %d; want 0 and 0", mem.BatchDeleteCalls, len(mem.Objects))
 	}
-	if got := counters.Load("b1", counter.FieldAPIRequests); got != 4 {
+	if got := loadUsage(counters, "b1").calls; got != 4 {
 		t.Errorf("API calls charged = %d, want one per single delete", got)
 	}
 }

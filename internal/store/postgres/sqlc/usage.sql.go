@@ -98,43 +98,12 @@ func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasPara
 	return err
 }
 
-const getPoolUsageForPeriod = `-- name: GetPoolUsageForPeriod :many
-SELECT backend_name, pool, requests
-FROM backend_request_usage
-WHERE period = $1
-`
-
-type GetPoolUsageForPeriodRow struct {
-	BackendName string
-	Pool        string
-	Requests    int64
-}
-
-// Returns every pool's request count for every backend in the given period.
-func (q *Queries) GetPoolUsageForPeriod(ctx context.Context, period string) ([]GetPoolUsageForPeriodRow, error) {
-	rows, err := q.db.Query(ctx, getPoolUsageForPeriod, period)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetPoolUsageForPeriodRow{}
-	for rows.Next() {
-		var i GetPoolUsageForPeriodRow
-		if err := rows.Scan(&i.BackendName, &i.Pool, &i.Requests); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getUsageForPeriod = `-- name: GetUsageForPeriod :many
-SELECT backend_name, api_requests, egress_bytes, ingress_bytes
-FROM backend_usage
-WHERE period = $1
+SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes,
+       p.pool, p.requests
+FROM backend_usage u
+LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+WHERE u.period = $1
 `
 
 type GetUsageForPeriodRow struct {
@@ -142,9 +111,13 @@ type GetUsageForPeriodRow struct {
 	ApiRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
+	Pool         *string
+	Requests     *int64
 }
 
-// Returns usage stats for all backends in the given period (e.g. '2026-02').
+// Returns every backend's totals for the given period (e.g. '2026-02'), joined
+// to its pool rows, so a backend with pools repeats its totals. Every pool row
+// has a totals row: a flush writes both in one transaction.
 func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUsageForPeriodRow, error) {
 	rows, err := q.db.Query(ctx, getUsageForPeriod, period)
 	if err != nil {
@@ -159,6 +132,8 @@ func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUs
 			&i.ApiRequests,
 			&i.EgressBytes,
 			&i.IngressBytes,
+			&i.Pool,
+			&i.Requests,
 		); err != nil {
 			return nil, err
 		}
@@ -168,4 +143,30 @@ func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUs
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneUsageFlushes = `-- name: PruneUsageFlushes :exec
+DELETE FROM usage_flushes WHERE applied_at < NOW() - INTERVAL '40 days'
+`
+
+// Drops ids older than any batch that can still be staged, whose keys expire
+// after 35 days.
+func (q *Queries) PruneUsageFlushes(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, pruneUsageFlushes)
+	return err
+}
+
+const recordUsageFlush = `-- name: RecordUsageFlush :execrows
+INSERT INTO usage_flushes (flush_id) VALUES ($1)
+ON CONFLICT (flush_id) DO NOTHING
+`
+
+// Records a shared batch's id in the transaction that applies it. Zero rows
+// means the batch was already applied, and its deltas must not be added again.
+func (q *Queries) RecordUsageFlush(ctx context.Context, flushID string) (int64, error) {
+	result, err := q.db.Exec(ctx, recordUsageFlush, flushID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

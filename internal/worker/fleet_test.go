@@ -103,7 +103,7 @@ func newFleet(
 		MaxObjectSizes:  opts.MaxObjectSizes,
 	})
 	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage, BackendNames: names,
+		Store: store, Usage: usage,
 	}))
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))
@@ -113,6 +113,14 @@ func newFleet(
 		rt.SetStateChecker(d)
 	}
 	return rt, writepath.New(rt, store)
+}
+
+// loadUsage returns a backend's unflushed counters as a fresh value, for the
+// assertions that read them.
+func loadUsage(b counter.Backend, name string) core.Usage {
+	var u core.Usage
+	b.Load(name, &u)
+	return u
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already
@@ -130,7 +138,7 @@ func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) 
 			primed[name] = core.BackendQuotaUsage{BackendName: name}
 		}
 	}
-	quota := counter.NewQuotaTracker(names)
+	quota := counter.NewQuotaTracker()
 	quota.SetBaselines(primed)
 	return quota
 }

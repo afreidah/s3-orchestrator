@@ -81,6 +81,14 @@ type fleet struct {
 // completes an upload.
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
 
+// usageOf reads a backend's unflushed usage counters for the current
+// period.
+func (f *fleet) usageOf(name string) core.Usage {
+	var u core.Usage
+	f.Runtime.Usage().Backend().Load(name, &u)
+	return u
+}
+
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
@@ -113,7 +121,7 @@ func newFleet(
 		AdmissionSem:    opts.AdmissionSem,
 	})
 	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage, BackendNames: names,
+		Store: store, Usage: usage,
 	}))
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
@@ -142,7 +150,7 @@ func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) 
 		primed[name] = core.BackendQuotaUsage{BackendName: name}
 	}
 	maps.Copy(primed, baselines)
-	quota := counter.NewQuotaTracker(names)
+	quota := counter.NewQuotaTracker()
 	quota.SetBaselines(primed)
 	return quota
 }

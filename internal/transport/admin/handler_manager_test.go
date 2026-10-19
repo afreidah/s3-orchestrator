@@ -555,8 +555,7 @@ func TestHandleCleanupQueue_PendingError(t *testing.T) {
 }
 
 // TestHandleUsageFlush_Error covers the FlushUsage error branch in
-// handleUsageFlush. The fixture's stack wraps a MockStore
-// whose FlushUsageDeltas call honours FlushUsageErr.
+// handleUsageFlush, driven through a BackendOps stub that always fails.
 func TestHandleUsageFlush_Error(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
