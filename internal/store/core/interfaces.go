@@ -184,10 +184,13 @@ type CleanupStore interface {
 // silently destroy the prior copy of an overwritten key.
 //
 // InsertPendingIfFits admits the intent on a backend whose flags all fall
-// within accepts. DiscardPending drops an intent whose upload will not be
-// recorded and queues its bytes under reason.
+// within accepts. ClaimPendingCopies does the same for several intents in one
+// transaction, each on a distinct backend taken from ranked in order.
+// DiscardPending drops an intent whose upload will not be recorded and queues
+// its bytes under reason.
 type PendingStore interface {
 	InsertPendingIfFits(ctx context.Context, p *PendingObject, accepts BackendFlags) (bool, error)
+	ClaimPendingCopies(ctx context.Context, intents []*PendingObject, ranked []string, accepts BackendFlags) (CopyClaims, error)
 	DeletePending(ctx context.Context, intentID string) error
 	DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error)
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)

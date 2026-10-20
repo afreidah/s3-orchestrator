@@ -116,6 +116,21 @@ func (mr *MockMetadataStoreMockRecorder) ClaimPendingCleanups(ctx, limit, instan
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimPendingCleanups", reflect.TypeOf((*MockMetadataStore)(nil).ClaimPendingCleanups), ctx, limit, instanceID, graceCutoff)
 }
 
+// ClaimPendingCopies mocks base method.
+func (m *MockMetadataStore) ClaimPendingCopies(ctx context.Context, intents []*core.PendingObject, ranked []string, accepts core.BackendFlags) (core.CopyClaims, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimPendingCopies", ctx, intents, ranked, accepts)
+	ret0, _ := ret[0].(core.CopyClaims)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimPendingCopies indicates an expected call of ClaimPendingCopies.
+func (mr *MockMetadataStoreMockRecorder) ClaimPendingCopies(ctx, intents, ranked, accepts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimPendingCopies", reflect.TypeOf((*MockMetadataStore)(nil).ClaimPendingCopies), ctx, intents, ranked, accepts)
+}
+
 // CleanupDLQDepth mocks base method.
 func (m *MockMetadataStore) CleanupDLQDepth(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()

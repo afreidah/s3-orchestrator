@@ -710,6 +710,26 @@ func TestStoreInt_MultipartCompletionMark(t *testing.T) {
 	storetest.CheckCompletionMark(t, adapterPgStore(t), uniqueKey(t, "upload"), "backend-a")
 }
 
+// TestStoreInt_ClaimPendingCopies verifies a write's copies are claimed in
+// one transaction, skipping a backend without room.
+func TestStoreInt_ClaimPendingCopies(t *testing.T) {
+	s := adapterPgStore(t)
+	full, roomy, spare := uniqueKey(t, "full"), uniqueKey(t, "roomy"), uniqueKey(t, "spare")
+	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{
+		{Name: full, QuotaBytes: 1},
+		{Name: roomy, QuotaBytes: 1 << 30},
+		{Name: spare, QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, name := range []string{full, roomy, spare} {
+			_ = s.DeleteBackendData(context.Background(), name)
+		}
+	})
+	storetest.CheckCopyClaims(t, s, full, roomy, spare)
+}
+
 // TestStoreInt_DeleteMultipartUpload_QueuesEveryPart verifies removing an
 // upload queues each part's bytes at its own path under the caller's reason,
 // and a second removal queues nothing.

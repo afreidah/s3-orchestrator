@@ -13,6 +13,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -683,15 +684,19 @@ func TestCommitCompanionCopy_RollsBackOnAFailedStep(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // claimTxStub records the order a claim touches the transaction in and what
-// reached the insert, and answers the insert with a seeded result.
+// reached the insert, and answers the insert with a seeded result. A backend
+// named in full declines whatever fits says.
 type claimTxStub struct {
 	noopTxAdapter
 
 	fits      bool
+	full      map[string]bool
 	lockErr   error
 	insertErr error
 
 	ops         []string
+	locked      []string
+	inserted    []string
 	lockedName  string
 	insertedID  string
 	accepted    BackendFlags
@@ -700,16 +705,18 @@ type claimTxStub struct {
 
 func (s *claimTxStub) AcquireBackendLock(_ context.Context, backendName string) error {
 	s.ops = append(s.ops, "backend_lock")
+	s.locked = append(s.locked, backendName)
 	s.lockedName = backendName
 	return s.lockErr
 }
 
 func (s *claimTxStub) InsertPendingIfFits(_ context.Context, p *PendingObject, accepts BackendFlags) (bool, error) {
 	s.ops = append(s.ops, "insert")
+	s.inserted = append(s.inserted, p.BackendName)
 	s.insertCalls++
 	s.insertedID = p.IntentID
 	s.accepted = accepts
-	return s.fits, s.insertErr
+	return s.fits && !s.full[p.BackendName], s.insertErr
 }
 
 // claimIntent is the intent every claim test admits.
@@ -771,6 +778,105 @@ func TestInsertPendingIfFits_ReturnsInsertOutcome(t *testing.T) {
 			}
 			if !errors.Is(err, stub.insertErr) {
 				t.Errorf("err = %v, want %v", err, stub.insertErr)
+			}
+		})
+	}
+}
+
+// -------------------------------------------------------------------------
+// COPY CLAIMS
+// -------------------------------------------------------------------------
+
+// copyIntents returns n intents for one write's copies, none placed yet.
+func copyIntents(n int) []*PendingObject {
+	out := make([]*PendingObject, n)
+	for i := range out {
+		out[i] = &PendingObject{IntentID: fmt.Sprintf("i-%d", i), ObjectKey: "k", SizeBytes: 100}
+	}
+	return out
+}
+
+// TestClaimPendingCopies_LocksSortedThenClaimsRanked verifies every candidate
+// is locked in name order before any insert, the inserts walk the ranking, and
+// claiming stops once every intent has a backend.
+func TestClaimPendingCopies_LocksSortedThenClaimsRanked(t *testing.T) {
+	t.Parallel()
+	stub := &claimTxStub{fits: true}
+	claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b3", "b1", "b2"}, AcceptForWrite)
+	if err != nil {
+		t.Fatalf("ClaimPendingCopies: %v", err)
+	}
+	if want := []string{"b1", "b2", "b3"}; !slices.Equal(stub.locked, want) {
+		t.Errorf("locked %v, want %v", stub.locked, want)
+	}
+	if want := []string{"backend_lock", "backend_lock", "backend_lock", "insert", "insert"}; !slices.Equal(stub.ops, want) {
+		t.Errorf("ops = %v, want %v", stub.ops, want)
+	}
+	if len(claims.Claimed) != 2 || claims.Claimed[0].BackendName != "b3" || claims.Claimed[1].BackendName != "b1" {
+		t.Errorf("claimed %+v, want the first two ranked candidates", claims.Claimed)
+	}
+	if stub.accepted != AcceptForWrite {
+		t.Errorf("accepts = %v, want %v", stub.accepted, AcceptForWrite)
+	}
+}
+
+// TestClaimPendingCopies_SkipsAFullBackend verifies a declining candidate is
+// reported and passed over for the next one rather than costing a copy.
+func TestClaimPendingCopies_SkipsAFullBackend(t *testing.T) {
+	t.Parallel()
+	stub := &claimTxStub{fits: true, full: map[string]bool{"b1": true}}
+	claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b1", "b2", "b3"}, AcceptForWrite)
+	if err != nil {
+		t.Fatalf("ClaimPendingCopies: %v", err)
+	}
+	if !slices.Equal(claims.Declined, []string{"b1"}) {
+		t.Errorf("declined %v, want [b1]", claims.Declined)
+	}
+	if len(claims.Claimed) != 2 || claims.Claimed[0].BackendName != "b2" || claims.Claimed[1].BackendName != "b3" {
+		t.Errorf("claimed %+v, want b2 and b3", claims.Claimed)
+	}
+}
+
+// TestClaimPendingCopies_ClaimsWhatFits verifies a fleet that cannot take every
+// copy yields the ones it can, and one that takes none yields nothing without
+// an error, leaving the caller to decide.
+func TestClaimPendingCopies_ClaimsWhatFits(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		stub   *claimTxStub
+		ranked []string
+		want   int
+	}{
+		"fewer backends than copies": {&claimTxStub{fits: true}, []string{"b1"}, 1},
+		"nothing fits":               {&claimTxStub{fits: false}, []string{"b1", "b2"}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: tc.stub}, copyIntents(2), tc.ranked, AcceptForWrite)
+			if err != nil || len(claims.Claimed) != tc.want {
+				t.Errorf("ClaimPendingCopies = %d claimed, %v; want %d", len(claims.Claimed), err, tc.want)
+			}
+		})
+	}
+}
+
+// TestClaimPendingCopies_ErrorClaimsNothing verifies a failed lock or insert
+// surfaces and reports no claims, since the transaction rolls every one back.
+func TestClaimPendingCopies_ErrorClaimsNothing(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("db down")
+	for name, stub := range map[string]*claimTxStub{
+		"lock failed":   {fits: true, lockErr: sentinel},
+		"insert failed": {fits: true, insertErr: sentinel},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b1", "b2"}, AcceptForWrite)
+			if !errors.Is(err, sentinel) {
+				t.Errorf("err = %v, want %v", err, sentinel)
+			}
+			if len(claims.Claimed) != 0 || len(claims.Declined) != 0 {
+				t.Errorf("claims = %+v alongside the error, want none", claims)
 			}
 		})
 	}

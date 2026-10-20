@@ -86,6 +86,9 @@ func Permissive(m *MockMetadataStore) {
 	r.ImportObject(a, a).Return(core.ImportSkippedExisting, nil).AnyTimes()
 	r.InsertNotification(a, a, a, a).Return(nil).AnyTimes()
 	r.InsertPendingIfFits(a, a, a).Return(true, nil).AnyTimes()
+	r.ClaimPendingCopies(a, a, a, a).DoAndReturn(ClaimCopiesVia(
+		func(context.Context, *core.PendingObject, core.BackendFlags) (bool, error) { return true, nil },
+	)).AnyTimes()
 	r.ListCleanupDLQ(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListDirectoryChildren(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListExpiredObjects(a, a).Return(nil, nil).AnyTimes()

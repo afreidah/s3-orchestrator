@@ -57,6 +57,21 @@ func (mr *MockCoordinatorStoresMockRecorder) ClaimPendingCleanups(ctx, limit, in
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimPendingCleanups", reflect.TypeOf((*MockCoordinatorStores)(nil).ClaimPendingCleanups), ctx, limit, instanceID, graceCutoff)
 }
 
+// ClaimPendingCopies mocks base method.
+func (m *MockCoordinatorStores) ClaimPendingCopies(ctx context.Context, intents []*core.PendingObject, ranked []string, accepts core.BackendFlags) (core.CopyClaims, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimPendingCopies", ctx, intents, ranked, accepts)
+	ret0, _ := ret[0].(core.CopyClaims)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimPendingCopies indicates an expected call of ClaimPendingCopies.
+func (mr *MockCoordinatorStoresMockRecorder) ClaimPendingCopies(ctx, intents, ranked, accepts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimPendingCopies", reflect.TypeOf((*MockCoordinatorStores)(nil).ClaimPendingCopies), ctx, intents, ranked, accepts)
+}
+
 // CleanupDLQDepth mocks base method.
 func (m *MockCoordinatorStores) CleanupDLQDepth(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()
@@ -208,20 +223,6 @@ func (m *MockCoordinatorStores) DeletePending(ctx context.Context, intentID stri
 func (mr *MockCoordinatorStoresMockRecorder) DeletePending(ctx, intentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePending", reflect.TypeOf((*MockCoordinatorStores)(nil).DeletePending), ctx, intentID)
-}
-
-// DeletePendingByBackend mocks base method.
-func (m *MockCoordinatorStores) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeletePendingByBackend", ctx, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeletePendingByBackend indicates an expected call of DeletePendingByBackend.
-func (mr *MockCoordinatorStoresMockRecorder) DeletePendingByBackend(ctx, backendName any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePendingByBackend", reflect.TypeOf((*MockCoordinatorStores)(nil).DeletePendingByBackend), ctx, backendName)
 }
 
 // DiscardPending mocks base method.

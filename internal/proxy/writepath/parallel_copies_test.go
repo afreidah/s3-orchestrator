@@ -41,57 +41,47 @@ func twoIntents(key string, size int64) []*core.PendingObject {
 // CLAIMING A BACKEND PER COPY
 // -------------------------------------------------------------------------
 
-// TestClaimWriteCopies_ClaimsOnePerIntent asserts each copy is claimed on a
-// backend of its own, in the order the ranking proposed.
-func TestClaimWriteCopies_ClaimsOnePerIntent(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	var claimed []string
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
-			claimed = append(claimed, p.BackendName)
-			return true, nil
-		}).Times(2)
-
-	coord := newCoordinatorWithStore(store)
-
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2", "b3"})
-	if err != nil {
-		t.Fatalf("ClaimWriteCopies: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("claimed %d copies, want 2", len(got))
-	}
-	if want := []string{"b1", "b2"}; !slices.Equal(claimed, want) {
-		t.Errorf("claimed %v, want %v: the third candidate was not needed", claimed, want)
-	}
-	if got[0].BackendName != "b1" || got[1].BackendName != "b2" {
-		t.Errorf("intents carry %s and %s, want the backends they were claimed on", got[0].BackendName, got[1].BackendName)
-	}
+// expectCopyClaims has the store claim the first n ranked candidates and
+// decline the rest, and records the ranking and flags it was handed.
+func expectCopyClaims(store *MockCoordinatorStores, n int, ranked *[]string, accepts *core.BackendFlags) {
+	store.EXPECT().ClaimPendingCopies(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, intents []*core.PendingObject, names []string, flags core.BackendFlags) (core.CopyClaims, error) {
+			*ranked, *accepts = names, flags
+			var out core.CopyClaims
+			for i, name := range names {
+				if i < n && i < len(intents) {
+					intents[i].BackendName = name
+					out.Claimed = append(out.Claimed, intents[i])
+				} else {
+					out.Declined = append(out.Declined, name)
+				}
+			}
+			return out, nil
+		})
 }
 
-// TestClaimWriteCopies_SkipsABackendWithoutRoom asserts a declining backend is
-// passed over for the next candidate rather than costing the write a copy.
-func TestClaimWriteCopies_SkipsABackendWithoutRoom(t *testing.T) {
+// TestClaimWriteCopies_ReturnsWhatTheStoreClaimed asserts the copies are
+// claimed in one store call over the ranked candidates with the write's
+// flags, and the intents come back on the backends they were claimed on.
+func TestClaimWriteCopies_ReturnsWhatTheStoreClaimed(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
-			return p.BackendName != "b2", nil
-		}).Times(3)
-
+	store := NewMockCoordinatorStores(gomock.NewController(t))
+	var (
+		ranked  []string
+		accepts core.BackendFlags
+	)
+	expectCopyClaims(store, 2, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
 	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2", "b3"})
 	if err != nil {
 		t.Fatalf("ClaimWriteCopies: %v", err)
 	}
-	if len(got) != 2 || got[1].BackendName != "b3" {
-		t.Fatalf("claimed %d copies ending on %q, want 2 ending on b3", len(got), got[len(got)-1].BackendName)
+	if want := []string{"b1", "b2", "b3"}; !slices.Equal(ranked, want) || accepts != core.AcceptForWrite {
+		t.Errorf("store got %v with %v, want %v with %v", ranked, accepts, want, core.AcceptForWrite)
+	}
+	if len(got) != 2 || got[0].BackendName != "b1" || got[1].BackendName != "b2" {
+		t.Errorf("claimed %+v, want the copies on b1 and b2", got)
 	}
 }
 
@@ -100,13 +90,15 @@ func TestClaimWriteCopies_SkipsABackendWithoutRoom(t *testing.T) {
 // and failing the write over it would be worse than one copy today.
 func TestClaimWriteCopies_FewerBackendsThanCopies(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
-
+	store := NewMockCoordinatorStores(gomock.NewController(t))
+	var (
+		ranked  []string
+		accepts core.BackendFlags
+	)
+	expectCopyClaims(store, 1, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1"})
+	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2"})
 	if err != nil {
 		t.Fatalf("ClaimWriteCopies: %v", err)
 	}
@@ -119,10 +111,12 @@ func TestClaimWriteCopies_FewerBackendsThanCopies(t *testing.T) {
 // told so, rather than being handed an empty set to upload to.
 func TestClaimWriteCopies_NoCandidateFits(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).Times(2)
-
+	store := NewMockCoordinatorStores(gomock.NewController(t))
+	var (
+		ranked  []string
+		accepts core.BackendFlags
+	)
+	expectCopyClaims(store, 0, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
 	if _, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096),
@@ -131,51 +125,25 @@ func TestClaimWriteCopies_NoCandidateFits(t *testing.T) {
 	}
 }
 
-// TestClaimWriteCopies_FirstClaimErrorFailsTheWrite asserts a database error
-// before anything is claimed surfaces, since the write has no copy to fall back
-// on and reading an outage as "no room" would place it somewhere else.
-func TestClaimWriteCopies_FirstClaimErrorFailsTheWrite(t *testing.T) {
+// TestClaimWriteCopies_ClaimErrorFailsTheWrite asserts a database error
+// surfaces, since the transaction claimed nothing and reading an outage as
+// "no room" would place the write somewhere else.
+func TestClaimWriteCopies_ClaimErrorFailsTheWrite(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, errors.New("db down")).Times(1)
-
+	store := NewMockCoordinatorStores(gomock.NewController(t))
+	store.EXPECT().ClaimPendingCopies(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(core.CopyClaims{}, errors.New("db down"))
 	coord := newCoordinatorWithStore(store)
 
 	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2"})
 	if err == nil {
-		t.Fatal("expected the insert failure to surface")
+		t.Fatal("expected the claim failure to surface")
 	}
 	if errors.Is(err, core.ErrNoSpaceAvailable) {
 		t.Error("a database error was reported as a full fleet")
 	}
 	if got != nil {
 		t.Errorf("claimed %d copies alongside the error, want none", len(got))
-	}
-}
-
-// TestClaimWriteCopies_LaterClaimErrorKeepsWhatItHas asserts a database error
-// after a copy is claimed ends the claiming rather than the write: one copy is
-// what a write places today, and the replicator makes up the difference.
-func TestClaimWriteCopies_LaterClaimErrorKeepsWhatItHas(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	gomock.InOrder(
-		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil),
-		store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, errors.New("db down")),
-	)
-
-	coord := newCoordinatorWithStore(store)
-
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2", "b3"})
-	if err != nil {
-		t.Fatalf("ClaimWriteCopies: %v", err)
-	}
-	if len(got) != 1 || got[0].BackendName != "b1" {
-		t.Errorf("kept %d copies, want the one claimed before the error", len(got))
 	}
 }
 

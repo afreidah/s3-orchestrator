@@ -37,6 +37,45 @@ func InsertPendingIfFits(ctx context.Context, runner Runner, p *PendingObject, a
 	})
 }
 
+// CopyClaims is what ClaimPendingCopies claimed: the intents that got a
+// backend, in claim order with BackendName set, and the candidates that
+// declined.
+type CopyClaims struct {
+	Claimed  []*PendingObject
+	Declined []string
+}
+
+// ClaimPendingCopies claims a distinct backend for each intent in one
+// transaction, walking ranked in order and recording each intent with the
+// conditional insert InsertPendingIfFits uses. Every candidate is locked
+// first, in sorted order, so two claims ranking the same backends differently
+// cannot deadlock. An error rolls back every claim.
+func ClaimPendingCopies(ctx context.Context, runner Runner, intents []*PendingObject, ranked []string, accepts BackendFlags) (CopyClaims, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (CopyClaims, error) {
+		var out CopyClaims
+		if err := lockInOrder(ctx, ranked, tx.AcquireBackendLock); err != nil {
+			return out, err
+		}
+		for _, name := range ranked {
+			if len(out.Claimed) == len(intents) {
+				break
+			}
+			p := intents[len(out.Claimed)]
+			p.BackendName = name
+			fits, err := tx.InsertPendingIfFits(ctx, p, accepts)
+			if err != nil {
+				return out, fmt.Errorf("claim %s: %w", name, err)
+			}
+			if fits {
+				out.Claimed = append(out.Claimed, p)
+			} else {
+				out.Declined = append(out.Declined, name)
+			}
+		}
+		return out, nil
+	})
+}
+
 // PromotePending resolves a pending intent transactionally. The pending row is
 // locked first so two reapers cannot promote the same intent. A location row
 // newer than the intent makes it Superseded, and a row that vanished before

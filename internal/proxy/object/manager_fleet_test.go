@@ -162,6 +162,8 @@ func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 		DoAndReturn(stubObjRecord(c, nil)).AnyTimes()
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
+	store.EXPECT().ClaimPendingCopies(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(storetest.ClaimCopiesVia(stubObjInsertPending(c, nil))).AnyTimes()
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjCommitCompanion(c)).AnyTimes()
 	store.EXPECT().DiscardPending(gomock.Any(), gomock.Any(), gomock.Any()).

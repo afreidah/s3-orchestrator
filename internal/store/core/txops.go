@@ -102,6 +102,12 @@ func (o TxOps) InsertPendingIfFits(ctx context.Context, p *PendingObject, accept
 	return InsertPendingIfFits(ctx, o.runner, p, accepts)
 }
 
+// ClaimPendingCopies claims a distinct backend for each intent in one
+// transaction, walking ranked in order.
+func (o TxOps) ClaimPendingCopies(ctx context.Context, intents []*PendingObject, ranked []string, accepts BackendFlags) (CopyClaims, error) {
+	return ClaimPendingCopies(ctx, o.runner, intents, ranked, accepts)
+}
+
 // PromotePending resolves a surviving PUT intent into a committed location.
 func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error) {
 	return PromotePending(ctx, o.runner, p)

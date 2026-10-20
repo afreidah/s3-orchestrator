@@ -102,12 +102,16 @@ func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObjec
 	if err != nil {
 		return "", err
 	}
-	// Tell the ranking what this instance just placed, or every write in the
-	// interval before the next reload ranks the candidates identically and
-	// spread stops spreading.
-	w.core.Quota().NotePlacement(name, p.SizeBytes)
-	telemetry.PendingIntentsEnqueuedTotal.Inc()
+	w.noteClaim(p)
 	return name, nil
+}
+
+// noteClaim tells the ranking what this instance just placed, or every write
+// in the interval before the next reload ranks the candidates identically and
+// spread stops spreading.
+func (w *Coordinator) noteClaim(p *core.PendingObject) {
+	w.core.Quota().NotePlacement(p.BackendName, p.SizeBytes)
+	telemetry.PendingIntentsEnqueuedTotal.Inc()
 }
 
 // claimFirst walks the eligible backends in routing order and returns the first
@@ -130,40 +134,26 @@ func (w *Coordinator) claimFirst(eligible []string, try func(name string) (bool,
 	return "", core.ErrNoSpaceAvailable
 }
 
-// ClaimWriteCopies claims a distinct backend for each intent, using the same
-// conditional insert a single-copy write uses, and returns the intents that got
-// one, in claim order, with BackendName set. Claiming fewer than asked is not an
-// error, since the replicator makes up the rest; only claiming none fails. A
-// database error after the first claim ends the loop rather than the write.
+// ClaimWriteCopies claims a distinct backend for each intent in one
+// transaction, using the same conditional insert a single-copy write uses, and
+// returns the intents that got one, in claim order, with BackendName set.
+// Claiming fewer than asked is not an error, since the replicator makes up the
+// rest; only claiming none fails.
 func (w *Coordinator) ClaimWriteCopies(ctx context.Context, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error) {
-	claimed := make([]*core.PendingObject, 0, len(intents))
-	for _, name := range w.rankForWrite(w.core.Quota(), eligible) {
-		if len(claimed) == len(intents) {
-			break
-		}
-		p := intents[len(claimed)]
-		p.BackendName = name
-		fits, err := w.stores.InsertPendingIfFits(ctx, p, core.AcceptForWrite)
-		if err != nil {
-			if len(claimed) == 0 {
-				return nil, fmt.Errorf("claim write target: %w", err)
-			}
-			w.log.WarnContext(ctx, "claim failed for a further copy, writing the copies already claimed",
-				"key", p.ObjectKey, "backend", name, logfmt.Err(err))
-			break
-		}
-		if !fits {
-			telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
-			continue
-		}
-		w.core.Quota().NotePlacement(name, p.SizeBytes)
-		telemetry.PendingIntentsEnqueuedTotal.Inc()
-		claimed = append(claimed, p)
+	claims, err := w.stores.ClaimPendingCopies(ctx, intents, w.rankForWrite(w.core.Quota(), eligible), core.AcceptForWrite)
+	if err != nil {
+		return nil, fmt.Errorf("claim write targets: %w", err)
 	}
-	if len(claimed) == 0 {
+	for _, name := range claims.Declined {
+		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
+	}
+	for _, p := range claims.Claimed {
+		w.noteClaim(p)
+	}
+	if len(claims.Claimed) == 0 {
 		return nil, core.ErrNoSpaceAvailable
 	}
-	return claimed, nil
+	return claims.Claimed, nil
 }
 
 // rankForWrite orders the candidates the way the configured strategy wants them
@@ -283,8 +273,7 @@ func (w *Coordinator) ClaimCopyTarget(ctx context.Context, p *core.PendingObject
 		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(p.BackendName).Inc()
 		return core.ErrTargetRefused
 	}
-	w.core.Quota().NotePlacement(p.BackendName, p.SizeBytes)
-	telemetry.PendingIntentsEnqueuedTotal.Inc()
+	w.noteClaim(p)
 	return nil
 }
 

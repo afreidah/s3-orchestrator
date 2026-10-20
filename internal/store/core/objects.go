@@ -270,7 +270,7 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) ([]Cl
 // removed key's intents are cleared as DeleteObject clears them, so an upload
 // still running cannot commit a copy of an object the batch removed.
 func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) (mutationResult, error) {
-	if err := lockKeysInOrder(ctx, tx, keys); err != nil {
+	if err := lockInOrder(ctx, keys, tx.AcquireKeyLock); err != nil {
 		return mutationResult{}, err
 	}
 	rows, err := tx.GetCopiesForKeysForUpdate(ctx, keys)
@@ -325,14 +325,14 @@ func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]re
 	return removed, deltas, perKey
 }
 
-// lockKeysInOrder takes the per-key lock for every distinct key in sorted
-// order, so concurrent batches sharing keys cannot deadlock. The caller's slice
-// is not modified.
-func lockKeysInOrder(ctx context.Context, tx TxAdapter, keys []string) error {
-	ordered := slices.Clone(keys)
+// lockInOrder takes lock on every distinct name in sorted order, so concurrent
+// transactions locking overlapping sets cannot deadlock. The caller's slice is
+// not modified.
+func lockInOrder(ctx context.Context, names []string, lock func(context.Context, string) error) error {
+	ordered := slices.Clone(names)
 	slices.Sort(ordered)
-	for _, k := range slices.Compact(ordered) {
-		if err := tx.AcquireKeyLock(ctx, k); err != nil {
+	for _, name := range slices.Compact(ordered) {
+		if err := lock(ctx, name); err != nil {
 			return err
 		}
 	}

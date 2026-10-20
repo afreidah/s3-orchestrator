@@ -64,6 +64,10 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**A replicated PUT claims its copies in one transaction ([#1732](https://github.com/afreidah/s3-orchestrator/issues/1732), v0.162.20)**
+
+A write placing more than one copy claimed each backend in a transaction of its own, one commit per copy before the upload started. The claims now run in one transaction with one commit. A database error while claiming a later copy now fails the write instead of continuing with the copies already claimed, since the transaction rolls every claim back. No migration.
+
 **Parts and aborts wait out a running multipart completion ([#1734](https://github.com/afreidah/s3-orchestrator/issues/1734), v0.162.19)**
 
 A part re-uploaded while `CompleteMultipartUpload` was assembling queued the replaced part for deletion at once, and an abort or the stale-upload sweep deleted every part, so the completion could lose bytes it was still reading and fail partway. A completion now marks its upload when it starts and renews the mark every 15 seconds while it runs. `UploadPart`, `AbortMultipartUpload`, the stale-upload sweep and a second completion are refused with `409 OperationAborted` while the mark is fresh, and a failed completion clears it so the client can retry. A mark not renewed for a minute belongs to a completion that died and no longer blocks the upload. The per-upload advisory lock completions used before is gone. One migration (Postgres `00044`, SQLite `0031`) adds `multipart_uploads.completion_heartbeat_at`.

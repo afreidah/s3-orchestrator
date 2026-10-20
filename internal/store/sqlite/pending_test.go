@@ -17,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -125,6 +127,20 @@ func TestPending_InsertAndDepth(t *testing.T) {
 	if got.CreatedAt.IsZero() {
 		t.Error("CreatedAt should be set by the database default")
 	}
+}
+
+// TestPending_ClaimCopies verifies a write's copies are claimed in one
+// transaction, skipping a backend without room.
+func TestPending_ClaimCopies(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{
+		{Name: "backend-full", QuotaBytes: 1},
+		{Name: "backend-c", QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	storetest.CheckCopyClaims(t, s, "backend-full", "backend-a", "backend-c")
 }
 
 // TestPending_DeleteRemovesRow verifies DeletePending decrements depth and
