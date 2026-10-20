@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -313,7 +314,7 @@ func TestPgCompleteDrain_WaitsForAMultipartUpload(t *testing.T) {
 	}); err != nil || !created {
 		t.Fatalf("CreateMultipartUpload = %v, %v; want created before the drain", created, err)
 	}
-	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason) })
+	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason, time.Now()) })
 	pgStartDrain(t, s, backend)
 
 	if pgCompletes(t, s, backend) {

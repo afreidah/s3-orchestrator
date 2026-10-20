@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // -------------------------------------------------------------------------
@@ -49,11 +50,19 @@ func RecordPart(ctx context.Context, runner Runner, p *RecordPartParams) ([]Clea
 
 // recordPartTx is the transactional body of RecordPart. The lock on the part's
 // fixed path serializes uploads of one part number, so the row a record
-// replaces is the one whose bytes it queues.
+// replaces is the one whose bytes it queues. The upload row lock keeps the
+// record from replacing a part a running completion is reading.
 func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partOutcome, error) {
 	partPath := PartPath(p.UploadID, p.PartNumber)
 	if err := tx.AcquireKeyLock(ctx, partPath); err != nil {
 		return partOutcome{}, err
+	}
+	backendName, err := lockUploadIdle(ctx, tx, p.UploadID, p.CompletionStaleBefore)
+	if err != nil {
+		return partOutcome{}, err
+	}
+	if backendName == "" {
+		return partOutcome{}, ErrMultipartUploadNotFound
 	}
 	held, err := intentsHeld(ctx, tx, []string{p.Intent.IntentID})
 	if err != nil {
@@ -86,10 +95,15 @@ func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partO
 // -------------------------------------------------------------------------
 
 // DeleteMultipartUpload removes an upload and its parts and queues every part's
-// bytes under reason. An upload already gone queues nothing.
-func DeleteMultipartUpload(ctx context.Context, runner Runner, uploadID, reason string) ([]CleanupItem, error) {
+// bytes under reason. An upload already gone queues nothing, and one whose
+// completion renewed its mark after staleBefore is refused.
+func DeleteMultipartUpload(ctx context.Context, runner Runner, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		backendName, parts, err := tx.DeleteMultipartUpload(ctx, uploadID)
+		backendName, err := lockUploadIdle(ctx, tx, uploadID, staleBefore)
+		if err != nil || backendName == "" {
+			return nil, err
+		}
+		parts, err := tx.DeleteMultipartUpload(ctx, uploadID)
 		if err != nil {
 			return nil, err
 		}
@@ -107,4 +121,19 @@ func DeleteMultipartUpload(ctx context.Context, runner Runner, uploadID, reason 
 		}
 		return items, nil
 	})
+}
+
+// lockUploadIdle locks the upload row and returns its backend, or an empty
+// backend when the upload is gone. A completion that renewed its mark after
+// staleBefore is still reading the parts, so the upload is refused with
+// ErrCompletionInProgress; an older mark belongs to a completion that died.
+func lockUploadIdle(ctx context.Context, tx TxAdapter, uploadID string, staleBefore time.Time) (string, error) {
+	backendName, heartbeat, err := tx.LockMultipartUpload(ctx, uploadID)
+	if err != nil {
+		return "", err
+	}
+	if heartbeat.After(staleBefore) {
+		return "", ErrCompletionInProgress
+	}
+	return backendName, nil
 }

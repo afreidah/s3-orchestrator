@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const beginMultipartCompletion = `-- name: BeginMultipartCompletion :execrows
+UPDATE multipart_uploads SET completion_heartbeat_at = NOW()
+WHERE upload_id = $1
+  AND (completion_heartbeat_at IS NULL OR completion_heartbeat_at < $2)
+`
+
+type BeginMultipartCompletionParams struct {
+	UploadID    string
+	StaleBefore pgtype.Timestamptz
+}
+
+// Marks the upload as being completed unless a completion that renewed its
+// mark after stale_before holds it. The update waits on the row lock of any
+// part record or abort in flight, so the parts read after it are the final set.
+func (q *Queries) BeginMultipartCompletion(ctx context.Context, arg BeginMultipartCompletionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, beginMultipartCompletion, arg.UploadID, arg.StaleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveMultipartUploadsByPrefix = `-- name: CountActiveMultipartUploadsByPrefix :one
 SELECT COUNT(*) FROM multipart_uploads
 WHERE object_key LIKE $1 || '%' ESCAPE '\'
@@ -129,6 +151,16 @@ DELETE FROM multipart_uploads WHERE backend_name = $1
 
 func (q *Queries) DeleteMultipartUploadsByBackend(ctx context.Context, backendName string) error {
 	_, err := q.db.Exec(ctx, deleteMultipartUploadsByBackend, backendName)
+	return err
+}
+
+const endMultipartCompletion = `-- name: EndMultipartCompletion :exec
+UPDATE multipart_uploads SET completion_heartbeat_at = NULL
+WHERE upload_id = $1
+`
+
+func (q *Queries) EndMultipartCompletion(ctx context.Context, uploadID string) error {
+	_, err := q.db.Exec(ctx, endMultipartCompletion, uploadID)
 	return err
 }
 
@@ -354,18 +386,36 @@ func (q *Queries) ListParts(ctx context.Context, arg ListPartsParams) ([]ListPar
 }
 
 const lockMultipartUpload = `-- name: LockMultipartUpload :one
-SELECT backend_name FROM multipart_uploads
+SELECT backend_name, completion_heartbeat_at FROM multipart_uploads
 WHERE upload_id = $1
 FOR UPDATE
 `
 
-// Taken before the parts are removed, so a part recorded concurrently waits on
-// the upload row and then finds it gone rather than landing unseen.
-func (q *Queries) LockMultipartUpload(ctx context.Context, uploadID string) (string, error) {
+type LockMultipartUploadRow struct {
+	BackendName           string
+	CompletionHeartbeatAt pgtype.Timestamptz
+}
+
+// Taken before a part is recorded or the parts are removed, so each waits for
+// the other and for a completion setting its mark, then sees what they wrote.
+func (q *Queries) LockMultipartUpload(ctx context.Context, uploadID string) (LockMultipartUploadRow, error) {
 	row := q.db.QueryRow(ctx, lockMultipartUpload, uploadID)
-	var backend_name string
-	err := row.Scan(&backend_name)
-	return backend_name, err
+	var i LockMultipartUploadRow
+	err := row.Scan(&i.BackendName, &i.CompletionHeartbeatAt)
+	return i, err
+}
+
+const renewMultipartCompletion = `-- name: RenewMultipartCompletion :execrows
+UPDATE multipart_uploads SET completion_heartbeat_at = NOW()
+WHERE upload_id = $1 AND completion_heartbeat_at IS NOT NULL
+`
+
+func (q *Queries) RenewMultipartCompletion(ctx context.Context, uploadID string) (int64, error) {
+	result, err := q.db.Exec(ctx, renewMultipartCompletion, uploadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const scanMultipartUploads = `-- name: ScanMultipartUploads :many

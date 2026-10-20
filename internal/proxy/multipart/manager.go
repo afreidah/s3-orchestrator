@@ -6,8 +6,8 @@
 // Manager owns the multipart-upload lifecycle: creation,
 // per-part uploads, completion, abort/cleanup, the encryption helpers
 // used by parts and the assembled object, the part/upload-row helpers
-// shared across paths, and the advisory-lock ID derivation used by
-// CompleteMultipartUpload.
+// shared across paths, and the completion mark CompleteMultipartUpload
+// holds while it assembles.
 // -------------------------------------------------------------------------------
 
 package multipart
@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,10 +57,9 @@ const spanPrefix = "Manager "
 const abortScanPageSize = 100
 
 // Stores is the persistence surface multipart needs: multipart row and part
-// operations, plus the advisory lock that serializes stale-upload sweeps.
+// operations, including the completion mark.
 type Stores interface {
 	core.MultipartStore
-	core.AdvisoryLocker
 }
 
 // Manager handles the multipart upload lifecycle.
@@ -73,7 +71,7 @@ type Stores interface {
 type Manager struct {
 	core               Runtime                // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord              *writepath.Coordinator // write-path helpers shared with the object manager
-	stores             Stores                 // multipart row/part operations and WithAdvisoryLock
+	stores             Stores                 // multipart row/part operations and the completion mark
 	encryptor          *encryption.Encryptor
 	codec              Codec
 	compression        config.CompressionConfig
@@ -272,6 +270,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	replaced, err := mp.stores.RecordPart(ctx, &core.RecordPartParams{
 		UploadID: uploadID, PartNumber: partNumber, ETag: storedETag,
 		PlaintextETag: plaintextETag, SizeBytes: uploadSize, Form: form, Intent: intent,
+		CompletionStaleBefore: completionStaleBefore(),
 	})
 	// A part replaced by this one, or this one when its intent was lost, was
 	// queued by the record's transaction.
@@ -371,20 +370,6 @@ func (mp *Manager) ListParts(ctx context.Context, bucket, key, uploadID string, 
 		presentToClient(&parts[i])
 	}
 	return parts, truncated, nil
-}
-
-// uploadIDLockNamespace is OR'd into every multipart-upload advisory
-// lock ID so per-uploadID locks live above 2^62 and cannot collide
-// with the small reserved service lock IDs in core/locks.go.
-const uploadIDLockNamespace int64 = 1 << 62
-
-// uploadIDLockID derives a stable advisory-lock ID from a multipart
-// upload ID. FNV-64a is fast and uniform; the namespace bit keeps the
-// per-key range disjoint from the service lock IDs (1001-1011 today).
-func uploadIDLockID(uploadID string) int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(uploadID))
-	return uploadIDLockNamespace | int64(h.Sum64()&((1<<62)-1))
 }
 
 // UnwrapUploadDEK returns the unwrapped DEK for a multipart upload,
@@ -566,7 +551,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	// The upload and its parts go and the parts' bytes are queued in one
 	// transaction, so an abort that dies before the deletes run leaves them
 	// to the cleanup worker rather than on the backend with nothing naming them.
-	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonAbortPart)
+	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonAbortPart, completionStaleBefore())
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return err
@@ -641,9 +626,9 @@ func (mp *Manager) abortMatching(ctx context.Context, filter core.MultipartUploa
 }
 
 // CompleteMultipartUpload streams the parts into one assembled object, records
-// its location, and removes the parts. It runs under an advisory lock keyed by
-// uploadID so two concurrent completions cannot both assemble the object; the
-// second caller fails fast with 409 OperationAborted.
+// its location, and removes the parts. It holds the upload's completion mark
+// while it runs, so a part upload, an abort or a second completion is refused
+// with 409 OperationAborted instead of deleting parts the assembly is reading.
 func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error) {
 	const operation = s3op.CompleteMultipartUpload
 	start := time.Now()
@@ -653,37 +638,87 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	)
 	defer span.End()
 
-	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
-	if err != nil {
+	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return "", err
 	}
-	_ = mu // CompleteMultipartUpload's locked path re-fetches under the advisory lock.
-
-	var etag string
-	acquired, err := mp.stores.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
-		var inner error
-		etag, inner = mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, manifest, start)
-		return inner
-	})
+	started, err := mp.stores.BeginMultipartCompletion(ctx, uploadID, completionStaleBefore())
 	if err != nil {
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
-	if !acquired {
-		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
-		return "", &core.S3Error{
-			StatusCode: http.StatusConflict,
-			Code:       "OperationAborted",
-			Message:    "Another CompleteMultipartUpload is already in progress for this upload",
+	if !started {
+		// An upload aborted since the fetch is gone, not held.
+		if _, err := mp.stores.GetMultipartUpload(ctx, uploadID); err != nil {
+			return "", mp.core.ClassifyWriteError(span, operation.String(), err)
 		}
+		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
+		return "", core.ErrCompletionInProgress
 	}
-	return etag, nil
+
+	return mp.withCompletionMark(ctx, uploadID, func(ctx context.Context) (string, error) {
+		return mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, manifest, start)
+	})
 }
 
-// completeMultipartUploadLocked runs the assembly under CompleteMultipartUpload's
-// advisory lock. The order is validate, assemble, commit, then drop the parts:
-// any failure before the commit leaves the parts and the upload row intact so
-// the client can retry, and the stale-multipart sweep reaps an upload that is
-// abandoned after a failure.
+// The completion mark goes stale once it has not been renewed for
+// completionGrace, which frees the upload of a completion that died.
+// completionRenewEvery renews it well inside that window.
+const (
+	completionGrace      = time.Minute
+	completionRenewEvery = completionGrace / 4
+)
+
+// completionStaleBefore is the renewal time before which a completion mark
+// belongs to a completion that died.
+func completionStaleBefore() time.Time {
+	return time.Now().Add(-completionGrace)
+}
+
+// withCompletionMark runs complete while renewing the upload's completion
+// mark, and clears the mark when complete returns. A renewal that fails or
+// finds the mark gone cancels complete, because the upload may no longer be
+// protected from deletes of the parts it is reading.
+func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, complete func(context.Context) (string, error)) (string, error) {
+	workCtx, cancel := context.WithCancelCause(ctx)
+	renewed := make(chan struct{})
+	go func() {
+		defer close(renewed)
+		ticker := time.NewTicker(completionRenewEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-workCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			held, err := mp.stores.RenewMultipartCompletion(workCtx, uploadID)
+			if err == nil && !held {
+				err = errCompletionMarkLost
+			}
+			if err != nil {
+				cancel(fmt.Errorf("renew completion mark: %w", err))
+				return
+			}
+		}
+	}()
+
+	etag, err := complete(workCtx)
+	cancel(nil)
+	<-renewed
+	if endErr := mp.stores.EndMultipartCompletion(context.WithoutCancel(ctx), uploadID); endErr != nil {
+		mp.log.WarnContext(ctx, "failed to clear multipart completion mark", "upload_id", uploadID, logfmt.Err(endErr))
+	}
+	return etag, err
+}
+
+// errCompletionMarkLost reports a renewal that found the completion mark gone.
+var errCompletionMarkLost = errors.New("completion mark is gone")
+
+// completeMultipartUploadLocked runs the assembly while CompleteMultipartUpload
+// holds the completion mark. The order is validate, assemble, commit, then drop
+// the parts: any failure before the commit leaves the parts and the upload row
+// intact so the client can retry, and the stale-multipart sweep reaps an
+// upload that is abandoned after a failure.
 func (mp *Manager) completeMultipartUploadLocked(
 	ctx context.Context,
 	span trace.Span,
@@ -718,7 +753,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 
 	// ETag and size checks run against the same rows assembly will read,
-	// under the same lock, so a part replaced between validation and
+	// under the same completion mark, so a part replaced between validation and
 	// assembly cannot slip through.
 	if err := validateManifestAgainstStored(manifest, parts, mp.enforceMinPartSize); err != nil {
 		observe.RecordSpanError(span, err)
@@ -822,8 +857,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 
 	// Only now is the object durably committed, so the source parts are safe
-	// to drop. Every failure path above returns with the parts and the upload
-	// row intact, leaving the completion retryable.
+	// to drop. They go while the mark is still held, so a retried completion
+	// cannot assemble them a second time.
 	mp.cleanupCompletedUpload(ctx, span, uploadID)
 
 	// Assembly spends egress equal to the parts and ingress equal to the result.
@@ -878,10 +913,11 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 // cleanupCompletedUpload removes the multipart_uploads row, queueing its parts'
 // bytes in the same transaction, then deletes them and drops the cached DEK of
 // a durably committed upload. Call it only after the commit: on a failure path
-// it would destroy the parts a retry needs. A removal that fails leaves the
-// upload to the stale-multipart sweep, which aborts it.
+// it would destroy the parts a retry needs. The completion mark is the
+// caller's own, so the delete ignores any mark renewed before now. A removal
+// that fails leaves the upload to the stale-multipart sweep, which aborts it.
 func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, uploadID string) {
-	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonCompletePart)
+	parts, err := mp.stores.DeleteMultipartUpload(ctx, uploadID, reasonCompletePart, time.Now())
 	if err != nil {
 		span.RecordError(err)
 	}

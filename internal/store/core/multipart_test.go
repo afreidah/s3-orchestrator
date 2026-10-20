@@ -7,7 +7,8 @@
 // a part locks the part's fixed path, confirms its intent is still held, and
 // queues the bytes of any part it replaced; a lost intent queues the upload's
 // own bytes and refuses. Removing an upload queues every part's bytes at the
-// path each one occupies.
+// path each one occupies. Both are refused while a completion holds a fresh
+// mark on the upload.
 // -------------------------------------------------------------------------------
 
 package core
@@ -17,6 +18,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 const (
@@ -25,13 +27,18 @@ const (
 	partIntentID = "i-part"
 )
 
+// markCutoff is the stale cutoff the completion-mark tests pass: a mark
+// renewed after it is fresh, one renewed before it belongs to a dead completion.
+var markCutoff = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// partTxStub drives the multipart transactions: it decides whether the part's
-// intent is held, which part an upsert replaced, and what an upload removal
-// finds, and records the locks, upserts and intent deletes it sees.
+// partTxStub drives the multipart transactions: it decides whether the upload
+// exists and when its completion mark was renewed, whether the part's intent
+// is held, which part an upsert replaced, and what an upload removal finds,
+// and records the locks, upserts, removals and intent deletes it sees.
 type partTxStub struct {
 	noopTxAdapter
 
@@ -42,18 +49,29 @@ type partTxStub struct {
 	upsertErr     error
 	deletePendErr error
 
-	uploadBackend string
+	gone          bool
+	heartbeat     time.Time
+	uploadLockErr error
 	uploadParts   []MultipartPart
 	uploadErr     error
 
 	locks          []string
 	upserted       []RecordPartParams
+	removed        []string
 	deletedIntents []string
 }
 
 func (s *partTxStub) AcquireKeyLock(_ context.Context, key string) error {
 	s.locks = append(s.locks, key)
 	return s.lockErr
+}
+
+func (s *partTxStub) LockMultipartUpload(_ context.Context, uploadID string) (string, time.Time, error) {
+	s.locks = append(s.locks, uploadID)
+	if s.uploadLockErr != nil || s.gone {
+		return "", time.Time{}, s.uploadLockErr
+	}
+	return partBackend, s.heartbeat, nil
 }
 
 func (s *partTxStub) ClaimPending(context.Context, string) (bool, error) {
@@ -76,8 +94,12 @@ func (s *partTxStub) UpsertPart(_ context.Context, p *RecordPartParams) (*Multip
 	return s.replaced, nil
 }
 
-func (s *partTxStub) DeleteMultipartUpload(context.Context, string) (string, []MultipartPart, error) {
-	return s.uploadBackend, s.uploadParts, s.uploadErr
+func (s *partTxStub) DeleteMultipartUpload(_ context.Context, uploadID string) ([]MultipartPart, error) {
+	if s.uploadErr != nil {
+		return nil, s.uploadErr
+	}
+	s.removed = append(s.removed, uploadID)
+	return s.uploadParts, nil
 }
 
 // -------------------------------------------------------------------------
@@ -136,8 +158,8 @@ func TestRecordPart_FreshPartQueuesNothing(t *testing.T) {
 	if cleanup != nil {
 		t.Errorf("cleanup = %+v, want none", cleanup)
 	}
-	if !slices.Equal(stub.locks, []string{PartPath(partUploadID, 2)}) {
-		t.Errorf("locks = %v, want the part's fixed path", stub.locks)
+	if !slices.Equal(stub.locks, []string{PartPath(partUploadID, 2), partUploadID}) {
+		t.Errorf("locks = %v, want the part's fixed path and then the upload", stub.locks)
 	}
 	if len(stub.upserted) != 1 || !slices.Equal(stub.deletedIntents, []string{partIntentID}) {
 		t.Errorf("upserted=%d intents=%v, want the part recorded and its intent cleared", len(stub.upserted), stub.deletedIntents)
@@ -208,6 +230,7 @@ func TestRecordPart_FailuresRollBack(t *testing.T) {
 	replaced := &MultipartPart{PartNumber: 2, SizeBytes: 300}
 	cases := map[string]TxAdapter{
 		"key lock":      &partTxStub{lockErr: sentinel},
+		"upload lock":   &partTxStub{uploadLockErr: sentinel},
 		"claim":         &partTxStub{claimErr: sentinel},
 		"upsert":        &partTxStub{upsertErr: sentinel},
 		"intent delete": &partTxStub{deletePendErr: sentinel},
@@ -228,42 +251,128 @@ func TestRecordPart_FailuresRollBack(t *testing.T) {
 	}
 }
 
+// TestRecordPart_RefusedWhileCompletionHoldsTheMark verifies a part is refused
+// with ErrCompletionInProgress, and nothing recorded or queued, when a
+// completion renewed its mark after the caller's stale cutoff.
+func TestRecordPart_RefusedWhileCompletionHoldsTheMark(t *testing.T) {
+	t.Parallel()
+	stub := &partTxStub{heartbeat: markCutoff.Add(time.Second)}
+	p := partParams()
+	p.CompletionStaleBefore = markCutoff
+	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p)
+	if !errors.Is(err, ErrCompletionInProgress) {
+		t.Fatalf("err = %v, want ErrCompletionInProgress", err)
+	}
+	if cleanup != nil || len(stub.upserted) != 0 || len(stub.deletedIntents) != 0 {
+		t.Errorf("refused part left work: cleanup=%+v upserted=%d intents=%v", cleanup, len(stub.upserted), stub.deletedIntents)
+	}
+}
+
+// TestRecordPart_RecordsPastAStaleOrAbsentMark verifies a mark renewed before
+// the stale cutoff, or no mark at all, does not hold the part back.
+func TestRecordPart_RecordsPastAStaleOrAbsentMark(t *testing.T) {
+	t.Parallel()
+	cases := map[string]time.Time{
+		"stale mark": markCutoff.Add(-time.Second),
+		"no mark":    {},
+	}
+	for name, heartbeat := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stub := &partTxStub{heartbeat: heartbeat}
+			p := partParams()
+			p.CompletionStaleBefore = markCutoff
+			if _, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p); err != nil {
+				t.Fatalf("RecordPart: %v", err)
+			}
+			if len(stub.upserted) != 1 {
+				t.Errorf("upserted = %d, want the part recorded", len(stub.upserted))
+			}
+		})
+	}
+}
+
+// TestRecordPart_GoneUploadIsNotFound verifies a part for an upload already
+// removed returns ErrMultipartUploadNotFound and records nothing.
+func TestRecordPart_GoneUploadIsNotFound(t *testing.T) {
+	t.Parallel()
+	stub := &partTxStub{gone: true}
+	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, partParams())
+	if !errors.Is(err, ErrMultipartUploadNotFound) {
+		t.Fatalf("err = %v, want ErrMultipartUploadNotFound", err)
+	}
+	if cleanup != nil || len(stub.upserted) != 0 || len(stub.deletedIntents) != 0 {
+		t.Errorf("part of a gone upload left work: cleanup=%+v upserted=%d intents=%v", cleanup, len(stub.upserted), stub.deletedIntents)
+	}
+}
+
 // -------------------------------------------------------------------------
 // DELETE MULTIPART UPLOAD
 // -------------------------------------------------------------------------
 
 // TestDeleteMultipartUpload_QueuesEveryPart verifies removing an upload queues
 // each part's bytes on the upload's backend at the path that part occupies,
-// labelled with the caller's reason.
+// labelled with the caller's reason, including past a stale completion mark.
 func TestDeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
 	t.Parallel()
+	cases := map[string]time.Time{
+		"no mark":    {},
+		"stale mark": markCutoff.Add(-time.Second),
+	}
+	for name, heartbeat := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stub := &partTxStub{
+				heartbeat: heartbeat,
+				uploadParts: []MultipartPart{
+					{PartNumber: 1, SizeBytes: 100},
+					{PartNumber: 2, SizeBytes: 200, StorageKey: "__multipart/up-1/2!w"},
+				},
+			}
+			cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+			if err != nil {
+				t.Fatalf("DeleteMultipartUpload: %v", err)
+			}
+			want := []CleanupItem{
+				{BackendName: partBackend, ObjectKey: PartPath(partUploadID, 1), StorageKey: PartPath(partUploadID, 1), Reason: "abort", SizeBytes: 100},
+				{BackendName: partBackend, ObjectKey: PartPath(partUploadID, 2), StorageKey: "__multipart/up-1/2!w", Reason: "abort", SizeBytes: 200},
+			}
+			if !slices.Equal(cleanup, want) {
+				t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+			}
+			if !slices.Equal(stub.locks, []string{partUploadID}) {
+				t.Errorf("locks = %v, want the upload locked before its removal", stub.locks)
+			}
+		})
+	}
+}
+
+// TestDeleteMultipartUpload_RefusedWhileCompletionHoldsTheMark verifies an
+// upload whose completion renewed its mark after the stale cutoff is refused
+// with ErrCompletionInProgress and neither removed nor queued.
+func TestDeleteMultipartUpload_RefusedWhileCompletionHoldsTheMark(t *testing.T) {
+	t.Parallel()
 	stub := &partTxStub{
-		uploadBackend: partBackend,
-		uploadParts: []MultipartPart{
-			{PartNumber: 1, SizeBytes: 100},
-			{PartNumber: 2, SizeBytes: 200, StorageKey: "__multipart/up-1/2!w"},
-		},
+		heartbeat:   markCutoff.Add(time.Second),
+		uploadParts: []MultipartPart{{PartNumber: 1, SizeBytes: 100}},
 	}
-	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort")
-	if err != nil {
-		t.Fatalf("DeleteMultipartUpload: %v", err)
+	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+	if !errors.Is(err, ErrCompletionInProgress) {
+		t.Fatalf("err = %v, want ErrCompletionInProgress", err)
 	}
-	want := []CleanupItem{
-		{BackendName: partBackend, ObjectKey: PartPath(partUploadID, 1), StorageKey: PartPath(partUploadID, 1), Reason: "abort", SizeBytes: 100},
-		{BackendName: partBackend, ObjectKey: PartPath(partUploadID, 2), StorageKey: "__multipart/up-1/2!w", Reason: "abort", SizeBytes: 200},
-	}
-	if !slices.Equal(cleanup, want) {
-		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
+	if cleanup != nil || len(stub.removed) != 0 {
+		t.Errorf("refused removal left work: cleanup=%+v removed=%v", cleanup, stub.removed)
 	}
 }
 
 // TestDeleteMultipartUpload_GoneQueuesNothing verifies an upload already
-// removed queues nothing and is not an error.
+// removed queues nothing, removes nothing, and is not an error.
 func TestDeleteMultipartUpload_GoneQueuesNothing(t *testing.T) {
 	t.Parallel()
-	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: &partTxStub{}}, partUploadID, "abort")
-	if err != nil || len(cleanup) != 0 {
-		t.Errorf("cleanup = %+v err = %v, want nothing", cleanup, err)
+	stub := &partTxStub{gone: true}
+	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+	if err != nil || len(cleanup) != 0 || len(stub.removed) != 0 {
+		t.Errorf("cleanup = %+v removed = %v err = %v, want nothing", cleanup, stub.removed, err)
 	}
 }
 
@@ -274,13 +383,14 @@ func TestDeleteMultipartUpload_FailuresRollBack(t *testing.T) {
 	sentinel := errors.New("step failed")
 	parts := []MultipartPart{{PartNumber: 1, SizeBytes: 100}}
 	cases := map[string]TxAdapter{
-		"remove": &partTxStub{uploadErr: sentinel},
-		"queue":  &queueRecorder{TxAdapter: &partTxStub{uploadBackend: partBackend, uploadParts: parts}, err: sentinel},
+		"upload lock": &partTxStub{uploadLockErr: sentinel},
+		"remove":      &partTxStub{uploadErr: sentinel},
+		"queue":       &queueRecorder{TxAdapter: &partTxStub{uploadParts: parts}, err: sentinel},
 	}
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: tx}, partUploadID, "abort")
+			cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: tx}, partUploadID, "abort", markCutoff)
 			if !errors.Is(err, sentinel) || cleanup != nil {
 				t.Errorf("cleanup = %+v err = %v, want the %s failure and nothing queued", cleanup, err, name)
 			}

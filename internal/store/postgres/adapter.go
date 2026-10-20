@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -358,29 +359,35 @@ func (a *pgTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.PendingOb
 // MULTIPART TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// DeleteMultipartUpload locks the upload row, removes its parts and then the
-// upload, and returns the upload's backend with the parts removed. An upload
-// already gone returns no parts.
-func (a *pgTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) (string, []core.MultipartPart, error) {
-	backendName, err := a.q.LockMultipartUpload(ctx, uploadID)
+// LockMultipartUpload locks the upload row and returns its backend and when a
+// running completion last renewed its mark. An upload already gone returns an
+// empty backend.
+func (a *pgTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string) (string, time.Time, error) {
+	row, err := a.q.LockMultipartUpload(ctx, uploadID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, nil
+		return "", time.Time{}, nil
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("lock multipart upload: %w", err)
+		return "", time.Time{}, fmt.Errorf("lock multipart upload: %w", err)
 	}
+	return row.BackendName, row.CompletionHeartbeatAt.Time, nil
+}
+
+// DeleteMultipartUpload removes the upload's parts and then the upload, and
+// returns the parts removed.
+func (a *pgTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	rows, err := a.q.DeleteMultipartParts(ctx, uploadID)
 	if err != nil {
-		return "", nil, fmt.Errorf("delete multipart parts: %w", err)
+		return nil, fmt.Errorf("delete multipart parts: %w", err)
 	}
 	if err := a.q.DeleteMultipartUpload(ctx, uploadID); err != nil {
-		return "", nil, fmt.Errorf("delete multipart upload: %w", err)
+		return nil, fmt.Errorf("delete multipart upload: %w", err)
 	}
 	parts := make([]core.MultipartPart, len(rows))
 	for i, r := range rows {
 		parts[i] = core.MultipartPart{PartNumber: int(r.PartNumber), SizeBytes: r.SizeBytes, StorageKey: derefStr(r.StorageKey)}
 	}
-	return backendName, parts, nil
+	return parts, nil
 }
 
 // UpsertPart records a part at its intent's path and returns the part of that

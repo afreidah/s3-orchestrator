@@ -181,11 +181,20 @@ func TestPgAdapterErr_UpsertPart(t *testing.T) {
 	}
 }
 
-// TestPgAdapterErr_DeleteMultipartUpload verifies the upload lock error is
+// TestPgAdapterErr_LockMultipartUpload verifies the upload lock error is
 // wrapped rather than read as an upload already gone.
+func TestPgAdapterErr_LockMultipartUpload(t *testing.T) {
+	a := closedPgAdapter(t, adapterPgStore(t))
+	if backend, _, err := a.LockMultipartUpload(context.Background(), "u"); err == nil || backend != "" {
+		t.Errorf("LockMultipartUpload = %q, %v; want an error from the closed tx", backend, err)
+	}
+}
+
+// TestPgAdapterErr_DeleteMultipartUpload verifies the parts delete error is
+// wrapped.
 func TestPgAdapterErr_DeleteMultipartUpload(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
+	if _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

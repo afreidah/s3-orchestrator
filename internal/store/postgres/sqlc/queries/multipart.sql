@@ -63,11 +63,27 @@ ORDER BY part_number
 LIMIT @row_limit;
 
 -- name: LockMultipartUpload :one
--- Taken before the parts are removed, so a part recorded concurrently waits on
--- the upload row and then finds it gone rather than landing unseen.
-SELECT backend_name FROM multipart_uploads
+-- Taken before a part is recorded or the parts are removed, so each waits for
+-- the other and for a completion setting its mark, then sees what they wrote.
+SELECT backend_name, completion_heartbeat_at FROM multipart_uploads
 WHERE upload_id = $1
 FOR UPDATE;
+
+-- name: BeginMultipartCompletion :execrows
+-- Marks the upload as being completed unless a completion that renewed its
+-- mark after stale_before holds it. The update waits on the row lock of any
+-- part record or abort in flight, so the parts read after it are the final set.
+UPDATE multipart_uploads SET completion_heartbeat_at = NOW()
+WHERE upload_id = @upload_id
+  AND (completion_heartbeat_at IS NULL OR completion_heartbeat_at < @stale_before);
+
+-- name: RenewMultipartCompletion :execrows
+UPDATE multipart_uploads SET completion_heartbeat_at = NOW()
+WHERE upload_id = $1 AND completion_heartbeat_at IS NOT NULL;
+
+-- name: EndMultipartCompletion :exec
+UPDATE multipart_uploads SET completion_heartbeat_at = NULL
+WHERE upload_id = $1;
 
 -- name: DeleteMultipartParts :many
 DELETE FROM multipart_parts

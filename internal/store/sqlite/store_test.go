@@ -119,6 +119,7 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{31, func() { dropColumns(t, s, "multipart_uploads", "completion_heartbeat_at") }},
 		// The view reads multipart_parts, so it goes before the column; 0027
 		// recreates it.
 		{28, func() {
@@ -1350,7 +1351,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	// Delete
-	cleanup, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason)
+	cleanup, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason, time.Now())
 	if err != nil {
 		t.Fatalf("DeleteMultipartUpload: %v", err)
 	}
@@ -1360,7 +1361,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	if !errors.Is(err, core.ErrMultipartUploadNotFound) {
 		t.Errorf("expected ErrMultipartUploadNotFound, got %v", err)
 	}
-	again, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason)
+	again, err := s.DeleteMultipartUpload(ctx, "upload-1", testAbortReason, time.Now())
 	if err != nil || len(again) != 0 {
 		t.Errorf("DeleteMultipartUpload of a gone upload = %+v, %v; want nothing queued", again, err)
 	}
@@ -1498,19 +1499,48 @@ func TestDeleteMultipartUpload_LegacyPartAtFixedPath(t *testing.T) {
 	}
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		backend, parts, err := a.DeleteMultipartUpload(ctx, uploadID)
+		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID)
+		if err != nil || backend != "backend-b" || !heartbeat.IsZero() {
+			t.Fatalf("LockMultipartUpload = %s, %v, %v; want backend-b with no mark", backend, heartbeat, err)
+		}
+		parts, err := a.DeleteMultipartUpload(ctx, uploadID)
 		if err != nil {
 			t.Fatalf("DeleteMultipartUpload: %v", err)
 		}
-		if backend != "backend-b" || len(parts) != 1 || parts[0].StorageKey != "" || parts[0].SizeBytes != 42 {
-			t.Errorf("DeleteMultipartUpload = %s, %+v; want backend-b and the one legacy part", backend, parts)
+		if len(parts) != 1 || parts[0].StorageKey != "" || parts[0].SizeBytes != 42 {
+			t.Errorf("DeleteMultipartUpload = %+v; want the one legacy part", parts)
 		}
 	})
-	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason)
+	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason, time.Now())
 	if err != nil {
 		t.Fatalf("DeleteMultipartUpload: %v", err)
 	}
 	assertQueuedOnly(t, s, cleanup, "backend-b", core.PartPath(uploadID, 3), testAbortReason, 42)
+}
+
+// TestMultipartCompletionMark verifies the completion mark holds off a second
+// completion, part records and upload deletes until it is cleared or stale.
+func TestMultipartCompletionMark(t *testing.T) {
+	t.Parallel()
+	storetest.CheckCompletionMark(t, newTestStore(t), "upload-mark", "backend-a")
+}
+
+// TestMultipartCompletionMark_ClosedStoreErrors verifies every completion mark
+// operation returns its error from a closed store.
+func TestMultipartCompletionMark_ClosedStoreErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	s.Close()
+	ctx := context.Background()
+	if _, err := s.BeginMultipartCompletion(ctx, "u", time.Now()); err == nil {
+		t.Error("BeginMultipartCompletion: expected an error")
+	}
+	if _, err := s.RenewMultipartCompletion(ctx, "u"); err == nil {
+		t.Error("RenewMultipartCompletion: expected an error")
+	}
+	if err := s.EndMultipartCompletion(ctx, "u"); err == nil {
+		t.Error("EndMultipartCompletion: expected an error")
+	}
 }
 
 // TestListMultipartUploads verifies prefix-scoped listing of active multipart uploads.

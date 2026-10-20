@@ -769,10 +769,10 @@ func TestPgAdapter_UpsertPart_StoresStorageKey(t *testing.T) {
 	}
 }
 
-// TestPgAdapter_DeleteMultipartUpload_ReturnsBackendAndParts verifies removing
-// an upload returns its backend and every part with its path, and leaves no
-// upload or part rows behind.
-func TestPgAdapter_DeleteMultipartUpload_ReturnsBackendAndParts(t *testing.T) {
+// TestPgAdapter_DeleteMultipartUpload_ReturnsParts verifies the upload lock
+// reports its backend with no completion mark, removing the upload returns
+// every part with its path, and no upload or part rows are left behind.
+func TestPgAdapter_DeleteMultipartUpload_ReturnsParts(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
@@ -782,16 +782,20 @@ func TestPgAdapter_DeleteMultipartUpload_ReturnsBackendAndParts(t *testing.T) {
 				t.Fatalf("UpsertPart(%d): %v", n, err)
 			}
 		}
-		backend, parts, err := a.DeleteMultipartUpload(ctx, uploadID)
+		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID)
+		if err != nil || backend != "backend-a" || !heartbeat.IsZero() {
+			t.Fatalf("LockMultipartUpload = %q, %v, %v; want backend-a with no mark", backend, heartbeat, err)
+		}
+		parts, err := a.DeleteMultipartUpload(ctx, uploadID)
 		if err != nil {
 			t.Fatalf("DeleteMultipartUpload: %v", err)
 		}
-		if backend != "backend-a" {
-			t.Errorf("backend = %q, want backend-a", backend)
-		}
 		assertRemovedParts(t, parts)
-		if again, left, err := a.DeleteMultipartUpload(ctx, uploadID); err != nil || again != "" || left != nil {
-			t.Errorf("second delete = %q, %+v, %v; want nothing", again, left, err)
+		if again, _, err := a.LockMultipartUpload(ctx, uploadID); err != nil || again != "" {
+			t.Errorf("LockMultipartUpload after delete = %q, %v; want the upload gone", again, err)
+		}
+		if left, err := a.DeleteMultipartUpload(ctx, uploadID); err != nil || len(left) != 0 {
+			t.Errorf("second delete = %+v, %v; want nothing", left, err)
 		}
 	})
 }
@@ -816,14 +820,14 @@ func assertRemovedParts(t *testing.T, parts []core.MultipartPart) {
 	}
 }
 
-// TestPgAdapter_DeleteMultipartUpload_MissingUploadReturnsNothing verifies an
-// upload already gone returns no backend and no parts.
-func TestPgAdapter_DeleteMultipartUpload_MissingUploadReturnsNothing(t *testing.T) {
+// TestPgAdapter_LockMultipartUpload_MissingUploadReturnsNothing verifies an
+// upload already gone locks as no backend and no mark.
+func TestPgAdapter_LockMultipartUpload_MissingUploadReturnsNothing(t *testing.T) {
 	s := adapterPgStore(t)
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		backend, parts, err := a.DeleteMultipartUpload(context.Background(), uniqueKey(t, "missing"))
-		if err != nil || backend != "" || parts != nil {
-			t.Errorf("DeleteMultipartUpload = %q, %+v, %v; want empty", backend, parts, err)
+		backend, heartbeat, err := a.LockMultipartUpload(context.Background(), uniqueKey(t, "missing"))
+		if err != nil || backend != "" || !heartbeat.IsZero() {
+			t.Errorf("LockMultipartUpload = %q, %v, %v; want empty", backend, heartbeat, err)
 		}
 	})
 }

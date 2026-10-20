@@ -12,7 +12,10 @@
 
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -93,8 +96,12 @@ func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*Multipart
 	return nil, nil
 }
 
-func (*noopTxAdapter) DeleteMultipartUpload(context.Context, string) (string, []MultipartPart, error) {
-	return "", nil, nil
+func (*noopTxAdapter) LockMultipartUpload(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (*noopTxAdapter) DeleteMultipartUpload(context.Context, string) ([]MultipartPart, error) {
+	return nil, nil
 }
 
 func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) error { return nil }

@@ -18,6 +18,7 @@ package core
 
 import (
 	"context"
+	"time"
 )
 
 // -------------------------------------------------------------------------
@@ -115,14 +116,17 @@ type CleanupTxAdapter interface {
 // -------------------------------------------------------------------------
 
 // MultipartTxAdapter exposes the transactional writes on multipart parts.
-// UpsertPart records a part at the path its intent names and returns the part
-// of that number it replaced, or nil. DeleteMultipartUpload removes the upload
-// and its parts and returns the upload's backend with the parts it removed. A
-// part recorded concurrently cannot slip between the read and the delete, and
-// an upload already gone returns no parts.
+// LockMultipartUpload locks the upload row for the rest of the transaction and
+// returns its backend and when a running completion last renewed its mark,
+// zero when none is running; an upload already gone returns an empty backend.
+// UpsertPart records a
+// part at the path its intent names and returns the part of that number it
+// replaced, or nil. DeleteMultipartUpload removes the upload and its parts and
+// returns the parts it removed.
 type MultipartTxAdapter interface {
+	LockMultipartUpload(ctx context.Context, uploadID string) (backendName string, completionHeartbeat time.Time, err error)
 	UpsertPart(ctx context.Context, p *RecordPartParams) (replaced *MultipartPart, err error)
-	DeleteMultipartUpload(ctx context.Context, uploadID string) (backendName string, parts []MultipartPart, err error)
+	DeleteMultipartUpload(ctx context.Context, uploadID string) (parts []MultipartPart, err error)
 }
 
 // -------------------------------------------------------------------------

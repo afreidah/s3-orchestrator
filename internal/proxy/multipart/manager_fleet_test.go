@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +46,16 @@ type multipartCalls struct {
 	retried            []int64
 	recordPart         []multipartPartCall
 	recordObject       []multipartObjectCall
+	markEvents         []string
 }
+
+// The completion mark events multipartCalls records, in the order the store
+// saw them; an upload delete is recorded as markDelete plus its reason.
+const (
+	markBegin  = "begin"
+	markEnd    = "end"
+	markDelete = "delete:"
+)
 
 // seededUpload is the upload row and parts the DeleteMultipartUpload stub
 // queues for deletion, as the store would from its own rows.
@@ -74,12 +84,13 @@ func (c *multipartCalls) queued(backendName, path, reason string, size int64) co
 }
 
 type multipartPartCall struct {
-	uploadID   string
-	partNumber int
-	etag       string
-	sizeBytes  int64
-	form       *core.StoredForm
-	storageKey string
+	uploadID    string
+	partNumber  int
+	etag        string
+	sizeBytes   int64
+	form        *core.StoredForm
+	storageKey  string
+	staleBefore time.Time
 }
 
 type multipartObjectCall struct {
@@ -100,12 +111,13 @@ func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *co
 
 // stubDeleteMultipart removes a seeded upload and returns a cleanup row for
 // each of its parts, queued under reason, as the store's transaction does.
-func stubDeleteMultipart(c *multipartCalls) func(context.Context, string, string) ([]core.CleanupItem, error) {
-	return func(_ context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
+func stubDeleteMultipart(c *multipartCalls) func(context.Context, string, string, time.Time) ([]core.CleanupItem, error) {
+	return func(_ context.Context, uploadID, reason string, _ time.Time) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.deleteMultipartHit = true
 		c.deleteReasons = append(c.deleteReasons, reason)
+		c.markEvents = append(c.markEvents, markDelete+reason)
 		up, ok := c.uploads[uploadID]
 		if !ok {
 			return nil, nil
@@ -117,6 +129,22 @@ func stubDeleteMultipart(c *multipartCalls) func(context.Context, string, string
 		}
 		return rows, nil
 	}
+}
+
+// markEvent records a completion mark event.
+// It takes c.mu itself.
+func (c *multipartCalls) markEvent(event string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.markEvents = append(c.markEvents, event)
+}
+
+// events returns a copy of the completion mark events recorded so far.
+// It takes c.mu itself.
+func (c *multipartCalls) events() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.markEvents)
 }
 
 // stubDiscardPending drops an intent and returns the cleanup row for its
@@ -149,6 +177,7 @@ func stubRecordPart(c *multipartCalls, replaced []core.CleanupItem, err error) f
 		defer c.mu.Unlock()
 		call := multipartPartCall{
 			uploadID: p.UploadID, partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.SizeBytes, form: p.Form,
+			staleBefore: p.CompletionStaleBefore,
 		}
 		if p.Intent != nil {
 			call.storageKey = p.Intent.StorageKey
@@ -179,8 +208,18 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 	c := &multipartCalls{}
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubCreateMultipart(c, nil)).AnyTimes()
-	store.EXPECT().DeleteMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().DeleteMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubDeleteMultipart(c)).AnyTimes()
+	store.EXPECT().BeginMultipartCompletion(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string, time.Time) (bool, error) {
+			c.markEvent(markBegin)
+			return true, nil
+		}).AnyTimes()
+	store.EXPECT().EndMultipartCompletion(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string) error {
+			c.markEvent(markEnd)
+			return nil
+		}).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordPart(c, nil, nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
@@ -556,7 +595,7 @@ func TestAbortMultipartUpload_DeleteUploadError(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().DeleteMultipartUpload(gomock.Any(), "upload-1", reasonAbortPart).
+	store.EXPECT().DeleteMultipartUpload(gomock.Any(), "upload-1", reasonAbortPart, gomock.Any()).
 		Return(nil, errors.New("db error"))
 	storetest.Permissive(store)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
@@ -655,36 +694,37 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	}
 }
 
-// TestCompleteMultipartUpload_LockContended pins the contended-lock
-// 409 branch.
-func TestCompleteMultipartUpload_LockContended(t *testing.T) {
+// TestCompleteMultipartUpload_MarkHeld asserts a completion that cannot take
+// the upload's mark, because another completion holds it, fails with a 409
+// OperationAborted and neither assembles, clears the mark, nor removes the
+// upload.
+func TestCompleteMultipartUpload_MarkHeld(t *testing.T) {
 	t.Parallel()
+	be := backendtest.NewInMemory()
+	parts := putParts(t, be, 1)
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
-		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 3}}, nil).AnyTimes()
-	store.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, nil).AnyTimes()
+	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().BeginMultipartCompletion(gomock.Any(), "upload-1", gomock.Any()).Return(false, nil)
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1))
-	if err == nil {
-		t.Fatal("expected OperationAborted error from contended lock")
+	if !errors.Is(err, core.ErrCompletionInProgress) {
+		t.Fatalf("err = %v, want ErrCompletionInProgress", err)
 	}
-	s3err, ok := errors.AsType[*core.S3Error](err)
-	if !ok {
-		t.Fatalf("expected *core.S3Error, got %T: %v", err, err)
+	if s3err, ok := errors.AsType[*core.S3Error](err); !ok || s3err.StatusCode != 409 || s3err.Code != "OperationAborted" {
+		t.Errorf("err = %v, want a 409 OperationAborted", err)
 	}
-	if s3err.StatusCode != 409 || s3err.Code != "OperationAborted" {
-		t.Errorf("expected 409 OperationAborted, got %d %s", s3err.StatusCode, s3err.Code)
+	if len(c.recordObject) != 0 || be.HasCopyOf("multi/key") {
+		t.Errorf("assembled while another completion held the mark: records=%d", len(c.recordObject))
 	}
-	if len(c.recordObject) != 0 {
-		t.Errorf("expected 0 RecordObject calls, got %d", len(c.recordObject))
+	if events := c.events(); len(events) != 0 {
+		t.Errorf("mark events = %v, want none", events)
 	}
 }
 

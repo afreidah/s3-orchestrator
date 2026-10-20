@@ -526,34 +526,46 @@ func (a *sqliteTxAdapter) AcquireBackendLock(_ context.Context, _ string) error 
 // MULTIPART TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// DeleteMultipartUpload removes an upload's parts and then the upload, and
-// returns the upload's backend with the parts removed. SQLite serializes
-// writers, so no part can be recorded between the read and the delete. An
-// upload already gone returns no parts.
-func (a *sqliteTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) (string, []core.MultipartPart, error) {
-	var backendName string
+// LockMultipartUpload reads the upload's backend and when a running
+// completion last renewed its mark. SQLite serializes writers, so the row
+// cannot change before the transaction ends. An upload already gone returns
+// an empty backend.
+func (a *sqliteTxAdapter) LockMultipartUpload(ctx context.Context, uploadID string) (string, time.Time, error) {
+	var (
+		backendName string
+		heartbeat   sql.NullString
+	)
 	err := a.q.QueryRowContext(ctx,
-		`SELECT backend_name FROM multipart_uploads WHERE upload_id = ?`, uploadID,
-	).Scan(&backendName)
+		`SELECT backend_name, completion_heartbeat_at FROM multipart_uploads WHERE upload_id = ?`, uploadID,
+	).Scan(&backendName, &heartbeat)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil, nil
+		return "", time.Time{}, nil
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("read multipart upload: %w", err)
+		return "", time.Time{}, fmt.Errorf("read multipart upload: %w", err)
 	}
+	if t := parseNullableTime(heartbeat); t != nil {
+		return backendName, *t, nil
+	}
+	return backendName, time.Time{}, nil
+}
+
+// DeleteMultipartUpload removes an upload's parts and then the upload, and
+// returns the parts removed.
+func (a *sqliteTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	rows, err := a.q.QueryContext(ctx,
 		`DELETE FROM multipart_parts WHERE upload_id = ? RETURNING part_number, size_bytes, storage_key`, uploadID)
 	if err != nil {
-		return "", nil, fmt.Errorf("delete multipart parts: %w", err)
+		return nil, fmt.Errorf("delete multipart parts: %w", err)
 	}
 	parts, err := collectRows(rows, "multipart parts", scanPartLocation)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	if _, err := a.q.ExecContext(ctx, `DELETE FROM multipart_uploads WHERE upload_id = ?`, uploadID); err != nil {
-		return "", nil, fmt.Errorf("delete multipart upload: %w", err)
+		return nil, fmt.Errorf("delete multipart upload: %w", err)
 	}
-	return backendName, parts, nil
+	return parts, nil
 }
 
 // UpsertPart records a part at its intent's path and returns the part of that

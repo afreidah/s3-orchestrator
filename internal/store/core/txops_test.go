@@ -15,10 +15,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
-// noopTxOps binds TxOps to a transaction that holds nothing and claims every
-// intent.
+// noopTxOps binds TxOps to a transaction that holds nothing, so no upload
+// exists, and claims every intent.
 func noopTxOps() TxOps {
 	return NewTxOps(&stubRunner{tx: &noopTxAdapter{}})
 }
@@ -66,10 +67,10 @@ func TestTxOps_IntentMethods(t *testing.T) {
 	if got, err := ops.DiscardPending(ctx, intent, "r"); err != nil || len(got) != 1 {
 		t.Errorf("DiscardPending = %+v, %v; want one queued row", got, err)
 	}
-	if _, err := ops.RecordPart(ctx, &RecordPartParams{UploadID: "u", PartNumber: 1, Intent: intent}); err != nil {
-		t.Errorf("RecordPart: %v", err)
+	if _, err := ops.RecordPart(ctx, &RecordPartParams{UploadID: "u", PartNumber: 1, Intent: intent}); !errors.Is(err, ErrMultipartUploadNotFound) {
+		t.Errorf("RecordPart err = %v, want ErrMultipartUploadNotFound", err)
 	}
-	if got, err := ops.DeleteMultipartUpload(ctx, "u", "r"); err != nil || len(got) != 0 {
+	if got, err := ops.DeleteMultipartUpload(ctx, "u", "r", time.Now()); err != nil || len(got) != 0 {
 		t.Errorf("DeleteMultipartUpload = %+v, %v; want nothing queued", got, err)
 	}
 }

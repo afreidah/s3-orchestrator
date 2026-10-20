@@ -66,6 +66,33 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 	return changed(n, err, "failed to create multipart upload")
 }
 
+// BeginMultipartCompletion marks the upload as being completed, reporting
+// false when a completion that renewed its mark after staleBefore holds it or
+// the upload is gone.
+func (s *Store) BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error) {
+	n, err := s.queries.BeginMultipartCompletion(ctx, db.BeginMultipartCompletionParams{
+		UploadID:    uploadID,
+		StaleBefore: pgTimestamptz(staleBefore),
+	})
+	return changed(n, err, "failed to begin multipart completion")
+}
+
+// RenewMultipartCompletion refreshes the upload's completion mark, reporting
+// false once the mark or the upload is gone.
+func (s *Store) RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error) {
+	n, err := s.queries.RenewMultipartCompletion(ctx, uploadID)
+	return changed(n, err, "failed to renew multipart completion")
+}
+
+// EndMultipartCompletion clears the upload's completion mark, so a completion
+// that failed leaves the upload open to parts, aborts and a retry.
+func (s *Store) EndMultipartCompletion(ctx context.Context, uploadID string) error {
+	if err := s.queries.EndMultipartCompletion(ctx, uploadID); err != nil {
+		return fmt.Errorf("failed to end multipart completion: %w", err)
+	}
+	return nil
+}
+
 // nilIfEmptyBytes returns nil when b is zero-length so the column lands
 // as NULL rather than an empty BYTEA.
 func nilIfEmptyBytes(b []byte) []byte {

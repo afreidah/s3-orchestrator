@@ -14,7 +14,10 @@
 
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // TxOps holds the Runner that the shared methods run their transactions
 // against. It is embedded by each engine store, which is itself that Runner.
@@ -88,9 +91,9 @@ func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupIt
 }
 
 // DeleteMultipartUpload removes an upload and its parts and queues the parts'
-// bytes.
-func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]CleanupItem, error) {
-	return DeleteMultipartUpload(ctx, o.runner, uploadID, reason)
+// bytes, unless a completion renewed its mark after staleBefore.
+func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error) {
+	return DeleteMultipartUpload(ctx, o.runner, uploadID, reason, staleBefore)
 }
 
 // InsertPendingIfFits admits an intent on its backend, serialized against the

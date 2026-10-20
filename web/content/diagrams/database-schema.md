@@ -104,6 +104,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        TEXT key_id',
     '        TEXT tagging',
     '        TIMESTAMPTZ created_at',
+    '        TIMESTAMPTZ completion_heartbeat_at',
     '    }',
     '',
     '    multipart_parts {',
@@ -381,7 +382,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Packed nonce + wrapped DEK (nullable)</td></tr>' +
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier (nullable)</td></tr>' +
         '<tr><td>tagging</td><td>TEXT</td><td>Query-string-encoded tag set from CreateMultipartUpload (nullable; NULL means the upload carried no tags)</td></tr>' +
-        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Upload initiation time</td></tr></table>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Upload initiation time</td></tr>' +
+        '<tr><td>completion_heartbeat_at</td><td>TIMESTAMPTZ</td><td>Last renewal of a running completion\'s mark (nullable; NULL means no completion is running). While it is under a minute old, part records, aborts and a second completion are refused with 409 OperationAborted</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on upload_id &bull; idx_multipart_uploads_created (created_at) &bull; idx_multipart_uploads_key_pattern (object_key text_pattern_ops) &bull; idx_multipart_uploads_backend_name (backend_name)</p>' +
         '<p>Used by: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, <a href="../background-services/">stale upload cleanup</a> and drain (ScanMultipartUploads, filtered by age or backend), quota available-space calculation (inflight parts JOIN).</p>' +
         '<p class="ac-metric">Key queries: CreateMultipartUpload, GetMultipartUpload, ScanMultipartUploads, ListMultipartUploadsByPrefix</p>'
@@ -744,3 +746,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00041_multipart_part_paths` | Add nullable `storage_key` to `multipart_parts`. Each part upload writes its own path under an intent, so a re-upload of a part number never shares bytes with the part it replaces; a part with a NULL path sits at the part number's fixed path |
 | `00042_capacity_covering_indexes` | Rebuild the `(backend_name, storage_key)` indexes on `cleanup_queue`, `cleanup_dlq` and `pending_objects` with `INCLUDE (size_bytes)`, so `backend_capacity`'s orphan and in-flight sums run from the indexes. Built `CONCURRENTLY` outside a transaction; the indexes keep their names. SQLite (0029) appends `size_bytes` to the same indexes |
 | `00043_usage_flushes` | Add `usage_flushes`, one row per shared usage batch applied, written in the transaction that applies it so a staged Redis batch found again after its commit is not counted twice. SQLite (0030) creates the same table |
+| `00044_multipart_completion_heartbeat` | Add nullable `completion_heartbeat_at` to `multipart_uploads`. A completion sets it before reading the parts and renews it while it runs; while it is fresh, part records and aborts refuse the upload, so neither can delete bytes the assembly is reading. SQLite (0031) adds the same column |

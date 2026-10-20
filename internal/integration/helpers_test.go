@@ -1127,11 +1127,38 @@ func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.M
 
 // DeleteMultipartUpload is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
+func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]core.CleanupItem, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.DeleteMultipartUpload(ctx, uploadID, reason)
+	return f.inner.DeleteMultipartUpload(ctx, uploadID, reason, staleBefore)
+}
+
+// BeginMultipartCompletion is an integration-test fixture helper; see file
+// header for the surrounding lifecycle the helpers participate in.
+func (f *FailableStore) BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error) {
+	if f.isFailing() {
+		return false, errSimulatedDBOutage
+	}
+	return f.inner.BeginMultipartCompletion(ctx, uploadID, staleBefore)
+}
+
+// RenewMultipartCompletion is an integration-test fixture helper; see file
+// header for the surrounding lifecycle the helpers participate in.
+func (f *FailableStore) RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error) {
+	if f.isFailing() {
+		return false, errSimulatedDBOutage
+	}
+	return f.inner.RenewMultipartCompletion(ctx, uploadID)
+}
+
+// EndMultipartCompletion is an integration-test fixture helper; see file
+// header for the surrounding lifecycle the helpers participate in.
+func (f *FailableStore) EndMultipartCompletion(ctx context.Context, uploadID string) error {
+	if f.isFailing() {
+		return errSimulatedDBOutage
+	}
+	return f.inner.EndMultipartCompletion(ctx, uploadID)
 }
 
 // GetQuotaStats is an integration-test fixture helper; see file header for

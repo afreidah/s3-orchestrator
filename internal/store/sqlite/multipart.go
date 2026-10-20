@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -81,6 +82,38 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 		return nil, err
 	}
 	return &mu, nil
+}
+
+// BeginMultipartCompletion marks the upload as being completed, reporting
+// false when a completion that renewed its mark after staleBefore holds it or
+// the upload is gone.
+func (s *Store) BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error) {
+	return s.execChanged(ctx, "failed to begin multipart completion",
+		`UPDATE multipart_uploads SET completion_heartbeat_at = ?
+		 WHERE upload_id = ? AND (completion_heartbeat_at IS NULL OR completion_heartbeat_at < ?)`,
+		now(), uploadID, formatTime(staleBefore),
+	)
+}
+
+// RenewMultipartCompletion refreshes the upload's completion mark, reporting
+// false once the mark or the upload is gone.
+func (s *Store) RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error) {
+	return s.execChanged(ctx, "failed to renew multipart completion",
+		`UPDATE multipart_uploads SET completion_heartbeat_at = ?
+		 WHERE upload_id = ? AND completion_heartbeat_at IS NOT NULL`,
+		now(), uploadID,
+	)
+}
+
+// EndMultipartCompletion clears the upload's completion mark, so a completion
+// that failed leaves the upload open to parts, aborts and a retry.
+func (s *Store) EndMultipartCompletion(ctx context.Context, uploadID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE multipart_uploads SET completion_heartbeat_at = NULL WHERE upload_id = ?`, uploadID,
+	); err != nil {
+		return fmt.Errorf("failed to end multipart completion: %w", err)
+	}
+	return nil
 }
 
 // -------------------------------------------------------------------------

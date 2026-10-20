@@ -92,13 +92,23 @@ type QuotaStore interface {
 // clears the part's intent and queues the bytes of a part it replaced, and
 // DeleteMultipartUpload queues every part's bytes under reason in the
 // transaction that removes the upload; both return the queued rows.
+//
+// BeginMultipartCompletion marks the upload as being completed and reports
+// false when a completion that renewed its mark after staleBefore already
+// holds it. RenewMultipartCompletion refreshes the mark and reports false once
+// it is gone; EndMultipartCompletion clears it. While the mark is fresh,
+// RecordPart and DeleteMultipartUpload refuse the upload with
+// ErrCompletionInProgress.
 type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) (bool, error)
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error)
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]MultipartPart, error)
-	DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]CleanupItem, error)
+	BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error)
+	RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error)
+	EndMultipartCompletion(ctx context.Context, uploadID string) error
+	DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error)
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 	ScanMultipartUploads(ctx context.Context, filter MultipartUploadFilter, limit int, afterUploadID string) ([]MultipartUpload, error)

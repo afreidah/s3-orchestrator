@@ -207,12 +207,22 @@ func TestAdapterErr_UpsertPartWithoutUpload(t *testing.T) {
 	}
 }
 
-// TestAdapterErr_DeleteMultipartUpload verifies the upload read error is
+// TestAdapterErr_LockMultipartUpload verifies the upload read error is
+// wrapped.
+func TestAdapterErr_LockMultipartUpload(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if _, _, err := a.LockMultipartUpload(context.Background(), "u"); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
+// TestAdapterErr_DeleteMultipartUpload verifies the parts delete error is
 // wrapped.
 func TestAdapterErr_DeleteMultipartUpload(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
+	if _, err := a.DeleteMultipartUpload(context.Background(), "u"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

@@ -385,15 +385,17 @@ func (p *MultipartPart) Path(uploadID string) string {
 // positionally: the two ETags and the two sizes are adjacent values of the same
 // types, which is exactly the shape a transposition hides in. Intent is the
 // claim the part's upload holds on the upload's backend; its path is where the
-// bytes were written, and recording the part clears it.
+// bytes were written, and recording the part clears it. A completion that
+// renewed its mark after CompletionStaleBefore refuses the part.
 type RecordPartParams struct {
-	UploadID      string
-	PartNumber    int
-	ETag          string
-	PlaintextETag string
-	SizeBytes     int64
-	Form          *StoredForm
-	Intent        *PendingObject
+	UploadID              string
+	PartNumber            int
+	ETag                  string
+	PlaintextETag         string
+	SizeBytes             int64
+	Form                  *StoredForm
+	Intent                *PendingObject
+	CompletionStaleBefore time.Time
 }
 
 // CompletePart is one entry of a client's CompleteMultipartUpload manifest:

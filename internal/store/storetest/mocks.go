@@ -86,6 +86,21 @@ func (mr *MockMetadataStoreMockRecorder) BackendObjectStats(ctx, backendName any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendObjectStats", reflect.TypeOf((*MockMetadataStore)(nil).BackendObjectStats), ctx, backendName)
 }
 
+// BeginMultipartCompletion mocks base method.
+func (m *MockMetadataStore) BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BeginMultipartCompletion", ctx, uploadID, staleBefore)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BeginMultipartCompletion indicates an expected call of BeginMultipartCompletion.
+func (mr *MockMetadataStoreMockRecorder) BeginMultipartCompletion(ctx, uploadID, staleBefore any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginMultipartCompletion", reflect.TypeOf((*MockMetadataStore)(nil).BeginMultipartCompletion), ctx, uploadID, staleBefore)
+}
+
 // ClaimPendingCleanups mocks base method.
 func (m *MockMetadataStore) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
@@ -437,18 +452,18 @@ func (mr *MockMetadataStoreMockRecorder) DeleteGrant(ctx, userID, r any) *gomock
 }
 
 // DeleteMultipartUpload mocks base method.
-func (m *MockMetadataStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string) ([]core.CleanupItem, error) {
+func (m *MockMetadataStore) DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteMultipartUpload", ctx, uploadID, reason)
+	ret := m.ctrl.Call(m, "DeleteMultipartUpload", ctx, uploadID, reason, staleBefore)
 	ret0, _ := ret[0].([]core.CleanupItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeleteMultipartUpload indicates an expected call of DeleteMultipartUpload.
-func (mr *MockMetadataStoreMockRecorder) DeleteMultipartUpload(ctx, uploadID, reason any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) DeleteMultipartUpload(ctx, uploadID, reason, staleBefore any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMultipartUpload", reflect.TypeOf((*MockMetadataStore)(nil).DeleteMultipartUpload), ctx, uploadID, reason)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMultipartUpload", reflect.TypeOf((*MockMetadataStore)(nil).DeleteMultipartUpload), ctx, uploadID, reason, staleBefore)
 }
 
 // DeleteObject mocks base method.
@@ -553,6 +568,20 @@ func (m *MockMetadataStore) DiscardPending(ctx context.Context, p *core.PendingO
 func (mr *MockMetadataStoreMockRecorder) DiscardPending(ctx, p, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscardPending", reflect.TypeOf((*MockMetadataStore)(nil).DiscardPending), ctx, p, reason)
+}
+
+// EndMultipartCompletion mocks base method.
+func (m *MockMetadataStore) EndMultipartCompletion(ctx context.Context, uploadID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EndMultipartCompletion", ctx, uploadID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// EndMultipartCompletion indicates an expected call of EndMultipartCompletion.
+func (mr *MockMetadataStoreMockRecorder) EndMultipartCompletion(ctx, uploadID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EndMultipartCompletion", reflect.TypeOf((*MockMetadataStore)(nil).EndMultipartCompletion), ctx, uploadID)
 }
 
 // GetActiveMultipartCounts mocks base method.
@@ -1258,6 +1287,21 @@ func (m *MockMetadataStore) RenameUser(ctx context.Context, id, name string) err
 func (mr *MockMetadataStoreMockRecorder) RenameUser(ctx, id, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameUser", reflect.TypeOf((*MockMetadataStore)(nil).RenameUser), ctx, id, name)
+}
+
+// RenewMultipartCompletion mocks base method.
+func (m *MockMetadataStore) RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenewMultipartCompletion", ctx, uploadID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RenewMultipartCompletion indicates an expected call of RenewMultipartCompletion.
+func (mr *MockMetadataStoreMockRecorder) RenewMultipartCompletion(ctx, uploadID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenewMultipartCompletion", reflect.TypeOf((*MockMetadataStore)(nil).RenewMultipartCompletion), ctx, uploadID)
 }
 
 // ReplaceObjectTags mocks base method.

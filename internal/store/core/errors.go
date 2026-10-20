@@ -74,6 +74,12 @@ var (
 		Message:    "multipart upload not found",
 	}
 
+	ErrCompletionInProgress = &S3Error{
+		StatusCode: http.StatusConflict,
+		Code:       "OperationAborted",
+		Message:    "a CompleteMultipartUpload is in progress for this upload",
+	}
+
 	ErrInvalidRange = &S3Error{
 		StatusCode: http.StatusRequestedRangeNotSatisfiable,
 		Code:       "InvalidRange",

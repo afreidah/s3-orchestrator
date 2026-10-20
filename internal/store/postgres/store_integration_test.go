@@ -584,7 +584,7 @@ func seedMultipartUpload(t *testing.T, s *Store, contentType string, metadata ma
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason) })
+	t.Cleanup(func() { _, _ = s.DeleteMultipartUpload(context.Background(), uploadID, testAbortReason, time.Now()) })
 	return uploadID, key
 }
 
@@ -703,6 +703,13 @@ func TestStoreInt_RecordPart_LostIntentQueuesTheUpload(t *testing.T) {
 	}
 }
 
+// TestStoreInt_MultipartCompletionMark verifies the completion mark holds off
+// a second completion, part records and upload deletes until it is cleared or
+// stale.
+func TestStoreInt_MultipartCompletionMark(t *testing.T) {
+	storetest.CheckCompletionMark(t, adapterPgStore(t), uniqueKey(t, "upload"), "backend-a")
+}
+
 // TestStoreInt_DeleteMultipartUpload_QueuesEveryPart verifies removing an
 // upload queues each part's bytes at its own path under the caller's reason,
 // and a second removal queues nothing.
@@ -713,7 +720,7 @@ func TestStoreInt_DeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
 	mustRecordPart(t, s, uploadID, 1, "a", 10, nil)
 	mustRecordPart(t, s, uploadID, 2, "b", 20, nil)
 
-	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason)
+	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason, time.Now())
 	if err != nil {
 		t.Fatalf("DeleteMultipartUpload: %v", err)
 	}
@@ -727,7 +734,7 @@ func TestStoreInt_DeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
 	if len(paths) != 2 || paths[partPathFor(uploadID, 1, "a")] != 10 || paths[partPathFor(uploadID, 2, "b")] != 20 {
 		t.Errorf("queued paths = %v, want both parts at their own paths", paths)
 	}
-	if again, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason); err != nil || len(again) != 0 {
+	if again, err := s.DeleteMultipartUpload(ctx, uploadID, testAbortReason, time.Now()); err != nil || len(again) != 0 {
 		t.Errorf("second DeleteMultipartUpload = %+v, %v; want nothing", again, err)
 	}
 }
@@ -863,7 +870,7 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	defer func() { _, _ = s.DeleteMultipartUpload(ctx, uploadID, testAbortReason) }()
+	defer func() { _, _ = s.DeleteMultipartUpload(ctx, uploadID, testAbortReason, time.Now()) }()
 	form := &core.StoredForm{
 		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 50,
 	}

@@ -128,7 +128,9 @@ CREATE TABLE IF NOT EXISTS multipart_uploads (
     encryption_key BLOB,
     key_id         TEXT,
     tagging        TEXT,
-    created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- Set while a completion assembles the parts; see migrations/0031.
+    completion_heartbeat_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_multipart_uploads_created
@@ -429,4 +431,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (30);
+INSERT INTO schema_version (version) VALUES (31);
