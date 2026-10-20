@@ -33,6 +33,7 @@ const (
 	LockPendingReaper    int64 = 1011 // abandoned PUT-intent resolution
 	LockMigrations       int64 = 1012 // schema migrations at startup
 	LockFleetSnapshot    int64 = 1013 // fleet-wide gauge and status recompute
+	LockNotifier         int64 = 1014 // webhook outbox delivery
 )
 
 // LockSpaceBackendClaim is the namespace of the transaction-scoped lock a claim

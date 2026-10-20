@@ -64,6 +64,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.162.x (current)
 
+**Webhook retries honor any max_retries ([#1731](https://github.com/afreidah/s3-orchestrator/issues/1731), v0.162.21)**
+
+The notification outbox queries skipped rows at 10 or more attempts, so an endpoint configured with `max_retries` above 10 left its failed events in `notification_outbox` forever, uncounted by `s3o_notification_queue_depth`. The queries no longer filter on attempts; the notifier already drops a row at its endpoint's `max_retries`. One migration (Postgres `00045`, SQLite `0032`) rebuilds `idx_notification_outbox_pending` without the filter.
+
+**Operator action items after upgrade:**
+
+- **Rows stuck before the upgrade are picked up again.** Each is retried once more and then delivered or dropped under its endpoint's current `max_retries`. Expect a burst of deliveries or `s3o_notification_dropped_total` increments on the first ticks.
+- **The notification drainer has its own advisory lock, `1014`.** It previously took `1011`, the pending reaper's lock, so the two skipped each other's ticks.
+- **`s3o_notification_dropped_total` now also counts rows dropped at `max_retries`**, as the documentation already described.
+- **The drainer reports per-tick health** with the other lock-gated workers, under the name `notifier`.
+
 **A replicated PUT claims its copies in one transaction ([#1732](https://github.com/afreidah/s3-orchestrator/issues/1732), v0.162.20)**
 
 A write placing more than one copy claimed each backend in a transaction of its own, one commit per copy before the upload started. The claims now run in one transaction with one commit. A database error while claiming a later copy now fails the write instead of continuing with the copies already claimed, since the transaction rolls every claim back. No migration.

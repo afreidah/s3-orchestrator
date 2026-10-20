@@ -56,8 +56,8 @@ func notificationFromRow(r *db.GetPendingNotificationsRow) core.NotificationRow 
 }
 
 // NotificationQueueDepth counts the notifications still to be delivered,
-// including those waiting out a retry backoff. Rows past the attempt limit are
-// never sent again and are not counted.
+// including those waiting out a retry backoff. The notifier deletes a row once
+// its endpoint's retries are spent, so every row still counts.
 func (s *Store) NotificationQueueDepth(ctx context.Context) (int64, error) {
 	return s.queries.NotificationQueueDepth(ctx)
 }

@@ -65,8 +65,8 @@ type Scrubber struct {
 	placement Placement
 	store     ScrubberStore
 	hasher    *storedHasher
-	gauges    GaugePublisher
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
+	telemetry.SharedGauges
 }
 
 // ScrubberDeps groups the scrubber's constructor dependencies. Encryptor and
@@ -93,12 +93,6 @@ func NewScrubber(deps ScrubberDeps) *Scrubber {
 		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec, "scrubber"),
 		log:       slog.Default().With(logfmt.Component("scrubber")),
 	}
-}
-
-// SetGaugePublisher shares verification coverage with every instance. Called
-// once at wiring, before the first pass; without it the gauges are set locally.
-func (s *Scrubber) SetGaugePublisher(p GaugePublisher) {
-	s.gauges = p
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -326,7 +320,7 @@ func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
 		return
 	}
 	stat := ledger.Coverage(reachable, time.Now())
-	publishGauges(ctx, s.gauges, telemetry.GaugeSourceScrubber, telemetry.WorkerGauges{
+	s.PublishGauges(ctx, telemetry.GaugeSourceScrubber, telemetry.WorkerGauges{
 		OldestUnverifiedSeconds: new(stat.OldestUnverifiedAge.Seconds()),
 		NeverVerifiedCopies:     &stat.NeverVerified,
 		DeferredCopies:          &stat.Deferred,

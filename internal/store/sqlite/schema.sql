@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
-    ON notification_outbox(next_retry) WHERE attempts < 10;
+    ON notification_outbox(next_retry);
 
 -- In-flight PutObject intent tracking. The write path inserts a row before
 -- the backend PUT and removes it on a successful metadata commit; the
@@ -431,4 +431,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (31);
+INSERT INTO schema_version (version) VALUES (32);

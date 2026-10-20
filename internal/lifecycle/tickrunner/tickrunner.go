@@ -73,7 +73,7 @@ func ComponentLogger(slug string) *slog.Logger {
 	return slog.Default().With(logfmt.Component(slug))
 }
 
-// QueueWork adapts a queue-draining pass into a Config.Work function. Both
+// QueueWork adapts a queue-draining pass into a Config.Work function. The
 // queue workers report the same way: run one pass, and say what it did only if
 // it did something. A quiet queue is the normal state, so logging every tick
 // would write a line a minute per instance forever and bury the ticks that

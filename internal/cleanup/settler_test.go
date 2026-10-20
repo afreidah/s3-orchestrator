@@ -297,24 +297,13 @@ func recordEvents(t *testing.T) func() []event.Event {
 // BACKOFF
 // -------------------------------------------------------------------------
 
-// TestBackoff pins the doubling from one minute, the 24h cap, and the
-// out-of-range inputs that short-circuit to the cap.
-func TestBackoff(t *testing.T) {
+// TestRetryBackoff pins the cleanup queue's policy: doubling from one minute,
+// capped at a day.
+func TestRetryBackoff(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		attempts int32
-		want     time.Duration
-	}{
-		{-1, 24 * time.Hour},
-		{0, time.Minute},
-		{3, 8 * time.Minute},
-		{10, 1024 * time.Minute},
-		{11, 24 * time.Hour},
-		{100, 24 * time.Hour},
-	}
-	for _, tc := range cases {
-		if got := Backoff(tc.attempts); got != tc.want {
-			t.Errorf("Backoff(%d) = %v, want %v", tc.attempts, got, tc.want)
+	for attempts, want := range map[int32]time.Duration{0: time.Minute, 10: 1024 * time.Minute, 11: 24 * time.Hour} {
+		if got := RetryBackoff.For(attempts); got != want {
+			t.Errorf("RetryBackoff.For(%d) = %v, want %v", attempts, got, want)
 		}
 	}
 }
@@ -357,8 +346,8 @@ func TestSettle_GivesEachRowItsOutcome(t *testing.T) {
 		t.Errorf("summary = %+v, want %+v", sum, want)
 	}
 	assertOneRetireCall(t, s, []int64{1, 2, 5, 6})
-	if rc, ok := s.retried[3]; !ok || rc.backoff != Backoff(2) || rc.lastError != errDelete.Error() {
-		t.Errorf("retry of row 3 = %+v (found %v), want Backoff(2) with the delete error", rc, ok)
+	if rc, ok := s.retried[3]; !ok || rc.backoff != RetryBackoff.For(2) || rc.lastError != errDelete.Error() {
+		t.Errorf("retry of row 3 = %+v (found %v), want RetryBackoff.For(2) with the delete error", rc, ok)
 	}
 	if !slices.Equal(s.dlq, []int64{4}) {
 		t.Errorf("dlq %v, want row 4", s.dlq)

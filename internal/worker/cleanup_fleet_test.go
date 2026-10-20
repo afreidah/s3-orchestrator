@@ -163,8 +163,8 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	if len(calls.retry) != 1 {
 		t.Fatalf("retry calls = %d, want 1", len(calls.retry))
 	}
-	if rc := calls.retry[0]; rc.id != 2 || rc.backoff != cleanup.Backoff(3) || rc.lastError != "be timeout" {
-		t.Errorf("retry = %+v, want row 2 backed off %v with the delete error", rc, cleanup.Backoff(3))
+	if rc := calls.retry[0]; rc.id != 2 || rc.backoff != cleanup.RetryBackoff.For(3) || rc.lastError != "be timeout" {
+		t.Errorf("retry = %+v, want row 2 backed off %v with the delete error", rc, cleanup.RetryBackoff.For(3))
 	}
 }
 

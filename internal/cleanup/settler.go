@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
@@ -104,21 +105,13 @@ const (
 	statusClaimLost = "claim_lost"
 )
 
+// RetryBackoff is how long a failed delete waits before its next attempt: a
+// minute doubled per attempt, capped at a day.
+var RetryBackoff = backoff.Exponential{Base: time.Minute, Ceiling: 24 * time.Hour}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
-
-// Backoff returns the backoff duration for the given attempt number:
-// min(1m * 2^attempts, 24h). It short-circuits the shift for attempts >= 11
-// (where the doubling already exceeds the cap) and for negative inputs, since
-// shifting by a negative or out-of-range count is undefined in Go.
-func Backoff(attempts int32) time.Duration {
-	const maxBackoff = 24 * time.Hour
-	if attempts < 0 || attempts >= 11 {
-		return maxBackoff
-	}
-	return min(time.Minute<<attempts, maxBackoff)
-}
 
 // Settle deletes every row's bytes, one batched delete per backend, and gives
 // each row its outcome. It deletes each row's queued path, not the object's
@@ -346,7 +339,7 @@ func (s *Settler) exhaust(ctx context.Context, item *core.CleanupItem, attempts 
 // retry stamps the next retry deadline on a row still within its budget and
 // releases its claim.
 func (s *Settler) retry(ctx context.Context, item *core.CleanupItem, delErr error) batch.ItemResult {
-	retried, err := s.store.RetryCleanupItem(ctx, item, Backoff(item.Attempts), delErr.Error())
+	retried, err := s.store.RetryCleanupItem(ctx, item, RetryBackoff.For(item.Attempts), delErr.Error())
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
 		return batch.ItemResult{Outcome: batch.ItemFailed, Status: statusRetry}

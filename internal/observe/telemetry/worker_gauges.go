@@ -13,6 +13,8 @@
 
 package telemetry
 
+import "context"
+
 // The workers that publish gauges, one shared-state key each. Each key has a
 // single writer at a time: the instance holding that worker's lock.
 const (
@@ -58,6 +60,35 @@ func (g *WorkerGauges) Apply() {
 	setIf(IntegrityDeferredCopies.Set, g.DeferredCopies)
 	setIf(RebalancePending.Set, g.RebalancePending)
 	setIf(NotificationQueueDepth.Set, g.NotificationQueueDepth)
+}
+
+// GaugePublisher shares a worker's fleet-wide gauges with every instance.
+// *metrics.Collector satisfies it.
+type GaugePublisher interface {
+	PublishWorkerGauges(ctx context.Context, source string, g WorkerGauges)
+}
+
+// SharedGauges is what a lock-gated worker embeds to publish its gauges. A
+// worker built without a publisher, a single instance or a test, sets them
+// locally instead.
+type SharedGauges struct {
+	publisher GaugePublisher
+}
+
+// SetGaugePublisher shares the worker's gauges with every instance. Called
+// once at wiring, before the first tick.
+func (s *SharedGauges) SetGaugePublisher(p GaugePublisher) {
+	s.publisher = p
+}
+
+// PublishGauges publishes g under source, or applies it locally when no
+// publisher is wired.
+func (s *SharedGauges) PublishGauges(ctx context.Context, source string, g WorkerGauges) {
+	if s.publisher == nil {
+		g.Apply()
+		return
+	}
+	s.publisher.PublishWorkerGauges(ctx, source, g)
 }
 
 // setIf sets a gauge from a count the value carries.

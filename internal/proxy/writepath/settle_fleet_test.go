@@ -57,7 +57,7 @@ func TestSettle_FleetRetriesAFailedDelete(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Cond(func(item *core.CleanupItem) bool {
 		return item.ID == 1 && item.Claim == rowClaim
-	}), cleanup.Backoff(2), gomock.Any()).Return(true, nil).Times(1)
+	}), cleanup.RetryBackoff.For(2), gomock.Any()).Return(true, nil).Times(1)
 	store.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Any()).Times(0)
 	storetest.Permissive(store)
 

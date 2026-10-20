@@ -119,6 +119,12 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{32, func() {
+			exec("drop the pending outbox index", `DROP INDEX idx_notification_outbox_pending`)
+			exec("restore the partial pending outbox index", `
+				CREATE INDEX idx_notification_outbox_pending
+				    ON notification_outbox(next_retry) WHERE attempts < 10`)
+		}},
 		{31, func() { dropColumns(t, s, "multipart_uploads", "completion_heartbeat_at") }},
 		// The view reads multipart_parts, so it goes before the column; 0027
 		// recreates it.
@@ -2611,8 +2617,7 @@ func TestNotificationOutbox_Retry(t *testing.T) {
 }
 
 // TestNotificationQueueDepth verifies the depth counts every notification still
-// to be delivered, including one waiting out a backoff, and not one past the
-// attempt limit.
+// to be delivered, including one waiting out a backoff.
 func TestNotificationQueueDepth(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -2631,15 +2636,46 @@ func TestNotificationQueueDepth(t *testing.T) {
 	if n, err := s.NotificationQueueDepth(ctx); err != nil || n != 2 {
 		t.Errorf("depth with one backing off = %d, %v; want 2", n, err)
 	}
+}
 
-	for range 10 {
-		if err := s.RetryNotification(ctx, pending[1].ID, time.Hour, "timeout"); err != nil {
-			t.Fatalf("RetryNotification: %v", err)
-		}
+// TestNotificationAttempts verifies a notification past ten attempts is
+// still due and still counted in the queue depth.
+func TestNotificationAttempts(t *testing.T) {
+	t.Parallel()
+	storetest.CheckNotificationAttempts(t, newTestStore(t))
+}
+
+// TestNotificationPendingIndex_UpgradeIndexesEveryRow verifies upgrading a
+// database whose pending outbox index skipped rows by attempt count leaves
+// an index over every row.
+func TestNotificationPendingIndex_UpgradeIndexesEveryRow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	rewindToSchemaVersion(t, s, 31)
+	if def := pendingOutboxIndexSQL(t, s); !strings.Contains(def, "WHERE") {
+		t.Fatalf("rewound index = %q, want the partial index", def)
 	}
-	if n, err := s.NotificationQueueDepth(ctx); err != nil || n != 1 {
-		t.Errorf("depth with one exhausted = %d, %v; want 1", n, err)
+
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
 	}
+
+	if def := pendingOutboxIndexSQL(t, s); strings.Contains(def, "WHERE") {
+		t.Errorf("upgraded index = %q, want no row filter", def)
+	}
+}
+
+// pendingOutboxIndexSQL returns the CREATE INDEX statement SQLite stored for
+// the pending outbox index.
+func pendingOutboxIndexSQL(t *testing.T, s *Store) string {
+	t.Helper()
+	var def string
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_notification_outbox_pending'`).Scan(&def); err != nil {
+		t.Fatalf("read pending outbox index: %v", err)
+	}
+	return def
 }
 
 // -------------------------------------------------------------------------

@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -252,7 +254,7 @@ func TestDeliver_Success(t *testing.T) {
 	defer srv.Close()
 
 	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
-	ep := &config.NotificationEndpoint{URL: srv.URL}
+	ep := &config.NotificationEndpoint{URL: srv.URL, Timeout: 5 * time.Second}
 	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
 	err := n.deliver(context.Background(), row, ep)
@@ -270,7 +272,7 @@ func TestDeliver_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
-	ep := &config.NotificationEndpoint{URL: srv.URL}
+	ep := &config.NotificationEndpoint{URL: srv.URL, Timeout: 5 * time.Second}
 	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
 	err := n.deliver(context.Background(), row, ep)
@@ -291,7 +293,7 @@ func TestDeliver_HMACSignature(t *testing.T) {
 	defer srv.Close()
 
 	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
-	ep := &config.NotificationEndpoint{URL: srv.URL, Secret: "test-secret"}
+	ep := &config.NotificationEndpoint{URL: srv.URL, Secret: "test-secret", Timeout: 5 * time.Second}
 	payload := []byte(`{"type":"test"}`)
 	row := core.NotificationRow{Payload: payload}
 
@@ -343,6 +345,8 @@ type mockOutboxStore struct {
 	pending      []core.NotificationRow
 	completedIDs []int64
 	retriedIDs   []int64
+	backoffs     []time.Duration
+	lockIDs      []int64
 	depth        int64
 }
 
@@ -381,16 +385,21 @@ func (m *mockOutboxStore) CompleteNotification(_ context.Context, id int64) erro
 // RetryNotification records the retry call (id, backoff, last_error)
 // so the test can assert the notifier scheduled retries with the
 // right backoff curve.
-func (m *mockOutboxStore) RetryNotification(_ context.Context, id int64, _ time.Duration, _ string) error {
+func (m *mockOutboxStore) RetryNotification(_ context.Context, id int64, backoff time.Duration, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.retriedIDs = append(m.retriedIDs, id)
+	m.backoffs = append(m.backoffs, backoff)
 	return nil
 }
 
-// WithAdvisoryLock runs the supplied function with advisory lock.
-func (m *mockOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(context.Context) error) (bool, error) {
-	return true, fn(context.Background())
+// WithAdvisoryLock records the lock id and runs fn as if the lock were
+// acquired.
+func (m *mockOutboxStore) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(context.Context) error) (bool, error) {
+	m.mu.Lock()
+	m.lockIDs = append(m.lockIDs, lockID)
+	m.mu.Unlock()
+	return true, fn(ctx)
 }
 
 // -------------------------------------------------------------------------
@@ -427,6 +436,22 @@ func (m *mockOutboxStore) retried() []int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]int64(nil), m.retriedIDs...)
+}
+
+// retryBackoffs returns a copy of the backoffs passed to RetryNotification
+// under the lock.
+func (m *mockOutboxStore) retryBackoffs() []time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]time.Duration(nil), m.backoffs...)
+}
+
+// locks returns a copy of the advisory lock ids taken under the lock.
+// Each tick takes one.
+func (m *mockOutboxStore) locks() []int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]int64(nil), m.lockIDs...)
 }
 
 // -------------------------------------------------------------------------
@@ -513,31 +538,54 @@ func TestEmit_MultipleEndpoints(t *testing.T) {
 	}
 }
 
-// TestDrainOnce_DeliversAndCompletes verifies the drain once delivers and completes contract.
-// Asserts that expected ID 1 completed, got.
-func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+// statusServer starts a webhook receiver that answers every delivery with
+// code, closed when the test ends.
+func statusServer(t *testing.T, code int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(code)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
-	ms := &mockOutboxStore{
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL},
-		},
+// testEndpoint returns an endpoint for url subscribed to every event, with
+// the timeout config validation would default and the given max_retries.
+func testEndpoint(url string, maxRetries int) config.NotificationEndpoint {
+	return config.NotificationEndpoint{URL: url, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: maxRetries}
+}
+
+// pendingRow returns an outbox row bound for url that has already been
+// attempted the given number of times.
+func pendingRow(id int64, url string, attempts int32) core.NotificationRow {
+	return core.NotificationRow{ID: id, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: url, Attempts: attempts}
+}
+
+// drainNotifier builds a notifier literal over store for tests that call
+// drain directly. It skips NewNotifier so the tests can run in parallel
+// without touching the process-wide emitter.
+func drainNotifier(store OutboxStore, endpoints ...config.NotificationEndpoint) *Notifier {
+	return &Notifier{
+		log:       slog.Default(),
+		endpoints: endpoints,
+		store:     store,
+		client:    &http.Client{Timeout: 5 * time.Second},
 	}
-	n := &Notifier{
-		log: slog.Default(),
-		endpoints: []config.NotificationEndpoint{
-			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
-		},
-		store:  ms,
-		client: &http.Client{Timeout: 5 * time.Second},
+}
+
+// TestDrain_DeliversAndCompletes verifies a delivered row is completed and
+// counted as a success.
+func TestDrain_DeliversAndCompletes(t *testing.T) {
+	t.Parallel()
+	srv := statusServer(t, http.StatusOK)
+	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}}
+	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
+
+	succeeded, failed := n.drain(context.Background())
+
+	if succeeded != 1 || failed != 0 {
+		t.Errorf("drain = (%d, %d), want (1, 0)", succeeded, failed)
 	}
-
-	n.drainOnce(context.Background())
-
 	if len(ms.completed()) != 1 || ms.completed()[0] != 1 {
 		t.Errorf("expected ID 1 completed, got %v", ms.completed())
 	}
@@ -557,29 +605,17 @@ func (r *recordingGauges) PublishWorkerGauges(_ context.Context, source string, 
 	r.source, r.g = source, g
 }
 
-// TestDrainOnce_PublishesOutboxBacklog verifies the queue depth is the whole
+// TestDrain_PublishesOutboxBacklog verifies the queue depth is the whole
 // outbox backlog the store counts, not the size of the batch just drained.
-func TestDrainOnce_PublishesOutboxBacklog(t *testing.T) {
+func TestDrain_PublishesOutboxBacklog(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	ms := &mockOutboxStore{
-		pending: []core.NotificationRow{{ID: 1, EventType: "test", Payload: []byte(`{}`), EndpointURL: srv.URL}},
-		depth:   42,
-	}
+	srv := statusServer(t, http.StatusOK)
+	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}, depth: 42}
 	pub := &recordingGauges{}
-	n := &Notifier{
-		log:       slog.Default(),
-		endpoints: []config.NotificationEndpoint{{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3}},
-		store:     ms,
-		client:    &http.Client{Timeout: 5 * time.Second},
-	}
+	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
 	n.SetGaugePublisher(pub)
 
-	n.drainOnce(context.Background())
+	n.drain(context.Background())
 
 	pub.mu.Lock()
 	defer pub.mu.Unlock()
@@ -591,87 +627,130 @@ func TestDrainOnce_PublishesOutboxBacklog(t *testing.T) {
 	}
 }
 
-// TestDrainOnce_RetriesOnFailure verifies the drain once retries on failure contract.
-// Asserts that expected ID 1 retried, got.
-func TestDrainOnce_RetriesOnFailure(t *testing.T) {
+// TestDrain_RetriesWithBackoff verifies a failed delivery below the
+// endpoint's max_retries is rescheduled, not completed, and waits the
+// backoff for its attempt count. Covers rows past ten attempts, which an
+// endpoint allowing more retries than that keeps retrying.
+func TestDrain_RetriesWithBackoff(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	ms := &mockOutboxStore{
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL, Attempts: 0},
-		},
+	cases := []struct {
+		name       string
+		attempts   int32
+		maxRetries int
+	}{
+		{"first failure", 0, 3},
+		{"past ten attempts", 10, 12},
 	}
-	n := &Notifier{
-		log: slog.Default(),
-		endpoints: []config.NotificationEndpoint{
-			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
-		},
-		store:  ms,
-		client: &http.Client{Timeout: 5 * time.Second},
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := statusServer(t, http.StatusInternalServerError)
+			ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, tc.attempts)}}
+			n := drainNotifier(ms, testEndpoint(srv.URL, tc.maxRetries))
 
-	n.drainOnce(context.Background())
+			succeeded, failed := n.drain(context.Background())
 
-	if len(ms.retried()) != 1 || ms.retried()[0] != 1 {
-		t.Errorf("expected ID 1 retried, got %v", ms.retried())
+			if succeeded != 0 || failed != 1 {
+				t.Errorf("drain = (%d, %d), want (0, 1)", succeeded, failed)
+			}
+			assertRetriedOnly(t, ms, retryBackoff.For(tc.attempts))
+		})
 	}
 }
 
-// TestDrainOnce_ExhaustsAfterMaxRetries verifies the drain once exhausts after max retries contract.
-// Asserts that expected exhausted notification to be completed, got completed= retried=.
-func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	ms := &mockOutboxStore{
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL, Attempts: 2},
-		},
+// assertRetriedOnly fails unless row 1 was rescheduled once with backoff
+// and nothing was completed.
+func assertRetriedOnly(t *testing.T, ms *mockOutboxStore, backoff time.Duration) {
+	t.Helper()
+	if got := ms.retried(); len(got) != 1 || got[0] != 1 {
+		t.Errorf("retried = %v, want [1]", got)
 	}
-	n := &Notifier{
-		log: slog.Default(),
-		endpoints: []config.NotificationEndpoint{
-			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
-		},
-		store:  ms,
-		client: &http.Client{Timeout: 5 * time.Second},
+	if got := ms.completed(); len(got) != 0 {
+		t.Errorf("completed = %v, want none while retries remain", got)
 	}
-
-	n.drainOnce(context.Background())
-
-	// At max retries, should complete (drop) rather than retry
-	if len(ms.completed()) != 1 {
-		t.Errorf("expected exhausted notification to be completed, got completed=%v retried=%v", ms.completed(), ms.retried())
+	if got := ms.retryBackoffs(); len(got) != 1 || got[0] != backoff {
+		t.Errorf("backoff = %v, want %v", got, backoff)
 	}
 }
 
-// TestDrainOnce_UnknownEndpointCompleted verifies the drain once unknown endpoint completed contract.
-// Asserts that notification to unknown endpoint should be completed (dropped), got.
-func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
-	t.Parallel()
-	ms := &mockOutboxStore{
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "test", Payload: []byte(`{}`), EndpointURL: "https://gone.example.com"},
-		},
-	}
-	n := &Notifier{
-		log:       slog.Default(),
-		endpoints: []config.NotificationEndpoint{},
-		store:     ms,
-		client:    &http.Client{Timeout: 5 * time.Second},
-	}
+// TestDrain_ExhaustedRowIsDropped verifies a row whose failed delivery uses
+// its last retry is completed instead of retried and counted as dropped.
+// Not parallel: it reads the process-wide dropped counter, which parallel
+// emit tests also bump.
+func TestDrain_ExhaustedRowIsDropped(t *testing.T) {
+	srv := statusServer(t, http.StatusInternalServerError)
+	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 11)}}
+	n := drainNotifier(ms, testEndpoint(srv.URL, 12))
+	before := promtest.ToFloat64(telemetry.NotificationDroppedTotal)
 
-	n.drainOnce(context.Background())
+	n.drain(context.Background())
+
+	if got := ms.completed(); len(got) != 1 || got[0] != 1 {
+		t.Errorf("completed = %v, want [1]", got)
+	}
+	if got := ms.retried(); len(got) != 0 {
+		t.Errorf("retried = %v, want none once retries are exhausted", got)
+	}
+	if got := promtest.ToFloat64(telemetry.NotificationDroppedTotal) - before; got != 1 {
+		t.Errorf("dropped delta = %v, want 1", got)
+	}
+}
+
+// TestDrain_UnknownEndpointCompleted verifies a row for an endpoint no
+// longer configured is completed without a delivery attempt.
+func TestDrain_UnknownEndpointCompleted(t *testing.T) {
+	t.Parallel()
+	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, "https://gone.example.com", 0)}}
+	n := drainNotifier(ms)
+
+	n.drain(context.Background())
 
 	if len(ms.completed()) != 1 {
 		t.Errorf("notification to unknown endpoint should be completed (dropped), got %v", ms.completed())
+	}
+}
+
+// TestTick_DrainsUnderNotifierLock verifies one tick of a constructed
+// notifier drains the outbox under the notifier lock and reports healthy.
+// Not parallel: NewNotifier writes the process-global event emitter.
+func TestTick_DrainsUnderNotifierLock(t *testing.T) {
+	srv := statusServer(t, http.StatusOK)
+	ms := &mockOutboxStore{pending: []core.NotificationRow{pendingRow(1, srv.URL, 0)}}
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint(srv.URL, 3)}}, ms)
+	t.Cleanup(n.Close)
+
+	n.Tick(context.Background())
+
+	if got := ms.locks(); len(got) != 1 || got[0] != core.LockNotifier {
+		t.Errorf("locks taken = %v, want [%d]", got, core.LockNotifier)
+	}
+	if got := ms.completed(); len(got) != 1 || got[0] != 1 {
+		t.Errorf("completed = %v, want [1]", got)
+	}
+	h := n.Health()
+	if h.Name != "notifier" || h.LastSuccess.IsZero() || h.ConsecutiveFailures != 0 {
+		t.Errorf("health = %+v, want a successful notifier tick", h)
+	}
+}
+
+// TestRun_ClosesOnShutdown verifies Run returns once its context ends and
+// deregisters the notifier, so later events reach no outbox.
+// Not parallel: NewNotifier writes the process-global event emitter.
+func TestRun_ClosesOnShutdown(t *testing.T) {
+	event.SetEmitter(nil)
+	t.Cleanup(func() { event.SetEmitter(nil) })
+	ms := &mockOutboxStore{}
+	n := NewNotifier(&config.NotificationConfig{Endpoints: []config.NotificationEndpoint{testEndpoint("https://example.com", 3)}}, ms)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := n.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	event.Publish(event.ServiceStopping, "", nil)
+	if got := ms.inserts(); got != 0 {
+		t.Errorf("outbox rows after Run returned = %d, want 0", got)
 	}
 }
 
@@ -711,6 +790,7 @@ func TestHasPrefix(t *testing.T) {
 // the worker doesn't panic or double-deliver.
 type failingOutboxStore struct {
 	pending     []core.NotificationRow
+	pendingErr  error
 	completeErr error
 	retryErr    error
 }
@@ -728,7 +808,7 @@ func (m *failingOutboxStore) InsertNotification(_ context.Context, _, _, _ strin
 
 // GetPendingNotifications returns pending notifications.
 func (m *failingOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]core.NotificationRow, error) {
-	return m.pending, nil
+	return m.pending, m.pendingErr
 }
 
 // CompleteNotification records the completion call so the test can
@@ -776,70 +856,52 @@ func TestRetryOrLog_LogsStoreError(t *testing.T) {
 	n.retryOrLog(context.Background(), 42, time.Second, "test_reason")
 }
 
-// TestDrainOnce_CompleteFailure_DoesNotPanic drives drainOnce through the
-// "delivery succeeded but Complete failed" path, previously a silent
-// discard. Verifies the worker survives the failure.
-func TestDrainOnce_CompleteFailure_DoesNotPanic(t *testing.T) {
+// TestDrain_CompleteFailure_DoesNotPanic drives drain through the
+// "delivery succeeded but Complete failed" path. Verifies the worker
+// survives the failure.
+func TestDrain_CompleteFailure_DoesNotPanic(t *testing.T) {
 	t.Parallel()
-	// Spin up an HTTP server that always returns 204 so delivery succeeds.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
+	srv := statusServer(t, http.StatusNoContent)
 	ms := &failingOutboxStore{
 		completeErr: fmt.Errorf("simulated complete failure"),
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}")},
-		},
+		pending:     []core.NotificationRow{pendingRow(1, srv.URL, 0)},
 	}
-	n := &Notifier{
-		log: slog.Default(),
-		endpoints: []config.NotificationEndpoint{
-			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 3, Timeout: time.Second},
-		},
-		store:  ms,
-		client: &http.Client{Timeout: time.Second},
-	}
+	n := drainNotifier(ms, testEndpoint(srv.URL, 3))
 
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("drainOnce panicked: %v", r)
+			t.Fatalf("drain panicked: %v", r)
 		}
 	}()
-	n.drainOnce(context.Background())
+	n.drain(context.Background())
 }
 
-// TestDrainOnce_RetryFailure_DoesNotPanic drives drainOnce through the
-// "delivery failed AND Retry failed" path.
-func TestDrainOnce_RetryFailure_DoesNotPanic(t *testing.T) {
+// TestDrain_FetchFailure_ProcessesNothing verifies a failed outbox read ends
+// the drain with nothing delivered or failed.
+func TestDrain_FetchFailure_ProcessesNothing(t *testing.T) {
 	t.Parallel()
-	// Server always returns 500 so delivery fails -> worker calls Retry ->
-	// Retry also fails (injected).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	n := drainNotifier(&failingOutboxStore{pendingErr: errors.New("read failed")})
 
+	if succeeded, failed := n.drain(context.Background()); succeeded != 0 || failed != 0 {
+		t.Errorf("drain = (%d, %d), want (0, 0)", succeeded, failed)
+	}
+}
+
+// TestDrain_RetryFailure_DoesNotPanic drives drain through the "delivery
+// failed and Retry failed" path.
+func TestDrain_RetryFailure_DoesNotPanic(t *testing.T) {
+	t.Parallel()
+	srv := statusServer(t, http.StatusInternalServerError)
 	ms := &failingOutboxStore{
 		retryErr: fmt.Errorf("simulated retry failure"),
-		pending: []core.NotificationRow{
-			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}"), Attempts: 0},
-		},
+		pending:  []core.NotificationRow{pendingRow(1, srv.URL, 0)},
 	}
-	n := &Notifier{
-		log: slog.Default(),
-		endpoints: []config.NotificationEndpoint{
-			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 5, Timeout: time.Second},
-		},
-		store:  ms,
-		client: &http.Client{Timeout: time.Second},
-	}
+	n := drainNotifier(ms, testEndpoint(srv.URL, 5))
 
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("drainOnce panicked: %v", r)
+			t.Fatalf("drain panicked: %v", r)
 		}
 	}()
-	n.drainOnce(context.Background())
+	n.drain(context.Background())
 }

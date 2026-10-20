@@ -209,7 +209,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     NOTIFY: {
       title: 'Notification Drainer',
       badge: 'process', badgeText: 'every 2 s',
-      body: '<p><code>notify.Notifier</code> delivers webhook notifications from the <code>notification_outbox</code> table. Each tick it reads up to 50 pending rows and POSTs each one to its endpoint.</p><p><b>Interval</b>: 2 seconds.<br><b>Advisory lock</b>: 1011, the same ID as <code>LockPendingReaper</code>, so the drainer and the pending reaper currently share one lock and each skips a tick while the other holds it.<br><b>Guard</b>: registered only in worker or all mode, and only when notification endpoints are configured.</p><p>A failed delivery is retried with backoff of 2^attempts seconds, capped at 64 seconds. After the endpoint\'s <code>max_retries</code> (default 3) the row is removed.</p><p class="ac-metric">Metrics: s3o_notification_sent_total{endpoint,event_type}, s3o_notification_failed_total{endpoint,event_type}, s3o_notification_dropped_total, s3o_notification_queue_depth, s3o_notification_store_errors_total{operation}, s3o_notification_duration_seconds{endpoint}</p>'
+      body: '<p><code>notify.Notifier</code> delivers webhook notifications from the <code>notification_outbox</code> table. Each tick it reads up to 50 pending rows and POSTs each one to its endpoint. It runs on the same tick runner as the other lock-gated workers, so it reports per-tick health with them.</p><p><b>Interval</b>: 2 seconds.<br><b>Advisory lock</b>: <code>LockNotifier = 1014</code>.<br><b>Guard</b>: registered only in worker or all mode, and only when notification endpoints are configured.</p><p>A failed delivery is retried with backoff of 2^attempts seconds, capped at 64 seconds. After the endpoint\'s <code>max_retries</code> (default 3) the row is removed and counted in <code>s3o_notification_dropped_total</code>. The outbox queries do not filter on attempts, so any <code>max_retries</code> is honored.</p><p class="ac-metric">Metrics: s3o_notification_sent_total{endpoint,event_type}, s3o_notification_failed_total{endpoint,event_type}, s3o_notification_dropped_total, s3o_notification_queue_depth, s3o_notification_store_errors_total{operation}, s3o_notification_duration_seconds{endpoint}</p>'
     },
     PROVWATCH: {
       title: 'Provisioning Watch',
@@ -346,7 +346,7 @@ In API-only mode only usage-flush, fleet-snapshot, cb-watchdog, flight-recorder 
 | Backend Drain | 10s | 1006 | `Drainer.Drain()` |
 | Orphan Reconciler | 24 hrs (configurable) | 1009 | `Reconciler.Run()` |
 | Integrity Scrubber | `scrubber_interval` (off by default) | 1010 | `Scrubber.Scrub()` |
-| Notification Drainer | 2s | 1011 (shared with the pending reaper) | `notify.Notifier.Run()` |
+| Notification Drainer | 2s | 1014 | `notify.Notifier.Run()` |
 | CB Watchdog | 5s | none (per-instance) | `breaker.NewWatchdog()` / `Registry.ProbeAll()` |
 | Provisioning Watch | on Redis message | none (per-instance) | `newProvisioningWatcher()` |
 | Flight Recorder | continuous | none (per-instance) | `debug.FlightRecorderService.Run()` |

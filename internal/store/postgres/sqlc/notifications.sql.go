@@ -23,7 +23,7 @@ func (q *Queries) CompleteNotification(ctx context.Context, id int64) error {
 const getPendingNotifications = `-- name: GetPendingNotifications :many
 SELECT id, event_type, payload, endpoint_url, attempts
 FROM notification_outbox
-WHERE next_retry <= NOW() AND attempts < 10
+WHERE next_retry <= NOW()
 ORDER BY created_at ASC
 LIMIT $1
 `
@@ -90,7 +90,7 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 }
 
 const notificationQueueDepth = `-- name: NotificationQueueDepth :one
-SELECT COUNT(*)::bigint FROM notification_outbox WHERE attempts < 10
+SELECT COUNT(*)::bigint FROM notification_outbox
 `
 
 func (q *Queries) NotificationQueueDepth(ctx context.Context) (int64, error) {

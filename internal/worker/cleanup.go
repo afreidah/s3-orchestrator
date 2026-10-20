@@ -37,7 +37,7 @@ type CleanupWorker struct {
 	settler          *cleanup.Settler
 	instanceID       string
 	claimGracePeriod time.Duration
-	gauges           GaugePublisher
+	telemetry.SharedGauges
 }
 
 // CleanupWorkerDeps groups the cleanup worker's constructor parameters.
@@ -73,12 +73,6 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 		claimGracePeriod: deps.ClaimGracePeriod,
 		log:              slog.Default().With(logfmt.Component("cleanup_worker")),
 	}
-}
-
-// SetGaugePublisher shares the queue depths with every instance. Called once
-// at wiring, before the first tick; without it the gauges are set locally.
-func (w *CleanupWorker) SetGaugePublisher(p GaugePublisher) {
-	w.gauges = p
 }
 
 // -------------------------------------------------------------------------
@@ -169,5 +163,5 @@ func (w *CleanupWorker) recordCleanupDepths(ctx context.Context) {
 	if dlqDepth, err := w.store.CleanupDLQDepth(ctx); err == nil {
 		g.CleanupDLQDepth = &dlqDepth
 	}
-	publishGauges(ctx, w.gauges, telemetry.GaugeSourceCleanup, g)
+	w.PublishGauges(ctx, telemetry.GaugeSourceCleanup, g)
 }

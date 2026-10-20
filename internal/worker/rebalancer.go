@@ -50,8 +50,8 @@ type Rebalancer struct {
 	ops       Ops
 	placement Placement
 	store     RebalancerStore
-	gauges    GaugePublisher
 	cfg       syncutil.AtomicConfig[config.RebalanceConfig]
+	telemetry.SharedGauges
 }
 
 // NewRebalancer creates a Rebalancer with fleet operations, write-path
@@ -61,12 +61,6 @@ func NewRebalancer(ops Ops, placement Placement, store RebalancerStore) *Rebalan
 	must.NotNil("placement", placement)
 	must.NotNil("store", store)
 	return &Rebalancer{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
-}
-
-// SetGaugePublisher shares the pending-move gauge with every instance. Called
-// once at wiring, before the first pass; without it the gauge is set locally.
-func (r *Rebalancer) SetGaugePublisher(p GaugePublisher) {
-	r.gauges = p
 }
 
 // SetConfig atomically stores the rebalance configuration.
@@ -180,7 +174,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 // publishPending shares how many moves the current pass has planned: the plan
 // size when it starts, zero when it ends.
 func (r *Rebalancer) publishPending(ctx context.Context, n int64) {
-	publishGauges(ctx, r.gauges, telemetry.GaugeSourceRebalancer, telemetry.WorkerGauges{RebalancePending: &n})
+	r.PublishGauges(ctx, telemetry.GaugeSourceRebalancer, telemetry.WorkerGauges{RebalancePending: &n})
 }
 
 // -------------------------------------------------------------------------

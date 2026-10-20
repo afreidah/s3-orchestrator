@@ -16,12 +16,12 @@ VALUES ($1, $2, $3);
 -- name: GetPendingNotifications :many
 SELECT id, event_type, payload, endpoint_url, attempts
 FROM notification_outbox
-WHERE next_retry <= NOW() AND attempts < 10
+WHERE next_retry <= NOW()
 ORDER BY created_at ASC
 LIMIT $1;
 
 -- name: NotificationQueueDepth :one
-SELECT COUNT(*)::bigint FROM notification_outbox WHERE attempts < 10;
+SELECT COUNT(*)::bigint FROM notification_outbox;
 
 -- name: CompleteNotification :exec
 DELETE FROM notification_outbox WHERE id = $1;

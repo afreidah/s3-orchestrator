@@ -5,9 +5,9 @@
 //
 // Delivers CloudEvents JSON payloads to configured webhook endpoints via HTTP
 // POST. Events are persisted in a notification_outbox table for durable retry
-// with exponential backoff. A background worker drains the outbox under an
-// advisory lock for multi-instance safety. Threshold-crossing events (capacity
-// warnings) are dampened to avoid repeated notifications.
+// with exponential backoff. The outbox is drained by a tick-runner service
+// under its own advisory lock for multi-instance safety. Threshold-crossing
+// events (capacity warnings) are dampened to avoid repeated notifications.
 // -------------------------------------------------------------------------------
 
 package notify
@@ -27,10 +27,12 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/backoff"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -74,51 +76,33 @@ const drainInterval = 2 * time.Second
 // per drain tick. Bounds memory use if notifications back up.
 const pendingBatchSize = 50
 
-// advisoryLockKey is the PostgreSQL advisory-lock key the notifier uses to
-// serialize outbox drains across multiple replicas.
-const advisoryLockKey = 1011
+// retryBackoff is how long a failed delivery waits before its next attempt: a
+// second doubled per attempt, capped at a minute and four seconds.
+var retryBackoff = backoff.Exponential{Base: time.Second, Ceiling: 64 * time.Second}
 
-// maxBackoffShift bounds the exponential-backoff shift so we cap at 2^6 = 64
-// seconds between retries, regardless of attempt count.
-const maxBackoffShift = 6
-
-// defaultMaxRetries is used when an endpoint doesn't set MaxRetries (or sets
-// it <= 0). After this many failed attempts, a notification is dropped.
-const defaultMaxRetries = 3
-
-// defaultEndpointTimeout is used when an endpoint doesn't set Timeout (or
-// sets it <= 0).
-const defaultEndpointTimeout = 5 * time.Second
-
-// Notifier delivers webhook notifications from a durable outbox queue.
-// Implements lifecycle.Runner via the Run method.
+// Notifier delivers webhook notifications from a durable outbox queue. The
+// embedded tick-runner service drains it and reports its health; Run wraps
+// that service's Run to release what the notifier holds on shutdown.
 type Notifier struct {
+	*tickrunner.Service
+	telemetry.SharedGauges
+
 	log       *slog.Logger
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
 	client    *http.Client
 	dampener  *syncutil.TTLCache[string, struct{}]
-	gauges    GaugePublisher
-}
-
-// GaugePublisher shares the outbox depth with every instance.
-// *metrics.Collector satisfies it.
-type GaugePublisher interface {
-	PublishWorkerGauges(ctx context.Context, source string, g telemetry.WorkerGauges)
-}
-
-// SetGaugePublisher shares the outbox depth with every instance. Called once at
-// wiring, before the first drain; without it the gauge is set locally.
-func (n *Notifier) SetGaugePublisher(p GaugePublisher) {
-	n.gauges = p
 }
 
 // NewNotifier creates a notifier backed by the given outbox store. Registers
 // itself as the process-wide event emitter so every package can publish
-// notifications through the same mechanism.
+// notifications through the same mechanism. Endpoints carry the defaults
+// config validation fills in.
 func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
+	const slug = "notifier"
+	log := tickrunner.ComponentLogger(slug)
 	n := &Notifier{
-		log:       slog.Default().With(logfmt.Component("notifier")),
+		log:       log,
 		endpoints: cfg.Endpoints,
 		store:     store,
 		client: &http.Client{
@@ -126,6 +110,14 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		},
 		dampener: syncutil.NewTTLCache[string, struct{}](dampenTTL),
 	}
+	n.Service = tickrunner.New(tickrunner.Config{
+		Locker:   store,
+		Interval: drainInterval,
+		LockID:   core.LockNotifier,
+		Name:     slug,
+		Log:      log,
+		Work:     tickrunner.QueueWork(log, "outbox drained", n.drain),
+	})
 	event.SetEmitter(n.emit)
 	return n
 }
@@ -211,22 +203,11 @@ func (n *Notifier) fanOutToEndpoints(ev *event.Event, payload []byte) {
 // BACKGROUND DELIVERY WORKER
 // -------------------------------------------------------------------------
 
-// Run implements lifecycle.Runner. Drains the notification outbox under an
-// advisory lock, delivering pending events via HTTP POST.
+// Run implements lifecycle.Runner. The embedded service drains the outbox on
+// each tick until ctx ends, and the notifier is closed after it returns.
 func (n *Notifier) Run(ctx context.Context) error {
-	ticker := time.NewTicker(drainInterval)
-	defer ticker.Stop()
-
 	defer n.Close()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			n.drainOnce(ctx)
-		}
-	}
+	return n.Service.Run(ctx)
 }
 
 // Close releases what the notifier holds beyond its own stack: the dampener's
@@ -243,42 +224,24 @@ func (n *Notifier) Close() {
 	}
 }
 
-// publishDepth shares how many notifications are still to be delivered once
-// the batch is done: the whole outbox backlog, not the batch just processed. A
-// failed count leaves the gauge as it was.
-func (n *Notifier) publishDepth(ctx context.Context) {
-	depth, err := n.store.NotificationQueueDepth(ctx)
+// drain delivers one batch of pending notifications, one at a time, and
+// shares how many are still to be delivered: the whole outbox backlog, not
+// the batch just processed. A failed count leaves the gauge as it was.
+func (n *Notifier) drain(ctx context.Context) (succeeded, failed int) {
+	rows, err := n.store.GetPendingNotifications(ctx, pendingBatchSize)
 	if err != nil {
-		n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
-		return
+		n.log.ErrorContext(ctx, "failed to fetch pending notifications", "error", err)
+		return 0, 0
 	}
-	g := telemetry.WorkerGauges{NotificationQueueDepth: &depth}
-	if n.gauges == nil {
-		g.Apply()
-		return
-	}
-	n.gauges.PublishWorkerGauges(ctx, telemetry.GaugeSourceNotifier, g)
-}
+	runner := batch.Runner[core.NotificationRow]{Name: "notifier", Log: n.log, Concurrency: 1}
+	sum := runner.Run(ctx, rows, n.processPendingRow)
 
-// drainOnce processes one batch of pending notifications under an advisory lock.
-func (n *Notifier) drainOnce(ctx context.Context) {
-	acquired, err := n.store.WithAdvisoryLock(ctx, advisoryLockKey, func(lockCtx context.Context) error {
-		rows, err := n.store.GetPendingNotifications(lockCtx, pendingBatchSize)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			n.processPendingRow(lockCtx, row)
-		}
-		n.publishDepth(lockCtx)
-		return nil
-	})
-	if err != nil {
-		n.log.ErrorContext(ctx, "notification drain failed", "error", err)
+	if depth, err := n.store.NotificationQueueDepth(ctx); err != nil {
+		n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
+	} else {
+		n.PublishGauges(ctx, telemetry.GaugeSourceNotifier, telemetry.WorkerGauges{NotificationQueueDepth: &depth})
 	}
-	if !acquired {
-		n.log.DebugContext(ctx, "notification drain skipped, another instance holds the lock")
-	}
+	return sum.Succeeded, sum.Failed
 }
 
 // deliver sends a single notification to the endpoint via HTTP POST.
@@ -296,11 +259,7 @@ func (n *Notifier) deliver(ctx context.Context, row core.NotificationRow, ep *co
 		req.Header.Set("X-Webhook-Signature", "sha256="+sig)
 	}
 
-	timeout := ep.Timeout
-	if timeout <= 0 {
-		timeout = defaultEndpointTimeout
-	}
-	n.client.Timeout = timeout
+	n.client.Timeout = ep.Timeout
 
 	resp, err := n.client.Do(req) //nolint:gosec // G704: endpoint URL is operator-configured, not user-tainted
 	if err != nil {
@@ -346,43 +305,38 @@ func generateEventID() string {
 // processPendingRow handles one outbox row: either the endpoint no longer
 // exists (complete immediately), delivery failed (retry or exhaust), or
 // delivery succeeded (complete + metrics).
-func (n *Notifier) processPendingRow(ctx context.Context, row core.NotificationRow) {
+func (n *Notifier) processPendingRow(ctx context.Context, row core.NotificationRow) batch.ItemResult {
 	ep := n.findEndpoint(row.EndpointURL)
 	if ep == nil {
 		n.completeOrLog(ctx, row.ID, "no_matching_endpoint")
-		return
+		return batch.ItemResult{Outcome: batch.ItemSkipped}
 	}
 	start := time.Now()
-	err := n.deliver(ctx, row, ep)
-	if err != nil {
+	if err := n.deliver(ctx, row, ep); err != nil {
 		n.handleDeliveryFailure(ctx, row, ep, err)
-		return
+		return batch.ItemResult{Outcome: batch.ItemFailed}
 	}
 	telemetry.NotificationSentTotal.WithLabelValues(ep.URL, row.EventType).Inc()
 	telemetry.NotificationDuration.WithLabelValues(ep.URL).Observe(time.Since(start).Seconds())
 	n.completeOrLog(ctx, row.ID, "delivered")
+	return batch.ItemResult{Outcome: batch.ItemSucceeded}
 }
 
-// handleDeliveryFailure decides whether to schedule a retry or give up,
-// based on the endpoint's configured max retries and the row's current
-// attempt count.
+// handleDeliveryFailure retries the row while the endpoint's max_retries
+// allow, and otherwise drops it and counts the drop.
 func (n *Notifier) handleDeliveryFailure(ctx context.Context, row core.NotificationRow, ep *config.NotificationEndpoint, err error) {
 	telemetry.NotificationFailedTotal.WithLabelValues(ep.URL, row.EventType).Inc()
-	backoff := time.Duration(1<<min(row.Attempts, maxBackoffShift)) * time.Second
-	maxRetries := ep.MaxRetries
-	if maxRetries <= 0 {
-		maxRetries = defaultMaxRetries
-	}
-	if int(row.Attempts)+1 >= maxRetries {
+	if int(row.Attempts)+1 >= ep.MaxRetries {
 		n.log.ErrorContext(ctx, "notification delivery exhausted",
 			slog.String("endpoint", ep.URL),
 			slog.String("event", row.EventType),
 			slog.Int("attempts", int(row.Attempts+1)),
 			"error", err)
+		telemetry.NotificationDroppedTotal.Inc()
 		n.completeOrLog(ctx, row.ID, "exhausted")
 		return
 	}
-	n.retryOrLog(ctx, row.ID, backoff, err.Error())
+	n.retryOrLog(ctx, row.ID, retryBackoff.For(row.Attempts), err.Error())
 }
 
 // completeOrLog marks a notification row complete in the outbox. Store

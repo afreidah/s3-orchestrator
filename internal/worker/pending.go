@@ -44,7 +44,7 @@ type PendingReaper struct {
 	concurrency int
 	minAge      time.Duration
 	batchSize   int
-	gauges      GaugePublisher
+	telemetry.SharedGauges
 }
 
 // PendingReaperDeps groups the pending reaper's constructor parameters.
@@ -85,12 +85,6 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 	}
 }
 
-// SetGaugePublisher shares the backlog depth with every instance. Called once
-// at wiring, before the first tick; without it the gauge is set locally.
-func (r *PendingReaper) SetGaugePublisher(p GaugePublisher) {
-	r.gauges = p
-}
-
 // -------------------------------------------------------------------------
 // REAPER TICK
 // -------------------------------------------------------------------------
@@ -128,7 +122,7 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 	})
 
 	if depth, err := r.store.PendingDepth(ctx); err == nil {
-		publishGauges(ctx, r.gauges, telemetry.GaugeSourcePendingReaper,
+		r.PublishGauges(ctx, telemetry.GaugeSourcePendingReaper,
 			telemetry.WorkerGauges{PendingIntentsDepth: &depth})
 	}
 	return sum
