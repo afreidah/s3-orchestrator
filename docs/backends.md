@@ -34,7 +34,7 @@ backends:
 | MinIO | `http://<host>:9000` | `true` |
 | Wasabi | `https://s3.<region>.wasabisys.com` | `true` |
 
-**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront - temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
+**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Each multipart part claims room on the upload's backend before its bytes land and is refused with `507 InsufficientStorage` when the backend is full, the same as a PUT. `CompleteMultipartUpload` then needs room for the assembled object while the parts are still stored, roughly twice the object's size, since the parts are removed only after the object is recorded.
 
 **Max object size:** Some providers impose per-object size limits (e.g. Supabase rejects uploads over 50 MB with 413 EntityTooLarge). Set `max_object_size` to prevent the orchestrator from routing writes, rebalance moves, or replication copies to a backend when the object exceeds the limit:
 
