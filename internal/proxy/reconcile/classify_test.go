@@ -13,12 +13,12 @@ package reconcile
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -41,10 +41,9 @@ func (s siblingStub) GetAllObjectLocations(context.Context, string) ([]core.Obje
 // newTestEncryptor builds an encryptor over a fixed master key.
 func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	p, err := encryption.NewConfigKeyProvider(key, "key-1")
+	p, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(p, 4096)
 	if err != nil {

@@ -21,16 +21,17 @@ import (
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
-// testKeyProvider is a simple ConfigKeyProvider for testing. Uses a fixed key.
-func testKeyProvider(t *testing.T) *ConfigKeyProvider {
+// testKeyProvider is a StaticKeyProvider over a fixed all-zero key, so every
+// test encryptor wraps under the same key ID.
+func testKeyProvider(t *testing.T) *StaticKeyProvider {
 	t.Helper()
-	// 32-byte key base64-encoded
-	p, err := NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	p, err := NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	return p
 }

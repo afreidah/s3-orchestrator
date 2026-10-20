@@ -455,14 +455,13 @@ func newRotateEncryptionKeyHandler(t *testing.T) *Handler {
 	return h
 }
 
-// testEncryptor builds a real encryptor over the local config-key provider,
-// for the paths that must get past the encryption-disabled guard.
+// testEncryptor builds a real encryptor over a static all-zero key, for the
+// paths that must get past the encryption-disabled guard.
 func testEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	provider, err := encryption.NewConfigKeyProvider(
-		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -473,8 +472,8 @@ func testEncryptor(t *testing.T) *encryption.Encryptor {
 
 // TestHandleRotateEncryptionKey_BodyValidation covers the request-body
 // validation paths past the nil-encryptor guard: malformed JSON should be
-// rejected by DecodeJSONBody, and an empty old_key_id should be rejected
-// by the explicit field check.
+// rejected by DecodeJSONBody, and a body naming neither or both of
+// old_key_id and all_stale should be rejected by the scope check.
 func TestHandleRotateEncryptionKey_BodyValidation(t *testing.T) {
 	t.Parallel()
 
@@ -484,7 +483,8 @@ func TestHandleRotateEncryptionKey_BodyValidation(t *testing.T) {
 		wantMsg string
 	}{
 		{"invalid json", `{not json`, "invalid request body"},
-		{"empty old_key_id", `{"old_key_id":""}`, "old_key_id is required"},
+		{"empty old_key_id", `{"old_key_id":""}`, ops.ErrKeyIDRequired.Error()},
+		{"both scopes", `{"old_key_id":"config-0","all_stale":true}`, ops.ErrKeyIDRequired.Error()},
 	}
 
 	for _, tc := range cases {
@@ -508,6 +508,27 @@ func TestHandleRotateEncryptionKey_BodyValidation(t *testing.T) {
 				t.Errorf("error = %q, want %q", resp["error"], tc.wantMsg)
 			}
 		})
+	}
+}
+
+// TestHandleRotateEncryptionKey_AllStale asserts an all_stale body reaches the
+// rotation as a pass over every copy not under the current key.
+func TestHandleRotateEncryptionKey_AllStale(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	enc := testEncryptor(t)
+	store := opstest.NewMockRewriteStore(gomock.NewController(t))
+	want := &core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: enc.Provider().KeyID()}
+	store.EXPECT().ListCopiesByForm(gomock.Any(), want, gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
+	encryptionWith(t, h, enc, store)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/rotate-encryption-key", `{"all_stale":true}`))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 }
 

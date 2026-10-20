@@ -217,8 +217,8 @@ DELETE FROM object_locations WHERE backend_name = $1;
 -- The copies a pass works through, selected by the layers their bytes carry:
 -- every bit of with_flags set and none of without_flags. The rest narrows the
 -- page to what the pass will act on, so row_limit is not spent on rows it
--- would decline: an empty backend_filter or key_id matches every value, and
--- managed_only leaves out data the orchestrator does not manage.
+-- would decline: an empty backend_filter, key_id or except_key_id matches every
+-- value, and managed_only leaves out data the orchestrator does not manage.
 --
 -- Paged by cursor rather than offset, since a pass usually takes the copies it
 -- acts on out of its own predicate, and an offset would step over the rows
@@ -238,6 +238,7 @@ WHERE (form & sqlc.arg(with_flags)::bigint) = sqlc.arg(with_flags)::bigint
   AND (NOT sqlc.arg(managed_only)::boolean OR managed)
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (sqlc.arg(key_id)::text = '' OR key_id = sqlc.arg(key_id)::text)
+  AND (sqlc.arg(except_key_id)::text = '' OR key_id IS DISTINCT FROM sqlc.arg(except_key_id)::text)
   AND object_size >= sqlc.arg(min_size)::bigint
   AND (sqlc.arg(probe_level)::text = ''
        OR compression_probe_size IS NULL

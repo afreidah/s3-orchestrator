@@ -214,9 +214,9 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(store)
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {

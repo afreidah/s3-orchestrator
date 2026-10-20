@@ -126,22 +126,29 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 	}.run(ctx, e.rewriteEnv(), obs)
 }
 
-// RotateKey re-wraps every DEK sealed with oldKeyID under the current primary
-// key. The old key must remain in previous_keys, since unwrapping happens with
-// it. Object bytes are untouched.
-func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyResult, error) {
+// RotateKey re-wraps DEKs under the current primary key: every DEK sealed with
+// oldKeyID, or with allStale every DEK recorded under any other ID, which also
+// moves rows still carrying an earlier release's positional IDs onto the
+// key's fingerprint. Exactly one of the two must be given. The old keys must
+// remain configured, since unwrapping happens with them. Object bytes are
+// untouched.
+func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string, allStale bool) (RotateKeyResult, error) {
 	if e.encryptor == nil || e.store == nil {
 		return RotateKeyResult{}, ErrEncryptionDisabled
 	}
-	if oldKeyID == "" {
+	if (oldKeyID != "") == allStale {
 		return RotateKeyResult{}, ErrKeyIDRequired
+	}
+	filter := core.FormFilter{With: core.StoredEncrypted, KeyID: oldKeyID}
+	if allStale {
+		filter.ExceptKeyID = e.encryptor.Provider().KeyID()
 	}
 
 	var res RotateKeyResult
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(rotateBatchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
-			return e.store.ListCopiesByForm(ctx, &core.FormFilter{With: core.StoredEncrypted, KeyID: oldKeyID}, limit, after)
+			return e.store.ListCopiesByForm(ctx, &filter, limit, after)
 		},
 		CursorOf: func(loc core.ObjectLocation) core.Cursor {
 			return core.Cursor{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName}

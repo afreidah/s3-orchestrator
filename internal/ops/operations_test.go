@@ -224,14 +224,13 @@ func newObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 	}), api
 }
 
-// testEncryptor builds a real encryptor over the local config-key provider,
-// for the paths that must get past the encryption-disabled guard.
+// testEncryptor builds a real encryptor over a static all-zero key, for the
+// paths that must get past the encryption-disabled guard.
 func testEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	provider, err := encryption.NewConfigKeyProvider(
-		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -752,7 +751,7 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), keyID)
+	res, err := svc.RotateKey(context.Background(), keyID, false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
@@ -788,7 +787,7 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), keyID)
+	res, err := svc.RotateKey(context.Background(), keyID, false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}
@@ -855,18 +854,52 @@ func TestRotateKey_SkippedWithoutEncryptor(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	_, err := svc.Encryption.RotateKey(context.Background(), "old-key")
+	_, err := svc.Encryption.RotateKey(context.Background(), "old-key", false)
 	assertSkipped(t, err)
 }
 
-// TestRotateKey_RejectsEmptyKeyID asserts the old key id is required, since
-// rotation is scoped to the objects sealed under it.
-func TestRotateKey_RejectsEmptyKeyID(t *testing.T) {
+// TestRotateKey_RequiresExactlyOneScope asserts a rotation names either one
+// old key or every stale key, never both and never neither.
+func TestRotateKey_RequiresExactlyOneScope(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), emptyEncAdmin{})
 
-	if _, err := svc.Encryption.RotateKey(context.Background(), ""); !errors.Is(err, ErrKeyIDRequired) {
-		t.Errorf("err = %v, want ErrKeyIDRequired", err)
+	for _, tc := range []struct {
+		name     string
+		oldKeyID string
+		allStale bool
+	}{
+		{"neither", "", false},
+		{"both", "old-key", true},
+	} {
+		if _, err := svc.Encryption.RotateKey(context.Background(), tc.oldKeyID, tc.allStale); !errors.Is(err, ErrKeyIDRequired) {
+			t.Errorf("%s: err = %v, want ErrKeyIDRequired", tc.name, err)
+		}
+	}
+}
+
+// TestRotateKey_AllStaleSkipsCurrentKey asserts an all-stale rotation pages
+// through every encrypted copy except those already under the current key.
+func TestRotateKey_AllStaleSkipsCurrentKey(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t)
+	want := &core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: enc.Provider().KeyID()}
+
+	store := opstest.NewMockRewriteStore(gomock.NewController(t))
+	store.EXPECT().ListCopiesByForm(gomock.Any(), want, rotateBatchSize, core.Cursor{}).Return(nil, nil).Times(1)
+
+	svc := NewEncryption(EncryptionDeps{
+		Encryptor: enc,
+		Store:     store,
+		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
+		Mover:     &fakeMover{},
+	})
+	res, err := svc.RotateKey(context.Background(), "", true)
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("res = %+v, want an empty run", res)
 	}
 }
 
@@ -1359,7 +1392,7 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 		Mover:     &fakeMover{},
 	})
 
-	res, err := svc.RotateKey(context.Background(), "old")
+	res, err := svc.RotateKey(context.Background(), "old", false)
 	if err != nil {
 		t.Fatalf("RotateKey: %v", err)
 	}

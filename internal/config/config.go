@@ -397,6 +397,8 @@ func topLevelFieldsChanged(old, next *Config) []string {
 	if old.Encryption.Enabled != next.Encryption.Enabled ||
 		old.Encryption.MasterKey != next.Encryption.MasterKey ||
 		old.Encryption.MasterKeyFile != next.Encryption.MasterKeyFile ||
+		!slices.Equal(old.Encryption.PreviousKeys, next.Encryption.PreviousKeys) ||
+		!slices.Equal(old.Encryption.PreviousKeyFiles, next.Encryption.PreviousKeyFiles) ||
 		old.Encryption.ChunkSize != next.Encryption.ChunkSize {
 		changed = append(changed, "encryption")
 	}

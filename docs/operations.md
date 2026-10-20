@@ -305,7 +305,7 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
    openssl rand -base64 32
    ```
 
-2. **Update the config** - set the new key as `master_key` and move the old key to `previous_keys`:
+2. **Update the config** - set the new key as `master_key` and move the old key to `previous_keys`, or to `previous_key_files` for a key held in a file:
 
    ```yaml
    encryption:
@@ -315,15 +315,15 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
        - "${OLD_ENCRYPTION_KEY}"
    ```
 
-3. **Restart the orchestrator** (encryption config is not reloadable).
+3. **Restart the orchestrator** (encryption config is not reloadable). Objects written under the old key stay readable from here on.
 
-4. **Re-wrap all DEKs:**
+4. **Re-wrap every DEK not under the new key:**
 
    ```bash
-   s3-orchestrator admin rotate-encryption-key --old-key-id config-0
+   s3-orchestrator admin rotate-encryption-key --all-stale
    ```
 
-   The `old-key-id` identifies which key's DEKs to re-wrap. For inline config keys, the ID is `config-0` for the primary and `config-1`, `config-2`, etc. for previous keys in order. For file-based keys, the ID is `file-0`. For Vault Transit, it's the key name.
+   Each inline or file key is recorded under its fingerprint, `k-` and 16 hex digits, so a key keeps the same ID wherever it sits in the config; `GET /admin/api/object-locations` shows the ID each copy is under. To re-wrap only one key's DEKs, pass `--old-key-id <id>` instead. Releases before v0.163.0 recorded positional IDs (`config-0`, `config-1`, `file-0`), and `--all-stale` moves those rows to the fingerprint as well. For Vault Transit the ID is `vault:{mount}/{key}`.
 
    The response shows progress:
 
@@ -331,7 +331,7 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
    {"status": "complete", "rotated": 1423, "failed": 0, "total": 1423}
    ```
 
-5. **After all DEKs are re-wrapped**, you can optionally remove the old key from `previous_keys` and restart. Objects that were rotated no longer need the old key.
+5. **After all DEKs are re-wrapped**, you can remove the old key from the config and restart. Wait first for multipart uploads started before the rotation to complete or be aborted: their parts were sealed under the old key, and the re-wrap pass covers stored objects only.
 
 **Metrics to watch during rotation:**
 

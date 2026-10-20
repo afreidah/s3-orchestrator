@@ -235,7 +235,7 @@ Three endpoints reject an input that would otherwise be a plausible convenience:
 
 - `DELETE /admin/api/cache/prefix` requires a non-empty `prefix`. An empty one would drop every entry, and a full flush should be a deliberate call to `POST /admin/api/cache/flush` rather than an accidentally-empty parameter.
 - `DELETE /admin/api/objects` requires a non-empty `prefix`. An empty one reads as "every object", which no request should be able to mean by omission.
-- `POST /admin/api/rotate-encryption-key` requires `old_key_id`. Rotating "whatever is current" is ambiguous during a partial rotation.
+- `POST /admin/api/rotate-encryption-key` requires exactly one of `old_key_id` or `all_stale: true`. An empty body re-wraps nothing rather than guessing which keys are meant.
 
 ## Endpoint reference
 

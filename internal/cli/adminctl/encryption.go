@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdEncryptExisting implements `s3-orchestrator admin encrypt-existing
@@ -33,21 +35,23 @@ func cmdDecryptExisting(args []string, c *client) int {
 }
 
 // cmdRotateEncryptionKey implements `s3-orchestrator admin
-// rotate-encryption-key -old-key-id=<id>`. Re-wraps every DEK sealed with the
-// old key under the current primary key; the old key must still be present in
-// previous_keys for unwrapping.
+// rotate-encryption-key -old-key-id=<id>` and `-all-stale`. Re-wraps every DEK
+// sealed with the old key, or with -all-stale every DEK not already under the
+// current primary key, under the current primary key; the old keys must still
+// be configured for unwrapping.
 func cmdRotateEncryptionKey(args []string, c *client) int {
 	fs := flag.NewFlagSet("rotate-encryption-key", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	oldKeyID := fs.String("old-key-id", "", "Key ID whose DEKs should be re-wrapped (required)")
+	oldKeyID := fs.String("old-key-id", "", "Key ID whose DEKs should be re-wrapped")
+	allStale := fs.Bool("all-stale", false, "Re-wrap every DEK not already under the current key")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *oldKeyID == "" {
-		fmt.Fprintln(c.stderr, "error: -old-key-id is required")
+	if (*oldKeyID != "") == *allStale {
+		fmt.Fprintln(c.stderr, "error: exactly one of -old-key-id or -all-stale is required")
 		return 1
 	}
-	body, err := json.Marshal(map[string]string{"old_key_id": *oldKeyID})
+	body, err := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale})
 	if err != nil {
 		fmt.Fprintf(c.stderr, fmtError, err)
 		return 1

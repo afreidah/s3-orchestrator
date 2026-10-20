@@ -222,8 +222,9 @@ func TestOps_PromptRefusedWhileRunning(t *testing.T) {
 // test names what it drives instead of pinning a menu position.
 func actionNamed(t *testing.T, label string) int {
 	t.Helper()
-	for i, a := range opsActions() {
-		if a.label == label {
+	actions := opsActions()
+	for i := range actions {
+		if actions[i].label == label {
 			return i
 		}
 	}
@@ -312,6 +313,37 @@ func TestOpsPrompt_RotateSendsKeyIDBody(t *testing.T) {
 	}
 	if got.OldKeyID != "key-2024" {
 		t.Errorf("old_key_id = %q, want key-2024", got.OldKeyID)
+	}
+}
+
+// TestOps_RotateAllStaleSendsFixedBody asserts the all-stale entry asks for
+// nothing, confirms, and posts the all_stale body to the rotation endpoint.
+func TestOps_RotateAllStaleSendsFixedBody(t *testing.T) {
+	t.Parallel()
+	f := &fakeLister{}
+	m := initialModel(f)
+	m.section = sectionOps
+	m.ops.actions = opsActions()
+	m.ops.cursor = actionNamed(t, "Rotate every stale encryption key")
+
+	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.prompt != nil {
+		t.Fatal("the all-stale rotation should not ask for input")
+	}
+	if m.confirm == nil {
+		t.Fatal("the all-stale rotation should confirm before running")
+	}
+	_, cmd := m.handleConfirmKey(key("y"))
+	if cmd == nil {
+		t.Fatal("confirming produced no command to run")
+	}
+	cmd()
+
+	if f.opRequest.path != pathRotateKey {
+		t.Errorf("path = %q, want the rotation endpoint", f.opRequest.path)
+	}
+	if got := string(f.opRequest.body); got != `{"all_stale":true}` {
+		t.Errorf("body = %s, want {\"all_stale\":true}", got)
 	}
 }
 

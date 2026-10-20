@@ -5,8 +5,9 @@
 //
 // KeyProvider interface and implementations for wrapping and unwrapping
 // per-object Data Encryption Keys (DEKs). Each object gets a random 256-bit
-// DEK that is wrapped (encrypted) by a master key before storage. Supports
-// inline config keys, file-based keys, and key rotation via MultiKeyProvider.
+// DEK that is wrapped (encrypted) by a master key before storage. Inline and
+// file keys share one provider and are recorded under their fingerprint, so a
+// key keeps its ID across a rotation; MultiKeyProvider holds the previous keys.
 // -------------------------------------------------------------------------------
 
 package encryption
@@ -15,11 +16,13 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -41,38 +44,43 @@ type KeyProvider interface {
 }
 
 // -------------------------------------------------------------------------
-// CONFIG KEY PROVIDER
+// STATIC KEY PROVIDER
 // -------------------------------------------------------------------------
 
-// ConfigKeyProvider wraps DEKs using an AES-256-GCM key derived from a
-// base64-encoded master key supplied in the configuration file or via
-// environment variable.
-type ConfigKeyProvider struct {
+// StaticKeyProvider wraps DEKs with AES-256-GCM under a master key held in
+// memory, whether it came inline from the config or from a key file. Its ID is
+// the key's fingerprint, so the same key has the same ID wherever it is
+// configured.
+type StaticKeyProvider struct {
 	key   []byte
 	keyID string
 }
 
-// NewConfigKeyProvider creates a provider from a base64-encoded 256-bit key.
-// The keyID identifies this key for rotation tracking; defaults to "config-0".
-func NewConfigKeyProvider(masterKeyB64, keyID string) (*ConfigKeyProvider, error) {
-	key, err := base64.StdEncoding.DecodeString(masterKeyB64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 master key: %w", err)
+// NewStaticKeyProvider creates a provider for a 256-bit master key.
+func NewStaticKeyProvider(key []byte) (*StaticKeyProvider, error) {
+	if len(key) != config.KeySize {
+		return nil, fmt.Errorf("master key must be %d bytes, got %d", config.KeySize, len(key))
 	}
-	if len(key) != 32 {
-		return nil, fmt.Errorf("master key must be 32 bytes, got %d", len(key))
-	}
-	if keyID == "" {
-		keyID = "config-0"
-	}
-	return &ConfigKeyProvider{key: key, keyID: keyID}, nil
+	return &StaticKeyProvider{key: key, keyID: Fingerprint(key)}, nil
 }
 
-// KeyID returns the identifier for this config-based master key.
-func (p *ConfigKeyProvider) KeyID() string { return p.keyID }
+// fingerprintLabel separates the fingerprint from any other use of the key.
+const fingerprintLabel = "s3-orchestrator key id"
 
-// WrapDEK encrypts the DEK with AES-256-GCM using the inline master key.
-func (p *ConfigKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, string, error) {
+// Fingerprint returns the ID a master key is recorded under: "k-" and the
+// first 8 bytes of HMAC-SHA256 over a fixed label, keyed by the key. It names
+// the key without revealing anything usable about it.
+func Fingerprint(key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(fingerprintLabel))
+	return "k-" + hex.EncodeToString(mac.Sum(nil)[:8])
+}
+
+// KeyID returns the key's fingerprint.
+func (p *StaticKeyProvider) KeyID() string { return p.keyID }
+
+// WrapDEK encrypts the DEK with AES-256-GCM under the master key.
+func (p *StaticKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, string, error) {
 	wrapped, err := aesGCMWrap(p.key, dek)
 	if err != nil {
 		return nil, "", err
@@ -80,53 +88,9 @@ func (p *ConfigKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, stri
 	return wrapped, p.keyID, nil
 }
 
-// UnwrapDEK decrypts a wrapped DEK using the inline master key.
-func (p *ConfigKeyProvider) UnwrapDEK(_ context.Context, wrappedDEK []byte, _ string) ([]byte, error) {
-	return aesGCMUnwrap(p.key, wrappedDEK)
-}
-
-// -------------------------------------------------------------------------
-// FILE KEY PROVIDER
-// -------------------------------------------------------------------------
-
-// FileKeyProvider wraps DEKs using a raw 32-byte key read from a file on
-// disk. Suitable for bare-metal and systemd deployments where keys are
-// provisioned by configuration management tools.
-type FileKeyProvider struct {
-	key   []byte
-	keyID string
-}
-
-// NewFileKeyProvider creates a provider by reading a raw 32-byte key from
-// the given file path. The keyID defaults to "file-0" if empty.
-func NewFileKeyProvider(path, keyID string) (*FileKeyProvider, error) {
-	key, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read key file: %w", err)
-	}
-	if len(key) != 32 {
-		return nil, fmt.Errorf("key file must contain exactly 32 bytes, got %d", len(key))
-	}
-	if keyID == "" {
-		keyID = "file-0"
-	}
-	return &FileKeyProvider{key: key, keyID: keyID}, nil
-}
-
-// KeyID returns the identifier for this file-based master key.
-func (p *FileKeyProvider) KeyID() string { return p.keyID }
-
-// WrapDEK encrypts the DEK with AES-256-GCM using the file-based master key.
-func (p *FileKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, string, error) {
-	wrapped, err := aesGCMWrap(p.key, dek)
-	if err != nil {
-		return nil, "", err
-	}
-	return wrapped, p.keyID, nil
-}
-
-// UnwrapDEK decrypts a wrapped DEK using the file-based master key.
-func (p *FileKeyProvider) UnwrapDEK(_ context.Context, wrappedDEK []byte, _ string) ([]byte, error) {
+// UnwrapDEK decrypts a wrapped DEK under the master key. The ID is not
+// consulted: GCM authentication rejects a DEK another key wrapped.
+func (p *StaticKeyProvider) UnwrapDEK(_ context.Context, wrappedDEK []byte, _ string) ([]byte, error) {
 	return aesGCMUnwrap(p.key, wrappedDEK)
 }
 
@@ -141,6 +105,7 @@ func (p *FileKeyProvider) UnwrapDEK(_ context.Context, wrappedDEK []byte, _ stri
 type MultiKeyProvider struct {
 	primary  KeyProvider
 	previous map[string]KeyProvider
+	ordered  []KeyProvider
 }
 
 // NewMultiKeyProvider creates a rotation-aware provider. New DEKs are wrapped
@@ -151,7 +116,7 @@ func NewMultiKeyProvider(primary KeyProvider, previous []KeyProvider) *MultiKeyP
 	for _, p := range previous {
 		prev[p.KeyID()] = p
 	}
-	return &MultiKeyProvider{primary: primary, previous: prev}
+	return &MultiKeyProvider{primary: primary, previous: prev, ordered: append([]KeyProvider{primary}, previous...)}
 }
 
 // KeyID returns the primary key identifier.
@@ -163,9 +128,10 @@ func (p *MultiKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, str
 }
 
 // UnwrapDEK decrypts a wrapped DEK by resolving the provider for the given
-// keyID. Returns an error if the keyID matches neither the primary key nor
-// any previous rotation key  -  this indicates metadata corruption or a key
-// that was removed from previous_keys config before all objects were migrated.
+// keyID. An ID no configured key carries, such as the positional "config-0"
+// and "file-0" earlier releases recorded, is tried against every key in turn;
+// GCM authentication rejects each key that did not wrap it. Returns an error
+// when none does, which means the key that wrapped it is no longer configured.
 func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) ([]byte, error) {
 	if keyID == p.primary.KeyID() {
 		return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)
@@ -173,12 +139,17 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 	if prev, ok := p.previous[keyID]; ok {
 		return prev.UnwrapDEK(ctx, wrappedDEK, keyID)
 	}
+	for _, candidate := range p.ordered {
+		if dek, err := candidate.UnwrapDEK(ctx, wrappedDEK, keyID); err == nil {
+			return dek, nil
+		}
+	}
 	telemetry.EncryptionUnknownKeyIDTotal.Inc()
 	slog.ErrorContext(ctx, "unknown encryption keyID - object cannot be decrypted",
 		logfmt.Component("encryption"),
 		"unknown_key_id", keyID,
 		"primary_key_id", p.primary.KeyID())
-	return nil, fmt.Errorf("unknown encryption key ID %q: ensure previous_keys includes all rotation keys", keyID)
+	return nil, fmt.Errorf("no configured key unwraps key ID %q: ensure previous_keys or previous_key_files includes every rotated key", keyID)
 }
 
 // -------------------------------------------------------------------------
@@ -189,36 +160,55 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 // encryption configuration. Returns a MultiKeyProvider when previous keys
 // are configured for rotation support.
 func NewKeyProviderFromConfig(cfg *config.EncryptionConfig) (KeyProvider, error) {
-	var primary KeyProvider
-	var err error
-
-	switch {
-	case cfg.MasterKey != "":
-		primary, err = NewConfigKeyProvider(cfg.MasterKey, "config-0")
-	case cfg.MasterKeyFile != "":
-		primary, err = NewFileKeyProvider(cfg.MasterKeyFile, "file-0")
-	case cfg.Vault != nil:
-		primary, err = NewVaultKeyProvider(cfg.Vault)
-	default:
-		return nil, fmt.Errorf("no encryption key source configured")
-	}
+	primary, err := primaryKeyProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(cfg.PreviousKeys) == 0 {
+	var previous []KeyProvider
+	for _, src := range []struct {
+		field   string
+		sources []string
+		load    func(string) ([]byte, error)
+	}{
+		{"previous_keys", cfg.PreviousKeys, config.DecodeKey},
+		{"previous_key_files", cfg.PreviousKeyFiles, config.ReadKeyFile},
+	} {
+		for i, source := range src.sources {
+			p, err := staticKeyFrom(source, src.load)
+			if err != nil {
+				return nil, fmt.Errorf("%s[%d]: %w", src.field, i, err)
+			}
+			previous = append(previous, p)
+		}
+	}
+	if len(previous) == 0 {
 		return primary, nil
 	}
-
-	previous := make([]KeyProvider, 0, len(cfg.PreviousKeys))
-	for i, k := range cfg.PreviousKeys {
-		p, err := NewConfigKeyProvider(k, fmt.Sprintf("config-%d", i+1))
-		if err != nil {
-			return nil, fmt.Errorf("previous key %d: %w", i, err)
-		}
-		previous = append(previous, p)
-	}
 	return NewMultiKeyProvider(primary, previous), nil
+}
+
+// primaryKeyProvider builds the provider for the one key source the config
+// names, which new DEKs are wrapped with.
+func primaryKeyProvider(cfg *config.EncryptionConfig) (KeyProvider, error) {
+	switch {
+	case cfg.MasterKey != "":
+		return staticKeyFrom(cfg.MasterKey, config.DecodeKey)
+	case cfg.MasterKeyFile != "":
+		return staticKeyFrom(cfg.MasterKeyFile, config.ReadKeyFile)
+	case cfg.Vault != nil:
+		return NewVaultKeyProvider(cfg.Vault)
+	}
+	return nil, errors.New("no encryption key source configured")
+}
+
+// staticKeyFrom loads a master key from source with load, the loader config
+// validation already ran it through, and wraps it in a StaticKeyProvider.
+func staticKeyFrom(source string, load func(string) ([]byte, error)) (KeyProvider, error) {
+	key, err := load(source)
+	if err != nil {
+		return nil, err
+	}
+	return NewStaticKeyProvider(key)
 }
 
 // -------------------------------------------------------------------------
@@ -229,13 +219,9 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig) (KeyProvider, error)
 // The output format is nonce (12 bytes) followed by ciphertext with appended
 // authentication tag.
 func aesGCMWrap(masterKey, dek []byte) ([]byte, error) {
-	block, err := aes.NewCipher(masterKey)
+	gcm, err := newGCM(masterKey)
 	if err != nil {
-		return nil, fmt.Errorf("aes cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("gcm: %w", err)
+		return nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -247,7 +233,21 @@ func aesGCMWrap(masterKey, dek []byte) ([]byte, error) {
 // aesGCMUnwrap decrypts a wrapped DEK produced by aesGCMWrap. Expects the
 // nonce prepended to the ciphertext.
 func aesGCMUnwrap(masterKey, wrapped []byte) ([]byte, error) {
-	block, err := aes.NewCipher(masterKey)
+	gcm, err := newGCM(masterKey)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(wrapped) < nonceSize {
+		return nil, fmt.Errorf("wrapped DEK too short")
+	}
+	return gcm.Open(nil, wrapped[:nonceSize], wrapped[nonceSize:], nil)
+}
+
+// newGCM builds the AES-256-GCM AEAD for key, the one cipher both the DEK
+// wrapping and the chunk encryption use.
+func newGCM(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("aes cipher: %w", err)
 	}
@@ -255,9 +255,5 @@ func aesGCMUnwrap(masterKey, wrapped []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gcm: %w", err)
 	}
-	nonceSize := gcm.NonceSize()
-	if len(wrapped) < nonceSize {
-		return nil, fmt.Errorf("wrapped DEK too short")
-	}
-	return gcm.Open(nil, wrapped[:nonceSize], wrapped[nonceSize:], nil)
+	return gcm, nil
 }

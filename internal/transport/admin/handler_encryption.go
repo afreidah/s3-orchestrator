@@ -20,16 +20,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
-// handleRotateEncryptionKey re-wraps all encrypted objects' DEKs with the
-// current primary key. The old key must remain in previous_keys for
-// unwrapping.
+// handleRotateEncryptionKey re-wraps encrypted objects' DEKs with the current
+// primary key: those under one old key ID, or every one under another ID. The
+// old keys must stay configured for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.RotateEncryptionKeyRequest
 	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
 
-	res, err := h.encryption.RotateKey(r.Context(), req.OldKeyID)
+	res, err := h.encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
 	if errors.Is(err, ops.ErrKeyIDRequired) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return

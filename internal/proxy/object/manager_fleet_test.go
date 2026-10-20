@@ -847,9 +847,9 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	b1.PutErr = errors.New("b1 down")
 	b2 := backendtest.NewInMemory()
 
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -894,9 +894,9 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 	b1 := backendtest.NewInMemory()
 	_, _ = b1.PutObject(context.Background(), "enc-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -926,9 +926,9 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -1175,9 +1175,9 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -2920,9 +2920,9 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 // like a row that lost its plaintext size.
 func TestGetObject_EmptyEncryptedObject(t *testing.T) {
 	t.Parallel()
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {
@@ -2983,9 +2983,9 @@ func TestGetObject_EmptyEncryptedObject(t *testing.T) {
 // given plaintext, returning the manager and the recorded location row.
 func encryptedObjectFleet(t *testing.T, key, plaintext string) *fleet {
 	t.Helper()
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {

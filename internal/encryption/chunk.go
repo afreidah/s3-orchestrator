@@ -21,7 +21,6 @@ package encryption
 
 import (
 	"bytes"
-	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
@@ -95,13 +94,9 @@ type encryptReader struct {
 // encrypted independently. bufs is borrowed for the lifetime of the reader;
 // release (if non-nil) fires once at EOF to return them.
 func newEncryptReader(src io.Reader, dek []byte, chunkSize int, bufs *chunkBuffers, release func()) (*encryptReader, error) {
-	block, err := aes.NewCipher(dek)
+	gcm, err := newGCM(dek)
 	if err != nil {
-		return nil, fmt.Errorf("aes cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("gcm: %w", err)
+		return nil, err
 	}
 
 	baseNonce := make([]byte, NonceSize)
@@ -243,13 +238,9 @@ type decryptReader struct {
 // the given chunk index. bufs is borrowed for the lifetime of the reader;
 // release (if non-nil) fires once at EOF to return them.
 func newDecryptReader(src io.Reader, dek []byte, baseNonce []byte, chunkSize int, startChunk uint64, bufs *chunkBuffers, release func()) (*decryptReader, error) {
-	block, err := aes.NewCipher(dek)
+	gcm, err := newGCM(dek)
 	if err != nil {
-		return nil, fmt.Errorf("aes cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("gcm: %w", err)
+		return nil, err
 	}
 
 	return &decryptReader{

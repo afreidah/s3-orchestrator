@@ -607,14 +607,15 @@ WHERE (form & $1::bigint) = $1::bigint
   AND (NOT $3::boolean OR managed)
   AND ($4::text = '' OR backend_name = $4::text)
   AND ($5::text = '' OR key_id = $5::text)
-  AND object_size >= $6::bigint
-  AND ($7::text = ''
+  AND ($6::text = '' OR key_id IS DISTINCT FROM $6::text)
+  AND object_size >= $7::bigint
+  AND ($8::text = ''
        OR compression_probe_size IS NULL
-       OR compression_probe_level IS DISTINCT FROM $7::text
-       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= $8::float8)
-  AND (object_key, backend_name) > ($9::text, $10::text)
+       OR compression_probe_level IS DISTINCT FROM $8::text
+       OR compression_probe_size::float8 / NULLIF(object_size, 0)::float8 <= $9::float8)
+  AND (object_key, backend_name) > ($10::text, $11::text)
 ORDER BY object_key, backend_name
-LIMIT $11
+LIMIT $12
 `
 
 type ListCopiesByFormParams struct {
@@ -623,6 +624,7 @@ type ListCopiesByFormParams struct {
 	ManagedOnly   bool
 	BackendFilter string
 	KeyID         string
+	ExceptKeyID   string
 	MinSize       int64
 	ProbeLevel    string
 	MinRatio      float64
@@ -634,8 +636,8 @@ type ListCopiesByFormParams struct {
 // The copies a pass works through, selected by the layers their bytes carry:
 // every bit of with_flags set and none of without_flags. The rest narrows the
 // page to what the pass will act on, so row_limit is not spent on rows it
-// would decline: an empty backend_filter or key_id matches every value, and
-// managed_only leaves out data the orchestrator does not manage.
+// would decline: an empty backend_filter, key_id or except_key_id matches every
+// value, and managed_only leaves out data the orchestrator does not manage.
 //
 // Paged by cursor rather than offset, since a pass usually takes the copies it
 // acts on out of its own predicate, and an offset would step over the rows
@@ -655,6 +657,7 @@ func (q *Queries) ListCopiesByForm(ctx context.Context, arg ListCopiesByFormPara
 		arg.ManagedOnly,
 		arg.BackendFilter,
 		arg.KeyID,
+		arg.ExceptKeyID,
 		arg.MinSize,
 		arg.ProbeLevel,
 		arg.MinRatio,

@@ -19,7 +19,7 @@ openssl rand -base64 32
 
 ## Step 2: Update the Config
 
-Set the new key as `master_key` and move the old key to `previous_keys`:
+Set the new key as `master_key` and move the old key to `previous_keys`, or its file to `previous_key_files`:
 
 ```yaml
 encryption:
@@ -29,7 +29,7 @@ encryption:
     - "${OLD_ENCRYPTION_KEY}"
 ```
 
-The `previous_keys` list allows the orchestrator to decrypt objects that still have DEKs wrapped with the old key.
+The previous keys allow the orchestrator to decrypt objects that still have DEKs wrapped with the old key. Each key is recorded under its fingerprint, `k-` and 16 hex digits, so a key keeps the same ID wherever it sits in the config.
 
 ### Vault Transit
 
@@ -49,27 +49,24 @@ Encryption configuration is **not reloadable** - a restart is required.
 systemctl restart s3-orchestrator
 ```
 
-After restarting, new objects use the new key. Existing objects can still be read because the old key is in `previous_keys`.
+After restarting, new objects use the new key. Existing objects can still be read because the old key is still configured.
 
 ## Step 4: Re-wrap All DEKs
 
-Re-wrap all DEKs by hitting the admin API. The orchestrator does not ship a
-CLI subcommand for this — use the HTTP endpoint:
+Re-wrap every DEK not already under the new key:
 
 ```bash
-curl -X POST http://orchestrator-host:9000/admin/api/rotate-encryption-key \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"old_key_id":"config-0"}'
+s3-orchestrator admin rotate-encryption-key --all-stale
 ```
 
-The `old_key_id` body field identifies which key's DEKs to re-wrap:
+The command calls `POST /admin/api/rotate-encryption-key` with `{"all_stale": true}`. To re-wrap only one key's DEKs, pass `--old-key-id` (`old_key_id` in the body) with that key's ID:
 
 | Key source | ID format |
 |-----------|-----------|
-| Inline (`master_key`) | `config-0` (primary), `config-1`, `config-2`, ... (previous keys in order) |
-| File (`master_key_file`) | `file-0` |
-| Vault Transit | The key name (e.g., `s3-orchestrator`) |
+| Inline (`master_key`, `previous_keys`) or file (`master_key_file`, `previous_key_files`) | `k-` and 16 hex digits, the key's fingerprint |
+| Vault Transit | `vault:{mount}/{key}` |
+
+Releases before v0.163.0 recorded positional IDs (`config-0`, `config-1`, `file-0`); `--all-stale` moves those rows to the fingerprint as well.
 
 The response shows progress:
 
@@ -86,13 +83,13 @@ Watch these metrics during and after rotation:
 | `s3o_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
 | `s3o_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
 | `s3o_key_rotation_objects_total{status="changed"}` | Copies a client overwrote during the pass; the new write is already sealed with the current key |
-| `s3o_encryption_unknown_key_id_total` | Decryption attempts where the keyID was not found in configured keys. Any non-zero value after rotation completes indicates objects wrapped with a key that is no longer in `previous_keys`. |
+| `s3o_encryption_unknown_key_id_total` | Decryptions no configured key could unwrap. Any non-zero value after rotation completes indicates objects wrapped with a key that is no longer configured. |
 
-If any DEKs failed, check the logs and retry - the command only processes DEKs still wrapped with the old key.
+If any DEKs failed, check the logs and retry - the command only processes DEKs not yet under the new key.
 
 ## Step 6: Clean Up (Optional)
 
-After all DEKs are re-wrapped, you can remove the old key from `previous_keys` and restart. Objects that were rotated no longer need the old key.
+After all DEKs are re-wrapped, you can remove the old key from the config and restart. Wait first for multipart uploads started before the rotation to complete or be aborted: their parts were sealed under the old key, and the re-wrap pass covers stored objects only.
 
 {{% notice tip %}}
 Keep the old key backed up somewhere safe even after removing it from the config, in case you need to restore from a backup that predates the rotation.

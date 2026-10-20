@@ -256,8 +256,8 @@ func TestStoreInt_CountCopiesByForm_MatchesTheListing(t *testing.T) {
 }
 
 // TestStoreInt_ListCopiesByForm_NarrowsByBackendKeyAndManagement verifies the
-// backend, key ID and managed filters each narrow the page, and that the empty
-// value of each matches every row.
+// backend, key ID, excluded key ID and managed filters each narrow the page,
+// and that the empty value of each matches every row.
 func TestStoreInt_ListCopiesByForm_NarrowsByBackendKeyAndManagement(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -279,6 +279,9 @@ func TestStoreInt_ListCopiesByForm_NarrowsByBackendKeyAndManagement(t *testing.T
 		{"one backend", core.FormFilter{With: core.StoredEncrypted, Backend: formOtherBackend}, []string{onB}},
 		{"unknown backend", core.FormFilter{With: core.StoredEncrypted, Backend: "backend-absent"}, nil},
 		{"one key", core.FormFilter{With: core.StoredEncrypted, KeyID: "key-1"}, []string{onA}},
+		{"except one key", core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: "key-1"}, []string{onB}},
+		{"except an unused key", core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: "key-absent"}, []string{onA, onB}},
+		{"except keeps keyless copies", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted, ExceptKeyID: "key-1"}, []string{stray}},
 		{"unmanaged included", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted}, []string{stray}},
 		{"managed only", core.FormFilter{Without: core.StoredHashed | core.StoredEncrypted, ManagedOnly: true}, nil},
 	}

@@ -62,7 +62,20 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.162.x (current)
+### v0.163.x (current)
+
+**Encryption keys are named by fingerprint ([#1704](https://github.com/afreidah/s3-orchestrator/issues/1704), v0.163.0)**
+
+Inline and file master keys were recorded under positional IDs: `config-0` for `master_key`, `file-0` for `master_key_file`, and `config-1`, `config-2`, ... for `previous_keys` in order. The documented rotation moved the old key into `previous_keys`, which renamed it, so every object written before the rotation was unwrapped with the new key and could not be read. Each key is now recorded under its fingerprint (`k-` and 16 hex digits), the same wherever it sits in the config. A row still carrying a positional ID is unwrapped by trying each configured key. `previous_key_files` lists old keys held in files, and `rotate-encryption-key --all-stale` (`all_stale` in the API) re-wraps every DEK not under the current key. No migration.
+
+**Operator action items after upgrade:**
+
+- **Finish the upgrade on every instance before rotating.** An instance on an older release that has `previous_keys` configured cannot resolve a fingerprint ID and fails to read objects a newer instance wrote.
+- **Optionally run `rotate-encryption-key --all-stale` once** to move rows from the positional IDs to the fingerprint. Reads work either way; the fingerprint is what lets a later rotation tell which rows still use an old key.
+- **If a rotation broke reads on an earlier release**, upgrading restores them with the old key still in `previous_keys`; then run `--all-stale`.
+- **A change to `previous_keys` now counts as a restart-only change** on reload, like the other encryption settings.
+
+### v0.162.x
 
 **Webhook retries honor any max_retries ([#1731](https://github.com/afreidah/s3-orchestrator/issues/1731), v0.162.21)**
 

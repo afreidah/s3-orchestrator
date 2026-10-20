@@ -224,7 +224,7 @@ The gray background workers run only when the process starts in `worker` or `all
     VAULT: {
       title: 'Key Provider (Master key / Vault)',
       badge: 'data', badgeText: 'key source',
-      body: '<p>Master key management for envelope encryption. Wraps/unwraps per-object Data Encryption Keys (DEKs).</p><p>Exactly one key source: <code>encryption.master_key</code> (inline base64), <code>encryption.master_key_file</code>, or <code>encryption.vault</code> (HashiCorp Vault Transit). For rotation, <code>encryption.previous_keys</code> lists old master keys that are used only to unwrap, so existing DEKs stay decryptable.</p>'
+      body: '<p>Master key management for envelope encryption. Wraps/unwraps per-object Data Encryption Keys (DEKs).</p><p>Exactly one key source: <code>encryption.master_key</code> (inline base64), <code>encryption.master_key_file</code>, or <code>encryption.vault</code> (HashiCorp Vault Transit). For rotation, <code>encryption.previous_keys</code> and <code>encryption.previous_key_files</code> list old master keys that are used only to unwrap, so existing DEKs stay decryptable. Inline and file keys are recorded under their fingerprint, so a key keeps its ID across a rotation.</p>'
     },
     SELECT: {
       title: 'Backend Selection & Failover',

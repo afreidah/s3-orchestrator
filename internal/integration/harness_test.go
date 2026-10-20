@@ -226,11 +226,9 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		CopiesPerWrite: spec.CopiesPerWrite,
 	}
 	if spec.Encrypt {
-		provider, err := encryption.NewConfigKeyProvider(testMasterKey, "test-key")
-		if err != nil {
-			t.Fatalf("harness key provider: %v", err)
-		}
-		h.enc, err = encryption.NewEncryptor(provider, 65536)
+		var err error
+		provider := providerFromConfig(t, &config.EncryptionConfig{MasterKey: testMasterKey})
+		h.enc, err = encryption.NewEncryptor(provider, encryptionChunkSize)
 		if err != nil {
 			t.Fatalf("harness encryptor: %v", err)
 		}

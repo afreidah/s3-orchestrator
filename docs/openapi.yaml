@@ -2267,10 +2267,10 @@ components:
             type: object
         RotateEncryptionKeyRequest:
             properties:
+                all_stale:
+                    type: boolean
                 old_key_id:
                     type: string
-            required:
-                - old_key_id
             type: object
         RotateEncryptionKeyResponse:
             properties:

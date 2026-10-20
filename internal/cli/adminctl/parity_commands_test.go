@@ -13,6 +13,7 @@ package adminctl
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,38 +72,56 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 	}
 }
 
-// TestCommand_RotateEncryptionKey_SendsBody verifies the old key ID is sent as
-// the JSON body the server expects.
+// TestCommand_RotateEncryptionKey_SendsBody verifies each scope flag is sent
+// as exactly the JSON body the server expects, with the unused field left out.
 func TestCommand_RotateEncryptionKey_SendsBody(t *testing.T) {
 	t.Parallel()
-	var gotBody map[string]string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "complete"})
-	}))
-	defer srv.Close()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"old key id", []string{"-old-key-id", "config-0"}, `{"old_key_id":"config-0"}`},
+		{"all stale", []string{"-all-stale"}, `{"all_stale":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var gotBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBody, _ = io.ReadAll(r.Body)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "complete"})
+			}))
+			defer srv.Close()
 
-	var stdout, stderr bytes.Buffer
-	code := Command("rotate-encryption-key", []string{"-old-key-id", "config-0"}, srv.URL, testCreds, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
-	}
-	if gotBody["old_key_id"] != "config-0" {
-		t.Errorf("body old_key_id = %q, want config-0", gotBody["old_key_id"])
+			var stdout, stderr bytes.Buffer
+			code := Command("rotate-encryption-key", tc.args, srv.URL, testCreds, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+			}
+			if string(gotBody) != tc.want {
+				t.Errorf("body = %s, want %s", gotBody, tc.want)
+			}
+		})
 	}
 }
 
-// TestCommand_RotateEncryptionKey_RequiresFlag verifies the command fails fast
-// with a clear message when -old-key-id is omitted, without hitting the server.
-func TestCommand_RotateEncryptionKey_RequiresFlag(t *testing.T) {
+// TestCommand_RotateEncryptionKey_RequiresOneScope verifies the command fails
+// fast with a clear message, without hitting the server, unless exactly one
+// of -old-key-id and -all-stale is given.
+func TestCommand_RotateEncryptionKey_RequiresOneScope(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	code := Command("rotate-encryption-key", nil, "http://unused", testCreds, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "-old-key-id is required") {
-		t.Errorf("stderr = %q, want '-old-key-id is required'", stderr.String())
+	for name, args := range map[string][]string{
+		"neither": nil,
+		"both":    {"-old-key-id", "config-0", "-all-stale"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := Command("rotate-encryption-key", args, "http://unused", testCreds, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("%s: exit code = %d, want 1", name, code)
+		}
+		if !strings.Contains(stderr.String(), "exactly one of -old-key-id or -all-stale is required") {
+			t.Errorf("%s: stderr = %q, want the exactly-one message", name, stderr.String())
+		}
 	}
 }
 

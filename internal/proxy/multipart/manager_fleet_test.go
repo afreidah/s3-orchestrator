@@ -1194,9 +1194,9 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 // buildAssembledUpload) can be exercised in unit tests.
 func newEncryptedTestManager(t *testing.T, store storetest.MetadataStore, backends map[string]*backendtest.InMemory) *fleet {
 	t.Helper()
-	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 64*1024)
 	if err != nil {

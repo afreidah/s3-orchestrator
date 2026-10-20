@@ -39,8 +39,8 @@ import (
 // through a reform.
 const testHash = "client-hash"
 
-// testKeyB64 is the master key every test encryptor wraps under.
-const testKeyB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+// testKey is the master key every test encryptor wraps under.
+var testKey = make([]byte, config.KeySize)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -90,7 +90,7 @@ func (c *brokenCodec) DecompressStream(io.Reader) (io.ReadCloser, error) { retur
 // chunks, so short payloads still span several of them.
 func newEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	p, err := encryption.NewConfigKeyProvider(testKeyB64, "test-0")
+	p, err := encryption.NewStaticKeyProvider(testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestSeal_MintsAKey(t *testing.T) {
 		t.Errorf("Size = %d, body = %d", sealed.Size, len(ciphertext))
 	}
 	f := sealed.Form
-	if !f.Encrypted || f.KeyID != "test-0" || f.PlaintextSize != int64(len(payload)) || f.ContentHash != "" {
+	if !f.Encrypted || f.KeyID != encryption.Fingerprint(testKey) || f.PlaintextSize != int64(len(payload)) || f.ContentHash != "" {
 		t.Errorf("form = %+v", f)
 	}
 	r, err := Unseal(context.Background(), enc, bytes.NewReader(ciphertext), f)

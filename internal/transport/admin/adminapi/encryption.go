@@ -36,7 +36,9 @@ type DecryptExistingResponse struct {
 }
 
 // RotateEncryptionKeyRequest is the body of a key-rotation call: the key ID
-// whose sealed DEKs should be re-wrapped under the current primary key.
+// whose sealed DEKs should be re-wrapped under the current primary key, or
+// AllStale to re-wrap every DEK not already under it. Exactly one is set.
 type RotateEncryptionKeyRequest struct {
-	OldKeyID string `json:"old_key_id"`
+	OldKeyID string `json:"old_key_id,omitempty"`
+	AllStale bool   `json:"all_stale,omitempty"`
 }

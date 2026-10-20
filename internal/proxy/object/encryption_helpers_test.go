@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -59,7 +60,7 @@ func (c *countingKeyProvider) KeyID() string { return c.inner.KeyID() }
 // provider so callers can inspect WrapDEK invocation counts.
 func newCountingEncryptor(t *testing.T) (*encryption.Encryptor, *countingKeyProvider) {
 	t.Helper()
-	inner, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	inner, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func newCountingEncryptor(t *testing.T) (*encryption.Encryptor, *countingKeyProv
 // newTestEncryptor constructs a new test encryptor.
 func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	p, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	p, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
 		t.Fatal(err)
 	}

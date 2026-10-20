@@ -2174,6 +2174,32 @@ func TestListCopiesByForm_KeyID(t *testing.T) {
 	}
 }
 
+// TestListCopiesByForm_ExceptKeyID verifies an excluded key ID leaves out the
+// copies wrapped under it and keeps every other copy, including copies with
+// no key ID at all, which is the set an all-stale rotation walks.
+func TestListCopiesByForm_ExceptKeyID(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/plain", "backend-a", 10)
+	for key, keyID := range map[string]string{"bucket/a": "key-1", "bucket/b": "key-2", "bucket/c": "config-0"} {
+		mustRecordEncrypted(t, s, key, "backend-a", keyID, 10, 20)
+	}
+
+	for _, tc := range []struct {
+		name string
+		f    core.FormFilter
+		want []string
+	}{
+		{"encrypted except one key", core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: "key-1"}, []string{"bucket/b", "bucket/c"}},
+		{"except an unused key", core.FormFilter{With: core.StoredEncrypted, ExceptKeyID: "key-absent"}, []string{"bucket/a", "bucket/b", "bucket/c"}},
+		{"except keeps keyless copies", core.FormFilter{ExceptKeyID: "key-1"}, []string{"bucket/b", "bucket/c", "bucket/plain"}},
+	} {
+		if got := keysOf(listByForm(t, s, &tc.f)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: listed %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestIntegrity_HashOperations verifies the backfill listing drops a copy once
 // it is hashed and the scrub listing picks it up.
 func TestIntegrity_HashOperations(t *testing.T) {

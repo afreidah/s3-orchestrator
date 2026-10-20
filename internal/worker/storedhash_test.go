@@ -14,7 +14,6 @@ package worker
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -44,9 +44,9 @@ const hashBody = "bytes the client wrote"
 // envelope with the row that records it.
 func sealedForHash(t *testing.T) ([]byte, core.ObjectLocation) {
 	t.Helper()
-	provider, err := encryption.NewConfigKeyProvider(base64.StdEncoding.EncodeToString(make([]byte, 32)), "key-1")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 4096)
 	if err != nil {

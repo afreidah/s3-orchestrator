@@ -126,6 +126,8 @@ backends:
 #   # Previous keys for rotation (unwrap only)
 #   # previous_keys:
 #   #   - "${OLD_ENCRYPTION_KEY}"
+#   # previous_key_files:
+#   #   - /etc/s3-orchestrator/old.key
 
 # --- At-rest compression (disabled by default) ---
 # Objects are stored as chunked zstd and served back as the bytes the client

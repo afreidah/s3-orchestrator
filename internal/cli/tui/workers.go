@@ -125,9 +125,10 @@ func (m *model) runWorkerOpsAction() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	for _, a := range maintenanceActions() {
-		if a.path == path {
-			return m.startRun(&a, opsRequest{path: a.path})
+	actions := maintenanceActions()
+	for i := range actions {
+		if actions[i].path == path {
+			return m.startRun(&actions[i], opsRequest{path: path})
 		}
 	}
 	return m, nil

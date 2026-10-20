@@ -245,8 +245,11 @@ s3-orchestrator admin encrypt-existing
 # Decrypt all encrypted objects back to plaintext (requires encryption enabled for key access)
 s3-orchestrator admin decrypt-existing
 
-# Re-wrap all DEKs encrypted with a specific key ID (key rotation)
-s3-orchestrator admin rotate-encryption-key --old-key-id config-0
+# Re-wrap every DEK not under the current key (key rotation)
+s3-orchestrator admin rotate-encryption-key --all-stale
+
+# Re-wrap only the DEKs under one key ID
+s3-orchestrator admin rotate-encryption-key --old-key-id k-1a2b3c4d5e6f7a8b
 
 # Store every uncompressed object as chunked zstd (requires a compression codec)
 s3-orchestrator admin compress-existing

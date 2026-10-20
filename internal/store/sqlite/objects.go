@@ -535,6 +535,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		  AND (NOT ? OR managed)
 		  AND (? = '' OR backend_name = ?)
 		  AND (? = '' OR key_id = ?)
+		  AND (? = '' OR key_id IS NOT ?)
 		  AND object_size >= ?
 		  AND (? = ''
 		       OR compression_probe_size IS NULL
@@ -547,6 +548,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		f.ManagedOnly,
 		f.Backend, f.Backend,
 		f.KeyID, f.KeyID,
+		f.ExceptKeyID, f.ExceptKeyID,
 		t.MinSize,
 		t.Level, t.Level, t.MinRatio,
 		after.ObjectKey, after.BackendName,

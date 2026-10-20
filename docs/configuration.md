@@ -767,7 +767,7 @@ Set `ca_cert` when Vault presents a certificate signed by a private CA; without 
 
 **Key rotation support:**
 
-When rotating to a new master key, move the old key to `previous_keys` so existing objects can still be decrypted:
+When rotating to a new master key, move the old key to `previous_keys`, or its file to `previous_key_files`, so existing objects can still be decrypted:
 
 ```yaml
 encryption:
@@ -775,9 +775,11 @@ encryption:
   master_key: "${NEW_ENCRYPTION_KEY}"         # new primary key
   previous_keys:
     - "${OLD_ENCRYPTION_KEY}"                 # old key, kept for unwrapping
+  previous_key_files:
+    - /etc/s3-orchestrator/old.key            # old key from a file, 32 raw bytes
 ```
 
-After updating the config, call the `rotate-encryption-key` admin API to re-wrap all DEKs with the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
+After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
 
 **Important notes:**
 - Encryption is **not reloadable** - changing encryption settings requires a restart.

@@ -33,6 +33,7 @@ const (
 	pathBackfillChecksums  = "/admin/api/backfill-checksums"
 	pathReconcile          = "/admin/api/reconcile"
 	pathCleanupDLQRequeue  = "/admin/api/cleanup-dlq/requeue"
+	pathRotateKey          = "/admin/api/rotate-encryption-key"
 )
 
 // queryBackend restricts a pass to one backend's copies. The backends pane sets
@@ -51,6 +52,7 @@ type opsAction struct {
 	path    string
 	result  oneShotDecoder
 	confirm string
+	body    []byte
 	ask     inputRequest
 	resolve func(value string) opsRequest
 }
@@ -133,6 +135,13 @@ func asks(question, placeholder string, resolve func(string) opsRequest) opsOpti
 	}
 }
 
+// sends gives an action that asks nothing a fixed JSON body, for the endpoints
+// whose choice is made by picking the entry.
+func sends(v any) opsOption {
+	body, _ := json.Marshal(v)
+	return func(a *opsAction) { a.body = body }
+}
+
 // deletes sends the action as a DELETE, for the endpoints that drop something
 // rather than start a pass.
 func deletes() opsOption {
@@ -203,12 +212,15 @@ func encryptionActions() []opsAction {
 		post("Decrypt existing objects (batch)", pathDecryptExisting,
 			"Read and rewrite that many encrypted copies as plaintext?", nil,
 			asks("Decrypt how many objects?", "1000", boundedRewrite(pathDecryptExisting))),
-		post("Rotate encryption key", "/admin/api/rotate-encryption-key",
+		post("Rotate encryption key", pathRotateKey,
 			"Re-wrap every object key sealed with that key id?", decodeOneShot[rotateKeyResult],
 			asks("Rotate away from which key id?", "old key id", func(value string) opsRequest {
 				body, _ := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: value})
-				return opsRequest{path: "/admin/api/rotate-encryption-key", body: body}
+				return opsRequest{path: pathRotateKey, body: body}
 			})),
+		post("Rotate every stale encryption key", pathRotateKey,
+			"Re-wrap every object key not sealed with the current key?", decodeOneShot[rotateKeyResult],
+			sends(adminapi.RotateEncryptionKeyRequest{AllStale: true})),
 	}
 }
 
@@ -282,7 +294,7 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.runAction(a, scopeToBackend(a.resolve(value), backend))
 			})
 		}
-		return m.startRun(a, scopeToBackend(opsRequest{path: a.path}, backend))
+		return m.startRun(a, scopeToBackend(opsRequest{path: a.path, body: a.body}, backend))
 	}
 	return m, nil
 }
@@ -332,7 +344,8 @@ func (m *model) opsHeaderView() string {
 // opsMenuView renders the action list with the cursor marker.
 func (m *model) opsMenuView() string {
 	var b strings.Builder
-	for i, a := range m.ops.actions {
+	for i := range m.ops.actions {
+		a := &m.ops.actions[i]
 		marker, style := "  ", navItemStyle
 		if i == m.ops.cursor {
 			marker, style = "> ", navActiveStyle

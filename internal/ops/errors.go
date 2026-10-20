@@ -59,7 +59,7 @@ var (
 // to a client error rather than a server fault.
 var (
 	ErrKeyRequired    = errors.New("key is required")
-	ErrKeyIDRequired  = errors.New("old_key_id is required")
+	ErrKeyIDRequired  = errors.New("exactly one of old_key_id or all_stale is required")
 	ErrPrefixRequired = errors.New("prefix is required")
 	ErrInvalidKey     = errors.New("key must start with a configured bucket name")
 	ErrNotFound       = errors.New("object not found")

@@ -80,6 +80,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		ManagedOnly:   f.ManagedOnly,
 		BackendFilter: f.Backend,
 		KeyID:         f.KeyID,
+		ExceptKeyID:   f.ExceptKeyID,
 		AfterKey:      after.ObjectKey,
 		AfterBackend:  after.BackendName,
 		RowLimit:      int32(max(0, min(limit, math.MaxInt32))), //nolint:gosec // clamped

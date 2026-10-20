@@ -52,21 +52,34 @@ type encryptionTestEnv struct {
 	stack       *proxytest.Stack
 }
 
-// setupEncryptionEnv creates a fresh proxy stack with encryption enabled,
-// an admin API server, and a proxy server. Returns the environment and a
-// cleanup function.
+// providerFromConfig builds the key provider cfg describes the way startup
+// does, failing the test when the config is unusable.
+func providerFromConfig(t *testing.T, cfg *config.EncryptionConfig) encryption.KeyProvider {
+	t.Helper()
+	provider, err := encryption.NewKeyProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewKeyProviderFromConfig: %v", err)
+	}
+	return provider
+}
+
+// setupEncryptionEnv clears the shared state and starts an encrypting
+// orchestrator under the test master key.
 func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	t.Helper()
 	resetState(t)
+	return startEncryptionEnv(t, &config.EncryptionConfig{MasterKey: testMasterKey})
+}
 
+// startEncryptionEnv starts an orchestrator instance with the encryption
+// config cfg, a proxy server and an admin API server, over the shared
+// database and backends. Starting a second one with another config is how a
+// test restarts the orchestrator with rotated keys.
+func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionTestEnv {
+	t.Helper()
 	ctx := context.Background()
 
-	// Create encryptor with a test key
-	keyProvider, err := encryption.NewConfigKeyProvider(testMasterKey, "test-key")
-	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
-	}
-	enc, err := encryption.NewEncryptor(keyProvider, 65536)
+	enc, err := encryption.NewEncryptor(providerFromConfig(t, cfg), encryptionChunkSize)
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
@@ -175,7 +188,22 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 // callAdmin makes a POST request to the admin API.
 func (env *encryptionTestEnv) callAdmin(t *testing.T, path string) map[string]any {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+env.adminAddr+path, nil)
+	return env.callAdminWith(t, path, nil)
+}
+
+// callAdminWith makes a POST request to the admin API carrying payload as
+// JSON, or no body when it is nil.
+func (env *encryptionTestEnv) callAdminWith(t *testing.T, path string, payload any) map[string]any {
+	t.Helper()
+	var reqBody io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		reqBody = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+env.adminAddr+path, reqBody)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -822,17 +850,7 @@ const encryptionChunkSize = 65536
 func TestEncryptedWritePath_RoundTrip(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
-
-	// The fleet's normal quotas are a few kilobytes, which cannot hold an
-	// object a chunk or more in size.
-	if err := testStore.SyncQuotaLimits(ctx, []config.BackendConfig{
-		{Name: "minio-1", QuotaBytes: 8 << 20},
-		{Name: "minio-2", QuotaBytes: 8 << 20},
-	}); err != nil {
-		t.Fatalf("raising quota limits: %v", err)
-	}
-	refreshQuota(t)
-	defer resyncQuotaLimits(t, ctx)
+	raiseQuotasForChunks(t, ctx)
 
 	cases := []struct {
 		name string
@@ -884,12 +902,25 @@ func TestEncryptedWritePath_RoundTrip(t *testing.T) {
 	}
 }
 
-// assertStoredAsEnvelope requires the bytes actually on the backend to be an
-// encryption envelope rather than the client's plaintext, and the ledger to
-// describe them as such.
-func assertStoredAsEnvelope(t *testing.T, ctx context.Context, key string, plaintext []byte) {
+// raiseQuotasForChunks lifts the backend quotas for the rest of the test. The
+// fleet's normal quotas are a few kilobytes, which cannot hold an object a
+// chunk or more in size.
+func raiseQuotasForChunks(t *testing.T, ctx context.Context) {
 	t.Helper()
+	if err := testStore.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "minio-1", QuotaBytes: 8 << 20},
+		{Name: "minio-2", QuotaBytes: 8 << 20},
+	}); err != nil {
+		t.Fatalf("raising quota limits: %v", err)
+	}
+	refreshQuota(t)
+	t.Cleanup(func() { resyncQuotaLimits(t, ctx) })
+}
 
+// readStoredBytes reads the bytes the ledger says back key, straight from
+// its backend and bypassing the orchestrator.
+func readStoredBytes(t *testing.T, ctx context.Context, key string) []byte {
+	t.Helper()
 	backendName := queryObjectBackend(t, key)
 	be, ok := allBackends[backendName]
 	if !ok {
@@ -905,6 +936,15 @@ func assertStoredAsEnvelope(t *testing.T, ctx context.Context, key string, plain
 	if readErr != nil {
 		t.Fatalf("reading stored bytes: %v", readErr)
 	}
+	return stored
+}
+
+// assertStoredAsEnvelope requires the bytes actually on the backend to be an
+// encryption envelope rather than the client's plaintext, and the ledger to
+// describe them as such.
+func assertStoredAsEnvelope(t *testing.T, ctx context.Context, key string, plaintext []byte) {
+	t.Helper()
+	stored := readStoredBytes(t, ctx, key)
 
 	if !encryption.HasEnvelopeMagic(stored) {
 		t.Fatalf("stored bytes for %q are not an encryption envelope", key)

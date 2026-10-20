@@ -45,7 +45,7 @@ The Vault Transit engine handles wrapping and unwrapping DEKs - the orchestrator
 
 **Key rotation support:**
 
-When rotating to a new master key, move the old key to `previous_keys` so existing objects can still be decrypted:
+When rotating to a new master key, move the old key to `previous_keys`, or its file to `previous_key_files`, so existing objects can still be decrypted:
 
 ```yaml
 encryption:
@@ -55,7 +55,7 @@ encryption:
     - "${OLD_ENCRYPTION_KEY}"                 # old key, kept for unwrapping
 ```
 
-After updating the config, call the `rotate-encryption-key` admin API to re-wrap all DEKs with the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
+Each key is recorded under its fingerprint (`k-` and 16 hex digits), so it keeps the same ID wherever it sits in the config. After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
 
 **Important notes:**
 - Each object's wrapped data key is stored only in the metadata database, so the master key alone cannot recover anything. Losing the database without a backup makes every encrypted object permanently unreadable. Back up the database as carefully as the master key; see [Losing PostgreSQL without a backup](disaster-recovery.md#losing-postgresql-without-a-backup).

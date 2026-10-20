@@ -15,7 +15,6 @@ package worker
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"io"
 	"testing"
@@ -268,10 +267,9 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	provider, err := encryption.NewConfigKeyProvider(key, "key-1")
+	provider, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
+		t.Fatalf("NewStaticKeyProvider: %v", err)
 	}
 	enc, err := encryption.NewEncryptor(provider, 4096)
 	if err != nil {

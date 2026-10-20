@@ -13,6 +13,7 @@ package multipart
 import (
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
@@ -20,7 +21,7 @@ import (
 // multipart-package tests. Mirrors the proxy-package helper.
 func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
-	p, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	p, err := encryption.NewStaticKeyProvider(make([]byte, config.KeySize))
 	if err != nil {
 		t.Fatal(err)
 	}

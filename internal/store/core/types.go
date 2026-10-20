@@ -532,13 +532,15 @@ type CompressionStat struct {
 
 // FormFilter selects copies by the layers their bytes carry: every flag of With
 // and none of Without. Backend and KeyID narrow the page to one value when set,
-// and ManagedOnly leaves out data the orchestrator does not manage. Candidates,
-// when set, keeps only copies a compression pass would still try to encode.
+// ExceptKeyID leaves out copies under that key, and ManagedOnly leaves out data
+// the orchestrator does not manage. Candidates, when set, keeps only copies a
+// compression pass would still try to encode.
 type FormFilter struct {
 	With        StoredFlags
 	Without     StoredFlags
 	Backend     string
 	KeyID       string
+	ExceptKeyID string
 	ManagedOnly bool
 	Candidates  *CompressionThresholds
 }
