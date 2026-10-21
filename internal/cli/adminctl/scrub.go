@@ -36,7 +36,7 @@ func cmdScrub(args []string, c *client) int {
 
 	q := url.Values{}
 	if *batchSize > 0 {
-		q.Set("batch_size", strconv.Itoa(*batchSize))
+		q.Set(queryBatch, strconv.Itoa(*batchSize))
 	}
 	if *backend != "" {
 		q.Set(queryBackend, *backend)

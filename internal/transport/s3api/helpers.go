@@ -11,6 +11,7 @@ package s3api
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -90,6 +91,17 @@ func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64,
 		r.Body = http.MaxBytesReader(w, r.Body, maxSize)
 	}
 	return 0, nil, true
+}
+
+// uploadHeaders reads the content type and user metadata a new object carries.
+// When ok is false the MetadataTooLarge response has already been written.
+func uploadHeaders(w http.ResponseWriter, r *http.Request) (contentType string, meta map[string]string, status int, err error, ok bool) {
+	meta = extractUserMetadata(r.Header)
+	if err := validateUserMetadata(meta); err != nil {
+		writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
+		return "", nil, http.StatusBadRequest, err, false
+	}
+	return cmp.Or(r.Header.Get(headerContentType), "application/octet-stream"), meta, 0, nil, true
 }
 
 // -------------------------------------------------------------------------

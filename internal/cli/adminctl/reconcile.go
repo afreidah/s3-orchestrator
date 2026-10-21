@@ -12,19 +12,20 @@ package adminctl
 import (
 	"flag"
 	"net/http"
+	"net/url"
 )
 
 // cmdReconcile implements `s3-orchestrator admin reconcile [-backend=NAME]`.
 func cmdReconcile(args []string, c *client) int {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	backendName := fs.String("backend", "", "Scope reconcile to a single backend (default: all)")
+	backendName := fs.String(flagBackend, "", "Scope reconcile to a single backend (default: all)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	path := "/admin/api/reconcile"
+	q := url.Values{}
 	if *backendName != "" {
-		path += "?backend=" + *backendName
+		q.Set(queryBackend, *backendName)
 	}
-	return c.stream(http.MethodPost, path, "")
+	return c.stream(http.MethodPost, withQuery("/admin/api/reconcile", q), "")
 }

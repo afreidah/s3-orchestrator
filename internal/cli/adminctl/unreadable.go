@@ -11,9 +11,13 @@ package adminctl
 
 import (
 	"flag"
-	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 )
+
+// unreadablePath is the endpoint both the listing and the purge address.
+const unreadablePath = "/admin/api/unreadable"
 
 // cmdUnreadable implements `s3-orchestrator admin unreadable [-limit=N]
 // [-execute] [-batch-size=N]`.
@@ -26,16 +30,15 @@ func cmdUnreadable(args []string, c *client) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	q := url.Values{}
 	if *execute {
-		path := "/admin/api/unreadable"
 		if *batchSize > 0 {
-			path += fmt.Sprintf(fmtBatchSize, *batchSize)
+			q.Set(queryBatch, strconv.Itoa(*batchSize))
 		}
-		return c.stream(http.MethodPost, path, "")
+		return c.stream(http.MethodPost, withQuery(unreadablePath, q), "")
 	}
-	path := "/admin/api/unreadable"
 	if *limit > 0 {
-		path += fmt.Sprintf("?limit=%d", *limit)
+		q.Set("limit", strconv.Itoa(*limit))
 	}
-	return c.get(path, nil)
+	return c.get(withQuery(unreadablePath, q), nil)
 }

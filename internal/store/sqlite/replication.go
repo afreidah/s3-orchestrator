@@ -182,30 +182,16 @@ func (s *Store) CountReplicationBacklog(ctx context.Context, factor int) (core.R
 func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
 		var (
-			loc           core.ObjectLocation
-			keyID         sql.NullString
-			ptSize        sql.NullInt64
-			contentHash   sql.NullString
-			compAlgorithm sql.NullString
-			compLevel     sql.NullString
-			compVersion   sql.NullInt64
-			logicalSize   sql.NullInt64
-			createdAt     string
+			loc       core.ObjectLocation
+			form      storedFormColumns
+			createdAt string
 		)
-		if err := rows.Scan(
-			&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &loc.Encrypted,
-			&loc.EncryptionKey, &keyID, &ptSize, &contentHash,
-			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
-		); err != nil {
+		dest := append([]any{&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes},
+			form.scanDest(&loc.StoredForm)...)
+		if err := rows.Scan(append(dest, &createdAt)...); err != nil {
 			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
-		loc.KeyID = nullStringValue(keyID)
-		loc.PlaintextSize = nullInt64Value(ptSize)
-		loc.ContentHash = nullStringValue(contentHash)
-		loc.CompressionAlgorithm = nullStringValue(compAlgorithm)
-		loc.CompressionLevel = nullStringValue(compLevel)
-		loc.CompressionFormatVersion = int(nullInt64Value(compVersion))
-		loc.LogicalSize = nullInt64Value(logicalSize)
+		form.apply(&loc.StoredForm)
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {

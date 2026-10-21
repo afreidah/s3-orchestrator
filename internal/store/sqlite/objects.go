@@ -631,12 +631,9 @@ func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	return loc, nil
 }
 
-// scannedObjectColumns holds the nullable columns of an object_locations row
-// between the scan and the conversion. Both scanners share it, so the column
-// order and the NULL handling are each stated once - the identified scanner
-// appends its three columns to this list rather than restating it.
-type scannedObjectColumns struct {
-	createdAt     string
+// storedFormColumns holds the nullable StoredForm columns object_locations and
+// pending_objects share, so their order and NULL handling are stated once.
+type storedFormColumns struct {
 	keyID         *string
 	plaintextSize *int64
 	contentHash   *string
@@ -644,9 +641,37 @@ type scannedObjectColumns struct {
 	compLevel     *string
 	compVersion   *int64
 	logicalSize   *int64
-	probeSize     *int64
-	probeLevel    *string
-	lastScrubbed  *string
+}
+
+// scanDest returns the scan targets for encrypted through logical_size, in
+// the order every query selects them.
+func (c *storedFormColumns) scanDest(f *core.StoredForm) []any {
+	return []any{&f.Encrypted, &f.EncryptionKey, &c.keyID, &c.plaintextSize, &c.contentHash,
+		&c.compAlgorithm, &c.compLevel, &c.compVersion, &c.logicalSize}
+}
+
+// apply dereferences the scanned columns onto f, leaving the zero value for
+// each NULL.
+func (c *storedFormColumns) apply(f *core.StoredForm) {
+	f.KeyID = deref(c.keyID)
+	f.PlaintextSize = deref(c.plaintextSize)
+	f.ContentHash = deref(c.contentHash)
+	f.CompressionAlgorithm = deref(c.compAlgorithm)
+	f.CompressionLevel = deref(c.compLevel)
+	f.CompressionFormatVersion = int(deref(c.compVersion))
+	f.LogicalSize = deref(c.logicalSize)
+}
+
+// scannedObjectColumns holds the nullable columns of an object_locations row
+// between the scan and the conversion. Both scanners share it, so the column
+// order and the NULL handling are each stated once - the identified scanner
+// appends its three columns to this list rather than restating it.
+type scannedObjectColumns struct {
+	storedFormColumns
+	createdAt    string
+	probeSize    *int64
+	probeLevel   *string
+	lastScrubbed *string
 }
 
 // objectColumns is the projection scanDest reads, in its order.
@@ -659,14 +684,9 @@ const objectColumns = `object_key, backend_name, storage_key, size_bytes, encryp
 // scanDest returns the scan targets in the order every object_locations query
 // selects them.
 func (c *scannedObjectColumns) scanDest(loc *core.ObjectLocation) []any {
-	return []any{
-		&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes,
-		&loc.Encrypted, &loc.EncryptionKey,
-		&c.keyID, &c.plaintextSize, &c.contentHash,
-		&c.compAlgorithm, &c.compLevel, &c.compVersion, &c.logicalSize,
-		&c.probeSize, &c.probeLevel,
-		&c.createdAt, &c.lastScrubbed,
-	}
+	dest := []any{&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes}
+	dest = append(dest, c.storedFormColumns.scanDest(&loc.StoredForm)...)
+	return append(dest, &c.probeSize, &c.probeLevel, &c.createdAt, &c.lastScrubbed)
 }
 
 // apply dereferences the scanned columns onto loc.
@@ -676,33 +696,9 @@ func (c *scannedObjectColumns) apply(loc *core.ObjectLocation) error {
 	if parseErr != nil {
 		return fmt.Errorf(errInvalidTimestamp, c.createdAt, parseErr)
 	}
-	if c.keyID != nil {
-		loc.KeyID = *c.keyID
-	}
-	if c.plaintextSize != nil {
-		loc.PlaintextSize = *c.plaintextSize
-	}
-	if c.contentHash != nil {
-		loc.ContentHash = *c.contentHash
-	}
-	if c.compAlgorithm != nil {
-		loc.CompressionAlgorithm = *c.compAlgorithm
-	}
-	if c.compLevel != nil {
-		loc.CompressionLevel = *c.compLevel
-	}
-	if c.compVersion != nil {
-		loc.CompressionFormatVersion = int(*c.compVersion)
-	}
-	if c.logicalSize != nil {
-		loc.LogicalSize = *c.logicalSize
-	}
-	if c.probeSize != nil {
-		loc.CompressionProbeSize = *c.probeSize
-	}
-	if c.probeLevel != nil {
-		loc.CompressionProbeLevel = *c.probeLevel
-	}
+	c.storedFormColumns.apply(&loc.StoredForm)
+	loc.CompressionProbeSize = deref(c.probeSize)
+	loc.CompressionProbeLevel = deref(c.probeLevel)
 	if c.lastScrubbed != nil {
 		scrubbed, err := parseTime(*c.lastScrubbed)
 		if err != nil {

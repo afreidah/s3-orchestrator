@@ -94,17 +94,9 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return status, err
 	}
 
-	contentType := r.Header.Get(headerContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	metadata := extractUserMetadata(r.Header)
-	if len(metadata) > 0 {
-		if err := validateUserMetadata(metadata); err != nil {
-			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
-			return http.StatusBadRequest, err
-		}
+	contentType, metadata, status, err, ok := uploadHeaders(w, r)
+	if !ok {
+		return status, err
 	}
 
 	// Best-effort precondition check before the body upload so a doomed

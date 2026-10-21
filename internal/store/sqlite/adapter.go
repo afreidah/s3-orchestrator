@@ -154,8 +154,9 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		if err := rows.Scan(&ec.BackendName, &ec.StorageKey, &ec.SizeBytes, &createdAt, &ec.Form); err != nil {
 			return core.ExistingCopy{}, fmt.Errorf("scan existing copy: %w", err)
 		}
-		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
-			ec.CreatedAt = t
+		var err error
+		if ec.CreatedAt, err = parseTime(createdAt); err != nil {
+			return core.ExistingCopy{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		return ec, nil
 	})

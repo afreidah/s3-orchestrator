@@ -34,7 +34,7 @@ func cmdDrain(args []string, c *client) int {
 	if requireBackendName(args, c.stderr) {
 		return 1
 	}
-	return c.post(adminBackendsPath+args[0]+drainSubpath, "", nil)
+	return c.post(backendPath(args[0])+drainSubpath, "", nil)
 }
 
 // cmdDrainStatus implements `s3-orchestrator admin drain-status <backend>`.
@@ -43,7 +43,7 @@ func cmdDrainStatus(args []string, c *client) int {
 	if requireBackendName(args, c.stderr) {
 		return 1
 	}
-	return c.get(adminBackendsPath+args[0]+drainSubpath, nil)
+	return c.get(backendPath(args[0])+drainSubpath, nil)
 }
 
 // cmdDrainCancel implements `s3-orchestrator admin drain-cancel <backend>`.
@@ -52,7 +52,7 @@ func cmdDrainCancel(args []string, c *client) int {
 	if requireBackendName(args, c.stderr) {
 		return 1
 	}
-	return c.delete(adminBackendsPath+args[0]+drainSubpath, nil)
+	return c.delete(backendPath(args[0])+drainSubpath, nil)
 }
 
 // cmdCordon implements `s3-orchestrator admin cordon <backend>`. Stops new
@@ -62,7 +62,7 @@ func cmdCordon(args []string, c *client) int {
 	if requireBackendName(args, c.stderr) {
 		return 1
 	}
-	return c.post(adminBackendsPath+args[0]+cordonSubpath, "", nil)
+	return c.post(backendPath(args[0])+cordonSubpath, "", nil)
 }
 
 // cmdUncordon implements `s3-orchestrator admin uncordon <backend>`. Lets new
@@ -71,5 +71,5 @@ func cmdUncordon(args []string, c *client) int {
 	if requireBackendName(args, c.stderr) {
 		return 1
 	}
-	return c.delete(adminBackendsPath+args[0]+cordonSubpath, nil)
+	return c.delete(backendPath(args[0])+cordonSubpath, nil)
 }

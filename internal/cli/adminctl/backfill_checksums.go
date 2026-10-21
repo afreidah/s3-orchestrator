@@ -32,7 +32,7 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	}
 	q := url.Values{}
 	if *batchSize != 100 {
-		q.Set("batch_size", strconv.Itoa(*batchSize))
+		q.Set(queryBatch, strconv.Itoa(*batchSize))
 	}
 	if *maxObjects > 0 {
 		q.Set("max", strconv.Itoa(*maxObjects))

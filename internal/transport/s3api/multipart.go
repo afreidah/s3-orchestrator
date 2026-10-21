@@ -105,17 +105,9 @@ type partInfo struct {
 // key is the user-facing key (for XML response), internalKey is the prefixed
 // key used for storage.
 func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, internalKey string) (int, error) {
-	contentType := r.Header.Get(headerContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	metadata := extractUserMetadata(r.Header)
-	if len(metadata) > 0 {
-		if err := validateUserMetadata(metadata); err != nil {
-			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
-			return http.StatusBadRequest, err
-		}
+	contentType, metadata, status, err, ok := uploadHeaders(w, r)
+	if !ok {
+		return status, err
 	}
 
 	// Check per-bucket multipart upload limit

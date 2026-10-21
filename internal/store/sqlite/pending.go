@@ -89,42 +89,25 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	}
 	return collectRows(rows, "pending rows", func(rows *sql.Rows) (core.PendingObject, error) {
 		var (
-			p             core.PendingObject
-			encrypted     int
-			keyID         sql.NullString
-			plaintextSize sql.NullInt64
-			contentHash   sql.NullString
-			compAlgorithm sql.NullString
-			compLevel     sql.NullString
-			compVersion   sql.NullInt64
-			logicalSize   sql.NullInt64
-			createdAt     string
-			encKey        []byte
-			etag          sql.NullString
-			contentType   sql.NullString
-			userMetadata  sql.NullString
-			role          string
+			p            core.PendingObject
+			form         storedFormColumns
+			createdAt    string
+			etag         sql.NullString
+			contentType  sql.NullString
+			userMetadata sql.NullString
+			role         string
 		)
-		if err := rows.Scan(&p.IntentID, &p.ObjectKey, &p.StorageKey, &p.BackendName, &p.SizeBytes,
-			&encrypted, &encKey, &keyID, &plaintextSize, &contentHash,
-			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
-			&etag, &contentType, &userMetadata, &role,
-		); err != nil {
+		dest := append([]any{&p.IntentID, &p.ObjectKey, &p.StorageKey, &p.BackendName, &p.SizeBytes},
+			form.scanDest(&p.StoredForm)...)
+		if err := rows.Scan(append(dest, &createdAt, &etag, &contentType, &userMetadata, &role)...); err != nil {
 			return core.PendingObject{}, fmt.Errorf("scan pending row: %w", err)
 		}
+		form.apply(&p.StoredForm)
 		p.Role = core.PendingRole(role)
 		p.Identity = identityFromColumns(etag, contentType, userMetadata)
-		p.Encrypted = encrypted != 0
-		p.EncryptionKey = encKey
-		p.KeyID = nullStringValue(keyID)
-		p.PlaintextSize = nullInt64Value(plaintextSize)
-		p.ContentHash = nullStringValue(contentHash)
-		p.CompressionAlgorithm = nullStringValue(compAlgorithm)
-		p.CompressionLevel = nullStringValue(compLevel)
-		p.CompressionFormatVersion = int(nullInt64Value(compVersion))
-		p.LogicalSize = nullInt64Value(logicalSize)
-		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
-			p.CreatedAt = t
+		var err error
+		if p.CreatedAt, err = parseTime(createdAt); err != nil {
+			return core.PendingObject{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		return p, nil
 	})

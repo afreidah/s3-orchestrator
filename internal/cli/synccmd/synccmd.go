@@ -22,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -133,15 +132,6 @@ func bucketNames(cfg *config.Config) []string {
 	out := make([]string, 0, len(cfg.Buckets))
 	for i := range cfg.Buckets {
 		out = append(out, cfg.Buckets[i].Name)
-	}
-	return out
-}
-
-// bucketPrefixes maps virtual bucket names to the key prefixes they own.
-func bucketPrefixes(buckets []string) []string {
-	out := make([]string, 0, len(buckets))
-	for _, b := range buckets {
-		out = append(out, internalkey.Prefix(b))
 	}
 	return out
 }
@@ -291,7 +281,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 			Log:     synccmdLogger(),
 		},
 		BackendName: run.BackendCfg.Name,
-		Prefixes:    bucketPrefixes(run.Buckets),
+		Prefixes:    reconcile.BucketPrefixes(run.Buckets),
 		DryRun:      opts.DryRun,
 	}
 

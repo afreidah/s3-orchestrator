@@ -458,6 +458,8 @@ var simpleWrapperCases = []wrapperCase{
 	{"object-tags-read", "object-tags", []string{"-key", "bucket/k"}, http.MethodGet, "/admin/api/objects/tags/bucket/k", ""},
 	{"object-tags-set", "object-tags", []string{"-key", "bucket/k", "-tag", "a=1"}, http.MethodPut, "/admin/api/objects/tags/bucket/k", ""},
 	{"object-tags-clear", "object-tags", []string{"-key", "bucket/k", "-clear"}, http.MethodDelete, "/admin/api/objects/tags/bucket/k", ""},
+	{"reconcile-backend-escaped", "reconcile", []string{"-backend", "a&b+c#d"}, http.MethodPost, "/admin/api/reconcile", "backend=a%26b%2Bc%23d"},
+	{"drain-backend-escaped", "drain", []string{"b#1?x"}, http.MethodPost, "/admin/api/backends/b#1?x/drain", ""},
 }
 
 // -------------------------------------------------------------------------

@@ -123,6 +123,16 @@ func nullInt64Value(n sql.NullInt64) int64 {
 	return n.Int64
 }
 
+// deref returns *p, or the zero value when p is nil, which is how a scanned
+// NULL column reaches the model.
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
+
 // boolToInt renders a Go bool as the 0/1 integer SQLite stores booleans as.
 func boolToInt(b bool) int {
 	if b {

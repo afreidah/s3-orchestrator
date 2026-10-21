@@ -12,8 +12,9 @@ package adminctl
 
 import (
 	"flag"
-	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 // cmdOverReplication implements `s3-orchestrator admin over-replication
@@ -27,11 +28,11 @@ func cmdOverReplication(args []string, c *client) int {
 		return 1
 	}
 	if *execute {
-		path := "/admin/api/over-replication"
+		q := url.Values{}
 		if *batchSize > 0 {
-			path += fmt.Sprintf(fmtBatchSize, *batchSize)
+			q.Set(queryBatch, strconv.Itoa(*batchSize))
 		}
-		return c.stream(http.MethodPost, path, "")
+		return c.stream(http.MethodPost, withQuery("/admin/api/over-replication", q), "")
 	}
 	return c.get("/admin/api/over-replication", nil)
 }

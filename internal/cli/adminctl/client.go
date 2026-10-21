@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -103,6 +104,22 @@ func (c *client) request(method, path, body string) ([]byte, int, int) {
 		return nil, 0, 1
 	}
 	return data, resp.StatusCode, 0
+}
+
+// withQuery appends an encoded query to a path, leaving the path alone when
+// nothing was set. Every query goes through it so a value carrying &, + or #
+// arrives as the value rather than changing what the server parses.
+func withQuery(path string, q url.Values) string {
+	if enc := q.Encode(); enc != "" {
+		return path + "?" + enc
+	}
+	return path
+}
+
+// backendPath addresses one backend by name. The name is escaped because
+// config does not restrict which characters a backend name may contain.
+func backendPath(name string) string {
+	return adminBackendsPath + url.PathEscape(name)
 }
 
 // bodyReader returns nil for an empty body so the shared client can tell "no

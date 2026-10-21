@@ -42,7 +42,7 @@ func cmdCleanupDLQ(args []string, c *client) int {
 
 	q := url.Values{}
 	if *backend != "" {
-		q.Set("backend", *backend)
+		q.Set(queryBackend, *backend)
 	}
 
 	if sub == "requeue" {

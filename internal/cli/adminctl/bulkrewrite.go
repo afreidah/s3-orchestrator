@@ -38,13 +38,3 @@ func runBulkRewrite(args []string, c *client, name, path string) int {
 	}
 	return c.post(withQuery(path, q), "", nil)
 }
-
-// withQuery appends an encoded query to a path, leaving the path alone when
-// nothing was set. Built rather than formatted because more than one parameter
-// can now be present, and a second "?" is not a query string.
-func withQuery(path string, q url.Values) string {
-	if enc := q.Encode(); enc != "" {
-		return path + "?" + enc
-	}
-	return path
-}

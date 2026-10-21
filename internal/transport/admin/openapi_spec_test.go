@@ -72,13 +72,7 @@ func openAPIRoutes(rts []route) []openapi.Route {
 		rt := &rts[i]
 		params := make([]openapi.Param, 0, len(rt.Params))
 		for _, p := range rt.Params {
-			params = append(params, openapi.Param{
-				Name:        p.Name,
-				In:          p.In,
-				Description: p.Description,
-				Required:    p.Required,
-				Type:        p.Type,
-			})
+			params = append(params, openapi.Param(p))
 		}
 		r := openapi.Route{
 			Method:       rt.Method,

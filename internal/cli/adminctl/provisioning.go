@@ -340,9 +340,9 @@ func resolveGrant(
 // grantPath addresses one grant. The orchestrator resource has no name, so its
 // path carries a placeholder segment the server ignores.
 func grantPath(user string, r core.Resource) string {
-	return pathProvGrants + "/" + url.PathEscape(user) + "/" +
-		url.PathEscape(cmp.Or(r.Name, string(core.ResourceOrchestrator))) +
-		"?" + flagKind + "=" + url.QueryEscape(string(r.Kind))
+	path := pathProvGrants + "/" + url.PathEscape(user) + "/" +
+		url.PathEscape(cmp.Or(r.Name, string(core.ResourceOrchestrator)))
+	return withQuery(path, url.Values{flagKind: {string(r.Kind)}})
 }
 
 // grantAdd lets a user reach a resource, with the permissions that reach

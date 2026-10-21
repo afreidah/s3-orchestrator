@@ -37,7 +37,7 @@ func cmdRemoveBackend(args []string, c *client) int {
 	}
 	name := fs.Arg(0)
 	if !*purge {
-		return c.delete(adminBackendsPath+name, nil)
+		return c.delete(backendPath(name), nil)
 	}
 	if !*confirm {
 		return c.removePreview(name)
@@ -74,13 +74,13 @@ func (c *client) removePurge(name string) int {
 		fmt.Fprintf(c.stderr, "error: server did not return a confirmation token\n")
 		return 1
 	}
-	path := adminBackendsPath + name + "?purge=true&confirm=" + url.QueryEscape(preview.ConfirmToken)
-	return c.stream(http.MethodDelete, path, "")
+	q := url.Values{"purge": {"true"}, "confirm": {preview.ConfirmToken}}
+	return c.stream(http.MethodDelete, withQuery(backendPath(name), q), "")
 }
 
 // fetchPurgePreview asks the purge endpoint, without a confirmation token,
 // what a purge would destroy and for the token that authorizes it.
 func (c *client) fetchPurgePreview(name string) (*adminapi.RemoveBackendPreview, error) {
 	return c.api.Delete[adminapi.RemoveBackendPreview](context.Background(),
-		adminBackendsPath+name, url.Values{"purge": {"true"}})
+		backendPath(name), url.Values{"purge": {"true"}})
 }

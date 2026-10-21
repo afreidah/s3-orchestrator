@@ -35,7 +35,7 @@ const (
 	adminBackendsPath = "/admin/api/backends/"
 
 	flagBatchSize = "batch-size"
-	fmtBatchSize  = "?batch_size=%d"
+	queryBatch    = "batch_size"
 	flagMax       = "max"
 	flagBackend   = "backend"
 	queryBackend  = "backend"
