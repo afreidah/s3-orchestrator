@@ -463,7 +463,7 @@ func requestCapped(t *testing.T, api, egress, ingress int64) core.UsageLimits {
 // baseline. Both the request total and the wildcard pool's share of it, which
 // admission judges against, are set.
 func alreadySpent(mgr *fleet, name string, api, egress, ingress int64) {
-	u := core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}}
+	u := core.Usage{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}
 	if api > 0 {
 		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}
@@ -2116,20 +2116,6 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 	}
 	if got != "backend-a" {
 		t.Errorf("cached backend = %q, want %q", got, "backend-a")
-	}
-}
-
-// TestLocationCache_Expiry pins TTL-based cache expiration.
-func TestLocationCache_Expiry(t *testing.T) {
-	t.Parallel()
-	mgr := newFleet(t, newPermissiveStore(t), nil,
-		&fleetOpts{CacheTTL: 10 * time.Millisecond})
-	mgr.LocationCache().Set("key1", "backend-a")
-
-	time.Sleep(15 * time.Millisecond)
-
-	if _, ok := mgr.LocationCache().Get("key1"); ok {
-		t.Fatal("expected cache miss after TTL")
 	}
 }
 

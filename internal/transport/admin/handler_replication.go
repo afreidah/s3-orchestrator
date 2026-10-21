@@ -56,7 +56,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	res, err := h.replication.CountSurplus(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-			Outcome: adminapi.Outcome{Status: statusSkipped, Reason: reason},
+			Status: statusSkipped, Reason: reason,
 		})
 		return
 	}
@@ -66,7 +66,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
-		Outcome: adminapi.Outcome{Status: statusOK},
+		Status:  statusOK,
 		Factor:  res.Factor,
 		Pending: res.Pending,
 	})

@@ -7,8 +7,9 @@
 // bytes, the client is answered on the first copy rather than the last, and a
 // shortfall is left to the replicator instead of failing the write.
 //
-// The copies after the first commit on goroutines that outlive the response, so
-// the assertions about them poll rather than read once.
+// The copies after the first commit on goroutines that outlive the response.
+// Tests wait for them the way shutdown does, through the detached-upload
+// registry, and then read the outcome once.
 // -------------------------------------------------------------------------------
 
 package object
@@ -19,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -29,13 +31,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
-// settleWindow bounds how long a test waits for the copies that outlive the
-// response. Generous because it covers a goroutine handoff on a loaded CI box,
-// and the assertions poll, so a fast machine does not pay it.
-const settleWindow = 2 * time.Second
+// settleTimeout bounds how long settle waits. Inside a synctest bubble it is
+// fake time, so a test's slow backend must finish within it.
+const settleTimeout = 10 * time.Second
+
+// settle waits until every copy the writes left uploading has committed or
+// been discarded, which is when a write releases its detached slot.
+func settle(t *testing.T, mgr *fleet) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), settleTimeout)
+	defer cancel()
+	if n := mgr.Detached.Wait(ctx); n != 0 {
+		t.Fatalf("%d writes still had copies uploading", n)
+	}
+}
 
 // TestPutObject_ParallelCopies_PlacesEveryCopy asserts a write configured for
 // three copies puts the bytes on three backends itself, records one of them as
@@ -57,24 +68,17 @@ func TestPutObject_ParallelCopies_PlacesEveryCopy(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	for name, be := range map[string]*backendtest.InMemory{"b1": b1, "b2": b2, "b3": b3} {
-		testx.Eventually(t, settleWindow, func() bool { return be.HasCopyOf("key") },
-			"backend %s never received its copy", name)
-	}
-
-	testx.Eventually(t, settleWindow, func() bool {
-		_, companions, _ := c.snapshot()
-		return len(companions) == 2
-	}, "the two copies after the first never committed")
+	settle(t, mgr)
 
 	recorded, companions, _ := c.snapshot()
-	if len(recorded) != 1 {
-		t.Fatalf("recorded %d objects, want 1: the first copy records, the rest add themselves", len(recorded))
+	if len(recorded) != 1 || len(companions) != 2 {
+		t.Fatalf("recorded %d objects and %d further copies, want 1 and 2: the first copy records, the rest add themselves",
+			len(recorded), len(companions))
 	}
 	// Every copy's bytes go on every backend, so each one reads back whole.
 	for name, be := range map[string]*backendtest.InMemory{"b1": b1, "b2": b2, "b3": b3} {
-		obj, _ := be.CopyOf("key")
-		if !bytes.Equal(obj.Data, payload) {
+		obj, ok := be.CopyOf("key")
+		if !ok || !bytes.Equal(obj.Data, payload) {
 			t.Errorf("backend %s holds %d bytes, want %d", name, len(obj.Data), len(payload))
 		}
 	}
@@ -156,12 +160,11 @@ func TestPutObject_ParallelCopies_KeepsTheIntentsStillUploading(t *testing.T) {
 		t.Errorf("commit named %q as still uploading, want the slow backend", got)
 	}
 
-	testx.Eventually(t, settleWindow, func() bool {
-		_, companions, _ := c.snapshot()
-		return len(companions) == 1
-	}, "the slow copy never committed")
-
+	settle(t, mgr)
 	_, companions, _ := c.snapshot()
+	if len(companions) != 1 {
+		t.Fatalf("%d further copies committed, want the slow one", len(companions))
+	}
 	if got, want := companions[0].IntentID, recorded[0].Placing[0].IntentID; got != want {
 		t.Errorf("the copy that committed carried intent %s, but the commit kept %s", got, want)
 	}
@@ -172,35 +175,38 @@ func TestPutObject_ParallelCopies_KeepsTheIntentsStillUploading(t *testing.T) {
 // backend on the critical path of every write, which is what placing one copy
 // and repairing later exists to avoid.
 func TestPutObject_ParallelCopies_AnswersOnTheFirstCopy(t *testing.T) {
-	t.Parallel()
-	const slowUpload = 750 * time.Millisecond
-	fast := backendtest.NewInMemory()
-	slow := &slowMockBackend{InMemory: backendtest.NewInMemory(), delay: slowUpload}
+	synctest.Test(t, func(t *testing.T) {
+		const slowUpload = settleTimeout / 2
+		fast := backendtest.NewInMemory()
+		slow := &slowMockBackend{InMemory: backendtest.NewInMemory(), delay: slowUpload}
 
-	store, _ := eligibleStore(t)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"fast": fast, "slow": slow}, &fleetOpts{
-		Order:          []string{"fast", "slow"},
-		CopiesPerWrite: 2,
-		BackendTimeout: 5 * time.Second,
+		store, _ := eligibleStore(t)
+		mgr := newFleet(t, store, map[string]backend.ObjectBackend{"fast": fast, "slow": slow}, &fleetOpts{
+			Order:          []string{"fast", "slow"},
+			CopiesPerWrite: 2,
+			BackendTimeout: settleTimeout,
+		})
+
+		payload := []byte("answered on the first copy")
+		start := time.Now()
+		if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+			Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
+		}); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed != 0 {
+			t.Errorf("PutObject took %v; it waited on the slow backend instead of answering on the first copy", elapsed)
+		}
+		if !fast.HasCopyOf("key") {
+			t.Error("the copy that answered the client is not on its backend")
+		}
+
+		// The slow copy still lands: the response detached it, it did not cancel it.
+		settle(t, mgr)
+		if !slow.HasCopyOf("key") {
+			t.Error("the copy still uploading at response time never finished")
+		}
 	})
-
-	payload := []byte("answered on the first copy")
-	start := time.Now()
-	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
-		Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
-	}); err != nil {
-		t.Fatalf("PutObject: %v", err)
-	}
-	if elapsed := time.Since(start); elapsed >= slowUpload {
-		t.Errorf("PutObject took %s, which is the slow backend's %s: it waited for every copy", elapsed, slowUpload)
-	}
-	if !fast.HasCopyOf("key") {
-		t.Error("the copy that answered the client is not on its backend")
-	}
-
-	// The slow copy still lands: the response detached it, it did not cancel it.
-	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
-		"the copy still uploading at response time never finished")
 }
 
 // TestPutObject_ParallelCopies_ShortfallIsNotAFailure asserts a write asked for
@@ -330,16 +336,14 @@ func TestPutObject_ParallelCopies_ReleasesItsSlot(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("PutObject %d: %v", i, err)
 		}
-		// Each write has to finish before the next can be admitted, since the
-		// fixture leaves exactly one slot.
-		testx.Eventually(t, settleWindow, func() bool { return mgr.Detached.Depth() == 0 },
-			"write %d never released its slot", i)
+		// Each write has to release its slot before the next can be admitted,
+		// since the fixture leaves exactly one.
+		settle(t, mgr)
 	}
 
-	testx.Eventually(t, settleWindow, func() bool {
-		_, companions, _ := c.snapshot()
-		return len(companions) == 3
-	}, "the second copy of every write should have committed")
+	if _, companions, _ := c.snapshot(); len(companions) != 3 {
+		t.Errorf("%d further copies committed, want the second copy of every write", len(companions))
+	}
 }
 
 // TestPutObject_ParallelCopies_CommitFailureAbandonsTheRest asserts a failed
@@ -378,12 +382,13 @@ func TestPutObject_ParallelCopies_CommitFailureAbandonsTheRest(t *testing.T) {
 
 	// The slow copy lands on its backend and is then abandoned: its intent is
 	// left for the reaper, which discards an extra copy rather than promoting.
-	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
-		"the copy still uploading never finished")
-	testx.Eventually(t, settleWindow, func() bool {
-		_, companions, _ := c.snapshot()
-		return len(companions) == 0
-	}, "an abandoned copy recorded itself against a key nothing anchors")
+	settle(t, mgr)
+	if !slow.HasCopyOf("key") {
+		t.Error("the copy still uploading never finished")
+	}
+	if _, companions, _ := c.snapshot(); len(companions) != 0 {
+		t.Error("an abandoned copy recorded itself against a key nothing anchors")
+	}
 }
 
 // TestPutObject_ParallelCopies_DrainRaceDropsThatCopy asserts a backend that
@@ -412,10 +417,10 @@ func TestPutObject_ParallelCopies_DrainRaceDropsThatCopy(t *testing.T) {
 	if len(recorded) != 1 || recorded[0].Backend != "b1" {
 		t.Fatalf("recorded %+v, want the single copy on b1", recorded)
 	}
-	testx.Eventually(t, settleWindow, func() bool {
-		_, companions, _ := c.snapshot()
-		return len(companions) == 0
-	}, "the copy on the draining backend was recorded anyway")
+	settle(t, mgr)
+	if _, companions, _ := c.snapshot(); len(companions) != 0 {
+		t.Error("the copy on the draining backend was recorded anyway")
+	}
 }
 
 // TestPutObject_ParallelCopies_SurvivesAnUploadThatOutlivesTheRequest asserts a
@@ -443,9 +448,11 @@ func TestPutObject_ParallelCopies_SurvivesAnUploadThatOutlivesTheRequest(t *test
 	}
 	cancel()
 
-	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
-		"cancelling the request killed a copy the client was already told about")
-	obj, _ := slow.CopyOf("key")
+	settle(t, mgr)
+	obj, ok := slow.CopyOf("key")
+	if !ok {
+		t.Fatal("cancelling the request killed a copy the client was already told about")
+	}
 	if !bytes.Equal(obj.Data, payload) {
 		t.Errorf("the detached copy holds %d bytes, want %d", len(obj.Data), len(payload))
 	}
@@ -472,16 +479,14 @@ func TestPutObject_ParallelCopies_RefusedTargetDiscardsItsCopy(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	testx.Eventually(t, settleWindow, func() bool {
-		_, _, discarded := c.snapshot()
-		return len(discarded) == 1
-	}, "the refused copy was never discarded")
+	settle(t, mgr)
 	_, _, discarded := c.snapshot()
-	if discarded[0].BackendName != "b2" || discarded[0].Reason != reasonWriteTargetRefused {
-		t.Errorf("discarded = %+v, want a %s row on b2", discarded[0], reasonWriteTargetRefused)
+	if len(discarded) != 1 || discarded[0].BackendName != "b2" || discarded[0].Reason != reasonWriteTargetRefused {
+		t.Fatalf("discarded = %+v, want one %s row on b2", discarded, reasonWriteTargetRefused)
 	}
-	testx.Eventually(t, settleWindow, func() bool { return !b2.HasCopyOf("key") },
-		"the refused copy's bytes are still on b2")
+	if b2.HasCopyOf("key") {
+		t.Error("the refused copy's bytes are still on b2")
+	}
 	if !b1.HasCopyOf("key") {
 		t.Error("the accepted copy should stay on b1")
 	}

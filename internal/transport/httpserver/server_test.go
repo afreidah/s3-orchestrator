@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/samber/do/v2"
@@ -533,48 +534,45 @@ func TestConfigureMetrics_Inline_PprofIgnored(t *testing.T) {
 	}
 }
 
-// TestServer_ShutdownLogsErrors drives the Shutdown method's
-// error-logging branches: both main and metrics http.Server.Shutdown
-// calls receive a deadline-exceeded context while a slow handler holds
-// the listener busy, so Shutdown reports the context error which the
-// Server logs without aborting the rest of the teardown.
+// TestServer_ShutdownLogsErrors asserts a drain that runs out of time on both
+// servers, because a request outlives it, logs both failures and still gives
+// up at the drain deadline rather than waiting for the request.
 func TestServer_ShutdownLogsErrors(t *testing.T) {
-	t.Parallel()
-	listenAndHold := func(t *testing.T) *http.Server {
-		t.Helper()
-		lc := &net.ListenConfig{}
-		ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen: %v", err)
-		}
-		srv := &http.Server{
-			ReadHeaderTimeout: time.Second,
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				time.Sleep(2 * time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		// holding serves one request that outlasts the drain, on the in-memory
+		// network, and returns the server once that request is in its handler.
+		holding := func() *http.Server {
+			srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				time.Sleep(2 * DrainTimeout)
 				w.WriteHeader(http.StatusOK)
-			}),
+			}))
+			client := srv.Client()
+			go func() {
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://held/", nil)
+				if resp, err := client.Do(req); err == nil {
+					_ = resp.Body.Close()
+				}
+			}()
+			return srv.Config
 		}
-		go func() { _ = srv.Serve(ln) }()
-		// kick off a slow request so a connection is open
-		go func() {
-			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+ln.Addr().String(), nil)
-			resp, err := http.DefaultClient.Do(req) //nolint:gosec // G104: test server URL
-			if err == nil && resp != nil {
-				_ = resp.Body.Close()
-			}
-		}()
-		time.Sleep(20 * time.Millisecond) // let the request reach the handler
-		return srv
-	}
+		var buf bytes.Buffer
+		s := &Server{main: holding(), metrics: holding(), log: slog.New(slog.NewTextHandler(&buf, nil))}
+		synctest.Wait()
 
-	s := &Server{
-		main:    listenAndHold(t),
-		metrics: listenAndHold(t),
-		log:     slog.Default(),
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	s.Shutdown(ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), DrainTimeout)
+		defer cancel()
+		start := time.Now()
+		s.Shutdown(ctx)
+
+		if elapsed := time.Since(start); elapsed != DrainTimeout {
+			t.Errorf("Shutdown returned after %v, want the %v drain deadline", elapsed, DrainTimeout)
+		}
+		for _, msg := range []string{"HTTP server shutdown error", "metrics server shutdown error"} {
+			if !strings.Contains(buf.String(), msg) {
+				t.Errorf("log is missing %q:\n%s", msg, buf.String())
+			}
+		}
+	})
 }
 
 // TestServer_RunWithSeparateMetrics verifies that Run, given a metrics address

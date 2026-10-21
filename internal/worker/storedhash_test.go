@@ -61,16 +61,14 @@ func sealedForHash(t *testing.T) ([]byte, core.ObjectLocation) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 	return ciphertext, core.ObjectLocation{
-		ObjectKey:   "bucket/key1",
-		BackendName: "b1",
-		SizeBytes:   int64(len(ciphertext)),
-		StoredForm: core.StoredForm{
-			Encrypted:     true,
-			EncryptionKey: res.WrappedDEK,
-			KeyID:         res.KeyID,
-			PlaintextSize: int64(len(hashBody)),
-			ContentHash:   hashString(hashBody),
-		},
+		ObjectKey:     "bucket/key1",
+		BackendName:   "b1",
+		SizeBytes:     int64(len(ciphertext)),
+		Encrypted:     true,
+		EncryptionKey: res.WrappedDEK,
+		KeyID:         res.KeyID,
+		PlaintextSize: int64(len(hashBody)),
+		ContentHash:   hashString(hashBody),
 	}
 }
 

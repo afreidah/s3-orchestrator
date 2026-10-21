@@ -78,13 +78,7 @@ func TestRouteGuards(t *testing.T) {
 func TestLogLevel_Get(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/log-level", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/log-level")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
@@ -155,13 +149,7 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 func TestReloadStatus_NoReloadYet(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/reload-status")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -180,13 +168,7 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 		gen := int64(7)
 		return &adminapi.ReloadStatusResponse{Generation: &gen, Status: "full_success"}
 	})
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/reload-status")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -210,13 +192,7 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 func TestCacheFlush_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t) // objectCache is nil
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/cache/flush")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
@@ -235,13 +211,7 @@ func TestCacheFlush_Disabled(t *testing.T) {
 func TestCacheFlush_Empty(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/cache/flush")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -272,13 +242,7 @@ func TestCacheFlush_Cleared(t *testing.T) {
 		mc.PutBytes(k, []byte(k+"-data"), cache.EntryMeta{})
 	}
 
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/cache/flush")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -300,13 +264,7 @@ func TestCacheFlush_Cleared(t *testing.T) {
 func TestCacheStats_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/cache")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
@@ -322,13 +280,7 @@ func TestCacheStats_Populated(t *testing.T) {
 	mc.PutBytes("key-a", []byte("hello"), cache.EntryMeta{ContentType: "text/plain"})
 	mc.PutBytes("key-b", []byte("world"), cache.EntryMeta{ContentType: "text/plain"})
 
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/cache")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -357,13 +309,7 @@ func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
 	mc.PutBytes("a/1", []byte("aaa"), cache.EntryMeta{})
 	mc.PutBytes("a/2", []byte("bbb"), cache.EntryMeta{})
 
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/a/1", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/keys/a/1")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -389,13 +335,7 @@ func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
 func TestCacheInvalidateKey_UnknownKey(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/nonexistent", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/keys/nonexistent")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
@@ -413,13 +353,7 @@ func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 		mc.PutBytes(k, []byte("data"), cache.EntryMeta{})
 	}
 
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -445,13 +379,7 @@ func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/prefix")
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -464,13 +392,7 @@ func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
 func TestCacheInvalidateKey_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t) // objectCache is nil
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/foo", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/keys/foo")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", w.Code)
@@ -482,13 +404,7 @@ func TestCacheInvalidateKey_Disabled(t *testing.T) {
 func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t) // objectCache is nil
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", w.Code)
@@ -548,13 +464,7 @@ func newTestHandlerWithCache(t *testing.T) *Handler {
 func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/decrypt-existing", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/decrypt-existing")
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -574,13 +484,7 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 func TestEncryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/encrypt-existing", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/encrypt-existing")
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)

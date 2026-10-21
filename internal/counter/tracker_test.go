@@ -57,7 +57,7 @@ func pooled(t *testing.T, specs []core.PoolSpec, unmetered ...s3op.Operation) co
 // baselines already set for others. The request total and the wildcard pool's
 // share of it are set together, as the collector loads them.
 func spent(tracker *UsageTracker, name string, api, egress, ingress int64) {
-	u := core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}}
+	u := core.Usage{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}
 	if api > 0 {
 		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}

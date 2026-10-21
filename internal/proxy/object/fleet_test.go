@@ -174,6 +174,8 @@ func newFleet(
 		IntegrityCfg:                 integrity,
 		BackendTimeout:               cmp.Or(opts.BackendTimeout, fleetTimeout),
 	})
+	// Stops the cache's eviction goroutine, as proxytest.New does for a stack.
+	t.Cleanup(om.LocationCache().Close)
 	return &fleet{Manager: om, Runtime: rt, Coord: coord, Integrity: integrity, Detached: detached}
 }
 

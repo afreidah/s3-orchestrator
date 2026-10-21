@@ -1,5 +1,4 @@
-// Package testx holds reusable test helpers shared across packages,
-// currently polling primitives that replace fixed time.Sleep calls
-// with conditions evaluated until they hold and context utilities for
-// scoping test deadlines.
+// Package testx holds reusable test helpers shared across packages: polling
+// primitives for the tests that cannot run on fake time, and a fake advisory
+// locker for the services that tick under one.
 package testx

@@ -305,7 +305,7 @@ func rewriteIntent(size int64) *core.PendingObject {
 	return &core.PendingObject{
 		IntentID: "intent-rewrite", ObjectKey: placedKey, StorageKey: rewrittenPath,
 		BackendName: "backend-a", SizeBytes: size, Role: core.PendingRoleCompanion,
-		StoredForm: core.StoredForm{CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 100},
+		CompressionAlgorithm: "zstd", CompressionLevel: "default", CompressionFormatVersion: 1, LogicalSize: 100,
 	}
 }
 

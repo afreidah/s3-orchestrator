@@ -7,11 +7,9 @@
 package admin
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -36,13 +34,7 @@ func (f *fakeWriterTo) WriteTo(w io.Writer) (int64, error) {
 func TestTraceSnapshot_Disabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/trace/snapshot")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
@@ -54,13 +46,7 @@ func TestTraceSnapshot_Success(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
 	h.flightRec = &fakeWriterTo{payload: []byte("trace-bytes")}
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/trace/snapshot")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -82,13 +68,7 @@ func TestTraceSnapshot_WriteToError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
 	h.flightRec = &fakeWriterTo{err: errors.New("simulated WriteTo failure")}
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/trace/snapshot")
 
 	if w.Body.Len() != 0 {
 		t.Errorf("body should be empty on WriteTo error, got %q", w.Body.String())

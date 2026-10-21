@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // -------------------------------------------------------------------------
@@ -197,7 +198,7 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 	computer := newRedisInstance(t, shared)
 	other := newRedisInstance(t, shared)
 
-	fleetTick(computer, acquiringLocker{})
+	fleetTick(computer, testx.Locker{})
 	NewUsageFlushService(&UsageFlushDeps{
 		Flusher: sharedCounterFlusher{},
 		Tracker: other.Usage(),
@@ -225,9 +226,9 @@ func TestFleetSnapshotService_FreshSnapshotIsNotRecomputed(t *testing.T) {
 	first := newRedisInstance(t, shared)
 	second := newRedisInstance(t, shared)
 
-	fleetTick(first, acquiringLocker{})
+	fleetTick(first, testx.Locker{})
 	published := first.MetricsCollector().ReplicationSnapshot(context.Background())
-	fleetTick(second, acquiringLocker{})
+	fleetTick(second, testx.Locker{})
 
 	got := second.MetricsCollector().ReplicationSnapshot(context.Background())
 	if !published.Ready || !got.ComputedAt.Equal(published.ComputedAt) {

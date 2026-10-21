@@ -4,69 +4,53 @@
 // Author: Alex Freidah
 //
 // A stream stays open for the whole pass, which outlasts server.write_timeout
-// on any real fleet. These drive a live server whose timeout is shorter than
-// the pass to hold that the deadline is lifted for streams and kept for
-// everything else - the distinction the fix rests on.
+// on any real fleet. These drive a server whose timeout is shorter than the
+// pass to hold that the deadline is lifted for streams and kept for everything
+// else - the distinction the fix rests on. The server runs on the in-memory
+// network inside a fake-clock bubble, so the timeout is a realistic one and
+// costs no wall-clock time.
 // -------------------------------------------------------------------------------
 
 package admin
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// streamWriteTimeout is the server-side write deadline these tests run under.
-// Short enough to keep the suite fast, and every pass below deliberately
-// outlives it.
-const streamWriteTimeout = 150 * time.Millisecond
+// streamWriteTimeout is the server-side write deadline these tests run under;
+// every pass below deliberately outlives it.
+const streamWriteTimeout = 30 * time.Second
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// serveWithWriteTimeout starts a live server running h with the write deadline
-// a long pass would otherwise trip. httptest.NewServer is used rather than a
-// ResponseRecorder because a recorder has no deadline to trip: the bug only
-// exists on a real net/http connection.
-func serveWithWriteTimeout(t *testing.T, h http.HandlerFunc) *httptest.Server {
+// getWithWriteTimeout serves h on a connection with the write deadline a long
+// pass would otherwise trip, issues one GET, and returns the body and the
+// error from reading it. A ResponseRecorder would not do: it has no deadline
+// to trip, and the bug only exists on a net/http connection.
+func getWithWriteTimeout(t *testing.T, h http.HandlerFunc) ([]byte, error) {
 	t.Helper()
-	srv := httptest.NewUnstartedServer(h)
+	srv := httptest.NewTestServer(t, h)
 	srv.Config.WriteTimeout = streamWriteTimeout
-	srv.Start()
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// get issues a GET against srv and returns the body, failing the test if the
-// response cannot be read to completion.
-func get(t *testing.T, srv *httptest.Server) []byte {
-	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://admin/", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
 	resp, err := srv.Client().Do(req)
 	if err != nil {
-		t.Fatalf("request: %v", err)
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	return body
+	return io.ReadAll(resp.Body)
 }
 
 // -------------------------------------------------------------------------
@@ -78,32 +62,36 @@ func get(t *testing.T, srv *httptest.Server) []byte {
 // write deadline; without the deadline being cleared the server kills the
 // response mid-stream and the terminal result never arrives.
 func TestStreamSteps_OutlivesTheServerWriteTimeout(t *testing.T) {
-	t.Parallel()
-	h := &Handler{}
-	srv := serveWithWriteTimeout(t, func(w http.ResponseWriter, _ *http.Request) {
-		h.streamSteps(w, "slow-op", "processing", true, func(obs progress.Observer) (stepResult, error) {
-			// Two steps either side of the deadline: the first lands inside the
-			// window, so a broken stream still looks healthy until the second.
-			progress.Track(obs, "first", func() string { return progress.StatusOK })
-			time.Sleep(2 * streamWriteTimeout)
-			progress.Track(obs, "second", func() string { return progress.StatusOK })
-			return stepResult{Processed: 2, Summary: "did the work"}, nil
+	synctest.Test(t, func(t *testing.T) {
+		h := &Handler{}
+		body, err := getWithWriteTimeout(t, func(w http.ResponseWriter, _ *http.Request) {
+			h.streamSteps(w, "slow-op", "processing", true, func(obs progress.Observer) (stepResult, error) {
+				// Two steps either side of the deadline: the first lands inside
+				// the window, so a broken stream still looks healthy until the
+				// second.
+				progress.Track(obs, "first", func() string { return progress.StatusOK })
+				time.Sleep(2 * streamWriteTimeout)
+				progress.Track(obs, "second", func() string { return progress.StatusOK })
+				return stepResult{Processed: 2, Summary: "did the work"}, nil
+			})
 		})
+		if err != nil {
+			t.Fatalf("stream cut short: %v", err)
+		}
+
+		events := decodeEvents(t, body)
+		if len(events) == 0 {
+			t.Fatal("no events decoded; the stream was cut before anything arrived")
+		}
+		last := events[len(events)-1]
+		if last.Kind != adminstream.KindResult {
+			t.Fatalf("last event = %+v, want a %s event; the pass outlived the write deadline and was cut short",
+				last, adminstream.KindResult)
+		}
+		if last.Outcome != adminstream.OutcomeOK || last.Processed != 2 {
+			t.Errorf("result = %+v, want an ok outcome over 2 items", last)
+		}
 	})
-
-	events := decodeEvents(t, get(t, srv))
-	if len(events) == 0 {
-		t.Fatal("no events decoded; the stream was cut before anything arrived")
-	}
-
-	last := events[len(events)-1]
-	if last.Kind != adminstream.KindResult {
-		t.Fatalf("last event = %+v, want a %s event; the pass outlived the write deadline and was cut short",
-			last, adminstream.KindResult)
-	}
-	if last.Outcome != adminstream.OutcomeOK || last.Processed != 2 {
-		t.Errorf("result = %+v, want an ok outcome over 2 items", last)
-	}
 }
 
 // TestNonStreamingResponse_KeepsTheWriteTimeout holds the other half: the
@@ -111,21 +99,13 @@ func TestStreamSteps_OutlivesTheServerWriteTimeout(t *testing.T) {
 // response would quietly remove write_timeout from the whole admin API, which
 // is a slow-client protection worth keeping.
 func TestNonStreamingResponse_KeepsTheWriteTimeout(t *testing.T) {
-	t.Parallel()
-	srv := serveWithWriteTimeout(t, func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(2 * streamWriteTimeout)
-		_, _ = w.Write([]byte("too late"))
-	})
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-	resp, err := srv.Client().Do(req)
-	if err == nil {
-		defer func() { _ = resp.Body.Close() }()
-		if _, err = io.ReadAll(resp.Body); err == nil {
-			t.Error("a response written past write_timeout should not have been delivered intact")
+	synctest.Test(t, func(t *testing.T) {
+		body, err := getWithWriteTimeout(t, func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(2 * streamWriteTimeout)
+			_, _ = w.Write([]byte("too late"))
+		})
+		if err == nil {
+			t.Errorf("a response written past write_timeout was delivered intact: %q", body)
 		}
-	}
+	})
 }

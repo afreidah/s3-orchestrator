@@ -35,13 +35,7 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
 	rebalanceWith(t, h, &rebalancerStub{moved: 3})
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/rebalance")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -65,13 +59,7 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 func TestHandleRebalance_NotWired(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t) // rebalancer deliberately nil
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/rebalance")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -96,14 +84,11 @@ func TestHandleRebalance_SkippedCycle(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
 	rebalanceWith(t, h, &rebalancerStub{skip: worker.SkipReasonWithinThreshold})
-	mux := http.NewServeMux()
-	h.Register(mux)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/rebalance")
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a skip is a normal outcome, not an error", w.Code)
+	}
 	var resp adminapi.RebalanceResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -118,13 +103,7 @@ func TestHandleRebalance_Error(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
 	rebalanceWith(t, h, &rebalancerStub{err: errors.New("boom")})
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodPost, "/admin/api/rebalance")
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())

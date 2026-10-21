@@ -182,7 +182,7 @@ func TestUsage_AddPool(t *testing.T) {
 // pool map for reuse.
 func TestUsage_Reset(t *testing.T) {
 	t.Parallel()
-	u := Usage{UsageStat: UsageStat{APIRequests: 1, EgressBytes: 2, IngressBytes: 3}}
+	u := Usage{APIRequests: 1, EgressBytes: 2, IngressBytes: 3}
 	u.AddPool("x", 4)
 	pools := u.Pools
 

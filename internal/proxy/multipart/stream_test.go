@@ -126,14 +126,12 @@ func sealPart(t *testing.T, enc *encryption.Encryptor, partNumber int, plain []b
 		t.Fatalf("read ciphertext: %v", err)
 	}
 	return ciphertext, &core.MultipartPart{
-		PartNumber: partNumber,
-		SizeBytes:  int64(len(ciphertext)),
-		StoredForm: core.StoredForm{
-			Encrypted:     true,
-			EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
-			KeyID:         res.KeyID,
-			PlaintextSize: int64(len(plain)),
-		},
+		PartNumber:    partNumber,
+		SizeBytes:     int64(len(ciphertext)),
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
+		KeyID:         res.KeyID,
+		PlaintextSize: int64(len(plain)),
 	}
 }
 
@@ -294,7 +292,7 @@ func TestSumPlaintextSize(t *testing.T) {
 	t.Parallel()
 	parts := []core.MultipartPart{
 		{PartNumber: 1, SizeBytes: 100},
-		{PartNumber: 2, SizeBytes: 164, StoredForm: core.StoredForm{Encrypted: true, PlaintextSize: 100}},
+		{PartNumber: 2, SizeBytes: 164, Encrypted: true, PlaintextSize: 100},
 		{PartNumber: 3, SizeBytes: 7},
 	}
 	if got := sumPlaintextSize(parts); got != 207 {

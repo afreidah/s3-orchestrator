@@ -14,17 +14,22 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 )
 
 // fakeProber counts Probe calls; atomic because ProbeAll runs them
 // concurrently.
 type fakeProber struct {
-	count atomic.Int32
+	count    atomic.Int32
+	workload atomic.Value
 }
 
-// Probe records that the registry probed this breaker.
-func (f *fakeProber) Probe(context.Context) {
+// Probe records that the registry probed this breaker, and the workload the
+// probe would be charged to.
+func (f *fakeProber) Probe(ctx context.Context) {
 	f.count.Add(1)
+	f.workload.Store(audit.WorkloadOf(ctx))
 }
 
 // TestNewRegistry_DropsNil verifies that nil entries passed to NewRegistry

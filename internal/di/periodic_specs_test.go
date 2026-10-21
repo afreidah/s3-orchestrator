@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -40,7 +41,7 @@ import (
 func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 	t.Helper()
 	f := newServicesFixture(t)
-	locker := fakeLocker{}
+	locker := testx.Locker{Busy: true}
 
 	runners := []lifecycle.Runner{
 		multipart.NewCleanupService(f.stack.Multipart, locker, 0),

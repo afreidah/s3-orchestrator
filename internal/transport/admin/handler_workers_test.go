@@ -41,13 +41,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 			{Name: "replicator", LastFailure: now, LastError: "boom", ConsecutiveFailures: 3},
 		}
 	}
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/workers", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/workers")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -79,13 +73,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 func TestHandleWorkers_NotWired(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t) // workerHealth deliberately nil
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/workers", nil)
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	w := serveOn(t, h, http.MethodGet, "/admin/api/workers")
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())

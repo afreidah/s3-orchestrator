@@ -14,6 +14,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -83,58 +84,64 @@ func TestDetachedUploads_ZeroLimitAdmitsNothing(t *testing.T) {
 // TestDetachedUploads_WaitReturnsWhenTheLastTailFinishes verifies the shutdown
 // wait ends as soon as the work does, rather than sitting out its deadline.
 func TestDetachedUploads_WaitReturnsWhenTheLastTailFinishes(t *testing.T) {
-	t.Parallel()
-	d := NewDetachedUploads(4)
+	synctest.Test(t, func(t *testing.T) {
+		d := NewDetachedUploads(4)
 
-	releases := make([]func(), 0, 3)
-	for range 3 {
-		release, ok := d.Begin()
-		if !ok {
-			t.Fatal("a tail was refused below the limit")
+		releases := make([]func(), 0, 3)
+		for range 3 {
+			release, ok := d.Begin()
+			if !ok {
+				t.Fatal("a tail was refused below the limit")
+			}
+			releases = append(releases, release)
 		}
-		releases = append(releases, release)
-	}
 
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for _, release := range releases {
-			time.Sleep(time.Millisecond)
-			release()
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			for _, release := range releases {
+				time.Sleep(time.Second)
+				release()
+			}
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+
+		start := time.Now()
+		if remaining := d.Wait(ctx); remaining != 0 {
+			t.Errorf("Wait returned with %d tails still running, want 0", remaining)
 		}
+		if elapsed := time.Since(start); elapsed != 3*time.Second {
+			t.Errorf("Wait returned after %v, want 3s: when the last tail finished", elapsed)
+		}
+		wg.Wait()
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if remaining := d.Wait(ctx); remaining != 0 {
-		t.Errorf("Wait returned with %d tails still running, want 0", remaining)
-	}
-	wg.Wait()
 }
 
 // TestDetachedUploads_WaitGivesUpOnTheDeadline verifies the drain is bounded.
 // A tail that outlasts shutdown is left as a kill would leave it, for the
 // reaper to resolve, rather than holding the process open.
 func TestDetachedUploads_WaitGivesUpOnTheDeadline(t *testing.T) {
-	t.Parallel()
-	d := NewDetachedUploads(2)
-	release, ok := d.Begin()
-	if !ok {
-		t.Fatal("the first tail was refused")
-	}
-	defer release()
+	synctest.Test(t, func(t *testing.T) {
+		d := NewDetachedUploads(2)
+		release, ok := d.Begin()
+		if !ok {
+			t.Fatal("the first tail was refused")
+		}
+		defer release()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+		const deadline = 30 * time.Second
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		defer cancel()
 
-	start := time.Now()
-	remaining := d.Wait(ctx)
-	if remaining != 1 {
-		t.Errorf("Wait reported %d tails still running, want 1", remaining)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("Wait took %s to give up on a 20ms deadline", elapsed)
-	}
+		start := time.Now()
+		if remaining := d.Wait(ctx); remaining != 1 {
+			t.Errorf("Wait reported %d tails still running, want 1", remaining)
+		}
+		if elapsed := time.Since(start); elapsed != deadline {
+			t.Errorf("Wait gave up after %v, want the %v deadline", elapsed, deadline)
+		}
+	})
 }
 
 // TestDetachedUploads_WaitOnAnEmptyRegistryReturnsImmediately verifies the

@@ -107,7 +107,7 @@ func TestApplyUsageBatch_KeepsWorkloadsApart(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	b := usageBatch("", 4, core.PoolUsage{usagePool: 4})
-	b.Workloads["scrub"] = core.Usage{UsageStat: core.UsageStat{EgressBytes: 900}, Pools: core.PoolUsage{usagePool: 1}}
+	b.Workloads["scrub"] = core.Usage{EgressBytes: 900, Pools: core.PoolUsage{usagePool: 1}}
 	applyBatch(t, s, b)
 
 	usage, err := s.GetUsageForPeriod(context.Background(), usagePeriod)

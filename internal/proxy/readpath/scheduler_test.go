@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -88,64 +89,63 @@ func TestProbeScheduler_SequentialWinnerAfterFailures(t *testing.T) {
 // TestProbeScheduler_WinnerCancelsLosers verifies that once a winner is
 // declared the still-running losers have their contexts cancelled.
 func TestProbeScheduler_WinnerCancelsLosers(t *testing.T) {
-	t.Parallel()
-	loserCancelled := make(chan struct{})
-	s := &ProbeScheduler[int]{pending: mkPending("winner", "loser"), drainTimeout: time.Second}
-	probe := func(ctx context.Context, name string, _ *core.ObjectLocation, _ backend.ObjectBackend) (ProbeResult[int], error) {
-		if name == "winner" {
-			return ProbeResult[int]{Value: 1, Cleanup: NoopCleanup}, nil
+	synctest.Test(t, func(t *testing.T) {
+		loserCancelled := make(chan struct{})
+		s := &ProbeScheduler[int]{pending: mkPending("winner", "loser"), drainTimeout: time.Second}
+		probe := func(ctx context.Context, name string, _ *core.ObjectLocation, _ backend.ObjectBackend) (ProbeResult[int], error) {
+			if name == "winner" {
+				return ProbeResult[int]{Value: 1, Cleanup: NoopCleanup}, nil
+			}
+			// Loser: block until the winner cancels this probe's context.
+			<-ctx.Done()
+			close(loserCancelled)
+			return ProbeResult[int]{}, ctx.Err()
 		}
-		// Loser: block until the winner cancels this probe's context.
-		<-ctx.Done()
-		close(loserCancelled)
-		return ProbeResult[int]{}, ctx.Err()
-	}
 
-	res, _, found := s.FirstSuccess(context.Background(), probe)
-	if !found || res.name != "winner" {
-		t.Fatalf("winner = %q found = %v, want winner / true", res.name, found)
-	}
-	select {
-	case <-loserCancelled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("loser probe was not cancelled after the winner was declared")
-	}
+		res, _, found := s.FirstSuccess(context.Background(), probe)
+		if !found || res.name != "winner" {
+			t.Fatalf("winner = %q found = %v, want winner / true", res.name, found)
+		}
+		// A loser that is never cancelled blocks forever, which the bubble
+		// reports as a deadlock.
+		<-loserCancelled
+	})
 }
 
 // TestProbeScheduler_RespectsParallelismCap verifies the rolling window never
 // runs more than `parallelism` probes at once: with a cap of 2 and 5 backends,
 // only 2 probes start until one returns.
 func TestProbeScheduler_RespectsParallelismCap(t *testing.T) {
-	t.Parallel()
-	started := make(chan string, 5)
-	release := make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan string, 5)
+		release := make(chan struct{})
 
-	s := &ProbeScheduler[int]{pending: mkPending("a", "b", "c", "d", "e"), parallelism: 2, drainTimeout: time.Second}
-	probe := func(_ context.Context, name string, _ *core.ObjectLocation, _ backend.ObjectBackend) (ProbeResult[int], error) {
-		started <- name
-		<-release // hold the slot until the test releases it
-		return ProbeResult[int]{}, errors.New(name + " failed")
-	}
-
-	done := make(chan struct{})
-	go func() {
-		_, _, found := s.FirstSuccess(context.Background(), probe)
-		if found {
-			t.Errorf("found = true, want false (every probe fails)")
+		s := &ProbeScheduler[int]{pending: mkPending("a", "b", "c", "d", "e"), parallelism: 2, drainTimeout: time.Second}
+		probe := func(_ context.Context, name string, _ *core.ObjectLocation, _ backend.ObjectBackend) (ProbeResult[int], error) {
+			started <- name
+			<-release // hold the slot until the test releases it
+			return ProbeResult[int]{}, errors.New(name + " failed")
 		}
-		close(done)
-	}()
 
-	// Exactly two probes should start while the slots are held.
-	<-started
-	<-started
-	select {
-	case n := <-started:
-		t.Fatalf("a third probe (%q) started while two slots were held; parallelism cap leaked", n)
-	case <-time.After(50 * time.Millisecond):
-		// Good: the cap held the window at two.
-	}
+		done := make(chan struct{})
+		go func() {
+			_, _, found := s.FirstSuccess(context.Background(), probe)
+			if found {
+				t.Errorf("found = true, want false (every probe fails)")
+			}
+			close(done)
+		}()
 
-	close(release) // let the held probes fail; the window now drains the rest
-	<-done
+		// Once everything is blocked, exactly two probes hold the slots.
+		synctest.Wait()
+		if n := len(started); n != 2 {
+			t.Fatalf("%d probes started while two slots were held, want 2", n)
+		}
+
+		close(release) // let the held probes fail; the window now drains the rest
+		<-done
+		if n := len(started); n != 5 {
+			t.Errorf("%d probes ran in total, want all 5", n)
+		}
+	})
 }

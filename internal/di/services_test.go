@@ -1,14 +1,12 @@
 // -------------------------------------------------------------------------------
-// Background Service Constructor Tests
+// Background Service Tests
 //
 // Author: Alex Freidah
 //
-// Smoke-level constructor tests for every background service exposed under
-// internal/di. They verify that each factory returns a lifecycle.Runner
-// value (never nil), that the lockedTickerService's shouldRun / onError
-// hooks fire as configured, and that the watchdog safely iterates an empty
-// backend fleet. Nothing here exercises the *timing* behavior of Run  -
-// lifecycle_test.go and the worker-specific suites cover that already.
+// The usage flush service, which runs on its own ticker rather than the shared
+// tick runner: which steps a tick runs, and how often it ticks at the normal
+// and the adaptive interval. Also holds the services fixture the other test
+// files build services from. The tick runner itself is tested in its package.
 // -------------------------------------------------------------------------------
 
 package di
@@ -16,26 +14,20 @@ package di
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
-	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -44,34 +36,17 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// fakeLocker skips advisory locking  -  useful for constructor-only tests
-// where we never want Run to actually fire.
-type fakeLocker struct{}
-
-// WithAdvisoryLock runs the supplied function with advisory lock.
-func (fakeLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx context.Context) error) (bool, error) {
-	return false, nil
-}
-
-// acquiringLocker always acquires the advisory lock and invokes the
-// callback, so tests can verify the "work ran" branch of runOnce.
-type acquiringLocker struct{}
-
-// WithAdvisoryLock runs the supplied function with advisory lock.
-func (acquiringLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
-	return true, fn(ctx)
-}
-
 // recordingFlusher is a usageFlushOps that appends each flush call to calls,
 // shared with recordingFleet so a test sees the whole tick in order.
 type recordingFlusher struct {
+	cfg   *config.UsageFlushConfig
 	redis bool
 	err   error
 	calls *[]string
 }
 
-func (recordingFlusher) Config() *config.UsageFlushConfig { return nil }
-func (r recordingFlusher) RedisCounterConfigured() bool   { return r.redis }
+func (r recordingFlusher) Config() *config.UsageFlushConfig { return r.cfg }
+func (r recordingFlusher) RedisCounterConfigured() bool     { return r.redis }
 
 func (r recordingFlusher) FlushUsage(_ context.Context) error {
 	*r.calls = append(*r.calls, "FlushUsage")
@@ -88,23 +63,6 @@ type recordingFleet struct {
 	err   error
 	calls *[]string
 }
-
-// recordingStates records each backend state refresh into the shared call log.
-type recordingStates struct {
-	err   error
-	calls *[]string
-}
-
-func (r recordingStates) Refresh(_ context.Context) error {
-	*r.calls = append(*r.calls, "RefreshBackendStates")
-	return r.err
-}
-
-// noStates is a backend state refresher with nothing to refresh, for tests
-// that do not look at the state cache.
-type noStates struct{}
-
-func (noStates) Refresh(_ context.Context) error { return nil }
 
 func (r recordingFleet) RefreshFleetIfStale(_ context.Context) error {
 	*r.calls = append(*r.calls, "RefreshFleetIfStale")
@@ -126,21 +84,27 @@ func (r recordingFleet) RefreshUsageBaselines(_ context.Context) error {
 	return r.err
 }
 
-// neverNearLimit keeps the adaptive interval out of flush-tick tests.
-type neverNearLimit struct{}
-
-func (neverNearLimit) NearLimit(_ float64) bool { return false }
-
-// flushDeps builds the usage-flush service's dependency bag from the fixture,
-// so the tests that drive one share the wiring.
-func (f *servicesFixture) flushDeps() *UsageFlushDeps {
-	return &UsageFlushDeps{
-		Flusher: f.stack.Usage,
-		Tracker: f.stack.Runtime.Usage(),
-		Fleet:   f.stack.Runtime,
-		States:  f.stack.States,
-	}
+// recordingStates records each backend state refresh into the shared call log.
+type recordingStates struct {
+	err   error
+	calls *[]string
 }
+
+func (r recordingStates) Refresh(_ context.Context) error {
+	*r.calls = append(*r.calls, "RefreshBackendStates")
+	return r.err
+}
+
+// noStates is a backend state refresher with nothing to refresh, for tests
+// that do not look at the state cache.
+type noStates struct{}
+
+func (noStates) Refresh(_ context.Context) error { return nil }
+
+// nearLimit reports a fixed answer to the adaptive interval's question.
+type nearLimit bool
+
+func (n nearLimit) NearLimit(_ float64) bool { return bool(n) }
 
 // servicesFixture bundles the proxy stack with the workers that the
 // background-service factories accept. Each worker is a separate dependency.
@@ -213,68 +177,6 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestCleanupQueueService_ProcessedLogFires pre-populates the mock
-// store with a cleanup item whose backend is not registered with the
-// fixture stack. ProcessCleanupQueue treats the unknown-backend row
-// as a successful retirement, so the work closure's "queue processed"
-// info log fires when processed > 0.
-func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
-	t.Parallel()
-	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mock.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.CleanupItem{{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0}}, nil).AnyTimes()
-	mock.EXPECT().CompleteCleanupItems(gomock.Any(), gomock.Len(1)).Return([]int64{1}, nil).AnyTimes()
-	storetest.Permissive(mock)
-	st := proxytest.New(t, mock, &proxytest.StackOptions{
-		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
-			Backends:        map[string]backend.ObjectBackend{},
-			Order:           []string{},
-			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
-		}),
-	})
-	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: st.Runtime, Store: mock, Concurrency: 1, InstanceID: "test", ClaimGracePeriod: 5 * time.Minute})
-
-	svc := worker.NewCleanupQueueService(cw, acquiringLocker{}).(*tickrunner.Service)
-	svc.Tick(context.Background())
-}
-
-// TestServiceWorkClosures_RunOnceCovers drives each background service's
-// work closure once via runOnce + acquiringLocker against an empty mock store,
-// exercising the closure body, nil-config guards, and worker dispatch without
-// asserting results.
-func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	locker := acquiringLocker{}
-
-	services := []lifecycle.Runner{
-		multipart.NewCleanupService(f.stack.Multipart, locker, 0),
-		worker.NewCleanupQueueService(f.cleanupWorker, locker),
-		worker.NewRebalancerService(f.stack.Runtime, f.rebalancer, locker),
-		NewFleetSnapshotService(f.stack.Runtime, locker, time.Minute),
-		NewLifecycleService(f.expirer, locker),
-		worker.NewOverReplicationService(f.stack.Runtime, f.overRep, locker),
-		worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker),
-		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
-			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
-			Buckets: provisioning.NewDeclared(),
-		}), locker, time.Hour),
-		worker.NewScrubberService(f.scrubber, locker),
-	}
-	for _, svc := range services {
-		ts, ok := svc.(*tickrunner.Service)
-		if !ok {
-			t.Fatalf("service %T is not *tickrunner.Service", svc)
-		}
-		// runOnce wraps the work closure in audit context + advisory
-		// lock acquisition, so this single call covers the locked path
-		// even when the closure itself returns early via a nil-config
-		// guard.
-		ts.Tick(context.Background())
-	}
-}
-
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
 // order. Every instance flushes its counters, since the service holds no lock
 // to lose. With Redis the instance also loads the published fleet snapshot;
@@ -302,12 +204,12 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 			var calls []string
 			svc := NewUsageFlushService(&UsageFlushDeps{
 				Flusher: recordingFlusher{redis: tt.redis, err: tt.err, calls: &calls},
-				Tracker: neverNearLimit{},
+				Tracker: nearLimit(false),
 				Fleet:   recordingFleet{err: tt.err, calls: &calls},
 				States:  recordingStates{err: tt.err, calls: &calls},
 			}).(*usageFlushService)
 
-			svc.flushTick(context.Background())
+			svc.flushTick(t.Context())
 
 			if !slices.Equal(calls, tt.want) {
 				t.Errorf("calls = %v, want %v", calls, tt.want)
@@ -316,295 +218,61 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 	}
 }
 
-// TestServiceConstructors_AllReturnNonNil asserts each factory produces a
-// usable lifecycle.Runner. Any missing assignment inside the constructor
-// body surfaces as a nil return.
-func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	locker := fakeLocker{}
-
+// TestUsageFlushService_RunFlushesEachInterval drives Run on a fake clock. It
+// flushes once per configured interval, and once a backend is near its limit
+// with adaptive flushing on, the ticks after the first come at the fast
+// interval.
+func TestUsageFlushService_RunFlushesEachInterval(t *testing.T) {
 	tests := []struct {
-		name string
-		svc  any
+		name    string
+		cfg     *config.UsageFlushConfig
+		near    nearLimit
+		elapsed time.Duration
+		want    int
 	}{
-		{"UsageFlush", NewUsageFlushService(f.flushDeps())},
-		{"FleetSnapshot", NewFleetSnapshotService(f.stack.Runtime, locker, time.Minute)},
-		{"MultipartCleanup", multipart.NewCleanupService(f.stack.Multipart, locker, 0)},
-		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
-		{"Rebalancer", worker.NewRebalancerService(f.stack.Runtime, f.rebalancer, locker)},
-		{"Lifecycle", NewLifecycleService(f.expirer, locker)},
-		{"OverReplication", worker.NewOverReplicationService(f.stack.Runtime, f.overRep, locker)},
-		{"Replicator", worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker)},
-		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
-			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
-			Buckets: provisioning.NewDeclared(),
-		}), locker, time.Hour)},
-		{"Scrubber", worker.NewScrubberService(f.scrubber, locker)},
-		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker(breaker.Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: core.ErrDBUnavailable})))},
+		{"default interval with no config", nil, false, 95 * time.Second, 3},
+		{"configured interval", &config.UsageFlushConfig{Interval: 10 * time.Second}, false, 45 * time.Second, 4},
+		{"adaptive off ignores the limit", &config.UsageFlushConfig{Interval: 30 * time.Second, FastInterval: 5 * time.Second}, true, 52 * time.Second, 1},
+		{"adaptive switches to the fast interval", &config.UsageFlushConfig{
+			Interval: 30 * time.Second, FastInterval: 5 * time.Second, AdaptiveEnabled: true, AdaptiveThreshold: 0.8,
+		}, true, 52 * time.Second, 5},
 	}
-	for _, tc := range tests {
-		if tc.svc == nil {
-			t.Errorf("%s: factory returned nil", tc.name)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				if got := flushesIn(t, tt.cfg, tt.near, tt.elapsed); got != tt.want {
+					t.Errorf("flushes in %v = %d, want %d", tt.elapsed, got, tt.want)
+				}
+			})
+		})
+	}
+}
+
+// flushesIn runs the usage flush service for elapsed on the bubble's fake
+// clock, stops it, and returns how many times it flushed.
+func flushesIn(t *testing.T, cfg *config.UsageFlushConfig, near nearLimit, elapsed time.Duration) int {
+	t.Helper()
+	var calls []string
+	svc := NewUsageFlushService(&UsageFlushDeps{
+		Flusher: recordingFlusher{cfg: cfg, calls: &calls},
+		Tracker: near,
+		Fleet:   recordingFleet{calls: &calls},
+		States:  noStates{},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error)
+	go func() { done <- svc.Run(ctx) }()
+
+	synctest.Sleep(elapsed)
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("Run returned %v on cancel, want nil", err)
+	}
+	flushes := 0
+	for _, c := range calls {
+		if c == "FlushUsage" {
+			flushes++
 		}
 	}
-}
-
-// TestLockedTickerService_RunOnceSkipsOnLockBusy drives one runOnce cycle
-// through the tick path to cover the "lock not acquired" logging branch
-// without standing up a ticker.
-func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
-	t.Parallel()
-	var workCalled bool
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   fakeLocker{},
-		Interval: time.Second,
-		LockID:   core.LockRebalancer,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { workCalled = true; return nil },
-	})
-	svc.Tick(context.Background())
-	if workCalled {
-		t.Error("work ran even though the lock was not acquired")
-	}
-}
-
-// errLocker always returns the supplied error from WithAdvisoryLock to
-// drive the runOnce error branch.
-type errLocker struct{ err error }
-
-// WithAdvisoryLock runs the supplied function with advisory lock.
-func (e errLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx context.Context) error) (bool, error) {
-	return false, e.err
-}
-
-// TestLockedTickerService_RunOnceInvokesOnError covers the onError callback
-// path, which is only triggered when WithAdvisoryLock returns a non-nil,
-// non-ErrDBUnavailable error.
-func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
-	t.Parallel()
-	var caught error
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   errLocker{err: errors.New("advisory lock broke")},
-		Interval: time.Second,
-		LockID:   core.LockLifecycle,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { return nil },
-		OnError:  func(err error) { caught = err },
-	})
-	svc.Tick(context.Background())
-	if caught == nil {
-		t.Fatal("onError was not invoked")
-	}
-}
-
-// TestLockedTickerService_RunOnceLogsErrorWhenNoOnError covers the
-// fallback log path: when WithAdvisoryLock returns a non-DBUnavailable
-// error and the service has no onError handler installed, runOnce falls
-// back to s.log.ErrorContext rather than dropping the error silently.
-func TestLockedTickerService_RunOnceLogsErrorWhenNoOnError(t *testing.T) {
-	t.Parallel()
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   errLocker{err: errors.New("advisory lock broke")},
-		Interval: time.Second,
-		LockID:   core.LockLifecycle,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { return nil },
-		// OnError intentionally nil to drive the fallback branch.
-	})
-	svc.Tick(context.Background()) // must not panic
-}
-
-// TestLockedTickerService_RunOnceSwallowsErrDBUnavailable verifies the
-// breaker-aware shortcut: when the advisory lock fails because the database
-// is down, the service logs at debug and does not invoke onError.
-func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
-	t.Parallel()
-	var onErrCalled bool
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   errLocker{err: core.ErrDBUnavailable},
-		Interval: time.Second,
-		LockID:   core.LockLifecycle,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { return nil },
-		OnError:  func(error) { onErrCalled = true },
-	})
-	svc.Tick(context.Background())
-	if onErrCalled {
-		t.Error("onError should not fire for ErrDBUnavailable")
-	}
-}
-
-// TestLockedTickerService_RunExitsOnCancel drives the Run method long
-// enough to execute its jittered startup sleep and tick-loop select before
-// context cancellation unwinds it.
-func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
-	t.Parallel()
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   fakeLocker{},
-		Interval: time.Hour, // long interval so Run blocks in the tick select
-		LockID:   core.LockRebalancer,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { return nil },
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := svc.Run(ctx); err != nil {
-		t.Errorf("Run returned error on cancel: %v", err)
-	}
-}
-
-// TestLockedTickerService_RunStartupFires covers the startup-once path by
-// registering a startup hook and invoking Run with a pre-cancelled context;
-// startup runs before the cancellation is observed by the jitter select.
-func TestLockedTickerService_RunStartupFires(t *testing.T) {
-	t.Parallel()
-	var startupCalled bool
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   acquiringLocker{},
-		Interval: time.Hour,
-		LockID:   core.LockReplicator,
-		Name:     "test",
-		Log:      slog.Default(),
-		Work:     func(context.Context) error { return nil },
-		Startup:  func(context.Context) error { startupCalled = true; return nil },
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_ = svc.Run(ctx)
-	// startup runs once via runOnce before the jitter select sees the
-	// cancelled context; acquiringLocker invokes the callback so startup
-	// must have fired.
-	if !startupCalled {
-		t.Error("startup hook was not invoked")
-	}
-}
-
-// TestUsageFlushService_RunExitsOnCancel covers the Run select-loop's
-// ctx.Done() path for the adaptive-interval flusher.
-func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	f.stack.Usage.SetConfig(&config.UsageFlushConfig{Interval: time.Hour})
-	svc := NewUsageFlushService(f.flushDeps())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := svc.Run(ctx); err != nil {
-		t.Errorf("Run returned error on cancel: %v", err)
-	}
-}
-
-// asTicker unwraps a lifecycle.Runner returned by one of the New*Service
-// factories so its shouldRun / work / startup closures can be poked
-// directly. Fails the test when the returned value isn't the ticker type
-// the tests rely on.
-func asTicker(t *testing.T, svc any) *tickrunner.Service {
-	t.Helper()
-	lt, ok := svc.(*tickrunner.Service)
-	if !ok {
-		t.Fatalf("expected *tickrunner.Service, got %T", svc)
-	}
-	return lt
-}
-
-// TestServiceClosures_ExerciseWorkAndShouldRun drives a single tick through
-// every New*Service factory's tickrunner, pinning that each wires a non-nil
-// Work closure that runs without panicking.
-func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	rt := f.stack.Runtime
-	ctx := context.Background()
-	locker := acquiringLocker{}
-
-	asTicker(t, multipart.NewCleanupService(f.stack.Multipart, locker, 100*time.Millisecond)).Tick(ctx)
-	asTicker(t, worker.NewCleanupQueueService(f.cleanupWorker, locker)).Tick(ctx)
-	asTicker(t, worker.NewRebalancerService(rt, f.rebalancer, locker)).Tick(ctx)
-	asTicker(t, NewLifecycleService(f.expirer, locker)).Tick(ctx)
-	asTicker(t, worker.NewOverReplicationService(rt, f.overRep, locker)).Tick(ctx)
-	asTicker(t, worker.NewReplicatorService(rt, f.replicator, locker)).Tick(ctx)
-	asTicker(t, worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
-		Syncer: f.reconciler, Fleet: rt, Usage: f.stack.Usage,
-		Buckets: provisioning.NewDeclared(),
-	}), locker, 100*time.Millisecond)).Tick(ctx)
-	asTicker(t, worker.NewScrubberService(f.scrubber, locker)).Tick(ctx)
-}
-
-// TestLockedTickerService_RunTicksOnce runs the ticker loop long enough to
-// execute the tick branch at least once, covering the shouldRun gating
-// path and the main select in Run.
-func TestLockedTickerService_RunTicksOnce(t *testing.T) {
-	t.Parallel()
-	done := make(chan struct{})
-	svc := tickrunner.New(tickrunner.Config{
-		Locker:   acquiringLocker{},
-		Interval: 2 * time.Millisecond,
-		LockID:   core.LockRebalancer,
-		Name:     "test",
-		Log:      slog.Default(),
-		ShouldRun: func() bool {
-			select {
-			case <-done:
-			default:
-				close(done)
-			}
-			return true
-		},
-		Work: func(context.Context) error { return nil },
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_ = svc.Run(ctx)
-	select {
-	case <-done:
-	default:
-		t.Error("shouldRun was never evaluated")
-	}
-}
-
-// TestUsageFlushService_RunTicksOnce ticks the adaptive flusher at least
-// once so the body of Run beyond the initial select is covered.
-func TestUsageFlushService_RunTicksOnce(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	f.stack.Usage.SetConfig(&config.UsageFlushConfig{Interval: 2 * time.Millisecond})
-	svc := NewUsageFlushService(f.flushDeps())
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_ = svc.Run(ctx)
-}
-
-// TestUsageFlushService_FlushTickWithAdaptiveSwitch runs the service with an
-// adaptive threshold of zero, so every tick switches the ticker to
-// FastInterval.
-func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	f.stack.Usage.SetConfig(&config.UsageFlushConfig{
-		Interval:          2 * time.Millisecond,
-		FastInterval:      time.Millisecond,
-		AdaptiveEnabled:   true,
-		AdaptiveThreshold: 0.0, // always triggers the fast-interval branch
-	})
-	svc := NewUsageFlushService(f.flushDeps())
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_ = svc.Run(ctx)
-}
-
-// TestUsageFlushService_FlushTickOnCancelledCtx runs a tick against the real
-// stack with a cancelled context, so every step fails and is logged without
-// the tick panicking.
-func TestUsageFlushService_FlushTickOnCancelledCtx(t *testing.T) {
-	t.Parallel()
-	f := newServicesFixture(t)
-	svc := NewUsageFlushService(f.flushDeps()).(*usageFlushService)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	svc.flushTick(ctx)
+	return flushes
 }

@@ -13,9 +13,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // TestLocationCache_SetGet verifies the location cache set get contract.
@@ -78,19 +77,31 @@ func TestLocationCache_Clear(t *testing.T) {
 	}
 }
 
-// TestLocationCache_Eviction verifies the location cache eviction contract.
-// Asserts that entries after eviction = , want 0.
-func TestLocationCache_Eviction(t *testing.T) {
-	t.Parallel()
-	c := NewLocationCache(50 * time.Millisecond)
-	defer c.Close()
+// TestLocationCache_ExpiryAndEviction asserts an entry is served until the
+// earliest its jittered TTL (+/-20%) can end, and that the eviction goroutine,
+// which ticks once per TTL, has removed it by the second tick, after the
+// latest it can end.
+func TestLocationCache_ExpiryAndEviction(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const ttl = time.Minute
+		c := NewLocationCache(ttl)
+		defer c.Close()
+		c.Set("key1", "backend-a")
 
-	c.Set("key1", "backend-a")
+		earliest := ttl * 8 / 10
+		synctest.Sleep(earliest - time.Second)
+		if got, ok := c.Get("key1"); !ok || got != "backend-a" {
+			t.Fatalf("before the earliest expiry: Get = %q, %v; want backend-a", got, ok)
+		}
 
-	// The eviction goroutine ticks every TTL, so the entry goes on its own
-	// schedule rather than on a deadline this test can pick.
-	testx.Eventually(t, 2*time.Second, func() bool { return c.Len() == 0 },
-		"entry was never evicted; Len = %d", c.Len())
+		synctest.Sleep(2*ttl - earliest + time.Second)
+		if n := c.Len(); n != 0 {
+			t.Errorf("entries after two eviction ticks = %d, want 0", n)
+		}
+		if _, ok := c.Get("key1"); ok {
+			t.Error("Get served an entry past its TTL")
+		}
+	})
 }
 
 // TestLocationCache_ZeroTTL_NoEvictionGoroutine verifies the location cache zero ttl no eviction goroutine path by exercising c.Close, c.Set, c.Get.

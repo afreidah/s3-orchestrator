@@ -99,48 +99,34 @@ func TestRoundTrip_EmptyInput(t *testing.T) {
 	}
 }
 
-// TestRoundTrip_ExactChunkSize verifies the round trip exact chunk size behaviour described by the test name.
-func TestRoundTrip_ExactChunkSize(t *testing.T) {
+// TestRoundTrip_ChunkBoundaries round-trips plaintexts sized at and around the
+// chunk boundaries, where an off-by-one in framing would surface.
+func TestRoundTrip_ChunkBoundaries(t *testing.T) {
 	t.Parallel()
-	testRoundTrip(t, 1024, 1024)
-}
-
-// TestRoundTrip_OneByteOverChunk verifies the round trip one byte over chunk behaviour described by the test name.
-func TestRoundTrip_OneByteOverChunk(t *testing.T) {
-	t.Parallel()
-	testRoundTrip(t, 1024, 1025)
-}
-
-// TestRoundTrip_OneByteUnderChunk verifies the round trip one byte under chunk behaviour described by the test name.
-func TestRoundTrip_OneByteUnderChunk(t *testing.T) {
-	t.Parallel()
-	testRoundTrip(t, 1024, 1023)
-}
-
-// TestRoundTrip_SmallChunkLargeInput verifies the round trip small chunk large input behaviour described by the test name.
-func TestRoundTrip_SmallChunkLargeInput(t *testing.T) {
-	t.Parallel()
-	testRoundTrip(t, 64, 1000)
-}
-
-// TestRoundTrip_SingleByte verifies the round trip single byte behaviour described by the test name.
-func TestRoundTrip_SingleByte(t *testing.T) {
-	t.Parallel()
-	testRoundTrip(t, 1024, 1)
-}
-
-// TestRoundTrip_MultipleFullChunks verifies the round trip multiple full chunks behaviour described by the test name.
-func TestRoundTrip_MultipleFullChunks(t *testing.T) {
-	t.Parallel()
-	testRoundTrip(t, 256, 256*5)
+	for _, tc := range []struct {
+		name             string
+		chunk, plaintext int
+	}{
+		{"single byte", 1024, 1},
+		{"one byte under a chunk", 1024, 1023},
+		{"exactly one chunk", 1024, 1024},
+		{"one byte over a chunk", 1024, 1025},
+		{"several full chunks", 256, 256 * 5},
+		{"small chunks, larger input", 64, 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testRoundTrip(t, tc.chunk, tc.plaintext)
+		})
+	}
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// testRoundTrip is the shared body of the encrypt/decrypt round-trip
-// table tests. Encrypts the plaintext, decrypts the ciphertext, and
+// testRoundTrip is the body of TestRoundTrip_ChunkBoundaries' cases.
+// Encrypts the plaintext, decrypts the ciphertext, and
 // asserts byte-for-byte equality plus the size invariants.
 func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 	t.Helper()

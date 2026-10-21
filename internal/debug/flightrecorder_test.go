@@ -36,29 +36,26 @@ func TestFlightRecorder_RecorderExposesUnderlying(t *testing.T) {
 	}
 }
 
-// TestFlightRecorder_RunStop drives the Start/block-on-ctx/Stop loop.
-// Not parallel: at most one runtime/trace.FlightRecorder may be active
-// per process.
+// TestFlightRecorder_RunStop asserts Run turns recording on before it waits for
+// cancellation and leaves it on, and Stop turns it off. Run is driven with a
+// cancelled context so it returns at once; the recorder is not safe to query
+// while another goroutine starts it. Not parallel: at most one
+// runtime/trace.FlightRecorder may be active per process.
 func TestFlightRecorder_RunStop(t *testing.T) {
 	s := NewFlightRecorderService(10 * time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-
-	// Give Run a chance to reach Start before we cancel.
-	time.Sleep(20 * time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("Run returned %v, want nil on ctx cancel", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not exit after ctx cancel")
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("Run returned %v, want nil on ctx cancel", err)
+	}
+	if !s.Recorder().Enabled() {
+		t.Fatal("Run returned without recording")
 	}
 
-	if err := s.Stop(context.Background()); err != nil {
+	if err := s.Stop(t.Context()); err != nil {
 		t.Errorf("Stop returned %v", err)
+	}
+	if s.Recorder().Enabled() {
+		t.Error("recording still on after Stop")
 	}
 }

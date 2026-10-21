@@ -200,6 +200,7 @@ func (s *Service) Run(ctx context.Context) error {
 		select {
 		case <-ticker.C:
 			if s.shouldRun != nil && !s.shouldRun() {
+				s.recordSkip()
 				continue
 			}
 			s.runOnce(ctx, s.work)
@@ -236,13 +237,19 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 		s.recordHealth(false, fmt.Errorf("advisory lock: %w", lockErr))
 	case !acquired:
 		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
-		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
+		s.recordSkip()
 	case workErr != nil:
 		s.log.ErrorContext(ctx, MsgPassFailed, "error", workErr)
 		s.recordHealth(false, workErr)
 	default:
 		s.recordHealth(true, nil)
 	}
+}
+
+// recordSkip counts a tick that did no work and is not a failure: the lock was
+// held elsewhere, or ShouldRun declined it. Health is left as it was.
+func (s *Service) recordSkip() {
+	telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
 }
 
 // recordHealth updates the per-service health state plus the worker
