@@ -21,18 +21,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
-// runOpsCycle attaches a fresh request ID, opens an internal-operation span,
-// and invokes fn inside both. Returns whatever fn returns.
-func runOpsCycle[T any](ctx context.Context, spanName, opAttr string, fn func(ctx context.Context) (T, error)) (T, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
+// runOpsCycle attaches a fresh request ID and the workload, opens an
+// internal-operation span, and invokes fn inside them. Returns whatever fn
+// returns.
+func runOpsCycle[T any](ctx context.Context, spanName, opAttr string, wl audit.Workload, fn func(ctx context.Context) (T, error)) (T, error) {
+	ctx = audit.WithWorkload(audit.WithRequestID(ctx, audit.NewID()), wl)
 	return observe.Run(ctx, cycleOp(spanName, opAttr), fn)
 }
 
 // runTickCycle opens the same span for a periodic scan that returns a summary
-// and no error. It does not mint a request ID: a tick is not an operator
-// action, and the workers that run one already bracket their own audit scope.
-func runTickCycle[T any](ctx context.Context, spanName, opAttr string, fn func(ctx context.Context) T) T {
-	return observe.RunValue(ctx, cycleOp(spanName, opAttr), fn)
+// and no error, under the workload. It does not mint a request ID: a tick is
+// not an operator action, and the workers that run one already bracket their
+// own audit scope.
+func runTickCycle[T any](ctx context.Context, spanName, opAttr string, wl audit.Workload, fn func(ctx context.Context) T) T {
+	return observe.RunValue(audit.WithWorkload(ctx, wl), cycleOp(spanName, opAttr), fn)
 }
 
 // cycleOp describes the span both envelopes open. spanName is the

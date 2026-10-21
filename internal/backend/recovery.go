@@ -39,7 +39,7 @@ const healthCheckTimeout = 10 * time.Second
 // Satisfied by *counter.UsageTracker.
 type UsageGate interface {
 	WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool
-	Record(backendName string, op s3op.Operation, egress, ingress int64)
+	Record(ctx context.Context, backendName string, op s3op.Operation, egress, ingress int64)
 }
 
 // RecoveryProber runs one breaker's check on a backoff schedule while it is
@@ -97,7 +97,7 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 	if !p.usage.WithinLimits(p.backend, []s3op.Operation{p.probe.Op}, 0, 0) {
 		return
 	}
-	p.usage.Record(p.backend, p.probe.Op, 0, 0)
+	p.usage.Record(ctx, p.backend, p.probe.Op, 0, 0)
 
 	checkCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	err := p.probe.Check(checkCtx)

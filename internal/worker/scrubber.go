@@ -153,7 +153,7 @@ func (o CopyOutcome) String() string {
 // A mismatch is handled as the sweep handles one: the bytes are discarded and
 // the ledger row dropped, so the replicator rebuilds from a healthy copy.
 func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
-	return runOpsCycle(ctx, "ScrubKey", "scrub_key", func(ctx context.Context) ([]CopyVerification, error) {
+	return runOpsCycle(ctx, "ScrubKey", "scrub_key", audit.WorkloadScrub, func(ctx context.Context) ([]CopyVerification, error) {
 		locations, err := s.store.GetAllObjectLocations(ctx, key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
@@ -194,7 +194,7 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 // number of objects checked and the number of hash mismatches found.
 func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return runTickCycle(ctx, "Scrub", "scrub", func(ctx context.Context) batch.Summary {
+	return runTickCycle(ctx, "Scrub", "scrub", audit.WorkloadScrub, func(ctx context.Context) batch.Summary {
 		return s.scrub(ctx, batchSize, backend, observer)
 	})
 }
@@ -443,6 +443,7 @@ func (s *Scrubber) ListUnreadable(ctx context.Context, limit int) ([]core.Object
 // at a time. Nothing can decrypt them, so they only hold quota. The listing is
 // walked by cursor, so a copy that fails to discard is tried once per purge.
 func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer progress.Observer) batch.Summary {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadPurge)
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		PageSize: batch.FixedPage(batchSize),
 		List: func(ctx context.Context, limit int, after core.Cursor) ([]core.ObjectLocation, error) {
@@ -486,7 +487,7 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 // backfill of copies that have none. observer, when non-nil, receives a start
 // step before each copy is hashed and an end step after, carrying its outcome.
 func (s *Scrubber) HashCopies(ctx context.Context, locs []core.ObjectLocation, observer progress.Observer) batch.Summary {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx = audit.WithWorkload(audit.WithRequestID(ctx, audit.NewID()), audit.WorkloadBackfill)
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
 	defer span.End()
 

@@ -28,16 +28,17 @@ func (q *Queries) DeleteUsageByBackend(ctx context.Context, backendName string) 
 }
 
 const flushPoolDelta = `-- name: FlushPoolDelta :exec
-INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (backend_name, period, pool) DO UPDATE SET
-    requests   = backend_request_usage.requests + $4,
+INSERT INTO backend_request_usage (backend_name, period, workload, pool, requests, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
+ON CONFLICT (backend_name, period, workload, pool) DO UPDATE SET
+    requests   = backend_request_usage.requests + $5,
     updated_at = NOW()
 `
 
 type FlushPoolDeltaParams struct {
 	BackendName string
 	Period      string
+	Workload    string
 	Pool        string
 	Requests    int64
 }
@@ -49,6 +50,7 @@ func (q *Queries) FlushPoolDelta(ctx context.Context, arg FlushPoolDeltaParams) 
 	_, err := q.db.Exec(ctx, flushPoolDelta,
 		arg.BackendName,
 		arg.Period,
+		arg.Workload,
 		arg.Pool,
 		arg.Requests,
 	)
@@ -57,18 +59,19 @@ func (q *Queries) FlushPoolDelta(ctx context.Context, arg FlushPoolDeltaParams) 
 
 const flushUsageDeltas = `-- name: FlushUsageDeltas :exec
 
-INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
-ON CONFLICT (backend_name, period) DO UPDATE SET
-    api_requests  = backend_usage.api_requests  + $3,
-    egress_bytes  = backend_usage.egress_bytes  + $4,
-    ingress_bytes = backend_usage.ingress_bytes + $5,
+INSERT INTO backend_usage (backend_name, period, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
+ON CONFLICT (backend_name, period, workload) DO UPDATE SET
+    api_requests  = backend_usage.api_requests  + $4,
+    egress_bytes  = backend_usage.egress_bytes  + $5,
+    ingress_bytes = backend_usage.ingress_bytes + $6,
     updated_at    = NOW()
 `
 
 type FlushUsageDeltasParams struct {
 	BackendName  string
 	Period       string
+	Workload     string
 	ApiRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
@@ -86,11 +89,12 @@ type FlushUsageDeltasParams struct {
 // same row without losing deltas.
 // -----------------------------------------------------------------------------
 // Atomically adds accumulated in-memory deltas to the persistent usage row.
-// Creates the row if it doesn't exist for this (backend, period) yet.
+// Creates the row if it doesn't exist for this (backend, period, workload) yet.
 func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasParams) error {
 	_, err := q.db.Exec(ctx, flushUsageDeltas,
 		arg.BackendName,
 		arg.Period,
+		arg.Workload,
 		arg.ApiRequests,
 		arg.EgressBytes,
 		arg.IngressBytes,
@@ -99,15 +103,17 @@ func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasPara
 }
 
 const getUsageForPeriod = `-- name: GetUsageForPeriod :many
-SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes,
+SELECT u.backend_name, u.workload, u.api_requests, u.egress_bytes, u.ingress_bytes,
        p.pool, p.requests
 FROM backend_usage u
-LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+LEFT JOIN backend_request_usage p
+    ON p.backend_name = u.backend_name AND p.period = u.period AND p.workload = u.workload
 WHERE u.period = $1
 `
 
 type GetUsageForPeriodRow struct {
 	BackendName  string
+	Workload     string
 	ApiRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
@@ -115,9 +121,10 @@ type GetUsageForPeriodRow struct {
 	Requests     *int64
 }
 
-// Returns every backend's totals for the given period (e.g. '2026-02'), joined
-// to its pool rows, so a backend with pools repeats its totals. Every pool row
-// has a totals row: a flush writes both in one transaction.
+// Returns every backend's totals by workload for the given period (e.g.
+// '2026-02'), joined to their pool rows, so a workload with pools repeats its
+// totals. Every pool row has a totals row: a flush writes both in one
+// transaction.
 func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUsageForPeriodRow, error) {
 	rows, err := q.db.Query(ctx, getUsageForPeriod, period)
 	if err != nil {
@@ -129,6 +136,7 @@ func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUs
 		var i GetUsageForPeriodRow
 		if err := rows.Scan(
 			&i.BackendName,
+			&i.Workload,
 			&i.ApiRequests,
 			&i.EgressBytes,
 			&i.IngressBytes,

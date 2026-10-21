@@ -35,7 +35,7 @@ import (
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
 func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, operation s3op.Operation, key, backendName string, size int64, start time.Time, failedBackends []string) {
-	o.core.Acct().PutSuccess(operation, backendName, size, start)
+	o.core.Acct().PutSuccess(ctx, operation, backendName, size, start)
 	if len(failedBackends) > 0 {
 		for _, fb := range failedBackends {
 			telemetry.WriteFailoverTotal.WithLabelValues(operation.String(), fb, backendName).Inc()
@@ -70,8 +70,8 @@ func (o *Manager) finalizeCopy(ctx context.Context, req *copyContext, etag strin
 	if native {
 		req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
 	} else {
-		o.core.Acct().Egress(s3op.GetObject, req.srcBackendName, req.size)
-		o.core.Acct().Ingress(s3op.PutObject, req.destBackendName, req.size)
+		o.core.Acct().Egress(ctx, s3op.GetObject, req.srcBackendName, req.size)
+		o.core.Acct().Ingress(ctx, s3op.PutObject, req.destBackendName, req.size)
 	}
 	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
 	o.cache.Delete(req.destKey)

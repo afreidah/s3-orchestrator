@@ -37,10 +37,10 @@ func TestAggregator_Success(t *testing.T) {
 
 	store := storetest.NewMockDashboardStore(ctrl)
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
-		Return(map[string]core.Usage{"b1": {
+		Return(map[string]core.WorkloadUsage{"b1": {"client": {
 			UsageStat: core.UsageStat{APIRequests: 10},
 			Pools:     core.PoolUsage{core.PoolAll: 10},
-		}}, nil)
+		}}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
 	fleet := newStubFleet(ctrl, &metrics.FleetSnapshot{
@@ -98,7 +98,7 @@ func dashboardReads() []dashboardRead {
 	return []dashboardRead{
 		{"usage stats",
 			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.Usage{}, nil)
+				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.WorkloadUsage{}, nil)
 			},
 			func(m *storetest.MockDashboardStore, err error) {
 				m.EXPECT().GetUsageForPeriod(a, a).Return(nil, err)

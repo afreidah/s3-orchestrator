@@ -158,7 +158,7 @@ func TestAllow_SeesWhatTheRecordMethodsSpend(t *testing.T) {
 	if !rec.Allow("b1", read, 60, 0) {
 		t.Fatal("first operation refused with a full budget")
 	}
-	rec.Egress(s3op.GetObject, "b1", 60)
+	rec.Egress(t.Context(), s3op.GetObject, "b1", 60)
 
 	if rec.Allow("b1", read, 60, 0) {
 		t.Error("second operation admitted; the spend from the first was not visible to Allow")
@@ -189,13 +189,14 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 		ops = append(ops, operation)
 	})
 
-	rec.APICall(s3op.PutObject, "b1")                                         // class_a
-	rec.APICalls(s3op.ListObjects, "b1", 3)                                   // class_b x3, one paginated walk
-	rec.Egress(s3op.GetObject, "b1", 500)                                     // class_b
-	rec.Ingress(s3op.UploadPart, "b1", 700)                                   // class_a
-	rec.PutSuccess(s3op.PutObject, "b1", 900, time.Now())                     // class_a + metric
-	rec.GetSuccess(s3op.GetObject, "b1", 100, time.Now())                     // class_b + metric
-	rec.OperationFailed(s3op.PutObject, "b1", time.Now(), errors.New("boom")) // class_a + metric
+	ctx := t.Context()
+	rec.APICall(ctx, s3op.PutObject, "b1")                                         // class_a
+	rec.APICalls(ctx, s3op.ListObjects, "b1", 3)                                   // class_b x3, one paginated walk
+	rec.Egress(ctx, s3op.GetObject, "b1", 500)                                     // class_b
+	rec.Ingress(ctx, s3op.UploadPart, "b1", 700)                                   // class_a
+	rec.PutSuccess(ctx, s3op.PutObject, "b1", 900, time.Now())                     // class_a + metric
+	rec.GetSuccess(ctx, s3op.GetObject, "b1", 100, time.Now())                     // class_b + metric
+	rec.OperationFailed(ctx, s3op.PutObject, "b1", time.Now(), errors.New("boom")) // class_a + metric
 
 	var all core.Usage
 	cb.Load("b1", &all)

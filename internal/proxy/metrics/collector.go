@@ -39,7 +39,7 @@ type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error)
 	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
 }
 
@@ -146,11 +146,12 @@ func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
 // updateUsageGauges refreshes the monthly usage gauges and seeds the
 // usage tracker baselines used by the in-process limit checks.
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
+	byWorkload, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
 		return
 	}
+	usage := core.Totals(byWorkload)
 	for name := range stats {
 		telemetry.UsageAPIRequests.WithLabelValues(name).Set(0)
 		telemetry.UsageEgressBytes.WithLabelValues(name).Set(0)
@@ -165,6 +166,21 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 	// backend at zero.
 	mc.usage.SetBaselines(usage)
 	mc.updatePoolGauges(usage)
+	updateWorkloadGauges(byWorkload)
+}
+
+// updateWorkloadGauges publishes each backend's usage split by workload. The
+// vectors are reset first so a workload with no rows this month drops out.
+func updateWorkloadGauges(usage map[string]core.WorkloadUsage) {
+	telemetry.UsageWorkloadAPIRequests.Reset()
+	telemetry.UsageWorkloadBytes.Reset()
+	for name, workloads := range usage {
+		for workload, u := range workloads {
+			telemetry.UsageWorkloadAPIRequests.WithLabelValues(name, workload).Set(float64(u.APIRequests))
+			telemetry.UsageWorkloadBytes.WithLabelValues(name, workload, "egress").Set(float64(u.EgressBytes))
+			telemetry.UsageWorkloadBytes.WithLabelValues(name, workload, "ingress").Set(float64(u.IngressBytes))
+		}
+	}
 }
 
 // updatePoolGauges publishes the per-pool request counts and the ceilings they

@@ -358,7 +358,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	_, err = be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
-		o.core.Acct().APICall(s3op.PutObject, backendName)
+		o.core.Acct().APICall(ctx, s3op.PutObject, backendName)
 		// Leave the pending row for the reaper. A backend PUT error does
 		// not reliably mean the bytes are absent: the response could have
 		// been lost mid-flight, so the reaper HEADs the backend on its
@@ -419,7 +419,7 @@ const reasonWriteTargetRefused = "write_target_refused"
 // drops the intent and settles the cleanup of its bytes.
 func (o *Manager) refuseWriteTarget(ctx context.Context, p *core.PendingObject) {
 	telemetry.WriteTargetRefusedTotal.Inc()
-	o.core.Acct().APICall(s3op.PutObject, p.BackendName)
+	o.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 	o.coord.Discard(ctx, p, reasonWriteTargetRefused)
 }
 

@@ -83,7 +83,7 @@ func TestUsageTracker_RequestPathDoesNotAllocate(t *testing.T) {
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"oci"}), benchLimits(t))
 	ops := []s3op.Operation{s3op.PutObject}
 	allocs := testing.AllocsPerRun(100, func() {
-		tracker.Record("oci", s3op.PutObject, 1024, 0)
+		tracker.Record(t.Context(), "oci", s3op.PutObject, 1024, 0)
 		tracker.WithinLimits("oci", ops, 0, 1024)
 	})
 	if allocs != 0 {
@@ -98,6 +98,6 @@ func BenchmarkUsageTracker_Record(b *testing.B) {
 	tracker := NewUsageTracker(cb, benchLimits(b))
 
 	for b.Loop() {
-		tracker.Record("oci", s3op.PutObject, 1024, 0)
+		tracker.Record(b.Context(), "oci", s3op.PutObject, 1024, 0)
 	}
 }

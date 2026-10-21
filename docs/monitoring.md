@@ -306,6 +306,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
+| `s3o_usage_workload_api_requests` | Gauge | backend, workload | Current month API request count split by the workload that made the calls |
+| `s3o_usage_workload_bytes` | Gauge | backend, workload, direction | Current month bytes split by workload; `direction` is `egress` or `ingress`. Workloads: `client`, `admin`, `scrub`, `backfill`, `replication`, `over_replication`, `rebalance`, `drain`, `rewrite`, `reconcile`, `lifecycle`, `multipart_cleanup`, `pending_reaper`, `cleanup`, `purge`, `probe`, and `unknown` for a charge with none |
 | `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits. `operation` covers the client paths plus `rebalance` (moves not planned) and `scrub` (copies deferred) |
 | `s3o_cleanup_queue_enqueued_total` | Counter | reason | Rows queued for deletion, by reason |
 | `s3o_cleanup_queue_processed_total` | Counter | status | Rows settled on the request path or by the worker (success/success_absent/retry/exhausted/claim_lost) |

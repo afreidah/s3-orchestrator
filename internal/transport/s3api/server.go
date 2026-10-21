@@ -145,7 +145,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isValidRequestID(requestID) {
 		requestID = audit.NewID()
 	}
-	ctx := audit.WithRequestID(r.Context(), requestID)
+	ctx := audit.WithWorkload(audit.WithRequestID(r.Context(), requestID), audit.WorkloadClient)
 	w.Header().Set("X-Amz-Request-Id", requestID)
 
 	telemetry.InflightRequests.WithLabelValues(method).Inc()

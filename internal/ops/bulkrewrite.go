@@ -142,6 +142,7 @@ func (o rewriteOutcome) status() string {
 //
 // obs reports each object as it is processed and may be nil.
 func (op bulkRewriteOp) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadRewrite)
 	var res BulkRewriteResult
 	pager := batch.Pager[core.ObjectLocation, core.Cursor]{
 		// A capped run's last page is asked for short, so the walk compares

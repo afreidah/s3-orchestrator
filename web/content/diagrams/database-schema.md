@@ -124,6 +124,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '    backend_usage {',
     '        TEXT backend_name "PK, FK"',
     '        TEXT period PK',
+    '        TEXT workload PK',
     '        BIGINT api_requests',
     '        BIGINT egress_bytes',
     '        BIGINT ingress_bytes',
@@ -133,6 +134,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '    backend_request_usage {',
     '        TEXT backend_name "PK, FK"',
     '        TEXT period PK',
+    '        TEXT workload PK',
     '        TEXT pool PK',
     '        BIGINT requests',
     '        TIMESTAMPTZ updated_at',
@@ -305,10 +307,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY (composite), FK to backend_quotas</td></tr>' +
         '<tr><td class="pk">period</td><td>TEXT</td><td>PRIMARY KEY (composite); the billing month the count belongs to</td></tr>' +
+        '<tr><td class="pk">workload</td><td>TEXT</td><td>PRIMARY KEY (composite); the workload that made the calls, as in <code>backend_usage</code></td></tr>' +
         '<tr><td class="pk">pool</td><td>TEXT</td><td>PRIMARY KEY (composite); the budget name from config, so the count is keyed rather than columnar and a new pool needs no migration</td></tr>' +
         '<tr><td>requests</td><td>BIGINT</td><td>Calls charged to this pool in the period</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush that touched the row</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, period, pool) for the per-pool flush &bull; idx_backend_request_usage_period (period) for the admission baseline, which loads a whole period at once</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, period, workload, pool) for the per-pool flush &bull; idx_backend_request_usage_period (period) for the admission baseline, which loads a whole period at once</p>' +
         '<p>Used by: <a href="../admission-control/">admission</a> (per-pool headroom), <a href="../usage-quotas/">usage reporting</a>, and the usage flush that writes the in-memory counters down.</p>' +
         '<p class="ac-metric">Metrics: s3o_usage_pool_requests{backend,pool}, s3o_usage_pool_limit{backend,pool}</p>'
     },
@@ -411,15 +414,16 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     backend_usage: {
       title: 'backend_usage',
       badge: 'usage', badgeText: 'usage tracking',
-      body: '<p>Monthly rolling usage counters per backend. Keyed by <code>(backend_name, period)</code> where period is <code>YYYY-MM</code> format. In-memory atomic counters are flushed to this table periodically via <code>FlushUsageDeltas</code> (upsert with atomic ADD).</p>' +
+      body: '<p>Monthly rolling usage counters per backend and workload. Keyed by <code>(backend_name, period, workload)</code> where period is <code>YYYY-MM</code> format. A backend\'s totals, which limits are judged against, are the sum of its workloads. In-memory atomic counters are flushed to this table periodically via <code>FlushUsageDeltas</code> (upsert with atomic ADD).</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>PK + FK &rarr; backend_quotas</td></tr>' +
         '<tr><td class="pk">period</td><td>TEXT</td><td>PK, e.g. "2026-03"</td></tr>' +
+        '<tr><td class="pk">workload</td><td>TEXT</td><td>PK; what made the charge: client, scrub, replication, and so on. unknown for a charge with none</td></tr>' +
         '<tr><td>api_requests</td><td>BIGINT</td><td>S3 API call count</td></tr>' +
         '<tr><td>egress_bytes</td><td>BIGINT</td><td>Bytes downloaded from backend</td></tr>' +
         '<tr><td>ingress_bytes</td><td>BIGINT</td><td>Bytes uploaded to backend</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush time</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (backend_name, period)</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (backend_name, period, workload)</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> eligibility filter (BackendsWithinLimits baseline), usage flush <a href="../background-services/">background service</a>, dashboard monthly usage chart.</p>' +
         '<p class="ac-metric">Key queries: FlushUsageDeltas (INSERT ON CONFLICT DO UPDATE), GetUsageForPeriod</p>'
     },
@@ -683,12 +687,12 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 |-------|---------|-------------|
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
 | **backend_quota_stripes** | A backend's stored byte total, split across rows so concurrent writes take different row locks | `(backend_name, stripe_id)` |
-| **backend_request_usage** | Monthly call counts per named request budget, which is what admission charges against | `(backend_name, period, pool)` |
+| **backend_request_usage** | Monthly call counts per named request budget, which is what admission charges against | `(backend_name, period, workload, pool)` |
 | **object_locations** | Maps objects to backends (supports replication) and records the path each copy occupies | `(object_key, backend_name)` |
 | **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
-| **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
+| **backend_usage** | Monthly API/bandwidth counters per backend and workload | `(backend_name, period, workload)` |
 | **cleanup_queue** | Bytes waiting to be deleted, queued by the transaction that stopped recording them | `id` (auto-increment) |
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
 | **pending_objects** | In-flight write intents, claimed by every write before its bytes land (admission and crash recovery) | `intent_id` (UUID) |
@@ -748,3 +752,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00043_usage_flushes` | Add `usage_flushes`, one row per shared usage batch applied, written in the transaction that applies it so a staged Redis batch found again after its commit is not counted twice. SQLite (0030) creates the same table |
 | `00044_multipart_completion_heartbeat` | Add nullable `completion_heartbeat_at` to `multipart_uploads`. A completion sets it before reading the parts and renews it while it runs; while it is fresh, part records and aborts refuse the upload, so neither can delete bytes the assembly is reading. SQLite (0031) adds the same column |
 | `00045_notification_outbox_pending_index` | Rebuild `idx_notification_outbox_pending` on `next_retry` without the `attempts < 10` filter, since the notifier removes a row at its endpoint's `max_retries` and a higher limit left rows stuck. Built `CONCURRENTLY` outside a transaction. SQLite (0032) rebuilds the same index |
+| `00046_usage_workload` | Add `workload` to the primary keys of `backend_usage` and `backend_request_usage`, so usage is split by what caused it. Existing rows become `unknown`. SQLite (0033) rebuilds both tables |

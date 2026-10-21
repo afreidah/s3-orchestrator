@@ -163,15 +163,16 @@ CREATE TABLE IF NOT EXISTS multipart_parts (
     PRIMARY KEY (upload_id, part_number)
 );
 
--- Track per-backend API requests and data transfer by month.
+-- Track per-backend API requests and data transfer by month and workload.
 CREATE TABLE IF NOT EXISTS backend_usage (
     backend_name  TEXT NOT NULL REFERENCES backend_quotas(backend_name),
     period        TEXT NOT NULL,
+    workload      TEXT NOT NULL,
     api_requests  INTEGER NOT NULL DEFAULT 0,
     egress_bytes  INTEGER NOT NULL DEFAULT 0,
     ingress_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (backend_name, period)
+    PRIMARY KEY (backend_name, period, workload)
 );
 
 -- Per-pool request counts, keyed by the pool names config declares. Additive
@@ -180,10 +181,11 @@ CREATE TABLE IF NOT EXISTS backend_usage (
 CREATE TABLE IF NOT EXISTS backend_request_usage (
     backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name),
     period       TEXT NOT NULL,
+    workload     TEXT NOT NULL,
     pool         TEXT NOT NULL,
     requests     INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (backend_name, period, pool)
+    PRIMARY KEY (backend_name, period, workload, pool)
 );
 
 CREATE INDEX IF NOT EXISTS idx_backend_request_usage_period
@@ -431,4 +433,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (32);
+INSERT INTO schema_version (version) VALUES (33);

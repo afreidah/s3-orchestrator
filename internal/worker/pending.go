@@ -94,7 +94,7 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 // reports. Returns the number of intents that completed (committed or
 // dropped) and the number that failed (left for the next tick).
 func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) batch.Summary {
-	return runTickCycle(ctx, "ProcessPendingQueue", "pending_queue", r.processPendingQueue)
+	return runTickCycle(ctx, "ProcessPendingQueue", "pending_queue", audit.WorkloadPendingReaper, r.processPendingQueue)
 }
 
 // processPendingQueue is the body of ProcessPendingQueue after the span is open.
@@ -186,7 +186,7 @@ const (
 // records one API call whatever the outcome.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
 	_, err := r.deps.HeadWithTimeout(ctx, be, core.StoragePath(p.ObjectKey, p.StorageKey))
-	r.deps.Acct().APICall(s3op.HeadObject, p.BackendName)
+	r.deps.Acct().APICall(ctx, s3op.HeadObject, p.BackendName)
 
 	switch {
 	case err == nil:

@@ -94,11 +94,11 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 	defer rcancel()
 	result, err := src.Backend.GetObject(rctx, req.SrcKey, "")
 	if err != nil {
-		c.Acct().APICall(s3op.GetObject, src.Name)
+		c.Acct().APICall(ctx, s3op.GetObject, src.Name)
 		return 0, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
 	defer func() { _ = result.Body.Close() }()
-	c.Acct().Egress(s3op.GetObject, src.Name, result.Size)
+	c.Acct().Egress(ctx, s3op.GetObject, src.Name, result.Size)
 
 	// PutObject consumes the source body live, so a write-leg error can come
 	// from a failing source read. Attributing it to the read phase keeps a
@@ -113,14 +113,14 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 	defer wcancel()
 	_, err = dst.Backend.PutObject(wctx, req.DstKey, body, size, result.ContentType, result.Metadata)
 	if err != nil {
-		c.Acct().APICall(s3op.PutObject, dst.Name)
+		c.Acct().APICall(ctx, s3op.PutObject, dst.Name)
 		phase := backend.CopyPhaseWrite
 		if tracked.readErr != nil {
 			phase = backend.CopyPhaseRead
 		}
 		return 0, &backend.CopyError{Phase: phase, Err: err}
 	}
-	c.Acct().Ingress(s3op.PutObject, dst.Name, size)
+	c.Acct().Ingress(ctx, s3op.PutObject, dst.Name, size)
 	return size, nil
 }
 

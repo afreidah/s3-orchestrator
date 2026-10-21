@@ -37,7 +37,7 @@ func (f *fakeUsage) WithinLimits(string, []s3op.Operation, int64, int64) bool {
 }
 
 // Record logs the charged operation.
-func (f *fakeUsage) Record(_ string, op s3op.Operation, _, _ int64) {
+func (f *fakeUsage) Record(_ context.Context, _ string, op s3op.Operation, _, _ int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.charged = append(f.charged, op)

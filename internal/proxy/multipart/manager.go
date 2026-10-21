@@ -260,7 +260,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	defer bcancel()
 	storedETag, err := be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
-		mp.core.Acct().APICall(s3op.UploadPart, mu.BackendName) // API call was made even on failure
+		mp.core.Acct().APICall(ctx, s3op.UploadPart, mu.BackendName) // API call was made even on failure
 		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
@@ -278,7 +278,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	if err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, discarding part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		mp.core.Acct().APICall(s3op.UploadPart, mu.BackendName) // the PUT that succeeded
+		mp.core.Acct().APICall(ctx, s3op.UploadPart, mu.BackendName) // the PUT that succeeded
 		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
@@ -287,7 +287,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	// Charged at what was sent, not at what the client handed over: an
 	// encrypted part carries its own envelope, and a large upload repeats that
 	// difference once per part.
-	mp.core.Acct().PutSuccess(operation, mu.BackendName, uploadSize, start)
+	mp.core.Acct().PutSuccess(ctx, operation, mu.BackendName, uploadSize, start)
 	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
 	// The client is given the MD5 of its own bytes, which is what S3 returns
 	// and what it will send back in the completion manifest.
@@ -561,7 +561,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 
 	// 1 abort API call. The part deletes are charged where they are sent.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	mp.core.Acct().APICall(operation, mu.BackendName)
+	mp.core.Acct().APICall(ctx, operation, mu.BackendName)
 
 	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil
@@ -578,6 +578,7 @@ const (
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
 func (mp *Manager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadMultipartCleanup)
 	sum := mp.abortMatching(ctx, core.MultipartUploadFilter{CreatedBefore: time.Now().Add(-olderThan)})
 	if sum.Succeeded > 0 {
 		audit.Log(ctx, "storage.MultipartCleanup",
@@ -866,9 +867,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// charged where they are sent.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
 	for i := range parts {
-		mp.core.Acct().Egress(s3op.GetObject, mu.BackendName, parts[i].SizeBytes)
+		mp.core.Acct().Egress(ctx, s3op.GetObject, mu.BackendName, parts[i].SizeBytes)
 	}
-	mp.core.Acct().Ingress(s3op.PutObject, mu.BackendName, uploadSize)
+	mp.core.Acct().Ingress(ctx, s3op.PutObject, mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	return identity.ETag, nil

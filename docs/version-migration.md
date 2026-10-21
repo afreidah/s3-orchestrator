@@ -62,7 +62,30 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.163.x (current)
+### v0.164.x (current)
+
+**Usage split by workload ([#1752](https://github.com/afreidah/s3-orchestrator/issues/1752), v0.164.0)**
+
+Every usage charge now records the workload that made it: `client` for S3 requests, `admin` for admin API and web UI requests, and `scrub`, `backfill`, `replication`, `over_replication`, `rebalance`, `drain`, `rewrite`, `reconcile`, `lifecycle`, `multipart_cleanup`, `pending_reaper`, `cleanup`, `purge` and `probe` for the workers. `backend_usage` and `backend_request_usage` add `workload` to their primary keys, and a backend's totals are the sum of its workloads, so limits behave as before. New gauges `s3o_usage_workload_api_requests{backend,workload}` and `s3o_usage_workload_bytes{backend,workload,direction}` carry the split, and audit log lines gain a `workload` attribute. Redis counter fields move under `w:{workload}:`. One migration (Postgres `00046`, SQLite `0033`).
+
+**Operator action items after upgrade:**
+
+- **This month's usage before the upgrade is recorded as `unknown`.** So is anything an instance on the previous version charges to Redis during a rolling upgrade. Totals and limits are unaffected.
+- **With Redis, finish the rollout quickly.** An instance on the previous version does not read the `w:` fields, so while both versions run its limit checks miss what new instances charged, and a flush it runs drops those charges.
+
+### v0.163.x
+
+**Admin CLI escapes backend names ([#1759](https://github.com/afreidah/s3-orchestrator/issues/1759), v0.163.2)**
+
+`admin reconcile -backend`, `drain`, `cordon`, `uncordon` and `remove-backend` put the backend name into the URL unescaped, so a name containing `&`, `+`, `#` or `?` reached the server as a different name. Every admin CLI query and backend path is now escaped. No migration.
+
+**Backends that ignore Range ([#1748](https://github.com/afreidah/s3-orchestrator/issues/1748), v0.163.1)**
+
+A backend that answers a ranged GET with `200` and the whole object made the read fail. The orchestrator now cuts the requested range out of the body. The backend still sends the object from its first byte to the end of the range, and egress is charged on every byte it sent, not the size of the range. `s3o_backend_range_ignored_total{backend}` counts these responses. No migration.
+
+**Operator action items after upgrade:**
+
+- **Check `s3o_backend_range_ignored_total`.** A backend that shows up there spends egress on every ranged read in proportion to how far into the object the range reaches; a tight `egress_byte_limit` on it fills faster than the client traffic suggests.
 
 **Encryption keys are named by fingerprint ([#1704](https://github.com/afreidah/s3-orchestrator/issues/1704), v0.163.0)**
 

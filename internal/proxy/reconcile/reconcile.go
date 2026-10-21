@@ -262,7 +262,7 @@ func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes 
 // bailing out when the stream is cancelled. Keys pass through untouched, so the
 // emitted sequence preserves the backend's byte ordering.
 func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefixes []string, budget pageBudget) error {
-	canContinue := budget.charge()
+	canContinue := budget.charge(ctx)
 	for i := range objects {
 		obj := &objects[i]
 		select {

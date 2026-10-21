@@ -198,10 +198,11 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 		CompressionStats:       snap.Ledger.Compression(),
 		ActiveMultipartCounts:  snap.Multipart,
 	}
-	data.UsageStats, err = da.store.GetUsageForPeriod(ctx, data.UsagePeriod)
+	usage, err := da.store.GetUsageForPeriod(ctx, data.UsagePeriod)
 	if err != nil {
 		return nil, err
 	}
+	data.UsageStats = core.Totals(usage)
 	da.decorateLiveState(ctx, data)
 	return data, nil
 }

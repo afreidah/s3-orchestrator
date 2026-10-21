@@ -204,7 +204,7 @@ func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
 		t.Error("expected fallback to be cleared after recovery")
 	}
 	batches := r.Take(context.Background())
-	if len(batches) != 1 || batches[0].APIRequests != 100 || batches[0].ID != "" {
+	if len(batches) != 1 || batches[0].Workloads.Total().APIRequests != 100 || batches[0].ID != "" {
 		t.Errorf("Take after recovery = %+v, want the local batch of 100 with no ID", batches)
 	}
 }

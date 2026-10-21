@@ -62,7 +62,7 @@ func (f *fakeStores) ApplyUsageBatch(_ context.Context, b *core.UsageBatch) erro
 	if f.applyErr != nil {
 		return f.applyErr
 	}
-	f.applied[b.Backend] += b.APIRequests
+	f.applied[b.Backend] += b.Workloads.Total().APIRequests
 	return nil
 }
 
@@ -102,8 +102,8 @@ func newService(t *testing.T, stores Stores) *Service {
 func newServiceWithQuota(t *testing.T, stores Stores) (*Service, *counter.QuotaTracker) {
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
-	tracker.Record("b1", s3op.GetObject, 0, 0)
-	tracker.Record("b2", s3op.GetObject, 0, 0)
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 0, 0)
+	tracker.Record(t.Context(), "b2", s3op.GetObject, 0, 0)
 	quota := counter.NewQuotaTracker()
 	return New(&Deps{Usage: tracker, Quota: quota, Stores: stores}), quota
 }

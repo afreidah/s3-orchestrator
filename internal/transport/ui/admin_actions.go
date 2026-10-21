@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -80,7 +81,7 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
-		ctx := context.Background()
+		ctx := audit.WithWorkload(context.Background(), audit.WorkloadAdmin)
 		counts, err := op.run(ctx)
 		reason, skipped := ops.SkipReason(err)
 		switch {

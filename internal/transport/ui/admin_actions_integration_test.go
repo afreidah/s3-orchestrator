@@ -59,7 +59,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
 	mock.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{}, nil).AnyTimes()
 	mock.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.Usage{}, nil).AnyTimes()
+	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.WorkloadUsage{}, nil).AnyTimes()
 	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().ListCopiesByForm(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	// An operator-triggered scrub runs under the advisory lock, so the dashboard

@@ -90,6 +90,7 @@ func (m *Manager) logger() *slog.Logger {
 func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	batchSize := batchSizeFor(m.Config())
 
+	ctx = audit.WithWorkload(ctx, audit.WorkloadLifecycle)
 	ctx, span := telemetry.StartSpan(ctx, "ProcessLifecycleRules",
 		telemetry.AttrOperation.String("lifecycle"),
 	)

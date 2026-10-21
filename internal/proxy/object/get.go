@@ -80,7 +80,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return nil, err
 	}
 	if !selfMetered.Load() {
-		o.core.Acct().Egress(s3op.GetObject, backendName, wireBytes.Load())
+		o.core.Acct().Egress(ctx, s3op.GetObject, backendName, wireBytes.Load())
 	}
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
@@ -212,13 +212,13 @@ func meteredGet(ctx context.Context, rt RangeFetchRuntime, be s3be.ObjectBackend
 	}
 	r, cancel, err := rt.GetWithTimeout(ctx, be, path, rangeHeader)
 	if err != nil {
-		rt.Acct().APICall(s3op.GetObject, beName)
+		rt.Acct().APICall(ctx, s3op.GetObject, beName)
 		return nil, nil, err
 	}
 	if !rt.Usage().WithinLimits(beName, getObjectOp, r.WireBytes(), 0) {
 		_ = r.Body.Close()
 		cancel()
-		rt.Acct().APICall(s3op.GetObject, beName)
+		rt.Acct().APICall(ctx, s3op.GetObject, beName)
 		return nil, nil, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	return r, cancel, nil

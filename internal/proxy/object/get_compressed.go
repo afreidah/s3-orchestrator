@@ -86,7 +86,7 @@ func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName,
 		}
 		return nil
 	})
-	o.core.Acct().APICall(s3op.ListObjectsV2, beName)
+	o.core.Acct().APICall(ctx, s3op.ListObjectsV2, beName)
 	return newest, size, err
 }
 

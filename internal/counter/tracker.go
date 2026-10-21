@@ -19,6 +19,7 @@
 package counter
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"maps"
@@ -27,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -53,34 +55,33 @@ func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *Usage
 	return u
 }
 
-// Record increments the usage counters for a backend. Operations no pool
-// charges are still counted in api_requests.
-func (u *UsageTracker) Record(backendName string, op s3op.Operation, egress, ingress int64) {
-	u.record(backendName, []s3op.Operation{op}, 1, egress, ingress)
+// Record increments the usage counters for a backend under ctx's workload.
+// Operations no pool charges are still counted in api_requests.
+func (u *UsageTracker) Record(ctx context.Context, backendName string, op s3op.Operation, egress, ingress int64) {
+	u.record(ctx, backendName, []s3op.Operation{op}, 1, egress, ingress)
 }
 
 // RecordN credits n calls of the same operation, for the paths that make a
 // run of identical requests before reporting: a paginated list walks a bucket
 // one page at a time and charges for every page.
-func (u *UsageTracker) RecordN(backendName string, op s3op.Operation, n int64) {
-	u.record(backendName, []s3op.Operation{op}, n, 0, 0)
-}
-
-// RecordAll credits a mixed set of operations in one pass, for the paths that
-// make more than one kind of call per unit of work: a rewrite reads an object
-// and writes it back, and the two are charged to different pools.
-func (u *UsageTracker) RecordAll(backendName string, ops []s3op.Operation, egress, ingress int64) {
-	u.record(backendName, ops, 1, egress, ingress)
+func (u *UsageTracker) RecordN(ctx context.Context, backendName string, op s3op.Operation, n int64) {
+	u.record(ctx, backendName, []s3op.Operation{op}, n, 0, 0)
 }
 
 // record is the single charging path: each operation counts once per
 // repetition against the backend's request total, and once per repetition
-// against every pool that contains it, all in one charge.
-func (u *UsageTracker) record(backendName string, ops []s3op.Operation, each, egress, ingress int64) {
+// against every pool that contains it, all in one charge to ctx's workload.
+func (u *UsageTracker) record(ctx context.Context, backendName string, ops []s3op.Operation, each, egress, ingress int64) {
 	if len(ops) == 0 || each <= 0 {
 		return
 	}
-	c := Charge{APIRequests: int64(len(ops)) * each, EgressBytes: egress, IngressBytes: ingress, PoolN: each}
+	c := Charge{
+		Workload:     string(cmp.Or(audit.WorkloadOf(ctx), audit.WorkloadUnknown)),
+		APIRequests:  int64(len(ops)) * each,
+		EgressBytes:  egress,
+		IngressBytes: ingress,
+		PoolN:        each,
+	}
 	lim := (*u.limits.Load())[backendName]
 	for i, op := range ops {
 		pools := lim.PoolsFor(op)

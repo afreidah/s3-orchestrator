@@ -53,9 +53,11 @@ encryption:
   master_key: "${NEW_ENCRYPTION_KEY}"         # new primary key
   previous_keys:
     - "${OLD_ENCRYPTION_KEY}"                 # old key, kept for unwrapping
+  previous_key_files:
+    - /etc/s3-orchestrator/old.key            # old key from a file, 32 raw bytes
 ```
 
-Each key is recorded under its fingerprint (`k-` and 16 hex digits), so it keeps the same ID wherever it sits in the config. After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
+Each key is recorded under its fingerprint (`k-` and 16 hex digits), so it keeps the same ID wherever it sits in the config. After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](operations.md#rotating-encryption-keys).
 
 **Important notes:**
 - Each object's wrapped data key is stored only in the metadata database, so the master key alone cannot recover anything. Losing the database without a backup makes every encrypted object permanently unreadable. Back up the database as carefully as the master key; see [Losing PostgreSQL without a backup](disaster-recovery.md#losing-postgresql-without-a-backup).

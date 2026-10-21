@@ -201,6 +201,16 @@ func (u *Usage) AddPool(name string, n int64) {
 	u.Pools[name] += n
 }
 
+// Add adds o's totals and pools into u.
+func (u *Usage) Add(o Usage) {
+	u.APIRequests += o.APIRequests
+	u.EgressBytes += o.EgressBytes
+	u.IngressBytes += o.IngressBytes
+	for name, n := range o.Pools {
+		u.AddPool(name, n)
+	}
+}
+
 // IsZero reports whether u carries nothing to flush.
 func (u Usage) IsZero() bool {
 	if u.UsageStat != (UsageStat{}) {
@@ -214,13 +224,45 @@ func (u Usage) IsZero() bool {
 	return true
 }
 
+// WorkloadUsage is one backend's usage in one period, keyed by workload.
+type WorkloadUsage map[string]Usage
+
+// Total sums every workload's usage into one.
+func (w WorkloadUsage) Total() Usage {
+	var t Usage
+	for _, u := range w {
+		t.Add(u)
+	}
+	return t
+}
+
+// IsZero reports whether no workload carries anything to flush.
+func (w WorkloadUsage) IsZero() bool {
+	for _, u := range w {
+		if !u.IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
+// Totals sums each backend's workloads, for the readers that only need what a
+// backend has used.
+func Totals(usage map[string]WorkloadUsage) map[string]Usage {
+	out := make(map[string]Usage, len(usage))
+	for name, w := range usage {
+		out[name] = w.Total()
+	}
+	return out
+}
+
 // UsageBatch is one backend's counters for one period, taken for a flush. ID
 // is set for a batch staged in shared storage, which more than one flush can
 // find, so the store applies a batch with an ID at most once. A batch held
 // only in this process's memory has no ID.
 type UsageBatch struct {
-	ID      string
-	Backend string
-	Period  string
-	Usage
+	ID        string
+	Backend   string
+	Period    string
+	Workloads WorkloadUsage
 }

@@ -181,42 +181,53 @@ func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 // USAGE DELTAS
 // -------------------------------------------------------------------------
 
-// ApplyUsageBatch adds a batch's totals and pools to its period's rows in one
-// transaction. A batch with an ID records it first, and one already recorded
-// is left alone; see core.UsageFlusher.
+// ApplyUsageBatch adds each workload's totals and pools in a batch to its
+// period's rows in one transaction. A batch with an ID records it first, and
+// one already recorded is left alone; see core.UsageFlusher.
 func (s *Store) ApplyUsageBatch(ctx context.Context, b *core.UsageBatch) error {
-	now := now()
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if fresh, err := recordUsageFlush(ctx, tx, b.ID); err != nil || !fresh {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (backend_name, period) DO UPDATE SET
-				api_requests  = backend_usage.api_requests  + excluded.api_requests,
-				egress_bytes  = backend_usage.egress_bytes  + excluded.egress_bytes,
-				ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
-				updated_at    = excluded.updated_at`,
-			b.Backend, b.Period, b.APIRequests, b.EgressBytes, b.IngressBytes, now); err != nil {
-			return fmt.Errorf("failed to flush usage deltas: %w", err)
-		}
-		for pool, requests := range b.Pools {
-			if requests == 0 {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
-				VALUES (?, ?, ?, ?, ?)
-				ON CONFLICT (backend_name, period, pool) DO UPDATE SET
-					requests   = backend_request_usage.requests + excluded.requests,
-					updated_at = excluded.updated_at`,
-				b.Backend, b.Period, pool, requests, now); err != nil {
-				return fmt.Errorf("failed to flush pool deltas: %w", err)
+		for workload, u := range b.Workloads {
+			if err := applyWorkloadUsage(ctx, tx, b, workload, &u); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
+}
+
+// applyWorkloadUsage adds one workload's totals and pools to its rows, inside
+// the batch's transaction.
+func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, b *core.UsageBatch, workload string, u *core.Usage) error {
+	now := now()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO backend_usage (backend_name, period, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (backend_name, period, workload) DO UPDATE SET
+			api_requests  = backend_usage.api_requests  + excluded.api_requests,
+			egress_bytes  = backend_usage.egress_bytes  + excluded.egress_bytes,
+			ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
+			updated_at    = excluded.updated_at`,
+		b.Backend, b.Period, workload, u.APIRequests, u.EgressBytes, u.IngressBytes, now); err != nil {
+		return fmt.Errorf("failed to flush usage deltas: %w", err)
+	}
+	for pool, requests := range u.Pools {
+		if requests == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO backend_request_usage (backend_name, period, workload, pool, requests, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (backend_name, period, workload, pool) DO UPDATE SET
+				requests   = backend_request_usage.requests + excluded.requests,
+				updated_at = excluded.updated_at`,
+			b.Backend, b.Period, workload, pool, requests, now); err != nil {
+			return fmt.Errorf("failed to flush pool deltas: %w", err)
+		}
+	}
+	return nil
 }
 
 // usageFlushRetention is how long a shared batch's id is kept, past the 35
@@ -246,40 +257,42 @@ func recordUsageFlush(ctx context.Context, tx *sql.Tx, id string) (bool, error) 
 	return true, nil
 }
 
-// GetUsageForPeriod returns every backend's totals and pool counts for the
-// given period, keyed by backend name. One query: each backend's totals row
-// joined to its pool rows, so a backend with pools repeats its totals.
-func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error) {
+// GetUsageForPeriod returns every backend's totals and pool counts by workload
+// for the given period, keyed by backend name. One query: each workload's
+// totals row joined to its pool rows, so a workload with pools repeats its
+// totals.
+func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes, p.pool, p.requests
+		SELECT u.backend_name, u.workload, u.api_requests, u.egress_bytes, u.ingress_bytes, p.pool, p.requests
 		FROM backend_usage u
-		LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+		LEFT JOIN backend_request_usage p
+			ON p.backend_name = u.backend_name AND p.period = u.period AND p.workload = u.workload
 		WHERE u.period = ?`, period)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	usage := make(map[string]core.Usage)
+	usage := make(map[string]core.WorkloadUsage)
 	for rows.Next() {
 		var (
-			name     string
-			u        core.UsageStat
-			pool     sql.NullString
-			requests sql.NullInt64
+			name, workload string
+			u              core.UsageStat
+			pool           sql.NullString
+			requests       sql.NullInt64
 		)
-		if err := rows.Scan(&name, &u.APIRequests, &u.EgressBytes, &u.IngressBytes, &pool, &requests); err != nil {
+		if err := rows.Scan(&name, &workload, &u.APIRequests, &u.EgressBytes, &u.IngressBytes, &pool, &requests); err != nil {
 			return nil, fmt.Errorf("failed to scan usage: %w", err)
 		}
-		entry := usage[name]
+		if usage[name] == nil {
+			usage[name] = make(core.WorkloadUsage)
+		}
+		entry := usage[name][workload]
 		entry.UsageStat = u
 		if pool.Valid {
-			if entry.Pools == nil {
-				entry.Pools = make(core.PoolUsage)
-			}
-			entry.Pools[pool.String] = requests.Int64
+			entry.AddPool(pool.String, requests.Int64)
 		}
-		usage[name] = entry
+		usage[name][workload] = entry
 	}
 	return usage, rows.Err()
 }

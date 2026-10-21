@@ -105,7 +105,7 @@ func (h *Handler) guard(rt *route) http.HandlerFunc {
 		if !h.authorize(w, r, rt, who) {
 			return
 		}
-		rt.Handler(w, r)
+		rt.Handler(w, r.WithContext(audit.WithWorkload(r.Context(), audit.WorkloadAdmin)))
 	}
 }
 

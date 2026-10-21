@@ -839,7 +839,7 @@ func limitedUsage(t *testing.T) *counter.UsageTracker {
 	tracker := counter.NewUsageTracker(cb, map[string]core.UsageLimits{
 		"b2": {EgressByteLimit: 1},
 	})
-	tracker.Record("b2", s3op.GetObject, 1000, 0)
+	tracker.Record(context.Background(), "b2", s3op.GetObject, 1000, 0)
 	return tracker
 }
 

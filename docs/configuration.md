@@ -779,7 +779,7 @@ encryption:
     - /etc/s3-orchestrator/old.key            # old key from a file, 32 raw bytes
 ```
 
-After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
+After updating the config, call the `rotate-encryption-key` admin API with `all_stale` to re-wrap every DEK under the new key. See [Rotating encryption keys](operations.md#rotating-encryption-keys).
 
 **Important notes:**
 - Encryption is **not reloadable** - changing encryption settings requires a restart.

@@ -127,7 +127,7 @@ type ReplicationSummary struct {
 // reach the target replication factor. observer, when non-nil, receives a
 // start and end step per object replicated.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (ReplicationSummary, error) {
+	return runOpsCycle(ctx, "Replicate", "replicate", audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
 }

@@ -238,10 +238,15 @@ func TestCharge_WritesOneHashPerBackendAndPeriod(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
 
-	r.Charge(backendB1, Charge{APIRequests: 2, IngressBytes: 512, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
+	r.Charge(backendB1, Charge{Workload: workloadA, APIRequests: 2, IngressBytes: 512, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
 
 	h := fr.hashes[liveKey(backendB1)]
-	want := map[string]string{fieldAPIRequests: "2", fieldIngressBytes: "512", "pool:class_a": "2", "pool:class_b": "2"}
+	want := map[string]string{
+		"w:scrub:" + fieldAPIRequests:  "2",
+		"w:scrub:" + fieldIngressBytes: "512",
+		"w:scrub:pool:class_a":         "2",
+		"w:scrub:pool:class_b":         "2",
+	}
 	if !maps.Equal(h, want) {
 		t.Errorf("hash = %v, want %v; zero fields are not written", h, want)
 	}
@@ -362,10 +367,10 @@ func TestTakeShared_StagesAndReturnsBatches(t *testing.T) {
 	if len(batches) != 2 {
 		t.Fatalf("TakeShared returned %v, want b1 and eu:west", batches)
 	}
-	if b := batches[backendB1]; b.ID == "" || b.Period != CurrentPeriod() || b.APIRequests != 2 || b.Pools[poolClassA] != 2 {
+	if b := batches[backendB1]; b.ID == "" || b.Period != CurrentPeriod() || b.Workloads.Total().APIRequests != 2 || b.Workloads.Total().Pools[poolClassA] != 2 {
 		t.Errorf("b1 batch = %+v, want an ID, the current period, and the charge", b)
 	}
-	if b := batches[colonBackend]; b.ID == "" || b.EgressBytes != 100 {
+	if b := batches[colonBackend]; b.ID == "" || b.Workloads.Total().EgressBytes != 100 {
 		t.Errorf("eu:west batch = %+v, want an ID and 100 egress", b)
 	}
 	if fr.has(liveKey(backendB1)) || !fr.has(r.stagedKey(CurrentPeriod(), backendB1, batches[backendB1].ID)) {
@@ -391,7 +396,7 @@ func TestSettle_StagedBatch(t *testing.T) {
 		t.Error("an applied staged hash should be deleted")
 	}
 	again := r.TakeShared(ctx)
-	if len(again) != 1 || again[0].ID != kept.ID || again[0].APIRequests != 2 {
+	if len(again) != 1 || again[0].ID != kept.ID || again[0].Workloads.Total().APIRequests != 2 {
 		t.Errorf("second take = %+v, want only the kept b2 batch %q", again, kept.ID)
 	}
 }
@@ -417,12 +422,13 @@ func TestSettle_InFallbackKeepsTheStagedHash(t *testing.T) {
 // backend's to settle.
 func TestSettle_LocalBatchReturnsToLocal(t *testing.T) {
 	r := newHashBackend(t, newFakeRedis())
-	b := core.UsageBatch{Backend: backendB1, Period: CurrentPeriod(), Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 6}}}
+	b := core.UsageBatch{Backend: backendB1, Period: CurrentPeriod(),
+		Workloads: core.WorkloadUsage{workloadA: {UsageStat: core.UsageStat{APIRequests: 6}}}}
 
 	r.Settle(context.Background(), &b, false)
 
 	batches := r.Take(context.Background())
-	if len(batches) != 1 || batches[0].APIRequests != 6 {
+	if len(batches) != 1 || batches[0].Workloads[workloadA].APIRequests != 6 {
 		t.Errorf("Take = %+v, want the local batch of 6", batches)
 	}
 }
@@ -437,7 +443,7 @@ func TestTakeShared_TakesThePreviousMonth(t *testing.T) {
 
 	batches := r.TakeShared(context.Background())
 
-	if len(batches) != 1 || batches[0].Period != previous || batches[0].APIRequests != 9 {
+	if len(batches) != 1 || batches[0].Period != previous || batches[0].Workloads.Total().APIRequests != 9 {
 		t.Errorf("TakeShared = %+v, want the %s batch of 9", batches, previous)
 	}
 }
@@ -457,8 +463,11 @@ func TestTakeShared_SkipsWhatCannotBeRead(t *testing.T) {
 
 	batches := r.TakeShared(context.Background())
 
-	if len(batches) != 1 || batches[0].ID != "g1" || batches[0].APIRequests != 3 || batches[0].EgressBytes != 0 {
-		t.Errorf("TakeShared = %+v, want only g1 with 3 requests", batches)
+	if len(batches) != 1 {
+		t.Fatalf("TakeShared = %+v, want only g1", batches)
+	}
+	if u := batches[0].Workloads.Total(); batches[0].ID != "g1" || u.APIRequests != 3 || u.EgressBytes != 0 {
+		t.Errorf("TakeShared = %+v, want g1 with 3 requests", batches)
 	}
 }
 

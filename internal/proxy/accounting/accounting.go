@@ -13,6 +13,8 @@
 //   - The per-operation metric (RecordOperation) carries the
 //     operation/backend/start/err tuple for the Prometheus histogram.
 //
+// Every charge goes to the context's workload (audit.WithWorkload).
+//
 // Methods are named by intent (APICall, Ingress, Egress) and a few
 // combo helpers (PutSuccess, GetSuccess, OperationFailed) bundle the
 // Operation + bytes pair so the matching pair cannot drift. Held by
@@ -23,6 +25,7 @@
 package accounting
 
 import (
+	"context"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -65,15 +68,15 @@ func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress i
 
 // APICall charges one call of op against the backend's usage counter. Call it
 // after every attempt that reached the backend, whatever the outcome.
-func (r *Recorder) APICall(op s3op.Operation, backend string) {
-	r.usage.Record(backend, op, 0, 0)
+func (r *Recorder) APICall(ctx context.Context, op s3op.Operation, backend string) {
+	r.usage.Record(ctx, backend, op, 0, 0)
 }
 
 // APICalls credits n calls of the same operation. For paginated lists,
 // multipart completes that touch many part objects, and other multi-call
 // operations.
-func (r *Recorder) APICalls(op s3op.Operation, backend string, n int64) {
-	r.usage.RecordN(backend, op, n)
+func (r *Recorder) APICalls(ctx context.Context, op s3op.Operation, backend string, n int64) {
+	r.usage.RecordN(ctx, backend, op, n)
 }
 
 // -------------------------------------------------------------------------
@@ -83,15 +86,15 @@ func (r *Recorder) APICalls(op s3op.Operation, backend string, n int64) {
 // Egress credits one API call + sizeBytes of egress on the backend.
 // Use after a successful GET-like operation (the bytes left the
 // backend toward the client).
-func (r *Recorder) Egress(op s3op.Operation, backend string, sizeBytes int64) {
-	r.usage.Record(backend, op, sizeBytes, 0)
+func (r *Recorder) Egress(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64) {
+	r.usage.Record(ctx, backend, op, sizeBytes, 0)
 }
 
 // Ingress credits one API call + sizeBytes of ingress on the backend.
 // Use after a successful PUT-like operation (the bytes arrived at the
 // backend from the client).
-func (r *Recorder) Ingress(op s3op.Operation, backend string, sizeBytes int64) {
-	r.usage.Record(backend, op, 0, sizeBytes)
+func (r *Recorder) Ingress(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64) {
+	r.usage.Record(ctx, backend, op, 0, sizeBytes)
 }
 
 // -------------------------------------------------------------------------
@@ -110,22 +113,22 @@ func (r *Recorder) Operation(op s3op.Operation, backend string, start time.Time,
 
 // PutSuccess is the canonical "PUT succeeded" pair: emit the per-op
 // metric with a nil error and credit one API call + ingress bytes.
-func (r *Recorder) PutSuccess(op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
+func (r *Recorder) PutSuccess(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
 	r.recordOp(op.String(), backend, start, nil)
-	r.usage.Record(backend, op, 0, sizeBytes)
+	r.usage.Record(ctx, backend, op, 0, sizeBytes)
 }
 
 // GetSuccess is the canonical "GET succeeded" pair: emit the per-op
 // metric with a nil error and credit one API call + egress bytes.
-func (r *Recorder) GetSuccess(op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
+func (r *Recorder) GetSuccess(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
 	r.recordOp(op.String(), backend, start, nil)
-	r.usage.Record(backend, op, sizeBytes, 0)
+	r.usage.Record(ctx, backend, op, sizeBytes, 0)
 }
 
 // OperationFailed is the canonical "the call reached the backend and
 // failed" pair: emit the per-op metric with the err and credit one API
 // call (no bytes, since nothing transferred).
-func (r *Recorder) OperationFailed(op s3op.Operation, backend string, start time.Time, err error) {
+func (r *Recorder) OperationFailed(ctx context.Context, op s3op.Operation, backend string, start time.Time, err error) {
 	r.recordOp(op.String(), backend, start, err)
-	r.usage.Record(backend, op, 0, 0)
+	r.usage.Record(ctx, backend, op, 0, 0)
 }

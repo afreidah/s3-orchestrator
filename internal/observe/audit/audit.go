@@ -44,11 +44,12 @@ func SetOnEvent(fn func(event string)) {
 // guarantees no other package can collide with these keys.
 type contextKey int
 
-// requestIDKey and userKey are the context keys the correlation ID and the
-// authenticated identity are stored under.
+// requestIDKey, userKey and workloadKey are the context keys the correlation
+// ID, the authenticated identity and the workload are stored under.
 const (
 	requestIDKey contextKey = iota
 	userKey
+	workloadKey
 )
 
 // -------------------------------------------------------------------------
@@ -101,11 +102,54 @@ func User(ctx context.Context) string {
 }
 
 // -------------------------------------------------------------------------
+// WORKLOAD
+// -------------------------------------------------------------------------
+
+// Workload names what a backend call was made for, so usage can be split by
+// cause.
+type Workload string
+
+// The workloads. A charge with none is recorded as unknown.
+const (
+	WorkloadUnknown          Workload = "unknown"
+	WorkloadClient           Workload = "client"
+	WorkloadAdmin            Workload = "admin"
+	WorkloadScrub            Workload = "scrub"
+	WorkloadBackfill         Workload = "backfill"
+	WorkloadReplication      Workload = "replication"
+	WorkloadOverReplication  Workload = "over_replication"
+	WorkloadRebalance        Workload = "rebalance"
+	WorkloadDrain            Workload = "drain"
+	WorkloadRewrite          Workload = "rewrite"
+	WorkloadReconcile        Workload = "reconcile"
+	WorkloadLifecycle        Workload = "lifecycle"
+	WorkloadMultipartCleanup Workload = "multipart_cleanup"
+	WorkloadPendingReaper    Workload = "pending_reaper"
+	WorkloadCleanup          Workload = "cleanup"
+	WorkloadPurge            Workload = "purge"
+	WorkloadProbe            Workload = "probe"
+)
+
+// WithWorkload stores the workload on the context, replacing any outer one, so
+// a scrub started by an admin request is charged as a scrub.
+func WithWorkload(ctx context.Context, w Workload) context.Context {
+	return context.WithValue(ctx, workloadKey, w)
+}
+
+// WorkloadOf extracts the workload from the context. Returns empty string when
+// none is set.
+func WorkloadOf(ctx context.Context) Workload {
+	w, _ := ctx.Value(workloadKey).(Workload)
+	return w
+}
+
+// -------------------------------------------------------------------------
 // AUDIT LOGGING
 // -------------------------------------------------------------------------
 
 // Log emits a structured audit log entry at Info level. Automatically
-// includes the request ID and the authenticated identity from context. If
+// includes the request ID, the authenticated identity and the workload from
+// context. If
 // OnEvent is set, it is called with the event name for metrics integration.
 func Log(ctx context.Context, event string, attrs ...slog.Attr) {
 	if fn := onEvent.Load(); fn != nil {
@@ -123,6 +167,10 @@ func Log(ctx context.Context, event string, attrs ...slog.Attr) {
 
 	if id := RequestID(ctx); id != "" {
 		base = append(base, slog.String("request_id", id))
+	}
+
+	if w := WorkloadOf(ctx); w != "" {
+		base = append(base, slog.String("workload", string(w)))
 	}
 
 	base = append(base, attrs...)

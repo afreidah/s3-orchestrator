@@ -54,7 +54,7 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{name: {}}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
-		Return(map[string]core.Usage{name: {UsageStat: core.UsageStat{EgressBytes: 900}}}, nil).AnyTimes()
+		Return(map[string]core.WorkloadUsage{name: {"client": {UsageStat: core.UsageStat{EgressBytes: 900}}}}, nil).AnyTimes()
 	storetest.Permissive(store)
 
 	rt := proxytest.NewRuntime(&proxytest.RuntimeOptions{

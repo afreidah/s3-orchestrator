@@ -12,23 +12,25 @@
 
 -- name: FlushUsageDeltas :exec
 -- Atomically adds accumulated in-memory deltas to the persistent usage row.
--- Creates the row if it doesn't exist for this (backend, period) yet.
-INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
-VALUES (@backend_name, @period, @api_requests, @egress_bytes, @ingress_bytes, NOW())
-ON CONFLICT (backend_name, period) DO UPDATE SET
+-- Creates the row if it doesn't exist for this (backend, period, workload) yet.
+INSERT INTO backend_usage (backend_name, period, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
+VALUES (@backend_name, @period, @workload, @api_requests, @egress_bytes, @ingress_bytes, NOW())
+ON CONFLICT (backend_name, period, workload) DO UPDATE SET
     api_requests  = backend_usage.api_requests  + @api_requests,
     egress_bytes  = backend_usage.egress_bytes  + @egress_bytes,
     ingress_bytes = backend_usage.ingress_bytes + @ingress_bytes,
     updated_at    = NOW();
 
 -- name: GetUsageForPeriod :many
--- Returns every backend's totals for the given period (e.g. '2026-02'), joined
--- to its pool rows, so a backend with pools repeats its totals. Every pool row
--- has a totals row: a flush writes both in one transaction.
-SELECT u.backend_name, u.api_requests, u.egress_bytes, u.ingress_bytes,
+-- Returns every backend's totals by workload for the given period (e.g.
+-- '2026-02'), joined to their pool rows, so a workload with pools repeats its
+-- totals. Every pool row has a totals row: a flush writes both in one
+-- transaction.
+SELECT u.backend_name, u.workload, u.api_requests, u.egress_bytes, u.ingress_bytes,
        p.pool, p.requests
 FROM backend_usage u
-LEFT JOIN backend_request_usage p ON p.backend_name = u.backend_name AND p.period = u.period
+LEFT JOIN backend_request_usage p
+    ON p.backend_name = u.backend_name AND p.period = u.period AND p.workload = u.workload
 WHERE u.period = @period;
 
 -- name: DeleteUsageByBackend :exec
@@ -38,9 +40,9 @@ DELETE FROM backend_usage WHERE backend_name = $1;
 -- Adds one pool's accumulated delta to its persistent row, creating the row on
 -- first charge in the period. Same additive ON CONFLICT as the totals above so
 -- concurrent flushers converge.
-INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
-VALUES (@backend_name, @period, @pool, @requests, NOW())
-ON CONFLICT (backend_name, period, pool) DO UPDATE SET
+INSERT INTO backend_request_usage (backend_name, period, workload, pool, requests, updated_at)
+VALUES (@backend_name, @period, @workload, @pool, @requests, NOW())
+ON CONFLICT (backend_name, period, workload, pool) DO UPDATE SET
     requests   = backend_request_usage.requests + @requests,
     updated_at = NOW();
 

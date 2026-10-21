@@ -294,7 +294,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
 
-	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx = audit.WithWorkload(audit.WithRequestID(ctx, audit.NewID()), audit.WorkloadPurge)
 
 	if purge {
 		if be, ok := d.infra.Backends()[name]; ok {

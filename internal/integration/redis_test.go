@@ -101,7 +101,7 @@ func TestRedis_TakeSharedStagesAndSettles(t *testing.T) {
 	rb.Charge("b1", counter.Charge{APIRequests: 4})
 
 	batches := rb.TakeShared(ctx)
-	if len(batches) != 1 || batches[0].ID == "" || batches[0].Backend != "b1" || batches[0].APIRequests != 4 {
+	if len(batches) != 1 || batches[0].ID == "" || batches[0].Backend != "b1" || batches[0].Workloads.Total().APIRequests != 4 {
 		t.Fatalf("batches = %+v, want one staged b1 batch of 4 requests", batches)
 	}
 	if got := loadUsage(rb, "b1").APIRequests; got != 0 {

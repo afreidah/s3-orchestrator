@@ -23,16 +23,17 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// periodKey names one backend's counters in one period. Keying by period means
-// a charge is flushed into the month it was made in, however late the flush.
+// periodKey names one workload's counters on one backend in one period. Keying
+// by period means a charge is flushed into the month it was made in, however
+// late the flush.
 type periodKey struct {
-	period  string
-	backend string
+	period   string
+	backend  string
+	workload string
 }
 
-// localCounters holds atomic counters for one backend in one period. Pool
-// names come from config, so a pool's entry is created the first time it is
-// charged.
+// localCounters holds atomic counters for one periodKey. Pool names come from
+// config, so a pool's entry is created the first time it is charged.
 type localCounters struct {
 	apiRequests  atomic.Int64
 	egressBytes  atomic.Int64
@@ -90,7 +91,7 @@ func (l *LocalCounterBackend) Charge(backend string, c Charge) {
 	if c.empty() || !slices.Contains(l.backends, backend) {
 		return
 	}
-	lc := l.counters.Get(periodKey{period: CurrentPeriod(), backend: backend})
+	lc := l.counters.Get(periodKey{period: CurrentPeriod(), backend: backend, workload: c.Workload})
 	lc.addStat(c.APIRequests, c.EgressBytes, c.IngressBytes)
 	if c.PoolN <= 0 {
 		return
@@ -100,24 +101,37 @@ func (l *LocalCounterBackend) Charge(backend string, c Charge) {
 	}
 }
 
-// Load adds the backend's unflushed counters for the current period into u.
+// Load adds the backend's unflushed counters for the current period, across
+// every workload, into u.
 func (l *LocalCounterBackend) Load(backend string, u *core.Usage) {
-	if lc := l.counters.Peek(periodKey{period: CurrentPeriod(), backend: backend}); lc != nil {
-		lc.addTo(u)
-	}
+	period := CurrentPeriod()
+	l.counters.Range(func(k periodKey, lc *localCounters) {
+		if k.period == period && k.backend == backend {
+			lc.addTo(u)
+		}
+	})
 }
 
 // Take empties the counters and returns them, one batch per backend and period
 // that was charged. The batches carry no ID: they exist only in this process.
 func (l *LocalCounterBackend) Take(_ context.Context) []core.UsageBatch {
-	old := l.counters.SwapAll()
-	batches := make([]core.UsageBatch, 0, len(old))
-	for k, lc := range old {
-		b := core.UsageBatch{Backend: k.backend, Period: k.period}
-		lc.addTo(&b.Usage)
-		if !b.IsZero() {
-			batches = append(batches, b)
+	type batchKey struct{ period, backend string }
+	grouped := make(map[batchKey]core.WorkloadUsage)
+	for k, lc := range l.counters.SwapAll() {
+		var u core.Usage
+		lc.addTo(&u)
+		if u.IsZero() {
+			continue
 		}
+		bk := batchKey{k.period, k.backend}
+		if grouped[bk] == nil {
+			grouped[bk] = make(core.WorkloadUsage)
+		}
+		grouped[bk][k.workload] = u
+	}
+	batches := make([]core.UsageBatch, 0, len(grouped))
+	for bk, w := range grouped {
+		batches = append(batches, core.UsageBatch{Backend: bk.backend, Period: bk.period, Workloads: w})
 	}
 	return batches
 }
@@ -128,9 +142,11 @@ func (l *LocalCounterBackend) Settle(_ context.Context, b *core.UsageBatch, appl
 	if applied {
 		return
 	}
-	lc := l.counters.Get(periodKey{period: b.Period, backend: b.Backend})
-	lc.addStat(b.APIRequests, b.EgressBytes, b.IngressBytes)
-	for name, n := range b.Pools {
-		lc.pools.Get(name).Add(n)
+	for workload, u := range b.Workloads {
+		lc := l.counters.Get(periodKey{period: b.Period, backend: b.Backend, workload: workload})
+		lc.addStat(u.APIRequests, u.EgressBytes, u.IngressBytes)
+		for name, n := range u.Pools {
+			lc.pools.Get(name).Add(n)
+		}
 	}
 }

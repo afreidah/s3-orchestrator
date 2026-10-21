@@ -175,7 +175,7 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 	_, err = be.PutObject(bctx, p.StorageKey, body, plan.uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
-		o.core.Acct().APICall(s3op.PutObject, p.BackendName)
+		o.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 		return err
 	}
 	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {

@@ -25,13 +25,14 @@ import (
 // -------------------------------------------------------------------------
 
 // Backend abstracts the storage of per-backend usage counters: the request and
-// byte totals plus a keyed set of request pools, kept per backend and per
-// period. Implementations must be safe for concurrent use.
+// byte totals plus a keyed set of request pools, kept per backend, period and
+// workload. Implementations must be safe for concurrent use.
 //
 // Charge records one charge in the current period. Load adds the current
-// period's unflushed counters into u, so the limit check that calls it on
-// every request can reuse one value. Take hands this process's counters over
-// for a flush, one batch per backend and period, and Settle tells the backend
+// period's unflushed counters of every workload into u, so the limit check
+// that calls it on every request can reuse one value. Take hands this
+// process's counters over for a flush, one batch per backend and period
+// carrying each workload, and Settle tells the backend
 // whether the store applied a batch; a batch that was not applied is kept and
 // flushed again.
 type Backend interface {
@@ -54,9 +55,10 @@ type SharedBackend interface {
 // TYPES
 // -------------------------------------------------------------------------
 
-// Charge is what one recorded call adds: the request and byte totals, and
-// PoolN on each of Pools. A pool listed twice is charged twice.
+// Charge is what one recorded call adds to its workload: the request and byte
+// totals, and PoolN on each of Pools. A pool listed twice is charged twice.
 type Charge struct {
+	Workload     string
 	APIRequests  int64
 	EgressBytes  int64
 	IngressBytes int64

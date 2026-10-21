@@ -88,13 +88,13 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 	// key.
 	result, cancel, err := h.ops.GetWithTimeout(ctx, be, core.StoragePath(loc.ObjectKey, loc.StorageKey), "")
 	if err != nil {
-		h.ops.Acct().APICall(s3op.GetObject, loc.BackendName)
+		h.ops.Acct().APICall(ctx, s3op.GetObject, loc.BackendName)
 		return storedDigests{}, fmt.Errorf("get object: %w", err)
 	}
 	defer cancel()
 	defer result.Body.Close()
 
-	h.ops.Acct().Egress(s3op.GetObject, loc.BackendName, result.Size)
+	h.ops.Acct().Egress(ctx, s3op.GetObject, loc.BackendName, result.Size)
 
 	// Opening checks the stored bytes against what the row claims first.
 	// Hashing an envelope as if it were plaintext writes a ciphertext digest

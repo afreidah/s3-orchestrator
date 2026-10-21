@@ -36,6 +36,7 @@ type BackendRequestUsage struct {
 	Pool        string
 	Requests    int64
 	UpdatedAt   pgtype.Timestamptz
+	Workload    string
 }
 
 type BackendState struct {
@@ -54,6 +55,7 @@ type BackendUsage struct {
 	EgressBytes  int64
 	IngressBytes int64
 	UpdatedAt    pgtype.Timestamptz
+	Workload     string
 }
 
 type Bucket struct {

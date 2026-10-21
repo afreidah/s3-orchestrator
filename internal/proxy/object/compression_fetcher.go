@@ -93,7 +93,7 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 	defer func() { _ = r.Body.Close() }()
 
 	wire := r.WireBytes()
-	f.rt.Acct().Egress(s3op.GetObject, f.beName, wire)
+	f.rt.Acct().Egress(ctx, s3op.GetObject, f.beName, wire)
 	// Counted here rather than per client request: a compressed read makes one
 	// fetch per frame it touches, and read amplification is exactly the sum of
 	// those against what the client was served.

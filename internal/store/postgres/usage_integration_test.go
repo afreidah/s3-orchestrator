@@ -28,13 +28,16 @@ const (
 )
 
 // pgUsageBatch builds a batch for backend in pgUsagePeriod with the given ID,
-// API request count and pools.
+// API request count and pools, all charged to the client workload.
 func pgUsageBatch(backend, id string, api int64, pools core.PoolUsage) *core.UsageBatch {
 	return &core.UsageBatch{
 		ID:      id,
 		Backend: backend,
 		Period:  pgUsagePeriod,
-		Usage:   core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: 2 * api, IngressBytes: 3 * api}, Pools: pools},
+		Workloads: core.WorkloadUsage{"client": {
+			UsageStat: core.UsageStat{APIRequests: api, EgressBytes: 2 * api, IngressBytes: 3 * api},
+			Pools:     pools,
+		}},
 	}
 }
 
@@ -55,7 +58,7 @@ func pgReadUsage(t *testing.T, s *Store, backend, period string) core.Usage {
 	if err != nil {
 		t.Fatalf("GetUsageForPeriod: %v", err)
 	}
-	return usage[backend]
+	return usage[backend].Total()
 }
 
 // pgFlushIDRecorded reports whether usage_flushes holds id.
@@ -228,8 +231,8 @@ func pgUsageFor(t *testing.T, s *Store, backend, period string) (core.Usage, boo
 	if err != nil {
 		t.Fatalf("GetUsageForPeriod: %v", err)
 	}
-	u, ok := usage[backend]
-	return u, ok
+	w, ok := usage[backend]
+	return w.Total(), ok
 }
 
 // TestStoreInt_UsageQueries_SurfaceDatabaseErrors keeps a failing database

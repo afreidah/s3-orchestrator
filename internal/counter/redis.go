@@ -11,8 +11,9 @@
 // Redis.
 //
 // Redis key schema:
-//   - {prefix}:usage:{YYYY-MM}:{backend} - hash of the live counters: the
-//     request and byte totals, and pool:{name} for each request pool.
+//   - {prefix}:usage:{YYYY-MM}:{backend} - hash of the live counters: for
+//     each workload, w:{workload}:{field} for the request and byte totals and
+//     w:{workload}:pool:{name} for each request pool.
 //   - {prefix}:usage-staged:{YYYY-MM}:{backend}:{flushID} - a hash taken for a
 //     flush, renamed from the live one and deleted once the store has applied
 //     it. The store records the flush ID with the deltas, so a staged hash found
@@ -43,6 +44,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -80,12 +82,14 @@ const scanCount = 100
 var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
 
 // Hash field names. A pool's field is its name under poolFieldPrefix, so a
-// pool cannot share a field with a total.
+// pool cannot share a field with a total. Every field sits under
+// w:{workload}:, keeping all workloads in one hash that Load reads in one call.
 const (
-	fieldAPIRequests  = "api_requests"
-	fieldEgressBytes  = "egress_bytes"
-	fieldIngressBytes = "ingress_bytes"
-	poolFieldPrefix   = "pool:"
+	fieldAPIRequests    = "api_requests"
+	fieldEgressBytes    = "egress_bytes"
+	fieldIngressBytes   = "ingress_bytes"
+	poolFieldPrefix     = "pool:"
+	workloadFieldPrefix = "w:"
 )
 
 // -------------------------------------------------------------------------
@@ -227,7 +231,7 @@ func (r *RedisCounterBackend) Charge(backend string, c Charge) {
 	tx := r.client.TxPipeline()
 	incr := func(field string, n int64) {
 		if n > 0 {
-			tx.HIncrBy(ctx, key, field, n)
+			tx.HIncrBy(ctx, key, workloadFieldPrefix+c.Workload+":"+field, n)
 		}
 	}
 	incr(fieldAPIRequests, c.APIRequests)
@@ -257,7 +261,7 @@ func (r *RedisCounterBackend) Load(backend string, u *core.Usage) {
 
 	fields, err := r.client.HGetAll(ctx, r.hashKey(CurrentPeriod(), backend)).Result()
 	if r.observe("load", err) == nil {
-		r.addFields(ctx, fields, u)
+		r.addFields(ctx, fields, func(string) *core.Usage { return u })
 	}
 }
 
@@ -355,13 +359,24 @@ func (r *RedisCounterBackend) readBatch(ctx context.Context, key string) (core.U
 	if r.observe("read_staged", err) != nil || len(fields) == 0 {
 		return b, false
 	}
-	r.addFields(ctx, fields, &b.Usage)
+	workloads := make(map[string]*core.Usage)
+	r.addFields(ctx, fields, func(workload string) *core.Usage {
+		if workloads[workload] == nil {
+			workloads[workload] = new(core.Usage)
+		}
+		return workloads[workload]
+	})
+	b.Workloads = make(core.WorkloadUsage, len(workloads))
+	for workload, u := range workloads {
+		b.Workloads[workload] = *u
+	}
 	return b, true
 }
 
-// addFields adds a counter hash's fields into u. A field that does not parse
-// as a number is logged and skipped.
-func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]string, u *core.Usage) {
+// addFields adds each field of a counter hash into usageFor(its workload). A
+// field with no workload prefix counts as unknown; an unparseable one is
+// logged and skipped.
+func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]string, usageFor func(workload string) *core.Usage) {
 	for field, raw := range fields {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -369,6 +384,11 @@ func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]s
 				slog.String("field", field), slog.String("value", raw))
 			continue
 		}
+		workload := string(audit.WorkloadUnknown)
+		if rest, ok := strings.CutPrefix(field, workloadFieldPrefix); ok {
+			workload, field, _ = strings.Cut(rest, ":")
+		}
+		u := usageFor(workload)
 		switch field {
 		case fieldAPIRequests:
 			u.APIRequests += v

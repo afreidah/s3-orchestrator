@@ -264,8 +264,8 @@ type BackendStateStore interface {
 }
 
 // UsageFlusher defines the store method the usage flush writes through.
-// ApplyUsageBatch adds a batch's totals and pools to its period's rows in one
-// transaction. A batch with an ID records it there too, and one whose ID is
+// ApplyUsageBatch adds each workload's totals and pools in a batch to its
+// period's rows in one transaction. A batch with an ID records it there too, and one whose ID is
 // already recorded changes nothing, so a batch found again after its commit is
 // not counted twice.
 type UsageFlusher interface {
@@ -286,7 +286,7 @@ type DashboardStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	LedgerStats(ctx context.Context) (LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]Usage, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]WorkloadUsage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 }
 

@@ -87,10 +87,10 @@ func (mr *MockDepsMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 }
 
 // GetUsageForPeriod mocks base method.
-func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.Usage, error) {
+func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.Usage)
+	ret0, _ := ret[0].(map[string]core.WorkloadUsage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

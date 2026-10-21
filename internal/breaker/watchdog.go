@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 )
 
 // DefaultWatchdogInterval is the cadence at which the watchdog probes every
@@ -39,8 +40,9 @@ func NewWatchdog(registry *Registry) lifecycle.Runner {
 }
 
 // Run implements lifecycle.Runner. Probes every breaker each interval until
-// ctx is cancelled.
+// ctx is cancelled, charging the checks to the probe workload.
 func (w *watchdog) Run(ctx context.Context) error {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadProbe)
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 

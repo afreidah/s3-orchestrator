@@ -92,7 +92,7 @@ const cleanupMaxBatchesPerTick = 20
 
 // ProcessCleanupQueue claims pending cleanup rows and settles them.
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) batch.Summary {
-	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", w.processCleanupQueue)
+	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", audit.WorkloadCleanup, w.processCleanupQueue)
 }
 
 // -------------------------------------------------------------------------

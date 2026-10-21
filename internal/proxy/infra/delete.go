@@ -39,7 +39,7 @@ func (c *BackendRuntime) Delete(ctx context.Context, name string, be backend.Obj
 	dctx, dcancel := c.WithTimeout(ctx)
 	defer dcancel()
 	err := be.DeleteObject(dctx, storageKey)
-	c.Acct().APICall(s3op.DeleteObject, name)
+	c.Acct().APICall(ctx, s3op.DeleteObject, name)
 	return err
 }
 
@@ -77,7 +77,7 @@ func (c *BackendRuntime) deleteBatch(ctx context.Context, name string, be backen
 		return nil, false
 	}
 	for range (len(storageKeys) + batchDeleteRequestKeys - 1) / batchDeleteRequestKeys {
-		c.Acct().APICall(s3op.DeleteObjects, name)
+		c.Acct().APICall(ctx, s3op.DeleteObjects, name)
 	}
 	if err != nil {
 		failed = make(map[string]error, len(storageKeys))

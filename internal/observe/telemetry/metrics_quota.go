@@ -141,6 +141,26 @@ var (
 		[]string{"backend"},
 	)
 
+	// UsageWorkloadAPIRequests splits s3o_usage_api_requests by the workload
+	// that made the calls.
+	UsageWorkloadAPIRequests = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_workload_api_requests",
+			Help: "Current month API request count per backend and workload (from DB)",
+		},
+		[]string{"backend", "workload"},
+	)
+
+	// UsageWorkloadBytes splits s3o_usage_egress_bytes and
+	// s3o_usage_ingress_bytes by workload; direction is egress or ingress.
+	UsageWorkloadBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_workload_bytes",
+			Help: "Current month bytes per backend, workload and direction (from DB)",
+		},
+		[]string{"backend", "workload", "direction"},
+	)
+
 	// UsageLimitRejectionsTotal counts operations rejected due to monthly usage limits.
 	UsageLimitRejectionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -148,7 +149,7 @@ func TestNearLimit_UnflushedCounters(t *testing.T) {
 		"b1": capped(t, 0, 1000, 0),
 	})
 	spent(tracker, "b1", 0, 700, 0)
-	tracker.Record("b1", s3op.GetObject, 150, 0) // unflushed egress pushes to 850/1000 = 85%
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 150, 0) // unflushed egress pushes to 850/1000 = 85%
 
 	if !tracker.NearLimit(0.8) {
 		t.Error("should be near limit when baseline + unflushed exceeds threshold")
@@ -253,7 +254,7 @@ func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
 		"b1": capped(t, 100, 0, 0),
 	})
 	spent(tracker, "b1", 50, 0, 0)
-	tracker.RecordN("b1", s3op.GetObject, 40) // baseline 50 + unflushed 40 = 90 effective
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 40) // baseline 50 + unflushed 40 = 90 effective
 
 	if !tracker.WithinLimits("b1", reads(5), 0, 0) {
 		t.Error("90 + 5 = 95 should be within limit of 100")
@@ -303,7 +304,7 @@ func TestWithinLimits_PoolsAreAdditive(t *testing.T) {
 			{Name: "lists", Operations: []string{string(s3op.ListObjects)}, Limit: 5},
 		}),
 	})
-	tracker.RecordN("b1", s3op.ListObjects, 5)
+	tracker.RecordN(t.Context(), "b1", s3op.ListObjects, 5)
 
 	if tracker.WithinLimits("b1", []s3op.Operation{s3op.ListObjects}, 0, 0) {
 		t.Error("the list sub-cap is spent even though the aggregate has room")
@@ -322,9 +323,8 @@ func TestRecord_IgnoresEmptyCharges(t *testing.T) {
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
 
-	tracker.RecordAll("b1", nil, 100, 100)
-	tracker.RecordN("b1", s3op.GetObject, 0)
-	tracker.RecordN("b1", s3op.GetObject, -5)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 0)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, -5)
 
 	if got := loaded(backend, "b1"); !got.IsZero() {
 		t.Errorf("counters = %+v, want all zero for empty charges", got)
@@ -342,7 +342,7 @@ func TestWithinLimits_ZeroLimitPoolCountsWithoutRefusing(t *testing.T) {
 			{Name: "watched", Operations: []string{string(s3op.GetObject)}, Limit: 0},
 		}),
 	})
-	tracker.RecordN("b1", s3op.GetObject, 1000)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 1000)
 
 	if !tracker.WithinLimits("b1", reads(1), 0, 0) {
 		t.Error("a pool with no ceiling must never refuse")
@@ -366,7 +366,7 @@ func TestWithinLimits_UnchargedPoolIsNotConsulted(t *testing.T) {
 			{Name: "reads", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
 		}),
 	})
-	tracker.RecordN("b1", s3op.PutObject, 1)
+	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 1)
 
 	if !tracker.WithinLimits("b1", reads(1), 0, 0) {
 		t.Error("a read was refused by a spent write budget it never charges")
@@ -384,7 +384,7 @@ func TestWithinLimits_UnmeteredNeverRefuses(t *testing.T) {
 			[]core.PoolSpec{{Name: core.PoolAll, Operations: []string{s3op.Wildcard}, Limit: 1}},
 			s3op.DeleteObject),
 	})
-	tracker.RecordN("b1", s3op.PutObject, 1) // the only metered call the budget allows
+	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 1) // the only metered call the budget allows
 
 	if tracker.WithinLimits("b1", []s3op.Operation{s3op.PutObject}, 0, 0) {
 		t.Error("the budget is spent; a metered write must be refused")
@@ -395,7 +395,7 @@ func TestWithinLimits_UnmeteredNeverRefuses(t *testing.T) {
 
 	// Recorded even though unbilled: not charging an operation is not a reason
 	// to stop reporting that it happened.
-	tracker.Record("b1", s3op.DeleteObject, 0, 0)
+	tracker.Record(t.Context(), "b1", s3op.DeleteObject, 0, 0)
 	if got := loaded(backend, "b1").APIRequests; got != 2 {
 		t.Errorf("api_requests = %d, want 2 (the write and the unmetered delete)", got)
 	}
@@ -404,29 +404,22 @@ func TestWithinLimits_UnmeteredNeverRefuses(t *testing.T) {
 	}
 }
 
-// TestRecordAll_ChargesEachOperationsPools covers the rewrite path: a pass that
-// reads and writes one object charges the two pools its provider bills them to,
-// rather than two of whichever pool a scalar count would have landed in.
-func TestRecordAll_ChargesEachOperationsPools(t *testing.T) {
+// TestRecord_ChargesCtxWorkload asserts a charge lands under the workload ctx
+// carries, and under unknown when it carries none.
+func TestRecord_ChargesCtxWorkload(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
-	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{
-		"b1": pooled(t, []core.PoolSpec{
-			{Name: "class_a", Operations: []string{string(s3op.PutObject)}, Limit: 100},
-			{Name: "class_b", Operations: []string{string(s3op.GetObject)}, Limit: 100},
-		}),
-	})
-	tracker.RecordAll("b1", []s3op.Operation{s3op.GetObject, s3op.PutObject}, 10, 20)
+	tracker := NewUsageTracker(backend, nil)
+	tracker.Record(audit.WithWorkload(t.Context(), audit.WorkloadScrub), "b1", s3op.GetObject, 10, 0)
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 5, 0)
 
-	all := loaded(backend, "b1")
-	if got := all.Pools["class_a"]; got != 1 {
-		t.Errorf("class_a = %d, want 1", got)
+	batches := backend.Take(t.Context())
+	if len(batches) != 1 {
+		t.Fatalf("Take returned %d batches, want 1", len(batches))
 	}
-	if got := all.Pools["class_b"]; got != 1 {
-		t.Errorf("class_b = %d, want 1", got)
-	}
-	if all.APIRequests != 2 || all.EgressBytes != 10 || all.IngressBytes != 20 {
-		t.Errorf("totals = %+v, want 2 requests / 10 egress / 20 ingress", all)
+	w := batches[0].Workloads
+	if w[string(audit.WorkloadScrub)].EgressBytes != 10 || w[string(audit.WorkloadUnknown)].EgressBytes != 5 {
+		t.Errorf("workloads = %+v, want 10 for scrub and 5 for unknown", w)
 	}
 }
 
@@ -522,7 +515,7 @@ func TestNearLimit_PoolReachesThreshold(t *testing.T) {
 			{Name: "reads", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
 		}),
 	})
-	tracker.RecordN("b1", s3op.PutObject, 9)
+	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 9)
 
 	if !tracker.NearLimit(0.8) {
 		t.Error("the write pool is at 90% and should count as near its limit")
@@ -539,8 +532,8 @@ func TestFlushUsage_AppliesAndSettles(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
-	tracker.RecordN("b1", s3op.GetObject, 10)
-	tracker.Record("b1", s3op.GetObject, 100, 50)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 10)
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 100, 50)
 
 	flusher := &recordingFlusher{}
 	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
@@ -553,8 +546,8 @@ func TestFlushUsage_AppliesAndSettles(t *testing.T) {
 	if b.ID != "" || b.Backend != "b1" || b.Period != CurrentPeriod() {
 		t.Errorf("batch = %+v, want b1 in the current period with no ID", b)
 	}
-	if b.APIRequests != 11 || b.EgressBytes != 100 || b.IngressBytes != 50 || b.Pools[core.PoolAll] != 11 {
-		t.Errorf("batch usage = %+v, want 11/100/50 and 11 against %q", b.Usage, core.PoolAll)
+	if u := b.Workloads.Total(); u.APIRequests != 11 || u.EgressBytes != 100 || u.IngressBytes != 50 || u.Pools[core.PoolAll] != 11 {
+		t.Errorf("batch usage = %+v, want 11/100/50 and 11 against %q", u, core.PoolAll)
 	}
 	if got := loaded(backend, "b1"); !got.IsZero() {
 		t.Errorf("counters after flush = %+v, want zero", got)
@@ -567,7 +560,7 @@ func TestFlushUsage_FailedApplyKeepsTheBatch(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(cb, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
-	tracker.RecordN("b1", s3op.GetObject, 10)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 10)
 
 	if err := tracker.FlushUsage(context.Background(), &recordingFlusher{err: errDBDown}); !errors.Is(err, errDBDown) {
 		t.Fatalf("FlushUsage error = %v, want %v", err, errDBDown)
@@ -581,7 +574,7 @@ func TestFlushUsage_FailedApplyKeepsTheBatch(t *testing.T) {
 	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
 		t.Fatalf("second flush: %v", err)
 	}
-	if len(flusher.applied) != 1 || flusher.applied[0].APIRequests != 10 {
+	if len(flusher.applied) != 1 || flusher.applied[0].Workloads.Total().APIRequests != 10 {
 		t.Errorf("second flush applied %+v, want the kept batch of 10", flusher.applied)
 	}
 }
@@ -602,7 +595,7 @@ func TestFlushUsage_SharedBatches(t *testing.T) {
 			t.Parallel()
 			backend := newFakeShared()
 			tracker := NewUsageTracker(backend, nil)
-			tracker.RecordN("b1", s3op.GetObject, 3)
+			tracker.RecordN(t.Context(), "b1", s3op.GetObject, 3)
 
 			flusher := &recordingFlusher{err: tc.err}
 			if err := tracker.FlushUsage(context.Background(), flusher); !errors.Is(err, tc.err) {
@@ -626,7 +619,7 @@ func TestFlushUsage_SharedBatches(t *testing.T) {
 func TestFlushUsage_PlainBackendSkipsShared(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(plainBackend{newFakeShared()}, nil)
-	tracker.RecordN("b1", s3op.GetObject, 3)
+	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 3)
 
 	flusher := &recordingFlusher{}
 	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
@@ -751,7 +744,7 @@ func newFakeShared() *fakeShared {
 // stage.
 func (f *fakeShared) TakeShared(_ context.Context) []core.UsageBatch {
 	return []core.UsageBatch{{ID: stagedBatchID, Backend: "b1", Period: CurrentPeriod(),
-		Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 7}}}}
+		Workloads: core.WorkloadUsage{workloadA: {UsageStat: core.UsageStat{APIRequests: 7}}}}}
 }
 
 // Settle records a staged batch's outcome and hands a local batch to the

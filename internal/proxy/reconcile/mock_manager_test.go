@@ -197,15 +197,15 @@ func (m *MockUsageRecorder) EXPECT() *MockUsageRecorderMockRecorder {
 }
 
 // APICalls mocks base method.
-func (m *MockUsageRecorder) APICalls(op s3op.Operation, backendName string, n int64) {
+func (m *MockUsageRecorder) APICalls(ctx context.Context, op s3op.Operation, backendName string, n int64) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "APICalls", op, backendName, n)
+	m.ctrl.Call(m, "APICalls", ctx, op, backendName, n)
 }
 
 // APICalls indicates an expected call of APICalls.
-func (mr *MockUsageRecorderMockRecorder) APICalls(op, backendName, n any) *gomock.Call {
+func (mr *MockUsageRecorderMockRecorder) APICalls(ctx, op, backendName, n any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "APICalls", reflect.TypeOf((*MockUsageRecorder)(nil).APICalls), op, backendName, n)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "APICalls", reflect.TypeOf((*MockUsageRecorder)(nil).APICalls), ctx, op, backendName, n)
 }
 
 // Allow mocks base method.

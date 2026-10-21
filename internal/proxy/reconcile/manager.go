@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -60,7 +61,7 @@ type BackendResolver interface {
 // spending the budget client requests need.
 type UsageRecorder interface {
 	Allow(backendName string, ops []s3op.Operation, egress, ingress int64) bool
-	APICalls(op s3op.Operation, backendName string, n int64)
+	APICalls(ctx context.Context, op s3op.Operation, backendName string, n int64)
 }
 
 // listOp is what a reconcile spends: it walks a bucket one listing page at a
@@ -89,12 +90,12 @@ type pageBudget struct {
 // charge records the page just consumed and reports whether the backend can
 // afford another. The page is charged either way: the request already happened,
 // and refusing to count it is how the ledger drifts from the provider's.
-func (b pageBudget) charge() bool {
+func (b pageBudget) charge(ctx context.Context) bool {
 	// A nil usage leaves the walk unmetered.
 	if b.usage == nil {
 		return true
 	}
-	b.usage.APICalls(s3op.ListObjects, b.backendName, 1)
+	b.usage.APICalls(ctx, s3op.ListObjects, b.backendName, 1)
 	return b.usage.Allow(b.backendName, listOp, 0, 0)
 }
 
@@ -170,6 +171,7 @@ func (m *Manager) logger() *slog.Logger {
 // unmanaged, so it counts toward the backend's quota without any worker acting
 // on it. Returns counts of imported vs skipped objects.
 func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadReconcile)
 	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {
 		return 0, 0, err
@@ -195,7 +197,7 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
 		// Charged before the import so the page is paid for even if importing
 		// it fails: the listing request reached the provider either way.
-		canContinue := budget.charge()
+		canContinue := budget.charge(ctx)
 		page, pErr := pages.Import(ctx, objects)
 		imported += page.Imported
 		skipped += page.Skipped
@@ -251,6 +253,7 @@ func (m *Manager) classifyDeps(be backend.ObjectBackend) ClassifyDeps {
 // real bucket, and keys are compared exactly as stored so both streams stay in
 // byte order.
 func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*Result, error) {
+	ctx = audit.WithWorkload(ctx, audit.WorkloadReconcile)
 	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {
 		return nil, err

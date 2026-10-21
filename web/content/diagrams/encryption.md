@@ -204,7 +204,7 @@ The base nonce is stored in the database specifically so range decryption can de
     LOCAL: {
       title: 'AES-GCM Local Key Wrap',
       badge: 'process', badgeText: 'local wrapping',
-      body: '<p><code>aesGCMWrap(masterKey, dek)</code>: creates AES-256-GCM cipher from the 32-byte master key, generates a random 12-byte nonce, and seals the DEK.</p><p>Output format: <code>nonce (12B) || ciphertext+tag</code>. The <code>aesGCMUnwrap</code> reversal splits on the nonce boundary.</p><p>Used by both <code>ConfigKeyProvider</code> (key from config/env) and <code>FileKeyProvider</code> (raw key from disk file).</p>'
+      body: '<p><code>aesGCMWrap(masterKey, dek)</code>: creates AES-256-GCM cipher from the 32-byte master key, generates a random 12-byte nonce, and seals the DEK.</p><p>Output format: <code>nonce (12B) || ciphertext+tag</code>. The <code>aesGCMUnwrap</code> reversal splits on the nonce boundary.</p><p>Used by <code>StaticKeyProvider</code>, which holds the keys from config, env and key files.</p>'
     },
     HDR: {
       title: 'Write 32-Byte Header',

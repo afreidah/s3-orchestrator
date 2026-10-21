@@ -915,7 +915,7 @@
       "gridPos": {
         "x": 0,
         "y": 44,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -957,9 +957,9 @@
       "id": 18,
       "title": "Backend Duration (p95)",
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 44,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -997,13 +997,54 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 158,
+      "title": "Ranged GETs Answered Whole",
+      "description": "Ranged GETs a backend answered with the whole object. The orchestrator cuts the range out, but egress is charged on every byte sent.",
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend) (rate(s3o_backend_range_ignored_total[5m]))",
+          "legendFormat": "{{backend}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
       "type": "table",
       "id": 19,
       "title": "Active Multipart Uploads",
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 44,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -1911,7 +1952,7 @@
       "gridPos": {
         "x": 0,
         "y": 98,
-        "w": 6,
+        "w": 4,
         "h": 6
       },
       "datasource": {
@@ -1993,9 +2034,9 @@
       "id": 34,
       "title": "Monthly Egress",
       "gridPos": {
-        "x": 6,
+        "x": 4,
         "y": 98,
-        "w": 6,
+        "w": 4,
         "h": 6
       },
       "datasource": {
@@ -2077,9 +2118,9 @@
       "id": 35,
       "title": "Monthly Ingress",
       "gridPos": {
-        "x": 12,
+        "x": 8,
         "y": 98,
-        "w": 6,
+        "w": 4,
         "h": 6
       },
       "datasource": {
@@ -2162,9 +2203,9 @@
       "title": "Request Pool Usage (% of limit)",
       "description": "Per-pool share of the monthly request budget. Providers meter operations in classes with separate allowances, so this is the figure a backend is refused on - Monthly API Requests counts every call, including ones no budget charges. Unlimited pools are omitted.",
       "gridPos": {
-        "x": 18,
+        "x": 12,
         "y": 98,
-        "w": 6,
+        "w": 4,
         "h": 6
       },
       "datasource": {
@@ -2251,6 +2292,57 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "type": "barchart",
+      "id": 157,
+      "title": "Monthly Egress by Workload",
+      "description": "This month's egress per backend, stacked by the workload that caused it.",
+      "gridPos": {
+        "x": 16,
+        "y": 98,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend, workload) (s3o_usage_workload_bytes{direction=\"egress\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "rowField": "backend",
+            "columnField": "workload",
+            "valueField": "Value",
+            "emptyValue": "zero"
+          }
+        }
+      ],
+      "options": {
+        "xField": "backend\\workload",
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "never",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
       }
     },
     {

@@ -106,7 +106,7 @@ type DrainSummary struct {
 // the drains whose backend ends up empty. observer, when non-nil, receives a
 // start and end step per object.
 func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainSummary, error) {
-	return runOpsCycle(ctx, "Drain", "drain", func(ctx context.Context) (DrainSummary, error) {
+	return runOpsCycle(ctx, "Drain", "drain", audit.WorkloadDrain, func(ctx context.Context) (DrainSummary, error) {
 		records, err := d.store.ListBackendStates(ctx)
 		if err != nil {
 			return DrainSummary{}, fmt.Errorf("list backend states: %w", err)

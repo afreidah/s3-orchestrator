@@ -502,7 +502,7 @@ func TestUsageBudget_ChecksEgressOnSourceAndIngressOnDestination(t *testing.T) {
 
 	// Exhaust the source's egress only. The destination still has ingress
 	// headroom, so a combined check would wrongly permit this.
-	tracker.Record("src", s3op.GetObject, 100, 0)
+	tracker.Record(t.Context(), "src", s3op.GetObject, 100, 0)
 	if b.allows("src", "dst", 50) {
 		t.Error("a source over its egress allowance must not be read from")
 	}
@@ -512,7 +512,7 @@ func TestUsageBudget_ChecksEgressOnSourceAndIngressOnDestination(t *testing.T) {
 		counter.NewLocalCounterBackend([]string{"src2", "dst2"}),
 		map[string]core.UsageLimits{"dst2": {IngressByteLimit: 10}},
 	))
-	b2.usage.Record("dst2", s3op.PutObject, 0, 100)
+	b2.usage.Record(t.Context(), "dst2", s3op.PutObject, 0, 100)
 	if b2.allows("src2", "dst2", 5) {
 		t.Error("a destination over its ingress allowance must not be written to")
 	}
@@ -568,7 +568,7 @@ func TestUsageBudget_UnlimitedWhenNoTracker(t *testing.T) {
 func exhaustedIngress(dest string, names ...string) *counter.UsageTracker {
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend(names),
 		map[string]core.UsageLimits{dest: {IngressByteLimit: 10}})
-	tracker.Record(dest, s3op.PutObject, 0, 1000)
+	tracker.Record(context.Background(), dest, s3op.PutObject, 0, 1000)
 	return tracker
 }
 

@@ -311,7 +311,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
-		w.core.Acct().APICall(s3op.PutObject, backendName)
+		w.core.Acct().APICall(ctx, s3op.PutObject, backendName)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
@@ -332,18 +332,18 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 		// discarding its bytes, since an extra copy is never promoted.
 		w.log.ErrorContext(ctx, "commit of a further copy failed; intent left for reaper",
 			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
-		w.core.Acct().APICall(s3op.PutObject, p.BackendName)
+		w.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyFailed).Inc()
 		return false, err
 	}
 	if result == core.CompanionCopyCommitted {
-		w.core.Acct().Ingress(s3op.PutObject, p.BackendName, p.SizeBytes)
+		w.core.Acct().Ingress(ctx, s3op.PutObject, p.BackendName, p.SizeBytes)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyCommitted).Inc()
 		return true, nil
 	}
 	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
-	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
+	w.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 	w.Settle(ctx, cleanup)
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
 	return false, nil

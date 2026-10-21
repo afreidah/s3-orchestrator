@@ -112,7 +112,7 @@ type RebalanceSummary struct {
 // observer, when non-nil, receives a step per planned move so a streaming
 // caller can report progress as the cycle runs.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
-	return runOpsCycle(ctx, "Rebalance", "rebalance", func(ctx context.Context) (RebalanceSummary, error) {
+	return runOpsCycle(ctx, "Rebalance", "rebalance", audit.WorkloadRebalance, func(ctx context.Context) (RebalanceSummary, error) {
 		start := time.Now()
 		audit.Log(ctx, "rebalance.start",
 			slog.String("strategy", cfg.Strategy),

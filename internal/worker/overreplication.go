@@ -88,7 +88,7 @@ func (c *OverReplicationCleaner) Config() *config.ReplicationConfig {
 // target replication factor. Returns the number of copies removed. observer,
 // when non-nil, receives a start and end step per object cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	return runOpsCycle(ctx, "OverReplicationClean", "over_replication_clean", func(ctx context.Context) (OverReplicationSummary, error) {
+	return runOpsCycle(ctx, "OverReplicationClean", "over_replication_clean", audit.WorkloadOverReplication, func(ctx context.Context) (OverReplicationSummary, error) {
 		return c.clean(ctx, cfg, observer)
 	})
 }

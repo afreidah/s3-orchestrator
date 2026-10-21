@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -62,7 +63,7 @@ func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.Handle
 			}
 		}
 
-		r = r.WithContext(withUser(r.Context(), user))
+		r = r.WithContext(audit.WithWorkload(withUser(r.Context(), user), audit.WorkloadAdmin))
 		if !h.authorizeRoute(w, r, rt) {
 			return
 		}

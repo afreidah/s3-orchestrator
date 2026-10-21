@@ -261,7 +261,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     S3: {
       title: 'S3 Backend GetObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range. A backend that ignores <code>Range</code> and answers 200 with the whole object has the range cut out of the body by the orchestrator; <code>WireSize</code> records the bytes it actually sent, which is what egress is charged on.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds, s3o_backend_range_ignored_total</p>'
     },
     FETCHFAIL: {
       title: 'Fetch Failed?',
@@ -276,7 +276,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     EGRESSCHK: {
       title: 'Egress Limit Check (Post-fetch)',
       badge: 'filter', badgeText: 'egress check',
-      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, response.Size, 0)</code></p><p>Now that the response size is known, checks if downloading this object would exceed the backend\'s monthly egress limit.</p><p>If over limit: closes the response body (releasing the HTTP connection), records the API call against usage, and loops back to try the next copy. If no copies remain within limits, returns <code>ErrUsageLimitExceeded</code>.</p>'
+      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, r.WireBytes(), 0)</code> in <code>meteredGet</code></p><p>Now that the bytes on the wire are known, checks if downloading them would exceed the backend\'s monthly egress limit. A backend that ignored <code>Range</code> is judged on the whole object it sent.</p><p>If over limit: closes the response body (releasing the HTTP connection), records the API call against usage, and loops back to try the next copy. If no copies remain within limits, returns <code>ErrUsageLimitExceeded</code>.</p>'
     },
     DECRYPT: {
       title: 'Decrypt Needed?',

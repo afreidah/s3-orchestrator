@@ -18,21 +18,26 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// usageBackend, usagePeriod and usagePool name the rows the usage tests write.
+// usageBackend, usagePeriod, usagePool and usageWorkload name the rows the
+// usage tests write.
 const (
-	usageBackend = "backend-a"
-	usagePeriod  = "2026-03"
-	usagePool    = "class_a"
+	usageBackend  = "backend-a"
+	usagePeriod   = "2026-03"
+	usagePool     = "class_a"
+	usageWorkload = "client"
 )
 
 // usageBatch builds a batch for usageBackend in usagePeriod with the given ID,
-// API request count and pools.
+// API request count and pools, all charged to usageWorkload.
 func usageBatch(id string, api int64, pools core.PoolUsage) *core.UsageBatch {
 	return &core.UsageBatch{
 		ID:      id,
 		Backend: usageBackend,
 		Period:  usagePeriod,
-		Usage:   core.Usage{UsageStat: core.UsageStat{APIRequests: api, EgressBytes: 2 * api, IngressBytes: 3 * api}, Pools: pools},
+		Workloads: core.WorkloadUsage{usageWorkload: {
+			UsageStat: core.UsageStat{APIRequests: api, EgressBytes: 2 * api, IngressBytes: 3 * api},
+			Pools:     pools,
+		}},
 	}
 }
 
@@ -53,7 +58,7 @@ func readUsage(t *testing.T, s *Store, period string) core.Usage {
 	if err != nil {
 		t.Fatalf("GetUsageForPeriod: %v", err)
 	}
-	return usage[usageBackend]
+	return usage[usageBackend].Total()
 }
 
 // flushIDRecorded reports whether usage_flushes holds id.
@@ -84,15 +89,37 @@ func TestApplyUsageBatch_AccumulatesTotalsAndPools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUsageForPeriod: %v", err)
 	}
-	a := usage[usageBackend]
+	a := usage[usageBackend].Total()
 	if a.UsageStat != (core.UsageStat{APIRequests: 15, EgressBytes: 30, IngressBytes: 45}) {
 		t.Errorf("backend-a totals = %+v, want 15/30/45", a.UsageStat)
 	}
 	if a.Pools[usagePool] != 15 || a.Pools["class_b"] != 3 {
 		t.Errorf("backend-a pools = %v, want class_a=15 class_b=3", a.Pools)
 	}
-	if b := usage["backend-b"]; b.APIRequests != 1 || b.Pools[usagePool] != 1 {
+	if b := usage["backend-b"].Total(); b.APIRequests != 1 || b.Pools[usagePool] != 1 {
 		t.Errorf("backend-b = %+v, want 1 request and class_a=1", b)
+	}
+}
+
+// TestApplyUsageBatch_KeepsWorkloadsApart verifies each workload in a batch
+// gets its own totals and pool rows, read back under the same workload.
+func TestApplyUsageBatch_KeepsWorkloadsApart(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	b := usageBatch("", 4, core.PoolUsage{usagePool: 4})
+	b.Workloads["scrub"] = core.Usage{UsageStat: core.UsageStat{EgressBytes: 900}, Pools: core.PoolUsage{usagePool: 1}}
+	applyBatch(t, s, b)
+
+	usage, err := s.GetUsageForPeriod(context.Background(), usagePeriod)
+	if err != nil {
+		t.Fatalf("GetUsageForPeriod: %v", err)
+	}
+	w := usage[usageBackend]
+	if w[usageWorkload].APIRequests != 4 || w[usageWorkload].Pools[usagePool] != 4 {
+		t.Errorf("client = %+v, want 4 requests and class_a=4", w[usageWorkload])
+	}
+	if w["scrub"].EgressBytes != 900 || w["scrub"].Pools[usagePool] != 1 {
+		t.Errorf("scrub = %+v, want 900 egress and class_a=1", w["scrub"])
 	}
 }
 
