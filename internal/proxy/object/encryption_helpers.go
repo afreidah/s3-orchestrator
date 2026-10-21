@@ -17,6 +17,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
@@ -42,7 +43,7 @@ func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.Get
 	r.Body = ioutilx.ReadCloser(storedform.WithStreamMetric(plainReader, op), r.Body)
 	r.Size = plainLen
 	if rng != nil {
-		r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
+		r.ContentRange = byterange.ContentRange(ptStart, ptEnd, loc.PlaintextSize)
 	}
 	return nil
 }

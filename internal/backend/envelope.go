@@ -18,6 +18,7 @@ import (
 	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
 // FetchEnvelopeHeader reads the leading encryption-header bytes of key from
@@ -26,7 +27,7 @@ import (
 // Range still works because only the prefix is read, and the 416 a zero-byte
 // object answers with is read as an empty header.
 func FetchEnvelopeHeader(ctx context.Context, be ObjectBackend, key string) ([]byte, error) {
-	r, err := be.GetObject(ctx, key, fmt.Sprintf("bytes=0-%d", encryption.HeaderSize-1))
+	r, err := be.GetObject(ctx, key, byterange.Header(0, encryption.HeaderSize-1))
 	if isRangeNotSatisfiable(err) {
 		return nil, nil
 	}

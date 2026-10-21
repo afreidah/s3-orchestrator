@@ -13,6 +13,7 @@ package object
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
 // -------------------------------------------------------------------------
@@ -80,27 +82,22 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 	if err != nil {
 		return nil, err
 	}
-	if !f.rt.Usage().WithinLimits(f.beName, getObjectOp, 0, 0) {
-		return nil, fmt.Errorf("backend %s: %w", f.beName, readpath.ErrUsageLimitSkip)
+	r, cancel, err := meteredGet(ctx, f.rt, f.be, f.beName, f.storageKey, header)
+	if errors.Is(err, readpath.ErrUsageLimitSkip) {
+		return nil, err
 	}
-
-	r, cancel, err := f.rt.GetWithTimeout(ctx, f.be, f.storageKey, header)
 	if err != nil {
-		f.rt.Acct().APICall(s3op.GetObject, f.beName)
 		return nil, fmt.Errorf("backend %s: fetch %s: %w", f.beName, header, err)
 	}
 	defer cancel()
 	defer func() { _ = r.Body.Close() }()
 
-	if !f.rt.Usage().WithinLimits(f.beName, getObjectOp, r.Size, 0) {
-		f.rt.Acct().APICall(s3op.GetObject, f.beName)
-		return nil, fmt.Errorf("backend %s egress: %w", f.beName, readpath.ErrUsageLimitSkip)
-	}
-	f.rt.Acct().Egress(s3op.GetObject, f.beName, r.Size)
+	wire := r.WireBytes()
+	f.rt.Acct().Egress(s3op.GetObject, f.beName, wire)
 	// Counted here rather than per client request: a compressed read makes one
 	// fetch per frame it touches, and read amplification is exactly the sum of
 	// those against what the client was served.
-	telemetry.CompressionFetchedBytesTotal.Add(float64(r.Size))
+	telemetry.CompressionFetchedBytesTotal.Add(float64(wire))
 	f.recordAttrs(r)
 
 	body, err := f.compressedBody(ctx, r, rng)
@@ -152,7 +149,7 @@ func (f *storedRangeFetcher) backendRangeFor(start, end int64) (string, *encrypt
 		return "", nil, fmt.Errorf("%w: %d-%d", core.ErrInvalidRange, start, end)
 	}
 	if !f.loc.Encrypted {
-		return fmt.Sprintf("bytes=%d-%d", start, end), nil, nil
+		return byterange.Header(start, end), nil, nil
 	}
 	if f.enc == nil {
 		return "", nil, fmt.Errorf("backend %s: %w", f.beName, core.ErrServiceUnavailable)

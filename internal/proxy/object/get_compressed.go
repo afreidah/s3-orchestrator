@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
@@ -192,7 +193,7 @@ func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRang
 	// An unsatisfiable range is served as the whole object. RFC 9110 lets a
 	// server ignore a Range it cannot act on, and that is what the uncompressed
 	// path does with one it cannot translate.
-	start, end, ok := ParsePlaintextRange(rangeHeader, size)
+	start, end, ok := byterange.Parse(rangeHeader, size)
 	if !ok {
 		return r, nil
 	}
@@ -201,6 +202,6 @@ func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRang
 	}
 	r.Size = end - start + 1
 	r.Body = ioutilx.ReadCloser(io.LimitReader(reader, r.Size), reader)
-	r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", start, end, size)
+	r.ContentRange = byterange.ContentRange(start, end, size)
 	return r, nil
 }

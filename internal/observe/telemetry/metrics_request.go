@@ -83,6 +83,16 @@ var (
 		[]string{"operation", "backend"},
 	)
 
+	// BackendRangeIgnoredTotal counts ranged GETs a backend answered with the
+	// whole object, which the orchestrator then cut down to the range itself.
+	BackendRangeIgnoredTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_backend_range_ignored_total",
+			Help: "Ranged GETs a backend answered with the whole object",
+		},
+		[]string{"backend"},
+	)
+
 	// ManagerRequestsTotal counts manager-level operations.
 	ManagerRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

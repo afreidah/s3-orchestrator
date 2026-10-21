@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
@@ -143,9 +144,6 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], int64, error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
-	if !o.core.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
-		return fail, 0, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
-	}
 	// A compressed copy is read by decoding it, which is driven by the codec
 	// rather than by a GET of the whole object.
 	if loc.Form().Has(core.StoredCompressed) {
@@ -170,18 +168,11 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}
 	actualRange := br.header
 
-	r, cancel, err := o.core.GetWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey), actualRange)
+	r, cancel, err := meteredGet(ctx, o.core, backend, beName, core.StoragePath(key, loc.StorageKey), actualRange)
 	if err != nil {
-		o.core.Acct().APICall(s3op.GetObject, beName)
 		return fail, 0, err
 	}
-	wire := r.Size
-	if !o.core.Usage().WithinLimits(beName, getObjectOp, wire, 0) {
-		_ = r.Body.Close()
-		cancel()
-		o.core.Acct().APICall(s3op.GetObject, beName)
-		return fail, 0, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
-	}
+	wire := r.WireBytes()
 
 	r.LastModified = resolveLastModified(r.LastModified, loc)
 
@@ -209,6 +200,30 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}, wire, nil
 }
 
+// meteredGet issues one backend GET under the backend's usage limits. It
+// declines before the call when the backend is already over a limit, and after
+// it when the bytes the backend sent would put it over, closing that response.
+// A failed or declined call is charged as an API call; the caller charges the
+// egress of a response it keeps, from WireBytes. On success the caller owns
+// the body and the timeout cancel.
+func meteredGet(ctx context.Context, rt RangeFetchRuntime, be s3be.ObjectBackend, beName, path, rangeHeader string) (*s3be.GetObjectResult, context.CancelFunc, error) {
+	if !rt.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
+		return nil, nil, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
+	}
+	r, cancel, err := rt.GetWithTimeout(ctx, be, path, rangeHeader)
+	if err != nil {
+		rt.Acct().APICall(s3op.GetObject, beName)
+		return nil, nil, err
+	}
+	if !rt.Usage().WithinLimits(beName, getObjectOp, r.WireBytes(), 0) {
+		_ = r.Body.Close()
+		cancel()
+		rt.Acct().APICall(s3op.GetObject, beName)
+		return nil, nil, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
+	}
+	return r, cancel, nil
+}
+
 // backendRange is a client Range header translated into what the backend
 // should actually be asked for.
 // For an encrypted object the header is in ciphertext coordinates, and rng
@@ -231,7 +246,7 @@ func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocati
 	if loc == nil || !loc.Encrypted || rangeHeader == "" {
 		return backendRange{header: rangeHeader}, nil
 	}
-	ptStart, ptEnd, ok := ParsePlaintextRange(rangeHeader, loc.PlaintextSize)
+	ptStart, ptEnd, ok := byterange.Parse(rangeHeader, loc.PlaintextSize)
 	if !ok {
 		// Unparseable or unsatisfiable against this object. RFC 9110 lets a
 		// server ignore a Range it cannot act on, and reading the whole object

@@ -34,6 +34,7 @@ func TestMetricsRegistration_KeyFamiliesPresent(t *testing.T) {
 	touches := []touch{
 		{"s3o_requests_total", func() { RequestsTotal.WithLabelValues("GET", "200").Inc() }},
 		{"s3o_backend_requests_total", func() { BackendRequestsTotal.WithLabelValues("b", "GET", "ok").Inc() }},
+		{"s3o_backend_range_ignored_total", func() { BackendRangeIgnoredTotal.WithLabelValues("b").Inc() }},
 		{"s3o_quota_bytes_used", func() { QuotaBytesUsed.WithLabelValues("b").Set(0) }},
 		{"s3o_rebalance_runs_total", func() { RebalanceRunsTotal.WithLabelValues("pack", "ok").Inc() }},
 		{"s3o_replication_runs_total", func() { ReplicationRunsTotal.WithLabelValues("ok").Inc() }},

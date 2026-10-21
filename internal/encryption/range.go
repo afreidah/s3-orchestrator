@@ -10,7 +10,11 @@
 
 package encryption
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
+)
 
 // ciphertextSizeExact computes the ciphertext size accounting for the last
 // chunk being smaller than chunkSize.
@@ -66,7 +70,7 @@ func CiphertextRange(start, end int64, chunkSize int) (*RangeResult, error) {
 	sliceLen := end - start + 1
 
 	return &RangeResult{
-		BackendRange: fmt.Sprintf("bytes=%d-%d", ctStart, ctEnd),
+		BackendRange: byterange.Header(ctStart, ctEnd),
 		StartChunk:   uint64(startChunk), //nolint:gosec // G115: startChunk derived from non-negative start offset
 		SliceStart:   sliceStart,
 		SliceLen:     sliceLen,

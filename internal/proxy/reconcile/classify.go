@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
 // -------------------------------------------------------------------------
@@ -66,7 +67,7 @@ type backendRange struct {
 
 // FetchRange implements compression.RangeFetcher.
 func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte, error) {
-	r, err := b.be.GetObject(ctx, b.key, fmt.Sprintf("bytes=%d-%d", start, end))
+	r, err := b.be.GetObject(ctx, b.key, byterange.Header(start, end))
 	if err != nil {
 		return nil, err
 	}

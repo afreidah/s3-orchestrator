@@ -146,6 +146,8 @@ Use `default_chain` when:
 
 Note: the config loader already expands `${ENV_VAR}` references at load time, so `access_key_id: ${AWS_ACCESS_KEY_ID}` covers the env-var case under `credential_source: static`. Use `default_chain` for credential sources the loader cannot reach (IMDS, SSO, STS) and for cases where refresh matters.
 
+**Backends without Range support:** some S3 gateways answer a ranged GET with the whole object. The orchestrator detects the missing `Content-Range`, discards the bytes before the range, and stops reading at its end, so clients still receive the bytes they asked for. Each such read still downloads the object from its first byte to the end of the range, and that transfer is what counts against `egress_byte_limit`. Encrypted and compressed objects are read in many small ranges, so they cost the most on such a backend. The orchestrator logs a warning the first time a backend does this and counts every occurrence in `s3o_backend_range_ignored_total`.
+
 
 ## Routing strategy
 

@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
 // listingPageLimit is the most parts or uploads one S3 listing response
@@ -205,7 +206,7 @@ func parseCopySourceRange(spec string, sourceSize int64) (string, int64, error) 
 	if last >= sourceSize {
 		return "", 0, errCopyRangeUnsatisfiable
 	}
-	return fmt.Sprintf("bytes=%d-%d", first, last), last - first + 1, nil
+	return byterange.Header(first, last), last - first + 1, nil
 }
 
 // writeCopySourceRangeError renders a copy-source range failure: one this

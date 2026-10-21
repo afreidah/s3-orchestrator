@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
 // -------------------------------------------------------------------------
@@ -192,14 +193,10 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 
 	// Skip bytes within the first chunk to reach the requested offset, then
 	// limit output to the requested length.
-	var reader io.Reader = dr
-	if rng.SliceStart > 0 {
-		if _, err := io.CopyN(io.Discard, dr, rng.SliceStart); err != nil {
-			return nil, 0, fmt.Errorf("skip to range start: %w", err)
-		}
+	reader, err := ioutilx.Window(dr, rng.SliceStart, rng.SliceLen)
+	if err != nil {
+		return nil, 0, fmt.Errorf("skip to range start: %w", err)
 	}
-	reader = io.LimitReader(reader, rng.SliceLen)
-
 	return reader, rng.SliceLen, nil
 }
 

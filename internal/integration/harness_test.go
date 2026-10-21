@@ -56,10 +56,12 @@ import (
 var harnessSeq atomic.Int64
 
 // harnessBackend is one backend in a declared fleet. The endpoint, bucket and
-// credentials belong to the harness; a test only says how much room it has.
+// credentials belong to the harness; a test only says how much room it has,
+// and whether the backend ignores Range the way some S3 gateways do.
 type harnessBackend struct {
-	Name  string
-	Quota int64
+	Name        string
+	Quota       int64
+	IgnoreRange bool
 }
 
 // harnessSpec declares the world one test needs. The zero value is a two-backend
@@ -187,6 +189,9 @@ func harnessBackendConfigs(t *testing.T, ctx context.Context, id int64, spec har
 		endpoint := minioEndpoints[i%len(minioEndpoints)]
 		bucket := fmt.Sprintf("harness-%d-%d", id, i)
 		mustCreateHarnessBucket(t, ctx, endpoint, bucket)
+		if be.IgnoreRange {
+			endpoint = rangeIgnoringProxy(t, endpoint)
+		}
 		out[i] = config.BackendConfig{
 			Name:            be.Name,
 			Endpoint:        endpoint,

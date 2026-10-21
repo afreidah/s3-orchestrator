@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -48,15 +49,24 @@ import (
 // GetObject") in the same trace.
 const spanPrefix = "Backend "
 
-// GetObjectResult holds the response from a GetObject call.
+// GetObjectResult holds the response from a GetObject call. Size is the length
+// of Body. WireSize is set only when the backend sent more than Body holds, as
+// one that ignores Range does; WireBytes reports what to charge as egress.
 type GetObjectResult struct {
 	Body         io.ReadCloser
 	Size         int64
+	WireSize     int64
 	ContentType  string
 	ETag         string
 	ContentRange string
 	LastModified time.Time
 	Metadata     map[string]string
+}
+
+// WireBytes returns how many bytes the backend sent for this response: WireSize
+// when the body was cut from a larger transfer, otherwise Size.
+func (r *GetObjectResult) WireBytes() int64 {
+	return max(r.WireSize, r.Size)
 }
 
 // HeadObjectResult holds the response from a HeadObject call.
@@ -100,13 +110,15 @@ type CheckedBackend interface {
 // S3 BACKEND IMPLEMENTATION
 // -------------------------------------------------------------------------
 
-// S3Backend implements ObjectBackend using AWS SDK v2.
+// S3Backend implements ObjectBackend using AWS SDK v2. rangeIgnored guards the
+// one-time warning for a backend that ignores Range.
 type S3Backend struct {
 	client          *s3.Client
 	bucket          string
 	name            string
 	endpoint        string
 	unsignedPayload bool
+	rangeIgnored    sync.Once
 }
 
 // newBackendTransport creates an HTTP transport for a single S3 backend, so
@@ -275,6 +287,8 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 // GetObject retrieves an object from the backend. When rangeHeader is non-empty
 // (e.g. "bytes=0-99"), it is passed through to S3 and the response includes a
 // contentRange value (e.g. "bytes 0-99/1000") for 206 Partial Content responses.
+// A backend that ignores Range has the range cut out of its whole-object reply,
+// so the result is the same either way.
 func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	const operation = "GetObject"
 	return observe.Run(ctx,
@@ -293,7 +307,11 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 			if err != nil {
 				return nil, fmt.Errorf("get object failed: %w", err)
 			}
-			return mapGetObjectResult(result), nil
+			res := mapGetObjectResult(result)
+			if err := b.emulateRange(ctx, res, rangeHeader); err != nil {
+				return nil, fmt.Errorf("get object failed: %w", err)
+			}
+			return res, nil
 		})
 }
 
