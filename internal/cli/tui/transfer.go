@@ -359,9 +359,5 @@ func transferLine(t *transfer) string {
 // percentOf reports how far a transfer has got, capped at 100 so a body longer
 // than its declared length cannot render past done.
 func percentOf(moved, total int64) int {
-	if total <= 0 {
-		return 0
-	}
-	pct := int(moved * 100 / total)
-	return min(pct, 100)
+	return min(humanize.Percent(moved, total), 100)
 }

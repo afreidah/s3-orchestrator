@@ -65,21 +65,6 @@ func TestRowsFromBackends(t *testing.T) {
 	}
 }
 
-func TestUsagePercent(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		used, limit int64
-		want        int
-	}{
-		{0, 4096, 0}, {2048, 4096, 50}, {4096, 4096, 100}, {5, 0, 0}, {5, -1, 0},
-	}
-	for _, c := range cases {
-		if got := usagePercent(c.used, c.limit); got != c.want {
-			t.Errorf("usagePercent(%d,%d) = %d, want %d", c.used, c.limit, got, c.want)
-		}
-	}
-}
-
 func TestUsageStyle_Thresholds(t *testing.T) {
 	t.Parallel()
 	// green under 70, yellow 70-89, red 90+.

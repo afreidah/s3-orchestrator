@@ -5,7 +5,7 @@
 //
 // Unit tests for backendStatuses, the pure dashboard-to-wire mapping behind
 // /admin/api/status: health inversion, drain-by-presence, per-backend counters,
-// and display ordering.
+// usage limits, and display ordering.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -17,6 +17,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // TestBackendStatuses_Mapping covers the health/drain/counter mapping and that
@@ -66,6 +67,36 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	}
 	if b2.BytesUsed != 0 || b2.ObjectCount != 0 || b2.APIRequests != 0 {
 		t.Errorf("b2 should have zero counters: %+v", b2)
+	}
+}
+
+// TestBackendStatuses_UsageLimits verifies each backend carries a meter per
+// limit it enforces, measured against its usage, and an unlimited backend an
+// empty list rather than none.
+func TestBackendStatuses_UsageLimits(t *testing.T) {
+	t.Parallel()
+	lim, err := core.NewUsageLimits(1000, 500, core.SingleRequestPool(100), nil)
+	if err != nil {
+		t.Fatalf("NewUsageLimits: %v", err)
+	}
+	got := backendStatuses(&dashboard.Data{
+		BackendOrder: []string{"b1", "b2"},
+		UsageLimits:  map[string]core.UsageLimits{"b1": lim},
+		UsageStats: map[string]core.Usage{
+			"b1": {UsageStat: core.UsageStat{EgressBytes: 20, IngressBytes: 40}, Pools: core.PoolUsage{core.PoolAll: 3}},
+		},
+	})
+
+	want := []adminapi.UsageMeter{
+		{Kind: core.MeterEgress, Used: 20, Limit: 1000},
+		{Kind: core.MeterIngress, Used: 40, Limit: 500},
+		{Kind: core.MeterRequests, Budget: core.PoolAll, Used: 3, Limit: 100},
+	}
+	if !slices.Equal(got[0].UsageLimits, want) {
+		t.Errorf("b1 usage limits = %+v, want %+v", got[0].UsageLimits, want)
+	}
+	if got[1].UsageLimits == nil || len(got[1].UsageLimits) != 0 {
+		t.Errorf("b2 usage limits = %#v, want an empty non-nil list", got[1].UsageLimits)
 	}
 }
 

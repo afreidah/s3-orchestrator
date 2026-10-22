@@ -70,3 +70,20 @@ func TestComma(t *testing.T) {
 		})
 	}
 }
+
+// TestPercent pins whole-number percentages, past 100 for an overrun, and 0
+// for a whole that is not positive.
+func TestPercent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		part, whole int64
+		want        int
+	}{
+		{0, 4096, 0}, {2048, 4096, 50}, {4096, 4096, 100}, {5000, 4096, 122}, {5, 0, 0}, {5, -1, 0},
+	}
+	for _, c := range cases {
+		if got := Percent(c.part, c.whole); got != c.want {
+			t.Errorf("Percent(%d,%d) = %d, want %d", c.part, c.whole, got, c.want)
+		}
+	}
+}

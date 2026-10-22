@@ -159,6 +159,44 @@ func (u UsageLimits) Unlimited() bool {
 	return true
 }
 
+// MeterEgress and the other meter kinds name the dimension a UsageMeter
+// measures. Egress and ingress count bytes; requests counts one request
+// budget's calls.
+const (
+	MeterEgress   = "egress"
+	MeterIngress  = "ingress"
+	MeterRequests = "requests"
+)
+
+// UsageMeter is one limited dimension of a backend's usage: what it has used
+// this period against its limit. Budget names the request budget of a requests
+// meter and is empty for the byte meters.
+type UsageMeter struct {
+	Kind   string
+	Budget string
+	Used   int64
+	Limit  int64
+}
+
+// Meters pairs a backend's usage with every limit it enforces: egress, ingress,
+// then each limited request budget in configured order. A dimension with no
+// limit has nothing to be measured against and is left out.
+func (u UsageLimits) Meters(used Usage) []UsageMeter {
+	var out []UsageMeter
+	if u.EgressByteLimit > 0 {
+		out = append(out, UsageMeter{Kind: MeterEgress, Used: used.EgressBytes, Limit: u.EgressByteLimit})
+	}
+	if u.IngressByteLimit > 0 {
+		out = append(out, UsageMeter{Kind: MeterIngress, Used: used.IngressBytes, Limit: u.IngressByteLimit})
+	}
+	for _, p := range u.pools {
+		if p.Limit > 0 {
+			out = append(out, UsageMeter{Kind: MeterRequests, Budget: p.Name, Used: used.Pools[p.Name], Limit: p.Limit})
+		}
+	}
+	return out
+}
+
 // -------------------------------------------------------------------------
 // USAGE READINGS
 // -------------------------------------------------------------------------

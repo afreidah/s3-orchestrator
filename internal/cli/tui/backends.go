@@ -468,7 +468,7 @@ var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"STATE":   by(func(b *adminapi.BackendStatus) string { return output.NameList(b.Flags) }),
 	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
 	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
-	"USE%":    by(func(b *adminapi.BackendStatus) int { return usagePercent(b.BytesUsed, b.BytesLimit) }),
+	"USE%":    by(func(b *adminapi.BackendStatus) int { return humanize.Percent(b.BytesUsed, b.BytesLimit) }),
 	"OBJECTS": by(func(b *adminapi.BackendStatus) int64 { return b.ObjectCount }),
 	"API":     by(func(b *adminapi.BackendStatus) int64 { return b.APIRequests }),
 	"INGRESS": by(func(b *adminapi.BackendStatus) int64 { return b.IngressBytes }),
@@ -485,7 +485,7 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		limit, usePct := "-", "-"
 		if b.BytesLimit > 0 {
 			limit = humanize.Bytes(b.BytesLimit)
-			usePct = fmt.Sprintf("%d%%", usagePercent(b.BytesUsed, b.BytesLimit))
+			usePct = fmt.Sprintf("%d%%", humanize.Percent(b.BytesUsed, b.BytesLimit))
 		}
 		rows = append(rows, table.Row{
 			b.Name,
@@ -586,7 +586,7 @@ func (m *model) backendsStatsLine() string {
 	}
 	total := "total: " + humanize.Bytes(used)
 	if limit > 0 {
-		pct := usagePercent(used, limit)
+		pct := humanize.Percent(used, limit)
 		total = fmt.Sprintf("total: %s / %s (%s)",
 			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
@@ -648,15 +648,6 @@ func deferredSuffix(deferred int64) string {
 	}
 	return "   " + statusErrStyle.Render(
 		fmt.Sprintf("%s unreachable", humanize.Comma(deferred)))
-}
-
-// usagePercent returns used as a whole-number percentage of limit (0 when
-// limit is non-positive).
-func usagePercent(used, limit int64) int {
-	if limit <= 0 {
-		return 0
-	}
-	return int(used * 100 / limit)
 }
 
 // backendsBody renders the current content: an error, the loading indicator,

@@ -165,7 +165,7 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 	// The whole map is replaced, so a new month with no rows yet starts every
 	// backend at zero.
 	mc.usage.SetBaselines(usage)
-	mc.updatePoolGauges(usage)
+	mc.updateLimitGauges(usage)
 	updateWorkloadGauges(byWorkload)
 }
 
@@ -183,12 +183,15 @@ func updateWorkloadGauges(usage map[string]core.WorkloadUsage) {
 	}
 }
 
-// updatePoolGauges publishes the per-pool request counts and the ceilings they
-// are judged against, so an operator can see which budget is close to
-// refusing work rather than only that the backend stopped accepting it.
-func (mc *Collector) updatePoolGauges(usage map[string]core.Usage) {
+// updateLimitGauges publishes each backend's egress and ingress limits and its
+// per-pool request counts with the ceilings they are judged against, so an
+// operator can see which limit is close to refusing work rather than only that
+// the backend stopped accepting it. An unlimited dimension reads 0.
+func (mc *Collector) updateLimitGauges(usage map[string]core.Usage) {
 	limits := mc.usage.GetLimits()
 	for name, lim := range limits {
+		telemetry.UsageEgressLimitBytes.WithLabelValues(name).Set(float64(lim.EgressByteLimit))
+		telemetry.UsageIngressLimitBytes.WithLabelValues(name).Set(float64(lim.IngressByteLimit))
 		for _, pool := range lim.Pools() {
 			telemetry.UsagePoolRequests.WithLabelValues(name, pool.Name).Set(float64(usage[name].Pools[pool.Name]))
 			telemetry.UsagePoolLimit.WithLabelValues(name, pool.Name).Set(float64(pool.Limit))

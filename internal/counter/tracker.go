@@ -264,15 +264,11 @@ func (u *UsageTracker) NearLimit(threshold float64) bool {
 // reached the threshold ratio. One tight pool is enough to want a shorter
 // flush interval, since that is the budget about to start refusing work.
 func nearLimit(base core.Usage, cur *core.Usage, lim core.UsageLimits, threshold float64) bool {
-	reached := func(n, limit int64) bool {
-		return limit > 0 && float64(n)/float64(limit) >= threshold
-	}
-	if reached(base.EgressBytes+cur.EgressBytes, lim.EgressByteLimit) ||
-		reached(base.IngressBytes+cur.IngressBytes, lim.IngressByteLimit) {
-		return true
-	}
-	for _, pool := range lim.Pools() {
-		if reached(base.Pools[pool.Name]+cur.Pools[pool.Name], pool.Limit) {
+	var used core.Usage
+	used.Add(base)
+	used.Add(*cur)
+	for _, m := range lim.Meters(used) {
+		if float64(m.Used)/float64(m.Limit) >= threshold {
 			return true
 		}
 	}

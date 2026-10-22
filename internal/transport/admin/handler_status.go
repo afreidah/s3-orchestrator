@@ -115,10 +115,14 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 		if oc, ok := data.ObjectCounts[name]; ok {
 			bs.ObjectCount = oc
 		}
-		if us, ok := data.UsageStats[name]; ok {
-			bs.APIRequests = us.APIRequests
-			bs.EgressBytes = us.EgressBytes
-			bs.IngressBytes = us.IngressBytes
+		us := data.UsageStats[name]
+		bs.APIRequests = us.APIRequests
+		bs.EgressBytes = us.EgressBytes
+		bs.IngressBytes = us.IngressBytes
+		meters := data.UsageLimits[name].Meters(us)
+		bs.UsageLimits = make([]adminapi.UsageMeter, len(meters))
+		for i, m := range meters {
+			bs.UsageLimits[i] = adminapi.UsageMeter(m)
 		}
 		bs.CompressionSavedBytes = data.CompressionSaved(name)
 		backends = append(backends, bs)

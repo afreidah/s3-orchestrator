@@ -23,8 +23,9 @@ import (
 )
 
 // dashboardModel returns a sized model on the dashboard with a status,
-// replication and cleanup snapshot applied: one backend near full and
-// draining, one refusing GET with no limit, and one refusing every call.
+// replication and cleanup snapshot applied: one backend near full, draining,
+// at its egress limit and part way through a request budget, one refusing GET
+// with no limit, and one refusing every call.
 func dashboardModel(t *testing.T) *model {
 	t.Helper()
 	m := initialModel(&fakeLister{})
@@ -34,7 +35,11 @@ func dashboardModel(t *testing.T) *model {
 		UsagePeriod: "2026-10",
 		Backends: []adminapi.BackendStatus{
 			{Name: "minio-a", Healthy: true, Flags: []string{"draining"}, BytesUsed: 9 << 30, BytesLimit: 10 << 30,
-				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30},
+				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30,
+				UsageLimits: []adminapi.UsageMeter{
+					{Kind: "egress", Used: 5 << 30, Limit: 5 << 30},
+					{Kind: "requests", Budget: "writes", Used: 1200, Limit: 4800},
+				}},
 			{Name: "minio-b", RefusedCalls: []string{"GetObject"}, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
 			{Name: "minio-c", RefusedCalls: []string{"PutObject", "GetObject", "HeadObject", "DeleteObject", "DeleteObjects", "CopyObject", "ListObjects"}},
 		},
@@ -82,6 +87,43 @@ func TestDashboard_Capacity(t *testing.T) {
 		"minio-c", "DOWN",
 		"fleet", "10.0 GiB / 10.0 GiB", "100%",
 		"[", "#", "-]")
+}
+
+// TestDashboard_UsageLimits verifies a limited backend gets one bar per limit,
+// bytes for egress and a call count for a request budget, an unlimited backend
+// gets none, and a limit used up fills its bar the way a full quota does.
+func TestDashboard_UsageLimits(t *testing.T) {
+	t.Parallel()
+	got := dashboardModel(t).dashboardUsageLimits()
+	assertContains(t, got,
+		"usage limits", "period 2026-10",
+		"minio-a egress", "5.0 GiB / 5.0 GiB", "100%", "[####",
+		"minio-a requests:writes", "1,200 / 4,800", "25%")
+	for _, absent := range []string{"minio-b", "minio-c", "ingress"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("block shows %q, which has no limit:\n%s", absent, got)
+		}
+	}
+	for line := range strings.SplitSeq(got, "\n") {
+		if strings.Contains(line, "minio-a egress") && strings.Contains(line, "-]") {
+			t.Errorf("the exhausted limit is not drawn as a full bar: %q", line)
+		}
+	}
+}
+
+// TestDashboard_NoUsageLimits verifies a fleet with no limits leaves the
+// block out of the dashboard instead of drawing an empty heading.
+func TestDashboard_NoUsageLimits(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 30
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{{Name: "b1", BytesUsed: 1}}})
+	if got := m.dashboardUsageLimits(); got != "" {
+		t.Errorf("usage limits = %q, want nothing", got)
+	}
+	if strings.Contains(bodyText(m.dashboardBody()), "usage limits") {
+		t.Error("dashboard drew a usage-limits block for a fleet with none")
+	}
 }
 
 // TestDashboard_Summary verifies the summary block reports every fleet-wide

@@ -1349,6 +1349,10 @@ components:
                     items:
                         type: string
                     type: array
+                usage_limits:
+                    items:
+                        $ref: '#/components/schemas/UsageMeter'
+                    type: array
             required:
                 - name
                 - healthy
@@ -1362,6 +1366,7 @@ components:
                 - egress_bytes
                 - ingress_bytes
                 - compression_saved_bytes
+                - usage_limits
             type: object
         BackfillChecksumsResponse:
             properties:
@@ -2425,6 +2430,24 @@ components:
                     type: string
             required:
                 - status
+            type: object
+        UsageMeter:
+            properties:
+                budget:
+                    type: string
+                kind:
+                    type: string
+                limit:
+                    format: int64
+                    type: integer
+                used:
+                    format: int64
+                    type: integer
+            required:
+                - kind
+                - budget
+                - used
+                - limit
             type: object
         UsageReconcileResponse:
             properties:

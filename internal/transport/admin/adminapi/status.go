@@ -49,6 +49,9 @@ type IntegrityStatus struct {
 //
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
+//
+// UsageLimits measures the period's usage against each limit the backend
+// enforces.
 type BackendStatus struct {
 	Name         string   `json:"name"`
 	Healthy      bool     `json:"healthy"`
@@ -63,6 +66,19 @@ type BackendStatus struct {
 	IngressBytes int64    `json:"ingress_bytes"`
 
 	CompressionSavedBytes int64 `json:"compression_saved_bytes"`
+
+	UsageLimits []UsageMeter `json:"usage_limits"`
+}
+
+// UsageMeter is one usage limit a backend enforces and what the current period
+// has used of it. Kind is egress or ingress, counted in bytes, or requests,
+// counted in calls against the request budget Budget names. A backend lists
+// only the limits it has, so an unlimited backend lists none.
+type UsageMeter struct {
+	Kind   string `json:"kind"`
+	Budget string `json:"budget,omitzero"`
+	Used   int64  `json:"used"`
+	Limit  int64  `json:"limit"`
 }
 
 // UsageReconcileResponse reports the per-backend byte corrections a reconcile

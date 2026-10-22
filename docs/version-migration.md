@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.166.x (current)
+### v0.167.x (current)
+
+**Usage limits in the status API, TUI and admin status ([#1756](https://github.com/afreidah/s3-orchestrator/issues/1756), v0.167.0)**
+
+`/admin/api/status` gives each backend a `usage_limits` list: one entry per limit it enforces (`egress`, `ingress`, and `requests` for each request budget), with what the current period has used of it. A backend with no limits lists none. The TUI dashboard draws a bar for each, marked red and full once a limit is used up, and `admin status` prints them as a second table. The new field is additive. New gauges `s3o_usage_egress_limit_bytes{backend}` and `s3o_usage_ingress_limit_bytes{backend}` publish the byte limits, and the Grafana "Request Pool Usage" panel becomes "Usage Limits (% used)", covering egress and ingress as well as each request budget. No migration and no config change.
+
+### v0.166.x
 
 **Every backend request audited ([#1753](https://github.com/afreidah/s3-orchestrator/issues/1753), [#1754](https://github.com/afreidah/s3-orchestrator/issues/1754), v0.166.0)**
 

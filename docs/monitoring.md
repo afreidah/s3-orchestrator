@@ -307,6 +307,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
+| `s3o_usage_egress_limit_bytes` | Gauge | backend | The configured monthly egress limit (0 = unlimited). `s3o_usage_egress_bytes / s3o_usage_egress_limit_bytes` is the share used |
+| `s3o_usage_ingress_limit_bytes` | Gauge | backend | The configured monthly ingress limit (0 = unlimited) |
 | `s3o_usage_pool_requests` | Gauge | backend, pool | Current month request count charged to each request pool |
 | `s3o_usage_pool_limit` | Gauge | backend, pool | The configured limit of each request pool (0 = counted, never refused) |
 | `s3o_usage_workload_api_requests` | Gauge | backend, workload | Current month API request count split by the workload that made the calls |

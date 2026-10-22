@@ -152,6 +152,36 @@ func TestUsageLimits_Unlimited(t *testing.T) {
 	}
 }
 
+// TestUsageLimits_Meters pins the one list every usage surface reads: egress,
+// ingress, then each limited budget in configured order, each paired with its
+// usage, and nothing for a dimension with no limit.
+func TestUsageLimits_Meters(t *testing.T) {
+	t.Parallel()
+	lim, err := NewUsageLimits(1000, 0, []PoolSpec{
+		{Name: "writes", Operations: []string{string(s3op.PutObject)}, Limit: 50},
+		{Name: "counted", Operations: []string{string(s3op.GetObject)}},
+		{Name: PoolAll, Operations: []string{s3op.Wildcard}, Limit: 100},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewUsageLimits: %v", err)
+	}
+	used := Usage{UsageStat: UsageStat{EgressBytes: 400, IngressBytes: 9}, Pools: PoolUsage{"writes": 50, "counted": 7, PoolAll: 60}}
+
+	want := []UsageMeter{
+		{Kind: MeterEgress, Used: 400, Limit: 1000},
+		{Kind: MeterRequests, Budget: "writes", Used: 50, Limit: 50},
+		{Kind: MeterRequests, Budget: PoolAll, Used: 60, Limit: 100},
+	}
+	if got := lim.Meters(used); !slices.Equal(got, want) {
+		t.Errorf("Meters = %+v, want %+v", got, want)
+	}
+
+	var none UsageLimits
+	if got := none.Meters(used); len(got) != 0 {
+		t.Errorf("unlimited backend Meters = %+v, want none", got)
+	}
+}
+
 // TestSingleRequestPool_UnsetCapCompilesToNoPools keeps an absent
 // api_request_limit from becoming a pool that reports as configured.
 func TestSingleRequestPool_UnsetCapCompilesToNoPools(t *testing.T) {

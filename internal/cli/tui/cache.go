@@ -129,7 +129,7 @@ func (m *model) cacheStats() string {
 	used := line("entries", fmt.Sprintf("%d", s.Entries))
 	size := line("size", humanize.Bytes(s.SizeBytes))
 	if s.MaxBytes > 0 {
-		pct := usagePercent(s.SizeBytes, s.MaxBytes)
+		pct := humanize.Percent(s.SizeBytes, s.MaxBytes)
 		size = line("size", fmt.Sprintf("%s / %s (%s)",
 			humanize.Bytes(s.SizeBytes), humanize.Bytes(s.MaxBytes), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct))))
 	}
@@ -137,7 +137,7 @@ func (m *model) cacheStats() string {
 	lookups := s.Hits + s.Misses
 	rate := line("hit rate", pathStyle.Render("no lookups yet"))
 	if lookups > 0 {
-		pct := int(s.Hits * 100 / lookups)
+		pct := humanize.Percent(s.Hits, lookups)
 		rate = line("hit rate", hitRateStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
 	served := line("lookups", fmt.Sprintf("%d hits / %d misses", s.Hits, s.Misses))

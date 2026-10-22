@@ -31,6 +31,15 @@ func Duration(d time.Duration) string {
 	}
 }
 
+// Percent returns part as a whole-number percentage of whole, and 0 when
+// whole is not positive, so an unset limit or an empty total reads as 0%.
+func Percent(part, whole int64) int {
+	if whole <= 0 {
+		return 0
+	}
+	return int(part * 100 / whole)
+}
+
 // Comma formats an integer with thousands separators.
 func Comma(n int64) string {
 	if n < 0 {

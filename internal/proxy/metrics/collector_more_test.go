@@ -99,11 +99,12 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	}
 }
 
-// TestUpdateQuotaMetrics_PublishesPoolGauges pins the pair an operator reads
-// to answer "which budget is about to refuse work": the count and the ceiling
-// it is judged against, per pool. The ceiling is published rather than assumed
-// so a dashboard does not have to carry a copy of the config.
-func TestUpdateQuotaMetrics_PublishesPoolGauges(t *testing.T) {
+// TestUpdateQuotaMetrics_PublishesLimitGauges pins what an operator reads to
+// answer "which limit is about to refuse work": each request budget's count and
+// ceiling, and the egress and ingress limits the byte gauges are judged
+// against. Limits are published rather than assumed so a dashboard does not
+// have to carry a copy of the config; an unlimited one reads 0.
+func TestUpdateQuotaMetrics_PublishesLimitGauges(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
 	store.EXPECT().GetQuotaStats(gomock.Any()).
@@ -116,7 +117,7 @@ func TestUpdateQuotaMetrics_PublishesPoolGauges(t *testing.T) {
 			Pools:     core.PoolUsage{"class_a": 30},
 		}}}, nil).AnyTimes()
 
-	lim, err := core.NewUsageLimits(0, 0, []core.PoolSpec{
+	lim, err := core.NewUsageLimits(7000, 0, []core.PoolSpec{
 		{Name: "class_a", Operations: []string{string(s3op.PutObject)}, Limit: 5000},
 		{Name: "class_b", Operations: []string{string(s3op.GetObject)}, Limit: 50000},
 	}, nil)
@@ -143,6 +144,12 @@ func TestUpdateQuotaMetrics_PublishesPoolGauges(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(telemetry.UsagePoolLimit.WithLabelValues("b1", "class_b")); got != 50000 {
 		t.Errorf("class_b limit gauge = %v, want 50000", got)
+	}
+	if got := testutil.ToFloat64(telemetry.UsageEgressLimitBytes.WithLabelValues("b1")); got != 7000 {
+		t.Errorf("egress limit gauge = %v, want 7000", got)
+	}
+	if got := testutil.ToFloat64(telemetry.UsageIngressLimitBytes.WithLabelValues("b1")); got != 0 {
+		t.Errorf("ingress limit gauge = %v, want 0 for an unlimited backend", got)
 	}
 }
 

@@ -2200,8 +2200,8 @@
     {
       "type": "table",
       "id": 129,
-      "title": "Request Pool Usage (% of limit)",
-      "description": "Per-pool share of the monthly request budget. Providers meter operations in classes with separate allowances, so this is the figure a backend is refused on - Monthly API Requests counts every call, including ones no budget charges. Unlimited pools are omitted.",
+      "title": "Usage Limits (% used)",
+      "description": "Share of each monthly usage limit used so far: egress, ingress, and each request budget (requests:<pool>). These are the figures a backend is refused on - Monthly API Requests counts every call, including ones no budget charges. Unlimited dimensions are omitted.",
       "gridPos": {
         "x": 12,
         "y": 98,
@@ -2214,7 +2214,7 @@
       },
       "targets": [
         {
-          "expr": "100 * max by (backend, pool) (s3o_usage_pool_requests) / (max by (backend, pool) (s3o_usage_pool_limit) > 0)",
+          "expr": "label_replace(100 * max by (backend) (s3o_usage_egress_bytes) / (max by (backend) (s3o_usage_egress_limit_bytes) > 0), \"limit\", \"egress\", \"\", \"\") or label_replace(100 * max by (backend) (s3o_usage_ingress_bytes) / (max by (backend) (s3o_usage_ingress_limit_bytes) > 0), \"limit\", \"ingress\", \"\", \"\") or max by (backend, limit) (label_replace(100 * max by (backend, pool) (s3o_usage_pool_requests) / (max by (backend, pool) (s3o_usage_pool_limit) > 0), \"limit\", \"requests:$1\", \"pool\", \"(.*)\"))",
           "format": "table",
           "instant": true
         }

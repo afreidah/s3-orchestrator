@@ -141,6 +141,26 @@ var (
 		[]string{"backend"},
 	)
 
+	// UsageEgressLimitBytes publishes each backend's monthly egress limit, so
+	// egress can be read as a share of it.
+	UsageEgressLimitBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_egress_limit_bytes",
+			Help: "Configured monthly egress byte limit per backend (0 = unlimited)",
+		},
+		[]string{"backend"},
+	)
+
+	// UsageIngressLimitBytes publishes each backend's monthly ingress limit, so
+	// ingress can be read as a share of it.
+	UsageIngressLimitBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_ingress_limit_bytes",
+			Help: "Configured monthly ingress byte limit per backend (0 = unlimited)",
+		},
+		[]string{"backend"},
+	)
+
 	// UsageWorkloadAPIRequests splits s3o_usage_api_requests by the workload
 	// that made the calls.
 	UsageWorkloadAPIRequests = promauto.NewGaugeVec(

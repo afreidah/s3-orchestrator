@@ -155,7 +155,8 @@ status: reconciled
 ```bash
 # Show backend health (healthy, degraded or down), the calls an open circuit
 # breaker is refusing, state flags (cordoned, draining, drained, drain-failed)
-# and usage
+# and usage, then each usage limit (egress, ingress, request budgets) with the
+# share of it used this period
 s3-orchestrator admin status
 
 # List all copies of an object across backends
@@ -441,7 +442,7 @@ Every change takes effect on the next request rather than the next restart: the 
 
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a usage bar per backend with its health and drain state, the replication and verification backlogs, encryption and compression coverage, usage for the period, and the cleanup queues; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Config** shows the running configuration; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Dashboard**, where it opens, summarizes the fleet - a storage bar per backend with its health and drain state, a bar for each usage limit a backend enforces (egress, ingress, and each request budget, marked red and full once used up; backends without a limit are left out), the replication and verification backlogs, encryption and compression coverage, usage for the period, and the cleanup queues; **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Config** shows the running configuration; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
