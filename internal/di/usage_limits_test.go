@@ -14,6 +14,7 @@ package di
 
 import (
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -69,6 +70,28 @@ func TestUsageLimitsFor_CarriesBytesAndPools(t *testing.T) {
 	}
 	if pools := lim.PoolsFor(s3op.DeleteObject); len(pools) != 0 {
 		t.Errorf("DeleteObject charges %+v, want nothing; the provider does not bill it", pools)
+	}
+}
+
+// TestUsageLimitsFor_CarriesThePeriod verifies the configured reset day and
+// zone reach the compiled limits, and that leaving both unset gives the
+// calendar month in UTC.
+func TestUsageLimitsFor_CarriesThePeriod(t *testing.T) {
+	t.Parallel()
+	lim, err := UsageLimitsFor(&config.BackendConfig{UsageResetDay: 14, UsageResetTimezone: "America/Los_Angeles"})
+	if err != nil {
+		t.Fatalf("UsageLimitsFor: %v", err)
+	}
+	if lim.Period.ResetDay != 14 || lim.Period.Location.String() != "America/Los_Angeles" {
+		t.Errorf("period = %+v, want day 14 in America/Los_Angeles", lim.Period)
+	}
+
+	lim, err = UsageLimitsFor(&config.BackendConfig{})
+	if err != nil {
+		t.Fatalf("UsageLimitsFor: %v", err)
+	}
+	if lim.Period.ResetDay != 0 || lim.Period.Location != time.UTC {
+		t.Errorf("default period = %+v, want day 1 (unset) in UTC", lim.Period)
 	}
 }
 

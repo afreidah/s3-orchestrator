@@ -99,6 +99,8 @@ var (
 	ErrNegativeAPILimit     = errors.New("api_request_limit must not be negative")
 	ErrNegativeEgress       = errors.New("egress_byte_limit must not be negative")
 	ErrNegativeIngress      = errors.New("ingress_byte_limit must not be negative")
+	ErrUsageResetDayRange   = errors.New("usage_reset_day must be between 1 and 28")
+	ErrUsageResetTimezone   = errors.New("usage_reset_timezone is not a known time zone")
 	ErrNegativeHTTPSetting  = errors.New("HTTP transport setting must not be negative")
 	ErrPoolNameRequired     = errors.New("request_limits entry requires a name")
 	ErrDuplicatePoolName    = errors.New("duplicate request_limits pool name")

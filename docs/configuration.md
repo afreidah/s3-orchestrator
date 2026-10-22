@@ -268,6 +268,15 @@ When a backend exceeds a usage limit, writes overflow to the next eligible backe
 
 Pools are additive: an operation charges every pool containing it and needs headroom in all of them. `"*"` matches every operation not listed as `unmetered`, and `limit: 0` counts without refusing. `api_request_limit` still works and desugars to one `all` pool over `"*"`; setting both on a backend is rejected. See [backends.md](backends.md) for the full operation vocabulary.
 
+**Usage cycle:** where a backend's monthly usage cycle starts, to match the provider's own reset:
+
+```yaml
+    usage_reset_day: 14                         # default: 1; 1 to 28
+    usage_reset_timezone: America/Los_Angeles   # default: UTC; IANA zone name
+```
+
+The cycle starts at midnight on `usage_reset_day` in `usage_reset_timezone`. Some providers reset on the calendar month in their own zone (GCP rolls over at midnight Pacific); others reset on the day the account or subscription started, which their billing page shows. Both settings are validated and reloadable, but in this release they are not yet used: every backend still counts usage over the calendar month in UTC.
+
 **HTTP transport:** Each backend gets its own connection pool. The defaults suit a proxy serving concurrent client traffic alongside the rebalancer and replicator, but deployments range from a Raspberry Pi to a high-concurrency gateway, so they can be tuned per backend:
 
 ```yaml
@@ -982,6 +991,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backends[].egress_byte_limit` | Yes | |
 | `backends[].ingress_byte_limit` | Yes | |
 | `backends[].request_limits`, `backends[].unmetered` | Yes | |
+| `backends[].usage_reset_day`, `backends[].usage_reset_timezone` | Yes | Validated and accepted; not yet used to count usage |
 | `server.log_level` | Yes | |
 | `backends[].http` (pool sizes, `force_http2`) | No | The transport is built when the backend client is constructed; a reload reports the change and keeps the running one |
 | `rebalance` | Yes | Strategy, threshold, concurrency, enabled/disabled; `interval` needs a restart |

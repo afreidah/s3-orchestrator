@@ -107,6 +107,13 @@ func TestConfigValidation_FieldRules(t *testing.T) {
 		{"negative api_request_limit", func(c *Config) { c.Backends[0].APIRequestLimit = -1 }, true},
 		{"negative egress_byte_limit", func(c *Config) { c.Backends[0].EgressByteLimit = -1 }, true},
 		{"negative ingress_byte_limit", func(c *Config) { c.Backends[0].IngressByteLimit = -1 }, true},
+		{"usage reset day unset", func(c *Config) { c.Backends[0].UsageResetDay = 0 }, false},
+		{"usage reset day 1", func(c *Config) { c.Backends[0].UsageResetDay = 1 }, false},
+		{"usage reset day 28", func(c *Config) { c.Backends[0].UsageResetDay = 28 }, false},
+		{"usage reset day 29", func(c *Config) { c.Backends[0].UsageResetDay = 29 }, true},
+		{"negative usage reset day", func(c *Config) { c.Backends[0].UsageResetDay = -1 }, true},
+		{"usage reset timezone by name", func(c *Config) { c.Backends[0].UsageResetTimezone = "America/Los_Angeles" }, false},
+		{"unknown usage reset timezone", func(c *Config) { c.Backends[0].UsageResetTimezone = "Mars/Olympus_Mons" }, true},
 		{"zero usage limits mean unlimited", func(c *Config) {
 			c.Backends[0].APIRequestLimit = 0
 			c.Backends[0].EgressByteLimit = 0
@@ -1986,6 +1993,22 @@ func TestRoutingStrategy_InvalidValue(t *testing.T) {
 // -------------------------------------------------------------------------
 // TRACING CONFIG TESTS
 // -------------------------------------------------------------------------
+
+// TestBackendConfig_UsageResetErrors verifies an out-of-range reset day and an
+// unknown zone each fail with their own error, naming the bad value.
+func TestBackendConfig_UsageResetErrors(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Backends[0].UsageResetDay = 31
+	cfg.Backends[0].UsageResetTimezone = "Nowhere/Here"
+	err := cfg.SetDefaultsAndValidate()
+	if !errors.Is(err, ErrUsageResetDayRange) || !errors.Is(err, ErrUsageResetTimezone) {
+		t.Fatalf("err = %v, want both %v and %v", err, ErrUsageResetDayRange, ErrUsageResetTimezone)
+	}
+	if !strings.Contains(err.Error(), "31") || !strings.Contains(err.Error(), "Nowhere/Here") {
+		t.Errorf("err = %v, want it to name the bad values", err)
+	}
+}
 
 // TestMetricsConfig_FleetInterval defaults the fleet interval and rejects one
 // short enough to scan the ledger continuously.

@@ -62,12 +62,14 @@ func SingleRequestPool(limit int64) []PoolSpec {
 }
 
 // UsageLimits holds the monthly usage limits for a single backend. Byte limits
-// are scalar; request limits are pools with a per-operation lookup. Build one
-// with NewUsageLimits; it is immutable afterwards and safe to share across
+// are scalar; request limits are pools with a per-operation lookup. Period is
+// the monthly cycle the limits are counted over. Build one with
+// NewUsageLimits; it is immutable afterwards and safe to share across
 // goroutines.
 type UsageLimits struct {
 	EgressByteLimit  int64
 	IngressByteLimit int64
+	Period           UsagePeriod
 
 	pools       []RequestPool
 	byOperation map[s3op.Operation][]RequestPool

@@ -636,31 +636,12 @@ func TestCurrentPeriod_RefreshesAnExpiredCache(t *testing.T) {
 	t.Parallel()
 	currentMonth.Store(&monthCache{period: "1999-01", until: time.Unix(0, 0)})
 
-	want := monthStart(time.Now()).Format("2006-01")
+	want := time.Now().UTC().Format(core.PeriodLayout)
 	if got := CurrentPeriod(); got != want {
 		t.Errorf("CurrentPeriod() = %q, want %q", got, want)
 	}
 	if c := currentMonth.Load(); c.period != want || !c.until.After(time.Now()) {
 		t.Errorf("cache = %+v, want %q until a future instant", c, want)
-	}
-}
-
-// TestMonthStart asserts the first instant of the month is taken in UTC,
-// whatever zone the input is in.
-func TestMonthStart(t *testing.T) {
-	t.Parallel()
-	east := time.FixedZone("east", 5*3600)
-	for _, tc := range []struct {
-		in   time.Time
-		want string
-	}{
-		{in: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC), want: "2026-10-01T00:00:00Z"},
-		{in: time.Date(2026, 11, 1, 2, 0, 0, 0, east), want: "2026-10-01T00:00:00Z"},
-		{in: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), want: "2027-01-01T00:00:00Z"},
-	} {
-		if got := monthStart(tc.in).Format(time.RFC3339); got != tc.want {
-			t.Errorf("monthStart(%v) = %s, want %s", tc.in, got, tc.want)
-		}
 	}
 }
 

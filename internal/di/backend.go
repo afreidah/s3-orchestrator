@@ -16,6 +16,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -63,10 +64,10 @@ type BackendsResult struct {
 	Breakers       []*backend.CircuitBreakerBackend // empty when per-backend breakers are disabled
 }
 
-// UsageLimitsFor compiles one backend's configured budgets into the form
-// admission reads, for both startup and the reload hook. api_request_limit
-// desugars into one wildcard pool; config validation rejects setting it
-// alongside request_limits.
+// UsageLimitsFor compiles one backend's configured budgets and usage cycle into
+// the form admission reads, for both startup and the reload hook.
+// api_request_limit desugars into one wildcard pool; config validation rejects
+// setting it alongside request_limits.
 func UsageLimitsFor(b *config.BackendConfig) (core.UsageLimits, error) {
 	specs := make([]core.PoolSpec, 0, len(b.RequestLimits)+1)
 	for i := range b.RequestLimits {
@@ -79,7 +80,16 @@ func UsageLimitsFor(b *config.BackendConfig) (core.UsageLimits, error) {
 	for _, name := range b.Unmetered {
 		unmetered = append(unmetered, s3op.Operation(name))
 	}
-	return core.NewUsageLimits(b.EgressByteLimit, b.IngressByteLimit, specs, unmetered)
+	lim, err := core.NewUsageLimits(b.EgressByteLimit, b.IngressByteLimit, specs, unmetered)
+	if err != nil {
+		return core.UsageLimits{}, err
+	}
+	loc, err := b.UsageResetLocation()
+	if err != nil {
+		return core.UsageLimits{}, fmt.Errorf("backend %q usage_reset_timezone: %w", b.Name, err)
+	}
+	lim.Period = core.UsagePeriod{ResetDay: b.UsageResetDay, Location: loc}
+	return lim, nil
 }
 
 // ProvideBackends initializes all configured storage backends, wrapping

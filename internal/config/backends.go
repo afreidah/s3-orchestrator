@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Defines BackendConfig - the per-backend YAML block describing the S3
-// endpoint, credentials, optional quota and per-object size cap, and the
-// read/write tunables (timeouts, max idle conns, signing tweaks) - plus
-// its validators. Every backend listed in config.yaml is parsed into one
+// endpoint, credentials, optional quota and per-object size cap, usage limits
+// and the cycle they are counted over, and the read/write tunables (timeouts,
+// max idle conns, signing tweaks) - plus its validators. Every backend listed in config.yaml is parsed into one
 // of these structs and handed to the backend runtime at startup.
 // -------------------------------------------------------------------------------
 
@@ -15,7 +15,12 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"strconv"
 	"time"
+
+	// Embeds the zone database, so usage_reset_timezone loads in an image
+	// that ships none.
+	_ "time/tzdata"
 
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
@@ -51,6 +56,9 @@ type BackendConfig struct {
 
 	RequestLimits []RequestPoolConfig `yaml:"request_limits"` // Per-operation request budgets (see RequestPoolConfig)
 	Unmetered     []string            `yaml:"unmetered"`      // Operations the provider does not bill, charged to no budget
+
+	UsageResetDay      int    `yaml:"usage_reset_day"`      // Day of the month the provider's usage cycle starts, 1-28 (default: 1)
+	UsageResetTimezone string `yaml:"usage_reset_timezone"` // IANA zone the cycle starts at midnight in (default: UTC)
 
 	HTTP BackendHTTPConfig `yaml:"http"` // Per-backend HTTP transport tuning
 }
@@ -166,7 +174,34 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 	b.HTTP.setDefaults()
 	errs = append(errs, nonNegativeBackendFieldErrs(prefix, b)...)
 	errs = append(errs, requestLimitErrs(prefix, b)...)
+	errs = append(errs, usageResetErrs(prefix, b)...)
 	return errs
+}
+
+// usageResetErrs checks the usage cycle settings: a reset day every month has,
+// and a zone name that loads.
+func usageResetErrs(prefix string, b *BackendConfig) []error {
+	var errs []error
+	if b.UsageResetDay < 0 || b.UsageResetDay > MaxUsageResetDay {
+		errs = append(errs, prefixedDetail(prefix, ErrUsageResetDayRange, strconv.Itoa(b.UsageResetDay)))
+	}
+	if _, err := b.UsageResetLocation(); err != nil {
+		errs = append(errs, prefixedDetail(prefix, ErrUsageResetTimezone, fmt.Sprintf("%q", b.UsageResetTimezone)))
+	}
+	return errs
+}
+
+// MaxUsageResetDay is the last day a usage cycle may start on: the last day
+// every month has, so a cycle never has to move to fit a short month.
+const MaxUsageResetDay = 28
+
+// UsageResetLocation returns the zone the backend's usage cycle starts at
+// midnight in: UTC when none is set.
+func (b *BackendConfig) UsageResetLocation() (*time.Location, error) {
+	if b.UsageResetTimezone == "" {
+		return time.UTC, nil
+	}
+	return time.LoadLocation(b.UsageResetTimezone)
 }
 
 // requiredBackendStringErrs returns errors for the universally-required

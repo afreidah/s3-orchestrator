@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.167.x (current)
+### v0.168.x (current)
+
+**Usage cycle settings ([#1770](https://github.com/afreidah/s3-orchestrator/issues/1770), v0.168.0)**
+
+Backends accept `usage_reset_day` (1 to 28, default 1) and `usage_reset_timezone` (IANA zone name, default UTC), the day and zone a provider's monthly usage cycle starts in. They are validated at startup and on reload, but are not yet used: every backend still counts usage over the calendar month in UTC until a following release switches counting over. The time zone database is now built into the binary, so zone names load in the Alpine image. No migration.
+
+### v0.167.x
 
 **Usage limits in the status API, TUI and admin status ([#1756](https://github.com/afreidah/s3-orchestrator/issues/1756), v0.167.0)**
 

@@ -522,7 +522,7 @@ func (r *RedisCounterBackend) stagedKey(period, backend, flushID string) string 
 // parses.
 func (r *RedisCounterBackend) parseStagedKey(key string) (core.UsageBatch, bool) {
 	rest, ok := strings.CutPrefix(key, r.prefix+":usage-staged:")
-	const periodLen = len(periodLayout)
+	const periodLen = len(core.PeriodLayout)
 	if !ok || len(rest) <= periodLen+2 || rest[periodLen] != ':' {
 		return core.UsageBatch{}, false
 	}

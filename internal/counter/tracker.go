@@ -279,8 +279,9 @@ func nearLimit(base core.Usage, cur *core.Usage, lim core.UsageLimits, threshold
 // FLUSH
 // -------------------------------------------------------------------------
 
-// periodLayout is the time layout of a usage period, one calendar month.
-const periodLayout = "2006-01"
+// defaultPeriod is the calendar month in UTC, the period every backend counts
+// over.
+var defaultPeriod core.UsagePeriod
 
 // monthCache is the formatted current month and the instant it stops being
 // current.
@@ -300,24 +301,17 @@ func CurrentPeriod() string {
 	if c := currentMonth.Load(); c != nil && now.Before(c.until) {
 		return c.period
 	}
-	first := monthStart(now)
-	c := &monthCache{period: first.Format(periodLayout), until: first.AddDate(0, 1, 0)}
+	c := &monthCache{period: defaultPeriod.Current(now), until: defaultPeriod.Next(now)}
 	currentMonth.Store(c)
 	return c.period
-}
-
-// monthStart returns the first instant of t's month in UTC.
-func monthStart(t time.Time) time.Time {
-	t = t.UTC()
-	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // flushPeriods returns the current and the previous month. A flush takes both,
 // so charges made just before a rollover are flushed into the month they
 // belong to after it.
 func flushPeriods() []string {
-	first := monthStart(time.Now())
-	return []string{first.Format(periodLayout), first.AddDate(0, -1, 0).Format(periodLayout)}
+	start := defaultPeriod.Start(time.Now())
+	return []string{defaultPeriod.Current(start), defaultPeriod.Current(start.Add(-time.Nanosecond))}
 }
 
 // FlushUsage writes every batch of counters the backend hands over to the
