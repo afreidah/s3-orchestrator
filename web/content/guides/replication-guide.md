@@ -7,7 +7,7 @@ weight: 3
 
 This guide explains how the S3 Orchestrator replication system works under the hood — how replicas are created, where they are placed, what side-effects to expect, and how to monitor and tune the process.
 
-For scenario-based walkthroughs, see [Local to Cloud Replication](../minio-cloud-replication/) or [Simple Multi-Cloud Redundancy](../multi-cloud-redundancy/).
+For scenario-based walkthroughs, see [Local to Cloud Replication](../local-cloud-replication/) or [Simple Multi-Cloud Redundancy](../multi-cloud-redundancy/).
 
 ## Overview
 
@@ -175,11 +175,11 @@ For example, a healthy backend at 90% utilization scores 2.1, while one at 50% s
 
 When no quota data is available for a backend, it receives a score of 2.5 (mid-range).
 
-## Encrypted Objects
+## Encrypted and Compressed Objects
 
-Encrypted objects are replicated as opaque binary streams. The replicator does not decrypt, re-encrypt, or re-wrap any data encryption keys. The exact same ciphertext that exists on the source backend is written to the target.
+Encrypted and compressed objects are replicated as opaque binary streams. The replicator does not decrypt, decompress, re-encrypt, or re-wrap any data encryption keys. The exact bytes that exist on the source backend are written to the target, so a compressed copy stays compressed and its replica costs the target the same reduced size against its quota.
 
-All encryption metadata — the wrapped DEK, key ID, and plaintext size — is cloned from the source copy's database record to the new replica's record. This means every replica is byte-identical on the backend and shares the same encryption envelope in the database.
+All encryption and compression metadata - the wrapped DEK, key ID, plaintext size, encoding and logical size - is cloned from the source copy's database record to the new replica's record. This means every replica is byte-identical on the backend and shares the same encryption envelope in the database.
 
 No master key access is required during replication, unless `integrity.verify_on_replicate` is on: then each new copy is decrypted to verify its hash before it is recorded. Otherwise the replicator only needs read access to the source backend and write access to the target.
 

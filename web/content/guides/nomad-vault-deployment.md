@@ -254,6 +254,13 @@ replication:
   batch_size: 50
   unhealthy_threshold: "10m"
 
+write_path:
+  parallel_copies:
+    enabled: true
+
+compression:
+  enabled: true
+
 encryption:
   enabled: true
   vault:
@@ -354,6 +361,8 @@ EOH
 - **`trusted_proxies`** ensures rate limiting uses the real client IP when behind a load balancer, not the proxy's IP
 - **`backend_circuit_breaker`** isolates individual backend failures so a single provider outage doesn't degrade the entire service
 - **`replication.factor: 2`** ensures every object exists on at least two backends for redundancy
+- **`write_path.parallel_copies`** has each write upload both copies at once, so the replicator only fills copies a write could not place instead of reading every object back off one provider to copy it to the other
+- **`compression`** stores objects as chunked zstd, so each copy occupies and transfers fewer bytes against the backends' quotas and usage limits; clients still see the object they wrote. See [Compression](../../docs/compression/)
 - **`usage_flush` adaptive mode** shortens the flush interval as backends approach usage limits, improving enforcement accuracy
 
 ## Step 5: Deploy

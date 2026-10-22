@@ -243,6 +243,8 @@ Change `quota_bytes` in the config and send `SIGHUP`. Quota limits are synced to
 
 Add a `replication` section with `factor > 1` and send `SIGHUP` (or restart). When restarting, the replication worker runs immediately at startup to begin creating copies of existing objects, then continues at the configured interval. With `SIGHUP`, the new factor takes effect on the next worker tick.
 
+The replicator brings existing objects up to the factor. For new writes, set [`write_path.parallel_copies.enabled: true`](configuration.md#write_pathparallel_copies) so each write uploads all its copies at once instead of leaving them to the replicator's next pass; `write_path` is read at startup, so this part needs a restart.
+
 Remember: the replication factor cannot exceed the number of backends.
 
 ### Enabling encryption on existing data

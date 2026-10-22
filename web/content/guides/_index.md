@@ -15,7 +15,7 @@ Step-by-step walkthroughs for common deployments and operations.
   {{< card link="access-control/" title="Setting Up Access Control" icon="shield-check" subtitle="Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane." >}}
   {{< card link="terraform-provider/" title="Provisioning with Terraform" icon="cube" subtitle="Declare the buckets, users, keypairs and grants a deployment serves." >}}
   {{< card link="replication-guide/" title="Understanding Replication" icon="duplicate" subtitle="How the replicator works, target selection, side effects, over-replication cleanup and monitoring." >}}
-  {{< card link="minio-cloud-replication/" title="Local to Cloud Replication" icon="cloud-upload" subtitle="Back up a local MinIO instance to the cloud with no sync scripts or extra tooling." >}}
+  {{< card link="local-cloud-replication/" title="Local to Cloud Replication" icon="cloud-upload" subtitle="Keep a copy of a self-hosted S3 store in the cloud with no sync scripts or extra tooling." >}}
   {{< card link="multi-cloud-redundancy/" title="Simple Multi-Cloud Redundancy" icon="globe" subtitle="Multi-cloud replication with automatic read failover and no application changes." >}}
   {{< card link="systemd-deployment/" title="Deploying with systemd" icon="terminal" subtitle="Install the Debian package and run as a hardened systemd service with hot reload." >}}
   {{< card link="nomad-vault-deployment/" title="Deploying on Nomad with Vault" icon="server" subtitle="Run as a Nomad job with Vault-managed secrets and Transit encryption." >}}

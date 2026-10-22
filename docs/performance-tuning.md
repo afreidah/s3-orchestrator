@@ -270,6 +270,8 @@ replication:
 - `unhealthy_threshold` sets the grace period before the replicator treats copies on a backend refusing reads as unavailable and creates replacements on backends serving reads. Set higher to avoid churn during brief outages; set lower for faster redundancy recovery. Requires `backend_circuit_breaker.enabled: true`.
 - The worker runs a catch-up pass on startup, so initial replication doesn't wait for the first interval.
 
+The worker is not the only way copies are made. With [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) enabled, each write uploads its copies itself, and the replicator only fills what a write could not place: failed uploads, writes made during an outage, imports, and writes that found the `max_in_flight` ceiling full. That removes the replicator's read-back - a full GET plus the source backend's egress - for every new object, and leaves the worker settings above governing the catch-up work alone. The extra copies' bytes go out at write time instead, so on a deployment whose uplink is the bottleneck, measure PUT throughput before leaving it on.
+
 For large backlogs (e.g., enabling replication on an existing dataset), temporarily increase `batch_size` to `500`, set `concurrency: 10`, and lower `worker_interval` to `"30s"`, then revert after catch-up.
 
 ## Cleanup Worker

@@ -56,24 +56,20 @@ The `spread` strategy distributes writes evenly across backends, keeping storage
 
 ## Step 2: Set the Replication Factor
 
-The replication factor controls how many copies of each object exist across your backends. Set it to the number of independent copies you want.
+The replication factor controls how many copies of each object exist across your backends. Set it to the number of independent copies you want, and turn on parallel copies so the write places them itself.
 
 ```yaml
 replication:
   factor: 2
-```
 
-With three backends and a replication factor of 2, each object is by default written to one backend on upload and then asynchronously copied to one additional backend. A factor of 3 would place a copy on every backend.
-
-To have the write place both copies itself instead of waiting for the replicator, add:
-
-```yaml
 write_path:
   parallel_copies:
     enabled: true
 ```
 
-The write then uploads to two backends at once and answers you on the first that commits, which matters most in a multi-cloud setup: the replicator's alternative is to read the object back out of one provider and write it to another, and you pay egress on the read.
+With three backends and a replication factor of 2, each upload goes to two backends at once and answers the client on the first that commits; the second finishes on its own. A factor of 3 would place a copy on every backend.
+
+The background replicator is the catch-all for copies a write did not place: an upload that failed, writes made while a backend was down, imported objects, and writes that found the `max_in_flight` ceiling full. Without parallel copies the replicator makes every extra copy, which in a multi-cloud setup means reading each object back out of one provider and writing it to another, paying egress on the read.
 
 {{< callout >}}
 A replication factor of 2 protects against a single provider outage. A factor of 3 protects against two simultaneous provider failures. Choose based on how critical your data is.
@@ -112,7 +108,7 @@ s3 = boto3.client('s3',
 s3.upload_file('report.pdf', 'myapp', 'report.pdf')
 ```
 
-Your application writes to a single endpoint. It does not know about OCI, R2, B2, or any other backend. The orchestrator routes the write and the replicator handles the rest.
+Your application writes to a single endpoint. It does not know about OCI, R2, B2, or any other backend. The orchestrator places both copies and the replicator fills anything a write missed.
 
 ## How Failover Works
 
@@ -148,14 +144,17 @@ Use the web dashboard to see replication status at a glance, or query Prometheus
 - **Backend health**: `s3o_circuit_breaker_state{name="<backend>"}` - 0=healthy, 1=down, 2=probing
 - **Failover events**: check structured logs for reads served from non-primary backends
 - **Health-aware copies**: `s3o_replication_health_copies_total` - non-zero means the replicator is creating replacement copies for down backends
+- **Copies still uploading**: `s3o_detached_uploads_depth` - copies still in flight after the client was answered; a rising floor means a provider is falling behind
+- **Writes that fell back**: `s3o_replication_write_fanout_skipped_total` - writes that found the `max_in_flight` ceiling full and left their extra copies to the replicator
 
 {{< callout type="warning" >}}
-Replication is asynchronous by default. There is a brief window after a write where the object exists on only one backend - for most workloads, seconds. Turning on `write_path.parallel_copies` narrows that window to the length of one upload, since the write places the copies itself; it does not eliminate it, because the client is answered on the first copy rather than the last.
+The client is answered on the first copy, not the last, so there is a window the length of one upload where the object exists on only one backend. Without parallel copies that window lasts until the replicator's next pass. Parallel copies also moves the extra uploads to write time: if your uplink is the bottleneck, PUT throughput can fall even as egress for read-backs goes away.
 {{< /callout >}}
 
 ## Important Notes
 
 - Adding or removing backends does not require application changes - update the config and restart the orchestrator
 - With `rebalance.enabled: true`, the rebalancer moves existing objects onto new backends on its next run; it is off by default
+- Compression shrinks every copy, and the compressed size is what counts against each provider's quota and usage limits; replicas carry the stored bytes as they are - see [Compression](../../docs/compression/)
 - Encryption can be layered on top of replication - see the [Encrypting Existing Data](../encrypting-existing-data/) guide
 - Free-tier limits on each provider can be enforced with quotas and usage limits - see the [Maximizing Free Tiers](../maximizing-free-tiers/) guide

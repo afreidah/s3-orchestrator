@@ -173,6 +173,12 @@ replication:
   batch_size: 50
   unhealthy_threshold: "10m"
 
+# Each write uploads both copies at once; the replicator fills only what a
+# write could not place.
+write_path:
+  parallel_copies:
+    enabled: true
+
 circuit_breaker:
   failure_threshold: 3
   open_timeout: "15s"
@@ -348,8 +354,18 @@ encryption:
 The `master_key_file` is validated at startup — the service will refuse to start if the file does not exist or is not exactly 32 bytes. Ensure the key file is in place before starting the service.
 {{< /callout >}}
 
-For Vault Transit encryption, see the [Deploying on Nomad with Vault](../nomad-vault-deployment/) guide — the encryption config is the same regardless of deployment method.
+For Vault Transit encryption, see the [Deploying on Nomad with Vault](../nomad-vault-deployment/) guide - the encryption config is the same regardless of deployment method.
 
+## Adding Compression
+
+To store objects as chunked zstd, so each copy occupies and transfers fewer bytes against the backends' quotas and usage limits, add to `config.yaml`:
+
+```yaml
+compression:
+  enabled: true
+```
+
+Restart the service (`sudo systemctl restart s3-orchestrator`); compression is read at startup and applies to new writes. Clients still see the object they wrote. To compress objects already stored, run `s3-orchestrator admin compress-existing`. See [Compression](../../docs/compression/) for the levels, thresholds and metrics.
 ## Upgrades
 
 To upgrade, download the new `.deb` and install it over the existing package:
