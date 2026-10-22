@@ -62,7 +62,7 @@ write_path:
 |---|---|---|
 | `enabled` | `false` | Whether a write places its own copies instead of leaving them to the replicator. |
 | `count` | `replication.factor` | Copies a write places. May not exceed the factor - the over-replication cleaner would delete anything past it about as fast as writes created it. A factor of 1 leaves the setting inert. |
-| `max_in_flight` | `server.max_concurrent_writes` | Ceiling on writes whose copies are still uploading after their client was answered. A write that finds it full places a single copy and leaves the rest to the replicator. |
+| `max_in_flight` | `server.max_concurrent_writes`, else `server.max_concurrent_requests` | Ceiling on writes whose copies are still uploading after their client was answered. A write that finds it full places a single copy and leaves the rest to the replicator. |
 
 Single-object PUTs only. Multipart uploads always write one copy and let the replicator make the rest.
 
@@ -89,22 +89,23 @@ Each scan emits an audit log entry with the number of copies created, objects ch
 
 ## Target Backend Selection
 
-When the replicator needs to place a new copy, it iterates through backends **in the order they appear in your configuration file** and picks the first eligible one. This is a first-fit algorithm, not a balanced distribution.
+When the replicator needs to place a new copy, it ranks the backends the same way a client write does: **in configuration order under `pack`**, and least-utilized first under `spread`. It then takes the first eligible one. Under `pack` this is a first-fit algorithm, not a balanced distribution.
 
 A backend is eligible if it meets all of these conditions:
 
 - It carries **no state flag**: it is not cordoned and not draining
 - It **does not already hold** a copy of the object
-- It is **serving uploads**: neither its backend breaker nor its PUT breaker is open
+- It is **serving uploads and downloads**: none of its backend, PUT or GET breakers is open
+- It is **within its monthly usage limits** and its `max_object_size`
 - It has **enough free space**: `quota - used_bytes - orphan_bytes - in-flight >= object_size`
 
 The free-space test is settled by the claim itself: before copying, the replicator inserts a pending intent for the copy on the target, and the insert succeeds only if the target still has room. A target that filled up since it was picked refuses the claim and the next one is tried. The intent holds the space until the copy is recorded, so concurrent copies cannot overfill a target.
 
 If no backend qualifies, the object remains under-replicated until the next scan.
 
-{{% notice warning %}}
-Because selection is first-fit by config order, replicas tend to concentrate on whichever backend appears earliest in your configuration and has available space. With a `pack` routing strategy this effect compounds — primary writes and replicas both favor the same backends, which can fill them unevenly. See [Side-Effects and Costs](#side-effects-and-costs) for details and mitigations.
-{{% /notice %}}
+{{< callout type="warning" >}}
+Under `pack`, selection is first-fit by config order, so replicas tend to concentrate on whichever backend appears earliest in your configuration and has available space, and primary writes favor the same backends, which can fill them unevenly. See [Side-Effects and Costs](#side-effects-and-costs) for details and mitigations.
+{{< /callout >}}
 
 ## Side-Effects and Costs
 
@@ -128,7 +129,7 @@ Replica bytes count toward the destination backend's quota. A 10 GB dataset with
 
 ### Uneven distribution
 
-The first-fit target selection means backends listed earlier in your configuration receive replicas preferentially. In the worst case, one backend can fill to capacity while others remain nearly empty. This is the exact scenario that can occur when using `pack` routing with replication — primary writes fill the first backend, and replicas also target it for other objects.
+Under `pack` routing, the first-fit target selection means backends listed earlier in your configuration receive replicas preferentially. In the worst case, one backend can fill to capacity while others remain nearly empty: primary writes fill the first backend, and replicas also target it for other objects. `spread` routing ranks replica targets by utilization and avoids this.
 
 ### Orphan bytes from failures
 
@@ -140,7 +141,7 @@ Several features work together to keep replication healthy:
 
 - **Place copies during the write** (`write_path.parallel_copies`) to remove the read half of every copy, which is the mitigation with the largest effect on both API counts and egress. It also sidesteps the uneven distribution below, since a write's copies are claimed together from the ranked candidates rather than by a separate first-fit pass.
 
-- **Use `spread` routing** to distribute primary writes across backends evenly, preventing the first-fit replica selection from compounding on already-full backends.
+- **Use `spread` routing** to rank both primary writes and replica targets by utilization, so neither piles onto already-full backends.
 
 - **The rebalancer** redistributes objects across backends to even out utilization over time, counteracting the uneven distribution that first-fit selection creates.
 
@@ -180,7 +181,7 @@ Encrypted objects are replicated as opaque binary streams. The replicator does n
 
 All encryption metadata — the wrapped DEK, key ID, and plaintext size — is cloned from the source copy's database record to the new replica's record. This means every replica is byte-identical on the backend and shares the same encryption envelope in the database.
 
-No master key access is required during replication. The replicator only needs read access to the source backend and write access to the target.
+No master key access is required during replication, unless `integrity.verify_on_replicate` is on: then each new copy is decrypted to verify its hash before it is recorded. Otherwise the replicator only needs read access to the source backend and write access to the target.
 
 ## Drain Interaction
 
@@ -198,10 +199,7 @@ A [cordoned](../../docs/operations/#cordoning-a-backend) backend is excluded fro
 
 The rebalancer moves objects between backends to even out utilization. These moves do not directly trigger replication — the rebalancer operates on object placement, not replica count.
 
-However, rebalancer moves can create temporary replication imbalances:
-
-- **Temporary under-replication** — if the rebalancer moves an object's primary copy while a replica exists elsewhere, there is a brief window where the database is updating. The next replication scan detects and corrects any shortfall.
-- **Temporary over-replication** — a rebalancer move can briefly result in an object existing on more backends than intended. The over-replication cleaner detects and removes excess copies on its next scan.
+A move records the new copy and removes the source in one transaction, so it never changes an object's copy count.
 
 Both the rebalancer and replicator use separate advisory locks (1001 and 1002), so they can run concurrently. Database-level safeguards — conditional inserts for replica records and compare-and-swap for moves — prevent data inconsistencies from concurrent operations.
 
@@ -215,7 +213,7 @@ Both the rebalancer and replicator use separate advisory locks (1001 and 1002), 
 | `s3o_replication_copies_created_total` | Counter | Total replica copies created across all scans. |
 | `s3o_replication_errors_total` | Counter | Total replication errors (individual object copy failures). Alert on sustained increase. |
 | `s3o_replication_duration_seconds` | Histogram | Time taken for each replication scan cycle. |
-| `s3o_replication_runs_total` | Counter | Total scan runs, labeled by `status` (`success` or `error`). Alert on repeated errors. |
+| `s3o_replication_runs_total` | Counter | Total scan runs, labeled by `status` (`success`, `partial`, `failed`, `empty`, `error`). Alert on repeated errors. |
 | `s3o_replication_health_copies_total` | Counter | Copies created specifically to replace backends that exceeded the unhealthy threshold. |
 
 ### Write-placed copy metrics
@@ -236,7 +234,7 @@ Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwis
 | `s3o_over_replication_pending` | Gauge | Objects currently above the target replication factor. |
 | `s3o_over_replication_removed_total` | Counter | Total excess copies removed. |
 | `s3o_over_replication_errors_total` | Counter | Total cleanup errors. Alert on sustained increase. |
-| `s3o_over_replication_runs_total` | Counter | Total cleanup runs, labeled by `status` (`success` or `error`). |
+| `s3o_over_replication_runs_total` | Counter | Total cleanup runs, labeled by `status` (`success`, `partial`, `failed`, `empty`, `error`). |
 | `s3o_over_replication_duration_seconds` | Histogram | Time taken for each cleanup cycle. |
 
 ### Rebalancer metrics
@@ -244,7 +242,7 @@ Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwis
 | Metric | Type | Description |
 |---|---|---|
 | `s3o_rebalance_pending` | Gauge | Objects planned for rebalance in the current cycle. |
-| `s3o_rebalance_objects_moved_total` | Counter | Total objects moved, labeled by `strategy`. |
+| `s3o_rebalance_objects_moved_total` | Counter | Total objects moved, labeled by `strategy` and `status`. |
 | `s3o_rebalance_runs_total` | Counter | Total rebalancer runs, labeled by `strategy` and `status`. |
 | `s3o_rebalance_duration_seconds` | Histogram | Rebalancer execution time. |
 | `s3o_rebalance_skipped_total` | Counter | Runs skipped, labeled by `reason` (threshold, empty_plan). |
@@ -253,7 +251,7 @@ Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwis
 
 - **`s3o_replication_pending > 0` for extended periods** — objects are stuck under-replicated. Check backend health, available quota, and circuit breaker state.
 - **`s3o_replication_errors_total` increasing steadily** — the replicator is failing to copy objects. Check logs for backend connectivity issues or permission errors.
-- **`s3o_replication_runs_total{status="error"}` increasing** — entire scan cycles are failing. This usually indicates a database connectivity issue or advisory lock contention.
+- **`s3o_replication_runs_total{status="error"}` increasing** - entire scan cycles are failing. This usually indicates a database connectivity issue; a tick skipped because another instance holds the lock is not counted as an error.
 - **`s3o_over_replication_pending > 0` for extended periods** — excess copies are not being cleaned up. Check that the cleanup worker is running and backends are reachable for deletions.
 - **Backend utilization skew** — compare `s3o_quota_bytes_used` across backends. Large disparities may indicate the first-fit selection is concentrating replicas unevenly.
 

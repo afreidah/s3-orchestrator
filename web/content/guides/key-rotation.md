@@ -39,7 +39,13 @@ If you're using Vault Transit, rotate the key in Vault itself:
 vault write -f transit/keys/s3-orchestrator/rotate
 ```
 
-The orchestrator uses the latest key version automatically. No config change or restart is needed for Vault-managed rotation - skip to Step 4.
+Vault wraps new DEKs with the latest key version on its own, so no config change or restart is needed. To re-wrap the existing DEKs under that version, skip to Step 4 and run it with the Vault key's ID rather than `--all-stale`:
+
+```bash
+s3-orchestrator admin rotate-encryption-key --old-key-id vault:transit/s3-orchestrator
+```
+
+`--all-stale` selects nothing here: a Vault key's ID is `vault:{mount}/{key}`, which stays the same when Vault rotates the key.
 
 ## Step 3: Restart the Orchestrator
 
@@ -91,9 +97,9 @@ If any DEKs failed, check the logs and retry - the command only processes DEKs n
 
 After all DEKs are re-wrapped, you can remove the old key from the config and restart. Wait first for multipart uploads started before the rotation to complete or be aborted: their parts were sealed under the old key, and the re-wrap pass covers stored objects only.
 
-{{% notice tip %}}
+{{< callout >}}
 Keep the old key backed up somewhere safe even after removing it from the config, in case you need to restore from a backup that predates the rotation.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Rotation Schedule
 

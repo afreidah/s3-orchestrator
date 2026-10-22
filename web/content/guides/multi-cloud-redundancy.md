@@ -75,9 +75,9 @@ write_path:
 
 The write then uploads to two backends at once and answers you on the first that commits, which matters most in a multi-cloud setup: the replicator's alternative is to read the object back out of one provider and write it to another, and you pay egress on the read.
 
-{{% notice tip %}}
+{{< callout >}}
 A replication factor of 2 protects against a single provider outage. A factor of 3 protects against two simultaneous provider failures. Choose based on how critical your data is.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 3: Configure a Virtual Bucket
 
@@ -149,13 +149,13 @@ Use the web dashboard to see replication status at a glance, or query Prometheus
 - **Failover events**: check structured logs for reads served from non-primary backends
 - **Health-aware copies**: `s3o_replication_health_copies_total` - non-zero means the replicator is creating replacement copies for down backends
 
-{{% notice warning %}}
+{{< callout type="warning" >}}
 Replication is asynchronous by default. There is a brief window after a write where the object exists on only one backend - for most workloads, seconds. Turning on `write_path.parallel_copies` narrows that window to the length of one upload, since the write places the copies itself; it does not eliminate it, because the client is answered on the first copy rather than the last.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Important Notes
 
-- Adding or removing backends does not require application changes - update the config and reload
-- The orchestrator re-balances objects automatically when new backends are added
+- Adding or removing backends does not require application changes - update the config and restart the orchestrator
+- With `rebalance.enabled: true`, the rebalancer moves existing objects onto new backends on its next run; it is off by default
 - Encryption can be layered on top of replication - see the [Encrypting Existing Data](../encrypting-existing-data/) guide
 - Free-tier limits on each provider can be enforced with quotas and usage limits - see the [Maximizing Free Tiers](../maximizing-free-tiers/) guide

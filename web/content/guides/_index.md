@@ -1,104 +1,26 @@
 ---
-title: "s3-orchestrator guides"
-linkTitle: "Guides"
+title: "Guides"
+seoTitle: "s3-orchestrator guides"
 description: "Step-by-step walkthroughs: stacking provider free tiers, multi-cloud redundancy, MinIO replication, and deployment on Nomad or systemd."
-chapter: true
 weight: 30
+cascade:
+  type: docs
 ---
 
+Step-by-step walkthroughs for common deployments and operations.
 
-<div class="landing-subheader">Step-by-step tutorials for common operations and deployment patterns.</div>
-
-<div class="landing-grid">
-  <a class="landing-card" href="local-demo/">
-    <i class="fas fa-play-circle landing-card-icon" style="color: #86efac;"></i>
-    <div>
-      <strong>Nomad/k8s Full Stack Demo</strong>
-      <p>Stand up a complete environment with Nomad or Kubernetes, three MinIO backends, and full observability in minutes.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="maximizing-free-tiers/">
-    <i class="fas fa-coins landing-card-icon" style="color: #6ee7b7;"></i>
-    <div>
-      <strong>Maximizing Free Tiers</strong>
-      <p>Combine free-tier storage from multiple cloud providers into a single pool without exceeding any provider's limits, and stop Bandwidth Alliance providers billing egress at all.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="access-control/">
-    <i class="fas fa-user-shield landing-card-icon" style="color: #5eead4;"></i>
-    <div>
-      <strong>Setting Up Access Control</strong>
-      <p>Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="terraform-provider/">
-    <i class="fas fa-cubes landing-card-icon" style="color: #818cf8;"></i>
-    <div>
-      <strong>Provisioning with Terraform</strong>
-      <p>Declare the buckets, users, keypairs and grants a deployment serves, narrow access without a gap, and move a bucket out of the configuration file without downtime.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="replication-guide/">
-    <i class="fas fa-copy landing-card-icon" style="color: #67e8f9;"></i>
-    <div>
-      <strong>Understanding Replication</strong>
-      <p>How the replicator works, target selection, side-effects, over-replication cleanup, and monitoring.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="minio-cloud-replication/">
-    <i class="fas fa-cloud-upload-alt landing-card-icon" style="color: #93c5fd;"></i>
-    <div>
-      <strong>Local to Cloud Replication</strong>
-      <p>Automatically back up a local MinIO instance to the cloud with no sync scripts or additional tooling.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="multi-cloud-redundancy/">
-    <i class="fas fa-globe landing-card-icon" style="color: #c4b5fd;"></i>
-    <div>
-      <strong>Simple Multi-Cloud Redundancy</strong>
-      <p>Transparent multi-cloud replication with automatic failover - no application changes required.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="systemd-deployment/">
-    <i class="fas fa-terminal landing-card-icon" style="color: #f9a8d4;"></i>
-    <div>
-      <strong>Deploying with systemd</strong>
-      <p>Install the Debian package and run as a systemd service with security hardening and hot reload.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="nomad-vault-deployment/">
-    <i class="fas fa-server landing-card-icon" style="color: #a78bfa;"></i>
-    <div>
-      <strong>Deploying on Nomad with Vault</strong>
-      <p>Run the orchestrator as a Nomad job with Vault-managed secrets and Transit encryption.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="event-notifications/">
-    <i class="fas fa-bell landing-card-icon" style="color: #fcd34d;"></i>
-    <div>
-      <strong>Event Notifications</strong>
-      <p>Send webhook notifications when objects are created, deleted, or when backends change state.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="encrypting-existing-data/">
-    <i class="fas fa-lock landing-card-icon" style="color: #fca5a5;"></i>
-    <div>
-      <strong>Encrypting Existing Data</strong>
-      <p>Enable server-side encryption and migrate unencrypted objects already stored across your backends.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="key-rotation/">
-    <i class="fas fa-key landing-card-icon" style="color: #e2b07a;"></i>
-    <div>
-      <strong>Key Rotation</strong>
-      <p>Rotate encryption master keys with zero downtime and no data re-encryption.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="tui-object-browser/">
-    <i class="fas fa-table-list landing-card-icon" style="color: #a5b4fc;"></i>
-    <div>
-      <strong>Browsing Objects with the TUI</strong>
-      <p>Explore the object namespace and inspect where every replica lives from the terminal.</p>
-    </div>
-  </a>
-</div>
+{{< cards >}}
+  {{< card link="local-demo/" title="Nomad/k8s Full Stack Demo" icon="play" subtitle="A complete environment on Nomad or Kubernetes with three MinIO backends and full observability." >}}
+  {{< card link="maximizing-free-tiers/" title="Maximizing Free Tiers" icon="cash" subtitle="Combine free-tier storage from several providers into one pool without exceeding any provider's limits." >}}
+  {{< card link="access-control/" title="Setting Up Access Control" icon="shield-check" subtitle="Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane." >}}
+  {{< card link="terraform-provider/" title="Provisioning with Terraform" icon="cube" subtitle="Declare the buckets, users, keypairs and grants a deployment serves." >}}
+  {{< card link="replication-guide/" title="Understanding Replication" icon="duplicate" subtitle="How the replicator works, target selection, side effects, over-replication cleanup and monitoring." >}}
+  {{< card link="minio-cloud-replication/" title="Local to Cloud Replication" icon="cloud-upload" subtitle="Back up a local MinIO instance to the cloud with no sync scripts or extra tooling." >}}
+  {{< card link="multi-cloud-redundancy/" title="Simple Multi-Cloud Redundancy" icon="globe" subtitle="Multi-cloud replication with automatic read failover and no application changes." >}}
+  {{< card link="systemd-deployment/" title="Deploying with systemd" icon="terminal" subtitle="Install the Debian package and run as a hardened systemd service with hot reload." >}}
+  {{< card link="nomad-vault-deployment/" title="Deploying on Nomad with Vault" icon="server" subtitle="Run as a Nomad job with Vault-managed secrets and Transit encryption." >}}
+  {{< card link="event-notifications/" title="Event Notifications" icon="bell" subtitle="Webhook notifications when objects are created or deleted, or backends change state." >}}
+  {{< card link="encrypting-existing-data/" title="Encrypting Existing Data" icon="lock-closed" subtitle="Enable server-side encryption and encrypt the objects already stored." >}}
+  {{< card link="key-rotation/" title="Key Rotation" icon="key" subtitle="Rotate encryption master keys with no downtime and no data re-encryption." >}}
+  {{< card link="tui-object-browser/" title="Browsing Objects with the TUI" icon="view-list" subtitle="Explore the object namespace and inspect where every replica lives from the terminal." >}}
+{{< /cards >}}

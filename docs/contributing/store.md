@@ -3,8 +3,6 @@ description: "Metadata store conventions: the composite interface, the narrow ro
 title: "Metadata Store Conventions"
 ---
 
-# Metadata Store Conventions
-
 The metadata store is split into a composite interface plus a set of
 narrow role interfaces. Consumers depend on the narrowest role they need;
 the producer-side composite exists to wire one implementation through
@@ -21,7 +19,7 @@ a store method does not require touching a long checklist.
 | `internal/store/core` | Role interfaces (`ObjectStore`, `QuotaStore`, `ReplicationStore`, ...). Shared error sentinels and value types live here. There is deliberately no composite of them: see below. |
 | `internal/store/sqlite` | Concrete `*Store` for SQLite. Asserts the full role set at compile time via `core.AssertEngine`. |
 | `internal/store/postgres` | Concrete `*Store` for PostgreSQL. Same compile-time assertions. |
-| `internal/store/storetest` | Declares the test-only composite `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`. |
+| `internal/store/storetest` | Declares the test-only composite `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`, plus per-role mocks (`MockObjectStore`, `MockQuotaStore`, ...) in `role_mocks.go`. |
 | `internal/di` | Declares the unexported `metadataStore` composite, the only place production code holds an opened engine before splitting it into roles. |
 | `internal/store/circuitbreaker.go` | `NewDatabaseBreaker` and the error filter; the breaker is installed at the SQL driver chokepoint so every store call passes through it. |
 
@@ -29,9 +27,10 @@ Worker / handler / proxy packages **never** import `internal/store/sqlite`
 or `internal/store/postgres` directly. They take a narrow role interface
 through DI and resolve to the concrete implementation only via
 `internal/di/store.go`. The `depguard` rule
-`store-boundary` in `.golangci.yml` enforces this mechanically: a
-non-`internal/di`, non-`internal/cli`, non-test file that imports a
-concrete store driver fails CI with a pointer back to this page.
+`store-boundary` in `.golangci.yml` enforces this mechanically: a file
+outside `internal/store`, `internal/di`, `internal/cli` and `cmd` that is
+not a test and imports a concrete store driver fails CI with a pointer back
+to this page.
 
 ---
 
@@ -43,8 +42,10 @@ concrete store driver fails CI with a pointer back to this page.
    `sqlite/store.go` and `postgres/store.go` fails the build if either
    implementation is missing, naming the method that is absent.
 3. From the repo root run `go generate ./internal/store/storetest/...`
-   to regenerate the gomock mocks. The composite `storetest.MetadataStore`
-   is the single mock source of truth. `storetest/permissive.go` is
+   to regenerate the gomock mocks: `MockMetadataStore` for the composite
+   `storetest.MetadataStore`, and the per-role mocks in `role_mocks.go`. A
+   new role that needs its own mock must be added to that second
+   `go:generate` list. `storetest/permissive.go` is
    hand-written: if a fixture may pass through the new method, add a stanza
    for it there, because mockgen does not.
 4. The driver-level circuit breaker installed by `NewDatabaseBreaker`
@@ -80,8 +81,8 @@ concrete store driver fails CI with a pointer back to this page.
 - **Per-role compile-time assertions**: `core.AssertEngine[*Store]`
   covers every role in one line. Adding
   `var _ core.ObjectStore = (*Store)(nil)` would be redundant.
-- **Hand-written mocks**: the gomock-generated `MockMetadataStore` is
-  the only mock the test suite uses. New methods appear there
+- **Hand-written mocks**: the gomock-generated `MockMetadataStore` and
+  per-role mocks are what the test suite uses. New methods appear there
   automatically after `go generate`.
 
 ---

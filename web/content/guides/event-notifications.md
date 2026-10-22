@@ -65,7 +65,7 @@ notifications:
 |-------|---------|-------------|
 | `url` | (required) | HTTP(S) endpoint URL to POST events to |
 | `events` | (required) | List of event type patterns to match (see [Event Types](#event-types)) |
-| `prefix` | (none) | Only deliver data events whose subject starts with this prefix |
+| `prefix` | (none) | Only deliver events whose subject starts with this prefix; events with no subject are always delivered |
 | `secret` | (none) | HMAC-SHA256 signing key for payload verification |
 | `timeout` | `5s` | HTTP request timeout per delivery attempt |
 | `max_retries` | `3` | Maximum delivery attempts before the event is dropped |
@@ -120,7 +120,7 @@ The `events` filter supports trailing wildcards:
 | `*` | All events |
 | `s3:ObjectCreated:*` | All object creation events (Put, Copy, CompleteMultipartUpload) |
 | `s3:ObjectRemoved:*` | All object deletion events (Delete, DeleteBatch) |
-| `backend.*` | All backend state events (circuit, capacity, drain, removed) |
+| `backend.*` | All backend state events (circuit, capacity, drain, removed, cordon) |
 | `integrity.*` | Integrity corruption events |
 
 ## Payload Format
@@ -205,7 +205,7 @@ func verify(body []byte, secret, signature string) bool {
 
 ## Prefix Filtering
 
-The `prefix` field on an endpoint filters **data events only** (S3 object events). Operational events are always delivered if they match the event pattern, regardless of prefix.
+The `prefix` field on an endpoint filters every event that has a subject: object events by their key, and operational events by their subject, which is a backend name or an object key. Events without a subject, such as `s3:ObjectRemoved:DeleteBatch` and the cycle-completed and service events, are always delivered. Keep operational events on an endpoint without a `prefix`, or a prefix meant for object keys will filter them out.
 
 ```yaml
 notifications:
@@ -227,7 +227,7 @@ The orchestrator exposes Prometheus metrics for notification delivery:
 |--------|------|-------------|
 | `s3o_notification_sent_total` | counter | Successful deliveries (labels: endpoint, event_type) |
 | `s3o_notification_failed_total` | counter | Failed delivery attempts (labels: endpoint, event_type) |
-| `s3o_notification_dropped_total` | counter | Events dropped (dampened or enqueue failure) |
+| `s3o_notification_dropped_total` | counter | Events dropped (dampened, enqueue failure, or delivery retries exhausted) |
 | `s3o_notification_queue_depth` | gauge | Current outbox queue depth |
 | `s3o_notification_duration_seconds` | histogram | Delivery latency (labels: endpoint) |
 

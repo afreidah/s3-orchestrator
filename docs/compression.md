@@ -2,7 +2,6 @@
 description: "At-rest chunked zstd compression: what changes on the backend, what stays identical to the object the client wrote, and how to enable it."
 title: "Compression"
 linkTitle: "Compression"
-weight: 28
 ---
 
 At-rest compression. When enabled, objects are stored on backends as chunked zstd; sizes, ETags and content hashes stay those of the object the client wrote. Disabled by default.

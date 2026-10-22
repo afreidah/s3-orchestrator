@@ -1,0 +1,46 @@
+{{- /*
+  Structured data for search engines: the project as software on the home
+  page, each documentation page as a technical article. The project name
+  collides with generic S3 tooling in search results, and the record is what
+  ties it to this repository.
+*/ -}}
+{{- $description := partial "utils/page-description.html" . | chomp -}}
+{{- if .IsHome -}}
+  {{- $data := dict
+    "@context" "https://schema.org"
+    "@type" "SoftwareSourceCode"
+    "name" site.Title
+    "description" $description
+    "url" .Permalink
+    "codeRepository" "https://github.com/afreidah/s3-orchestrator"
+    "programmingLanguage" "Go"
+    "license" "https://opensource.org/licenses/MIT"
+    "image" ("images/og-card.png" | absURL)
+  -}}
+  <script type="application/ld+json">{{ $data | jsonify | safeJS }}</script>
+{{- else if and .IsPage (in (slice "docs" "guides") .Section) -}}
+  {{- $data := dict
+    "@context" "https://schema.org"
+    "@type" "TechArticle"
+    "headline" (.Params.seoTitle | default .Title)
+    "description" $description
+    "url" .Permalink
+    "image" ("images/og-card.png" | absURL)
+    "isPartOf" (dict "@type" "WebSite" "name" site.Title "url" site.Home.Permalink)
+  -}}
+  {{- with .Lastmod -}}
+    {{- $data = merge $data (dict "dateModified" (.Format "2006-01-02T15:04:05Z07:00")) -}}
+  {{- end -}}
+  <script type="application/ld+json">{{ $data | jsonify | safeJS }}</script>
+{{- end -}}
+{{- /*
+  Diagram styling, loaded only under diagrams/. Every page there renders into
+  the same container id, so one stylesheet covers all of them and none of the
+  weight lands on pages that carry no diagram.
+*/ -}}
+{{- if eq .Section "diagrams" -}}
+  {{- with resources.Get "css/diagrams.css" -}}
+    {{- $css := . | minify | fingerprint -}}
+    <link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}" />
+  {{- end -}}
+{{- end -}}

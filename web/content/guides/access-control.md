@@ -45,9 +45,9 @@ auth:
 
 Every value supports `${ENV_VAR}` expansion, so a Vault template, a Nomad template or a Kubernetes secret can supply both halves without the secret touching disk.
 
-{{% notice tip %}}
+{{< callout >}}
 `auth.root` is required when the dashboard is enabled, because a deployment holding no credential at all would have nothing able to log in and create the first user. A pure S3 endpoint that administers itself through credentials already in its store can leave the stanza out entirely.
-{{% /notice %}}
+{{< /callout >}}
 
 Point the CLI at the deployment. The address can come from the config file, but the keypair never does - it comes from your own flags or environment:
 
@@ -61,7 +61,7 @@ s3-orchestrator admin status
 
 ## Step 2: Onboard a client with only what it needs
 
-A nightly backup job writes new objects and never reads or deletes them. Granting it the bucket outright would give it `delete` too, so grant the four permissions it uses and leave the rest off.
+A nightly backup job writes new objects and never reads or deletes them. Granting it the bucket outright would give it `delete` too, so grant the three permissions it uses and leave the rest off.
 
 The user comes first, because a keypair belongs to an identity rather than to a bucket:
 
@@ -90,10 +90,10 @@ That keeps the orchestrator out of the business of generating secrets, and makes
 
 The order matters only in that a credential needs its user first and a grant needs both sides. A user created but not yet granted anything authenticates successfully and reaches nothing, which is a safe intermediate state to leave it in - and a clearer answer for the client than a failed signature would be.
 
-Confirm what the job can now do:
+Confirm what the job can now do; the Grants column lists each of a user's grants and its permissions:
 
 ```bash
-s3-orchestrator admin grant list
+s3-orchestrator admin user list
 ```
 
 `-permissions` defaults to `all`, which is every data-plane permission. On a backend or orchestrator grant, pass `admin-all` for the control-plane equivalent - the two vocabularies do not mix, and `all` on a backend is refused rather than quietly reinterpreted.
@@ -132,9 +132,9 @@ s3-orchestrator admin grant add -user user-ops \
 
 `-name '*'` covers every backend including ones added later. Scoping to a single provider instead is `-name wasabi-eu`, and it means what it says: a pass that names no backend runs against the whole fleet, so it is authorized as `backend:*` and an operator granted one provider cannot start a conversion that spends egress on the rest.
 
-{{% notice warning %}}
+{{< callout type="warning" >}}
 `admin-provision` is worth withholding unless the role genuinely needs it. A grant carrying it can mint a grant carrying anything, which makes it equivalent to root by a short path.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 4: Change access after the fact
 

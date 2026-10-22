@@ -1,26 +1,66 @@
-/* -----------------------------------------------------------------------------
-   Diagram presentation for the pages under diagrams/.
+/* -------------------------------------------------------------------------------
+ * Diagrams
+ *
+ * Author: Alex Freidah
+ *
+ * Presentation for the pages under diagrams/. Every page renders into
+ * #ac-diagram and shows details in #ac-tooltip, so styling both here reaches
+ * all of them. Colours come from the site palette in custom.css, so the
+ * diagrams follow the light and dark themes; node colours are set by
+ * assets/js/diagram.js.
+ * ------------------------------------------------------------------------------- */
 
-   Every diagram page renders into #ac-diagram and hovers details out of
-   #ac-tooltip, so styling both here reaches all of them without touching page
-   markup.
+/* Node colours by role, as fill, stroke and text, for each theme. The diagram
+   script colours nodes from these, and the legend swatches use them too. */
+:root {
+  --dg-entry-fill: #1f7a5a;      --dg-entry-stroke: #1f7a5a;      --dg-entry-text: #ffffff;
+  --dg-success-fill: #d8f0e5;    --dg-success-stroke: #2a9d73;    --dg-success-text: #0e3b2c;
+  --dg-process-fill: #eef6f2;    --dg-process-stroke: #2f8f6c;    --dg-process-text: #0e1211;
+  --dg-decision-fill: #ffffff;   --dg-decision-stroke: #2a9d73;   --dg-decision-text: #0e1211;
+  --dg-storage-fill: #e3f1eb;    --dg-storage-stroke: #3f9c7b;    --dg-storage-text: #0e1211;
+  --dg-filter-fill: #fbf3e0;     --dg-filter-stroke: #b8892b;     --dg-filter-text: #3d2f0b;
+  --dg-reject-fill: #fbe9e9;     --dg-reject-stroke: #c25454;     --dg-reject-text: #4a1212;
+  --dg-background-fill: #f2f4f3; --dg-background-stroke: #9aa6a1; --dg-background-text: #2a332f;
+}
 
-   The width rules are the load-bearing part. Mermaid is initialised with
-   useMaxWidth, which scales a diagram down to the content column; a tall flow
-   like the write path then renders its labels too small to read. Letting the
-   svg keep its natural width and scrolling the container instead trades a
-   horizontal scrollbar on narrow screens for legible text everywhere.
-   -------------------------------------------------------------------------- */
+.dark {
+  --dg-entry-fill: #1f7a5a;      --dg-entry-stroke: #34b882;      --dg-entry-text: #ffffff;
+  --dg-success-fill: #17604a;    --dg-success-stroke: #34b882;    --dg-success-text: #ffffff;
+  --dg-process-fill: #16231f;    --dg-process-stroke: #2f8f6c;    --dg-process-text: #e6efeb;
+  --dg-decision-fill: #111917;   --dg-decision-stroke: #34b882;   --dg-decision-text: #cfe3da;
+  --dg-storage-fill: #132923;    --dg-storage-stroke: #4aaa8a;    --dg-storage-text: #cfe3da;
+  --dg-filter-fill: #2a2414;     --dg-filter-stroke: #c9a24a;     --dg-filter-text: #f1e6c8;
+  --dg-reject-fill: #2c1616;     --dg-reject-stroke: #d06a6a;     --dg-reject-text: #f3d6d6;
+  --dg-background-fill: #1a1f1d; --dg-background-stroke: #6b7a74; --dg-background-text: #d4dcd8;
+}
 
+/* A legend swatch is a small node in its role's colours. */
+.dg-swatch {
+  display: inline-block;
+  width: 2.2rem;
+  height: 1.1rem;
+  vertical-align: middle;
+  border: 1.5px solid;
+  border-radius: 5px;
+}
+
+.dg-entry { background: var(--dg-entry-fill); border-color: var(--dg-entry-stroke); }
+.dg-success { background: var(--dg-success-fill); border-color: var(--dg-success-stroke); }
+.dg-process { background: var(--dg-process-fill); border-color: var(--dg-process-stroke); }
+.dg-decision { width: 1.1rem; background: var(--dg-decision-fill); border-color: var(--dg-decision-stroke); border-radius: 3px; transform: rotate(45deg) scale(0.8); }
+.dg-storage { background: var(--dg-storage-fill); border-color: var(--dg-storage-stroke); }
+.dg-filter { background: var(--dg-filter-fill); border-color: var(--dg-filter-stroke); }
+.dg-reject { background: var(--dg-reject-fill); border-color: var(--dg-reject-stroke); }
+.dg-background { background: var(--dg-background-fill); border-color: var(--dg-background-stroke); }
+
+/* The frame matches the site's code blocks, and the diagram is scaled to fit
+   it. */
 #ac-diagram {
   margin: 2rem 0;
   padding: 1.5rem 1rem;
-  overflow-x: auto;
-  border: 1px solid #303a35;
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 50% 0, #22302b 0, transparent 55%),
-    #191c23;
+  background-color: var(--s3o-surface);
+  border: 1px solid var(--s3o-border);
+  border-radius: 0.75rem;
 }
 
 #ac-diagram svg {
@@ -29,72 +69,113 @@
   margin: 0 auto;
 }
 
-/*
-  The width override applies to the flowcharts only. The schema page renders an
-  ER diagram with useMaxWidth off and its own entity sizing, so it already emits
-  the width it wants; forcing a minimum on top of that scales it past the
-  viewport until a single table fills the frame.
-*/
-#ac-diagram svg:not(#db-mermaid-svg) {
-  width: auto !important;
-  max-width: none !important;
-  min-width: 100%;
-}
-
-/* Softer corners than mermaid's default square nodes. */
 #ac-diagram .node rect {
-  rx: 8px;
-  ry: 8px;
+  rx: 10px;
+  ry: 10px;
 }
 
-/* Mermaid draws edge labels on an opaque plate. Matching it to the container
-   removes the grey blocks that otherwise sit on top of every connector. */
 #ac-diagram .edgeLabel {
-  color: #cbd5d1;
+  color: var(--s3o-muted);
   font-size: 12px;
 }
 
 #ac-diagram .edgeLabel rect,
-#ac-diagram .edgeLabel .label-container {
-  fill: #191c23 !important;
-  background-color: #191c23 !important;
-  opacity: 0.95 !important;
+#ac-diagram .edgeLabel .label-container,
+#ac-diagram .edgeLabel p {
+  background-color: var(--s3o-surface) !important;
+  fill: var(--s3o-surface) !important;
 }
 
-#ac-diagram .flowchart-link {
-  stroke-width: 1.75px;
-}
-
-#ac-diagram marker path {
-  fill: #7f8b86 !important;
-  stroke: #7f8b86 !important;
-}
-
-/* Subgraph frames sit behind their nodes rather than competing with them. */
 #ac-diagram .cluster rect {
   rx: 12px;
   ry: 12px;
   stroke-dasharray: 4 3;
 }
 
+/* Mermaid sizes a subgraph title before this applies, so only its colour is
+   changed here; a different size or case would clip it. */
 #ac-diagram .cluster-label,
 #ac-diagram .cluster text {
-  fill: #8fa39b !important;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  color: var(--s3o-muted) !important;
+  fill: var(--s3o-muted) !important;
 }
 
-/*
-  The detail panel is positioned against the viewport, and the largest entries
-  are taller than it. Capping the height and scrolling inside keeps the whole
-  entry reachable; the panel already listens for its own mouseleave, so the
-  pointer can move into it to scroll without dismissing it.
-*/
+/* Hovering a node highlights every path through it and dims the rest. */
+#ac-diagram .node {
+  cursor: pointer;
+}
+
+#ac-diagram .node,
+#ac-diagram path[data-edge="true"],
+#ac-diagram .edgeLabel {
+  transition: opacity 0.15s, filter 0.15s;
+}
+
+#ac-diagram svg.highlighting .node,
+#ac-diagram svg.highlighting path[data-edge="true"],
+#ac-diagram svg.highlighting .edgeLabel {
+  opacity: 0.15;
+}
+
+#ac-diagram svg.highlighting .node.highlight,
+#ac-diagram svg.highlighting path[data-edge="true"].highlight,
+#ac-diagram svg.highlighting .edgeLabel.highlight {
+  opacity: 1;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s3o-link) 45%, transparent));
+}
+
+/* -------------------------------------------------------------------------
+ * TOOLTIP
+ * ------------------------------------------------------------------------- */
+
+/* Positioned against the viewport. The largest entries are taller than it,
+   so the height is capped and the panel scrolls; it listens for its own
+   mouseleave, so the pointer can move in to scroll without dismissing it. */
 #ac-tooltip {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  max-width: 400px;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 0.8rem 0.95rem;
+  color: var(--s3o-text);
+  background-color: var(--s3o-bg);
+  border: 1px solid var(--s3o-border);
+  border-radius: 0.6rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+#ac-tooltip h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--s3o-text);
+}
+
+#ac-tooltip p {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--s3o-muted);
+}
+
+#ac-tooltip a {
+  color: var(--s3o-link);
+}
+
+#ac-tooltip code {
+  padding: 1px 4px;
+  font-size: 0.72rem;
+  background-color: var(--s3o-surface);
+  border: 1px solid var(--s3o-border);
+  border-radius: 3px;
+}
+
+#ac-tooltip .ac-metric {
+  font-style: italic;
+  font-size: 0.72rem;
 }
 
 #ac-tooltip::-webkit-scrollbar {
@@ -102,18 +183,79 @@
 }
 
 #ac-tooltip::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: var(--s3o-border);
   border-radius: 4px;
 }
 
-/* Hovering a node is the affordance for the tooltip, so say so. */
-#ac-diagram .node {
-  cursor: pointer;
+/* The schema diagram's tooltips list a table's columns and indexes. */
+#ac-tooltip table.ac-cols {
+  width: 100%;
+  margin: 0.3rem 0;
+  border-collapse: collapse;
+  font-size: 0.68rem;
 }
 
-#ac-diagram .node:hover rect,
-#ac-diagram .node:hover polygon,
-#ac-diagram .node:hover circle,
-#ac-diagram .node:hover ellipse {
-  filter: brightness(1.18);
+#ac-tooltip table.ac-cols th {
+  padding: 2px 6px 2px 0;
+  text-align: left;
+  font-weight: 600;
+  color: var(--s3o-muted);
+  background: none;
+  border-bottom: 1px solid var(--s3o-border);
+}
+
+#ac-tooltip table.ac-cols td {
+  padding: 1px 6px 1px 0;
+  border: none;
+}
+
+#ac-tooltip table.ac-cols td:first-child {
+  font-family: ui-monospace, monospace;
+  color: var(--s3o-link);
+}
+
+#ac-tooltip table.ac-cols td.pk {
+  color: #e08a3c;
+}
+
+#ac-tooltip table.ac-cols td.fk {
+  color: #a87ee8;
+}
+
+#ac-tooltip .ac-idx {
+  margin-top: 0.2rem;
+  font-size: 0.66rem;
+  color: var(--s3o-muted);
+}
+
+/* A badge names the node's role, in the colour of its role. */
+#ac-tooltip .ac-badge {
+  --badge: var(--s3o-link);
+  display: inline-block;
+  margin-bottom: 0.45rem;
+  padding: 1px 7px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--badge);
+  background-color: color-mix(in srgb, var(--badge) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge) 40%, transparent);
+  border-radius: 4px;
+}
+
+.ac-badge-filter,
+.ac-badge-middleware,
+.ac-badge-cb,
+.ac-badge-usage {
+  --badge: #c9a24a !important;
+}
+
+.ac-badge-reject {
+  --badge: #d06a6a !important;
+}
+
+.ac-badge-background,
+.ac-badge-cleanup,
+.ac-badge-observability {
+  --badge: var(--s3o-muted) !important;
 }

@@ -36,8 +36,11 @@ backends:
     bucket: data
     access_key_id: "${MINIO_ACCESS_KEY}"
     secret_access_key: "${MINIO_SECRET_KEY}"
-    quota_bytes: 0  # No quota - local storage is yours
+    force_path_style: true  # MinIO addresses buckets by path, not subdomain
+    quota_bytes: 107374182400  # 100 GB - set to the space MinIO has
 ```
+
+Either every backend sets `quota_bytes` or none does; a config that mixes the two is refused at startup. Since the cloud backend below has a quota, MinIO needs one too.
 
 ## Step 2: Add a Cloud Backend
 
@@ -51,7 +54,8 @@ backends:
     bucket: data
     access_key_id: "${MINIO_ACCESS_KEY}"
     secret_access_key: "${MINIO_SECRET_KEY}"
-    quota_bytes: 0
+    force_path_style: true
+    quota_bytes: 107374182400
 
   - name: r2
     endpoint: https://<account-id>.r2.cloudflarestorage.com
@@ -92,6 +96,23 @@ echo "Access Key: $(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')"
 echo "Secret Key: $(openssl rand -base64 30)"
 ```
 
+The bucket's credential reaches only the bucket. The `s3-orchestrator admin` commands used below need the administering credential, declared under `auth.root` with a pair generated the same way:
+
+```yaml
+auth:
+  root:
+    access_key_id: "${ADMIN_ACCESS_KEY}"
+    secret_access_key: "${ADMIN_SECRET_KEY}"
+```
+
+The admin CLI signs its requests with that pair, read from `S3O_ACCESS_KEY_ID` and `S3O_SECRET_ACCESS_KEY`, and finds the instance through `S3O_ADMIN_ADDR`:
+
+```bash
+export S3O_ADMIN_ADDR=http://orchestrator-host:9000
+export S3O_ACCESS_KEY_ID=$ADMIN_ACCESS_KEY
+export S3O_SECRET_ACCESS_KEY=$ADMIN_SECRET_KEY
+```
+
 ## Step 5: Point Clients at the Orchestrator
 
 Update your application or S3 client to use the orchestrator's endpoint instead of MinIO directly.
@@ -121,9 +142,9 @@ When MinIO comes back online, the replication worker detects that objects writte
 
 No changes are needed on the MinIO side. It does not need to know about the orchestrator or the cloud backend.
 
-{{% notice info %}}
+{{< callout type="info" >}}
 **Encryption and replication:** If encryption is enabled, objects are encrypted before they are written to any backend. Replicas are copied as opaque ciphertext — the replicator does not decrypt and re-encrypt, it streams the encrypted bytes directly. All copies share the same encryption key metadata, so any copy can be decrypted by the orchestrator. Enabling or disabling encryption does not affect the replication process.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Monitoring Replication
 
@@ -133,16 +154,16 @@ Track replication progress through the web dashboard or Prometheus metrics:
 - **Replication operations**: `s3o_replication_copies_created_total` - completed copies
 - **Per-backend storage**: `s3o_quota_bytes_used` - confirms objects are landing on R2
 
-{{% notice warning %}}
+{{< callout type="warning" >}}
 Replication copies count against the cloud backend's quota and usage limits. If you set a 10 GB quota on R2, that 10 GB is shared between direct writes and replicated objects. Size your quota to accommodate the full contents of your MinIO instance.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Important Notes
 
 - Replication is asynchronous by default - there is a brief window after a write where the object exists only on MinIO before the copy completes. Setting `write_path.parallel_copies.enabled: true` has the write upload to both backends at once instead, narrowing that window to the length of one upload and sparing MinIO the read-back the replicator would otherwise make
 - The replicator is idempotent - restarting the orchestrator does not duplicate objects
 - To replicate to multiple cloud providers for extra safety, add more backends and increase the replication factor
-- If you have existing objects in MinIO, the orchestrator can discover and replicate them via the admin sync operation
+- Objects already in MinIO can be imported with `s3-orchestrator sync --backend local-minio --bucket myapp`. Only objects under the virtual bucket's prefix in the MinIO bucket (`myapp/...`) are imported as part of `myapp` and replicated. Objects at the root of the bucket are imported as unmanaged: they count toward the backend's quota, but clients cannot read them through the orchestrator and they are never replicated. Copy them under `myapp/` in MinIO before importing ([#1765](https://github.com/afreidah/s3-orchestrator/issues/1765) tracks importing them in place)
 
 ## Optional: Enable Encryption
 
@@ -158,12 +179,12 @@ Generate a key with `openssl rand -base64 32` and store it securely.
 
 After restarting the orchestrator, all new writes are encrypted automatically. Both the primary copy on MinIO and the replica on the cloud backend are encrypted — backends never see plaintext.
 
-To encrypt objects that were uploaded before encryption was enabled, hit the admin API:
+To encrypt objects that were uploaded before encryption was enabled, run the encryption pass with the admin CLI:
 
 ```bash
-curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}"
-# {"status":"complete","encrypted":N,"skipped":N,"changed":N,"failed":N,"total":N}
+s3-orchestrator admin encrypt-existing
 ```
+
+It reports how many objects it encrypted, skipped and failed when it finishes. Each copy is rewritten to a new path on its own backend, so it is encrypted on MinIO and R2 alike. `-max N` stops after N objects, so a large bucket can be converted over several runs.
 
 For production deployments, consider using [Vault Transit](../nomad-vault-deployment/) instead of an inline key. See the [Encrypting Existing Data](../encrypting-existing-data/) guide for the full walkthrough and the [Key Rotation](../key-rotation/) guide for rotating master keys.

@@ -67,12 +67,7 @@ Encrypt all existing unencrypted objects with the CLI:
 s3-orchestrator admin encrypt-existing
 ```
 
-or by calling the admin API directly:
-
-```bash
-curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}"
-```
+The CLI signs the request with the keypair from `-access-key`/`-secret-key` or `$S3O_ACCESS_KEY_ID`/`$S3O_SECRET_ACCESS_KEY`: the `auth.root` credential, or one granted `admin.convert`. Pass `-backend NAME` to convert one backend's copies, or `-max N` to stop after N copies.
 
 This processes copies in batches of 100: each copy is downloaded from its backend, encrypted, and written to a new path on the same backend. The new row replaces the plaintext one in one transaction, then the plaintext bytes are deleted, so a reader sees either the old copy or the new one. A compressed copy keeps its encoding. The response shows progress:
 
@@ -82,9 +77,9 @@ This processes copies in batches of 100: each copy is downloaded from its backen
 
 `skipped` counts copies on a backend with no usage headroom, no room for the larger ciphertext, or a drain in progress. `changed` counts copies a client wrote while the pass was converting them: the client's write stands and the pass deletes the bytes it wrote. See [When a conversion meets a live write](../../docs/admin-api/#when-a-conversion-meets-a-live-write).
 
-{{% notice warning %}}
+{{< callout type="warning" >}}
 This operation downloads and rewrites every unencrypted copy. Each rewrite costs a GET, a PUT and a DELETE and counts against backend quotas and usage limits (API requests, egress, ingress). Plan for the additional network traffic and time, especially with large datasets.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 5: Verify
 

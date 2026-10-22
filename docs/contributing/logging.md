@@ -3,8 +3,6 @@ description: "Structured log/slog conventions: the shared key vocabulary every c
 title: "Structured Logging Conventions"
 ---
 
-# Structured Logging Conventions
-
 All operational logs in s3-orchestrator are structured `log/slog` JSON.
 The conventions below pin every call site to one vocabulary so log
 pipelines (Loki, Nomad UI, Grafana panels) can aggregate without
@@ -29,8 +27,9 @@ call site uses:
 | `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Use in typed-attr calls (`slog.LogAttrs`, `audit.Log`) or where `err` may be nil — see the error-attribute section below. |
 | `logfmt.Outcome(value)` | `slog.Attr` | `outcome` attr; pass one of `OutcomeOK`, `OutcomeError`, `OutcomeSkipped`, `OutcomeTimeout`, `OutcomeNotFound`. |
 | `logfmt.Component(name)` | `slog.Attr` | `component` attr used at logger construction. |
-| `logfmt.RequestIDFromCtx(ctx)` | `slog.Attr` | Pulls the audit request ID from context (empty attr if none). |
-| `logfmt.LoggerFromCtx(ctx, base)` | `*slog.Logger` | Returns `base` scoped with the request ID when one is on context. |
+| `logfmt.NewErrAttrHandler(inner)` | `slog.Handler` | Wraps a handler so any error-typed attribute is rendered as its `Error()` string; see below. |
+
+The request ID is read from context with `audit.RequestID(ctx)`.
 
 ---
 
@@ -42,17 +41,18 @@ calls flow through it.
 
 ```go
 type PendingReaper struct {
-    deps  CleanupOps
-    store PendingReaperStore
+    deps  Ops
+    store core.PendingStore
     log   *slog.Logger
     // ...
 }
 
-func NewPendingReaper(deps CleanupOps, store PendingReaperStore) *PendingReaper {
+func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
     return &PendingReaper{
-        deps:  deps,
-        store: store,
+        deps:  deps.Ops,
+        store: deps.Store,
         log:   slog.Default().With(logfmt.Component("pending_reaper")),
+        // ...
     }
 }
 
@@ -79,8 +79,8 @@ which replaces any attribute whose value implements `error` with its
 `Error()` string before the inner handler serialises the record. The
 wrapper covers raw `"error", err` pairs, `slog.Any("error", err)`, and
 group-nested errors. The runtime composes the handler in
-`internal/observe/telemetry`, so every production log line goes through
-it.
+`internal/runtime/observability.go`, so every production log line goes
+through it.
 
 Pick the form that matches the slog API you are already using:
 
@@ -111,18 +111,19 @@ it for new code.
 
 ### What is still rejected
 
-The CI lint rejects these patterns regardless of handler behaviour, so
-a future handler swap cannot silently break log structure:
+The CI lint (sloglint's `forbidden-keys`) rejects the first pattern; the
+others are review conventions, so a future handler swap cannot silently
+break log structure:
 
 | Pattern | Why |
 |---|---|
-| `"err", err`, `"e", err` | Non-canonical key — operators grep on `error=`. |
+| `"err", err`, `"e", err` | Non-canonical key - operators grep on `error=`. Lint-rejected. |
 | `"error", err.Error()` | Strips type before the handler sees it, defeating the central rendering rule and the handler-contract tests. |
 | `"error", fmt.Sprintf("%v", err)` | Same problem; loses error identity for downstream tooling. |
 | `"error_message", err` | Non-canonical key. |
 
 The handler contract has tests in
-`internal/observe/logfmt/handler_test.go` that pin the rendering
+`internal/observe/logfmt/handler_contract_test.go` that pin the rendering
 behaviour end-to-end, so a regression in the runtime composition fails
 the suite rather than silently shipping `[object Object]` to operators.
 
@@ -168,7 +169,7 @@ The CI lint rejects these. Use the canonical name on the right.
 | `err`, `e` | `error` |
 | `from_backend`, `source_backend` | `src_backend` |
 | `to_backend` | `dst_backend` |
-| `remote_addr`, `remote` | `client_addr` |
+| `remote_addr` | `client_addr` |
 
 Use `snake_case` for every attribute key. The lint enforces this.
 
@@ -226,7 +227,7 @@ above.
 carry `request_id` and use dotted event names (`s3.PutObject`,
 `storage.DeleteObject`, `cleanup_queue.processed`). The conventions
 documented here apply to **operational** logs, not audit entries — see
-`README.md` § Audit Logging for the audit contract.
+[Audit logging](../security-hardening.md#audit-logging) for the audit contract.
 
 An entry produced by an authenticated S3 request also carries `user`,
 naming the identity behind the credential that proved it. Both the

@@ -115,7 +115,7 @@ encryption:
 - Vault provides audit logging of all key operations.
 - Key rotation in Vault automatically versions the key; the orchestrator's `rotate-encryption-key` API re-wraps DEKs to the latest version.
 
-When using `token_file` for Nomad workload identity, the file must have permissions `0600` or stricter. The orchestrator rejects token files that are group- or world-readable to prevent accidental exposure of the Vault token to other local users.
+When using `token_file` for Nomad workload identity, restrict the file to `0600` so the Vault token is not exposed to other local users. The orchestrator does not check the file's mode.
 
 ### Encryption Metrics
 
@@ -131,7 +131,7 @@ Monitor encryption health with these Prometheus metrics:
 
 ### Nonce Safety
 
-Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce - even re-uploads of identical content produce different ciphertext. The `SAFETY INVARIANT` comment block at `internal/encryption/chunk.go:258-280` captures the three-clause reasoning (fresh DEK per object, fresh base nonce per call, sequential chunk indices) and notes when this derivation must be replaced (e.g., if the DEK-per-object invariant is ever relaxed for performance).
+Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce - even re-uploads of identical content produce different ciphertext. The `SAFETY INVARIANT` comment on `deriveNonce` in `internal/encryption/chunk.go` captures the three-clause reasoning (fresh DEK per object, fresh base nonce per call, sequential chunk indices) and notes when this derivation must be replaced (e.g., if the DEK-per-object invariant is ever relaxed for performance).
 
 ## SigV4 Path Handling
 
@@ -240,14 +240,14 @@ backends:
 
 Provide the environment variables via systemd `EnvironmentFile`, Vault agent injection, Nomad template blocks, or Kubernetes secrets.
 
-**Never commit config files** with real credentials to version control. The `.gitignore` already excludes `/config.yaml` at the project root.
+**Never commit config files** with real credentials to version control. The `config.yaml` at the repository root is the tracked local-development config, so keep production configs outside the repository.
 
 ## Network Segmentation
 
 - **PostgreSQL** should only be reachable from orchestrator instances. It does not need public access.
 - **Storage backends** (if self-hosted like MinIO) should only be reachable from orchestrator instances.
 - **The orchestrator** is the only component that needs to be exposed to clients.
-- **Admin API** (`/admin/api/`) is protected by token auth and per-IP rate limiting (when enabled). Consider additionally restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
+- **Admin API** (`/admin/api/`) is authenticated with SigV4, authorized by control-plane grants, and covered by per-IP rate limiting (when enabled). Consider additionally restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
 - **Metrics endpoint** (`/metrics`) exposes backend names, quota utilization, replication factor, and circuit breaker state. Bind it to an internal-only address to prevent public access:
 
   ```yaml
@@ -333,7 +333,7 @@ Limit the number of concurrent S3 requests to prevent backend and database satur
 
 ```yaml
 server:
-  max_concurrent_requests: 30    # 0 = unlimited (default)
+  max_concurrent_requests: 30    # default 1000 when no read/write split is set
   # max_concurrent_reads: 20     # separate read limit (optional)
   # max_concurrent_writes: 10    # separate write limit (optional)
   # load_shed_threshold: 0.8     # probabilistic shedding at 80% capacity (optional)
@@ -404,7 +404,7 @@ Watch `s3o_cors_preflight_total{result="rejected"}`: a sustained climb from an o
 
 ## Request Body Limits
 
-All admin and UI JSON endpoints enforce a 1 MB request body limit via `http.MaxBytesReader`. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.
+All admin and UI JSON endpoints enforce a request body limit via `http.MaxBytesReader`: 1 MB, and 64 KiB for the provisioning and object-tag endpoints. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.
 
 ## Streaming SigV4 Payloads
 

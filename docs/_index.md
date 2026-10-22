@@ -1,164 +1,84 @@
 ---
 title: "Documentation"
-linkTitle: "Documentation"
+linkTitle: "Docs"
 description: "Configuration, deployment, backends, replication, encryption, compression, monitoring, and the admin API for s3-orchestrator."
-chapter: true
 weight: 20
-alwaysopen: false
+# Sidebar order, in the groups of the table below, and titles for the pages
+# whose front matter has none. A page that sets its own title keeps it.
 cascade:
-  - title: "Quickstart"
-    linkTitle: "Quickstart"
-    weight: 1
-    _target:
-      path: "/docs/quickstart"
-  - title: "README"
-    linkTitle: "README"
-    weight: 2
-    _target:
-      path: "/docs/readme"
-  - title: "User Guide"
-    linkTitle: "User Guide"
-    weight: 3
-    _target:
-      path: "/docs/user-guide"
-  - title: "Admin Guide"
-    linkTitle: "Admin Guide"
-    weight: 4
-    _target:
-      path: "/docs/admin-guide"
-  - title: "API Reference"
-    linkTitle: "API Reference"
-    weight: 5
-    _target:
-      path: "/docs/api-reference"
-  - title: "Admin API"
-    linkTitle: "Admin API"
-    weight: 6
-    _target:
-      path: "/docs/admin-api"
-  - title: "Security Hardening"
-    linkTitle: "Security Hardening"
-    weight: 7
-    _target:
-      path: "/docs/security-hardening"
-  - title: "Performance Tuning"
-    linkTitle: "Performance Tuning"
-    weight: 8
-    _target:
-      path: "/docs/performance-tuning"
-  - title: "Disaster Recovery"
-    linkTitle: "Disaster Recovery"
-    weight: 9
-    _target:
-      path: "/docs/disaster-recovery"
-  - title: "Version Migration"
-    linkTitle: "Version Migration"
-    weight: 10
-    _target:
-      path: "/docs/version-migration"
-  - title: "Benchmarking"
-    linkTitle: "Benchmarking"
-    weight: 11
-    _target:
-      path: "/docs/benchmarking"
-  - title: "Changelog"
-    linkTitle: "Changelog"
-    weight: 12
-    _target:
-      path: "/docs/changelog"
-  - title: "Style Guide"
-    weight: 13
-    hidden: true
-    _target:
-      path: "/docs/style-guide"
+  - {weight: 101, title: "Quickstart", target: {path: "/docs/quickstart"}}
+  - {weight: 102, title: "README", target: {path: "/docs/readme"}}
+  - {weight: 103, title: "User Guide", target: {path: "/docs/user-guide"}}
+  - {weight: 104, target: {path: "/docs/architecture"}}
+  - {weight: 201, target: {path: "/docs/configuration"}}
+  - {weight: 202, target: {path: "/docs/backends"}}
+  - {weight: 203, target: {path: "/docs/authentication"}}
+  - {weight: 204, target: {path: "/docs/database"}}
+  - {weight: 205, target: {path: "/docs/encryption"}}
+  - {weight: 206, target: {path: "/docs/compression"}}
+  - {weight: 207, target: {path: "/docs/tagging"}}
+  - {weight: 208, target: {path: "/docs/notifications"}}
+  - {weight: 301, target: {path: "/docs/admin-guide"}}
+  - {weight: 302, target: {path: "/docs/operations"}}
+  - {weight: 303, target: {path: "/docs/replication"}}
+  - {weight: 304, target: {path: "/docs/cleanup-and-lifecycle"}}
+  - {weight: 305, target: {path: "/docs/background-services"}}
+  - {weight: 306, target: {path: "/docs/deployment"}}
+  - {weight: 307, target: {path: "/docs/cli"}}
+  - {weight: 308, target: {path: "/docs/monitoring"}}
+  - {weight: 309, target: {path: "/docs/grafana-dashboard"}}
+  - {weight: 310, title: "Disaster Recovery", target: {path: "/docs/disaster-recovery"}}
+  - {weight: 311, title: "Security Hardening", target: {path: "/docs/security-hardening"}}
+  - {weight: 401, title: "Performance Tuning", target: {path: "/docs/performance-tuning"}}
+  - {weight: 402, target: {path: "/docs/performance-envelope"}}
+  - {weight: 403, target: {path: "/docs/benchmarking"}}
+  - {weight: 501, target: {path: "/docs/admin-api"}}
+  - {weight: 502, title: "API Reference", target: {path: "/docs/api-reference"}}
+  - {weight: 503, title: "Version Migration", target: {path: "/docs/version-migration"}}
+  - {weight: 504, title: "Changelog", target: {path: "/docs/changelog"}}
+  - {weight: 601, title: "Style Guide", target: {path: "/docs/style-guide"}}
+  - {weight: 602, target: {path: "/docs/contributing/logging"}}
+  - {weight: 603, target: {path: "/docs/contributing/store"}}
 ---
 
+s3-orchestrator is a storage orchestration layer that presents any number of
+S3-compatible providers as one S3 endpoint. It tracks where every object lives
+in its own database, and from that places each write, keeps the configured
+number of copies, enforces per-backend quotas and usage limits, and keeps
+serving when a backend does not.
 
-<div class="landing-subheader">Comprehensive documentation for deploying, configuring, and operating the S3 Orchestrator.</div>
-
-<div class="landing-grid">
-  <a class="landing-card" href="quickstart/">
-    <i class="fas fa-rocket landing-card-icon" style="color: #6ee7b7;"></i>
-    <div>
-      <strong>Quickstart</strong>
-      <p>Get running locally in under a minute.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="readme/">
-    <i class="fab fa-github landing-card-icon" style="color: #e2e8f0;"></i>
-    <div>
-      <strong>README</strong>
-      <p>Project overview, features, configuration reference, and metrics.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="user-guide/">
-    <i class="fas fa-user landing-card-icon" style="color: #93c5fd;"></i>
-    <div>
-      <strong>User Guide</strong>
-      <p>Connect with AWS CLI, rclone, SDKs, and other S3 clients.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="admin-guide/">
-    <i class="fas fa-cogs landing-card-icon" style="color: #7dd3fc;"></i>
-    <div>
-      <strong>Admin Guide</strong>
-      <p>Deploy, configure, and operate in production.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="api-reference/">
-    <i class="fas fa-plug landing-card-icon" style="color: #c4b5fd;"></i>
-    <div>
-      <strong>API Reference</strong>
-      <p>UI JSON API for the built-in dashboard.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="admin-api/">
-    <i class="fas fa-sliders-h landing-card-icon" style="color: #c4b5fd;"></i>
-    <div>
-      <strong>Admin API</strong>
-      <p>Operational control plane, generated from the route table.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="security-hardening/">
-    <i class="fas fa-shield-alt landing-card-icon" style="color: #fca5a5;"></i>
-    <div>
-      <strong>Security Hardening</strong>
-      <p>TLS, credentials, network isolation, and encryption best practices.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="performance-tuning/">
-    <i class="fas fa-tachometer-alt landing-card-icon" style="color: #e2b07a;"></i>
-    <div>
-      <strong>Performance Tuning</strong>
-      <p>Connection pools, timeouts, caching, and resource sizing.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="disaster-recovery/">
-    <i class="fas fa-life-ring landing-card-icon" style="color: #fca5a5;"></i>
-    <div>
-      <strong>Disaster Recovery</strong>
-      <p>Failure scenarios and recovery procedures.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="version-migration/">
-    <i class="fas fa-exchange-alt landing-card-icon" style="color: #6ee7b7;"></i>
-    <div>
-      <strong>Version Migration</strong>
-      <p>Upgrade paths, breaking changes, and database migrations.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="benchmarking/">
-    <i class="fas fa-stopwatch landing-card-icon" style="color: #7dd3fc;"></i>
-    <div>
-      <strong>Benchmarking</strong>
-      <p>Micro-benchmarks for hot-path performance regression testing.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="changelog/">
-    <i class="fas fa-scroll landing-card-icon" style="color: #e2b07a;"></i>
-    <div>
-      <strong>Changelog</strong>
-      <p>Release history and notable changes by version.</p>
-    </div>
-  </a>
-</div>
+| Section | Page | Covers |
+|---|---|---|
+| Getting started | [Quickstart](quickstart.md) | A local instance and a first object, in under a minute |
+| | [README](readme.md) | Project overview, features and install |
+| | [User Guide](user-guide.md) | Connecting the AWS CLI, rclone, SDKs and other S3 clients |
+| | [Architecture](architecture.md) | Components, the storage layer and write routing |
+| Configuring | [Configuration](configuration.md) | Every block of the configuration file |
+| | [Backends](backends.md) | Providers, routing strategies, quotas and usage limits |
+| | [Authentication](authentication.md) | SigV4, credentials and bucket isolation |
+| | [Database](database.md) | SQLite or PostgreSQL, schema and migrations |
+| | [Encryption](encryption.md) | Envelope encryption, Vault Transit and key rotation |
+| | [Compression](compression.md) | Chunked zstd and ranged reads |
+| | [Tagging](tagging.md) | Object tag sets and how they are stored |
+| | [Notifications](notifications.md) | Webhook outbox, CloudEvents and HMAC signing |
+| Operating | [Admin Guide](admin-guide.md) | Index of the operational pages |
+| | [Operations](operations.md) | Cordon, drain, rebalance, scrub and cache management |
+| | [Replication](replication.md) | Replication factor, over-replication and reconciliation |
+| | [Cleanup and lifecycle](cleanup-and-lifecycle.md) | Cleanup queue, pending intents and expiration |
+| | [Background services](background-services.md) | Every periodic worker, its interval and lock |
+| | [Deployment](deployment.md) | Nomad, Kubernetes, Docker, the Debian package and multi-instance |
+| | [CLI and TUI](cli.md) | Every subcommand and the terminal UI |
+| | [Monitoring](monitoring.md) | Metrics, traces, structured logs and the audit log |
+| | [Grafana Dashboard](grafana-dashboard.md) | The bundled dashboard, shown whole |
+| | [Disaster Recovery](disaster-recovery.md) | Failure scenarios and recovery procedures |
+| | [Security Hardening](security-hardening.md) | TLS, credentials, network isolation and encryption |
+| Performance | [Performance Tuning](performance-tuning.md) | Connection pools, timeouts, caching and sizing |
+| | [Performance envelope](performance-envelope.md) | Measured throughput and latency |
+| | [Benchmarking](benchmarking.md) | Micro-benchmarks for hot-path regressions |
+| Reference | [Admin API](admin-api.md) | The control plane, generated from the route table |
+| | [API Reference](api-reference.md) | The dashboard's JSON API |
+| | [Version Migration](version-migration.md) | Upgrade notes, breaking changes and migrations |
+| | [Changelog](changelog.md) | Release history |
+| Contributing | [Style Guide](style-guide.md) | Code, comment and documentation conventions |
+| | [Logging](contributing/logging.md) | Structured log conventions |
+| | [Metadata store](contributing/store.md) | Store interface conventions |

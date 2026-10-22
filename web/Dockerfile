@@ -34,8 +34,11 @@ RUN mkdir -p /godoc && \
             sed -i '/^# '"$name"'$/d' /godoc/$name.md; \
         done
 
-FROM --platform=$BUILDPLATFORM hugomods/hugo:latest AS build
+FROM --platform=$BUILDPLATFORM hugomods/hugo:go-git-0.157.0 AS build
 WORKDIR /src/web
+# The image pins GOTOOLCHAIN=local to its own Go; auto fetches the version
+# web/go.mod names, which Hugo's module download of the theme runs under.
+ENV GOTOOLCHAIN=auto
 COPY web/ /src/web/
 COPY docs/ /src/docs/
 COPY README.md /src/README.md

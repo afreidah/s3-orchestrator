@@ -1,278 +1,72 @@
 ---
-description: "Interactive entity-relationship diagram of the PostgreSQL metadata store, with column details and usage context on every table."
+description: "Interactive map of the PostgreSQL metadata store's tables and how they relate, with column details and usage context on every table."
 title: "Database Schema"
 linkTitle: "Database Schema"
 weight: 8
 ---
 
-Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (`internal/store/sqlite`) implements the same tables and the `backend_capacity` view, without the PostgreSQL-only collation and covering indexes and some CHECK constraints. **Hover over any table** for column details and usage context.
+The tables of the PostgreSQL metadata store and how they relate. The SQLite store (`internal/store/sqlite`) implements the same tables and the `backend_capacity` view, without the PostgreSQL-only collation and covering indexes and some CHECK constraints. **Hover over any table** for column details and usage context.
 
-<style>
-  #ac-diagram { margin: 1rem 0; }
-  #ac-diagram svg { display: block; width: 100%; height: auto; }
-  #ac-tooltip {
-    position: fixed; z-index: 9999;
-    max-width: 420px; padding: 0.7rem 0.85rem;
-    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
-  }
-  #ac-tooltip a { color: #34b882; text-decoration: none; }
-  #ac-tooltip a:hover { text-decoration: underline; }
-  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
-  #ac-tooltip .ac-badge {
-    display: inline-block; padding: 1px 7px; border-radius: 4px;
-    font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
-  }
-  .ac-badge-core { background: #1f6feb22; color: #58a6ff; border: 1px solid #58a6ff55; }
-  .ac-badge-multipart { background: #8957e522; color: #bc8cff; border: 1px solid #bc8cff55; }
-  .ac-badge-usage { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
-  .ac-badge-cleanup { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
-  .ac-badge-provisioning { background: #2a9d7322; color: #4aaa8a; border: 1px solid #4aaa8a55; }
-  #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
-  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
-  #ac-tooltip table.ac-cols { width: 100%; border-collapse: collapse; margin: 0.3rem 0; font-size: 0.68rem; }
-  #ac-tooltip table.ac-cols th { text-align: left; color: #8b949e; font-weight: 600; padding: 2px 6px 2px 0; border-bottom: 1px solid #30363d; }
-  #ac-tooltip table.ac-cols td { padding: 1px 6px 1px 0; color: #c9d1d9; }
-  #ac-tooltip table.ac-cols td:first-child { color: #4aaa8a; font-family: monospace; }
-  #ac-tooltip table.ac-cols td.pk { color: #f0883e; }
-  #ac-tooltip table.ac-cols td.fk { color: #bc8cff; }
-  #ac-tooltip .ac-idx { color: #8b949e; font-size: 0.66rem; margin-top: 0.2rem; }
-  #ac-diagram .entityBox { cursor: pointer; transition: opacity 0.15s, filter 0.15s; }
-  #ac-diagram .er { transition: opacity 0.15s; }
-</style>
+{{< diagram >}}
 
-<div id="ac-diagram"></div>
-<div id="ac-tooltip"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.8.0/dist/mermaid.min.js"></script>
 <script>
-(function() {
-  var diagramSrc = [
-    'erDiagram',
-    '    backend_quotas {',
-    '        TEXT backend_name PK',
-    '        BIGINT bytes_limit',
-    '        TIMESTAMPTZ updated_at',
-    '    }',
-    '',
-    '    backend_quota_stripes {',
-    '        TEXT backend_name "PK, FK"',
-    '        SMALLINT stripe_id PK',
-    '        BIGINT bytes_used',
-    '    }',
-    '',
-    '    object_locations {',
-    '        TEXT object_key PK',
-    '        TEXT backend_name "PK, FK"',
-    '        TEXT storage_key',
-    '        BIGINT size_bytes',
-    '        BOOLEAN encrypted',
-    '        BYTEA encryption_key',
-    '        TEXT key_id',
-    '        BIGINT plaintext_size',
-    '        TEXT content_hash',
-    '        TEXT compression_algorithm',
-    '        TEXT compression_level',
-    '        SMALLINT compression_format_version',
-    '        BIGINT logical_size',
-    '        BIGINT compression_probe_size',
-    '        TEXT compression_probe_level',
-    '        TEXT etag',
-    '        TEXT content_type',
-    '        JSONB user_metadata',
-    '        BOOLEAN managed',
-    '        TIMESTAMPTZ last_scrubbed_at',
-    '        TIMESTAMPTZ created_at',
-    '        BIGINT form "generated"',
-    '        BIGINT object_size "generated"',
-    '    }',
-    '',
-    '    object_tags {',
-    '        TEXT object_key PK',
-    '        TEXT tag_key PK',
-    '        TEXT tag_value',
-    '    }',
-    '',
-    '    multipart_uploads {',
-    '        TEXT upload_id PK',
-    '        TEXT object_key',
-    '        TEXT backend_name FK',
-    '        TEXT content_type',
-    '        JSONB metadata',
-    '        BYTEA encryption_key',
-    '        TEXT key_id',
-    '        TEXT tagging',
-    '        TIMESTAMPTZ created_at',
-    '        TIMESTAMPTZ completion_heartbeat_at',
-    '    }',
-    '',
-    '    multipart_parts {',
-    '        TEXT upload_id "PK, FK"',
-    '        INT part_number PK',
-    '        TEXT etag',
-    '        BIGINT size_bytes',
-    '        BOOLEAN encrypted',
-    '        BYTEA encryption_key',
-    '        TEXT key_id',
-    '        BIGINT plaintext_size',
-    '        TEXT plaintext_etag',
-    '        TEXT storage_key',
-    '        TIMESTAMPTZ created_at',
-    '    }',
-    '',
-    '    backend_usage {',
-    '        TEXT backend_name "PK, FK"',
-    '        TEXT period PK',
-    '        TEXT workload PK',
-    '        BIGINT api_requests',
-    '        BIGINT egress_bytes',
-    '        BIGINT ingress_bytes',
-    '        TIMESTAMPTZ updated_at',
-    '    }',
-    '',
-    '    backend_request_usage {',
-    '        TEXT backend_name "PK, FK"',
-    '        TEXT period PK',
-    '        TEXT workload PK',
-    '        TEXT pool PK',
-    '        BIGINT requests',
-    '        TIMESTAMPTZ updated_at',
-    '    }',
-    '',
-    '    usage_flushes {',
-    '        TEXT flush_id PK',
-    '        TIMESTAMPTZ applied_at',
-    '    }',
-    '',
-    '    cleanup_queue {',
-    '        BIGSERIAL id PK',
-    '        TEXT backend_name FK',
-    '        TEXT object_key',
-    '        TEXT storage_key',
-    '        TEXT reason',
-    '        BIGINT size_bytes',
-    '        TIMESTAMPTZ created_at',
-    '        TIMESTAMPTZ next_retry',
-    '        INT attempts',
-    '        TEXT last_error',
-    '        TIMESTAMPTZ claimed_at',
-    '        TEXT claimed_by',
-    '    }',
-    '',
-    '    cleanup_dlq {',
-    '        BIGSERIAL id PK',
-    '        BIGINT original_id',
-    '        TEXT backend_name FK',
-    '        TEXT object_key',
-    '        TEXT storage_key',
-    '        TEXT reason',
-    '        BIGINT size_bytes',
-    '        INT attempts',
-    '        TIMESTAMPTZ first_enqueued_at',
-    '        TIMESTAMPTZ moved_at',
-    '        TEXT last_error',
-    '    }',
-    '',
-    '    pending_objects {',
-    '        TEXT intent_id PK',
-    '        TEXT object_key',
-    '        TEXT storage_key',
-    '        TEXT backend_name FK',
-    '        BIGINT size_bytes',
-    '        BOOLEAN encrypted',
-    '        BYTEA encryption_key',
-    '        TEXT key_id',
-    '        BIGINT plaintext_size',
-    '        TEXT content_hash',
-    '        TEXT compression_algorithm',
-    '        TEXT compression_level',
-    '        SMALLINT compression_format_version',
-    '        BIGINT logical_size',
-    '        TEXT etag',
-    '        TEXT content_type',
-    '        JSONB user_metadata',
-    '        TEXT role',
-    '        TIMESTAMPTZ created_at',
-    '    }',
-    '',
-    '    notification_outbox {',
-    '        BIGSERIAL id PK',
-    '        TEXT event_type',
-    '        JSONB payload',
-    '        TEXT endpoint_url',
-    '        TIMESTAMPTZ created_at',
-    '        TIMESTAMPTZ next_retry',
-    '        INT attempts',
-    '        TEXT last_error',
-    '    }',
-    '',
-    '    buckets {',
-    '        TEXT name PK',
-    '        INTEGER max_multipart_uploads',
-    '        JSONB cors',
-    '        TIMESTAMPTZ created_at',
-    '    }',
-    '',
-    '    users {',
-    '        TEXT id PK',
-    '        TEXT name',
-    '        TIMESTAMPTZ created_at',
-    '    }',
-    '',
-    '    credentials {',
-    '        TEXT access_key_id PK',
-    '        TEXT user_id FK',
-    '        TEXT secret',
-    '        TEXT label',
-    '        BOOLEAN disabled',
-    '        TIMESTAMPTZ created_at',
-    '        TIMESTAMPTZ last_used_at',
-    '    }',
-    '',
-    '    grants {',
-    '        TEXT user_id "PK, FK"',
-    '        TEXT resource_kind PK',
-    '        TEXT resource_name PK',
-    '        TEXT permissions',
-    '        TIMESTAMPTZ created_at',
-    '    }',
-    '',
-    '    backend_states {',
-    '        TEXT backend_name PK',
-    '        BIGINT objects_moved',
-    '        TEXT last_error',
-    '        TIMESTAMPTZ started_at',
-    '        TIMESTAMPTZ finished_at',
-    '        BIGINT flags',
-    '    }',
-    '',
-    '    backend_quotas ||--o{ backend_quota_stripes : "striped byte total"',
-    '    backend_quotas ||--o{ object_locations : "tracks objects"',
-    '    backend_quotas ||--o{ multipart_uploads : "tracks uploads"',
-    '    backend_quotas ||--o{ backend_usage : "monthly usage"',
-    '    backend_quotas ||--o{ backend_request_usage : "monthly usage per budget pool"',
-    '    backend_quotas ||--o{ cleanup_queue : "pending deletes"',
-    '    backend_quotas ||--o{ cleanup_dlq : "exhausted orphans"',
-    '    backend_quotas ||--o{ pending_objects : "in-flight intents"',
-    '    cleanup_queue ||--o| cleanup_dlq : "graduates on retry exhaustion"',
-    '    multipart_uploads ||--o{ multipart_parts : "upload parts"',
-    '    object_locations ||--o{ object_tags : "tag set, by object_key only"',
-    '    users ||--o{ credentials : "keypairs proving one identity"',
-    '    users ||--o{ grants : "resources this identity reaches"'
-  ].join('\n');
+window.s3oDiagram = {
+  // Tables and their relationships only, grouped by area; each table's
+  // columns, keys and indexes are in its hover panel.
+  roles: {
+    backends: 'storage', objects: 'entry', multipart: 'process',
+    usage: 'filter', cleanup: 'background', access: 'success',
+  },
 
-  mermaid.initialize({
-    startOnLoad: false, theme: 'dark', fontSize: 16,
-    er: { useMaxWidth: false, minEntityWidth: 160, entityPadding: 18, fontSize: 16 }
-  });
+  source: [
+    'flowchart LR',
+    '    subgraph BACKENDS [Backends]',
+    '        backend_quotas[backend_quotas]:::backends',
+    '        backend_quota_stripes[backend_quota_stripes]:::backends',
+    '        backend_states[backend_states]:::backends',
+    '    end',
+    '    subgraph OBJECTS [Objects]',
+    '        object_locations[object_locations]:::objects',
+    '        object_tags[object_tags]:::objects',
+    '    end',
+    '    subgraph MULTIPART [Multipart uploads]',
+    '        multipart_uploads[multipart_uploads]:::multipart',
+    '        multipart_parts[multipart_parts]:::multipart',
+    '    end',
+    '    subgraph USAGE [Usage]',
+    '        backend_usage[backend_usage]:::usage',
+    '        backend_request_usage[backend_request_usage]:::usage',
+    '        usage_flushes[usage_flushes]:::usage',
+    '    end',
+    '    subgraph CLEANUP [Cleanup and delivery]',
+    '        pending_objects[pending_objects]:::cleanup',
+    '        cleanup_queue[cleanup_queue]:::cleanup',
+    '        cleanup_dlq[cleanup_dlq]:::cleanup',
+    '        notification_outbox[notification_outbox]:::cleanup',
+    '    end',
+    '    subgraph ACCESS [Access control]',
+    '        buckets[buckets]:::access',
+    '        users[users]:::access',
+    '        credentials[credentials]:::access',
+    '        grants[grants]:::access',
+    '    end',
+    '',
+    '    backend_quotas -->|striped byte total| backend_quota_stripes',
+    '    backend_quotas -->|tracks objects| object_locations',
+    '    backend_quotas -->|tracks uploads| multipart_uploads',
+    '    backend_quotas -->|monthly usage| backend_usage',
+    '    backend_quotas -->|usage per pool| backend_request_usage',
+    '    backend_quotas -->|in-flight intents| pending_objects',
+    '    backend_quotas -->|pending deletes| cleanup_queue',
+    '    backend_quotas -->|exhausted orphans| cleanup_dlq',
+    '    cleanup_queue -->|graduates| cleanup_dlq',
+    '    multipart_uploads -->|parts| multipart_parts',
+    '    object_locations -->|tag set| object_tags',
+    '    users -->|keypairs| credentials',
+    '    users -->|grants| grants'
+  ].join('\n'),
 
-  mermaid.render('db-mermaid-svg', diagramSrc).then(function(result) {
-    document.getElementById('ac-diagram').innerHTML = result.svg;
-    wireUpInteractivity();
-  });
-
-  var nodeInfo = {
+  info: {
     backend_quotas: {
       title: 'backend_quotas',
       badge: 'core', badgeText: 'core table',
@@ -586,100 +380,22 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<p class="ac-metric">Key queries: SetBackendFlag, ClearBackendFlags, StartDrain, ListBackendStates, AddDrainedObjects, CompleteDrain, MarkDrainFailed, ClearBackendState</p>' +
         '<p class="ac-metric">Metrics: s3o_backend_state, s3o_drain_active, s3o_drain_objects_moved_total, s3o_drain_bytes_moved_total &bull; Audit events: storage.Cordon, storage.Uncordon, storage.DrainStart, storage.DrainCancel, storage.DrainMove, storage.DrainRemoveReplica, storage.DrainComplete &bull; Events: backend.cordoned, backend.uncordoned, backend.drain.completed, backend.drain.failed</p>'
     }
-  };
-
-  var tooltip = document.getElementById('ac-tooltip');
-  var mouseX = 0, mouseY = 0;
-  var pinned = false, hideTimer = null, hoveringTooltip = false, hoveringNode = false;
-
-  tooltip.addEventListener('mouseenter', function() { hoveringTooltip = true; clearTimeout(hideTimer); });
-  tooltip.addEventListener('mouseleave', function() {
-    hoveringTooltip = false;
-    hideTimer = setTimeout(function() { if (!hoveringNode && !hoveringTooltip) clearInfo(); }, 100);
-  });
-
-  document.addEventListener('mousemove', function(e) {
-    mouseX = e.clientX; mouseY = e.clientY;
-    if (tooltip.style.display === 'block' && !pinned) positionTooltip();
-  });
-  function positionTooltip() {
-    var pad = 12;
-    var w = tooltip.offsetWidth, h = tooltip.offsetHeight;
-    var vw = window.innerWidth, vh = window.innerHeight;
-
-    var x = mouseX + pad;
-    if (x + w > vw - pad) x = mouseX - w - pad;
-    x = Math.max(pad, Math.min(x, vw - w - pad));
-
-    // Prefer below the cursor, and flip above only when above genuinely has
-    // more room. Clamping afterwards is what keeps a tall panel on screen: an
-    // unclamped flip puts its top edge above the viewport, and a panel taller
-    // than the viewport pins to the top and scrolls instead.
-    var below = vh - mouseY - pad * 2;
-    var above = mouseY - pad * 2;
-    var y = (h <= below || below >= above) ? mouseY + pad : mouseY - h - pad;
-    y = Math.max(pad, Math.min(y, vh - h - pad));
-
-    tooltip.style.left = x + 'px';
-    tooltip.style.top = y + 'px';
   }
-  function showInfo(id) {
-    var info = nodeInfo[id];
-    if (!info) { tooltip.style.display = 'none'; pinned = false; return; }
-    tooltip.innerHTML = '<h3>' + info.title + '</h3><span class="ac-badge ac-badge-' + info.badge + '">' + info.badgeText + '</span>' + info.body;
-    pinned = false;
-    tooltip.style.display = 'block'; positionTooltip();
-    if (tooltip.querySelector('a')) pinned = true;
-  }
-  function clearInfo() {
-    tooltip.style.display = 'none'; pinned = false;
-  }
-
-  function wireUpInteractivity() {
-    var svg = document.querySelector('#ac-diagram svg');
-    if (!svg) return;
-
-    // Mermaid ER diagrams render entities as g.entity elements with an id
-    // matching the entity name or containing it. We search for all entity
-    // groups and wire hover events.
-    var entities = svg.querySelectorAll('g[id]');
-    entities.forEach(function(g) {
-      var gId = g.getAttribute('id') || '';
-      // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
-      // or just the table name directly. Try to extract the table name.
-      var tableName = null;
-      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants', 'backend_states'];
-      for (var i = 0; i < tableNames.length; i++) {
-        if (gId.indexOf(tableNames[i]) !== -1) {
-          tableName = tableNames[i];
-          break;
-        }
-      }
-      if (!tableName) return;
-
-      g.style.cursor = 'pointer';
-      g.addEventListener('mouseenter', function() {
-        hoveringNode = true; clearTimeout(hideTimer);
-        showInfo(tableName);
-      });
-      g.addEventListener('mouseleave', function() {
-        hoveringNode = false;
-        hideTimer = setTimeout(function() { if (!hoveringNode && !hoveringTooltip) clearInfo(); }, 100);
-      });
-    });
-  }
-})();
+};
 </script>
 
 ## Legend
 
-| Symbol | Meaning |
-|--------|---------|
-| <span style="color:#f0883e">**PK**</span> | Primary key column |
-| <span style="color:#bc8cff">**FK**</span> | Foreign key reference |
-| `\|\|--o{` | One-to-many relationship |
-| <span style="color:#f0883e">**BIGSERIAL**</span> | Auto-incrementing surrogate key |
-| <span style="color:#4aaa8a">**text_pattern_ops**</span> | B-tree index optimized for LIKE prefix queries |
+| Node | Area |
+|------|------|
+| <span class="dg-swatch dg-storage"></span> | Backends |
+| <span class="dg-swatch dg-entry"></span> | Objects |
+| <span class="dg-swatch dg-process"></span> | Multipart uploads |
+| <span class="dg-swatch dg-filter"></span> | Usage |
+| <span class="dg-swatch dg-background"></span> | Cleanup and delivery |
+| <span class="dg-swatch dg-success"></span> | Access control |
+
+An arrow is a one-to-many relationship, from the parent table to the child. In a table's hover panel, **PK** marks a primary key column, **FK** a foreign key reference, **BIGSERIAL** an auto-incrementing surrogate key, and **text_pattern_ops** a B-tree index for LIKE prefix queries.
 
 ### Table Summary
 

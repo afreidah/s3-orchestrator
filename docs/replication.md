@@ -2,7 +2,6 @@
 description: "How replicas are created and placed, what over-replication and reconciliation do, and the tunables controlling each of the workers."
 title: "Replication, Over-Replication, and Reconciliation"
 linkTitle: "Replication"
-weight: 25
 ---
 
 ## Replication
@@ -15,7 +14,7 @@ replication:
   factor: 2                      # copies per object (default: 1 = no replication)
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
-  concurrency: 5                 # parallel object replications per cycle (default: 10)
+  concurrency: 5                 # parallel object replications per cycle (default: 5)
   unhealthy_threshold: "10m"     # grace period before replacing copies on backends refusing reads (default: 10m)
 ```
 
@@ -56,7 +55,7 @@ rebalance:
   interval: "6h"                 # default: 6h
   batch_size: 100                # objects per run (default: 100)
   threshold: 0.1                 # min utilization spread to trigger (default: 0.1)
-  concurrency: 5                 # parallel moves per run (default: 10)
+  concurrency: 5                 # parallel moves per run (default: 5)
 ```
 
 - **pack** - fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
@@ -75,7 +74,7 @@ When a backend recovers after the replicator has already created replacement cop
 
 The cleaner scores each copy by its backend's health and storage utilization, then removes the lowest-scoring copies until the object reaches the target factor:
 
-- **Draining backend**: score 0 (always removed first)
+- **Backend refusing new copies** (cordoned, draining, drained or drain-failed) or no longer configured: score 0 (always removed first)
 - **Backend refusing reads**: score 1 (removed next)
 - **Healthy backend**: score 2 + (1 - utilization ratio), range [2..3]
 

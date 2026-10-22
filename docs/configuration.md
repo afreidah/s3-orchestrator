@@ -2,7 +2,6 @@
 description: "Walkthrough of every YAML block in the config file, with examples, validation rules, and links to the per-topic operational docs."
 title: "Configuration Walkthrough"
 linkTitle: "Configuration"
-weight: 21
 ---
 
 This page walks every YAML block in the config, with examples and validation rules. Each subsection below has a corresponding per-topic doc with operational depth:
@@ -15,12 +14,12 @@ This page walks every YAML block in the config, with examples and validation rul
 - [cache](#cache) -> [docs/backends.md](backends.md) (object data cache)
 - [cleanup_queue / lifecycle / write_path](#cleanup-queue) -> [docs/cleanup-and-lifecycle.md](cleanup-and-lifecycle.md)
 - [telemetry](#telemetry) -> [docs/monitoring.md](monitoring.md)
-- [notifications](#notifications) -> [docs/notifications.md](notifications.md)
+- notifications -> [docs/notifications.md](notifications.md)
 
 ---
 
 
-This section covers each config section in detail. See `packaging/config.yaml` for a complete template.
+This section covers each config section in detail. `packaging/config.yaml` is a starting template covering the common sections.
 
 All config values support `${ENV_VAR}` expansion - the orchestrator calls `os.Expand` on the entire YAML file before parsing. Use this for secrets:
 
@@ -53,9 +52,9 @@ server:
 ```
 
 - `listen_addr` is the only required field.
-- `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically). PutObject materializes the body so a write can fail over to another backend, but only bodies up to 32 MiB are held in memory; anything larger spills to a temporary file. Peak memory from uploads is therefore bounded by `32 MiB x max_concurrent_writes` rather than by `max_object_size`, at the cost of disk for the spilled ones.
+- `max_object_size` caps the size of any object, whether written with a single PUT or assembled from a multipart upload: each part and the completed upload's combined size are checked against it, and an object over it is refused with `413 EntityTooLarge`. PutObject materializes the body so a write can fail over to another backend, but only bodies up to 32 MiB are held in memory; anything larger spills to a temporary file. Peak memory from uploads is therefore bounded by `32 MiB x max_concurrent_writes` rather than by `max_object_size`, at the cost of disk for the spilled ones.
 - `spill_dir` is where those spill files are written. The default is the OS temp directory, which is `/tmp` on Linux - and `/tmp` is tmpfs under the systemd default and in most container images, which means the spill that exists to keep large objects off the heap puts them straight back in RAM. **If your objects exceed 32 MiB, point this at real disk**, or size the host for `max_object_size x max_concurrent_writes` after all. The directory must exist at startup; the orchestrator refuses to start otherwise rather than failing the first large upload. Files are unlinked as soon as they are created, so nothing survives a crash and the directory needs no cleaning.
-- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding.
+- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Size it together with `database.max_conns`; see [Performance Tuning - Connection Pool Sizing](performance-tuning.md#connection-pool-sizing).
 
   **There is no unlimited mode.** Leaving all three of `max_concurrent_requests`, `max_concurrent_reads` and `max_concurrent_writes` at `0` applies a default of 1000 combined requests rather than disabling admission control. A deployment sized on the assumption that it has no cap is one that will meet `503 SlowDown` without knowing where it came from. Set the value explicitly if 1000 is not what you want.
 - `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads. **Background workers contend with HTTP writes, not reads** - cleanup, replication, rebalance, pending reaper, and over-replication acquire admission slots from the same pool sized to `max_concurrent_writes`. In merged mode (`max_concurrent_requests` only), every HTTP request and every background worker shares the single global pool. Size `max_concurrent_writes` to accommodate both peak HTTP write traffic and the worst-case overlap of background worker activity (typically the replication factor x replicator concurrency for the dominant case). See issue #835 for the design rationale.
@@ -67,6 +66,17 @@ server:
 - `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers. Streaming admin operations are exempt from `write_timeout`: a scrub or compress-existing pass holds its NDJSON response open for the life of the run, which on a real fleet is longer than any timeout worth applying to a request meant to finish. Every other response is still bound by it, so there is no need to raise the value to accommodate a long pass.
 - `idle_timeout` controls how long keep-alive connections stay open waiting for the next request.
 - `shutdown_delay` adds a pause between marking the instance as not-ready and starting the HTTP drain on SIGTERM. Set this to ~5s in environments where service deregistration is asynchronous (Consul, Kubernetes) so load balancers stop routing before connections are closed. Default `0` means no delay.
+- `read_header_timeout` must not exceed `read_timeout`, and `backend_timeout` must not exceed `write_timeout`; validation refuses the config otherwise.
+- `tls` terminates TLS on the orchestrator itself. With `cert_file` and `key_file` both set the server listens with TLS; with both empty it serves plain HTTP. `min_version` is `"1.2"` (default) or `"1.3"`, and `client_ca_file` names a CA bundle to require and verify client certificates (mTLS). The certificate and key files are re-read on SIGHUP, so a renewed certificate needs no restart:
+
+  ```yaml
+  server:
+    tls:
+      cert_file: "/etc/s3-orchestrator/tls/cert.pem"
+      key_file: "/etc/s3-orchestrator/tls/key.pem"
+      min_version: "1.2"
+      # client_ca_file: "/etc/s3-orchestrator/tls/clients-ca.pem"
+  ```
 
 ### buckets
 
@@ -179,12 +189,12 @@ database:
   user: "s3orchestrator"         # required
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
-  max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
+  max_conns: 50                  # default: 50
   min_conns: 10                  # default: 10
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
-Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. Size `max_conns` to 2-3x your `max_concurrent_requests` setting. See [Performance Tuning - Connection Pool Sizing](performance-tuning.md#connection-pool-sizing) for detailed guidance.
+Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. See [Performance Tuning - Connection Pool Sizing](performance-tuning.md#connection-pool-sizing) for detailed guidance.
 
 ### routing_strategy
 
@@ -225,7 +235,7 @@ backends:
 | MinIO | `http://<host>:9000` | `true` |
 | Wasabi | `https://s3.<region>.wasabisys.com` | `true` |
 
-**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront - temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
+**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in the metadata database and updated atomically with every write/delete. Each multipart part claims room on the upload's backend before its bytes land and is refused with `507 InsufficientStorage` when the backend is full; `CompleteMultipartUpload` needs room for the assembled object while the parts are still stored. Either every backend sets `quota_bytes` or none does - a config that mixes the two is refused at startup - and two or more unlimited backends require `replication.factor` of at least 2.
 
 **Max object size:** Some providers impose per-object size limits (e.g. Supabase rejects uploads over 50 MB with 413 EntityTooLarge). Set `max_object_size` to prevent the orchestrator from routing writes, rebalance moves, or replication copies to a backend when the object exceeds the limit:
 
@@ -351,6 +361,7 @@ telemetry:
     # listen: "127.0.0.1:9091"  # serve on separate address (keeps /metrics off the public port)
     # require_listener: true    # default; fail startup if that address cannot be bound
     # fleet_interval: "60s"     # default; how often the fleet-wide gauges are recomputed (minimum 10s)
+    # pprof: false              # default; mount /debug/pprof/* on the `listen` address
   tracing:
     enabled: false
     endpoint: "localhost:4317"   # OTLP gRPC endpoint
@@ -358,7 +369,7 @@ telemetry:
     sample_rate: 1.0             # fraction of requests that generate traces (use 0.01-0.1 in production)
 ```
 
-Metrics are served on the same port as the S3 API unless `listen` is set. Tracing exports spans via gRPC OTLP (e.g., to Tempo or Jaeger).
+Metrics are served on the same port as the S3 API unless `listen` is set. `pprof` mounts the Go profiling endpoints on that separate listener only, never on the S3 port; it is off by default. Tracing exports spans via gRPC OTLP (e.g., to Tempo or Jaeger); `endpoint` is required when tracing is enabled, and `sample_rate` defaults to 1.0.
 
 **`require_listener`** decides what happens when a configured `listen` address cannot be bound - a port conflict, a permission problem, an address that does not exist on the host. It defaults to `true`: startup fails and says why.
 
@@ -484,7 +495,7 @@ The tradeoff is shape rather than total. Total work goes down, but the extra cop
 
 Partial success is not failure, exactly as it is today with one copy: a backend that declines the claim means fewer copies, an upload that fails leaves its intent for the reaper, and the write fails only when no copy lands. Whatever the write does not place is a shortfall the replicator fills on its next pass.
 
-**The ceiling, and what happens at it.** The copies still uploading when the client is answered belong to no request, so they are tracked in a registry `max_in_flight` bounds. It is a ceiling for a backend that has gone slow rather than a queue: a write that finds it full places one copy and leaves the rest to the replicator, which costs exactly the read-back this feature exists to avoid. The default follows `server.max_concurrent_writes` (or `max_concurrent_requests`, or 512 if neither is set), which a fleet keeping up never approaches - the steady state is roughly your write rate times how long one copy takes, so a handful.
+**The ceiling, and what happens at it.** The copies still uploading when the client is answered belong to no request, so they are tracked in a registry `max_in_flight` bounds. It is a ceiling for a backend that has gone slow rather than a queue: a write that finds it full places one copy and leaves the rest to the replicator, which costs exactly the read-back this feature exists to avoid. The default follows `server.max_concurrent_writes`, else `max_concurrent_requests` (1000 when no limit is set; 512 applies only when just `max_concurrent_reads` is set), which a fleet keeping up never approaches - the steady state is roughly your write rate times how long one copy takes, so a handful.
 
 Two metrics make it visible. `s3o_detached_uploads_depth` is the copies still uploading right now, and a rising floor there is a backend falling behind without failing. `s3o_replication_write_fanout_skipped_total` counts the writes that hit the ceiling and fell back, so a non-zero rate means either the ceiling is too low for your write rate or one backend needs attention.
 
@@ -648,6 +659,8 @@ openssl rand -hex 32
 
 `session_secret` is independent of any credential - rotating a keypair does not invalidate active sessions, and vice versa.
 
+When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). Unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
+
 ### usage_flush
 
 Controls how often usage counters are flushed to the database. When adaptive flushing is enabled, the interval shortens automatically when any backend approaches a usage limit, improving enforcement accuracy.
@@ -717,7 +730,7 @@ lifecycle:
 - Two rules may share a prefix when their tags differ. Two rules with the same filter are refused as a duplicate.
 - The cutoff is measured from the object's creation time, not from when a tag was applied, so tagging an object older than the window makes it eligible immediately. See [Cleanup and lifecycle](cleanup-and-lifecycle.md#age-is-measured-from-object-creation).
 - Omit the `lifecycle` section or leave `rules` empty to disable lifecycle entirely.
-- Rules are evaluated every hour by a background worker with an advisory lock.
+- Rules are evaluated every hour by a background worker with an advisory lock. `lifecycle.batch_size` (default 100) sets how many objects each database query fetches.
 - Deletions go through the standard `DeleteObject` path - all copies removed, quotas decremented, and the bytes queued in the cleanup queue and deleted after the commit.
 - Hot-reloadable via `SIGHUP`.
 
@@ -753,8 +766,7 @@ encryption:
   enabled: true
   vault:
     address: "http://vault.service.consul:8200"
-    token: "${VAULT_TOKEN}"
-    token_file: "/secrets/vault_token"  # optional; re-read on each renewal tick
+    token: "${VAULT_TOKEN}"   # or token_file: "/secrets/vault_token", re-read on each renewal tick
     key_name: "s3-orchestrator"
     mount_path: "transit"     # default: transit
     ca_cert: "/etc/ssl/vault-ca.pem"    # optional; PEM CA bundle for verifying Vault's TLS
@@ -763,7 +775,7 @@ encryption:
 
 The Vault Transit engine handles wrapping and unwrapping DEKs - the orchestrator never sees the master key material. The `key_name` must reference an existing key in the Transit engine.
 
-Set `ca_cert` when Vault presents a certificate signed by a private CA; without it the system trust store is used. `token_file` suits Nomad or Kubernetes workload identity, where the token is rotated on disk by the platform: it is re-read on every `renew_interval` tick rather than only at startup.
+Set `ca_cert` when Vault presents a certificate signed by a private CA; without it the system trust store is used. `token` and `token_file` are mutually exclusive, and exactly one is required. `token_file` suits Nomad or Kubernetes workload identity, where the token is rotated on disk by the platform: it is re-read on every `renew_interval` tick rather than only at startup.
 
 **Key rotation support:**
 
@@ -790,7 +802,7 @@ After updating the config, call the `rotate-encryption-key` admin API with `all_
 
 At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
 
-Every read, write, worker and recovery path honours this. It stays off by default; there is no way to compress objects already stored, so enabling it affects new writes only.
+Every read, write, worker and recovery path honours this. It stays off by default, and enabling it affects new writes; `s3-orchestrator admin compress-existing` rewrites objects already stored.
 
 ```yaml
 compression:
@@ -825,7 +837,7 @@ Larger chunks compress marginally better and make a small range read pull more t
 
 ### integrity
 
-SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in PostgreSQL.
+SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in the metadata database. `verify_on_read` and `verify_on_replicate` both default to `false`. `s3o_integrity_checks_total{operation}` and `s3o_integrity_errors_total{operation}` count the verifications performed and the mismatches found.
 
 ```yaml
 integrity:
@@ -902,12 +914,49 @@ The cache is **not hot-reloadable** - changing cache settings requires a restart
 
 | Metric | Labels | Description |
 |--------|--------|-------------|
-| `s3o_integrity_checks_total` | `operation` | Hash verifications performed (read, scrub) |
-| `s3o_integrity_errors_total` | `operation` | Hash mismatches detected (read, scrub) |
+| `s3o_cache_hits_total` | - | Reads served from the cache |
+| `s3o_cache_misses_total` | - | Reads that went to a backend |
+| `s3o_cache_evictions_total` | - | Entries evicted to make room |
+| `s3o_cache_size_bytes` | - | Bytes currently cached |
+| `s3o_cache_entries` | - | Objects currently cached |
 
-When enabled, the dashboard is served at `{path}/` on the same port as the S3 API.
+### reconcile
 
-All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires a session, and a session requires a credential the deployment holds - unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
+Periodically scans each backend's bucket and reconciles it against the metadata database: objects the database does not track are imported, and rows for objects the backend no longer holds are removed. Disabled by default; changing it needs a restart. See [Orphan reconciliation](replication.md#orphan-reconciliation).
+
+```yaml
+reconcile:
+  enabled: true       # default: false
+  interval: "24h"     # default: 24h
+```
+
+### notifications
+
+Webhook delivery of object and operational events. An empty or absent `endpoints` list disables notifications. See [Notifications](notifications.md) for the event types and payload.
+
+```yaml
+notifications:
+  endpoints:
+    - url: "https://hooks.example.com/s3"   # required
+      events: ["s3:ObjectCreated:*", "backend.*"]   # required; wildcard patterns
+      prefix: "invoices/"                   # optional; only events whose subject starts with it
+      secret: "${WEBHOOK_SECRET}"           # optional; HMAC-SHA256 signing key
+      timeout: "5s"                         # default: 5s
+      max_retries: 3                        # default: 3
+```
+
+### debug
+
+Opt-in diagnostics, all off by default.
+
+```yaml
+debug:
+  flight_recorder:
+    enabled: false    # default; when false, the trace snapshot endpoint returns 503
+    min_age: "30s"    # default; soft lower bound on the age of the recorded window
+```
+
+The flight recorder keeps a rolling runtime trace in memory, which `s3-orchestrator admin trace-snapshot` downloads for `go tool trace`. It has a continuous overhead, so enable it while investigating an incident.
 
 
 ## Configuration hot-reload
@@ -926,17 +975,20 @@ kill -HUP $(pidof s3-orchestrator)
 | `buckets` (credentials, limits) | Yes | Credentials and `max_multipart_uploads` take effect immediately |
 | `auth.root` | Yes | The registry is rebuilt from config merged with the store, so the new keypair takes effect on the next request |
 | `buckets[].cors` | Yes | The new rule set takes effect on the next request; a rule the matcher cannot read aborts the whole reload before anything is applied |
-| `rate_limit` | Yes | New visitors get updated rates; existing per-IP limiters expire naturally |
+| `rate_limit.requests_per_sec`, `rate_limit.burst` | Yes | Every client gets the new rate at once: the per-IP limiters are discarded |
+| `rate_limit` (other fields) | No | `enabled`, `trusted_proxies` and the cleanup settings need a restart |
 | `backends[].quota_bytes` | Yes | Synced to database on reload |
 | `backends[].api_request_limit` | Yes | |
 | `backends[].egress_byte_limit` | Yes | |
 | `backends[].ingress_byte_limit` | Yes | |
+| `backends[].request_limits`, `backends[].unmetered` | Yes | |
+| `server.log_level` | Yes | |
 | `backends[].http` (pool sizes, `force_http2`) | No | The transport is built when the backend client is constructed; a reload reports the change and keeps the running one |
-| `rebalance` | Yes | Strategy, interval, threshold, concurrency, enabled/disabled |
-| `replication` | Yes | Factor, worker interval, batch size |
+| `rebalance` | Yes | Strategy, threshold, concurrency, enabled/disabled; `interval` needs a restart |
+| `replication` | Yes | Factor, batch size; `worker_interval` needs a restart |
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
-| `integrity` | Yes | Enabled, verify_on_read, scrubber interval/batch size |
+| `integrity` | Yes | Enabled, verify_on_read, scrubber batch size; `scrubber_interval` needs a restart |
 | `server.listen_addr` | No | Requires restart |
 | `server.max_concurrent_requests` | No | Requires restart |
 | `server.max_concurrent_reads` | No | Requires restart |
@@ -946,7 +998,10 @@ kill -HUP $(pidof s3-orchestrator)
 | `server.max_header_bytes` | No | Requires restart |
 | `server.max_header_value_count` | No | Requires restart |
 | `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
-| `server.tls` | No | Requires restart |
+| `server.tls` | No | The certificate and key files are re-read on SIGHUP; changing the paths or other `tls` fields requires a restart |
+| `server.max_object_size`, `spill_dir`, `backend_timeout` | No | Requires restart; no warning is logged |
+| `backends[].max_object_size`, `backends[].credential_source` | No | Requires restart; no warning is logged |
+| `cleanup_queue`, `write_path`, `notifications`, `debug` | No | Requires restart; no warning is logged |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
 | `circuit_breaker` | No | Requires restart |
@@ -960,26 +1015,21 @@ kill -HUP $(pidof s3-orchestrator)
 | `reconcile` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, count) | No | Requires restart |
 
-On a successful reload, the orchestrator logs each reloaded section:
+A reload logs its start and its outcome:
 
 ```
 {"level":"INFO","msg":"SIGHUP received, reloading configuration","path":"config.yaml"}
-{"level":"INFO","msg":"Reloaded bucket credentials","buckets":2}
-{"level":"INFO","msg":"Reloaded rate limits","requests_per_sec":100,"burst":200}
-{"level":"INFO","msg":"Reloaded backend quota limits"}
-{"level":"INFO","msg":"Reloaded backend usage limits"}
-{"level":"INFO","msg":"Reloaded rebalance/replication/usage-flush config"}
-{"level":"INFO","msg":"Configuration reload complete"}
+{"level":"INFO","msg":"configuration reload complete"}
 ```
 
-If the new config file is invalid, the orchestrator keeps the current configuration and logs the error:
+If a setting fails to apply, the rest still apply and the outcome is logged as `configuration reload partially applied`; `s3-orchestrator admin reload-status` names the parts that failed. If the new config file fails to load or validate, the orchestrator keeps the current configuration and logs `config reload aborted, keeping current config` or `configuration reload validation failed, keeping current config`:
 
 ```
-{"level":"ERROR","msg":"Config reload failed, keeping current config","error":"invalid config: ..."}
+{"level":"ERROR","msg":"configuration reload validation failed, keeping current config","error":"invalid config: ..."}
 ```
 
-Non-reloadable field changes are logged as warnings but do not prevent the reload of other settings:
+Changes to the server, database, telemetry, ui, circuit breaker, encryption, compression, routing_strategy and redis settings, and structural backend changes, are logged as warnings but do not prevent the reload of other settings. Changes to `cache`, `reconcile` and the fields the table marks "no warning is logged" take effect only after a restart without a warning:
 
 ```
-{"level":"WARN","msg":"Config field changed but requires restart to take effect","field":"server.listen_addr"}
+{"level":"WARN","msg":"config field changed but requires restart to take effect","field":"server.listen_addr"}
 ```

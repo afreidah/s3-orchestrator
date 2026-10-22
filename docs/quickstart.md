@@ -16,13 +16,14 @@ This starts three MinIO instances via Docker Compose, then launches the orchestr
 
 ## What `make run` does
 
-1. **`make dev-deps`** - runs `docker compose -f docker-compose.test.yml up -d` to start:
+1. **Starts the MinIO backends** from `docker-compose.test.yml` and waits for them to be healthy:
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
    - MinIO 3 on `localhost:19004` (bucket: `backend3`)
-   - A setup container that creates the MinIO buckets
-   - PostgreSQL and Redis are also started for integration tests, but the default `config.yaml` uses embedded SQLite so neither is required for local development
-2. **`go run ./cmd/s3-orchestrator -config config.yaml`** - compiles and starts the server on port 9000
+2. **Runs the `minio-setup` container once** to create the buckets.
+3. **`go run ./cmd/s3-orchestrator -config config.yaml`** - compiles and starts the server on port 9000
+
+The default `config.yaml` uses embedded SQLite, so PostgreSQL and Redis are not started. `make dev-deps` starts the full set, including them.
 
 ## Test it
 
@@ -84,7 +85,7 @@ export S3O_SECRET_ACCESS_KEY=local-dev-root-secret
 go run ./cmd/s3-orchestrator tui
 ```
 
-Navigate prefixes with the arrow keys and press `enter` on an object to open the inspector, which lists every backend copy. The TUI signs its requests with the root keypair from the environment and reads the address from the local `config.yaml`. See [CLI subcommands](cli.md#tui).
+Navigate prefixes with the arrow keys and press `enter` on an object to open the inspector, which lists every backend copy. The TUI signs its requests with the root keypair from the environment and reads the address from the local `config.yaml`. See [CLI and TUI](cli.md#tui).
 
 ## Validate the config
 
@@ -102,7 +103,7 @@ Stop the Docker containers and remove build artifacts:
 make clean
 ```
 
-`make clean` stops the containers but Docker volumes persist (MinIO data). SQLite data is stored locally in `dev-data.db`. To remove everything including stored data:
+`make clean` removes the containers, their volumes and the SQLite file `dev-data.db`, along with the Nomad and k3d demo environments and the build artifacts. To remove only the compose services and their data:
 
 ```bash
 docker compose -f docker-compose.test.yml down -v
@@ -119,4 +120,5 @@ docker compose -f docker-compose.test.yml down -v
 
 - [Admin Guide](admin-guide.md) - production deployment, backend configuration, operational procedures
 - [User Guide](user-guide.md) - client setup for AWS CLI, rclone, boto3, and Go SDK
-- [README](../README.md) - architecture, features, and full configuration reference
+- [README](../README.md) - project overview, features and install options
+- [Configuration](configuration.md) - every block of the configuration file

@@ -35,7 +35,8 @@ max_conns = max_concurrent_requests + (active_workers x 2) + 10
 - `max_conn_lifetime` rotates connections to pick up DNS changes and distribute load across replicas. The 5-minute default works well in most environments.
 - The orchestrator does not export pool-level Prometheus metrics for the pgx
   connection pool. To check for saturation, query PostgreSQL directly
-  (`SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 's3-orchestrator%'`)
+  (`SELECT count(*) FROM pg_stat_activity WHERE usename = 's3orchestrator' AND datname = 's3orchestrator'`,
+  with the user and database from your `database` config)
   or read the per-process `pg_stat_activity` row. Orchestrator-side request
   saturation is best inferred from `s3o_inflight_requests` and
   `s3o_admission_rejections_total`.
@@ -67,7 +68,7 @@ When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to 
 
 ### When to set this
 
-- **Default (0)**: no limit. Fine for low-traffic single-instance deployments.
+- **Default**: 1000 concurrent requests when no read/write split is set. Fine for low-traffic single-instance deployments.
 - **Recommended starting point**: set to 2-3x your `database.max_conns` value. Every S3 operation needs at least one database query, so there's no benefit admitting more requests than the connection pool can serve.
 - **Split pools**: if your workload is read-heavy, set `max_concurrent_reads` higher than `max_concurrent_writes` to protect read availability during upload bursts.
 - **Load shedding**: start with `load_shed_threshold: 0.8` and adjust based on `s3o_load_shed_total` rates.
@@ -167,7 +168,7 @@ The default `GOGC=100` provides smooth GC behavior with `GOMEMLIMIT` set. Settin
 
 ## Backend HTTP Transport
 
-Each S3 backend gets a dedicated `http.Transport` with tuned connection pool settings. These are not configurable via YAML -- they are compiled defaults sized for the orchestrator's concurrent workload (rebalancer, replicator, parallel PUTs/GETs).
+Each S3 backend gets a dedicated `http.Transport` with tuned connection pool settings, sized for the orchestrator's concurrent workload (rebalancer, replicator, parallel PUTs/GETs). The pool sizes and response-header timeout below are defaults that each backend's `http` block can override (`max_idle_conns`, `max_idle_conns_per_host`, `max_conns_per_host`, `response_header_timeout`, `force_http2`); the dial, keepalive, TLS-handshake and idle timeouts are fixed.
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
@@ -312,7 +313,7 @@ redis:
   open_timeout: "15s"
 ```
 
-Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (`GET` pipeline). For most workloads the latency is negligible compared to backend S3 calls. If Redis becomes unavailable, the circuit breaker falls back to local counters automatically - no manual intervention needed.
+Redis adds ~0.2ms per write operation (`HINCRBY` in a MULTI pipeline) and ~0.2ms per limit check (`HGETALL`). For most workloads the latency is negligible compared to backend S3 calls. If Redis becomes unavailable, the circuit breaker falls back to local counters automatically - no manual intervention needed.
 
 **When to use Redis:**
 - Running 2+ instances with usage limits enabled
@@ -328,7 +329,7 @@ Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (
 ```yaml
 backend_circuit_breaker:
   enabled: true
-  failure_threshold: 5   # consecutive failures before opening (default: 10)
+  failure_threshold: 5   # consecutive failures before opening (default: 5)
   open_timeout: "5m"     # delay before probing recovery (default: 5m)
 ```
 
@@ -416,11 +417,12 @@ To limit memory growth under attack:
 
 ## Tracing Sample Rate
 
-The `telemetry.sample_rate` controls what fraction of requests generate OpenTelemetry trace spans exported to the collector (Tempo, Jaeger, etc.). This does not affect Prometheus metrics or structured logs - only distributed traces.
+The `telemetry.tracing.sample_rate` controls what fraction of requests generate OpenTelemetry trace spans exported to the collector (Tempo, Jaeger, etc.). This does not affect Prometheus metrics or structured logs - only distributed traces.
 
 ```yaml
 telemetry:
-  sample_rate: 0.1   # 10% of requests traced
+  tracing:
+    sample_rate: 0.1   # 10% of requests traced
 ```
 
 | Workload | Recommended Rate | Rationale |
@@ -535,7 +537,7 @@ These reference numbers were measured on a single instance with three local MinI
 | Mixed 1KB | 300/s | ~8ms | ~140% | 50/50 PUT/GET |
 | Burst (100 VUs) | ~280/s | ~96ms | 150-200% spikes | k6 scenario, all PUTs |
 
-CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes - the streaming architecture avoids buffering objects in memory. Larger objects (1MB+) will increase memory usage proportionally to concurrency.
+CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes. PUT bodies up to 32 MiB are held in memory before upload, so with larger objects memory grows with object size times concurrent writes.
 
 ## Object Data Cache
 

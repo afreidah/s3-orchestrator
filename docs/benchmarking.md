@@ -1,7 +1,6 @@
 ---
 description: "Micro-benchmarks for hot-path operations: how to run them, how to read the output, and how to compare results between two revisions."
 title: Benchmarking
-weight: 80
 ---
 
 The project includes micro-benchmarks for hot-path operations. Use them to
@@ -24,7 +23,7 @@ go test -bench=. -benchmem -count=6 -run='^$' ./... 2>/dev/null | tee bench-befo
 ```
 
 The `-count=6` flag gives `benchstat` enough samples for statistical
-significance. For a quick sanity check, `make bench` (runs once) is fine.
+significance. `make bench` runs the full suite ten times (`BENCH_COUNT=10`) and saves the results under `benchmarks/`; compare two saved runs with `make bench-compare`.
 
 ### 2. Implement your changes
 
@@ -33,7 +32,7 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 
 | File | What it covers |
 |------|---------------|
-| `internal/transport/auth/auth_bench_test.go` | SigV4 verification, token auth, canonical request building |
+| `internal/transport/auth/auth_bench_test.go` | SigV4 verification, secret-keypair (dashboard login) auth, canonical request building |
 | `internal/transport/s3api/admission_bench_test.go` | Admission gate, split read/write pools |
 | `internal/transport/s3api/ratelimit_bench_test.go` | Per-credential rate limit checks |
 | `internal/transport/s3api/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
@@ -115,6 +114,7 @@ func BenchmarkMyFeature(b *testing.B) {
 
 | Command | Purpose |
 |---------|---------|
-| `make bench` | Run all benchmarks once (quick sanity check) |
+| `make bench` | Run the full suite (`BENCH_COUNT=10`) and save the results under `benchmarks/` |
+| `make bench-compare` | Compare two saved runs with benchstat |
 | `go test -bench=. -benchmem -count=6 -run='^$' ./... 2>/dev/null \| tee out.txt` | Run with enough samples for benchstat |
 | `benchstat before.txt after.txt` | Compare two runs |

@@ -144,7 +144,7 @@ Deeper details: [docs/architecture.md](docs/architecture.md).
 | S3 client setup | [User Guide](docs/user-guide.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Configuration walkthrough + hot-reload | [docs/configuration.md](docs/configuration.md) |
-| Authentication (SigV4, tokens, multi-bucket) | [docs/authentication.md](docs/authentication.md) |
+| Authentication (SigV4, presigned URLs, users and grants) | [docs/authentication.md](docs/authentication.md) |
 | Backends, quotas, routing strategies | [docs/backends.md](docs/backends.md) |
 | Database engines, schema, migrations | [docs/database.md](docs/database.md) |
 | Replication, over-replication, orphan reconciliation | [docs/replication.md](docs/replication.md) |

@@ -29,7 +29,7 @@ auth:
 
 That is an ordinary identity holding every permission on every resource, not a special case in the request path. Issue narrower credentials through the provisioning API and grant them what they need.
 
-Requests without a valid signature get `401` with a JSON body. Request bodies are capped at 1 MB.
+Requests without a valid signature get `401` with a JSON body. JSON request bodies are capped at 1 MB, and at 64 KiB for provisioning and object tags.
 
 ## Authorization
 
@@ -74,7 +74,7 @@ Thirteen endpoints run long enough that a single response is unhelpful: `rebalan
 s3-orchestrator admin scrub
 ```
 
-Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand asks for the stream and renders it as live progress.
+Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `progress` as work advances, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand asks for the stream and renders it as live progress.
 
 ## Restricting a pass to one backend
 
@@ -106,7 +106,7 @@ A `mismatch` is acted on, not just reported: the bad copy is discarded and repli
 
 ## Reading and writing objects
 
-`/admin/api/objects` covers the object namespace itself: `GET` browses a page of it or streams one object down, `PUT` stores one, `DELETE` removes a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client, and they are what the [TUI object browser](cli.md#tui) and the dashboard drive.
+`/admin/api/objects` covers the object namespace itself: `GET` browses a page of it or streams one object down, `PUT` stores one, `DELETE` removes a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client, and they are what the [TUI object browser](cli.md#tui) and `s3-orchestrator admin` drive.
 
 Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. Uploads are capped at 512 MiB; a larger one is refused before it reaches a backend.
 
@@ -118,7 +118,7 @@ A prefix delete that removes some objects and fails on others answers `500` carr
 
 ## Object tags
 
-`/admin/api/objects/tags/{key}` reads, replaces and clears one object's tag set. It exchanges JSON rather than the `Tagging` XML the S3 endpoints use, because its callers are `adminctl`, the dashboard and the TUI:
+`/admin/api/objects/tags/{key}` reads, replaces and clears one object's tag set. It exchanges JSON rather than the `Tagging` XML the S3 endpoints use, because its callers are `adminctl` and the TUI:
 
 ```bash
 # Read the set.
@@ -223,11 +223,9 @@ To bring an object from outside every prefix under management, move it under a v
 
 Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why.
 
-An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip at factor 1, integrity endpoints skip when verification is disabled, encryption endpoints skip when no encryptor is configured, and rebalance skips when utilization is already within the threshold or the strategy plans no moves.
+An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip at factor 1, integrity endpoints skip when verification is disabled, and rebalance skips when utilization is already within the threshold or the strategy plans no moves. A skip is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
 
-The compression endpoints skip only when no codec is available, which is not the same as compression being disabled. A codec is built either way so already-stored objects stay readable, so `compress-existing` is a legitimate thing to run on a fleet that has not turned compression on for writes yet.
-
-This is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
+The four conversion passes (`encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing`) and key rotation differ: they report `"status": "complete"` when they run, and answer `400` with the reason when there is nothing to run against - no encryptor for the encryption passes and rotation, no codec for the compression passes. A codec is built whether or not compression is on for writes, so already-stored objects stay readable, and `compress-existing` is a legitimate thing to run on a fleet that has not turned compression on yet.
 
 ## Deliberate rejections
 

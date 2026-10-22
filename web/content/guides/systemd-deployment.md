@@ -22,27 +22,29 @@ The package maintainer scripts create a dedicated `s3-orchestrator` system user 
 ## Prerequisites
 
 - Debian or Ubuntu-based Linux distribution
-- PostgreSQL accessible from the host
-- One or more S3-compatible storage backends with credentials
+- Two or more S3-compatible storage backends with credentials (the example keeps two copies of every object)
+- PostgreSQL, only for a multi-instance deployment; a single instance uses the embedded SQLite database
 - Root or sudo access for package installation
 
 ## Step 1: Install the Package
 
-Download the `.deb` from the [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) page:
+Download the `.deb` from the [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) page. Asset names carry the version, so set it first:
 
 ```bash
+VERSION=0.165.1   # the release to install, without the leading v
+
 # For amd64
-curl -LO https://github.com/afreidah/s3-orchestrator/releases/latest/download/s3-orchestrator_amd64.deb
+curl -LO https://github.com/afreidah/s3-orchestrator/releases/download/v${VERSION}/s3-orchestrator_${VERSION}_linux_amd64.deb
 
 # For arm64
-curl -LO https://github.com/afreidah/s3-orchestrator/releases/latest/download/s3-orchestrator_arm64.deb
+curl -LO https://github.com/afreidah/s3-orchestrator/releases/download/v${VERSION}/s3-orchestrator_${VERSION}_linux_arm64.deb
 
 sudo dpkg -i s3-orchestrator_*.deb
 ```
 
-{{% notice tip %}}
+{{< callout >}}
 You can also build the package from source with `make deb`. This requires Go and [GoReleaser](https://goreleaser.com/) installed locally.
-{{% /notice %}}
+{{< /callout >}}
 
 After installation, the service is enabled but not yet running:
 
@@ -62,7 +64,12 @@ sudo editor /etc/default/s3-orchestrator
 ```
 
 ```bash
-# --- Database credentials ---
+# --- Administering credential and dashboard session secret ---
+ROOT_ACCESS_KEY_ID=your-admin-access-key
+ROOT_SECRET_ACCESS_KEY=your-admin-secret-key
+UI_SESSION_SECRET=your-session-secret
+
+# --- Database credentials (PostgreSQL only) ---
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=s3_orchestrator
@@ -78,16 +85,23 @@ BACKEND1_BUCKET=my-bucket
 BACKEND1_ACCESS_KEY=your-oci-access-key
 BACKEND1_SECRET_KEY=your-oci-secret-key
 
+BACKEND2_NAME=b2
+BACKEND2_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+BACKEND2_REGION=us-west-004
+BACKEND2_BUCKET=my-bucket
+BACKEND2_ACCESS_KEY=your-b2-key-id
+BACKEND2_SECRET_KEY=your-b2-application-key
+
 # --- Bucket client credentials ---
 BUCKET_ACCESS_KEY=your-client-access-key
 BUCKET_SECRET_KEY=your-client-secret-key
 ```
 
-The file is installed with `0640` permissions (root-owned, readable by the `s3-orchestrator` group) so credentials are not world-readable.
+The file is installed root-owned with `0640` permissions, so credentials are not world-readable. systemd reads it as root before starting the service.
 
-{{% notice tip %}}
+{{< callout >}}
 Generate strong credentials with `openssl rand -hex 20` for access keys and `openssl rand -base64 30` for secret keys.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 3: Configure the Service
 
@@ -141,6 +155,15 @@ backends:
     quota_bytes: 10737418240       # 10 GB
     api_request_limit: 50000
     egress_byte_limit: 10737418240 # 10 GB
+
+  - name: ${BACKEND2_NAME}
+    endpoint: ${BACKEND2_ENDPOINT}
+    region: ${BACKEND2_REGION}
+    bucket: ${BACKEND2_BUCKET}
+    access_key_id: ${BACKEND2_ACCESS_KEY}
+    secret_access_key: ${BACKEND2_SECRET_KEY}
+    force_path_style: true
+    quota_bytes: 10737418240       # 10 GB
 
 routing_strategy: "spread"
 
@@ -196,11 +219,11 @@ telemetry:
     path: "/metrics"
 ```
 
-Add more backends by defining `BACKEND2_*` variables in `/etc/default/s3-orchestrator` and adding corresponding entries to the `backends` list.
+`replication.factor` cannot exceed the number of backends. Add more backends by defining further `BACKENDn_*` variables in `/etc/default/s3-orchestrator` and adding corresponding entries to the `backends` list.
 
 ## Step 4: Prepare the Database
 
-Create the PostgreSQL database and user:
+With the SQLite configuration above there is nothing to prepare: the database file is created on first start. For PostgreSQL, create the database and user:
 
 ```bash
 sudo -u postgres psql <<SQL
@@ -271,7 +294,7 @@ The orchestrator supports hot configuration reload via `SIGHUP`. When you change
 sudo systemctl reload s3-orchestrator
 ```
 
-This re-reads the configuration file and applies changes to rate limits, routing strategy, backend settings, and UI options without dropping active connections. TLS certificates are also hot-reloaded if configured.
+This re-reads the configuration file and applies changes to rate limits, bucket credentials, backend quota and usage limits, and replication and rebalance settings without dropping active connections. TLS certificates are also hot-reloaded if configured. Routing strategy, UI settings and adding or removing backends need a restart; see [Reloading configuration](../../docs/operations/#reloading-configuration).
 
 ## Adding TLS
 
@@ -306,7 +329,7 @@ For server-side encryption with a local master key:
 
 ```bash
 # Generate a 256-bit master key
-openssl rand 32 | base64 > /tmp/encryption.key
+openssl rand -out /tmp/encryption.key 32
 
 # Store it securely
 sudo install -o root -g s3-orchestrator -m 0640 /tmp/encryption.key /etc/s3-orchestrator/encryption.key
@@ -321,9 +344,9 @@ encryption:
   master_key_file: "/etc/s3-orchestrator/encryption.key"
 ```
 
-{{% notice note %}}
+{{< callout type="info" >}}
 The `master_key_file` is validated at startup — the service will refuse to start if the file does not exist or is not exactly 32 bytes. Ensure the key file is in place before starting the service.
-{{% /notice %}}
+{{< /callout >}}
 
 For Vault Transit encryption, see the [Deploying on Nomad with Vault](../nomad-vault-deployment/) guide — the encryption config is the same regardless of deployment method.
 

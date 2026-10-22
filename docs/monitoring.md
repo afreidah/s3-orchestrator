@@ -2,7 +2,6 @@
 description: "The three observability streams the orchestrator emits - metrics, traces, and structured logs - and how to consume each of them."
 title: "Monitoring"
 linkTitle: "Monitoring"
-weight: 31
 ---
 
 The orchestrator emits three observability streams:
@@ -11,7 +10,7 @@ The orchestrator emits three observability streams:
 - **OpenTelemetry traces** - every HTTP request, manager operation, and backend S3 call; OTLP-exported to Tempo or compatible collector.
 - **Structured JSON logs** - `slog` to stdout, including a dedicated audit subset with `"audit": true`.
 
-A ready-to-import Grafana dashboard covering every metric ships at `grafana/s3-orchestrator.json`.
+A ready-to-import Grafana dashboard covering the metrics below ships at `grafana/s3-orchestrator.json`; the [Grafana Dashboard](grafana-dashboard.md) page shows it whole.
 
 ### Web dashboard
 
@@ -32,6 +31,8 @@ The dashboard also provides management actions:
 - **Delete** - delete individual objects by clicking the delete icon on any file in the tree
 - **Rebalance** - trigger an on-demand rebalance using the configured strategy and settings
 - **Clean Excess** - remove over-replicated copies that exceed the replication factor
+- **Maintenance passes** - replicate, scrub, backfill checksums and run the lifecycle rules on demand
+- **Conversions** - encrypt, compress or decompress existing objects
 - **Sync** - import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket - objects already in the database are skipped, and objects outside every configured virtual bucket prefix are imported as unmanaged so they count toward quota without the workers acting on them.
 
 ### On-demand reconciliation
@@ -61,7 +62,7 @@ The dashboard requires authentication. Users log in at `{path}/login` with a cre
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion - directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The dashboard endpoint's `BackendFlags` maps each backend carrying a state flag to its flag names, such as `["cordoned"]`. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` and `before` (RFC3339 timestamps), `component`, and `limit` (default 200, max 1000). Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The dashboard endpoint's `BackendFlags` maps each backend carrying a state flag to its flag names, such as `["cordoned"]`. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` and `before` (RFC3339 timestamps), `component`, and `limit` (default 200, max 1000). Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/sync`, and the background actions `{path}/api/rebalance`, `clean-excess`, `replicate`, `scrub`, `backfill-checksums`, `lifecycle`, `encrypt-existing`, `compress-existing` and `decompress-existing`, each with a `/status` route) accept POST requests; see the [API reference](api-reference.md). The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
 
 ### Health endpoints
 
@@ -83,7 +84,7 @@ curl http://localhost:9000/health/ready
 # {"status":"not ready"}  - 503
 ```
 
-The HTTP response body is intentionally minimal - only the `status` field is returned, so log aggregators can grep on a fixed pattern. To identify which instance answered a probe in a multi-instance deployment, query `GET /admin/api/workers` (which includes the instance identifier) or correlate by source IP.
+The HTTP response body is intentionally minimal - only the `status` field is returned, so log aggregators can grep on a fixed pattern. To identify which instance answered a probe in a multi-instance deployment, correlate by source IP.
 
 ### Background worker health
 
@@ -106,13 +107,13 @@ s3-orchestrator admin workers
 {
   "workers": [
     {"name": "cleanup_queue", "last_success": "2026-05-12T18:42:01Z", "consecutive_failures": 0},
-    {"name": "replicator", "last_failure": "2026-05-12T18:45:14Z", "last_error": "connection refused", "consecutive_failures": 3}
+    {"name": "replication", "last_failure": "2026-05-12T18:45:14Z", "last_error": "connection refused", "consecutive_failures": 3}
   ]
 }
 ```
 
-Workers in proxy-only deployments return `503` from this endpoint
-because no worker pool is registered.
+An `api`-mode instance lists only the services it runs. The endpoint
+returns `503` only when no lifecycle manager is available.
 
 The same data flows into Prometheus as
 `s3o_worker_last_success_timestamp_seconds`,
@@ -150,7 +151,7 @@ The circuit breaker row shows each backend's call state over time - served, degr
 If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Two listener modes:
 
 - **Inline (`telemetry.metrics.listen` empty, the default):** `/metrics` is served on the same listener as the public S3 API. Convenient for single-port deployments and the docker-compose / local-dev workflow. In this mode `/debug/pprof/*` endpoints are **not** registered - mounting pprof on the public S3 listener would leak runtime internals (de-anonymized stack frames via `/debug/pprof/heap`, the command line and flag values via `/debug/pprof/cmdline`) and offer a DoS amplifier (`/debug/pprof/profile?seconds=300` triggers minutes of CPU profiling on demand).
-- **Dedicated listener (`telemetry.metrics.listen` set, e.g. `127.0.0.1:9001`):** `/metrics` and `/debug/pprof/*` are both mounted on the dedicated listener. Bind to `127.0.0.1` or a private network interface so the surface is only reachable from operators inside the trust boundary. The nomad demo uses `0.0.0.0:9001` so the demo's Prometheus can scrape each instance's published port; production deployments should tighten this to `127.0.0.1:9001` or a private network address.
+- **Dedicated listener (`telemetry.metrics.listen` set, e.g. `127.0.0.1:9001`):** `/metrics` is mounted on the dedicated listener, and `/debug/pprof/*` too when `telemetry.metrics.pprof: true` (off by default). Bind to `127.0.0.1` or a private network interface so the surface is only reachable from operators inside the trust boundary. The nomad demo uses `0.0.0.0:9001` so the demo's Prometheus can scrape each instance's published port; production deployments should tighten this to `127.0.0.1:9001` or a private network address.
 
 Once the dedicated listener is configured, captures look like:
 
@@ -293,19 +294,21 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3o_backend_call_refused` | Gauge | backend, call | 1 while the backend's circuit breakers refuse the call, 0 while it is served |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
-| `s3o_circuit_breaker_internal_errors_total` | Counter | - | Errors returned by breaker post-check or state transitions |
+| `s3o_circuit_breaker_internal_errors_total` | Counter | name, operation | Errors returned by breaker post-check or state transitions |
 | `s3o_degraded_mode_active` | Gauge | - | 1 while the read path is in degraded mode (database unavailable), 0 otherwise |
 | `s3o_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
 | `s3o_degraded_cache_hits_total` | Counter | - | Cache hits during degraded reads |
 | `s3o_degraded_write_rejections_total` | Counter | operation | Writes rejected in degraded mode |
-| `s3o_degraded_broadcast_duration_seconds` | Histogram | outcome | Wall-clock duration of degraded-mode broadcast reads, by terminal outcome |
-| `s3o_degraded_broadcast_drain_timeout_total` | Counter | - | Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out |
-| `s3o_degraded_broadcast_mixed_outcomes_total` | Counter | - | Broadcasts whose all-failed terminal saw both 404 and non-404 failures, which surfaces provider divergence otherwise hidden under not_found |
-| `s3o_write_failover_total` | Counter | - | Write operations that failed over to a different backend |
+| `s3o_degraded_broadcast_duration_seconds` | Histogram | operation, outcome | Wall-clock duration of degraded-mode broadcast reads, by terminal outcome |
+| `s3o_degraded_broadcast_drain_timeout_total` | Counter | operation | Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out |
+| `s3o_degraded_broadcast_mixed_outcomes_total` | Counter | operation | Broadcasts whose all-failed terminal saw both 404 and non-404 failures, which surfaces provider divergence otherwise hidden under not_found |
+| `s3o_write_failover_total` | Counter | operation, failed_backend, success_backend | Write operations that failed over to a different backend |
 | `s3o_quota_reconcile_corrections_total` | Counter | - | Byte-total drift corrections applied by usage reconciliation. Expected to stay at zero: the counter is charged in the same transaction that writes the rows it summarizes, so any increase means a mutation path is storing bytes without charging them |
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
+| `s3o_usage_pool_requests` | Gauge | backend, pool | Current month request count charged to each request pool |
+| `s3o_usage_pool_limit` | Gauge | backend, pool | The configured limit of each request pool (0 = counted, never refused) |
 | `s3o_usage_workload_api_requests` | Gauge | backend, workload | Current month API request count split by the workload that made the calls |
 | `s3o_usage_workload_bytes` | Gauge | backend, workload, direction | Current month bytes split by workload; `direction` is `egress` or `ingress`. Workloads: `client`, `admin`, `scrub`, `backfill`, `replication`, `over_replication`, `rebalance`, `drain`, `rewrite`, `reconcile`, `lifecycle`, `multipart_cleanup`, `pending_reaper`, `cleanup`, `purge`, `probe`, and `unknown` for a charge with none |
 | `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits. `operation` covers the client paths plus `rebalance` (moves not planned) and `scrub` (copies deferred) |
@@ -377,9 +380,9 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_notification_queue_depth` | Gauge | - | Webhook events still to be delivered, including those waiting out a retry backoff |
 | `s3o_notification_sent_total` | Counter | endpoint, event_type | Successfully POSTed webhook events |
 | `s3o_notification_failed_total` | Counter | endpoint, event_type | Webhook POST failures (before retry) |
-| `s3o_notification_dropped_total` | Counter | endpoint, event_type | Webhook events dropped (dampened, or the outbox enqueue failed) |
+| `s3o_notification_dropped_total` | Counter | - | Webhook events dropped (dampened, the outbox enqueue failed, or delivery retries exhausted) |
 | `s3o_notification_duration_seconds` | Histogram | endpoint | Webhook delivery latency |
-| `s3o_notification_store_errors_total` | Counter | - | Outbox persistence failures |
+| `s3o_notification_store_errors_total` | Counter | operation | Outbox persistence failures |
 | `s3o_http_panic_recovered_total` | Counter | route | Handler panics caught by the recovery middleware |
 
 The fleet-wide gauges - quota bytes, object, multipart, plaintext and unreadable counts, and the replication and over-replication pending counts - are recomputed from the database every `telemetry.metrics.fleet_interval` (default 60s, no backend API calls), and immediately after a rebalance, replication, over-replication, reconcile or reload pass that changes something. With several instances one computes per interval and the others load its result. The replication counts are exact, not sampled.

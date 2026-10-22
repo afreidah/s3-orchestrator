@@ -1,97 +1,25 @@
 ---
+title: "Diagrams"
+seoTitle: "s3-orchestrator diagrams"
 description: "Interactive diagrams of the request paths, storage layer, background workers, and database schema, with per-component implementation notes."
-title: "s3-orchestrator diagrams"
-linkTitle: "Diagrams"
-chapter: true
 weight: 35
+cascade:
+  type: docs
 ---
 
+Interactive architecture and flow diagrams of the orchestrator's internals. Hover over any component for implementation details.
 
-<div class="landing-subheader">Interactive architecture and flow diagrams for the S3 Orchestrator internals.</div>
-
-<div class="landing-grid">
-  <a class="landing-card" href="architecture/">
-    <i class="fas fa-project-diagram landing-card-icon" style="color: #d29922;"></i>
-    <div>
-      <strong>System Architecture</strong>
-      <p>End-to-end architecture showing the request path, storage layer, background services, and observability.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="admission-control/">
-    <i class="fas fa-filter landing-card-icon" style="color: #58a6ff;"></i>
-    <div>
-      <strong>Admission Control Flow</strong>
-      <p>Detailed request lifecycle through admission control, authentication, routing, and circuit breakers.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="access-control/">
-    <i class="fas fa-user-shield landing-card-icon" style="color: #34b882;"></i>
-    <div>
-      <strong>Access Control Flow</strong>
-      <p>How a credential resolves to a user, and how that user's grants authorize the S3 API, the admin API and the dashboard alike.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="write-path/">
-    <i class="fas fa-upload landing-card-icon" style="color: #3fb950;"></i>
-    <div>
-      <strong>Write Path</strong>
-      <p>PutObject flow through backend selection, compression, encryption, failover, and metadata recording.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="read-path/">
-    <i class="fas fa-download landing-card-icon" style="color: #bc8cff;"></i>
-    <div>
-      <strong>Read Path</strong>
-      <p>GetObject flow through location lookup, failover, broadcast reads, decryption, frame decoding, and streaming.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="circuit-breaker/">
-    <i class="fas fa-bolt landing-card-icon" style="color: #f85149;"></i>
-    <div>
-      <strong>Circuit Breaker</strong>
-      <p>Breaker states for the database, Redis counters, each backend and each backend call: the database breaker probes through half-open, and the others recover through an out-of-band check.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="encryption/">
-    <i class="fas fa-lock landing-card-icon" style="color: #a7d5c1;"></i>
-    <div>
-      <strong>Encryption Flow</strong>
-      <p>Envelope encryption pipeline: DEK generation, key wrapping, chunk-based AES-256-GCM, and range decryption.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="compression/">
-    <i class="fas fa-file-zipper landing-card-icon" style="color: #f0883e;"></i>
-    <div>
-      <strong>Compression</strong>
-      <p>Chunked zstd pipeline: size and ratio floors, seek table, frame-level ranged reads, and composition with encryption.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="tagging/">
-    <i class="fas fa-tags landing-card-icon" style="color: #58a6ff;"></i>
-    <div>
-      <strong>Object Tagging</strong>
-      <p>The four ways a tag set is written, validation and the per-key lock, one set per object key, and what clears it.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="usage-quotas/">
-    <i class="fas fa-gauge-high landing-card-icon" style="color: #c4a35a;"></i>
-    <div>
-      <strong>Usage Quotas</strong>
-      <p>Per-operation request budgets: pooled admission, unmetered operations, ungated deletes, and where the counters live.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="background-services/">
-    <i class="fas fa-cogs landing-card-icon" style="color: #8b949e;"></i>
-    <div>
-      <strong>Background Services</strong>
-      <p>Periodic workers: replicator, rebalancer, over-replication cleaner, cleanup queue, pending reaper, drainer, scrubber, reconciler, lifecycle, multipart cleanup, usage flusher, fleet snapshot, and notification delivery.</p>
-    </div>
-  </a>
-  <a class="landing-card" href="database-schema/">
-    <i class="fas fa-database landing-card-icon" style="color: #4aaa8a;"></i>
-    <div>
-      <strong>Database Schema</strong>
-      <p>Entity-relationship diagram of the PostgreSQL metadata store, which SQLite mirrors: tables, columns, indexes, and relationships.</p>
-    </div>
-  </a>
-</div>
+{{< cards >}}
+  {{< card link="architecture/" title="System Architecture" icon="template" subtitle="The request path, storage layer, background services and observability, end to end." >}}
+  {{< card link="admission-control/" title="Admission Control Flow" icon="filter" subtitle="A request through admission control, authentication, routing and circuit breakers." >}}
+  {{< card link="access-control/" title="Access Control Flow" icon="shield-check" subtitle="How a credential resolves to a user, and how that user's grants authorize the S3 API, the admin API and the dashboard." >}}
+  {{< card link="write-path/" title="Write Path" icon="upload" subtitle="PutObject through backend selection, compression, encryption, failover and metadata recording." >}}
+  {{< card link="read-path/" title="Read Path" icon="download" subtitle="GetObject through location lookup, failover, broadcast reads, decryption, frame decoding and streaming." >}}
+  {{< card link="circuit-breaker/" title="Circuit Breaker" icon="lightning-bolt" subtitle="Breaker states for the database, Redis counters, each backend and each backend call." >}}
+  {{< card link="encryption/" title="Encryption Flow" icon="lock-closed" subtitle="DEK generation, key wrapping, chunked AES-256-GCM and range decryption." >}}
+  {{< card link="compression/" title="Compression" icon="archive" subtitle="Chunked zstd: size and ratio floors, seek table, frame-level ranged reads, and composition with encryption." >}}
+  {{< card link="tagging/" title="Object Tagging" icon="tag" subtitle="The four ways a tag set is written, validation and the per-key lock, and what clears it." >}}
+  {{< card link="usage-quotas/" title="Usage Quotas" icon="scale" subtitle="Per-operation request budgets, pooled admission, unmetered operations and where the counters live." >}}
+  {{< card link="background-services/" title="Background Services" icon="cog" subtitle="Every periodic worker, from the replicator and rebalancer to the scrubber and usage flusher." >}}
+  {{< card link="database-schema/" title="Database Schema" icon="database" subtitle="The PostgreSQL metadata store, which SQLite mirrors: tables, columns, indexes and relationships." >}}
+{{< /cards >}}

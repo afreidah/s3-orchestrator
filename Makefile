@@ -120,7 +120,7 @@ strip-mock-package-docs:
 # they carry vendored mermaid, MathJax and swagger-ui bundles, which is the same
 # exclusion sonar-project.properties already makes for web/**.
 cloc: ## Count the lines this project actually holds, excluding vendored code
-	cloc . --vcs=git --exclude-dir=node_modules,themes,public
+	cloc . --vcs=git --exclude-dir=node_modules,public
 
 test: ## Run Go tests with coverage
 	go test -race -cover ./...
@@ -685,19 +685,16 @@ web-godoc: ## Generate Go API reference markdown for the website
 			sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
 		done
 
-web-submodules: ## Ensure Hugo theme submodule is checked out
-	@git submodule update --init --recursive web/themes/hugo-theme-relearn
-
-web-serve: web-submodules web-godoc ## Serve the project website locally
+web-serve: web-godoc ## Serve the project website locally
 	cd web && hugo serve
 
-web-build: web-submodules web-godoc ## Build the project website
+web-build: web-godoc ## Build the project website
 	cd web && hugo --minify
 
-web-docker: web-submodules ## Build website Docker image for local architecture
+web-docker: ## Build website Docker image for local architecture
 	docker build --pull -f web/Dockerfile -t $(WEB_IMAGE):$(WEB_TAG) .
 
-web-push: web-submodules builder ## Build and push multi-arch website image to registry
+web-push: builder ## Build and push multi-arch website image to registry
 	docker buildx build \
 	  --pull \
 	  --platform $(PLATFORMS) \
@@ -800,5 +797,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs provider-publish dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish grafana-publish artifacts-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs provider-publish dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish grafana-publish artifacts-publish clean
 .DEFAULT_GOAL := help

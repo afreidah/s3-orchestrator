@@ -9,49 +9,11 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
 
 The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush, the fleet snapshot and the circuit breaker watchdog, which run in every mode, plus the flight recorder and provisioning watch when enabled.
 
-<style>
-  #ac-diagram { margin: 1rem 0; }
+{{< diagram >}}
 
-  /* floating tooltip */
-  #ac-tooltip {
-    position: fixed; z-index: 9999;
-    max-width: 380px; padding: 0.7rem 0.85rem;
-    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-    display: none;
-  }
-  #ac-tooltip a { color: #34b882; text-decoration: none; }
-  #ac-tooltip a:hover { text-decoration: underline; }
-  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
-  #ac-tooltip .ac-badge {
-    display: inline-block; padding: 1px 7px; border-radius: 4px;
-    font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
-  }
-  .ac-badge-entry { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
-  .ac-badge-middleware { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
-  .ac-badge-handler { background: #8957e522; color: #bc8cff; border: 1px solid #bc8cff55; }
-  .ac-badge-storage { background: #1a3a3022; color: #4aaa8a; border: 1px solid #4aaa8a55; }
-  .ac-badge-data { background: #23863622; color: #3fb950; border: 1px solid #3fb95055; }
-  .ac-badge-background { background: #8b949e22; color: #8b949e; border: 1px solid #8b949e55; }
-  .ac-badge-observability { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
-  #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
-  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
-
-  /* path highlighting */
-  #ac-diagram .node, #ac-diagram .edgePath, #ac-diagram .edgeLabel { transition: opacity 0.15s, filter 0.15s; }
-  #ac-diagram svg.highlighting .node, #ac-diagram svg.highlighting .edgePath, #ac-diagram svg.highlighting .edgeLabel { opacity: 0.12; }
-  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(42,157,115,0.5)); }
-  #ac-diagram .node { cursor: pointer; }
-</style>
-
-<div id="ac-diagram"></div>
-<div id="ac-tooltip"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.8.0/dist/mermaid.min.js"></script>
 <script>
-(function() {
-  var diagramSrc = [
+window.s3oDiagram = {
+  source: [
     'flowchart TD',
     '    CLIENT([S3 Client]):::entry --> HTTP[HTTP Server<br>TLS / Timeouts]:::middleware',
     '    HTTP --> ROUTE{Path<br>Router}:::middleware',
@@ -91,71 +53,21 @@ The gray background workers run only when the process starts in `worker` or `all
     '    USAGE --> PG',
     '    OBJMGR --> USAGE',
     '',
-    '    REPL[Replicator]:::background --> SELECT',
-    '    REPL --> PG',
-    '    REBAL[Rebalancer]:::background --> SELECT',
-    '    REBAL --> PG',
-    '    CLEAN[Cleanup<br>Queue]:::background --> CB1',
-    '    CLEAN --> PG',
-    '    LIFE[Lifecycle<br>Expiration]:::background --> OBJMGR',
-    '    MPCLEAN[Multipart<br>Cleanup]:::background --> MPMGR',
-    '    OVERREP[Over-Replication<br>Cleaner]:::background --> CB1',
-    '    OVERREP --> PG',
-    '    PENDREAP[Pending<br>Reaper]:::background --> PG',
-    '    PENDREAP --> CB1',
-    '    DRAIN[Drainer]:::background --> SELECT',
-    '    DRAIN --> PG',
-    '    SCRUB[Scrubber]:::background --> CB1',
-    '    SCRUB --> PG',
-    '    RECON[Reconciler]:::background --> CB1',
-    '    RECON --> PG',
-    '    FLEET[Fleet<br>Snapshot]:::background --> PG',
-    '    FLEET --> PROM',
+    '    WORKERS[Background<br>Workers]:::background',
+    '    WORKERS --> SELECT',
+    '    WORKERS --> CB1',
+    '    WORKERS --> PG',
     '',
-    '    HTTP --> PROM[Prometheus<br>Metrics]:::observability',
-    '    HTTP --> TEMPO[OpenTelemetry<br>Tracing]:::observability',
-    '    HTTP --> AUDIT[Structured<br>Audit Logs]:::observability',
+    '    subgraph OBS [Observability]',
+    '        PROM[Prometheus<br>Metrics]:::observability',
+    '        TEMPO[OpenTelemetry<br>Tracing]:::observability',
+    '        AUDIT[Structured<br>Audit Logs]:::observability',
+    '    end',
+    '    HTTP --> OBS',
     '',
-    '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
-    '    classDef middleware fill:#6b5b2e,stroke:#c4a35a,color:#fff',
-    '    classDef handler fill:#2d7d6a,stroke:#5ec9a0,color:#fff',
-    '    classDef storage fill:#1a3a30,stroke:#4aaa8a,color:#c9d1d9',
-    '    classDef data fill:#1a7a5a,stroke:#34b882,color:#fff',
-    '    classDef background fill:#222a26,stroke:#8a9aa8,color:#e6edf3',
-    '    classDef observability fill:#8b3a3a,stroke:#d4a0a0,color:#fff'
-  ].join('\n');
+  ].join('\n'),
 
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    themeVariables: {
-      darkMode: true,
-      background: '#191c23',
-      fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      fontSize: '15px',
-      primaryColor: '#26332f',
-      primaryTextColor: '#f8fafc',
-      primaryBorderColor: '#2a9d73',
-      secondaryColor: '#3a2e20',
-      secondaryTextColor: '#e8dfd0',
-      secondaryBorderColor: '#c4a35a',
-      tertiaryColor: '#20262d',
-      tertiaryTextColor: '#e8dfd0',
-      tertiaryBorderColor: '#4aaa8a',
-      lineColor: '#7f8b86',
-      edgeLabelBackground: '#191c23',
-      clusterBkg: '#1d2229',
-      clusterBorder: '#39443f'
-    },
-    flowchart: { nodeSpacing: 32, rankSpacing: 46, curve: 'linear', padding: 12, diagramPadding: 16, useMaxWidth: true, htmlLabels: true }
-  });
-
-  mermaid.render('arch-mermaid-svg', diagramSrc).then(function(result) {
-    document.getElementById('ac-diagram').innerHTML = result.svg;
-    wireUpInteractivity();
-  });
-
-  var nodeInfo = {
+  info: {
     CLIENT: {
       title: 'S3 Client',
       badge: 'entry', badgeText: 'entry point',
@@ -281,60 +193,10 @@ The gray background workers run only when the process starts in `worker` or `all
       badge: 'data', badgeText: 'counters',
       body: '<p><b>Local:</b> atomic in-process counters (single instance).<br><b>Redis:</b> shared counters for multi-instance deployments.</p><p>Redis fallback: if Redis is down, counters accumulate locally and flush to DB on the next successful cycle. No data loss, just temporary per-instance isolation.</p>'
     },
-    REPL: {
-      title: 'Replicator',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Reads from copies on backends serving <code>GetObject</code>, falling back to any copy when none does, and stream-copies to write targets with available quota (binary copy, no re-encryption). Each copy claims its target with an intent first, so concurrent copies cannot overfill it.</p><p>A copy on a backend that has refused reads for longer than <code>replication.unhealthy_threshold</code> (default 10m) stops counting toward the factor, so a replacement is made elsewhere.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    REBAL: {
-      title: 'Rebalancer',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Redistributes objects across backends to optimize storage utilization. Disabled by default (<code>rebalance.enabled</code>). Runs every <code>rebalance.interval</code> (default 6 hours) under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: claim the target with an intent, refused when it has no room &rarr; stream copy from source to target (binary copy, no re-encryption) &rarr; record the copy with <code>PlaceCopy</code>, which commits only while the source is still the copy that was read, and queues the source copy\'s bytes in the same transaction &rarr; delete the source copy. Destinations are limited to write targets.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    CLEAN: {
-      title: 'Cleanup Queue',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Every transaction that stops recording bytes queues them in <code>cleanup_queue</code> before it commits, claimed by its instance, which deletes them right after. This worker retries the deletes that failed, with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, claiming 50 rows at a time for up to 20 batches, with 10 concurrent goroutines, and settles them through the same code the request path uses.</p><p>Each tick uses <code>ClaimPendingCleanups</code> (a CTE that selects candidates <code>FOR UPDATE SKIP LOCKED</code>, then <code>UPDATE ... FROM</code> that set) to atomically reserve rows and stamp the calling instance\'s identifier so concurrent ticks across instances always see disjoint sets. A claim older than <code>cleanup_queue.claim_grace_period</code> (default 5m) is reclaimable, so a process that died before settling its rows does not leave them stuck. A settle retires every row whose bytes are gone through one <code>CompleteCleanupItems</code> statement, which releases their bytes from the backend\'s orphan bytes, since <code>backend_capacity</code> sums the rows. Every settle write matches the claim the row was read under, so a row another instance reclaimed is left to it.</p><p>Rows come from client deletes and overwrites, multipart abort, completion and part replacement, the rebalancer, replicator, over-replication cleaner, drain, rewrite passes, scrubber, read-path integrity checks, discarded intents and the pending reaper.</p><p>On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code> and the <code>cleanup.exhausted</code> notification is emitted; its bytes stay counted as orphan bytes because they are still on disk.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_dlq_depth, s3o_cleanup_dlq_enqueued_total{backend}</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    LIFE: {
-      title: 'Lifecycle Expiration',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Automatic object expiration. Each rule filters on <code>prefix</code>, <code>tags</code>, or both, and sets <code>expiration_days</code>. Runs hourly under advisory lock.</p><p>Example: <code>prefix: temp/, expiration_days: 30</code> deletes all objects under <code>temp/</code> older than 30 days. Calls ObjectManager.DeleteObject for proper cleanup across all backends.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    MPCLEAN: {
-      title: 'Multipart Cleanup',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Finds incomplete multipart uploads older than 24 hours and aborts them. Runs hourly under advisory lock.</p><p>Prevents orphaned temporary parts (<code>__multipart/{uploadID}/*</code>) from accumulating on backends when clients abandon uploads: the abort removes the upload and part rows and queues the parts\' bytes in one transaction, then deletes them.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    OVERREP: {
-      title: 'Over-Replication Cleaner',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every <code>replication.worker_interval</code> (default 5 minutes) under advisory lock <code>LockOverReplication</code> (1008).</p><p>Copies are scored by backend state: copies on backends that accept no new copies (cordoned or drain-flagged) go first, then copies on backends refusing reads, then copies on the most utilized healthy backends. Frees up quota where it is scarcest.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    PENDREAP: {
-      title: 'Pending Reaper',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Resolves unresolved <code>pending_objects</code> rows. Every write claims its target with an intent before its bytes land: a PUT and its extra copies, a replica, a move, a rewrite and a multipart part. If the orchestrator died between the backend write and the metadata commit, this worker is what makes the orphan recoverable: it HEADs the backend and either promotes the intent (HEAD 200) or drops it (HEAD 404). An intent a newer committed copy superseded has its bytes queued for deletion. A companion intent is never promoted: it is kept when a recorded copy sits at its path and otherwise discarded with its bytes.</p><p>Runs every <code>write_path.pending_pattern.reaper_tick</code> (default 1 min), processing intents older than <code>min_age</code> (default 5 min) in batches of <code>batch_size</code> (default 50) with concurrency 4. Each tick runs under advisory lock <code>LockPendingReaper</code> (1011), and each intent is re-read under <code>FOR UPDATE</code> before it is resolved.</p><p>Every write records an intent, so the reaper has no enable switch. It is registered in <code>worker</code> and <code>all</code> mode, and is skipped only if it fails to build, which is logged as a warning.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a> &middot; <a href="../write-path/">Write path diagram &rarr;</a></p>'
-    },
-    DRAIN: {
-      title: 'Drainer',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Works backend drains. A drain is a flag on the backend\'s <code>backend_states</code> row, set through the admin API (<code>POST /admin/api/backends/{name}/drain</code>). Cancelling the drain clears the drain flags and leaves any cordon in place.</p><p>Runs every 10s under advisory lock <code>LockDrain</code> (1006). Each pass moves a draining backend\'s objects to other backends until the drain finishes or stalls. A backend carrying a drain or cordon flag accepts no new copies, because admission tests its flags through <code>backend_capacity</code>. A cordoned backend still takes rewrites of its own copies and parts of uploads started before the cordon; a draining one takes neither.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    SCRUB: {
-      title: 'Scrubber',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Integrity verification. Reads a batch of objects that have stored SHA-256 hashes, undoes encryption and compression, and checks the content still matches. A corrupted copy\'s row is dropped and its bytes queued for deletion in the same transaction.</p><p>Runs only when <code>integrity.enabled</code> is true and <code>integrity.scrubber_interval</code> is set, under advisory lock <code>LockScrubber</code> (1010). A copy verified within <code>integrity.scrubber_min_age</code> (default 7 days) is skipped, and a backend with only <code>integrity.scrubber_egress_reserve</code> of its monthly egress limit left is deferred.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    RECON: {
-      title: 'Reconciler',
-      badge: 'background', badgeText: 'background worker',
-      body: '<p>Scans each backend\'s bucket and imports objects the metadata store does not track, such as orphans from failed writes or manual uploads, so quota accounting stays accurate.</p><p>Registered only when <code>reconcile.enabled</code> is true. Runs every <code>reconcile.interval</code> (default 24h) under advisory lock <code>LockReconcile</code> (1009).</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
-    },
-    FLEET: {
-      title: 'Fleet Snapshot',
-      badge: 'background', badgeText: 'every mode',
-      body: '<p>Computes the fleet-wide figures every <code>telemetry.metrics.fleet_interval</code> (default 60s) under advisory lock 1013: quota bytes, one grouped ledger pass for per-backend object, unverified, plaintext, unreadable, compression and coverage figures, multipart counts, and exact under- and over-replicated counts.</p><p>Applies them to the Prometheus gauges and, with Redis, publishes them so every instance serves the same numbers. An instance that finds a snapshot younger than half the interval applies it instead of recomputing. The dashboard and <code>/admin/api/status</code> read this snapshot rather than querying the ledger per request.</p>'
+    WORKERS: {
+      title: 'Background Workers',
+      badge: 'background', badgeText: 'background workers',
+      body: '<p>The replicator, rebalancer, drainer, over-replication cleaner, cleanup queue, pending reaper, scrubber, reconciler, lifecycle expiration, multipart cleanup and fleet snapshot. Each runs on its own interval under an advisory lock, so only one instance works a given task at a time.</p><p>They read and write the metadata store, and move or delete bytes through backend selection and the per-backend circuit breakers. Most run only in <code>worker</code> or <code>all</code> mode.</p><p><a href="../background-services/">Background services diagram &rarr;</a></p>'
     },
     PROM: {
       title: 'Prometheus Metrics',
@@ -351,149 +213,18 @@ The gray background workers run only when the process starts in `worker` or `all
       badge: 'observability', badgeText: 'observability',
       body: '<p>Structured <code>slog</code> entries with <code>audit=true</code> marker. Two-level audit: HTTP envelope (method, path, status, duration) + storage operation (backend, key, outcome).</p><p>Request IDs flow through context from HTTP layer to storage layer. Background services get auto-generated correlation IDs per tick.</p><p>JSON output to stdout for log collectors. Recent entries buffered in-memory for the Web UI log viewer.</p><p class="ac-metric">Metric: s3o_audit_events_total</p>'
     }
-  };
-
-  var tooltip = document.getElementById('ac-tooltip');
-  var mouseX = 0, mouseY = 0;
-
-  var pinned = false;
-  document.addEventListener('mousemove', function(e) {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-    if (tooltip.style.display === 'block' && !pinned) positionTooltip();
-  });
-
-  function positionTooltip() {
-    var pad = 12;
-    var w = tooltip.offsetWidth, h = tooltip.offsetHeight;
-    var vw = window.innerWidth, vh = window.innerHeight;
-
-    var x = mouseX + pad;
-    if (x + w > vw - pad) x = mouseX - w - pad;
-    x = Math.max(pad, Math.min(x, vw - w - pad));
-
-    // Prefer below the cursor, and flip above only when above genuinely has
-    // more room. Clamping afterwards is what keeps a tall panel on screen: an
-    // unclamped flip puts its top edge above the viewport, and a panel taller
-    // than the viewport pins to the top and scrolls instead.
-    var below = vh - mouseY - pad * 2;
-    var above = mouseY - pad * 2;
-    var y = (h <= below || below >= above) ? mouseY + pad : mouseY - h - pad;
-    y = Math.max(pad, Math.min(y, vh - h - pad));
-
-    tooltip.style.left = x + 'px';
-    tooltip.style.top = y + 'px';
   }
-
-  function showInfo(id) {
-    var info = nodeInfo[id];
-    if (!info) { tooltip.style.display = 'none'; pinned = false; return; }
-    tooltip.innerHTML = '<h3>' + info.title + '</h3><span class="ac-badge ac-badge-' + info.badge + '">' + info.badgeText + '</span>' + info.body;
-    pinned = false;
-    tooltip.style.display = 'block';
-    positionTooltip();
-    // Pin in place if tooltip has clickable links
-    if (tooltip.querySelector('a')) pinned = true;
-  }
-
-  var hideTimer = null;
-  var hoveringTooltip = false;
-  var hoveringNode = false;
-
-  tooltip.addEventListener('mouseenter', function() { hoveringTooltip = true; clearTimeout(hideTimer); });
-  tooltip.addEventListener('mouseleave', function() {
-    hoveringTooltip = false;
-    hideTimer = setTimeout(function() {
-      if (!hoveringNode && !hoveringTooltip) clearInfo();
-    }, 100);
-  });
-
-  function clearInfo() {
-    tooltip.style.display = 'none';
-    pinned = false;
-    var svg = document.querySelector('#ac-diagram svg');
-    if (svg) {
-      svg.classList.remove('highlighting');
-      svg.querySelectorAll('.highlight').forEach(function(el) { el.classList.remove('highlight'); });
-    }
-  }
-
-  function wireUpInteractivity() {
-    var svg = document.querySelector('#ac-diagram svg');
-    if (!svg) return;
-
-    var adj = {}, edgeMap = {};
-    svg.querySelectorAll('.edgePath').forEach(function(ep, i) {
-      var cls = ep.getAttribute('class') || '';
-      var m = cls.match(/LS-(\S+)/), m2 = cls.match(/LE-(\S+)/);
-      if (!m || !m2) return;
-      var from = m[1], to = m2[1];
-      edgeMap[i] = { from: from, to: to, path: ep, label: svg.querySelectorAll('.edgeLabel')[i] };
-      (adj[from] = adj[from] || []).push(i);
-    });
-
-    function bfs(startId, adjacency, getNext) {
-      var visited = new Set([startId]), edges = new Set(), queue = [startId];
-      while (queue.length) {
-        var cur = queue.shift();
-        (adjacency[cur] || []).forEach(function(ei) {
-          edges.add(ei);
-          var next = getNext(edgeMap[ei]);
-          if (!visited.has(next)) { visited.add(next); queue.push(next); }
-        });
-      }
-      return { nodes: visited, edges: edges };
-    }
-
-    var radj = {};
-    Object.keys(edgeMap).forEach(function(i) {
-      var e = edgeMap[i];
-      (radj[e.to] = radj[e.to] || []).push(Number(i));
-    });
-
-    svg.querySelectorAll('.node').forEach(function(node) {
-      var id = node.id.replace(/^flowchart-/, '').replace(/-\d+$/, '');
-
-      node.addEventListener('mouseenter', function() {
-        hoveringNode = true;
-        clearTimeout(hideTimer);
-        svg.classList.add('highlighting');
-        var fwd = bfs(id, adj, function(e) { return e.to; });
-        var bwd = bfs(id, radj, function(e) { return e.from; });
-        var allNodes = new Set([...fwd.nodes, ...bwd.nodes]);
-        var allEdges = new Set([...fwd.edges, ...bwd.edges]);
-
-        svg.querySelectorAll('.node').forEach(function(n) {
-          var nid = n.id.replace(/^flowchart-/, '').replace(/-\d+$/, '');
-          n.classList.toggle('highlight', allNodes.has(nid));
-        });
-        Object.keys(edgeMap).forEach(function(i) {
-          var hl = allEdges.has(Number(i));
-          edgeMap[i].path.classList.toggle('highlight', hl);
-          if (edgeMap[i].label) edgeMap[i].label.classList.toggle('highlight', hl);
-        });
-        showInfo(id);
-      });
-
-      node.addEventListener('mouseleave', function() {
-        hoveringNode = false;
-        hideTimer = setTimeout(function() {
-          if (!hoveringNode && !hoveringTooltip) clearInfo();
-        }, 100);
-      });
-    });
-  }
-})();
+};
 </script>
 
 ## Legend
 
-| Color | Meaning |
-|-------|---------|
-| <span style="color:#1a7a5a">**Forest green**</span> | Entry point |
-| <span style="color:#c4a35a">**Amber**</span> | Middleware / routing |
-| <span style="color:#5ec9a0">**Teal**</span> | Request handlers |
-| <span style="color:#4aaa8a">**Teal**</span> | Internal storage layer |
-| <span style="color:#34b882">**Green**</span> | External data stores |
-| <span style="color:#8a9aa8">**Gray**</span> | Background services |
-| <span style="color:#d4a0a0">**Red**</span> | Observability |
+| Node | Meaning |
+|------|---------|
+| <span class="dg-swatch dg-entry"></span> | Entry point |
+| <span class="dg-swatch dg-filter"></span> | Middleware / routing |
+| <span class="dg-swatch dg-process"></span> | Request handlers |
+| <span class="dg-swatch dg-storage"></span> | Internal storage layer |
+| <span class="dg-swatch dg-success"></span> | External data stores |
+| <span class="dg-swatch dg-background"></span> | Background services |
+| <span class="dg-swatch dg-reject"></span> | Observability |

@@ -7,43 +7,11 @@ weight: 7
 
 Coordination of periodic background workers that maintain storage health, enforce replication, and persist counters. **Hover over any component** for implementation details.
 
-<style>
-  #ac-diagram { margin: 1rem 0; }
-  #ac-tooltip {
-    position: fixed; z-index: 9999; pointer-events: none;
-    max-width: 380px; padding: 0.7rem 0.85rem;
-    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
-  }
-  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
-  #ac-tooltip .ac-badge {
-    display: inline-block; padding: 1px 7px; border-radius: 4px;
-    font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
-  }
-  .ac-badge-entry { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
-  .ac-badge-filter { background: #6b5b2e22; color: #c4a35a; border: 1px solid #c4a35a55; }
-  .ac-badge-decision { background: #2a9d7322; color: #2a9d73; border: 1px solid #2a9d7355; }
-  .ac-badge-process { background: #2d7d6a22; color: #5ec9a0; border: 1px solid #5ec9a055; }
-  .ac-badge-storage { background: #1a3a3022; color: #4aaa8a; border: 1px solid #4aaa8a55; }
-  .ac-badge-success { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
-  .ac-badge-reject { background: #8b3a3a22; color: #d4a0a0; border: 1px solid #d4a0a055; }
-  .ac-badge-cleanup { background: #4a556822; color: #8a9aa8; border: 1px solid #8a9aa855; }
-  #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
-  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
-  #ac-diagram .node, #ac-diagram .edgePath, #ac-diagram .edgeLabel { transition: opacity 0.15s, filter 0.15s; }
-  #ac-diagram svg.highlighting .node, #ac-diagram svg.highlighting .edgePath, #ac-diagram svg.highlighting .edgeLabel { opacity: 0.12; }
-  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(42,157,115,0.5)); }
-  #ac-diagram .node { cursor: pointer; }
-</style>
+{{< diagram >}}
 
-<div id="ac-diagram"></div>
-<div id="ac-tooltip"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.8.0/dist/mermaid.min.js"></script>
 <script>
-(function() {
-  var diagramSrc = [
+window.s3oDiagram = {
+  source: [
     'flowchart LR',
     '    SCHED([Lifecycle<br>Manager]):::entry --> REPL[Replicator]:::process',
     '    SCHED --> REBAL[Rebalancer]:::process',
@@ -90,47 +58,9 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    NOTIFY -->|drain outbox| PG',
     '    PROVWATCH -->|reload provisioning| PG',
     '',
-    '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
-    '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
-    '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
-    '    classDef process fill:#2d7d6a,stroke:#5ec9a0,color:#fff',
-    '    classDef storage fill:#1a3a30,stroke:#4aaa8a,color:#c9d1d9',
-    '    classDef success fill:#1a7a5a,stroke:#34b882,color:#fff,font-weight:bold',
-    '    classDef reject fill:#8b3a3a,stroke:#d4a0a0,color:#fff,font-weight:bold',
-    '    classDef cleanup fill:#222a26,stroke:#8a9aa8,color:#e6edf3'
-  ].join('\n');
+  ].join('\n'),
 
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    themeVariables: {
-      darkMode: true,
-      background: '#191c23',
-      fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      fontSize: '15px',
-      primaryColor: '#26332f',
-      primaryTextColor: '#f8fafc',
-      primaryBorderColor: '#2a9d73',
-      secondaryColor: '#3a2e20',
-      secondaryTextColor: '#e8dfd0',
-      secondaryBorderColor: '#c4a35a',
-      tertiaryColor: '#20262d',
-      tertiaryTextColor: '#e8dfd0',
-      tertiaryBorderColor: '#4aaa8a',
-      lineColor: '#7f8b86',
-      edgeLabelBackground: '#191c23',
-      clusterBkg: '#1d2229',
-      clusterBorder: '#39443f'
-    },
-    flowchart: { nodeSpacing: 80, rankSpacing: 160, curve: 'linear', padding: 12, diagramPadding: 16, useMaxWidth: true, htmlLabels: true }
-  });
-
-  mermaid.render('bg-mermaid-svg', diagramSrc).then(function(result) {
-    document.getElementById('ac-diagram').innerHTML = result.svg;
-    wireUpInteractivity();
-  });
-
-  var nodeInfo = {
+  info: {
     SCHED: {
       title: 'Lifecycle Manager (Scheduler)',
       badge: 'entry', badgeText: 'scheduler',
@@ -231,100 +161,19 @@ Coordination of periodic background workers that maintain storage health, enforc
       badge: 'cleanup', badgeText: 'cleanup outbox',
       body: '<p>Table <code>cleanup_queue</code> holding the bytes waiting to be deleted. Every transaction that stops recording bytes inserts their rows before it commits, already claimed by its instance, which deletes the bytes once it commits and settles each row; the worker retries what that delete could not complete.</p><p><b>Schema</b>: <code>id</code>, <code>backend_name</code>, <code>object_key</code>, <code>storage_key</code>, <code>reason</code>, <code>size_bytes</code>, <code>attempts</code>, <code>last_error</code>, <code>next_retry</code>, <code>created_at</code>, <code>claimed_at</code>, <code>claimed_by</code>.</p><p><b>Reasons</b>: <code>object_deleted</code>, <code>overwrite_displaced</code>, <code>superseded_intent</code>, <code>companion_discarded</code>, <code>companion_untrusted</code>, <code>write_target_refused</code>, <code>replication_orphan</code>, <code>over_replication</code>, <code>rebalance_orphan</code>, <code>rebalance_source_delete</code>, <code>drain_orphan</code>, <code>drain_source_delete</code>, <code>rewrite_orphan</code>, <code>rewrite_source_delete</code>, <code>part_replaced</code>, <code>abort_part_cleanup</code>, <code>complete_part_cleanup</code>, <code>orphan_part_record_failed</code>, <code>integrity_scrub_failed</code>, <code>integrity_failed</code>.</p><p>A backend\'s orphan bytes are the sum of <code>size_bytes</code> over its rows here and in <code>cleanup_dlq</code>, computed by the <code>backend_capacity</code> view, so admission accounts for space not yet released without any counter to maintain. Settling a row deletes it, which releases its bytes.</p><p>Worker claim filter: <code>WHERE next_retry <= NOW() AND attempts < 10 AND (claimed_at IS NULL OR claimed_at < graceCutoff)</code> with <code>FOR UPDATE SKIP LOCKED</code>; the matching <code>idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts < 10</code> serves the <code>ORDER BY next_retry, created_at</code> scan without a sort. On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>, where its bytes stay counted because they are still on disk; reclaim happens only when an operator confirms the object is gone.</p>'
     }
-  };
-
-  var tooltip = document.getElementById('ac-tooltip');
-  var mouseX = 0, mouseY = 0;
-  document.addEventListener('mousemove', function(e) {
-    mouseX = e.clientX; mouseY = e.clientY;
-    if (tooltip.style.display === 'block') positionTooltip();
-  });
-  function positionTooltip() {
-    var pad = 12;
-    var w = tooltip.offsetWidth, h = tooltip.offsetHeight;
-    var vw = window.innerWidth, vh = window.innerHeight;
-
-    var x = mouseX + pad;
-    if (x + w > vw - pad) x = mouseX - w - pad;
-    x = Math.max(pad, Math.min(x, vw - w - pad));
-
-    // Prefer below the cursor, and flip above only when above genuinely has
-    // more room. Clamping afterwards is what keeps a tall panel on screen: an
-    // unclamped flip puts its top edge above the viewport, and a panel taller
-    // than the viewport pins to the top and scrolls instead.
-    var below = vh - mouseY - pad * 2;
-    var above = mouseY - pad * 2;
-    var y = (h <= below || below >= above) ? mouseY + pad : mouseY - h - pad;
-    y = Math.max(pad, Math.min(y, vh - h - pad));
-
-    tooltip.style.left = x + 'px';
-    tooltip.style.top = y + 'px';
   }
-  function showInfo(id) {
-    var info = nodeInfo[id];
-    if (!info) { tooltip.style.display = 'none'; return; }
-    tooltip.innerHTML = '<h3>' + info.title + '</h3><span class="ac-badge ac-badge-' + info.badge + '">' + info.badgeText + '</span>' + info.body;
-    tooltip.style.display = 'block'; positionTooltip();
-  }
-  function clearInfo() { tooltip.style.display = 'none'; }
-
-  function wireUpInteractivity() {
-    var svg = document.querySelector('#ac-diagram svg');
-    if (!svg) return;
-    var adj = {}, edgeMap = {};
-    svg.querySelectorAll('.edgePath').forEach(function(ep, i) {
-      var cls = ep.getAttribute('class') || '';
-      var m = cls.match(/LS-(\S+)/), m2 = cls.match(/LE-(\S+)/);
-      if (!m || !m2) return;
-      edgeMap[i] = { from: m[1], to: m2[1], path: ep, label: svg.querySelectorAll('.edgeLabel')[i] };
-      (adj[m[1]] = adj[m[1]] || []).push(i);
-    });
-    function bfs(startId, adjacency, getNext) {
-      var visited = new Set([startId]), edges = new Set(), queue = [startId];
-      while (queue.length) { var cur = queue.shift(); (adjacency[cur] || []).forEach(function(ei) {
-        edges.add(ei); var next = getNext(edgeMap[ei]);
-        if (!visited.has(next)) { visited.add(next); queue.push(next); }
-      }); } return { nodes: visited, edges: edges };
-    }
-    var radj = {};
-    Object.keys(edgeMap).forEach(function(i) { var e = edgeMap[i]; (radj[e.to] = radj[e.to] || []).push(Number(i)); });
-    svg.querySelectorAll('.node').forEach(function(node) {
-      var id = node.id.replace(/^flowchart-/, '').replace(/-\d+$/, '');
-      node.addEventListener('mouseenter', function() {
-        svg.classList.add('highlighting');
-        var fwd = bfs(id, adj, function(e) { return e.to; });
-        var bwd = bfs(id, radj, function(e) { return e.from; });
-        var allNodes = new Set([...fwd.nodes, ...bwd.nodes]);
-        var allEdges = new Set([...fwd.edges, ...bwd.edges]);
-        svg.querySelectorAll('.node').forEach(function(n) {
-          n.classList.toggle('highlight', allNodes.has(n.id.replace(/^flowchart-/, '').replace(/-\d+$/, '')));
-        });
-        Object.keys(edgeMap).forEach(function(i) {
-          var hl = allEdges.has(Number(i));
-          edgeMap[i].path.classList.toggle('highlight', hl);
-          if (edgeMap[i].label) edgeMap[i].label.classList.toggle('highlight', hl);
-        });
-        showInfo(id);
-      });
-      node.addEventListener('mouseleave', function() {
-        svg.classList.remove('highlighting');
-        svg.querySelectorAll('.highlight').forEach(function(el) { el.classList.remove('highlight'); });
-        clearInfo();
-      });
-    });
-  }
-})();
+};
 </script>
 
 ## Legend
 
-| Color | Meaning |
-|-------|---------|
-| <span style="color:#1a7a5a">**Forest green**</span> | Scheduler / entry point |
-| <span style="color:#c4a35a">**Amber**</span> | Service that runs on every instance |
-| <span style="color:#5ec9a0">**Teal**</span> | Worker that needs worker or all mode |
-| <span style="color:#4aaa8a">**Teal**</span> | Shared storage (PostgreSQL / S3) |
-| <span style="color:#8a9aa8">**Gray**</span> | Cleanup / retry queue |
+| Node | Meaning |
+|------|---------|
+| <span class="dg-swatch dg-entry"></span> | Scheduler / entry point |
+| <span class="dg-swatch dg-filter"></span> | Service that runs on every instance |
+| <span class="dg-swatch dg-process"></span> | Worker that needs worker or all mode |
+| <span class="dg-swatch dg-storage"></span> | Shared storage (PostgreSQL / S3) |
+| <span class="dg-swatch dg-background"></span> | Cleanup / retry queue |
 
 ## Run Modes
 

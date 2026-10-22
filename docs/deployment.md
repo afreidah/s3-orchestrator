@@ -2,7 +2,6 @@
 description: "Production manifests for Nomad and Kubernetes, plus the local demo scripts that stand up a complete environment in one command."
 title: "Deployment"
 linkTitle: "Deployment"
-weight: 35
 ---
 
 
@@ -46,9 +45,9 @@ By default, every instance runs both the HTTP API and all background workers (`-
 
 | Mode | HTTP API | Background workers | Use case |
 |------|----------|-------------------|----------|
-| `all` (default) | Yes | All 6 services | Single-instance or small deployments |
-| `api` | Yes | Usage flush and fleet snapshot only | Scale-out API instances behind a load balancer |
-| `worker` | Health + metrics only | All 6 services | Dedicated background processing |
+| `all` (default) | Yes | All background services | Single-instance or small deployments |
+| `api` | Yes | Usage flush, fleet snapshot and CB watchdog only | Scale-out API instances behind a load balancer |
+| `worker` | Health, metrics and the admin API only | All background services | Dedicated background processing |
 
 ```bash
 # API instance - serves S3 requests, no background workers
@@ -61,7 +60,7 @@ s3-orchestrator -config config.yaml -mode worker
 **How it works:**
 
 - **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing counters on restart and the fleet-snapshot service that feeds the fleet gauges and dashboard, but skip every other advisory-locked background task.
-- **Worker instances** run all background services and expose `/health`, `/health/ready`, and `/metrics` for monitoring, but don't serve S3 traffic or the web UI.
+- **Worker instances** run all background services and expose `/health`, `/health/ready`, `/metrics` and the admin API, but don't serve S3 traffic or the web UI.
 - Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** - only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held. The circuit breaker watchdog runs on all instances without a lock (it operates on per-instance circuit state).
 
 **Recommended topology:** N `api` instances behind a load balancer + 1-2 `worker` instances for redundancy. All instances share the same config file and PostgreSQL database.
@@ -69,14 +68,14 @@ s3-orchestrator -config config.yaml -mode worker
 ### Docker
 
 ```bash
-# Local build
-make build
+# Local image build
+make docker
 
 # Multi-arch build and push to registry with version tag
 make push VERSION=vX.Y.Z
 ```
 
-The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
+The `VERSION` is baked into the binary via `-ldflags` and shown in the web UI, by `s3-orchestrator version`, and in the `s3o_build_info` metric. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
 
 ```bash
 docker run -d \
@@ -107,7 +106,7 @@ make deb
 make deb-lint
 ```
 
-`make deb` runs GoReleaser in snapshot mode, which builds both architectures in one pass; there is no separate per-architecture target. The version comes from the git tag rather than a variable on the command line.
+`make deb` runs GoReleaser in snapshot mode, which builds both architectures in one pass; there is no separate per-architecture target. The version comes from `.version`, or from `VERSION=` on the command line.
 
 Install and configure:
 
@@ -146,7 +145,7 @@ The systemd unit runs as a dedicated `s3-orchestrator` user with filesystem hard
 sudo systemctl reload s3-orchestrator
 ```
 
-This sends `SIGHUP` to the process, reloading bucket credentials, quota limits, rate limits, and rebalance/replication settings without downtime. See [Reloading configuration](#reloading-configuration) for details on what is and isn't reloadable.
+This sends `SIGHUP` to the process, reloading bucket credentials, quota limits, rate limits, and rebalance/replication settings without downtime. See [Reloading configuration](operations.md#reloading-configuration) for details on what is and isn't reloadable.
 
 **Uninstall:**
 
@@ -156,9 +155,9 @@ sudo apt remove s3-orchestrator
 
 # Remove everything including config, data, and system user
 sudo apt purge s3-orchestrator
+```
 
-## Multi-instance deployment
-
+## Shared state across instances
 
 Multiple orchestrator instances can safely share the same PostgreSQL database. Background tasks (rebalancer, replicator, cleanup queue, multipart cleanup) use PostgreSQL advisory locks to prevent concurrent execution across instances - if one instance holds the lock for a task, other instances skip that tick silently.
 

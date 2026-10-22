@@ -3,57 +3,35 @@
 #
 # Author: Alex Freidah
 #
-# Top-level config for the documentation Hugo site. Sets the base URL the
-# build embeds into absolute links, the page title, and the theme. The
-# rest of the site uses convention-over-configuration; per-section settings
-# live alongside the pages they affect under content/.
+# The project site: a landing page, guides, diagrams and the Go API reference
+# from web/content, and the documentation from the repository's docs/, mounted
+# in place so the same Markdown renders on GitHub and here. The Hextra theme is
+# a Hugo module, pinned in web/go.mod.
 # -------------------------------------------------------------------------------
 
 baseURL = "https://s3-orchestrator.munchbox.cc/"
 languageCode = "en-us"
 title = "s3-orchestrator"
-theme = "hugo-theme-relearn"
-# No page here is filed under a tag or a category, so the taxonomy listings are
-# empty pages a crawler still reaches and reports as missing a description.
-disableKinds = ["taxonomy", "term"]
+enableGitInfo = false
+# Nothing is filed under a tag or category; the listings would be empty pages.
+# No feeds either: docs change in place and are not a stream of posts.
+disableKinds = ["taxonomy", "term", "rss"]
+# robots.txt from layouts/robots.txt, pointing crawlers at the sitemap.
+enableRobotsTXT = true
 
-[params]
-  themeVariant = ["s3orchestrator"]
-  # Social card. The OpenGraph and Twitter partials switch to the large-image
-  # card once a page resolves an image; without one, a link shared to Slack,
-  # Reddit, or X renders as bare text.
-  images = ["images/og-card.png"]
-  # Cloudflare Web Analytics site token, emitted as the RUM beacon by
-  # partials/custom-footer.html. Public by design: it names the site rather than
-  # authenticating, and ships in the page source on every request.
-  webAnalyticsToken = "77f2d4d9a4724baeb678a41619d533c5"
-  # Address pages by their directory rather than ".../index.html". The theme
-  # appends that suffix so a build still works opened from disk; served over
-  # HTTP it disagrees with the canonical tag every page carries, leaving og:url
-  # naming a different URL than the page claims for itself.
-  disableExplicitIndexURLs = true
-  # Sections kept out of search results. Pages under these prefixes carry a
-  # noindex robots tag and are left out of the sitemap, so the two cannot
-  # disagree about which pages a search result may land on. The generated Go
-  # API reference outnumbers the documentation two to one, and a crawler
-  # spending its budget there reaches less of what the site is for.
-  noIndexSections = ["/godoc/"]
-  editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/web/content/"
-  showVisitedLinks = false
-  disableLandingPageButton = false
-  alwaysopen = true
-  collapsibleMenu = true
-  [params.topbar]
-    showTableOfContents = false
-    showBreadcrumbs = false
-    showEditLink = false
+# Sitemap <lastmod> comes from each page's lastmod. With no git history in the
+# image build, the file's modification time is the one source that exists.
+[frontmatter]
+  lastmod = [":fileModTime", ":default"]
 
-[markup]
-  [markup.goldmark]
-    [markup.goldmark.renderer]
-      unsafe = true
+[sitemap]
+  changeFreq = ""
+  priority = -1
 
 [module]
+  [[module.imports]]
+    path = "github.com/imfing/hextra"
+
   [[module.mounts]]
     source = "content"
     target = "content"
@@ -61,8 +39,14 @@ disableKinds = ["taxonomy", "term"]
     source = "../docs"
     target = "content/docs"
   [[module.mounts]]
+    source = "static"
+    target = "static"
+  [[module.mounts]]
     source = "assets"
     target = "assets"
+  [[module.mounts]]
+    source = "layouts"
+    target = "layouts"
   [[module.mounts]]
     source = "../README.md"
     target = "assets/repo/README.md"
@@ -75,3 +59,97 @@ disableKinds = ["taxonomy", "term"]
   [[module.mounts]]
     source = "../docs/openapi.yaml"
     target = "assets/repo/openapi.yaml"
+
+[markup]
+  [markup.goldmark.renderer]
+    # The landing page and the diagrams are HTML around shortcodes.
+    unsafe = true
+  [markup.highlight]
+    noClasses = false
+
+[menu]
+  [[menu.main]]
+    name = "Docs"
+    pageRef = "/docs"
+    weight = 1
+  [[menu.main]]
+    name = "Guides"
+    pageRef = "/guides"
+    weight = 2
+  [[menu.main]]
+    name = "Diagrams"
+    pageRef = "/diagrams"
+    weight = 3
+  [[menu.main]]
+    name = "Go API"
+    pageRef = "/godoc"
+    weight = 4
+  [[menu.main]]
+    name = "alexfreidah.com"
+    url = "https://alexfreidah.com"
+    weight = 5
+  [[menu.main]]
+    name = "Search"
+    weight = 5
+    [menu.main.params]
+      type = "search"
+  [[menu.main]]
+    name = "GitHub"
+    url = "https://github.com/afreidah/s3-orchestrator"
+    weight = 6
+    [menu.main.params]
+      icon = "github"
+
+[params]
+  description = "Storage orchestration layer presenting many S3 providers as one S3 endpoint: copies across providers with read failover, per-backend quotas and usage limits, drain, rebalance, and integrity scrubbing."
+  homeTitle = "s3-orchestrator: storage orchestration across S3 providers"
+  # Social card for pages with no image of their own. With one set, links
+  # shared to Slack, X or LinkedIn get the large-image card.
+  images = ["images/og-card.png"]
+  # Cloudflare Web Analytics site token, emitted as the RUM beacon by
+  # layouts/_partials/custom/footer.html. Public by design: it names the site
+  # rather than authenticating, and ships in the page source on every request.
+  webAnalyticsToken = "77f2d4d9a4724baeb678a41619d533c5"
+  # Sections kept out of search results. Pages under these prefixes carry a
+  # noindex robots tag and are left out of the sitemap, so the two cannot
+  # disagree about which pages a search result may land on. The generated Go
+  # API reference outnumbers the documentation two to one, and a crawler
+  # spending its budget there reaches less of what the site is for.
+  noIndexSections = ["/godoc/"]
+
+  [params.navbar]
+    displayTitle = true
+    displayLogo = true
+    [params.navbar.logo]
+      path = "images/logo.png"
+      height = 32
+      width = 32
+
+  [params.theme]
+    default = "dark"
+    displayToggle = true
+
+  [params.page]
+    width = "wide"
+
+  [params.footer]
+    enable = true
+    displayCopyright = false
+    displayPoweredBy = false
+
+  # The theme builds edit links from the content directory, which docs/ is
+  # mounted from outside of, so the links it would build are wrong.
+  [params.editURL]
+    enable = false
+
+  [params.search]
+    enable = true
+    type = "flexsearch"
+    [params.search.flexsearch]
+      index = "content"
+
+  [params.highlight.copy]
+    enable = true
+    display = "hover"
+
+  externalLinkDecoration = true

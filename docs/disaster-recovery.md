@@ -20,7 +20,7 @@ The orchestrator binary itself is stateless. Any instance with access to the dat
 
 When PostgreSQL becomes unreachable, the circuit breaker activates automatically:
 
-- **Reads** enter degraded mode: the orchestrator broadcasts GET requests to all backends (or uses a short-lived cache of recent key-to-backend mappings if `circuit_breaker.cache_ttl` is configured). Each backend is listed to find the object's newest copy, since only the database records which `<key>!<id>` path a write used. Unencrypted objects found on any backend are returned normally, and compressed ones are decoded first. A deleted object whose backend delete failed and is waiting for retry can be served in that window. **Encrypted objects return `503 Service Unavailable`** because decryption requires encryption metadata (wrapped DEK, key ID) stored in the database.
+- **Reads** enter degraded mode: the orchestrator consults a cache of recent key-to-backend lookups (`circuit_breaker.cache_ttl`, default 60s) and otherwise broadcasts GET requests to all backends. Set `circuit_breaker.degraded_reads_enabled: false` to fail reads fast instead. Each backend is listed to find the object's newest copy, since only the database records which `<key>!<id>` path a write used. Unencrypted objects found on any backend are returned normally, and compressed ones are decoded first. A deleted object whose backend delete failed and is waiting for retry can be served in that window. **Encrypted objects return `503 Service Unavailable`** because decryption requires encryption metadata (wrapped DEK, key ID) stored in the database.
 - **Writes** return `503 Service Unavailable` because the orchestrator cannot record the object's location without the database.
 - **Background workers** (rebalancer, replicator, usage flush, cleanup queue) pause until the database recovers.
 
@@ -28,11 +28,11 @@ The circuit breaker transitions back to healthy after successful database probes
 
 ### Monitoring
 
-Watch for these log messages:
+Watch for these log messages, filtering on `breaker_name="database"`:
 
 ```
-{"level":"WARN","msg":"Circuit breaker opened","consecutive_failures":3}
-{"level":"INFO","msg":"Circuit breaker closed","state":"healthy"}
+{"level":"WARN","msg":"opened: failure threshold reached","component":"circuit_breaker","breaker_name":"database","failures":3,"threshold":3}
+{"level":"INFO","msg":"closed: recovered","component":"circuit_breaker","breaker_name":"database","degraded_duration":"42.1s"}
 ```
 
 The `/health` endpoint continues to return `200 OK` with `"status":"degraded"` during database outages, so the service stays in load balancer rotation for reads.
@@ -199,22 +199,16 @@ Items that exhaust all 10 retry attempts are graduated to the `cleanup_dlq` tabl
 
 Monitor `s3o_cleanup_dlq_depth` (gauge) and `s3o_cleanup_dlq_enqueued_total{backend}` (counter): a non-zero depth means at least one unrecoverable orphan needs operator action; a single backend dominating the counter rate means that backend's delete path is broken and should be investigated.
 
-After manually resolving a DLQ entry (e.g. confirming via the reconciler that the object is gone, or deleting it out-of-band), remove the row. Removing it releases its bytes from the backend's orphan bytes:
+List the dead-lettered rows, and push them back through automatic retry once the backend is fixed:
+
+```bash
+s3-orchestrator admin cleanup-dlq [-backend NAME]
+s3-orchestrator admin cleanup-dlq requeue [-backend NAME]
+```
+
+Writing off a row has no command. After confirming the object is gone (via the reconciler, or by deleting it out-of-band), remove the row; removing it releases its bytes from the backend's orphan bytes:
 
 ```sql
--- View pending DLQ entries
-SELECT id, original_id, backend_name, object_key, storage_key, reason, attempts,
-       size_bytes, first_enqueued_at, moved_at, last_error
-FROM cleanup_dlq
-ORDER BY moved_at;
-
--- After confirming the object is gone:
-DELETE FROM cleanup_dlq WHERE id = 42;
-
--- To push a DLQ entry back through automatic retry (e.g. after fixing the backend):
-INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, next_retry, attempts, last_error)
-SELECT backend_name, object_key, storage_key, reason, size_bytes, NOW(), 0, last_error
-  FROM cleanup_dlq WHERE id = 42;
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 

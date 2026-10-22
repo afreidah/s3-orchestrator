@@ -1,0 +1,15 @@
+{{- /*
+  Images, full width and lazy-loaded. A query string on a local image is a
+  display hint written for an earlier theme, such as "?classes=lightbox", and
+  is dropped so the file is requested by its path.
+*/ -}}
+
+{{- $src := .Destination -}}
+{{- $url := urls.Parse $src -}}
+{{- if not $url.Scheme -}}
+  {{- $src = $url.Path -}}
+{{- end -}}
+
+<img src="{{ $src }}" alt="{{ .PlainText }}" loading="lazy" class="s3o-doc-image"
+  {{- with .Title }} title="{{ . }}"{{ end }} />
+{{- /* No trailing newline, so an image inline with text stays inline. */ -}}

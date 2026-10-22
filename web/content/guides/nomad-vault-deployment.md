@@ -23,7 +23,7 @@ The orchestrator runs as a Docker container on Nomad. At startup, Nomad's templa
 - Vault integrated with Nomad ([Nomad-Vault integration docs](https://developer.hashicorp.com/nomad/docs/integrations/vault-integration))
 - Consul for service discovery (optional but recommended)
 - PostgreSQL accessible from Nomad clients
-- S3 Orchestrator Docker image pushed to a registry your Nomad clients can pull from
+- Nomad clients able to pull the published image, `ghcr.io/afreidah/s3-orchestrator`
 - One or more S3-compatible storage backends with credentials
 
 ## Step 1: Store Secrets in Vault
@@ -50,9 +50,9 @@ vault kv put secret/s3-orchestrator \
   ui_session_secret="$(openssl rand -hex 32)"
 ```
 
-{{% notice tip %}}
+{{< callout >}}
 Generate strong credentials for the virtual bucket and the root identity with `openssl rand -hex 20` for keys and `openssl rand -base64 30` for secrets.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 2: Create a Vault Policy and Role
 
@@ -98,9 +98,9 @@ vault write auth/jwt-nomad/role/s3-orchestrator \
   token_ttl="768h"
 ```
 
-{{% notice info %}}
+{{< callout type="info" >}}
 This example uses Nomad's [workload identity](https://developer.hashicorp.com/nomad/docs/concepts/workload-identity) with JWT auth. If your cluster uses the legacy token-based integration, create a token role instead and reference it in the Nomad server config.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 3: Set Up Vault Transit (Optional)
 
@@ -187,7 +187,7 @@ job "s3-orchestrator" {
       }
 
       config {
-        image        = "registry.example.com/s3-orchestrator:v0.13.0"
+        image        = "ghcr.io/afreidah/s3-orchestrator:v0.165.1"
         ports        = ["http"]
         network_mode = "host"
         args         = ["-config", "/secrets/config.yaml"]
@@ -258,7 +258,7 @@ encryption:
   enabled: true
   vault:
     address: "https://vault.service.consul:8200"
-    token: "${VAULT_TOKEN}"
+    token_file: "/secrets/vault_token"
     key_name: "s3-orchestrator"
     mount_path: "transit"
     ca_cert: "/secrets/vault-ca.pem"
@@ -348,7 +348,7 @@ EOH
 - **`template` stanza** with `{{ with secret "secret/data/s3-orchestrator" }}` fetches the KV secret at deploy time and interpolates values into `config.yaml`
 - **`perms = "0400"`** restricts the rendered config to read-only — secrets are only readable by the task process
 - **`change_mode = "restart"`** means the task restarts automatically if the Vault secret is updated or the lease is renewed with new values
-- **`${VAULT_TOKEN}`** in the encryption config is the Nomad-issued Vault token, injected as an environment variable — the orchestrator uses it for ongoing Transit API calls
+- **`token_file`** in the encryption config points at the Vault token Nomad writes into the task's secrets directory; the orchestrator uses it for ongoing Transit API calls and re-reads it on every renewal tick
 - **Volumes** bind-mount the rendered secrets from Nomad's secrets directory into the container at `/secrets/`
 - **Two health checks** — `/health` (liveness) keeps the allocation alive during DB outages, `/health/ready` (readiness) with `on_update = "require_healthy"` gates rolling deploys
 - **`trusted_proxies`** ensures rate limiting uses the real client IP when behind a load balancer, not the proxy's IP
@@ -431,7 +431,12 @@ nomad alloc restart <alloc-id>
 
 ## Scaling
 
-To run multiple instances, increase the `count` in the group stanza:
+To run multiple instances, add a `redis` block to the rendered config and increase the `count` in the group stanza:
+
+```yaml
+redis:
+  address: "redis.service.consul:6379"
+```
 
 ```hcl
 group "s3-orchestrator" {
@@ -440,12 +445,12 @@ group "s3-orchestrator" {
 }
 ```
 
-Multiple instances are safe to run concurrently. PostgreSQL advisory locks ensure only one instance runs each background worker (rebalancer, replicator, cleanup queue). All instances serve API requests.
+Redis carries the shared usage counters, so usage limits hold across instances between database flushes, and the change notices that reach every instance when buckets or credentials are provisioned through the API. PostgreSQL advisory locks ensure only one instance runs each background worker (rebalancer, replicator, cleanup queue). All instances serve API requests.
 
 ## Important Notes
 
 - The `secrets/` directory in Nomad is tmpfs-backed and never written to disk — credentials exist only in memory
-- Vault token renewal is handled automatically by Nomad — the orchestrator does not need to manage token lifecycle
+- The orchestrator re-reads the token file every `encryption.vault.renew_interval` (default 5m), so a token Nomad rotates is picked up without a restart
 - If Vault is temporarily unavailable, the existing rendered config remains in place and the orchestrator continues running, but Transit encryption operations will fail until Vault recovers
 - The `auto_revert` update strategy rolls back to the previous version if the new deployment fails health checks
-- Pin your Docker image to a specific version tag (e.g., `v0.13.0`) rather than `latest` to ensure reproducible deployments
+- Pin the image to a specific version tag (e.g., `v0.165.1`) rather than `latest` to ensure reproducible deployments

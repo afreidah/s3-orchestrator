@@ -1,10 +1,17 @@
 ---
-description: "Every s3-orchestrator subcommand: serving, admin control, database migrations, the object browser, benchmarks, and version reporting."
-title: "CLI Subcommands"
-linkTitle: "CLI Subcommands"
-weight: 34
+description: "Every s3-orchestrator subcommand: serving, interactive config generation, validation, admin control, importing existing data, the terminal UI, and version reporting."
+title: "CLI and TUI"
+linkTitle: "CLI and TUI"
 ---
 
+
+### init
+
+Generates a configuration file interactively, prompting for the database, a backend with its quota and usage limits, and the virtual buckets with their credentials:
+
+```bash
+s3-orchestrator init
+```
 
 ### version
 
@@ -301,8 +308,13 @@ s3-orchestrator admin reconcile
 # Reconcile a single backend
 s3-orchestrator admin reconcile -backend backblaze
 
-# Show background worker last-tick health (503 in proxy-only mode)
+# Show background worker last-tick health; an api-mode instance lists only the
+# services it runs
 s3-orchestrator admin workers
+
+# List dead-lettered cleanup rows, or one backend's; requeue retries them
+s3-orchestrator admin cleanup-dlq [-backend NAME]
+s3-orchestrator admin cleanup-dlq requeue [-backend NAME]
 
 # Show the outcome of the last SIGHUP config reload
 s3-orchestrator admin reload-status
@@ -369,7 +381,7 @@ s3-orchestrator admin grant add -user user-abc123 -name backups -permissions lis
 
 `instance` is still accepted as a spelling of `orchestrator`, and grants stored under it still authorize, but it renders as `orchestrator` in every listing. It was renamed because it read as one process of a deployment running several, when the grant has always covered every process.
 
-`-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. `read` covers an object's tags as well as its bytes; `tags` is the right to change them. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
+`-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. `read` covers an object's tags as well as its bytes; `tags` is the right to change them. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-cordon`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
 
 ```bash
 # A monitoring credential that reads status and nothing else
@@ -502,7 +514,7 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
-| `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
+| `enter` / `right` | Open: a sidebar section, a prefix, or the inspector on an object; in Backends, the selected backend's action menu |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring; in Logs, filter the entries by text in the component or message |
 | `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
@@ -528,7 +540,7 @@ A copy reading `never` under `VERIFIED` has a recorded hash that nothing has eve
 
 The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health (`healthy`, `degraded` while some calls are refused, `down` while all are), the refused calls by name, state flags (cordoned, draining, drained, drain-failed), quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). The pane polls every 10 seconds; press `r` to poll now. Quota and object counts come from the fleet snapshot, so they can be up to one `telemetry.metrics.fleet_interval` old; the usage counters are current.
 
-Four admin actions act on the highlighted row, each behind a confirmation naming that backend so a keystroke on the wrong row cannot start work on it: `d` drains every copy off it, `C` cordons it so no new copies land on it (or uncordons it when it is already cordoned), `R` reconciles metadata against its storage, and `Q` requeues its dead-lettered cleanups. Backend removal is deliberately not here - it is irreversible with `purge=true` and stays an `admin remove-backend` operation, behind its two-phase confirmation.
+Four admin actions act on the highlighted row, each behind a confirmation naming that backend so a keystroke on the wrong row cannot start work on it: `d` drains every copy off it, `C` cordons it so no new copies land on it (or uncordons it when it is already cordoned), `R` reconciles metadata against its storage, and `Q` requeues its dead-lettered cleanups. `a` (or `enter`) opens the backend's own action menu: scrub, backfill checksums, reconcile, requeue dead-lettered cleanups, and the encrypt, decrypt, compress and decompress passes scoped to that backend. Backend removal is deliberately not here - it is irreversible with `purge=true` and stays an `admin remove-backend` operation, behind its two-phase confirmation.
 
 A drain runs for as long as it takes, so the TUI follows it: once accepted, a line under the stats reports the objects moved and what remains, refreshed every couple of seconds until the drain finishes or is cancelled. It keeps following while you look at other panes, and the footer reports when the drain finishes or fails, wherever you are. Press `x` to cancel the drain the pane is following; copies already moved stay moved. The key is only offered while a drain is in flight.
 
@@ -536,7 +548,7 @@ The metadata database health is also shown persistently at the bottom of the sid
 
 The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It refreshes every 3 seconds whichever pane is showing (the counts drift constantly as workers reconcile), so the view is live the moment you open it. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads the fleet snapshot, recomputed every `telemetry.metrics.fleet_interval`, polling it is cheap. The counts are exact.
 
-The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. A proxy-only deployment registers no worker pool, and the pane says so rather than reporting an error.
+The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. An `api`-mode instance lists only the services it runs: the usage flush, fleet snapshot and circuit breaker watchdog.
 
 The **Cleanup** section shows the cleanup queue and its dead-letter table, sourced from `GET /admin/api/cleanup-queue` and `GET /admin/api/cleanup-dlq`. Both listings share the pane, toggled with `t`, and the title bar carries both depths so a backlog in the listing you are not looking at stays visible. The depth is the true total; the listing itself is one page of it. On the dead-letter listing, `R` requeues every dead-lettered row for the selected row's backend (`POST /admin/api/cleanup-dlq/requeue`) - a whole-backend operation, which is what the confirmation names, and the pane reloads afterwards so the depths stay honest.
 
@@ -556,7 +568,7 @@ Deleting a directory removes everything under it, so the confirmation states how
 
 Downloads and uploads move real bytes, so the status line reports the progress (`downloading bucket/db.sql   45.2 MiB / 120.0 MiB (37%)`) while the interface stays responsive. A download writes to a temporary file beside its destination and renames it into place only once the whole body has landed, so an interrupted transfer leaves nothing where a complete file would be - a failure reports what went wrong rather than leaving a truncated file to be discovered later.
 
-The **Ops** section, reached with `o`, is the full menu, grouped by kind: the maintenance passes (rebalance, replicate under-replicated objects, clean over-replicated copies, scrub, backfill checksums, reconcile metadata, reconcile usage counters, flush usage counters to the database, expire objects by lifecycle rule), cache control (flush the cache, invalidate one key, invalidate a prefix), and the encryption transitions (encrypt existing, decrypt existing, rotate the encryption key). Accepting the confirmation switches to a scrolling output pane immediately, so an operation that takes minutes reports that it started rather than leaving the menu live until it finishes.
+The **Ops** section, reached with `o`, is the full menu, grouped by kind: the maintenance passes (rebalance, replicate under-replicated objects, clean over-replicated copies, scrub, backfill checksums, reconcile metadata, reconcile usage counters, flush usage counters to the database, expire objects by lifecycle rule, purge unreadable copies), cache control (flush the cache, invalidate one key, invalidate a prefix), the encryption transitions (encrypt existing, decrypt existing, rotate the encryption key), and the compression transitions (compress existing, decompress existing, each with a batch variant). Accepting the confirmation switches to a scrolling output pane immediately, so an operation that takes minutes reports that it started rather than leaving the menu live until it finishes.
 
 An entry ending in `...` asks for a value first: the key or prefix to invalidate, or the key id to rotate away from. Type it and press `enter`, or `esc` to abandon the action. An empty value is refused in the prompt rather than sent, since the endpoints that take one reject an empty value on purpose. Rotation still confirms after the key id is entered; cache invalidation does not, because the value typed is itself the statement of intent and nothing is lost but a cached copy.
 

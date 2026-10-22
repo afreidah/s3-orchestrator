@@ -25,14 +25,15 @@ The admin guide has been split into per-topic pages so each topic has a focused 
 - **[Operations](operations.md)** - cordon, drain, rebalance, scrub, cache management, trace snapshot, credential rotation
 - **[Replication](replication.md)** - replication factor, over-replication cleanup, orphan reconciliation
 - **[Cleanup and lifecycle](cleanup-and-lifecycle.md)** - cleanup queue, PUT-before-COMMIT pending intents, lifecycle expiration
-- **[CLI subcommands](cli.md)** - `version`, `init`, `validate`, `sync`, `admin`, `tui`
+- **[CLI and TUI](cli.md)** - `version`, `init`, `validate`, `sync`, `admin`, `tui`
 - **[Deployment](deployment.md)** - Nomad, Kubernetes, Docker, Debian package, multi-instance
 
 ## Observability and troubleshooting
 
 - **[Monitoring](monitoring.md)** - full Prometheus metric reference, OpenTelemetry traces, structured logs, audit log, panic recovery, on-demand reconciliation
 - **[Background services](background-services.md)** - worker reference table (intervals, advisory locks)
-- **[Performance tuning](performance-tuning.md)** - connection pools, timeouts, broadcast tuning
+- **[Performance tuning](performance-tuning.md)** - connection pools, timeouts, caching and sizing
 - **[Disaster recovery](disaster-recovery.md)** - failure scenarios and recovery procedures
 - **[Security hardening](security-hardening.md)** - TLS, mTLS, config security, network segmentation
-- **[API reference](api-reference.md)** - UI and Admin API JSON endpoints
+- **[API reference](api-reference.md)** - the dashboard's JSON API
+- **[Admin API](admin-api.md)** - the control plane, generated from the route table

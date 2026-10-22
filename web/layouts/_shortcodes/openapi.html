@@ -1,0 +1,24 @@
+{{- /*
+  Renders an OpenAPI document with Swagger UI. src names the spec as an asset,
+  such as "repo/openapi.yaml". Request submission is off: this is a static
+  docs site, so a request would go to the docs host rather than an
+  orchestrator, and the admin API sends no CORS headers for it to succeed
+  against a real instance either.
+
+  @example {{< openapi src="repo/openapi.yaml" >}}
+*/ -}}
+{{- $spec := resources.Get (.Get "src") -}}
+{{- if not $spec -}}
+  {{- errorf "openapi: no asset at %q in %s" (.Get "src") .Position -}}
+{{- end -}}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css" />
+<div id="s3o-openapi" class="s3o-openapi"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+<script>
+  SwaggerUIBundle({
+    url: "{{ $spec.RelPermalink }}",
+    dom_id: "#s3o-openapi",
+    supportedSubmitMethods: [],
+    deepLinking: true,
+  });
+</script>

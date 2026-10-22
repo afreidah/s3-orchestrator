@@ -2,7 +2,7 @@
 description: "Reference for the UI JSON API serving the built-in dashboard: authentication, the endpoints it exposes, and how it differs from the admin API."
 ---
 
-This document covers the UI JSON API the built-in dashboard is served by. For the operational control plane, see the [Admin API](../admin-api/). For the S3-compatible API, see the [S3 API Coverage](../README.md#s3-api-coverage) section of the README.
+This document covers the UI JSON API the built-in dashboard is served by. For the operational control plane, see the [Admin API](../admin-api/). For the S3-compatible API, see the [User Guide](user-guide.md).
 
 ## Authentication
 
@@ -19,13 +19,15 @@ curl -c cookies.txt -X POST \
 curl -b cookies.txt http://localhost:9000/ui/api/dashboard
 ```
 
-The keypair is any credential the deployment holds - the `auth.root` one, or any the store has issued - and the session carries the user it proved. Sessions are HMAC-SHA256 signed cookies with a 24-hour TTL.
+The keypair is any credential whose user holds `admin-read` on the orchestrator - the `auth.root` one, or one the store has issued and granted it. Any other valid credential is refused with 403. The session carries the user it proved; sessions are HMAC-SHA256 signed cookies with a 24-hour TTL.
+
+State-changing (`POST`) requests must also send an `X-CSRF-Token` header whose value matches the `s3orch_csrf` cookie set at login; without it they are refused with 403. Each route also requires its permission: the object routes need `list`, `read`, `write` or `delete` on the bucket, the logs need `admin-logs`, the maintenance passes need `admin-maintain`, and the encryption and compression conversions need `admin-convert`.
 
 ### Admin API
 
 Admin endpoints take a signed request rather than a session; see [Admin API](../admin-api/#authentication).
 
-All JSON request bodies on admin and UI endpoints are limited to 1 MB.
+JSON request bodies on admin and UI endpoints are limited to 1 MB, except provisioning and object-tag bodies, which are limited to 64 KiB.
 
 Two S3 operations carry an XML request body, and both are capped above the largest request the S3 API permits: multi-object delete at 4 MB and CompleteMultipartUpload at 2 MB. Exceeding the cap returns `413 MaxMessageLengthExceeded` rather than a parse error, and a body containing anything after its first XML document is rejected as `400 MalformedXML` rather than having the remainder silently ignored.
 
@@ -51,10 +53,10 @@ Returns the full dashboard data. Quota, object, multipart, integrity, plaintext 
   "ObjectCounts": {"oci": 42, "r2": 15},
   "ActiveMultipartCounts": {"oci": 0, "r2": 0},
   "UsageStats": {
-    "oci": {"APIRequests": 1234, "EgressBytes": 5242880, "IngressBytes": 10485760}
+    "oci": {"APIRequests": 1234, "EgressBytes": 5242880, "IngressBytes": 10485760, "Pools": {"all": 1234}}
   },
   "UsageLimits": {
-    "oci": {"APIRequestLimit": 50000, "EgressByteLimit": 10737418240, "IngressByteLimit": 0}
+    "oci": {"EgressByteLimit": 10737418240, "IngressByteLimit": 0}
   },
   "UsagePeriod": "2026-03",
   "TopLevelEntries": {
@@ -92,7 +94,7 @@ Returns children of a directory prefix for the lazy-loaded file browser.
 
 ### GET /ui/api/logs
 
-Returns buffered log entries from the in-memory ring buffer (last 5,000 entries), oldest first. This route serves the same handler as `GET /admin/api/logs`, behind the dashboard session instead of the admin token.
+Returns buffered log entries from the in-memory ring buffer (last 5,000 entries), oldest first. This route serves the same handler as `GET /admin/api/logs`, behind the dashboard session instead of a SigV4 signature, and requires `admin-logs`.
 
 **Query parameters:**
 
@@ -175,6 +177,7 @@ Uploads a file via multipart form data. Maximum upload size is 512 MiB.
 
 ```bash
 curl -b cookies.txt -X POST \
+  -H "X-CSRF-Token: <value of the s3orch_csrf cookie>" \
   -F "key=my-bucket/path/to/file.txt" \
   -F "file=@localfile.txt" \
   http://localhost:9000/ui/api/upload
@@ -250,7 +253,7 @@ Removes over-replicated copies in the background. Returns immediately with 202 A
 **Response (409):** Returned if cleanup is already running.
 
 ```json
-{"error": "cleanup already running"}
+{"error": "clean-excess already running"}
 ```
 
 ### GET /ui/api/clean-excess/status
@@ -261,11 +264,15 @@ Returns the status of the most recent cleanup operation.
 
 ```json
 {"status": "running"}
-{"status": "done", "ok": true, "removed": 3}
+{"status": "done", "ok": true, "removed": 3, "failed": 0}
 {"status": "skipped", "reason": "replication not configured or factor <= 1"}
-{"status": "error", "error": "cleanup failed"}
+{"status": "error", "error": "clean-excess failed"}
 {"status": "idle"}
 ```
+
+### Other background actions
+
+The dashboard's other actions take the same shape: `POST` starts the run and answers 202, a second `POST` while it runs answers 409, and `GET .../status` reports `running`, `done`, `skipped`, `error` or `idle`. They are `/ui/api/lifecycle`, `/ui/api/replicate`, `/ui/api/scrub`, `/ui/api/backfill-checksums`, `/ui/api/encrypt-existing`, `/ui/api/compress-existing` and `/ui/api/decompress-existing`, each with its `/status` route.
 
 ### POST /ui/api/sync
 
@@ -291,7 +298,7 @@ The admin API has moved to its own page: **[Admin API](../admin-api/)**.
 
 Its endpoint reference is generated from the server's route table, so it cannot
 drift from the code. That page also covers the parts a schema does not carry:
-token authentication, which permissions the object endpoints require and when
+SigV4 authentication, which permissions the object endpoints require and when
 they answer `403`, the newline-delimited streaming mode, and the two-phase
 confirmation a destructive backend purge requires.
 
@@ -309,6 +316,8 @@ Common HTTP status codes:
 | Code | Meaning |
 |------|---------|
 | 400 | Bad request (missing required parameters, invalid JSON) |
-| 401 | Unauthorized (missing or invalid token/session) |
+| 401 | No valid session |
+| 403 | CSRF token missing, or the grant does not carry the route's permission |
 | 405 | Method not allowed |
+| 409 | The action is already running |
 | 500 | Internal server error |

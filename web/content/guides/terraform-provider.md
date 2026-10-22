@@ -13,7 +13,7 @@ The provider manages exactly what the admin API manages: the **buckets** a deplo
 
 Backends are absent, and deliberately so. There is no endpoint that creates one, and a backend's structural fields are read once at startup, so a resource whose apply silently required a process restart would be worse than no resource. Backends stay with whatever templates the configuration file. The same reasoning covers configuration generally: Terraform models declarative state a running process can adopt, and most of that file is read once at boot.
 
-Anything the configuration file declares is read-only through the API - `s3o admin bucket list` and `s3o admin user list` show those with a `config` source. The provider refuses to manage or import one and says which it is, rather than letting the refusal read as a credential problem. For buckets that is a starting point rather than a dead end; [moving a bucket out of the configuration file](#moving-a-bucket-out-of-the-configuration-file) below does it without downtime.
+Anything the configuration file declares is read-only through the API - `s3-orchestrator admin bucket list` and `s3-orchestrator admin user list` show those with a `config` source. The provider refuses to manage or import one and says which it is, rather than letting the refusal read as a credential problem. For buckets that is a starting point rather than a dead end; [moving a bucket out of the configuration file](#moving-a-bucket-out-of-the-configuration-file) below does it without downtime.
 
 ## Installing the provider
 
@@ -51,7 +51,7 @@ With an override in place Terraform skips `init` for this provider and prints a 
 
 The provider signs its requests with SigV4, exactly as the admin CLI and the dashboard do. There is no separate provider credential: it is an ordinary keypair whose user holds the admin grants for what you ask it to do. `admin-provision` covers every resource here.
 
-Each attribute falls back to the environment variable the admin CLI already reads, so a shell configured for `s3o admin` is configured for Terraform:
+Each attribute falls back to the environment variable the admin CLI already reads, so a shell configured for `s3-orchestrator admin` is configured for Terraform:
 
 | Attribute | Environment variable |
 |-----------|----------------------|
@@ -229,7 +229,7 @@ resource "s3orchestrator_bucket" "photos" {
 Apply. Nothing changes for clients, and the bucket reports as shadowed:
 
 ```console
-$ s3o admin bucket list
+$ s3-orchestrator admin bucket list
 Bucket   Multipart  Source
 ------   ---------  ------
 photos   unlimited  config
@@ -240,7 +240,7 @@ notice: bucket_shadowed: stored bucket "photos" is shadowed by a config bucket
 Now remove the bucket from the `buckets:` block of the configuration file and reload. The row stops being shadowed and takes over:
 
 ```console
-$ s3o admin bucket list
+$ s3-orchestrator admin bucket list
 Bucket   Multipart  Source
 ------   ---------  ------
 photos   unlimited  store
@@ -280,7 +280,7 @@ terraform import s3orchestrator_credential.backup MFRGGZDFMZTWQ2LKNNWG
 terraform import s3orchestrator_grant.backup user-4kqx7n2mjb5tza6wfhc3/bucket/photos
 ```
 
-A user is imported by its generated id, which `s3o admin user list` prints. A credential is imported by its access key. A grant has no identifier of its own - the orchestrator keys it by user, kind and name together - so the import identifier is those three joined by a slash. A grant on the orchestrator takes no name, so its identifier ends in an empty third segment, and the trailing slash is required:
+A user is imported by its generated id, which `s3-orchestrator admin user list` prints. A credential is imported by its access key. A grant has no identifier of its own - the orchestrator keys it by user, kind and name together - so the import identifier is those three joined by a slash. A grant on the orchestrator takes no name, so its identifier ends in an empty third segment, and the trailing slash is required:
 
 ```bash
 terraform import s3orchestrator_grant.operator user-4kqx7n2mjb5tza6wfhc3/orchestrator/

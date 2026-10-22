@@ -1,28 +1,30 @@
 ---
 title: "Nomad/k8s Full Stack Demo"
-description: "Run the full demo stack locally: three MinIO backends, PostgreSQL, and a complete S3 Orchestrator instance on Nomad or Kubernetes."
+description: "Run the full demo stack locally: three s3-orchestrator instances behind Traefik, three MinIO backends, PostgreSQL and Redis, on Nomad or Kubernetes."
 weight: 1
 ---
 
 
-This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up a fully functional instance with three MinIO backends, PostgreSQL, and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality - pick whichever you prefer.
+This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up three s3-orchestrator instances behind Traefik on port 9000 (set `INSTANCES=1` for one), sharing PostgreSQL and Redis, with three MinIO backends and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality - pick whichever you prefer.
 
 ## Prerequisites
 
 Both demos require:
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Go](https://go.dev/dl/) (to build from source)
+- [Docker](https://docs.docker.com/get-docker/) - the image is built from source with `docker build`
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html) (or any S3-compatible client)
+- `jq`
 
 **Nomad demo** additionally requires:
 
 - [Nomad](https://developer.hashicorp.com/nomad/install) - runs in `-dev` mode, no cluster setup needed
+- `curl`
 
 **Kubernetes demo** additionally requires:
 
 - [k3d](https://k3d.io/) - lightweight Kubernetes in Docker
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [helm](https://helm.sh/docs/intro/install/)
 
 ## Starting the Demo
 
@@ -46,14 +48,31 @@ The script builds the container image from source, runs the backing services in 
   S3 Orchestrator is running in Nomad
 ========================================
 
-  S3 API:     http://localhost:9000
+  S3 API:     http://localhost:9000  (Traefik over 3 instances)
   Dashboard:  http://localhost:9000/ui/
-  Metrics:    http://localhost:9000/metrics
   Health:     http://localhost:9000/health
+  Traefik:    http://localhost:8081/dashboard/
   Grafana:    http://localhost:13000
+  Prometheus: http://localhost:19090
   Tempo:      http://localhost:3200
   Nomad UI:   http://localhost:4646
+  Metrics and pprof, one listener per instance:
+    http://127.0.0.1:24137/metrics  (alloc 3f2a9c1d)
+    ...
+
+  Root keypair - the only credential, for the dashboard login, the
+  TUI, and the admin API:
+    access key: ...
+    secret key: ...
+
+    export S3O_ADMIN_ADDR=http://localhost:9000
+    export S3O_ACCESS_KEY_ID=...
+    export S3O_SECRET_ACCESS_KEY=...
+    s3-orchestrator admin status
+    s3-orchestrator tui
 ```
+
+The summary goes on to show a test upload, the `perf` identity `make perf` signs as, and the teardown command.
 
 ## What Is Running
 
@@ -61,11 +80,13 @@ The demo starts several services behind the scenes:
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| **S3 Orchestrator** | 9000 | S3 API, admin dashboard, Prometheus metrics |
+| **Traefik** | 9000, 8081 | Routes S3, dashboard and admin traffic across the instances; its own dashboard on 8081 |
+| **S3 Orchestrator** | behind 9000 | Three instances by default; each serves `/metrics` and pprof on its own listener (container port 9001) |
 | **MinIO 1** | 19000 | First storage backend (10 GB quota) |
 | **MinIO 2** | 19002 | Second storage backend (10 GB quota) |
 | **MinIO 3** | 19004 | Third storage backend (10 GB quota) |
 | **PostgreSQL** | 15432 | Metadata database |
+| **Redis** | 16379 (Nomad) | Shared usage counters across the instances |
 | **Prometheus** | 19090 | Metrics collection (10 s scrape interval) |
 | **Grafana** | 13000 | Dashboard, log exploration, trace viewer |
 | **Tempo** | 3200 | Distributed tracing backend |
@@ -79,13 +100,13 @@ The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes de
 Both demos are pre-configured with:
 
 - **Three backends** - `minio-1`, `minio-2`, and `minio-3`, each with a 10 GB quota
-- **Replication factor 2** - every object is automatically copied to a second backend
+- **Replication factor 2** - every write places both copies itself (`write_path.parallel_copies`), and the replicator repairs any it missed
 - **Encryption enabled** - all objects are AES-encrypted at rest
 - **Circuit breaker** - backends are automatically taken out of rotation after 3 consecutive failures
 - **Full telemetry** - 100% trace sampling, structured JSON logging with trace correlation
 - **Admin UI** - enabled, logged into with the root keypair the demo prints when it finishes
 
-The Nomad demo uses `pack` routing (fills one backend before the next). The Kubernetes demo uses `spread` routing (distributes evenly across backends). This lets you observe different storage distribution patterns in the dashboard.
+Both demos render the same configuration, `deploy/local/config.yaml`, and use `spread` routing, which places writes by utilization ratio across the three backends.
 
 ## Uploading Files
 
@@ -133,7 +154,7 @@ The dashboard also exposes management operations:
 
 - **Upload** - upload files or entire folders via the browser; supports multi-file selection and preserves directory structure
 - **Delete** - remove individual objects or batch-delete by prefix
-- **Rebalance** - trigger an on-demand rebalance to redistribute objects across backends according to the current routing strategy
+- **Rebalance** - trigger an on-demand rebalance to redistribute objects across backends according to `rebalance.strategy`
 - **Sync** - import pre-existing objects from a backend's S3 bucket into the orchestrator database (useful when adding a new backend that already has data)
 
 ## Grafana Dashboard
@@ -162,13 +183,13 @@ The backend and manager operations panels show request rate and duration at the 
 
 ### Drain, Lifecycle & Encryption
 
-The bottom of the dashboard covers drain operations (active drains, objects and bytes moved), lifecycle rule enforcement (objects deleted, failed deletions, rule evaluation runs), and encryption metrics (encrypt/decrypt operations, errors, key rotation events).
+The Drain & Lifecycle and Encryption sections cover drain operations (active drains, objects and bytes moved), lifecycle rule enforcement (objects deleted, failed deletions, rule evaluation runs), and encryption metrics (encrypt/decrypt operations, errors, key rotation events).
 
 ![Drain, Lifecycle & Encryption](/images/demo-grafana-lifecycle.png)
 
 ## Prometheus Metrics
 
-The orchestrator exposes a Prometheus-compatible metrics endpoint at [http://localhost:9000/metrics](http://localhost:9000/metrics). Prometheus scrapes it every 10 seconds in the demo. To explore raw metrics, go to **Explore** in Grafana, select the **Prometheus** datasource, and browse the available metrics. All metrics are prefixed with `s3o_` (a rename to `s3_orchestrator_` is planned).
+Each instance serves `/metrics` on its own metrics listener (container port 9001), not on the S3 port; the Nomad demo's summary lists each instance's address, and on Kubernetes `kubectl port-forward pod/<name> 9001` reaches one. Prometheus scrapes them every 10 seconds. To explore raw metrics, go to **Explore** in Grafana, select the **Prometheus** datasource, and browse the available metrics. All metrics are prefixed with `s3o_`.
 
 ![Prometheus Metrics](/images/demo-prometheus.png)
 
@@ -219,22 +240,18 @@ Here are some things to try:
 
 ### Watch replication in action
 
-Upload a file and check the Backends Table in the admin dashboard. You will see the object appear on one backend first, then on the second backend within a few seconds as the replication worker copies it.
-
-### Observe routing strategies
-
-Upload several files and compare the storage distribution. The Nomad demo uses `pack` (fills `minio-1` first, then `minio-2`, then `minio-3`), while the Kubernetes demo uses `spread` (distributes evenly across all three backends). The Grafana dashboard's **Quota & Storage** section shows the difference clearly.
+Upload a file and check the Backends Table in the admin dashboard. The write places both copies itself (`write_path.parallel_copies`), so the object shows on two backends as soon as the upload returns. Lower `write_path.parallel_copies.max_in_flight` in `deploy/local/config.yaml` to watch writes fall back to a single copy that the replicator then repairs within its 20-second interval.
 
 ### Trigger a rebalance
 
-A rebalance redistributes objects according to the current routing strategy. It is useful when the routing strategy has changed or a new backend has been added - if objects are already where the strategy wants them, rebalance is a no-op.
+A rebalance moves objects to match `rebalance.strategy` (separate from `routing_strategy`), and only when backend utilization differs by more than `rebalance.threshold` (0.7 in the demo). If objects are already where the strategy wants them, rebalance is a no-op.
 
-To see it in action with the Nomad demo:
+To see it in action:
 
-1. Upload several files - `pack` routing places them all on `minio-1` first
-2. Edit the Nomad job to change the routing strategy to `spread` and redeploy
+1. In `deploy/local/config.yaml`, set `routing_strategy: "pack"` and lower `rebalance.threshold`, then restart the demo
+2. Upload several files - `pack` routing places them on `minio-1` first
 3. Click **Rebalance** in the admin dashboard
-4. Objects migrate from `minio-1` to `minio-2` and `minio-3` until all backends are balanced
+4. Objects migrate from `minio-1` to `minio-2` and `minio-3` until utilization evens out
 5. Watch the **Rebalancer** section in the Grafana dashboard to see objects and bytes moving
 
 ### Test circuit breaker behavior

@@ -2,7 +2,6 @@
 description: "Server-side envelope encryption with chunked AES-256-GCM, the key sources it supports, and how existing objects are migrated to it."
 title: "Encryption"
 linkTitle: "Encryption"
-weight: 27
 ---
 
 

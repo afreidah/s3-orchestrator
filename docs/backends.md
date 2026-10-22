@@ -2,7 +2,6 @@
 title: "Backends"
 linkTitle: "Backends"
 description: "Configure S3-compatible backends: endpoints, credentials, byte quotas, per-operation request pools, egress limits, and per-backend HTTP transport tuning."
-weight: 23
 ---
 
 Configuration, routing strategies, multi-backend topologies, and the provider quick-reference table.
@@ -212,9 +211,9 @@ backends:
 
 This gives you 30 GB of combined storage across two providers.
 
-### Multiple backends without quotas (requires replication or spread)
+### Multiple backends without quotas (requires replication)
 
-When all backends are unlimited and using the default `pack` routing, only the first backend would receive writes. To distribute data, either set `replication.factor >= 2` to replicate across backends, or use `routing_strategy: "spread"` to distribute writes by utilization ratio.
+When more than one backend is unlimited, `replication.factor` must be 2 or more; validation refuses the config otherwise. With the default `pack` routing only the first backend would receive client writes, and the replicator places the other copies. `routing_strategy: "spread"` changes the order writes try backends but does not lift the requirement.
 
 ```yaml
 backends:
@@ -239,10 +238,8 @@ replication:
   factor: 2
 ```
 
-**Validation rule:** You cannot mix unlimited and quota-limited backends. Either all backends have `quota_bytes` set (quota routing) or all are unlimited (replication or spread routing required).
+**Validation rule:** You cannot mix unlimited and quota-limited backends. Either all backends have `quota_bytes` set (quota routing) or all are unlimited (`replication.factor >= 2` required).
 
-
-## Usage limits
 
 ## Usage Limits
 
@@ -254,4 +251,4 @@ Per-backend monthly limits for API requests, egress bytes, and ingress bytes. Se
 - **Reads** (GetObject, HeadObject) - over-limit backends are skipped; the orchestrator tries replicas. Returns `429 SlowDown` only when *all* copies of the object are on over-limit backends.
 - **Deletes** (DeleteObject, DeleteObjects, AbortMultipartUpload) - always allowed regardless of limits.
 
-Effective usage is computed as `DB baseline + unflushed counters + proposed operation`, so enforcement stays accurate between flush/refresh cycles without double-counting. The flush interval is configurable (default 30s) and can adaptively shorten when backends approach their limits. For multi-instance deployments, optional [Redis shared counters](#usage-counters) eliminate the cross-instance blind spot between flushes.
+Effective usage is computed as `DB baseline + unflushed counters + proposed operation`, so enforcement stays accurate between flush/refresh cycles without double-counting. The flush interval is configurable (default 30s) and can adaptively shorten when backends approach their limits. For multi-instance deployments, optional [Redis shared counters](deployment.md#usage-counters) eliminate the cross-instance blind spot between flushes.

@@ -1,0 +1,42 @@
+{{- /*
+  Links, with the relative Markdown links docs/ uses on GitHub, such as
+  "backends.md#usage-limits" or "../configuration.md", resolved to the page
+  they name. docs/ is mounted at content/docs, so a content path is also the
+  file's path in the repository: a link to a file that is not a page goes to it
+  on GitHub. A relative link with no extension is a site URL, as the guides
+  write them, and is left alone. Otherwise this is Hextra's own link hook.
+*/ -}}
+
+{{- $dest := .Destination -}}
+{{- $url := urls.Parse $dest -}}
+{{- $fragment := cond (ne $url.Fragment "") (printf "#%s" $url.Fragment) "" -}}
+{{- $isExternal := hasPrefix $dest "http" -}}
+{{- $isRelative := and (not $url.Scheme) $url.Path (not (hasPrefix $url.Path "/")) (path.Ext $url.Path) -}}
+
+{{- if and $isRelative .PageInner.File -}}
+  {{- /* Resolved against the linking file's directory, as GitHub does. */ -}}
+  {{- $target := path.Join (path.Dir .PageInner.File.Path) $url.Path -}}
+  {{- with site.GetPage (printf "/%s" $target) -}}
+    {{- $dest = printf "%s%s" .RelPermalink $fragment -}}
+  {{- else -}}
+    {{- $dest = printf "https://github.com/afreidah/s3-orchestrator/blob/main/%s%s" $target $fragment -}}
+    {{- $isExternal = true -}}
+  {{- end -}}
+{{- else if hasPrefix $dest "/" -}}
+  {{- with or (.PageInner.GetPage $url.Path) (resources.Get $url.Path) -}}
+    {{- $dest = printf "%s%s" .RelPermalink $fragment -}}
+  {{- else -}}
+    {{- $dest = relURL (strings.TrimPrefix "/" $dest) -}}
+  {{- end -}}
+{{- end -}}
+
+<a href="{{ $dest | safeURL }}"
+  {{- with .Title }} title="{{ . }}"{{ end -}}
+  {{- if $isExternal }} target="_blank" rel="noopener"{{ end -}}
+>
+  {{- .Text | safeHTML -}}
+  {{- if and site.Params.externalLinkDecoration $isExternal -}}
+    {{- partial "utils/icon.html" (dict "name" "arrow-up-right" "attributes" `class="hx:inline hx:rtl:rotate-270 hx:align-baseline" height="1em" aria-hidden="true"`) -}}
+  {{- end -}}
+</a>
+{{- /* Trailing newline trimmed so a link followed by punctuation renders tight. */ -}}

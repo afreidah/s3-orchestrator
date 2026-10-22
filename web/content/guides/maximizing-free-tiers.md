@@ -223,7 +223,7 @@ telemetry:
     sample_rate: 1.0             # reduce to 0.01–0.1 for production
 ```
 
-{{% notice note %}}
+{{< callout type="info" >}}
 **Google Cloud Storage** requires three backend-level settings to work correctly:
 
 - **`disable_checksum: true`** — GCS does not support the `x-amz-checksum-*` headers that the AWS SDK sends by default.
@@ -231,7 +231,7 @@ telemetry:
 - **`strip_sdk_headers: true`** — AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that GCS does not include when verifying the SigV4 signature, causing `SignatureDoesNotMatch` errors.
 
 See the [Admin Guide](../../docs/backends/) for more details.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Prerequisites
 
@@ -268,13 +268,13 @@ Three things in that table decide how the backend is configured:
 
 **Some allowances are narrower than the provider's headline.** The GCS free tier applies only to the three US regions listed; a bucket anywhere else bills from the first operation. The OCI egress allowance covers the entire tenancy, so compute instances draw from the same 10 TB. The g3 storage is a Google account quota shared with Gmail and Photos.
 
-{{% notice tip %}}
+{{< callout >}}
 **[g3](https://github.com/afreidah/g3)** is an S3-compatible gateway that uses Google Drive for object data and Gmail for metadata. Each free Google account provides 15 GB of storage. g3 runs as a service in your infrastructure and presents a standard S3 API that S3 Orchestrator connects to like any other backend. See the [g3 project website](https://g3.munchbox.cc) for setup instructions.
-{{% /notice %}}
+{{< /callout >}}
 
-{{% notice warning %}}
+{{< callout type="warning" >}}
 Free-tier limits change without notice. Always verify current allowances on each provider's pricing page before configuring quotas and usage limits. The numbers listed here are a starting point, not a guarantee.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 2: Get Credentials from Each Provider
 
@@ -335,9 +335,9 @@ Each provider gives you an **access key** and **secret key** for their S3-compat
 6. Your S3 endpoint is `https://storage.googleapis.com`
 7. Create a bucket under **Cloud Storage** -> **Buckets** -> **Create**
 
-{{% notice tip %}}
+{{< callout >}}
 Never commit provider credentials to version control. Use environment variables in your config file with the `${VAR}` syntax, and inject them via systemd `EnvironmentFile`, container secrets, or a secrets manager.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 3: Configure Backends with Quotas and Usage Limits
 
@@ -455,9 +455,9 @@ backends:
 
 When a backend hits a usage limit, reads fail over to replicas on other backends and writes overflow to backends that still have headroom.
 
-{{% notice tip %}}
+{{< callout >}}
 Set limits slightly below the actual free-tier cap to give yourself a safety margin. The orchestrator's adaptive flushing shortens the tracking interval as limits approach, but a small buffer avoids edge cases.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 4: Spend Less of Every Allowance
 
@@ -494,9 +494,9 @@ With replication on, a second copy has to come from somewhere. By default the re
 
 The cost is that both copies are uploaded during the write rather than spread over replicator cycles, so peak write bandwidth roughly doubles. For free-tier setups, where the constraint is a monthly allowance rather than throughput, that is usually the right trade.
 
-{{% notice tip %}}
+{{< callout >}}
 Both settings compound: compression shrinks the object, and the write then places the compressed copies without reading anything back. Together they cut what replication costs you on every metered dimension a provider bills.
-{{% /notice %}}
+{{< /callout >}}
 
 ### Cloudflare Bandwidth Alliance: egress the provider stops billing
 
@@ -540,9 +540,9 @@ backends:
 
 `unsigned_payload: true` matters for the same class of reason. A client using chunked payload signatures embeds per-chunk signatures derived from its own key, which cannot be re-signed without buffering the whole body, so the worker answers those with `501 Not Implemented` rather than forwarding something the origin will reject. Presigned URLs carry their signature in the query string and take a different verification path; the worker rejects those explicitly too.
 
-{{% notice tip %}}
+{{< callout >}}
 Relax the egress budget on a proxied backend, not the request budget. The alliance waives egress and only egress — every GET still counts as a Class B transaction against whatever request allowance the provider gives you. `egress_byte_limit` can come up or come off; `api_request_limit` stays exactly where it was.
-{{% /notice %}}
+{{< /callout >}}
 
 One worker fronts one backend, so a pool spanning three alliance providers deploys the same script three times under distinct names and routes. Cloudflare's free and Pro plans cap the request body at 100 MB, so keep multipart part size below that.
 
@@ -629,7 +629,7 @@ Use the web dashboard or Prometheus metrics to track how close each backend is t
 - **Storage quota**: `s3o_quota_bytes_used{backend}` against `s3o_quota_bytes_limit{backend}`, with `s3o_quota_bytes_available{backend}` as the headroom directly
 - **API requests**: `s3o_usage_api_requests{backend}` for the month's total, and `s3o_usage_pool_requests{backend,pool}` against `s3o_usage_pool_limit{backend,pool}` for each request class you declared with `request_limits`
 - **Egress / ingress**: `s3o_usage_egress_bytes{backend}` and `s3o_usage_ingress_bytes{backend}`
-- **Hitting a cap**: `s3o_usage_limit_rejections_total{operation,direction}` counts operations turned away because a backend was out of allowance, and `s3o_quota_claims_declined_total{backend}` counts writes a backend refused for want of space
+- **Hitting a cap**: `s3o_usage_limit_rejections_total{operation,limit_type}` counts operations turned away because a backend was out of allowance, and `s3o_quota_claims_declined_total{backend}` counts writes a backend refused for want of space
 
 The dashboard shows per-backend quota bars and monthly usage charts so you can see at a glance how much headroom remains.
 
@@ -637,11 +637,11 @@ The per-class metrics are the ones to watch on providers that meter by class. A 
 
 ## Adding More Providers
 
-To expand your pool, add another backend with its own quota and usage limits. No existing configuration needs to change. The orchestrator picks up new backends on configuration reload.
+To expand your pool, add another backend with its own quota and usage limits. No existing configuration needs to change. Adding a backend needs a restart (a rolling restart for a multi-instance deployment); quotas and usage limits on existing backends reload with SIGHUP.
 
-{{% notice tip %}}
+{{< callout >}}
 Enable [replication](../../docs/replication/) with a factor of 2 or more so that objects are copied across providers. This gives you redundancy and allows reads to fail over when one backend's usage limits are reached. Remember that it also halves your usable capacity - see the note under Step 1.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Reduce API Calls with the Object Data Cache
 
@@ -657,14 +657,14 @@ cache:
 
 Each cache hit avoids one backend API request and the associated egress, which directly extends your free-tier headroom. The cache is especially effective for providers with low API request limits (e.g., OCI at 50,000/mo or GCS at 5,000/mo).
 
-{{% notice tip %}}
+{{< callout >}}
 Size `max_object_size` to match your typical object sizes. If most of your objects are small config files or thumbnails, a 1-5 MB limit keeps the cache efficient. Large objects that would consume the entire cache are better left to direct backend reads.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Important Notes
 
 - Quotas are enforced atomically on every write - you will never accidentally exceed a backend's limit
 - Usage limits reset monthly - the orchestrator tracks the current billing period automatically
-- Adding or removing backends does not require downtime - reload the configuration and the orchestrator adjusts routing immediately
+- Adding or removing a backend needs a restart, which a multi-instance deployment can do one instance at a time without downtime; quotas and usage limits on existing backends reload with SIGHUP
 - Replication copies count against the destination backend's quota and usage limits, so factor that into your calculations
 - Backend credentials (from the provider) and client credentials (for your virtual buckets) are completely separate - rotating one does not affect the other

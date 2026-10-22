@@ -29,10 +29,11 @@ cannot be compared against anything. Each table block therefore carries an
 
 ### Scenario inventory
 
-Seven scenarios produce the matrix. Every scenario that writes carries
+Seven scenarios produce the matrix. The overwrite scenario carries
 `-compressible`, because bodies of random bytes are the one input an encoder
 can never shrink: a suite made entirely of them measures compression as the
-cost of declining and never as the work of encoding.
+cost of declining and never as the work of encoding. Add `-compressible 0.8`
+to the other writing scenarios to measure encoding there too.
 
 1. **Sustained PUT** at varying object sizes
    ```bash
@@ -59,7 +60,7 @@ cost of declining and never as the work of encoding.
      -output-json get-cold.json
    ```
 
-4. **Mixed PUT/GET/DELETE** across rates (saturation-find ramp)
+4. **Mixed PUT/GET** across rates (saturation-find ramp)
    ```bash
    ./loadtest/s3-loadtest \
      -op mixed -rate 100 -ramp-to 2000 -ramp-step 200 \
@@ -106,8 +107,8 @@ require new code):
 
 | Signal | Source | Method |
 |---|---|---|
-| Postgres pool utilization | `pg_stat_activity` | `psql -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='s3-orchestrator'"` sampled before and after each run |
-| Orchestrator goroutine + heap | `/debug/pprof/goroutine`, `/debug/pprof/heap` | `curl http://orch:9000/debug/pprof/heap > heap.pprof` at saturation |
+| Postgres pool utilization | `pg_stat_activity` | `psql -c "SELECT count(*) FROM pg_stat_activity WHERE usename='s3orchestrator'"` (the configured database user) sampled before and after each run |
+| Orchestrator goroutine + heap | `/debug/pprof/goroutine`, `/debug/pprof/heap` | `curl http://127.0.0.1:9091/debug/pprof/heap > heap.pprof` at saturation, against the metrics listener; pprof needs `telemetry.metrics.listen` and `telemetry.metrics.pprof: true` |
 | Container CPU + RSS | `docker stats` or cgroup `/sys/fs/cgroup/...` | One sample per scenario step |
 | Cache hit / miss / size | `/metrics` | Prometheus scrape diff between t=0 and t=end |
 
@@ -121,6 +122,8 @@ machine model into each section so the numbers stay interpretable.
 
 ## Results
 
+The result tables follow the inventory above: scenarios 2 and 3 share one table, and the overwrite scenario has no table yet.
+
 ### Scenario 1 - Sustained PUT
 
 **Environment:** _fill from `put-sweep.json -> hardware` + host model_
@@ -131,7 +134,7 @@ machine model into each section so the numbers stay interpretable.
 | 1 MB | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 | 100 MB | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 
-### Scenario 2 - Sustained GET (warm vs cold)
+### Scenarios 2 and 3 - Sustained GET (warm vs cold)
 
 **Environment:** _fill_
 
@@ -140,7 +143,7 @@ machine model into each section so the numbers stay interpretable.
 | 1 KB | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 | 1 MB | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 
-### Scenario 3 - Mixed saturation ramp
+### Scenario 4 - Mixed saturation ramp
 
 **Environment:** _fill_
 
@@ -151,7 +154,7 @@ machine model into each section so the numbers stay interpretable.
 
 **Saturation point:** _fill from `mixed-ramp.json -> saturation_rps`_
 
-### Scenario 4 - List performance
+### Scenario 5 - List performance
 
 **Environment:** _fill_
 
@@ -182,7 +185,7 @@ on a busy fleet to land somewhere between the two figures above rather than at
 the floor, and autovacuum settings to matter more than they would on a
 read-mostly table.
 
-### Scenario 5 - Concurrent multipart
+### Scenario 7 - Concurrent multipart
 
 **Environment:** _fill_
 
@@ -205,8 +208,8 @@ scenario. Typical candidates:
   (working set exceeds cache size)
 - **Admission control** kicks in via `s3o_admission_rejections_total`
   and `s3o_load_shed_total` non-zero
-- **Multipart Postgres contention** on the per-uploadId advisory
-  lock at high concurrency
+- **Multipart Postgres contention** on the row lock each part takes on
+  its upload's `multipart_uploads` row at high concurrency
 
 ### Quota row contention
 

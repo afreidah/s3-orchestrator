@@ -5,7 +5,7 @@ weight: 8
 ---
 
 
-This guide walks through `s3-orchestrator tui`, the built-in terminal UI. It is a read-only way to explore the object namespace, see exactly which backends hold a copy of an object, and check backend status - without leaving the shell or opening the web dashboard.
+This guide walks through `s3-orchestrator tui`, the built-in terminal UI. It explores the object namespace, see exactly which backends hold a copy of an object, and check backend status - without leaving the shell or opening the web dashboard.
 
 ## Overview
 
@@ -27,7 +27,7 @@ The pane that currently has keyboard focus renders with a bright title bar while
 
 Every table fits the terminal's width. In a narrow terminal the less important columns are dropped first (on Backends, `SAVED` and the period counters) and come back when the window widens.
 
-Browsing is read-only: the listing, inspector, and every status pane issue `GET` requests to the admin API and never mutate state. The Ops menu and the Cleanup pane's requeue are the exceptions, and both ask before they act.
+Browsing issues only `GET` requests to the admin API and never changes state. The actions that do change state - upload and delete in Files, the Backends actions, the inspector's scrub, the Cleanup pane's requeue and the Ops menu - each ask before they act.
 
 ![The Dashboard: a usage bar per backend with its health, here one backend degraded and refusing GetObject, the fleet total, and the fleet-wide backlogs and coverage](/docs/images/tui-dashboard.png?classes=lightbox)
 
@@ -83,7 +83,7 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `l` | Jump to the Logs section |
 | `o` | Jump to the Ops section |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
-| `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
+| `enter` / `right` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring; in Logs, filter the entries by text in the component or message |
 | `D` | Download the selected object, or everything under the selected directory into a new local directory |
@@ -91,7 +91,7 @@ The TUI opens on the Dashboard; press `f` for the Files section, which starts at
 | `X` | Delete the selected object, or everything under the selected directory (asks to confirm) |
 | `R` | In Workers, run the Ops action that does the selected worker's job, as if chosen from the Ops menu |
 | `s` | In Files, cycle the sort order (name / size); in Backends, Buckets, Workers and Cleanup, sort by the next column, then back to the server's order |
-| `S` | Reverse the table's sort (in the inspector, `S` verifies the object instead) |
+| `S` | Reverse the sort in Backends, Buckets, Workers and Cleanup (in the inspector, `S` verifies the object instead) |
 | `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Refresh the current view now |
 | `?` | Show every key the current pane answers; any key closes it |
@@ -131,9 +131,9 @@ Reading the columns:
 
 Two copies with matching sizes and hashes is a healthy replicated object. A single row means the object is under-replicated (or replication is disabled); a mismatch in size or hash across copies is worth investigating.
 
-{{% notice tip %}}
+{{< callout >}}
 The inspector shows encryption *metadata* only. The wrapped data-encryption key is never sent over the admin API - only the `encrypted` flag and the wrapping `key_id` are exposed.
-{{% /notice %}}
+{{< /callout >}}
 
 ## Step 4: Check backend status
 
@@ -182,7 +182,7 @@ The neighbouring status sections read the same way: `p` for the replication fact
 
 ## Step 7: Run an admin action
 
-Press `o` (or select **Ops**) for the instance-wide actions, grouped into the maintenance passes, cache control, and the encryption transitions. Every entry confirms with `y/N` before it runs, and an entry ending in `...` prompts for a value first.
+Press `o` (or select **Ops**) for the instance-wide actions, grouped into the maintenance passes, cache control, and the encryption and compression transitions. Every entry confirms with `y/N` before it runs, and an entry ending in `...` prompts for a value first.
 
 ![The Ops menu listing the instance-wide admin actions](/docs/images/tui-ops.png?classes=lightbox)
 

@@ -2,7 +2,6 @@
 description: "How a credential resolves to a user, how that user's grants decide which virtual buckets it reaches, and how every request is authenticated and authorised before reaching a backend."
 title: "Authentication and Credentials"
 linkTitle: "Authentication"
-weight: 22
 ---
 
 ## SigV4 and multi-bucket auth

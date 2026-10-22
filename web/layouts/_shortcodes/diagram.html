@@ -1,0 +1,12 @@
+{{- /*
+  Places an interactive diagram: the frame it renders into, the tooltip it
+  shows details in, and the script that draws it. The page declares the
+  diagram itself in window.s3oDiagram, as its mermaid source and the detail
+  for each node; see assets/js/diagram.js.
+
+  @example {{< diagram >}}
+*/ -}}
+{{- $js := resources.Get "js/diagram.js" | minify | fingerprint -}}
+<div id="ac-diagram"></div>
+<div id="ac-tooltip"></div>
+<script type="module" src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}"></script>

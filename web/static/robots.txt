@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://s3-orchestrator.munchbox.cc/sitemap.xml

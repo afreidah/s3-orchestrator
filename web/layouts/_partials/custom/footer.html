@@ -1,0 +1,16 @@
+<p class="hx:text-sm hx:py-6">
+  Built by <a href="https://alexfreidah.com">Alex Freidah</a> &middot;
+  <a href="https://github.com/afreidah/s3-orchestrator/blob/main/LICENSE">MIT License</a>
+</p>
+{{- /*
+  Emits the Cloudflare Web Analytics beacon. The zone's Web Analytics record
+  asks the edge to add it, but the edge serves the page without it, so the tag
+  is emitted here; without the beacon every Core Web Vital reports no data.
+
+  The token names the site rather than authenticating anything, so it lives in
+  hugo.toml. Production builds only, so a local hugo server does not report
+  page views into the same dataset.
+*/ -}}
+{{- if and hugo.IsProduction site.Params.webAnalyticsToken }}
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "{{ site.Params.webAnalyticsToken }}"}'></script>
+{{- end }}

@@ -1,0 +1,231 @@
+/* -------------------------------------------------------------------------------
+ * Site Palette
+ *
+ * Author: Alex Freidah
+ *
+ * The logo's green (#2a9d73) as Hextra's primary colour, near-black and
+ * cool-grey neutrals, and links in a green that holds contrast on each
+ * background. Headings stay in the body text colour; green marks what is
+ * interactive.
+ * ------------------------------------------------------------------------------- */
+
+:root {
+  --primary-hue: 158deg;
+  --primary-saturation: 58%;
+  --primary-lightness: 39%;
+
+  --s3o-bg: #ffffff;
+  --s3o-surface: #f6f8f7;
+  --s3o-border: #dde2df;
+  --s3o-text: #0e1211;
+  --s3o-muted: #616b67;
+  --s3o-link: #1d7756;
+}
+
+.dark {
+  --primary-hue: 158deg;
+  --primary-saturation: 58%;
+  --primary-lightness: 45%;
+
+  --s3o-bg: #0e1211;
+  --s3o-surface: #151b19;
+  --s3o-border: #2a332f;
+  --s3o-text: #eef1f0;
+  --s3o-muted: #98a29e;
+  --s3o-link: #34b882;
+
+  /* Hextra's own dark background, used by the page, navbar and sidebar. */
+  --hx-color-dark: #0e1211;
+}
+
+/* -------------------------------------------------------------------------
+ * BASE
+ * ------------------------------------------------------------------------- */
+
+html,
+body {
+  background-color: var(--s3o-bg);
+  color: var(--s3o-text);
+}
+
+.content a:not(.not-prose a) {
+  color: var(--s3o-link);
+  text-decoration-color: color-mix(in srgb, var(--s3o-link) 40%, transparent);
+}
+
+.content :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--s3o-text);
+}
+
+/* Code blocks and tables sit on the surface colour, bordered. */
+.content pre,
+.content :not(pre) > code {
+  background-color: var(--s3o-surface);
+  border: 1px solid var(--s3o-border);
+}
+
+.content :not(pre) > code {
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+
+.content img.s3o-doc-image {
+  width: 100%;
+  height: auto;
+  margin: 1.5rem 0;
+}
+
+.content table th {
+  background-color: var(--s3o-surface);
+}
+
+.content table th,
+.content table td {
+  border-color: var(--s3o-border);
+}
+
+/* Swagger UI draws for a light page, so it gets one in either theme. */
+.s3o-openapi {
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+}
+
+/* -------------------------------------------------------------------------
+ * LANDING PAGE
+ * ------------------------------------------------------------------------- */
+
+.s3o-hero {
+  padding: 3rem 0 1rem;
+}
+
+/* Solid, in place of the theme's gradient headline. */
+.s3o-hero h1 {
+  background-image: none;
+  color: var(--s3o-text);
+}
+
+.s3o-hero-logo {
+  width: min(340px, 70vw);
+  height: auto;
+}
+
+.s3o-diagram {
+  width: 100%;
+  max-width: 60rem;
+  margin: 3rem auto 0;
+}
+
+.s3o-diagram img {
+  width: 100%;
+  height: auto;
+}
+
+/* Feature rows: text on one side, an example on the other, alternating. */
+.s3o-sections {
+  width: 100%;
+  max-width: 72rem;
+  margin: 4rem auto 0;
+}
+
+.s3o-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 3rem;
+  align-items: center;
+  padding: 3.5rem 0;
+  border-top: 1px solid var(--s3o-border);
+}
+
+.s3o-row.s3o-flip .s3o-text {
+  order: 2;
+}
+
+.s3o-text h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--s3o-text);
+  margin-bottom: 1rem;
+}
+
+.s3o-text p {
+  color: var(--s3o-muted);
+  line-height: 1.7;
+}
+
+.s3o-more {
+  display: inline-block;
+  margin-top: 1.25rem;
+  color: var(--s3o-link);
+  font-weight: 600;
+}
+
+.s3o-more:hover {
+  text-decoration: underline;
+}
+
+.s3o-example pre {
+  background-color: var(--s3o-surface) !important;
+  border: 1px solid var(--s3o-border);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.s3o-example img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--s3o-border);
+  border-radius: 0.5rem;
+}
+
+/* The closing three-column list: plain text, no boxes. */
+.s3o-more-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3rem;
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto 4rem;
+  padding-top: 3.5rem;
+  border-top: 1px solid var(--s3o-border);
+}
+
+.s3o-more-list h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--s3o-text);
+  margin-bottom: 0.5rem;
+}
+
+.s3o-more-list p {
+  color: var(--s3o-muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+@media (max-width: 768px) {
+  .s3o-row,
+  .s3o-more-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+  }
+
+  .s3o-row.s3o-flip .s3o-text {
+    order: 0;
+  }
+}
+
+/* The author's site link in the navbar. */
+a[href="https://alexfreidah.com"],
+a[href="https://alexfreidah.com"] span {
+  color: #c97a3a;
+}
+
+html.dark a[href="https://alexfreidah.com"],
+html.dark a[href="https://alexfreidah.com"] span {
+  color: #d9925a;
+}

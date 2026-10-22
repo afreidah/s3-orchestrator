@@ -95,9 +95,8 @@ jobs:
           fi
           echo "Version bumped: $BASE_VERSION → $PR_VERSION"
 
-  # Catches go.mod drift between root and nested modules. The vendored
-  # Hugo theme under web/themes/** is excluded - it is a third-party
-  # project synced from upstream and pins its own minimum Go version.
+  # Catches go.mod drift between root and nested modules, including the
+  # website's Hugo module file under web/.
   go-version-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -121,7 +120,7 @@ jobs:
             else
               echo "ok: $mod -> $ver"
             fi
-          done < <(find . -name go.mod -not -path './go.mod' -not -path './web/themes/*' -not -path './vendor/*')
+          done < <(find . -name go.mod -not -path './go.mod' -not -path './vendor/*')
           exit $status
 
   lint:
@@ -540,8 +539,6 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-        with:
-          submodules: true
 
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4

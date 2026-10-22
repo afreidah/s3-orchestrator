@@ -2,7 +2,6 @@
 description: "The always-on cleanup queue, pending write intents, and lifecycle rules, with the tunables controlling how aggressively each one runs."
 title: "Cleanup Queue, Pending Intents, and Lifecycle"
 linkTitle: "Cleanup & Lifecycle"
-weight: 26
 ---
 
 ## Cleanup queue
@@ -17,7 +16,7 @@ cleanup_queue:
   multipart_stale_timeout: 24h   # abort multipart uploads older than this (default: 24h)
 ```
 
-`multipart_stale_timeout` is consumed by the hourly `CleanupStaleMultipartUploads` sweep - uploads that have been open longer than this are aborted, their parts deleted from the backend, and the multipart rows removed. The default 24h matches the AWS S3 SDK's default abort behavior; lower it on backends with tight free-tier headroom to recover quota faster.
+`multipart_stale_timeout` is consumed by the hourly `CleanupStaleMultipartUploads` sweep - uploads that have been open longer than this are aborted, their parts deleted from the backend, and the multipart rows removed. The default is 24h; lower it on backends with tight free-tier headroom to recover quota faster.
 
 Every transaction that stops recording bytes queues their deletion in the same transaction: client deletes (DeleteObject and DeleteObjects), overwrites by PUT, CopyObject and multipart completion, drain, rebalance and rewrite moves removing their source, scrubber and verify-on-read integrity failures, over-replication removal, multipart abort and completion removing parts, a discarded intent, and a refused placement. The rows are inserted already claimed by the instance running the transaction. After the commit that instance deletes the bytes right away, one batched request per backend, and settles each row on its own result: retired when the delete succeeds or returns 404, retried with backoff when it fails. The request path and the worker settle rows through the same code. Outcomes are written even when the client disconnects mid-delete, so a hang-up leaves the row retried rather than stuck.
 
@@ -93,7 +92,7 @@ write_path:
 
 - `s3o_pending_intents_enqueued_total` - intents inserted, by every write that claims a target: PUTs, extra copies, replicas, moves, rewrites and parts.
 - `s3o_pending_intents_resolved_total{status}` - `committed` is the happy path (synchronous commit succeeded); `promoted`, `dropped`, `superseded`, `companion_kept` and `companion_discarded` are reaper resolutions; `ambiguous` is the alert.
-- `s3o_pending_intents_depth` - gauge of unresolved intents. Alert when consistently above `batch_size` - the reaper is not keeping up (raise `batch_size`, lower `reaper_tick`, or add concurrency).
+- `s3o_pending_intents_depth` - gauge of unresolved intents. Alert when consistently above `batch_size` - the reaper is not keeping up (raise `batch_size` or lower `reaper_tick`).
 - Audit events: `pending_reaper.promoted` / `pending_reaper.dropped` / `pending_reaper.superseded` / `pending_reaper.companion_kept` / `pending_reaper.companion_discarded`.
 
 

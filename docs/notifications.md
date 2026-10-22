@@ -2,7 +2,6 @@
 description: "Outbound webhooks for object mutations and operational events, delivered from a durable outbox so nothing is lost across a restart."
 title: "Webhook Notifications"
 linkTitle: "Notifications"
-weight: 33
 ---
 
 Optional outbound webhooks for object mutations and operational events. Each event is written to a durable `notification_outbox` table once the change that raised it has happened, then a background drainer POSTs it as CloudEvents-formatted JSON to each configured endpoint. A queued event survives a restart and is retried until it is delivered or its endpoint's retries run out.

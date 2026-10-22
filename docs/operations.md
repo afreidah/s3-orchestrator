@@ -2,7 +2,6 @@
 description: "Day-to-day procedures: draining a backend, rebalancing copies, running integrity scrubs, managing cache, and taking trace snapshots."
 title: "Operations"
 linkTitle: "Operations"
-weight: 30
 ---
 
 Day-to-day operational procedures: drain, rebalance, scrub, cache management, and trace snapshot.
@@ -20,7 +19,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 3. **Check the logs** to confirm the reload succeeded:
    ```
    {"level":"INFO","msg":"SIGHUP received, reloading configuration","path":"config.yaml"}
-   {"level":"INFO","msg":"Configuration reload complete"}
+   {"level":"INFO","msg":"configuration reload complete"}
    ```
 
 **What takes effect immediately:**
@@ -30,30 +29,33 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 - Rate limit settings (requests per second, burst)
 - Backend quota limits (`quota_bytes`)
 - Backend usage limits (`api_request_limit`, `egress_byte_limit`, `ingress_byte_limit`)
-- Rebalance settings (strategy, interval, batch size, threshold, enable/disable)
-- Replication settings (factor, worker interval, batch size, unhealthy threshold)
+- Rebalance settings (strategy, batch size, threshold, enable/disable)
+- Replication settings (factor, batch size, unhealthy threshold)
 - Usage flush settings (interval, adaptive enabled/threshold/fast interval)
+
+The rebalancer's `interval` and the replicator's `worker_interval` are read when the worker starts, so a new value applies after a restart.
 
 **What requires a restart:**
 
-- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`, `redis`
+- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `server.tls` (the certificate and key files themselves are re-read on SIGHUP), `server.max_concurrent_requests`/`reads`/`writes`, `server.max_header_bytes`, `server.max_header_value_count`, `server.load_shed_threshold`, `server.admission_wait`
+- `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`, `compression`, `circuit_breaker`, `backend_circuit_breaker`, `redis`
 - Backend structural changes (endpoint, S3 credentials, adding/removing backends)
 
 If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:
 
 ```
-{"level":"WARN","msg":"Config field changed but requires restart to take effect","field":"server.listen_addr"}
+{"level":"WARN","msg":"config field changed but requires restart to take effect","field":"server.listen_addr"}
 ```
 
 These are measured against the config the process started with, so a change from an earlier reload stays listed until a restart applies it. `s3-orchestrator admin config` (or the TUI's Config section) shows them alongside the running configuration.
 
-**If the config file is invalid**, the orchestrator keeps the current configuration entirely and logs the parse/validation error:
+**If the config file is invalid**, the orchestrator keeps the current configuration entirely and logs why - `config reload aborted, keeping current config` when the file fails to load, and `configuration reload validation failed, keeping current config` when it fails validation:
 
 ```
-{"level":"ERROR","msg":"Config reload failed, keeping current config","error":"invalid config: ..."}
+{"level":"ERROR","msg":"configuration reload validation failed, keeping current config","error":"invalid config: ..."}
 ```
 
-No partial reload happens - either all reloadable settings update, or none do.
+A file that fails to load or validate changes nothing. If one setting then fails to apply, the rest still apply and the reload is logged as `configuration reload partially applied`; `s3-orchestrator admin reload-status` names the parts that failed.
 
 ### Adding a new backend
 

@@ -15,7 +15,7 @@ You need four pieces of information from your orchestrator admin:
 | **Access Key ID** | `AKID_APP1_WRITER` |
 | **Secret Access Key** | `wJalrXUtnFEMI/K7MDENG+bPxRfi...` |
 
-Your credentials are tied to a specific bucket. You can only access the bucket your credentials are authorized for.
+Your credentials reach only the buckets your administrator has granted them, and only with the permissions those grants carry.
 
 ## AWS CLI
 
@@ -552,7 +552,7 @@ The orchestrator implements a practical subset of the S3 API. A few things to be
 
 - **Same-bucket copies only** - `CopyObject` and `UploadPartCopy` require source and destination to be in the same bucket. Both are supported, so a client copying a large object server-side copies it part by part rather than pulling the bytes down and pushing them back.
 - **Unimplemented operations answer 501** - S3 selects the operation from the query string, so a request for a subresource this server does not serve (`?lifecycle`, `?policy`, `?versions` and the rest) returns `501 NotImplemented` rather than an empty document that reads as "there are none".
-- **No bucket creation or deletion** - Buckets are configured server-side, so `CreateBucket` and `DeleteBucket` are not supported. `ListBuckets` is: it returns the one bucket the presented credential is authorized for, which is what lets a client that lists before it works pick the right target. `HeadBucket`, `GetBucketLocation` and `GetBucketVersioning` answer as well; versioning always reports disabled.
+- **No bucket creation or deletion** - Buckets are configured server-side, so `CreateBucket` and `DeleteBucket` are not supported. `ListBuckets` is: it returns every bucket the presented credential holds a `list-buckets` grant on, which is what lets a client that lists before it works pick the right target. `HeadBucket`, `GetBucketLocation` and `GetBucketVersioning` answer as well; versioning always reports disabled.
 - **No ACLs or policies** - Access control is handled entirely through the credential-to-bucket mapping in the server config.
 - **CORS is configured server-side** - `PutBucketCors` and `GetBucketCors` are not supported. Browser origins are declared in the bucket's `cors` block and reloaded with the rest of the config.
 - **No object versioning** - Each key holds exactly one object. Uploading to an existing key overwrites it. Concurrent PUTs to the same key are last-writer-wins, matching native S3 semantics. The orchestrator's per-key advisory lock keeps location metadata consistent across replicas, and bytes from the losing writer are enqueued for backend cleanup. Clients that need conflict detection should send `If-None-Match: *` (see [Conditional Writes](#conditional-writes)).

@@ -2,7 +2,6 @@
 description: "Choosing between embedded SQLite and PostgreSQL, sizing the connection pool, and the migrations that manage the metadata schema."
 title: "Database"
 linkTitle: "Database"
-weight: 24
 ---
 
 ## database
@@ -31,7 +30,7 @@ database:
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
   max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 10                  # default: 5
+  min_conns: 10                  # default: 10
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
@@ -44,10 +43,11 @@ SQLite is the default for single-instance use; PostgreSQL is required for multi-
 
 The orchestrator supports two metadata-store engines:
 
-- **SQLite** (default) - embedded, zero-dependency, single-instance. Schema is
-  applied at startup from a single consolidated `schema.sql` and pinned by a
-  `schema_version` table, so a database written by a newer binary is refused
-  rather than silently mis-read.
+- **SQLite** (default) - embedded, zero-dependency, single-instance. A new
+  database is created from a consolidated `schema.sql`; an existing one is
+  upgraded by the numbered migrations embedded in the binary, each applied in
+  its own transaction and recorded in a `schema_version` table. A database
+  written by a newer binary is refused rather than silently mis-read.
 - **PostgreSQL** - required for multi-instance deployments. Connects via
   pgx/v5 pools and auto-applies versioned migrations on startup using
   [goose](https://github.com/pressly/goose); migration files are embedded
@@ -74,7 +74,12 @@ The schema currently provisions:
 | `cleanup_queue` | Bytes waiting to be deleted. Every transaction that stops recording bytes inserts their rows, claimed by its instance, which deletes the bytes after the commit; the worker retries what that delete could not complete. Deletes go to `storage_key`; `object_key` names the object the orphan belonged to |
 | `cleanup_dlq` | Dead-letter for `cleanup_queue` rows that exhausted retries; surfaces unrecoverable orphans for operator action. Carries the same `storage_key` and `object_key` as the queue row |
 | `pending_objects` | In-flight write intents, recorded before a write's bytes land - a PUT and its extra copies, a replica, a move, a rewrite or a multipart part - so a DB outage can't silently destroy the prior copy and the bytes are admitted against the backend's room. `storage_key` is the path the upload writes, which the reaper HEADs and deletes at. Carries the same stored-form columns as `object_locations`, so an intent the reaper promotes describes bytes that can actually be read |
+| `usage_flushes` | IDs of usage batches already applied, so a batch staged in Redis that more than one flush finds is applied at most once |
 | `notification_outbox` | Durable webhook event delivery queue |
+| `buckets` | Virtual buckets provisioned through the API rather than the config file |
+| `users` | Identities that credentials belong to and grants are given to |
+| `credentials` | Keypairs issued through the API, each belonging to one user |
+| `grants` | A user's permissions on a bucket, a backend, or the orchestrator |
 | `backend_states` | A backend's state flags as one integer - cordoned (1), [draining](operations.md#draining-a-backend) (2), drained (4), drain failed (8) - and its most recent drain's progress: objects moved, the error that stopped a failed drain, and when it started and finished. A backend with no row, or a row with no flags set, is in normal service. Bits are only ever added, never renumbered. No foreign key to `backend_quotas`, so the record outlives that row |
 
 The schema also defines one view, `backend_capacity`: per backend, the byte limit, stored bytes, orphan bytes (the sum of `size_bytes` over its `cleanup_queue` and `cleanup_dlq` rows), in-flight bytes (incomplete multipart parts plus the intents of writes still uploading), the bytes still available (NULL when there is no limit), and its state flags (0 when it has no row). Every admission test reads it and refuses a backend carrying a flag writes do not accept, testing the flags against a mask the orchestrator passes in. Every admission test reads it, so a pending intent, a replica, and a multipart upload are all refused by the same definition, and the quota tracker refreshes its baselines from the same figures.

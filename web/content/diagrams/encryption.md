@@ -66,43 +66,11 @@ The base nonce is stored in the database specifically so range decryption can de
 
 ---
 
-<style>
-  #ac-diagram { margin: 1rem 0; }
-  #ac-tooltip {
-    position: fixed; z-index: 9999; pointer-events: none;
-    max-width: 380px; padding: 0.7rem 0.85rem;
-    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
-  }
-  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
-  #ac-tooltip .ac-badge {
-    display: inline-block; padding: 1px 7px; border-radius: 4px;
-    font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
-  }
-  .ac-badge-entry { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
-  .ac-badge-filter { background: #6b5b2e22; color: #c4a35a; border: 1px solid #c4a35a55; }
-  .ac-badge-decision { background: #2a9d7322; color: #2a9d73; border: 1px solid #2a9d7355; }
-  .ac-badge-process { background: #2d7d6a22; color: #5ec9a0; border: 1px solid #5ec9a055; }
-  .ac-badge-storage { background: #1a3a3022; color: #4aaa8a; border: 1px solid #4aaa8a55; }
-  .ac-badge-success { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
-  .ac-badge-reject { background: #8b3a3a22; color: #d4a0a0; border: 1px solid #d4a0a055; }
-  .ac-badge-cleanup { background: #4a556822; color: #8a9aa8; border: 1px solid #8a9aa855; }
-  #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
-  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
-  #ac-diagram .node, #ac-diagram .edgePath, #ac-diagram .edgeLabel { transition: opacity 0.15s, filter 0.15s; }
-  #ac-diagram svg.highlighting .node, #ac-diagram svg.highlighting .edgePath, #ac-diagram svg.highlighting .edgeLabel { opacity: 0.12; }
-  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(42,157,115,0.5)); }
-  #ac-diagram .node { cursor: pointer; }
-</style>
+{{< diagram >}}
 
-<div id="ac-diagram"></div>
-<div id="ac-tooltip"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.8.0/dist/mermaid.min.js"></script>
 <script>
-(function() {
-  var diagramSrc = [
+window.s3oDiagram = {
+  source: [
     'flowchart TD',
     '    PLAIN([Plaintext<br>Stream]):::entry --> DEK[Generate Random<br>256-bit DEK]:::process',
     '    DEK --> WRAP[WrapDEK via<br>KeyProvider]:::storage',
@@ -135,47 +103,9 @@ The base nonce is stored in the database specifically so range decryption can de
     '    RDEC --> SLICE[Skip + Limit<br>to Byte Range]:::filter',
     '    SLICE --> ROUT([Range Plaintext<br>Bytes]):::success',
     '',
-    '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
-    '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
-    '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
-    '    classDef process fill:#2d7d6a,stroke:#5ec9a0,color:#fff',
-    '    classDef storage fill:#1a3a30,stroke:#4aaa8a,color:#c9d1d9',
-    '    classDef success fill:#1a7a5a,stroke:#34b882,color:#fff,font-weight:bold',
-    '    classDef reject fill:#8b3a3a,stroke:#d4a0a0,color:#fff,font-weight:bold',
-    '    classDef cleanup fill:#222a26,stroke:#8a9aa8,color:#e6edf3'
-  ].join('\n');
+  ].join('\n'),
 
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    themeVariables: {
-      darkMode: true,
-      background: '#191c23',
-      fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      fontSize: '15px',
-      primaryColor: '#26332f',
-      primaryTextColor: '#f8fafc',
-      primaryBorderColor: '#2a9d73',
-      secondaryColor: '#3a2e20',
-      secondaryTextColor: '#e8dfd0',
-      secondaryBorderColor: '#c4a35a',
-      tertiaryColor: '#20262d',
-      tertiaryTextColor: '#e8dfd0',
-      tertiaryBorderColor: '#4aaa8a',
-      lineColor: '#7f8b86',
-      edgeLabelBackground: '#191c23',
-      clusterBkg: '#1d2229',
-      clusterBorder: '#39443f'
-    },
-    flowchart: { nodeSpacing: 32, rankSpacing: 46, curve: 'linear', padding: 12, diagramPadding: 16, useMaxWidth: true, htmlLabels: true }
-  });
-
-  mermaid.render('enc-mermaid-svg', diagramSrc).then(function(result) {
-    document.getElementById('ac-diagram').innerHTML = result.svg;
-    wireUpInteractivity();
-  });
-
-  var nodeInfo = {
+  info: {
     PLAIN: {
       title: 'Plaintext Stream',
       badge: 'entry', badgeText: 'encrypt entry',
@@ -311,99 +241,18 @@ The base nonce is stored in the database specifically so range decryption can de
       badge: 'success', badgeText: 'range output',
       body: '<p>Returns the requested plaintext byte range as an <code>io.Reader</code> along with <code>SliceLen</code> (the content length). Streams directly to the HTTP 206 Partial Content response.</p><p>The <code>Content-Range</code> header uses the original plaintext offsets, transparent to the client &mdash; encryption is entirely server-side.</p>'
     }
-  };
-
-  var tooltip = document.getElementById('ac-tooltip');
-  var mouseX = 0, mouseY = 0;
-  document.addEventListener('mousemove', function(e) {
-    mouseX = e.clientX; mouseY = e.clientY;
-    if (tooltip.style.display === 'block') positionTooltip();
-  });
-  function positionTooltip() {
-    var pad = 12;
-    var w = tooltip.offsetWidth, h = tooltip.offsetHeight;
-    var vw = window.innerWidth, vh = window.innerHeight;
-
-    var x = mouseX + pad;
-    if (x + w > vw - pad) x = mouseX - w - pad;
-    x = Math.max(pad, Math.min(x, vw - w - pad));
-
-    // Prefer below the cursor, and flip above only when above genuinely has
-    // more room. Clamping afterwards is what keeps a tall panel on screen: an
-    // unclamped flip puts its top edge above the viewport, and a panel taller
-    // than the viewport pins to the top and scrolls instead.
-    var below = vh - mouseY - pad * 2;
-    var above = mouseY - pad * 2;
-    var y = (h <= below || below >= above) ? mouseY + pad : mouseY - h - pad;
-    y = Math.max(pad, Math.min(y, vh - h - pad));
-
-    tooltip.style.left = x + 'px';
-    tooltip.style.top = y + 'px';
   }
-  function showInfo(id) {
-    var info = nodeInfo[id];
-    if (!info) { tooltip.style.display = 'none'; return; }
-    tooltip.innerHTML = '<h3>' + info.title + '</h3><span class="ac-badge ac-badge-' + info.badge + '">' + info.badgeText + '</span>' + info.body;
-    tooltip.style.display = 'block'; positionTooltip();
-  }
-  function clearInfo() { tooltip.style.display = 'none'; }
-
-  function wireUpInteractivity() {
-    var svg = document.querySelector('#ac-diagram svg');
-    if (!svg) return;
-    var adj = {}, edgeMap = {};
-    svg.querySelectorAll('.edgePath').forEach(function(ep, i) {
-      var cls = ep.getAttribute('class') || '';
-      var m = cls.match(/LS-(\S+)/), m2 = cls.match(/LE-(\S+)/);
-      if (!m || !m2) return;
-      edgeMap[i] = { from: m[1], to: m2[1], path: ep, label: svg.querySelectorAll('.edgeLabel')[i] };
-      (adj[m[1]] = adj[m[1]] || []).push(i);
-    });
-    function bfs(startId, adjacency, getNext) {
-      var visited = new Set([startId]), edges = new Set(), queue = [startId];
-      while (queue.length) { var cur = queue.shift(); (adjacency[cur] || []).forEach(function(ei) {
-        edges.add(ei); var next = getNext(edgeMap[ei]);
-        if (!visited.has(next)) { visited.add(next); queue.push(next); }
-      }); } return { nodes: visited, edges: edges };
-    }
-    var radj = {};
-    Object.keys(edgeMap).forEach(function(i) { var e = edgeMap[i]; (radj[e.to] = radj[e.to] || []).push(Number(i)); });
-    svg.querySelectorAll('.node').forEach(function(node) {
-      var id = node.id.replace(/^flowchart-/, '').replace(/-\d+$/, '');
-      node.addEventListener('mouseenter', function() {
-        svg.classList.add('highlighting');
-        var fwd = bfs(id, adj, function(e) { return e.to; });
-        var bwd = bfs(id, radj, function(e) { return e.from; });
-        var allNodes = new Set([...fwd.nodes, ...bwd.nodes]);
-        var allEdges = new Set([...fwd.edges, ...bwd.edges]);
-        svg.querySelectorAll('.node').forEach(function(n) {
-          n.classList.toggle('highlight', allNodes.has(n.id.replace(/^flowchart-/, '').replace(/-\d+$/, '')));
-        });
-        Object.keys(edgeMap).forEach(function(i) {
-          var hl = allEdges.has(Number(i));
-          edgeMap[i].path.classList.toggle('highlight', hl);
-          if (edgeMap[i].label) edgeMap[i].label.classList.toggle('highlight', hl);
-        });
-        showInfo(id);
-      });
-      node.addEventListener('mouseleave', function() {
-        svg.classList.remove('highlighting');
-        svg.querySelectorAll('.highlight').forEach(function(el) { el.classList.remove('highlight'); });
-        clearInfo();
-      });
-    });
-  }
-})();
+};
 </script>
 
 ## Legend
 
-| Color | Meaning |
-|-------|---------|
-| <span style="color:#1a7a5a">**Forest green**</span> | Entry point |
-| <span style="color:#c4a35a">**Amber**</span> | Integrity / filtering |
-| <span style="color:#2a9d73">**Green border**</span> | Decision / branch |
-| <span style="color:#5ec9a0">**Teal**</span> | Processing step |
-| <span style="color:#4aaa8a">**Teal**</span> | Storage / KMS / DB |
-| <span style="color:#34b882">**Green**</span> | Output |
+| Node | Meaning |
+|------|---------|
+| <span class="dg-swatch dg-entry"></span> | Entry point |
+| <span class="dg-swatch dg-filter"></span> | Integrity / filtering |
+| <span class="dg-swatch dg-decision"></span> | Decision / branch |
+| <span class="dg-swatch dg-process"></span> | Processing step |
+| <span class="dg-swatch dg-storage"></span> | Storage / KMS / DB |
+| <span class="dg-swatch dg-success"></span> | Output |
 
