@@ -53,7 +53,7 @@ func TestAggregator_Success(t *testing.T) {
 		Multipart: map[string]int64{"b1": 1},
 	})
 
-	da := New(store, stubUsage(ctrl), []string{"b1"}, fleet, nil)
+	da := New(store, stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
 	data, err := da.GetData(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 			}
 			c.fail(store, errors.New("db down"))
 
-			da := New(store, stubUsage(ctrl), nil, newStubFleet(ctrl, emptySnapshot()), nil)
+			da := New(store, stubUsage(ctrl), nil, nil, newStubFleet(ctrl, emptySnapshot()), nil)
 			if _, err := da.GetData(t.Context()); err == nil {
 				t.Fatalf("GetData succeeded despite %s failing", c.name)
 			}
@@ -168,7 +168,7 @@ func TestAggregator_SnapshotFailuresFailGetStatus(t *testing.T) {
 			fleet := NewMockFleetView(ctrl)
 			fleet.EXPECT().FleetSnapshot(gomock.Any()).Return(c.snap, c.err)
 
-			da := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+			da := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, nil)
 			if _, err := da.GetStatus(t.Context()); err == nil {
 				t.Fatal("GetStatus succeeded without a complete snapshot")
 			}
@@ -197,7 +197,7 @@ func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 			store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), maxDirectoryChildren).
 				Return(&core.DirectoryListResult{}, nil).Times(1)
 
-			da := New(store, stubUsage(ctrl), nil, nil, nil)
+			da := New(store, stubUsage(ctrl), nil, nil, nil, nil)
 			if _, err := da.GetDirectoryChildren(t.Context(), "", "", c.maxKeys); err != nil {
 				t.Fatal(err)
 			}
@@ -214,7 +214,7 @@ func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), "photos/", "cat.jpg", 25).
 		Return(&core.DirectoryListResult{}, nil).Times(1)
 
-	da := New(store, stubUsage(ctrl), nil, nil, nil)
+	da := New(store, stubUsage(ctrl), nil, nil, nil, nil)
 	if _, err := da.GetDirectoryChildren(t.Context(), "photos/", "cat.jpg", 25); err != nil {
 		t.Fatal(err)
 	}

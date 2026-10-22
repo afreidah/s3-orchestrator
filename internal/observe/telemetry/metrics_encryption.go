@@ -98,14 +98,13 @@ var (
 	)
 
 	// IntegrityDeferredCopies counts the copies the sweep cannot reach because
-	// their backend is over its usage limit. Non-zero means the coverage
-	// figures above describe only part of the fleet, so alert on it: the sweep
-	// will not close this gap on its own, and raising the limit or excluding
-	// the backend is an operator decision.
+	// their backend is over its usage limit, or has used all the egress the
+	// scrub reserve leaves the scrubber this month. Non-zero means the coverage
+	// figures above describe only part of the fleet until the month resets.
 	IntegrityDeferredCopies = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_integrity_deferred_copies",
-			Help: "Object copies the scrubber cannot reach because their backend is over its usage limit",
+			Help: "Object copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve",
 		},
 	)
 

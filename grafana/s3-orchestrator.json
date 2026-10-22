@@ -3965,7 +3965,7 @@
         },
         {
           "expr": "max(s3o_integrity_deferred_copies)",
-          "legendFormat": "unreachable (backend over limit)"
+          "legendFormat": "unreachable (over limit or scrub reserve)"
         }
       ],
       "options": {

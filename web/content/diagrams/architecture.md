@@ -324,7 +324,7 @@ The gray background workers run only when the process starts in `worker` or `all
     SCRUB: {
       title: 'Scrubber',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Integrity verification. Reads a batch of objects that have stored SHA-256 hashes, undoes encryption and compression, and checks the content still matches. A corrupted copy\'s row is dropped and its bytes queued for deletion in the same transaction.</p><p>Runs only when <code>integrity.enabled</code> is true and <code>integrity.scrubber_interval</code> is set, under advisory lock <code>LockScrubber</code> (1010). A copy verified within <code>integrity.scrubber_min_age</code> (default 24h) is skipped.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Integrity verification. Reads a batch of objects that have stored SHA-256 hashes, undoes encryption and compression, and checks the content still matches. A corrupted copy\'s row is dropped and its bytes queued for deletion in the same transaction.</p><p>Runs only when <code>integrity.enabled</code> is true and <code>integrity.scrubber_interval</code> is set, under advisory lock <code>LockScrubber</code> (1010). A copy verified within <code>integrity.scrubber_min_age</code> (default 7 days) is skipped, and a backend with only <code>integrity.scrubber_egress_reserve</code> of its monthly egress limit left is deferred.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     RECON: {
       title: 'Reconciler',

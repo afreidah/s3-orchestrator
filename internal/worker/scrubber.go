@@ -255,27 +255,35 @@ func (s *Scrubber) scrubbedBefore() time.Time {
 	return s.Config().ScrubbedBefore(time.Now())
 }
 
-// affordableBackends splits the fleet into the backends the scrubber can still
-// read from and the ones whose usage limits it would breach. It checks only
-// for headroom, since no object is known yet; verifyOne re-checks against the
-// real size.
-func (s *Scrubber) affordableBackends() (affordable, declined []string) {
-	order := s.deps.BackendOrder()
-	affordable = s.deps.Usage().BackendsWithinLimits(order, getObjectOp, 0, 0)
+// ReachableBackends returns the backends the scrub queue draws from right now,
+// so the dashboard scopes coverage to exactly the copies the sweep can stamp.
+func (s *Scrubber) ReachableBackends() []string {
+	affordable, _ := s.affordableBackends()
+	return affordable
+}
 
-	if len(affordable) == len(order) {
-		return affordable, nil
-	}
-	keep := make(map[string]bool, len(affordable))
-	for _, name := range affordable {
-		keep[name] = true
-	}
-	for _, name := range order {
-		if !keep[name] {
+// affordableBackends splits the fleet into the backends the scrubber can still
+// read from and the ones it has to leave alone. It checks only for headroom,
+// since no object is known yet; verifyOne re-checks against the real size.
+func (s *Scrubber) affordableBackends() (affordable, declined []string) {
+	for _, name := range s.deps.BackendOrder() {
+		if s.admits(name, 0) {
+			affordable = append(affordable, name)
+		} else {
 			declined = append(declined, name)
 		}
 	}
 	return affordable, declined
+}
+
+// admits reports whether the scrubber may read egress bytes from a backend.
+// The read is checked as if it also spent the scrub reserve, so the scrubber
+// stops while that share of the monthly egress limit is still free for client
+// reads, which are checked against the whole limit.
+func (s *Scrubber) admits(backend string, egress int64) bool {
+	usage := s.deps.Usage()
+	reserve := s.Config().ScrubReserve(usage.GetLimits()[backend].EgressByteLimit)
+	return usage.WithinLimits(backend, getObjectOp, egress+reserve, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -304,7 +312,7 @@ func (s *Scrubber) countDeferred(ctx context.Context, declined []string, scrubbe
 		return 0
 	}
 	telemetry.UsageLimitRejectionsTotal.WithLabelValues("scrub", "read").Add(float64(n))
-	s.log.WarnContext(ctx, "scrub deferred copies on backends over their usage limit",
+	s.log.WarnContext(ctx, "scrub deferred copies on backends past their usage limit or scrub reserve",
 		"backends", declined, "copies", n)
 	return int(n)
 }
@@ -335,7 +343,7 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) batc
 	// Admit the object's own size, since the batch-level split only checked
 	// for any headroom. This must run before the scrub stamp below, so an
 	// unread copy is not recorded as verified.
-	if !s.deps.Usage().WithinLimits(loc.BackendName, getObjectOp, loc.SizeBytes, 0) {
+	if !s.admits(loc.BackendName, loc.SizeBytes) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		s.log.WarnContext(ctx, "scrub declined by usage limits",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)

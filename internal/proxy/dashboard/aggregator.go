@@ -19,7 +19,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -30,10 +29,6 @@ import (
 // maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
 // for the top-level listing and for a caller-supplied page size.
 const maxDirectoryChildren = 200
-
-// scrubReadOp is the operation the scrub queue is admitted against, so asking
-// which backends it can reach means asking about a read.
-var scrubReadOp = []s3op.Operation{s3op.GetObject}
 
 // errIncompleteSnapshot reports a fleet snapshot missing the ledger or
 // multipart figures because the store read behind them failed.
@@ -74,7 +69,7 @@ type Data struct {
 	RefusedCalls           map[string]core.BackendCalls
 }
 
-//go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
+//go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader,ScrubReachReader
 
 // FleetView is the backend-fleet surface the aggregator reads: the fleet
 // snapshot the ledger figures come from, and the live state it decorates them
@@ -87,13 +82,17 @@ type FleetView interface {
 }
 
 // UsageReader is the usage surface the aggregator reads: the configured
-// per-backend limits it renders alongside consumption, and which backends still
-// have read headroom. *counter.UsageTracker satisfies it. BackendsWithinLimits
-// scopes the integrity figures to the backends the scrub queue draws from, so
-// the dashboard and the sweep agree on which copies are reachable.
+// per-backend limits it renders alongside consumption. *counter.UsageTracker
+// satisfies it.
 type UsageReader interface {
 	GetLimits() map[string]core.UsageLimits
-	BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string
+}
+
+// ScrubReachReader names the backends the scrub queue draws from right now,
+// which scopes the integrity figures so the dashboard and the sweep agree on
+// which copies are reachable. *worker.Scrubber satisfies it.
+type ScrubReachReader interface {
+	ReachableBackends() []string
 }
 
 // DrainProgressReader reports per-backend drain progress.
@@ -108,17 +107,20 @@ type DrainProgressReader interface {
 type Aggregator struct {
 	store core.DashboardStore
 	usage UsageReader
+	scrub ScrubReachReader
 	order []string
 	fleet FleetView
 	drain DrainProgressReader
 }
 
-// New creates an Aggregator over the given backend order. drainReader may be
-// nil when the deployment runs no backend state manager.
-func New(store core.DashboardStore, usage UsageReader, order []string, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
+// New creates an Aggregator over the given backend order. scrub may be nil,
+// which scopes the integrity figures to every backend; drainReader may be nil
+// when the deployment runs no backend state manager.
+func New(store core.DashboardStore, usage UsageReader, scrub ScrubReachReader, order []string, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
 	return &Aggregator{
 		store: store,
 		usage: usage,
+		scrub: scrub,
 		order: order,
 		fleet: fleet,
 		drain: drainReader,
@@ -129,14 +131,13 @@ func New(store core.DashboardStore, usage UsageReader, order []string, fleet Fle
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// scrubbableBackends is the set the scrub queue would draw from right now:
-// those still within their read budget. It mirrors the scrubber's own split so
-// the dashboard scopes coverage to exactly the copies the sweep can stamp.
+// scrubbableBackends is the set the scrub queue would draw from right now, or
+// every backend when no scrubber is wired.
 func (da *Aggregator) scrubbableBackends() []string {
-	if da.usage == nil {
+	if da.scrub == nil {
 		return da.order
 	}
-	return da.usage.BackendsWithinLimits(da.order, scrubReadOp, 0, 0)
+	return da.scrub.ReachableBackends()
 }
 
 // decorateLiveState fills in the fields that come from the running fleet

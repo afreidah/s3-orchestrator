@@ -21,18 +21,34 @@ import (
 
 // DefaultScrubberMinAge is how recently a copy must have been verified for the
 // scrubber to pass over it when the integrity config does not specify a floor.
-const DefaultScrubberMinAge = 24 * time.Hour
+const DefaultScrubberMinAge = 7 * 24 * time.Hour
+
+// DefaultScrubberEgressReserve is the share of each backend's monthly egress
+// limit the scrubber leaves for other reads when the config does not set one.
+const DefaultScrubberEgressReserve = 0.8
 
 // IntegrityConfig holds settings for object integrity verification.
 // When enabled, objects are checksummed on write and optionally verified
 // on read and during replication.
 type IntegrityConfig struct {
-	Enabled           bool          `yaml:"enabled"`             // Enable integrity verification (default: false)
-	VerifyOnRead      bool          `yaml:"verify_on_read"`      // Hash-check every GET response (default: false)
-	VerifyOnReplicate bool          `yaml:"verify_on_replicate"` // Hash-check a new replica before recording it (default: false)
-	ScrubberInterval  time.Duration `yaml:"scrubber_interval"`   // Background verification interval (0 = disabled)
-	ScrubberBatchSize int           `yaml:"scrubber_batch_size"` // Objects per scrub cycle (default: 100)
-	ScrubberMinAge    time.Duration `yaml:"scrubber_min_age"`    // Minimum age before a copy is re-verified (default: 24h)
+	Enabled               bool          `yaml:"enabled"`                 // Enable integrity verification (default: false)
+	VerifyOnRead          bool          `yaml:"verify_on_read"`          // Hash-check every GET response (default: false)
+	VerifyOnReplicate     bool          `yaml:"verify_on_replicate"`     // Hash-check a new replica before recording it (default: false)
+	ScrubberInterval      time.Duration `yaml:"scrubber_interval"`       // Background verification interval (0 = disabled)
+	ScrubberBatchSize     int           `yaml:"scrubber_batch_size"`     // Objects per scrub cycle (default: 100)
+	ScrubberMinAge        time.Duration `yaml:"scrubber_min_age"`        // Minimum age before a copy is re-verified (default: 7d)
+	ScrubberEgressReserve *float64      `yaml:"scrubber_egress_reserve"` // Share of egress_byte_limit the scrubber leaves for other reads (default: 0.8)
+}
+
+// ScrubReserve returns how many bytes of a backend's monthly egress limit the
+// scrubber must leave unspent. A backend with no egress limit has no reserve.
+// An unset share, or a nil config, uses the default, like ScrubbedBefore.
+func (ic *IntegrityConfig) ScrubReserve(egressLimit int64) int64 {
+	share := DefaultScrubberEgressReserve
+	if ic != nil && ic.ScrubberEgressReserve != nil {
+		share = *ic.ScrubberEgressReserve
+	}
+	return int64(share * float64(egressLimit))
 }
 
 // ScrubbedBefore returns the cutoff a scrub batch selects against: a copy last
@@ -91,12 +107,20 @@ func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 		ic.ScrubberMinAge = DefaultScrubberMinAge
 	}
 
+	if ic.ScrubberEgressReserve == nil {
+		ic.ScrubberEgressReserve = new(DefaultScrubberEgressReserve)
+	}
+
 	if ic.ScrubberInterval < 0 {
 		return []error{fmt.Errorf("integrity.scrubber_interval must be >= 0")}
 	}
 
 	if ic.ScrubberMinAge < 0 {
 		return []error{fmt.Errorf("integrity.scrubber_min_age must be >= 0")}
+	}
+
+	if r := ic.ScrubberEgressReserve; r != nil && (*r < 0 || *r > 1) {
+		return []error{fmt.Errorf("integrity.scrubber_egress_reserve must be between 0 and 1")}
 	}
 
 	return nil

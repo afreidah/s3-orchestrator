@@ -125,7 +125,8 @@ ui:
 #   verify_on_read: true             # Hash-check every GET response
 #   scrubber_interval: "6h"          # Background verification interval (0 = disabled)
 #   scrubber_batch_size: 100         # Objects per scrub cycle
-#   scrubber_min_age: "24h"          # Skip copies verified more recently than this
+#   scrubber_min_age: "168h"         # Skip copies verified more recently than this
+#   scrubber_egress_reserve: 0.8     # Share of each egress_byte_limit the scrubber leaves for other reads
 
 # --- Object data cache ---
 cache:

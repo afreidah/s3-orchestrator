@@ -22,7 +22,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -76,8 +75,6 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFle
 func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 	usage := NewMockUsageReader(ctrl)
 	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
-	usage.EXPECT().BackendsWithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(order []string, _ []s3op.Operation, _, _ int64) []string { return order }).AnyTimes()
 	return usage
 }
 
@@ -97,7 +94,7 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -120,7 +117,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), []string{"b1"}, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -149,7 +146,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), "draining").
 		Return(&backendstate.DrainProgress{Active: true, ObjectsRemaining: 6, ObjectsMoved: 4}, nil).Times(1)
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -183,7 +180,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("boom")).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, drainReader)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, drainReader)
 
 	data, err := agg.GetData(t.Context())
 	if err != nil {
@@ -205,7 +202,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
-	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, fleet, nil)
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, nil)
 	data, err := agg.GetData(t.Context())
 	if err != nil {
 		t.Fatalf("GetData: %v", err)

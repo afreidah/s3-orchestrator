@@ -766,8 +766,8 @@ func queryObjectCopies(t *testing.T, key string) int {
 func backdateObjectLocations(t *testing.T, db *sql.DB, key string) {
 	t.Helper()
 	if _, err := db.Exec(
-		"UPDATE object_locations SET created_at = NOW() - INTERVAL '48 hours', last_scrubbed_at = NULL WHERE object_key = $1",
-		internalKey(key),
+		"UPDATE object_locations SET created_at = $2, last_scrubbed_at = NULL WHERE object_key = $1",
+		internalKey(key), time.Now().Add(-config.DefaultScrubberMinAge-24*time.Hour),
 	); err != nil {
 		t.Fatalf("backdateObjectLocations(%q): %v", key, err)
 	}

@@ -62,7 +62,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.164.x (current)
+### v0.165.x (current)
+
+**Scrub egress reserve ([#1749](https://github.com/afreidah/s3-orchestrator/issues/1749), v0.165.0)**
+
+The scrubber read any backend still under its usage limits, so on a fleet where most backends were near their limits, one backend took the whole scrub load until its monthly egress ran out and client reads of it failed. New `integrity.scrubber_egress_reserve` (default 0.8) is the share of each backend's `egress_byte_limit` the scrubber leaves for other reads: it stops once only that share is left, and the copies it holds are deferred until the month resets. Client reads are still admitted against the whole limit. The default `integrity.scrubber_min_age` goes from 24h to 7 days. No migration.
+
+**Operator action items after upgrade:**
+
+- **Expect deferred copies on metered backends late in the month.** `s3o_integrity_deferred_copies` now counts copies held back by the reserve as well as by usage limits. Set `scrubber_egress_reserve: 0` to restore the previous behaviour.
+- **A config that set no `scrubber_min_age` now re-verifies a copy weekly instead of daily.** Set `scrubber_min_age: "24h"` to keep the old floor.
+
+### v0.164.x
 
 **Usage split by workload ([#1752](https://github.com/afreidah/s3-orchestrator/issues/1752), v0.164.0)**
 

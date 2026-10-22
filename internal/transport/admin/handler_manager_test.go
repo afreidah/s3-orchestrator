@@ -77,7 +77,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
 		objects:      svc.Objects,
 		integrity:    svc.Integrity,
 		replication:  svc.Replication,
@@ -872,7 +872,7 @@ func newKnownBackendHandler(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.States),
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
 		states:       st.States,
 		stateStore:   mock,
 		logLevel:     &lv,

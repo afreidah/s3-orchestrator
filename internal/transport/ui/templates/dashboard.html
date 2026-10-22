@@ -159,7 +159,7 @@
         <tr>
           <td>Unreachable</td>
           <td class="num">{{if ne .Data.DeferredCopies 0}}<span class="orphan-value">{{formatNumber .Data.DeferredCopies}}</span>{{else}}&mdash;{{end}}</td>
-          <td>Copies the sweep cannot read because their backend is over its usage limit. They are excluded from the two figures above, because a copy that can never be stamped would pin the age to the clock and no amount of scrubbing would lower it. The sweep will not clear this on its own: raise the backend's limit or wait for the period to roll over.</td>
+          <td>Copies the sweep cannot read because their backend is over its usage limit or scrub reserve. They are excluded from the two figures above, because a copy that can never be stamped would pin the age to the clock and no amount of scrubbing would lower it. The sweep will not clear this on its own: raise the backend's limit or wait for the period to roll over.</td>
         </tr>
         <tr>
           <td>Checks run</td>

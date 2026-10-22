@@ -834,7 +834,8 @@ integrity:
   verify_on_replicate: false         # Read each new replica back and hash-check it
   scrubber_interval: "6h"            # Background verification interval (0 = disabled)
   scrubber_batch_size: 100           # Objects per scrub cycle
-  scrubber_min_age: "24h"            # Skip copies verified more recently than this
+  scrubber_min_age: "168h"           # Skip copies verified more recently than this
+  scrubber_egress_reserve: 0.8       # Share of each egress_byte_limit the scrubber leaves for other reads
 ```
 
 **How it works:**
@@ -855,11 +856,15 @@ A mismatch does not say which end is damaged. The copy is byte-for-byte identica
 
 The scrubber runs on a tick and never at startup, so an interval longer than the process lifetime means it never runs at all while the dashboard still reports integrity as enabled. `s3o_integrity_oldest_unverified_seconds` is the figure that tells you whether the sweep is keeping up: it should settle around the period implied by these two settings, and a steadily climbing value means the batch is too small or the interval too long.
 
-**`scrubber_min_age` bounds what a pass may re-read.** A copy verified more recently than this is passed over, so the cost of a pass tracks how stale the data is rather than how often the scrubber runs. It matters most where a backend holds fewer copies than `scrubber_batch_size`: without a floor that backend is read in full on every pass, and on a metered provider the monthly egress is its whole size multiplied by the number of passes. The default is 24h. Raising it toward the period you picked above lowers the ceiling on repeat reads; lowering it toward zero restores the old behaviour, which is rarely what you want.
+**`scrubber_min_age` bounds what a pass may re-read.** A copy verified more recently than this is passed over, so the cost of a pass tracks how stale the data is rather than how often the scrubber runs. It matters most where a backend holds fewer copies than `scrubber_batch_size`: without a floor that backend is read in full on every pass, and on a metered provider the monthly egress is its whole size multiplied by the number of passes. The default is 7 days. Raising it toward the period you picked above lowers the ceiling on repeat reads; lowering it toward zero restores the old behaviour, which is rarely what you want.
+
+**`scrubber_egress_reserve` keeps the scrubber out of the egress clients need.** On a backend with an `egress_byte_limit`, the scrubber stops reading once only this share of the monthly limit is left, and the copies it holds are deferred until the month resets. Client reads are still admitted against the whole limit. With the default of 0.8, the scrubber can spend at most the first 20% of a backend's monthly egress, less whatever clients have already used. Backends with no egress limit are unaffected, and 0 lets the scrubber spend the whole limit.
+
+The reserve and `scrubber_min_age` together set what a backend costs to scrub. With a 1 TB monthly limit, scrubbing is capped at 200 GB a month; a backend holding 73 GB with a 7-day floor is re-read about four times a month, roughly 300 GB. That backend reaches the cap partway through the month and its remaining copies are deferred. Raise `scrubber_min_age` until a month of re-reads fits under the cap, or lower the reserve if the backend has egress to spare.
 
 **An operator-triggered scrub takes the same lock as the sweep.** `admin scrub`, the TUI and the dashboard all serialize against the scheduled tick and against each other, so two runs cannot read the fleet twice over. A pass that finds the lock held reports `another instance is already scrubbing` and does no reads, rather than queuing behind the holder.
 
-**Usage limits bound the sweep.** A backend that has spent its configured egress or API allowance is excluded from the batch entirely, and the copies it holds are reported as `deferred` rather than checked. They are also excluded from `s3o_integrity_oldest_unverified_seconds` and `s3o_integrity_never_verified_copies`, and published as `s3o_integrity_deferred_copies` instead. Leaving them in the coverage figures would make the age climb by a day every day and never fall, since the sweep can never stamp a copy it may not read; a separate gauge keeps the gap visible without breaking the figure that tracks the backlog the sweep can actually work through. Deferred work is also counted by `s3o_usage_limit_rejections_total{operation="scrub"}`.
+**Usage limits bound the sweep.** A backend that has spent its configured egress or API allowance, or reached its scrub reserve, is excluded from the batch entirely, and the copies it holds are reported as `deferred` rather than checked. They are also excluded from `s3o_integrity_oldest_unverified_seconds` and `s3o_integrity_never_verified_copies`, and published as `s3o_integrity_deferred_copies` instead. Leaving them in the coverage figures would make the age climb by a day every day and never fall, since the sweep can never stamp a copy it may not read; a separate gauge keeps the gap visible without breaking the figure that tracks the backlog the sweep can actually work through. Deferred work is also counted by `s3o_usage_limit_rejections_total{operation="scrub"}`.
 
 **Integrity is hot-reloadable** - changes take effect on SIGHUP without a restart.
 

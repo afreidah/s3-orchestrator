@@ -872,6 +872,85 @@ func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	}
 }
 
+// reserveScrubber builds a scrubber over b1, which has spent spent bytes of a
+// 1000-byte monthly egress limit, and b2, which has no limit.
+func reserveScrubber(t *testing.T, spent int64, reserve *float64) (*Scrubber, *counter.UsageTracker, *mockMetadataStore) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	ops := newMockOps(ctrl)
+	ms := &mockMetadataStore{deferredCandidates: 5}
+	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}),
+		map[string]core.UsageLimits{"b1": {EgressByteLimit: 1000}})
+	tracker.SetBaselines(map[string]core.Usage{"b1": {UsageStat: core.UsageStat{EgressBytes: spent}}})
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().Usage().Return(tracker).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve})
+	return s, tracker, ms
+}
+
+// TestScrub_LeavesTheReserveForClientReads checks that a backend is deferred
+// once only the reserve is left of its egress limit, while a client read is
+// still admitted against the whole limit and a backend with no limit is
+// scrubbed as before.
+func TestScrub_LeavesTheReserveForClientReads(t *testing.T) {
+	t.Parallel()
+	s, tracker, ms := reserveScrubber(t, 250, nil)
+
+	sum := s.Scrub(context.Background(), 10, "", nil)
+
+	if got := ms.scrubSelectedBackends; !slices.Equal(got, []string{"b2"}) {
+		t.Errorf("selected backends = %v, want [b2]", got)
+	}
+	if got := ms.scrubDeclinedBackends; !slices.Equal(got, []string{"b1"}) {
+		t.Errorf("declined backends = %v, want [b1]", got)
+	}
+	if sum.Deferred != 5 {
+		t.Errorf("Deferred = %d, want 5", sum.Deferred)
+	}
+	if !tracker.WithinLimits("b1", getObjectOp, 700, 0) {
+		t.Error("a client read inside the reserve was refused")
+	}
+}
+
+// TestScrubber_ReachableBackendsHonourTheReserve covers where the reserve
+// draws the line, and that the share resets with the month: a new period
+// replaces the baselines, so a deferred backend is reachable again.
+func TestScrubber_ReachableBackendsHonourTheReserve(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		spent   int64
+		reserve *float64
+		want    []string
+	}{
+		{"headroom above the default reserve", 200, nil, []string{"b1", "b2"}},
+		{"into the default reserve", 201, nil, []string{"b2"}},
+		{"smaller reserve", 250, new(0.5), []string{"b1", "b2"}},
+		{"no reserve", 999, new(0.0), []string{"b1", "b2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _, _ := reserveScrubber(t, tc.spent, tc.reserve)
+			if got := s.ReachableBackends(); !slices.Equal(got, tc.want) {
+				t.Errorf("ReachableBackends = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("new month", func(t *testing.T) {
+		t.Parallel()
+		s, tracker, _ := reserveScrubber(t, 900, nil)
+		tracker.SetBaselines(nil)
+		if got := s.ReachableBackends(); !slices.Equal(got, []string{"b1", "b2"}) {
+			t.Errorf("ReachableBackends = %v, want both once the month resets", got)
+		}
+	})
+}
+
 // TestScrub_SelectsEverythingWhenNothingIsOverBudget guards the common case:
 // with no limits configured the whole fleet is offered to the query and nothing
 // is reported as deferred.
@@ -1126,7 +1205,9 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 	}
 
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+	// No reserve, so the backend passes the batch split and only the copy's own
+	// size is refused.
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)})
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Failed != 0 {

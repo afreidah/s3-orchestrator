@@ -102,6 +102,51 @@ func TestIntegrityConfig_ScrubbedBeforeNilConfig(t *testing.T) {
 	}
 }
 
+// TestIntegrityConfig_ScrubReserve pins the reserve to the configured share of
+// the backend's egress limit. An unset share or a nil config takes the default,
+// an explicit zero reserves nothing, and a backend with no limit has no reserve.
+func TestIntegrityConfig_ScrubReserve(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		ic    *IntegrityConfig
+		limit int64
+		want  int64
+	}{
+		{"nil config", nil, 1000, 800},
+		{"unset", &IntegrityConfig{}, 1000, 800},
+		{"configured", &IntegrityConfig{ScrubberEgressReserve: new(0.5)}, 1000, 500},
+		{"zero", &IntegrityConfig{ScrubberEgressReserve: new(0.0)}, 1000, 0},
+		{"no egress limit", &IntegrityConfig{}, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.ic.ScrubReserve(tc.limit); got != tc.want {
+				t.Errorf("ScrubReserve(%d) = %d, want %d", tc.limit, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIntegrityConfig_ScrubberEgressReserveValidation checks an enabled block
+// is given the default share and a share outside 0 to 1 is rejected.
+func TestIntegrityConfig_ScrubberEgressReserveValidation(t *testing.T) {
+	t.Parallel()
+	ic := IntegrityConfig{Enabled: true}
+	if errs := ic.setDefaultsAndValidate(); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if r := ic.ScrubberEgressReserve; r == nil || *r != DefaultScrubberEgressReserve {
+		t.Errorf("ScrubberEgressReserve = %v, want %v", r, DefaultScrubberEgressReserve)
+	}
+	for _, share := range []float64{-0.1, 1.1} {
+		ic := IntegrityConfig{Enabled: true, ScrubberEgressReserve: new(share)}
+		if errs := ic.setDefaultsAndValidate(); len(errs) == 0 {
+			t.Errorf("scrubber_egress_reserve %v was accepted", share)
+		}
+	}
+}
+
 // TestIntegrityConfig_DisabledSkipsValidation verifies a disabled block is left
 // alone, so a half-filled section cannot fail startup or acquire defaults it
 // will never use.

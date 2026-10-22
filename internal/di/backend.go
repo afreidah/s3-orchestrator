@@ -505,6 +505,7 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	rt := r.Resolve[*infra.BackendRuntime]()
 	br := r.Resolve[*BackendsResult]()
 	stores := r.Resolve[metadataStore]()
+	scrubber := r.Resolve[*worker.Scrubber]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -515,7 +516,7 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	if dm, err := do.Invoke[*backendstate.Manager](i); err == nil && dm != nil {
 		drainReader = dm
 	}
-	return dashboard.New(stores, rt.Usage(), br.Order, rt, drainReader), nil
+	return dashboard.New(stores, rt.Usage(), scrubber, br.Order, rt, drainReader), nil
 }
 
 // ProvideExpiryManager builds the lifecycle-expiration manager. It owns the
