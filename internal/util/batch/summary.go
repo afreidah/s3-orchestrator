@@ -11,7 +11,11 @@
 
 package batch
 
-import "time"
+import (
+	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -41,7 +45,7 @@ type ItemResult struct {
 //
 // Deferred is not an item outcome: it counts work never selected because its
 // backend is over its usage limit, so a budget-limited cycle does not read as
-// complete.
+// complete. Usage is what the items were charged on each backend.
 type Summary struct {
 	Planned   int           // items the cycle set out to process
 	Attempted int           // items the per-item function ran (succeeded + failed)
@@ -50,6 +54,7 @@ type Summary struct {
 	Skipped   int           // items declined before any work
 	Deferred  int           // work never selected, the backend being over budget
 	Duration  time.Duration // wall-clock time for the cycle
+	Usage     audit.Usage   // usage charged per backend while the items ran
 }
 
 // The outcome label every cycle reports under. Outcome() picks one of the first
@@ -77,6 +82,7 @@ func (s Summary) Plus(o Summary) Summary {
 		Skipped:   s.Skipped + o.Skipped,
 		Deferred:  s.Deferred + o.Deferred,
 		Duration:  s.Duration + o.Duration,
+		Usage:     s.Usage.Plus(o.Usage),
 	}
 }
 

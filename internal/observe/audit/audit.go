@@ -44,12 +44,14 @@ func SetOnEvent(fn func(event string)) {
 // guarantees no other package can collide with these keys.
 type contextKey int
 
-// requestIDKey, userKey and workloadKey are the context keys the correlation
-// ID, the authenticated identity and the workload are stored under.
+// requestIDKey, userKey, workloadKey and tallyKey are the context keys the
+// correlation ID, the authenticated identity, the workload and the usage tally
+// are stored under.
 const (
 	requestIDKey contextKey = iota
 	userKey
 	workloadKey
+	tallyKey
 )
 
 // -------------------------------------------------------------------------

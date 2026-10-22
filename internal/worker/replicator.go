@@ -200,6 +200,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		slog.Int("objects_checked", len(tasks)),
 		slog.Int("objects_failed", sum.Failed),
 		slog.Duration("duration", time.Since(start)),
+		sum.Usage.Attr(),
 	)
 
 	return summary, nil

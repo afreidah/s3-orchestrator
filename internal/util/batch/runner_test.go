@@ -14,10 +14,13 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 )
 
 // TestRunner_Run_Tallies verifies sequential tallying of mixed outcomes.
@@ -96,7 +99,7 @@ func TestTally_CountsEachOutcome(t *testing.T) {
 	want := Summary{Planned: 4, Attempted: 3, Succeeded: 1, Failed: 2, Skipped: 1}
 	got := sum
 	got.Duration = 0
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("summary = %+v, want %+v", got, want)
 	}
 	if sum.Duration < time.Second {
@@ -150,5 +153,30 @@ func TestRunner_Run_LogsCycle(t *testing.T) {
 	})
 	if !strings.Contains(buf.String(), `msg="test cycle complete"`) {
 		t.Errorf("log %q, want the cycle line", buf.String())
+	}
+}
+
+// TestRunner_Run_ReportsItemUsage verifies the summary and the cycle line carry
+// what the items were charged, and nothing charged outside the run.
+func TestRunner_Run_ReportsItemUsage(t *testing.T) {
+	t.Parallel()
+	ctx, outer := audit.WithTally(context.Background())
+	audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 9})
+
+	var buf bytes.Buffer
+	runner := Runner[int]{Name: "test", Log: slog.New(slog.NewJSONHandler(&buf, nil)), Concurrency: 2}
+	sum := runner.Run(ctx, []int{1, 2}, func(ctx context.Context, _ int) ItemResult {
+		audit.TallyOf(ctx).Add("b1", audit.BackendUsage{APIRequests: 1, EgressBytes: 10})
+		return ItemResult{Outcome: ItemSucceeded}
+	})
+
+	if got, want := sum.Usage, (audit.Usage{"b1": {APIRequests: 2, EgressBytes: 20}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("Usage = %+v, want %+v", got, want)
+	}
+	if got := outer.Usage()["b1"].APIRequests; got != 11 {
+		t.Errorf("enclosing tally APIRequests = %d, want 11", got)
+	}
+	if !strings.Contains(buf.String(), `"usage":{"b1":{"api_requests":2,"egress_bytes":20,"ingress_bytes":0}}`) {
+		t.Errorf("cycle line %q does not report the usage", buf.String())
 	}
 }

@@ -166,6 +166,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			slog.Int("objects_moved", sum.Succeeded),
 			slog.Int("planned", len(plan)),
 			slog.Duration("duration", time.Since(start)),
+			sum.Usage.Attr(),
 		)
 		return RebalanceSummary{Summary: sum}, nil
 	})

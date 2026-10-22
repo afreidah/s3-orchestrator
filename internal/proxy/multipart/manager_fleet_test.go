@@ -507,8 +507,8 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
-	if got := mgr.usageOf("b1").APIRequests; got != 2 {
-		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
+	if got := mgr.usageOf("b1").APIRequests; got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (the part delete; the abort sends no request)", got)
 	}
 }
 
@@ -524,7 +524,7 @@ func putParts(t *testing.T, be *backendtest.InMemory, n int) []core.MultipartPar
 }
 
 // TestAbortMultipartUpload_DeletesPartsInOneBatch verifies an abort removes
-// every part in one batch request, charged as one call beside the abort.
+// every part in one batch request, charged as the only call it makes.
 func TestAbortMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -540,8 +540,8 @@ func TestAbortMultipartUpload_DeletesPartsInOneBatch(t *testing.T) {
 	if be.BatchDeleteCalls != 1 || len(be.Objects) != 0 {
 		t.Errorf("batch calls = %d, objects left = %d; want 1 and 0", be.BatchDeleteCalls, len(be.Objects))
 	}
-	if got := mgr.usageOf("b1").APIRequests; got != 2 {
-		t.Errorf("apiRequests = %d, want 2 (1 batch delete + 1 abort)", got)
+	if got := mgr.usageOf("b1").APIRequests; got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (the batch delete; the abort sends no request)", got)
 	}
 }
 

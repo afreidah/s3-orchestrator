@@ -219,6 +219,7 @@ func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start tim
 		slog.Int("objects_checked", out.objectsChecked),
 		slog.Int("objects_failed", out.summary.Failed),
 		slog.Duration("duration", duration),
+		out.summary.Usage.Attr(),
 	)
 }
 

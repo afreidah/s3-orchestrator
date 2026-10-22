@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -43,9 +44,11 @@ type Runner[T any] struct {
 // Run processes items through fn with the configured concurrency, brackets each
 // in a progress step, and returns the tallied Summary. Items not reached
 // because ctx was cancelled mid-batch are left out of the tally, so
-// Planned - (Attempted + Skipped) reflects the cancelled remainder.
+// Planned - (Attempted + Skipped) reflects the cancelled remainder. The items
+// run under a usage tally, so the Summary reports what they were charged.
 func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, T) ItemResult) Summary {
 	start := time.Now()
+	ctx, usage := audit.WithTally(ctx)
 	var succeeded, failed, skipped atomic.Int64
 
 	workerpool.Run(ctx, r.Concurrency, items, func(ctx context.Context, item T) {
@@ -74,6 +77,7 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 		Failed:    int(failed.Load()),
 		Skipped:   int(skipped.Load()),
 		Duration:  time.Since(start),
+		Usage:     usage.Usage(),
 	}
 	sum.Attempted = sum.Succeeded + sum.Failed
 	LogCycle(ctx, r.Log, r.Name, sum)
@@ -98,8 +102,8 @@ func Tally(results []ItemResult, start time.Time) Summary {
 	return sum
 }
 
-// LogCycle emits the one "<name> cycle complete" line every batch reports. A
-// nil log emits nothing.
+// LogCycle emits the one "<name> cycle complete" line every batch reports,
+// with the usage charged to each backend. A nil log emits nothing.
 func LogCycle(ctx context.Context, log *slog.Logger, name string, sum Summary) {
 	if log == nil {
 		return
@@ -111,5 +115,6 @@ func LogCycle(ctx context.Context, log *slog.Logger, name string, sum Summary) {
 		"skipped", sum.Skipped,
 		"outcome", sum.Outcome(),
 		"duration", sum.Duration,
+		sum.Usage.Attr(),
 	)
 }

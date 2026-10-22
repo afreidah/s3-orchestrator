@@ -95,6 +95,9 @@ func (u *UsageTracker) record(ctx context.Context, backendName string, ops []s3o
 		c.Pools = append(c.Pools, pools...)
 	}
 	u.backend.Charge(backendName, c)
+	if t := audit.TallyOf(ctx); t != nil {
+		t.Add(backendName, audit.BackendUsage{APIRequests: c.APIRequests, EgressBytes: c.EgressBytes, IngressBytes: c.IngressBytes})
+	}
 }
 
 // poolCharge counts how many times the operations charge the named pool. A

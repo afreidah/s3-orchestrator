@@ -10,8 +10,11 @@
 package batch
 
 import (
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 )
 
 // TestSummary_Outcome pins the label each tally reports under. The expected
@@ -42,10 +45,16 @@ func TestSummary_Outcome(t *testing.T) {
 // reports the same totals as one batch would.
 func TestSummary_Plus(t *testing.T) {
 	t.Parallel()
-	a := Summary{Planned: 1, Attempted: 2, Succeeded: 3, Failed: 4, Skipped: 5, Deferred: 6, Duration: time.Second}
-	b := Summary{Planned: 10, Attempted: 20, Succeeded: 30, Failed: 40, Skipped: 50, Deferred: 60, Duration: time.Minute}
-	want := Summary{Planned: 11, Attempted: 22, Succeeded: 33, Failed: 44, Skipped: 55, Deferred: 66, Duration: time.Minute + time.Second}
-	if got := a.Plus(b); got != want {
+	a := Summary{Planned: 1, Attempted: 2, Succeeded: 3, Failed: 4, Skipped: 5, Deferred: 6, Duration: time.Second,
+		Usage: audit.Usage{"b1": {APIRequests: 1, EgressBytes: 100}}}
+	b := Summary{Planned: 10, Attempted: 20, Succeeded: 30, Failed: 40, Skipped: 50, Deferred: 60, Duration: time.Minute,
+		Usage: audit.Usage{"b1": {APIRequests: 2, IngressBytes: 7}, "b2": {APIRequests: 1}}}
+	want := Summary{Planned: 11, Attempted: 22, Succeeded: 33, Failed: 44, Skipped: 55, Deferred: 66, Duration: time.Minute + time.Second,
+		Usage: audit.Usage{"b1": {APIRequests: 3, EgressBytes: 100, IngressBytes: 7}, "b2": {APIRequests: 1}}}
+	if got := a.Plus(b); !reflect.DeepEqual(got, want) {
 		t.Errorf("Plus = %+v, want %+v", got, want)
+	}
+	if len(a.Usage) != 1 || a.Usage["b1"].APIRequests != 1 {
+		t.Errorf("Plus modified its receiver's usage: %+v", a.Usage)
 	}
 }

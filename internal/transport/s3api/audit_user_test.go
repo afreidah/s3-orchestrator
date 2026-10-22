@@ -13,55 +13,12 @@
 package s3api
 
 import (
-	"bytes"
-	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 )
-
-// -------------------------------------------------------------------------
-// HELPERS
-// -------------------------------------------------------------------------
-
-// captureAudit installs a JSON handler for the duration of the test and returns
-// every audit entry the body emitted, in order.
-func captureAudit(t *testing.T, body func()) []map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	defer slog.SetDefault(prev)
-
-	body()
-
-	var out []map[string]any
-	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
-		if line == "" {
-			continue
-		}
-		var entry map[string]any
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		if entry["audit"] == true {
-			out = append(out, entry)
-		}
-	}
-	return out
-}
-
-// eventsNaming returns the audit entries whose event matches name.
-func eventsNaming(entries []map[string]any, name string) []map[string]any {
-	var out []map[string]any
-	for _, e := range entries {
-		if e["event"] == name {
-			out = append(out, e)
-		}
-	}
-	return out
-}
 
 // -------------------------------------------------------------------------
 // TESTS
@@ -73,7 +30,7 @@ func eventsNaming(entries []map[string]any, name string) []map[string]any {
 func TestAudit_PutCarriesTheUser(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
-	entries := captureAudit(t, func() {
+	entries := audittest.Capture(t, func() {
 		resp := doReq(t, ts, http.MethodPut, ts.URL+"/mybucket/audited.txt", strings.NewReader("payload"))
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -98,13 +55,13 @@ func TestAudit_PutCarriesTheUser(t *testing.T) {
 func TestAudit_BothCorrelatedEntriesCarryIt(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
-	entries := captureAudit(t, func() {
+	entries := audittest.Capture(t, func() {
 		resp := doReq(t, ts, http.MethodPut, ts.URL+"/mybucket/correlated.txt", strings.NewReader("payload"))
 		defer resp.Body.Close()
 	})
 
-	http1 := eventsNaming(entries, "s3.PutObject")
-	storage := eventsNaming(entries, "storage.PutObject")
+	http1 := audittest.Named(entries, "s3.PutObject")
+	storage := audittest.Named(entries, "storage.PutObject")
 	if len(http1) == 0 || len(storage) == 0 {
 		t.Fatalf("want both layers to emit; got s3.PutObject=%d storage.PutObject=%d",
 			len(http1), len(storage))
@@ -124,7 +81,7 @@ func TestAudit_BothCorrelatedEntriesCarryIt(t *testing.T) {
 func TestAudit_RejectedRequestNamesNoUser(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
-	entries := captureAudit(t, func() {
+	entries := audittest.Capture(t, func() {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/mybucket/x.txt", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -156,7 +113,7 @@ func TestAudit_RejectedRequestNamesNoUser(t *testing.T) {
 func TestAudit_BucketDeniedNamesTheUserOnce(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
-	entries := captureAudit(t, func() {
+	entries := audittest.Capture(t, func() {
 		resp := doReq(t, ts, http.MethodGet, ts.URL+"/other-bucket/x.txt", nil)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
@@ -164,7 +121,7 @@ func TestAudit_BucketDeniedNamesTheUserOnce(t *testing.T) {
 		}
 	})
 
-	denied := eventsNaming(entries, "s3.BucketDenied")
+	denied := audittest.Named(entries, "s3.BucketDenied")
 	if len(denied) != 1 {
 		t.Fatalf("s3.BucketDenied entries = %d, want 1", len(denied))
 	}

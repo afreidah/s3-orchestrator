@@ -559,9 +559,9 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	mp.coord.Settle(ctx, parts)
 	mp.forgetUploadDEK(uploadID)
 
-	// 1 abort API call. The part deletes are charged where they are sent.
+	// The abort itself sends no request: parts are plain objects, so the only
+	// backend calls are the part deletes, charged where they are sent.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	mp.core.Acct().APICall(ctx, operation, mu.BackendName)
 
 	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil

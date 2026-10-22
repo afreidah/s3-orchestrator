@@ -419,6 +419,7 @@ Key audit events:
 |-------|--------|-------------|
 | `s3.PutObject`, `s3.GetObject`, `s3.DeleteObjects`, etc. | HTTP layer | S3 API request with method, path, bucket, status, duration |
 | `storage.PutObject`, `storage.GetObject`, `storage.DeleteObjects`, etc. | Storage layer | Backend operation with key, backend name, size |
+| `backend.PutObject`, `backend.GetObject`, `backend.HeadObject`, `backend.DeleteObject`, `backend.DeleteObjects`, `backend.CopyObject`, `backend.ListObjectsV2`, `backend.HeadBucket` | Backend client | One per request sent to a backend, whatever made it: `backend`, `key` (the prefix for a list page, `keys` with the count for a batch delete), `bytes` moved (sent for a PUT, received for a GET), `workload`, and `error` when the request failed |
 | `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
@@ -434,7 +435,15 @@ Key audit events:
 | `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
 | `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, and the panic value. The matching error-level slog entry carries the captured stack trace |
 
-Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
+Each S3 API request produces correlated audit entries sharing the same `request_id`: the HTTP-level and storage-level entries, plus one `backend.*` entry per request it sent to a backend. Internal operations (rebalance, replication) generate their own correlation IDs, so a worker's `backend.*` entries share the ID of the operation that made them. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
+
+The `workload` field on a `backend.*` entry is the same tag usage accounting charges under, so summing `bytes` by workload and backend from the audit log matches `s3o_usage_workload_bytes`. Backend spans carry the same two values as `s3o.workload` and `s3o.bytes_moved`.
+
+Batch cycle summaries (the `<name> cycle complete` log lines, `scrub completed`, and the `replication.complete`, `rebalance.complete` and `over_replication.complete` audit entries) carry a `usage` group with the requests, egress bytes and ingress bytes the cycle was charged on each backend:
+
+```json
+{"msg":"scrub cycle complete","planned":50,"succeeded":50,"usage":{"r2":{"api_requests":50,"egress_bytes":52428800,"ingress_bytes":0}}}
+```
 
 ### HTTP panic recovery
 

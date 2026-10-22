@@ -13,10 +13,12 @@ package backend
 //go:generate mockgen -destination=mock_generated_test.go -package=backend github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend,CheckedBackend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,9 +34,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithymiddleware "github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
@@ -188,6 +193,66 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 }
 
 // -------------------------------------------------------------------------
+// REQUEST ENVELOPE
+// -------------------------------------------------------------------------
+
+// backendCall names one request to the backend: its operation and the key it
+// addresses. A batch request sets keys to how many it carries.
+type backendCall struct {
+	op   string
+	key  string
+	keys int
+}
+
+// run sends one backend request under its span and operation metric, then
+// records what it moved. moved, when set, reports the bytes a successful
+// request carried; a failed one moved none.
+func run[R any](ctx context.Context, b *S3Backend, c backendCall, moved func(R) int64, fn func(context.Context) (R, error)) (R, error) {
+	return observe.Run(ctx,
+		observe.Client(spanPrefix+c.op,
+			telemetry.BackendAttributes(c.op, b.name, b.endpoint, b.bucket, c.key),
+			b.recordOperation),
+		func(ctx context.Context) (R, error) {
+			res, err := fn(ctx)
+			var n int64
+			if err == nil && moved != nil {
+				n = moved(res)
+			}
+			b.recordRequest(ctx, c, n, err)
+			return res, err
+		})
+}
+
+// runErr is run for a request that returns only an error.
+func runErr(ctx context.Context, b *S3Backend, c backendCall, fn func(context.Context) error) error {
+	_, err := run(ctx, b, c, nil, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, fn(ctx)
+	})
+	return err
+}
+
+// recordRequest puts the workload and bytes moved on the request's span and
+// writes its backend.<op> audit event, so every request the orchestrator makes
+// of a backend can be traced to the work that made it.
+func (b *S3Backend) recordRequest(ctx context.Context, c backendCall, moved int64, err error) {
+	workload := cmp.Or(audit.WorkloadOf(ctx), audit.WorkloadUnknown)
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.AttrWorkload.String(string(workload)),
+		telemetry.AttrBytesMoved.Int64(moved),
+	)
+	target := slog.String("key", c.key)
+	if c.keys > 0 {
+		target = slog.Int("keys", c.keys)
+	}
+	audit.Log(ctx, "backend."+c.op,
+		slog.String("backend", b.name),
+		target,
+		slog.Int64("bytes", moved),
+		logfmt.Err(err),
+	)
+}
+
+// -------------------------------------------------------------------------
 // CRUD OPERATIONS
 // -------------------------------------------------------------------------
 
@@ -247,11 +312,8 @@ func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []fun
 
 // PutObject uploads an object to the backend.
 func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
-	const operation = "PutObject"
-	return observe.Run(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
-			b.recordOperation),
+	return run(ctx, b, backendCall{op: "PutObject", key: key},
+		func(string) int64 { return size },
 		func(ctx context.Context) (string, error) {
 			putBody, opts, cleanup, err := b.preparePutBody(body, size)
 			if err != nil {
@@ -290,11 +352,8 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 // A backend that ignores Range has the range cut out of its whole-object reply,
 // so the result is the same either way.
 func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
-	const operation = "GetObject"
-	return observe.Run(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
-			b.recordOperation),
+	return run(ctx, b, backendCall{op: "GetObject", key: key},
+		(*GetObjectResult).WireBytes,
 		func(ctx context.Context) (*GetObjectResult, error) {
 			input := &s3.GetObjectInput{
 				Bucket: aws.String(b.bucket),
@@ -368,11 +427,7 @@ func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
 
 // HeadObject retrieves object metadata without the body.
 func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
-	const operation = "HeadObject"
-	return observe.Run(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
-			b.recordOperation),
+	return run(ctx, b, backendCall{op: "HeadObject", key: key}, nil,
 		func(ctx context.Context) (*HeadObjectResult, error) {
 			result, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{
 				Bucket: aws.String(b.bucket),
@@ -395,11 +450,7 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 
 // HeadBucket checks that the bucket exists and the credentials can reach it.
 func (b *S3Backend) HeadBucket(ctx context.Context) error {
-	const operation = "HeadBucket"
-	return observe.RunErr(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, ""),
-			b.recordOperation),
+	return runErr(ctx, b, backendCall{op: "HeadBucket"},
 		func(ctx context.Context) error {
 			if _, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{
 				Bucket: aws.String(b.bucket),
@@ -412,11 +463,7 @@ func (b *S3Backend) HeadBucket(ctx context.Context) error {
 
 // DeleteObject removes an object from the backend.
 func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
-	const operation = "DeleteObject"
-	return observe.RunErr(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
-			b.recordOperation),
+	return runErr(ctx, b, backendCall{op: "DeleteObject", key: key},
 		func(ctx context.Context) error {
 			_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(b.bucket),
@@ -454,11 +501,7 @@ func (b *S3Backend) DeleteObjects(ctx context.Context, keys []string) (map[strin
 // deleteChunk sends one DeleteObjects request and records its per-key
 // failures in failed.
 func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[string]error) error {
-	const operation = "DeleteObjects"
-	return observe.RunErr(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, keys[0]),
-			b.recordOperation),
+	return runErr(ctx, b, backendCall{op: "DeleteObjects", key: keys[0], keys: len(keys)},
 		func(ctx context.Context) error {
 			ids := make([]types.ObjectIdentifier, len(keys))
 			for i := range keys {
@@ -486,11 +529,7 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 // MetadataDirective=REPLACE; otherwise S3 preserves the source's content type
 // and user metadata.
 func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
-	const operation = "CopyObject"
-	return observe.Run(ctx,
-		observe.Client(spanPrefix+operation,
-			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, dstKey),
-			b.recordOperation),
+	return run(ctx, b, backendCall{op: "CopyObject", key: dstKey}, nil,
 		func(ctx context.Context) (string, error) {
 			input := &s3.CopyObjectInput{
 				Bucket:     aws.String(b.bucket),
@@ -534,8 +573,8 @@ type ListedObject struct {
 
 // ListObjects iterates all objects in the backend bucket with the given
 // prefix, calling fn for each page of results. Uses ListObjectsV2
-// pagination internally; per-page metric emission happens inside
-// nextListPage, so the outer span has no recorder.
+// pagination internally; each page is its own request, with its own metric
+// and audit event, so the span around the whole listing has no recorder.
 func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error {
 	const operation = "ListObjectsV2"
 	return observe.RunErr(ctx,
@@ -545,9 +584,12 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 		func(ctx context.Context) error {
 			paginator := s3.NewListObjectsV2Paginator(b.client, listObjectsInput(b.bucket, prefix))
 			for paginator.HasMorePages() {
-				page, err := b.nextListPage(ctx, paginator, operation)
+				page, err := run(ctx, b, backendCall{op: operation, key: prefix}, nil,
+					func(ctx context.Context) (*s3.ListObjectsV2Output, error) {
+						return paginator.NextPage(ctx)
+					})
 				if err != nil {
-					return err
+					return fmt.Errorf("list objects failed: %w", err)
 				}
 				objects := convertListPage(page)
 				if len(objects) == 0 {
@@ -572,18 +614,6 @@ func listObjectsInput(bucket, prefix string) *s3.ListObjectsV2Input {
 		input.Prefix = aws.String(prefix)
 	}
 	return input
-}
-
-// nextListPage fetches the next paginator page and records its operation
-// metrics. Wraps the SDK error with context.
-func (b *S3Backend) nextListPage(ctx context.Context, paginator *s3.ListObjectsV2Paginator, operation string) (*s3.ListObjectsV2Output, error) {
-	start := time.Now()
-	page, err := paginator.NextPage(ctx)
-	b.recordOperation(operation, start, err)
-	if err != nil {
-		return nil, fmt.Errorf("list objects failed: %w", err)
-	}
-	return page, nil
 }
 
 // convertListPage maps SDK pointer-nullable Content objects to the flat

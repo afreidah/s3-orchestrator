@@ -762,3 +762,25 @@ func (f *fakeShared) Settle(ctx context.Context, b *core.UsageBatch, applied boo
 type plainBackend struct {
 	Backend
 }
+
+// TestRecord_AddsToContextTally verifies every charge made under a tally lands
+// on it with the same figures the counters take, so a cycle's reported usage
+// matches the usage metrics.
+func TestRecord_AddsToContextTally(t *testing.T) {
+	t.Parallel()
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), nil)
+	ctx, tally := audit.WithTally(context.Background())
+
+	tracker.Record(ctx, "b1", s3op.GetObject, 100, 0)
+	tracker.Record(ctx, "b1", s3op.PutObject, 0, 40)
+	tracker.RecordN(ctx, "b2", s3op.ListObjectsV2, 3)
+	tracker.Record(context.Background(), "b1", s3op.GetObject, 999, 0)
+
+	want := audit.Usage{
+		"b1": {APIRequests: 2, EgressBytes: 100, IngressBytes: 40},
+		"b2": {APIRequests: 3},
+	}
+	if got := tally.Usage(); !maps.Equal(got, want) {
+		t.Errorf("tally = %+v, want %+v", got, want)
+	}
+}

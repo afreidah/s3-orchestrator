@@ -131,6 +131,8 @@ var (
 	AttrObjectSize        = attribute.Key("s3o.object.size")
 	AttrContentType       = attribute.Key("s3o.object.content_type")
 	AttrOperation         = attribute.Key("s3o.operation")
+	AttrWorkload          = attribute.Key("s3o.workload")
+	AttrBytesMoved        = attribute.Key("s3o.bytes_moved")
 	AttrUploadID          = attribute.Key("s3o.upload_id")
 	AttrPartNumber        = attribute.Key("s3o.part_number")
 	AttrWriteFailover     = attribute.Key("s3o.write_failover")

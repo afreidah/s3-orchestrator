@@ -63,7 +63,7 @@ func scrubCycle(ctx context.Context, scrubber *Scrubber, log *slog.Logger) error
 	if sum.Attempted > 0 || sum.Failed > 0 || sum.Skipped > 0 || sum.Deferred > 0 {
 		log.InfoContext(ctx, "scrub completed",
 			"checked", sum.Attempted, "failed", sum.Failed,
-			"unreadable", sum.Skipped, "deferred", sum.Deferred)
+			"unreadable", sum.Skipped, "deferred", sum.Deferred, sum.Usage.Attr())
 	}
 	return nil
 }

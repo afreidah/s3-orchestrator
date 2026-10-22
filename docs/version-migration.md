@@ -62,7 +62,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.165.x (current)
+### v0.166.x (current)
+
+**Every backend request audited ([#1753](https://github.com/afreidah/s3-orchestrator/issues/1753), [#1754](https://github.com/afreidah/s3-orchestrator/issues/1754), v0.166.0)**
+
+Every request sent to a backend now writes a `backend.<Op>` audit entry with the backend, key, bytes moved, workload and any error, whether a client or a worker made it, so scrub, backfill, multipart assembly, rewrites and drain reads can be traced in the audit log. Backend spans carry `s3o.workload` and `s3o.bytes_moved`. Batch cycle summaries and the `replication.complete`, `rebalance.complete` and `over_replication.complete` entries gain a `usage` group with the requests and bytes charged per backend. No migration and no config change.
+
+**Operator action items after upgrade:**
+
+- **Expect more audit volume.** Each backend request adds one audit line, so a client GET now writes three entries (`s3.GetObject`, `storage.GetObject`, `backend.GetObject`), and every worker read and write adds one. Size log retention accordingly, or drop `event=~"backend\..*"` in the log pipeline if per-request backend entries are not wanted.
+
+### v0.165.x
 
 **Scrub egress reserve ([#1749](https://github.com/afreidah/s3-orchestrator/issues/1749), v0.165.0)**
 

@@ -7,6 +7,8 @@
 // point that reaches a backend, then reads its usage counters directly. Every
 // charge has to name the workload that made it: one recorded as unknown means
 // some path into the orchestrator does not set the workload on its context.
+// The same run checks every backend request wrote an audit event that names
+// its workload.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -25,6 +27,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 )
 
@@ -38,8 +41,11 @@ func TestWorkload_EveryChargeNamesItsWorkload(t *testing.T) {
 	}})
 	ctx := context.Background()
 
-	driveClient(t, h)
-	driveWorkers(t, h)
+	entries := audittest.Capture(t, func() {
+		driveClient(t, h)
+		driveWorkers(t, h)
+	})
+	checkBackendAudit(t, audittest.WithPrefix(entries, "backend."))
 
 	charged := map[string]bool{}
 	for _, b := range h.stack.Runtime.Usage().Backend().Take(ctx) {
@@ -52,18 +58,45 @@ func TestWorkload_EveryChargeNamesItsWorkload(t *testing.T) {
 	if charged[string(audit.WorkloadUnknown)] {
 		t.Errorf("a charge was recorded as %q; workloads charged: %v", audit.WorkloadUnknown, charged)
 	}
-	for _, w := range []audit.Workload{
-		audit.WorkloadClient, audit.WorkloadReplication, audit.WorkloadOverReplication,
-		audit.WorkloadScrub, audit.WorkloadBackfill, audit.WorkloadReconcile, audit.WorkloadDrain, audit.WorkloadMultipartCleanup,
-	} {
+	for _, w := range drivenWorkloads {
 		if !charged[string(w)] {
 			t.Errorf("no charge recorded for %q; workloads charged: %v", w, charged)
 		}
 	}
 }
 
+// drivenWorkloads are the workloads driveClient and driveWorkers reach a
+// backend under.
+var drivenWorkloads = []audit.Workload{
+	audit.WorkloadClient, audit.WorkloadReplication, audit.WorkloadOverReplication,
+	audit.WorkloadScrub, audit.WorkloadBackfill, audit.WorkloadReconcile, audit.WorkloadDrain, audit.WorkloadMultipartCleanup,
+}
+
+// checkBackendAudit fails on any backend request audited without a workload
+// or a key, and on a driven workload whose requests left no audit event.
+func checkBackendAudit(t *testing.T, events []audittest.Entry) {
+	t.Helper()
+	audited := map[string]bool{}
+	for _, e := range events {
+		w, _ := e["workload"].(string)
+		if w == "" || w == string(audit.WorkloadUnknown) {
+			t.Errorf("%v on %v audited with no workload: %v", e["event"], e["backend"], e)
+		}
+		if e["key"] == nil && e["keys"] == nil && e["event"] != "backend.HeadBucket" {
+			t.Errorf("%v audited with no key: %v", e["event"], e)
+		}
+		audited[w] = true
+	}
+	for _, w := range drivenWorkloads {
+		if !audited[string(w)] {
+			t.Errorf("no backend request audited for %q; workloads audited: %v", w, audited)
+		}
+	}
+}
+
 // driveClient makes the S3 calls that reach a backend: a put, get, head and
-// delete, a completed multipart upload, and one left open for the stale sweep.
+// delete, a completed multipart upload, and one left open with a part for the
+// stale sweep to delete.
 func driveClient(t *testing.T, h *harness) {
 	t.Helper()
 	ctx := context.Background()
@@ -80,15 +113,12 @@ func driveClient(t *testing.T, h *harness) {
 	}
 
 	completeMultipart(t, h, "wl/mp", body)
-	if _, err := h.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(virtualBucket), Key: aws.String("wl/abandoned"),
-	}); err != nil {
-		t.Fatalf("CreateMultipartUpload: %v", err)
-	}
+	uploadPart(t, h, "wl/abandoned", body)
 }
 
-// completeMultipart uploads body as a one-part multipart upload under key.
-func completeMultipart(t *testing.T, h *harness, key string, body []byte) {
+// uploadPart opens a multipart upload under key, uploads body as its first
+// part, and returns the upload id and the part's ETag.
+func uploadPart(t *testing.T, h *harness, key string, body []byte) (*string, *string) {
 	t.Helper()
 	ctx := context.Background()
 	created, err := h.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
@@ -104,9 +134,17 @@ func completeMultipart(t *testing.T, h *harness, key string, body []byte) {
 	if err != nil {
 		t.Fatalf("UploadPart(%s): %v", key, err)
 	}
+	return created.UploadId, part.ETag
+}
+
+// completeMultipart uploads body as a one-part multipart upload under key.
+func completeMultipart(t *testing.T, h *harness, key string, body []byte) {
+	t.Helper()
+	ctx := context.Background()
+	uploadID, etag := uploadPart(t, h, key, body)
 	if _, err := h.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket: aws.String(virtualBucket), Key: aws.String(key), UploadId: created.UploadId,
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: []types.CompletedPart{{ETag: part.ETag, PartNumber: aws.Int32(1)}}},
+		Bucket: aws.String(virtualBucket), Key: aws.String(key), UploadId: uploadID,
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: []types.CompletedPart{{ETag: etag, PartNumber: aws.Int32(1)}}},
 	}); err != nil {
 		t.Fatalf("CompleteMultipartUpload(%s): %v", key, err)
 	}

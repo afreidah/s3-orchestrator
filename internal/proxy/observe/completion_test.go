@@ -13,35 +13,24 @@
 package observe
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"log/slog"
 	"testing"
 
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 )
 
-// captureAudit swaps the default slog handler for a JSON buffer for the
-// duration of fn, then parses the captured line. Mirrors the pattern in
-// internal/observe/audit/audit_test.go.
-func captureAudit(t *testing.T, fn func()) map[string]any {
+// captureAudit returns the single audit entry fn emits.
+func captureAudit(t *testing.T, fn func()) audittest.Entry {
 	t.Helper()
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	defer slog.SetDefault(prev)
-
-	fn()
-
-	var entry map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-		t.Fatalf("failed to parse audit JSON: %v\nraw: %s", err, buf.String())
+	entries := audittest.Capture(t, fn)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1: %v", len(entries), entries)
 	}
-	return entry
+	return entries[0]
 }
 
 // captureEvent registers an emitter for the duration of fn and returns the
