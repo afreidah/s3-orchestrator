@@ -275,7 +275,7 @@ Pools are additive: an operation charges every pool containing it and needs head
     usage_reset_timezone: America/Los_Angeles   # default: UTC; IANA zone name
 ```
 
-The cycle starts at midnight on `usage_reset_day` in `usage_reset_timezone`. Some providers reset on the calendar month in their own zone (GCP rolls over at midnight Pacific); others reset on the day the account or subscription started, which their billing page shows. Both settings are validated and reloadable, but in this release they are not yet used: every backend still counts usage over the calendar month in UTC.
+The cycle starts at midnight on `usage_reset_day` in `usage_reset_timezone`. Some providers reset on the calendar month in their own zone (GCP rolls over at midnight Pacific); others reset on the day the account or subscription started, which their billing page shows. Usage is recorded in hourly UTC buckets, and a backend's cycle is the sum of its buckets from the cycle's start, so the zone must stay a whole number of hours from UTC all year; a zone such as `Asia/Kolkata` is rejected. Both settings are reloadable, and a change applies to the cycle in progress.
 
 **HTTP transport:** Each backend gets its own connection pool. The defaults suit a proxy serving concurrent client traffic alongside the rebalancer and replicator, but deployments range from a Raspberry Pi to a high-concurrency gateway, so they can be tuned per backend:
 
@@ -991,7 +991,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backends[].egress_byte_limit` | Yes | |
 | `backends[].ingress_byte_limit` | Yes | |
 | `backends[].request_limits`, `backends[].unmetered` | Yes | |
-| `backends[].usage_reset_day`, `backends[].usage_reset_timezone` | Yes | Validated and accepted; not yet used to count usage |
+| `backends[].usage_reset_day`, `backends[].usage_reset_timezone` | Yes | |
 | `server.log_level` | Yes | |
 | `backends[].http` (pool sizes, `force_http2`) | No | The transport is built when the backend client is constructed; a reload reports the change and keeps the running one |
 | `rebalance` | Yes | Strategy, threshold, concurrency, enabled/disabled; `interval` needs a restart |

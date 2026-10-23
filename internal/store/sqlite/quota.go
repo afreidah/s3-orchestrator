@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -182,35 +183,51 @@ func scanLedgerGroup(rows *sql.Rows) (core.LedgerGroup, error) {
 // -------------------------------------------------------------------------
 
 // ApplyUsageBatch adds each workload's totals and pools in a batch to its
-// period's rows in one transaction. A batch with an ID records it first, and
-// one already recorded is left alone; see core.UsageFlusher.
+// buckets' rows in one transaction, then drops the backend's buckets older
+// than core.UsageRetention. A batch with an ID records it first, and one
+// already recorded is left alone; see core.UsageFlusher.
 func (s *Store) ApplyUsageBatch(ctx context.Context, b *core.UsageBatch) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if fresh, err := recordUsageFlush(ctx, tx, b.ID); err != nil || !fresh {
 			return err
 		}
-		for workload, u := range b.Workloads {
-			if err := applyWorkloadUsage(ctx, tx, b, workload, &u); err != nil {
-				return err
-			}
+		if err := b.Each(func(bucket time.Time, workload string, u *core.Usage) error {
+			return applyWorkloadUsage(ctx, tx, b.Backend, formatTime(bucket), workload, u)
+		}); err != nil {
+			return err
 		}
-		return nil
+		return pruneUsageBuckets(ctx, tx, b.Backend)
 	})
 }
 
-// applyWorkloadUsage adds one workload's totals and pools to its rows, inside
-// the batch's transaction.
-func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, b *core.UsageBatch, workload string, u *core.Usage) error {
+// pruneUsageBuckets drops one backend's buckets older than the retention
+// window, inside the flush's transaction.
+func pruneUsageBuckets(ctx context.Context, tx *sql.Tx, backend string) error {
+	cutoff := formatTime(time.Now().Add(-core.UsageRetention))
+	for table, query := range map[string]string{
+		"backend_usage":         `DELETE FROM backend_usage WHERE backend_name = ? AND bucket_start < ?`,
+		"backend_request_usage": `DELETE FROM backend_request_usage WHERE backend_name = ? AND bucket_start < ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, backend, cutoff); err != nil {
+			return fmt.Errorf("prune %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// applyWorkloadUsage adds one workload's totals and pools to its bucket's
+// rows, inside the batch's transaction.
+func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, backend, bucket, workload string, u *core.Usage) error {
 	now := now()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO backend_usage (backend_name, period, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
+		INSERT INTO backend_usage (backend_name, bucket_start, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (backend_name, period, workload) DO UPDATE SET
+		ON CONFLICT (backend_name, bucket_start, workload) DO UPDATE SET
 			api_requests  = backend_usage.api_requests  + excluded.api_requests,
 			egress_bytes  = backend_usage.egress_bytes  + excluded.egress_bytes,
 			ingress_bytes = backend_usage.ingress_bytes + excluded.ingress_bytes,
 			updated_at    = excluded.updated_at`,
-		b.Backend, b.Period, workload, u.APIRequests, u.EgressBytes, u.IngressBytes, now); err != nil {
+		backend, bucket, workload, u.APIRequests, u.EgressBytes, u.IngressBytes, now); err != nil {
 		return fmt.Errorf("failed to flush usage deltas: %w", err)
 	}
 	for pool, requests := range u.Pools {
@@ -218,12 +235,12 @@ func applyWorkloadUsage(ctx context.Context, tx *sql.Tx, b *core.UsageBatch, wor
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO backend_request_usage (backend_name, period, workload, pool, requests, updated_at)
+			INSERT INTO backend_request_usage (backend_name, bucket_start, workload, pool, requests, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (backend_name, period, workload, pool) DO UPDATE SET
+			ON CONFLICT (backend_name, bucket_start, workload, pool) DO UPDATE SET
 				requests   = backend_request_usage.requests + excluded.requests,
 				updated_at = excluded.updated_at`,
-			b.Backend, b.Period, workload, pool, requests, now); err != nil {
+			backend, bucket, workload, pool, requests, now); err != nil {
 			return fmt.Errorf("failed to flush pool deltas: %w", err)
 		}
 	}
@@ -257,42 +274,54 @@ func recordUsageFlush(ctx context.Context, tx *sql.Tx, id string) (bool, error) 
 	return true, nil
 }
 
-// GetUsageForPeriod returns every backend's totals and pool counts by workload
-// for the given period, keyed by backend name. One query: each workload's
-// totals row joined to its pool rows, so a workload with pools repeats its
-// totals.
-func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
+// GetUsageSince sums each backend's buckets from its own start onward, by
+// workload, from one query: each workload's summed totals joined to its pool
+// sums, so a workload with pools repeats its totals. See core.UsageReader.
+func (s *Store) GetUsageSince(ctx context.Context, starts map[string]time.Time) (map[string]core.WorkloadUsage, error) {
+	usage := make(map[string]core.WorkloadUsage)
+	if len(starts) == 0 {
+		return usage, nil
+	}
+	values := make([]string, 0, len(starts))
+	args := make([]any, 0, 2*len(starts))
+	for backend, start := range starts {
+		values = append(values, "(?, ?)")
+		args = append(args, backend, formatTime(start))
+	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT u.backend_name, u.workload, u.api_requests, u.egress_bytes, u.ingress_bytes, p.pool, p.requests
-		FROM backend_usage u
-		LEFT JOIN backend_request_usage p
-			ON p.backend_name = u.backend_name AND p.period = u.period AND p.workload = u.workload
-		WHERE u.period = ?`, period)
+		WITH win(backend_name, start) AS (VALUES `+strings.Join(values, ", ")+`),
+		totals AS (
+			SELECT u.backend_name, u.workload, SUM(u.api_requests) AS api_requests,
+			       SUM(u.egress_bytes) AS egress_bytes, SUM(u.ingress_bytes) AS ingress_bytes
+			FROM backend_usage u
+			JOIN win ON win.backend_name = u.backend_name AND u.bucket_start >= win.start
+			GROUP BY u.backend_name, u.workload
+		),
+		pools AS (
+			SELECT p.backend_name, p.workload, p.pool, SUM(p.requests) AS requests
+			FROM backend_request_usage p
+			JOIN win ON win.backend_name = p.backend_name AND p.bucket_start >= win.start
+			GROUP BY p.backend_name, p.workload, p.pool
+		)
+		SELECT t.backend_name, t.workload, t.api_requests, t.egress_bytes, t.ingress_bytes, p.pool, p.requests
+		FROM totals t
+		LEFT JOIN pools p ON p.backend_name = t.backend_name AND p.workload = t.workload`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	usage := make(map[string]core.WorkloadUsage)
 	for rows.Next() {
 		var (
 			name, workload string
-			u              core.UsageStat
-			pool           sql.NullString
-			requests       sql.NullInt64
+			stat           core.UsageStat
+			pool           *string
+			requests       *int64
 		)
-		if err := rows.Scan(&name, &workload, &u.APIRequests, &u.EgressBytes, &u.IngressBytes, &pool, &requests); err != nil {
+		if err := rows.Scan(&name, &workload, &stat.APIRequests, &stat.EgressBytes, &stat.IngressBytes, &pool, &requests); err != nil {
 			return nil, fmt.Errorf("failed to scan usage: %w", err)
 		}
-		if usage[name] == nil {
-			usage[name] = make(core.WorkloadUsage)
-		}
-		entry := usage[name][workload]
-		entry.UsageStat = u
-		if pool.Valid {
-			entry.AddPool(pool.String, requests.Int64)
-		}
-		usage[name][workload] = entry
+		core.AddUsageRow(usage, name, workload, stat, pool, requests)
 	}
 	return usage, rows.Err()
 }

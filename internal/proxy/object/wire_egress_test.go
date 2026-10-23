@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -60,7 +61,7 @@ func TestMeteredGet_JudgesLimitOnWireBytes(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUsageLimitSkip", err)
 	}
 	var u core.Usage
-	rt.usage.Backend().Load("be1", &u)
+	rt.usage.Backend().Load("be1", time.Time{}, &u)
 	if u.APIRequests != 1 || u.EgressBytes != 0 {
 		t.Errorf("usage = %d calls, %d egress; want 1 call and no egress", u.APIRequests, u.EgressBytes)
 	}
@@ -78,7 +79,7 @@ func TestStoredRangeFetcher_ChargesWireBytes(t *testing.T) {
 		t.Fatalf("FetchRange: %v", err)
 	}
 	var u core.Usage
-	s.rt.usage.Backend().Load("be1", &u)
+	s.rt.usage.Backend().Load("be1", time.Time{}, &u)
 	if u.EgressBytes != 16+wirePad {
 		t.Errorf("egress = %d, want %d", u.EgressBytes, 16+wirePad)
 	}

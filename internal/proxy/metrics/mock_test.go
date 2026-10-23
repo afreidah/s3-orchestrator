@@ -12,6 +12,7 @@ package metrics
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
@@ -86,19 +87,19 @@ func (mr *MockDepsMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockDeps)(nil).GetQuotaStats), ctx)
 }
 
-// GetUsageForPeriod mocks base method.
-func (m *MockDeps) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
+// GetUsageSince mocks base method.
+func (m *MockDeps) GetUsageSince(ctx context.Context, starts map[string]time.Time) (map[string]core.WorkloadUsage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
+	ret := m.ctrl.Call(m, "GetUsageSince", ctx, starts)
 	ret0, _ := ret[0].(map[string]core.WorkloadUsage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetUsageForPeriod indicates an expected call of GetUsageForPeriod.
-func (mr *MockDepsMockRecorder) GetUsageForPeriod(ctx, period any) *gomock.Call {
+// GetUsageSince indicates an expected call of GetUsageSince.
+func (mr *MockDepsMockRecorder) GetUsageSince(ctx, starts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockDeps)(nil).GetUsageForPeriod), ctx, period)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageSince", reflect.TypeOf((*MockDeps)(nil).GetUsageSince), ctx, starts)
 }
 
 // LedgerStats mocks base method.

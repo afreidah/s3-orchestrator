@@ -3,21 +3,20 @@
 //
 // Author: Alex Freidah
 //
-// Implements SharedBackend with one Redis hash per backend and period, so every
-// instance charges the same counters. Includes a circuit breaker that falls
+// Implements SharedBackend with one Redis hash per backend, so every instance
+// charges the same counters. Includes a circuit breaker that falls
 // back to an embedded LocalCounterBackend when Redis is unavailable, and a
 // health probe goroutine that returns to Redis once it answers. Charges kept
 // locally are flushed by the instance that holds them, never replayed into
 // Redis.
 //
 // Redis key schema:
-//   - {prefix}:usage:{YYYY-MM}:{backend} - hash of the live counters: for
-//     each workload, w:{workload}:{field} for the request and byte totals and
-//     w:{workload}:pool:{name} for each request pool.
-//   - {prefix}:usage-staged:{YYYY-MM}:{backend}:{flushID} - a hash taken for a
-//     flush, renamed from the live one and deleted once the store has applied
-//     it. The store records the flush ID with the deltas, so a staged hash found
-//     again after its commit is not counted twice.
+//   - {prefix}:usage:{backend} - hash of the live counters, with fields
+//     {bucket}:w:{workload}:{field} and {bucket}:w:{workload}:pool:{name}.
+//   - {prefix}:usage-staged:{backend}:{flushID} - a hash taken for a flush,
+//     renamed from the live one and deleted once the store has applied it. The
+//     store records the flush ID with the deltas, so a staged hash found again
+//     after its commit is not counted twice.
 //
 // Keys receive a 35-day TTL, which a rename keeps, so abandoned keys expire.
 //
@@ -44,7 +43,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -52,8 +50,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// keyTTL is applied to Redis counter keys on every charge. Set to 35 days so
-// that keys from the previous month expire naturally.
+// keyTTL is applied to Redis counter keys on every charge, so a hash nothing
+// flushes, such as a removed backend's, expires on its own.
 const keyTTL = 35 * 24 * time.Hour
 
 // healthProbeInterval controls how often the background goroutine PINGs
@@ -83,7 +81,7 @@ var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`
 
 // Hash field names. A pool's field is its name under poolFieldPrefix, so a
 // pool cannot share a field with a total. Every field sits under
-// w:{workload}:, keeping all workloads in one hash that Load reads in one call.
+// {bucket}:w:{workload}:, so Load reads every bucket in one call.
 const (
 	fieldAPIRequests    = "api_requests"
 	fieldEgressBytes    = "egress_bytes"
@@ -91,6 +89,28 @@ const (
 	poolFieldPrefix     = "pool:"
 	workloadFieldPrefix = "w:"
 )
+
+// fieldPrefix is the hash field prefix a bucket and workload's counters sit
+// under: {unix}:w:{workload}:.
+func fieldPrefix(bucket time.Time, workload string) string {
+	return fmt.Sprintf("%d:%s%s:", bucket.Unix(), workloadFieldPrefix, workload)
+}
+
+// parseField splits a hash field into its bucket, workload and counter name,
+// reporting false for a field not in the {unix}:w:{workload}: layout.
+func parseField(field string) (time.Time, string, string, bool) {
+	unix, rest, ok := strings.Cut(field, ":")
+	if !ok {
+		return time.Time{}, "", "", false
+	}
+	secs, err := strconv.ParseInt(unix, 10, 64)
+	rest, hasWorkload := strings.CutPrefix(rest, workloadFieldPrefix)
+	if err != nil || !hasWorkload {
+		return time.Time{}, "", "", false
+	}
+	workload, name, ok := strings.Cut(rest, ":")
+	return time.Unix(secs, 0).UTC(), workload, name, ok
+}
 
 // -------------------------------------------------------------------------
 // REDIS CLIENT INTERFACE
@@ -212,26 +232,26 @@ func (r *RedisCounterBackend) Backends() []string {
 	return r.backends
 }
 
-// Charge adds one charge to the backend's hash for the current period in one
-// transaction, so a failure leaves none of it applied and the charge is kept
-// locally instead. A backend not named at construction is dropped, since no
-// flush would ever stage its hash.
-func (r *RedisCounterBackend) Charge(backend string, c Charge) {
+// Charge adds one charge to the backend's hash in one transaction, so a
+// failure leaves none of it applied and the charge is kept locally instead. A
+// backend not named at construction is dropped, since no flush would stage it.
+func (r *RedisCounterBackend) Charge(backend string, bucket time.Time, c Charge) {
 	if c.empty() || !slices.Contains(r.backends, backend) {
 		return
 	}
 	if r.inFallback() {
-		r.local.Charge(backend, c)
+		r.local.Charge(backend, bucket, c)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
-	key := r.hashKey(CurrentPeriod(), backend)
+	key := r.hashKey(backend)
+	prefix := fieldPrefix(bucket, c.Workload)
 	tx := r.client.TxPipeline()
 	incr := func(field string, n int64) {
 		if n > 0 {
-			tx.HIncrBy(ctx, key, workloadFieldPrefix+c.Workload+":"+field, n)
+			tx.HIncrBy(ctx, key, prefix+field, n)
 		}
 	}
 	incr(fieldAPIRequests, c.APIRequests)
@@ -244,24 +264,28 @@ func (r *RedisCounterBackend) Charge(backend string, c Charge) {
 
 	_, err := tx.Exec(ctx)
 	if r.observe("charge", err) != nil {
-		r.local.Charge(backend, c)
+		r.local.Charge(backend, bucket, c)
 	}
 }
 
-// Load adds the backend's unflushed counters for the current period into u:
-// whatever this instance holds locally and has not flushed, plus the shared
-// hash.
-func (r *RedisCounterBackend) Load(backend string, u *core.Usage) {
-	r.local.Load(backend, u)
+// Load adds the backend's unflushed counters in buckets from since onward into
+// u: whatever this instance holds locally, plus the shared hash.
+func (r *RedisCounterBackend) Load(backend string, since time.Time, u *core.Usage) {
+	r.local.Load(backend, since, u)
 	if r.inFallback() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
-	fields, err := r.client.HGetAll(ctx, r.hashKey(CurrentPeriod(), backend)).Result()
+	fields, err := r.client.HGetAll(ctx, r.hashKey(backend)).Result()
 	if r.observe("load", err) == nil {
-		r.addFields(ctx, fields, func(string) *core.Usage { return u })
+		r.addFields(ctx, fields, func(bucket time.Time, _ string) *core.Usage {
+			if bucket.Before(since) {
+				return nil
+			}
+			return u
+		})
 	}
 }
 
@@ -271,10 +295,9 @@ func (r *RedisCounterBackend) Take(ctx context.Context) []core.UsageBatch {
 	return r.local.Take(ctx)
 }
 
-// TakeShared stages each backend's hash for the current and previous period
-// under a fresh flush ID, then returns every staged hash, including ones an
-// earlier flush on any instance staged and never deleted. Taking the previous
-// period is what flushes the end of a month after it has rolled over.
+// TakeShared stages each backend's hash under a fresh flush ID, then returns
+// every staged hash, including ones an earlier flush on any instance staged
+// and never deleted.
 func (r *RedisCounterBackend) TakeShared(ctx context.Context) []core.UsageBatch {
 	if r.inFallback() {
 		return nil
@@ -296,7 +319,7 @@ func (r *RedisCounterBackend) Settle(ctx context.Context, b *core.UsageBatch, ap
 	}
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-	_ = r.observe("unstage", r.client.Del(ctx, r.stagedKey(b.Period, b.Backend, b.ID)).Err())
+	_ = r.observe("unstage", r.client.Del(ctx, r.stagedKey(b.Backend, b.ID)).Err())
 }
 
 // -------------------------------------------------------------------------
@@ -307,17 +330,15 @@ func (r *RedisCounterBackend) Settle(ctx context.Context, b *core.UsageBatch, ap
 // rename starts a fresh live hash, so nothing is lost between the two. A
 // missing hash means the backend was not charged and is skipped.
 func (r *RedisCounterBackend) stage(ctx context.Context) {
-	for _, period := range flushPeriods() {
-		for _, backend := range r.backends {
-			octx, cancel := context.WithTimeout(ctx, opTimeout)
-			err := r.client.Rename(octx, r.hashKey(period, backend), r.stagedKey(period, backend, rand.Text())).Err()
-			cancel()
-			if err != nil && strings.Contains(err.Error(), "no such key") {
-				continue
-			}
-			if r.observe("stage", err) != nil {
-				return
-			}
+	for _, backend := range r.backends {
+		octx, cancel := context.WithTimeout(ctx, opTimeout)
+		err := r.client.Rename(octx, r.hashKey(backend), r.stagedKey(backend, rand.Text())).Err()
+		cancel()
+		if err != nil && strings.Contains(err.Error(), "no such key") {
+			continue
+		}
+		if r.observe("stage", err) != nil {
+			return
 		}
 	}
 }
@@ -359,37 +380,38 @@ func (r *RedisCounterBackend) readBatch(ctx context.Context, key string) (core.U
 	if r.observe("read_staged", err) != nil || len(fields) == 0 {
 		return b, false
 	}
-	workloads := make(map[string]*core.Usage)
-	r.addFields(ctx, fields, func(workload string) *core.Usage {
-		if workloads[workload] == nil {
-			workloads[workload] = new(core.Usage)
+	parsed := make(map[bucketKey]*core.Usage)
+	r.addFields(ctx, fields, func(bucket time.Time, workload string) *core.Usage {
+		k := bucketKey{bucket: bucket, workload: workload}
+		if parsed[k] == nil {
+			parsed[k] = new(core.Usage)
 		}
-		return workloads[workload]
+		return parsed[k]
 	})
-	b.Workloads = make(core.WorkloadUsage, len(workloads))
-	for workload, u := range workloads {
-		b.Workloads[workload] = *u
+	b.Buckets = make(core.BucketUsage)
+	for k, u := range parsed {
+		b.Buckets.Add(k.bucket, k.workload, *u)
 	}
 	return b, true
 }
 
-// addFields adds each field of a counter hash into usageFor(its workload). A
-// field with no workload prefix counts as unknown; an unparseable one is
-// logged and skipped.
-func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]string, usageFor func(workload string) *core.Usage) {
+// addFields adds each field of a counter hash into usageFor(its bucket and
+// workload), skipping a field usageFor returns nil for. A field that does not
+// parse is logged and skipped.
+func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]string, usageFor func(bucket time.Time, workload string) *core.Usage) {
 	for field, raw := range fields {
 		v, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
+		bucket, workload, name, ok := parseField(field)
+		if err != nil || !ok {
 			r.logger().WarnContext(ctx, "discarding unparseable usage counter",
 				slog.String("field", field), slog.String("value", raw))
 			continue
 		}
-		workload := string(audit.WorkloadUnknown)
-		if rest, ok := strings.CutPrefix(field, workloadFieldPrefix); ok {
-			workload, field, _ = strings.Cut(rest, ":")
+		u := usageFor(bucket, workload)
+		if u == nil {
+			continue
 		}
-		u := usageFor(workload)
-		switch field {
+		switch name {
 		case fieldAPIRequests:
 			u.APIRequests += v
 		case fieldEgressBytes:
@@ -397,7 +419,7 @@ func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]s
 		case fieldIngressBytes:
 			u.IngressBytes += v
 		default:
-			if pool, ok := strings.CutPrefix(field, poolFieldPrefix); ok {
+			if pool, ok := strings.CutPrefix(name, poolFieldPrefix); ok {
 				u.AddPool(pool, v)
 			}
 		}
@@ -506,31 +528,27 @@ func (r *RedisCounterBackend) recordFailure(err error) {
 // KEY HELPERS
 // -------------------------------------------------------------------------
 
-// hashKey returns the live counter hash for a backend in a period.
-func (r *RedisCounterBackend) hashKey(period, backend string) string {
-	return fmt.Sprintf("%s:usage:%s:%s", r.prefix, period, backend)
+// hashKey returns the live counter hash for a backend, holding every bucket it
+// has been charged in since its last flush.
+func (r *RedisCounterBackend) hashKey(backend string) string {
+	return fmt.Sprintf("%s:usage:%s", r.prefix, backend)
 }
 
-// stagedKey returns the key a backend's hash for a period is staged under for
-// one flush.
-func (r *RedisCounterBackend) stagedKey(period, backend, flushID string) string {
-	return fmt.Sprintf("%s:usage-staged:%s:%s:%s", r.prefix, period, backend, flushID)
+// stagedKey returns the key a backend's hash is staged under for one flush,
+// renamed from the live hash so later charges start a fresh one.
+func (r *RedisCounterBackend) stagedKey(backend, flushID string) string {
+	return fmt.Sprintf("%s:usage-staged:%s:%s", r.prefix, backend, flushID)
 }
 
-// parseStagedKey recovers the batch a staged key names. The period has a fixed
-// width and the flush ID holds no colon, so a backend name containing one still
-// parses.
+// parseStagedKey recovers the batch a staged key names. The flush ID holds no
+// colon, so a backend name containing one still parses.
 func (r *RedisCounterBackend) parseStagedKey(key string) (core.UsageBatch, bool) {
 	rest, ok := strings.CutPrefix(key, r.prefix+":usage-staged:")
-	const periodLen = len(core.PeriodLayout)
-	if !ok || len(rest) <= periodLen+2 || rest[periodLen] != ':' {
-		return core.UsageBatch{}, false
-	}
 	sep := strings.LastIndexByte(rest, ':')
-	if sep <= periodLen+1 || sep == len(rest)-1 {
+	if !ok || sep <= 0 || sep == len(rest)-1 {
 		return core.UsageBatch{}, false
 	}
-	return core.UsageBatch{ID: rest[sep+1:], Backend: rest[periodLen+1 : sep], Period: rest[:periodLen]}, true
+	return core.UsageBatch{ID: rest[sep+1:], Backend: rest[:sep]}, true
 }
 
 // sharedKey returns the Redis key for a named piece of shared state.

@@ -163,33 +163,37 @@ CREATE TABLE IF NOT EXISTS multipart_parts (
     PRIMARY KEY (upload_id, part_number)
 );
 
--- Track per-backend API requests and data transfer by month and workload.
+-- Track per-backend API requests and data transfer by hourly bucket (UTC) and
+-- workload. A backend's cycle is the sum of its buckets from the cycle's start.
 CREATE TABLE IF NOT EXISTS backend_usage (
     backend_name  TEXT NOT NULL REFERENCES backend_quotas(backend_name),
-    period        TEXT NOT NULL,
+    bucket_start  TEXT NOT NULL,
     workload      TEXT NOT NULL,
     api_requests  INTEGER NOT NULL DEFAULT 0,
     egress_bytes  INTEGER NOT NULL DEFAULT 0,
     ingress_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (backend_name, period, workload)
+    PRIMARY KEY (backend_name, bucket_start, workload)
 );
+
+CREATE INDEX IF NOT EXISTS idx_backend_usage_bucket_start
+    ON backend_usage(bucket_start);
 
 -- Per-pool request counts, keyed by the pool names config declares. Additive
 -- with each other rather than a decomposition of backend_usage.api_requests:
 -- an operation charges every pool that contains it.
 CREATE TABLE IF NOT EXISTS backend_request_usage (
     backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name),
-    period       TEXT NOT NULL,
+    bucket_start TEXT NOT NULL,
     workload     TEXT NOT NULL,
     pool         TEXT NOT NULL,
     requests     INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (backend_name, period, workload, pool)
+    PRIMARY KEY (backend_name, bucket_start, workload, pool)
 );
 
-CREATE INDEX IF NOT EXISTS idx_backend_request_usage_period
-    ON backend_request_usage(period);
+CREATE INDEX IF NOT EXISTS idx_backend_request_usage_bucket_start
+    ON backend_request_usage(bucket_start);
 
 -- One row per shared usage batch applied above, written in the same
 -- transaction as its deltas, so a batch is never applied twice.
@@ -433,4 +437,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (33);
+INSERT INTO schema_version (version) VALUES (34);

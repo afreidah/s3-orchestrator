@@ -62,7 +62,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.168.x (current)
+### v0.169.x (current)
+
+**Usage counted per backend cycle ([#1771](https://github.com/afreidah/s3-orchestrator/issues/1771), v0.169.0)**
+
+Usage is now recorded in hourly UTC buckets, and each backend's usage is read from the start of its own cycle, set by `usage_reset_day` and `usage_reset_timezone`. Limits, the status API, the TUI, the web dashboard and the `s3o_usage_*` gauges all report the current cycle. `usage_reset_timezone` must now be a whole number of hours from UTC all year. Buckets older than 100 days are pruned. Migration `00047_usage_buckets` (SQLite `0034_usage_buckets`) rekeys `backend_usage` and `backend_request_usage` by `bucket_start` and keeps each existing monthly row as one bucket at the start of its month.
+
+**Operator action items after upgrade:**
+
+- **Stop old instances promptly during a rolling upgrade.** The usage tables and Redis counter keys change shape, so an old instance cannot flush usage once the migration has run. Usage it has not flushed is lost.
+- **A mid-month reset day set right after upgrading counts the whole pre-upgrade month in the first cycle.** Usage recorded before the upgrade is kept per month, not per hour, so it all falls at the start of its month.
+
+### v0.168.x
 
 **Usage cycle settings ([#1770](https://github.com/afreidah/s3-orchestrator/issues/1770), v0.168.0)**
 

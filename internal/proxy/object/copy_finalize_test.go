@@ -76,7 +76,7 @@ func finalizeCopyFixture(t *testing.T, store storetest.MetadataStore, native boo
 // period.
 func usageOf(mgr *fleet, name string) core.Usage {
 	var u core.Usage
-	mgr.Runtime.Usage().Backend().Load(name, &u)
+	mgr.Runtime.Usage().Backend().Load(name, time.Time{}, &u)
 	return u
 }
 

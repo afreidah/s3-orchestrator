@@ -15,6 +15,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -51,7 +52,7 @@ func (f fakeReplicationDeps) LedgerStats(context.Context) (core.LedgerStats, err
 func (fakeReplicationDeps) GetActiveMultipartCounts(context.Context) (map[string]int64, error) {
 	return nil, nil
 }
-func (fakeReplicationDeps) GetUsageForPeriod(context.Context, string) (map[string]core.WorkloadUsage, error) {
+func (fakeReplicationDeps) GetUsageSince(context.Context, map[string]time.Time) (map[string]core.WorkloadUsage, error) {
 	return nil, nil
 }
 func (f fakeReplicationDeps) CountReplicationBacklog(context.Context, int) (core.ReplicationBacklog, error) {

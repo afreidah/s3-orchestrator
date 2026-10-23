@@ -533,7 +533,7 @@ type usageOf struct {
 // loadUsage reads backend's charges from counters.
 func loadUsage(counters *counter.LocalCounterBackend, backend string) usageOf {
 	var u core.Usage
-	counters.Load(backend, &u)
+	counters.Load(backend, time.Time{}, &u)
 	return usageOf{calls: u.APIRequests, egress: u.EgressBytes, ingress: u.IngressBytes}
 }
 

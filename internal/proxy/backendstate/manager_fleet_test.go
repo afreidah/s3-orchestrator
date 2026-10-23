@@ -127,7 +127,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 		t.Error("obj2 should have been deleted from S3 be")
 	}
 	var u core.Usage
-	rt.Usage().Backend().Load("b1", &u)
+	rt.Usage().Backend().Load("b1", time.Time{}, &u)
 	if u.APIRequests != 2 {
 		t.Errorf("apiRequests = %d, want 2 (purge deletes)", u.APIRequests)
 	}

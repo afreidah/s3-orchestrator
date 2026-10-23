@@ -163,6 +163,20 @@ func (m *MockUsageReader) EXPECT() *MockUsageReaderMockRecorder {
 	return m.recorder
 }
 
+// CycleUsage mocks base method.
+func (m *MockUsageReader) CycleUsage() map[string]core.Usage {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CycleUsage")
+	ret0, _ := ret[0].(map[string]core.Usage)
+	return ret0
+}
+
+// CycleUsage indicates an expected call of CycleUsage.
+func (mr *MockUsageReaderMockRecorder) CycleUsage() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CycleUsage", reflect.TypeOf((*MockUsageReader)(nil).CycleUsage))
+}
+
 // GetLimits mocks base method.
 func (m *MockUsageReader) GetLimits() map[string]core.UsageLimits {
 	m.ctrl.T.Helper()

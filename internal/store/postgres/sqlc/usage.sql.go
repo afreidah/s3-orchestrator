@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deletePoolUsageByBackend = `-- name: DeletePoolUsageByBackend :exec
@@ -28,28 +30,28 @@ func (q *Queries) DeleteUsageByBackend(ctx context.Context, backendName string) 
 }
 
 const flushPoolDelta = `-- name: FlushPoolDelta :exec
-INSERT INTO backend_request_usage (backend_name, period, workload, pool, requests, updated_at)
+INSERT INTO backend_request_usage (backend_name, bucket_start, workload, pool, requests, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW())
-ON CONFLICT (backend_name, period, workload, pool) DO UPDATE SET
+ON CONFLICT (backend_name, bucket_start, workload, pool) DO UPDATE SET
     requests   = backend_request_usage.requests + $5,
     updated_at = NOW()
 `
 
 type FlushPoolDeltaParams struct {
 	BackendName string
-	Period      string
+	BucketStart pgtype.Timestamptz
 	Workload    string
 	Pool        string
 	Requests    int64
 }
 
 // Adds one pool's accumulated delta to its persistent row, creating the row on
-// first charge in the period. Same additive ON CONFLICT as the totals above so
+// first charge in the bucket. Same additive ON CONFLICT as the totals above so
 // concurrent flushers converge.
 func (q *Queries) FlushPoolDelta(ctx context.Context, arg FlushPoolDeltaParams) error {
 	_, err := q.db.Exec(ctx, flushPoolDelta,
 		arg.BackendName,
-		arg.Period,
+		arg.BucketStart,
 		arg.Workload,
 		arg.Pool,
 		arg.Requests,
@@ -59,9 +61,9 @@ func (q *Queries) FlushPoolDelta(ctx context.Context, arg FlushPoolDeltaParams) 
 
 const flushUsageDeltas = `-- name: FlushUsageDeltas :exec
 
-INSERT INTO backend_usage (backend_name, period, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
+INSERT INTO backend_usage (backend_name, bucket_start, workload, api_requests, egress_bytes, ingress_bytes, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT (backend_name, period, workload) DO UPDATE SET
+ON CONFLICT (backend_name, bucket_start, workload) DO UPDATE SET
     api_requests  = backend_usage.api_requests  + $4,
     egress_bytes  = backend_usage.egress_bytes  + $5,
     ingress_bytes = backend_usage.ingress_bytes + $6,
@@ -70,7 +72,7 @@ ON CONFLICT (backend_name, period, workload) DO UPDATE SET
 
 type FlushUsageDeltasParams struct {
 	BackendName  string
-	Period       string
+	BucketStart  pgtype.Timestamptz
 	Workload     string
 	ApiRequests  int64
 	EgressBytes  int64
@@ -82,18 +84,19 @@ type FlushUsageDeltasParams struct {
 //
 // Author: Alex Freidah
 //
-// sqlc-input definitions for backend_usage - the monthly per-backend
-// (api_requests, egress_bytes, ingress_bytes) counters used by the usage
-// flusher and the dashboard. FlushUsageDeltas uses INSERT ON CONFLICT DO
-// UPDATE with column-level ADDs so multiple flushers can converge on the
-// same row without losing deltas.
+// sqlc-input definitions for backend_usage and backend_request_usage - the
+// per-backend (api_requests, egress_bytes, ingress_bytes) counters and per-pool
+// request counts, kept per hourly bucket in UTC, used by the usage flusher, the
+// limit checks and the dashboard. FlushUsageDeltas uses INSERT ON CONFLICT DO
+// UPDATE with column-level ADDs so multiple flushers can converge on the same
+// row without losing deltas.
 // -----------------------------------------------------------------------------
 // Atomically adds accumulated in-memory deltas to the persistent usage row.
-// Creates the row if it doesn't exist for this (backend, period, workload) yet.
+// Creates the row if it doesn't exist for this (backend, bucket, workload) yet.
 func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasParams) error {
 	_, err := q.db.Exec(ctx, flushUsageDeltas,
 		arg.BackendName,
-		arg.Period,
+		arg.BucketStart,
 		arg.Workload,
 		arg.ApiRequests,
 		arg.EgressBytes,
@@ -102,16 +105,37 @@ func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasPara
 	return err
 }
 
-const getUsageForPeriod = `-- name: GetUsageForPeriod :many
-SELECT u.backend_name, u.workload, u.api_requests, u.egress_bytes, u.ingress_bytes,
+const getUsageSince = `-- name: GetUsageSince :many
+WITH win AS (
+    SELECT unnest($1::text[]) AS backend_name, unnest($2::timestamptz[]) AS start
+),
+totals AS (
+    SELECT u.backend_name, u.workload,
+           SUM(u.api_requests)::bigint AS api_requests,
+           SUM(u.egress_bytes)::bigint AS egress_bytes,
+           SUM(u.ingress_bytes)::bigint AS ingress_bytes
+    FROM backend_usage u
+    JOIN win ON win.backend_name = u.backend_name AND u.bucket_start >= win.start
+    GROUP BY u.backend_name, u.workload
+),
+pools AS (
+    SELECT p.backend_name, p.workload, p.pool, SUM(p.requests)::bigint AS requests
+    FROM backend_request_usage p
+    JOIN win ON win.backend_name = p.backend_name AND p.bucket_start >= win.start
+    GROUP BY p.backend_name, p.workload, p.pool
+)
+SELECT t.backend_name, t.workload, t.api_requests, t.egress_bytes, t.ingress_bytes,
        p.pool, p.requests
-FROM backend_usage u
-LEFT JOIN backend_request_usage p
-    ON p.backend_name = u.backend_name AND p.period = u.period AND p.workload = u.workload
-WHERE u.period = $1
+FROM totals t
+LEFT JOIN pools p ON p.backend_name = t.backend_name AND p.workload = t.workload
 `
 
-type GetUsageForPeriodRow struct {
+type GetUsageSinceParams struct {
+	Backends []string
+	Starts   []pgtype.Timestamptz
+}
+
+type GetUsageSinceRow struct {
 	BackendName  string
 	Workload     string
 	ApiRequests  int64
@@ -121,19 +145,19 @@ type GetUsageForPeriodRow struct {
 	Requests     *int64
 }
 
-// Returns every backend's totals by workload for the given period (e.g.
-// '2026-02'), joined to their pool rows, so a workload with pools repeats its
-// totals. Every pool row has a totals row: a flush writes both in one
-// transaction.
-func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUsageForPeriodRow, error) {
-	rows, err := q.db.Query(ctx, getUsageForPeriod, period)
+// Sums each backend's buckets from its own start onward, by workload, joined to
+// its pool sums, so a workload with pools repeats its totals. The backends and
+// their starts are zipped by unnesting the two arrays side by side; a backend
+// not listed is not read.
+func (q *Queries) GetUsageSince(ctx context.Context, arg GetUsageSinceParams) ([]GetUsageSinceRow, error) {
+	rows, err := q.db.Query(ctx, getUsageSince, arg.Backends, arg.Starts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetUsageForPeriodRow{}
+	items := []GetUsageSinceRow{}
 	for rows.Next() {
-		var i GetUsageForPeriodRow
+		var i GetUsageSinceRow
 		if err := rows.Scan(
 			&i.BackendName,
 			&i.Workload,
@@ -151,6 +175,38 @@ func (q *Queries) GetUsageForPeriod(ctx context.Context, period string) ([]GetUs
 		return nil, err
 	}
 	return items, nil
+}
+
+const prunePoolUsageBuckets = `-- name: PrunePoolUsageBuckets :exec
+DELETE FROM backend_request_usage WHERE backend_name = $1 AND bucket_start < $2
+`
+
+type PrunePoolUsageBucketsParams struct {
+	BackendName string
+	Cutoff      pgtype.Timestamptz
+}
+
+// Drops one backend's pool buckets that started before the cutoff.
+func (q *Queries) PrunePoolUsageBuckets(ctx context.Context, arg PrunePoolUsageBucketsParams) error {
+	_, err := q.db.Exec(ctx, prunePoolUsageBuckets, arg.BackendName, arg.Cutoff)
+	return err
+}
+
+const pruneUsageBuckets = `-- name: PruneUsageBuckets :exec
+DELETE FROM backend_usage WHERE backend_name = $1 AND bucket_start < $2
+`
+
+type PruneUsageBucketsParams struct {
+	BackendName string
+	Cutoff      pgtype.Timestamptz
+}
+
+// Drops one backend's buckets that started before the cutoff. Keyed by the
+// primary key's leading columns, so the flush that runs it reads only what it
+// deletes.
+func (q *Queries) PruneUsageBuckets(ctx context.Context, arg PruneUsageBucketsParams) error {
+	_, err := q.db.Exec(ctx, pruneUsageBuckets, arg.BackendName, arg.Cutoff)
+	return err
 }
 
 const pruneUsageFlushes = `-- name: PruneUsageFlushes :exec

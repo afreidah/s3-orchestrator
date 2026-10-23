@@ -922,6 +922,7 @@ type roleStore interface {
 	core.BackendStateStore
 	core.DashboardStore
 	core.UsageFlusher
+	core.UsageReader
 	core.AdvisoryLocker
 }
 
@@ -929,6 +930,7 @@ type roleStore interface {
 type metricsAdapter struct {
 	core.DashboardStore
 	core.ReplicationStore
+	core.UsageReader
 }
 
 // newMetricsAdapter returns a proxy.MetricsDeps-compatible value backed
@@ -937,6 +939,7 @@ func newMetricsAdapter(src roleStore) *metricsAdapter {
 	return &metricsAdapter{
 		DashboardStore:   src,
 		ReplicationStore: src,
+		UsageReader:      src,
 	}
 }
 

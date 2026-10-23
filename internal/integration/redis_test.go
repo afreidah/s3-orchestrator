@@ -62,12 +62,26 @@ func newTestRedisBackend(t *testing.T, backends []string) (*counter.RedisCounter
 	return rb, client
 }
 
+// chargeBucket is the hourly bucket the Redis tests charge into.
+var chargeBucket = core.UsageBucket(time.Now())
+
 // loadUsage returns a backend's unflushed counters as a fresh value, for the
 // assertions that read them.
 func loadUsage(b counter.Backend, name string) core.Usage {
 	var u core.Usage
-	b.Load(name, &u)
+	b.Load(name, time.Time{}, &u)
 	return u
+}
+
+// batchRequests sums a batch's API requests across its buckets and
+// workloads.
+func batchRequests(b core.UsageBatch) int64 {
+	var n int64
+	_ = b.Each(func(_ time.Time, _ string, u *core.Usage) error {
+		n += u.APIRequests
+		return nil
+	})
+	return n
 }
 
 // -------------------------------------------------------------------------
@@ -79,9 +93,9 @@ func loadUsage(b counter.Backend, name string) core.Usage {
 func TestRedis_ChargeAndLoad(t *testing.T) {
 	rb, _ := newTestRedisBackend(t, []string{"b1", "b2"})
 
-	rb.Charge("b1", counter.Charge{APIRequests: 5, EgressBytes: 100, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 5})
-	rb.Charge("b1", counter.Charge{APIRequests: 3, EgressBytes: 50, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 3})
-	rb.Charge("b2", counter.Charge{APIRequests: 1, IngressBytes: 300})
+	rb.Charge("b1", chargeBucket, counter.Charge{APIRequests: 5, EgressBytes: 100, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 5})
+	rb.Charge("b1", chargeBucket, counter.Charge{APIRequests: 3, EgressBytes: 50, Pools: []core.RequestPool{{Name: "reads"}}, PoolN: 3})
+	rb.Charge("b2", chargeBucket, counter.Charge{APIRequests: 1, IngressBytes: 300})
 
 	b1 := loadUsage(rb, "b1")
 	if b1.APIRequests != 8 || b1.EgressBytes != 150 || b1.Pools["reads"] != 8 {
@@ -98,16 +112,16 @@ func TestRedis_ChargeAndLoad(t *testing.T) {
 func TestRedis_TakeSharedStagesAndSettles(t *testing.T) {
 	ctx := context.Background()
 	rb, _ := newTestRedisBackend(t, []string{"b1"})
-	rb.Charge("b1", counter.Charge{APIRequests: 4})
+	rb.Charge("b1", chargeBucket, counter.Charge{APIRequests: 4})
 
 	batches := rb.TakeShared(ctx)
-	if len(batches) != 1 || batches[0].ID == "" || batches[0].Backend != "b1" || batches[0].Workloads.Total().APIRequests != 4 {
+	if len(batches) != 1 || batches[0].ID == "" || batches[0].Backend != "b1" || batchRequests(batches[0]) != 4 {
 		t.Fatalf("batches = %+v, want one staged b1 batch of 4 requests", batches)
 	}
 	if got := loadUsage(rb, "b1").APIRequests; got != 0 {
 		t.Errorf("live requests after the take = %d, want 0", got)
 	}
-	rb.Charge("b1", counter.Charge{APIRequests: 2})
+	rb.Charge("b1", chargeBucket, counter.Charge{APIRequests: 2})
 
 	rb.Settle(ctx, &batches[0], false)
 	again := rb.TakeShared(ctx)
@@ -146,8 +160,8 @@ func TestRedis_SharedVisibility(t *testing.T) {
 	rb2 := counter.NewRedisCounterBackend(client2, cfg, backends)
 	defer rb2.Close()
 
-	rb1.Charge("b1", counter.Charge{APIRequests: 10})
-	rb2.Charge("b1", counter.Charge{APIRequests: 20})
+	rb1.Charge("b1", chargeBucket, counter.Charge{APIRequests: 10})
+	rb2.Charge("b1", chargeBucket, counter.Charge{APIRequests: 20})
 
 	// Both should see the combined value
 	if got := loadUsage(rb1, "b1").APIRequests; got != 30 {

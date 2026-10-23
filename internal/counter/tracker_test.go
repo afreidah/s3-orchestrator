@@ -61,7 +61,10 @@ func spent(tracker *UsageTracker, name string, api, egress, ingress int64) {
 	if api > 0 {
 		u.Pools = core.PoolUsage{core.PoolAll: api}
 	}
-	baselines := maps.Clone(*tracker.baseline.Load())
+	baselines := make(map[string]core.Usage)
+	for other, b := range *tracker.baseline.Load() {
+		baselines[other] = b.used
+	}
 	baselines[name] = u
 	tracker.SetBaselines(baselines)
 }
@@ -417,7 +420,7 @@ func TestRecord_ChargesCtxWorkload(t *testing.T) {
 	if len(batches) != 1 {
 		t.Fatalf("Take returned %d batches, want 1", len(batches))
 	}
-	w := batches[0].Workloads
+	w := workloadsOf(batches[0])
 	if w[string(audit.WorkloadScrub)].EgressBytes != 10 || w[string(audit.WorkloadUnknown)].EgressBytes != 5 {
 		t.Errorf("workloads = %+v, want 10 for scrub and 5 for unknown", w)
 	}
@@ -505,6 +508,103 @@ func TestSetBaselines_ReplacesEveryBackend(t *testing.T) {
 	}
 }
 
+// TestCycleBaseline_ClearsAtTheReset asserts flushed usage applies until the
+// cycle's reset and reads as zero from then, starting at the reset.
+func TestCycleBaseline_ClearsAtTheReset(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	next := start.AddDate(0, 1, 0)
+	b := cycleBaseline{used: core.Usage{APIRequests: 9}, start: start, next: next}
+
+	if used, since := b.at(next.Add(-time.Nanosecond)); used.APIRequests != 9 || !since.Equal(start) {
+		t.Errorf("before the reset = %+v since %v, want 9 since %v", used, since, start)
+	}
+	if used, since := b.at(next); !used.IsZero() || !since.Equal(next) {
+		t.Errorf("at the reset = %+v since %v, want zero since %v", used, since, next)
+	}
+}
+
+// startsReader records the starts it is asked for and answers with usage, or
+// with err.
+type startsReader struct {
+	starts map[string]time.Time
+	usage  map[string]core.WorkloadUsage
+	err    error
+}
+
+// GetUsageSince records starts and returns the canned answer.
+// Stands in for the store in the refresh tests.
+func (r *startsReader) GetUsageSince(_ context.Context, starts map[string]time.Time) (map[string]core.WorkloadUsage, error) {
+	r.starts = starts
+	return r.usage, r.err
+}
+
+// TestRefreshUsage_ReadsEachBackendFromItsCycleStart asserts every counted or
+// limited backend is read from its own cycle start, and the result becomes
+// the baseline admission is judged against.
+func TestRefreshUsage_ReadsEachBackendFromItsCycleStart(t *testing.T) {
+	t.Parallel()
+	mid := capped(t, 10, 0, 0)
+	mid.Period = core.UsagePeriod{ResetDay: 15}
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{"b1": mid})
+	reader := &startsReader{usage: map[string]core.WorkloadUsage{
+		"b1": {workloadA: {UsageStat: core.UsageStat{APIRequests: 10}, Pools: core.PoolUsage{core.PoolAll: 10}}},
+	}}
+
+	got, err := tracker.RefreshUsage(t.Context(), reader)
+	if err != nil {
+		t.Fatalf("RefreshUsage: %v", err)
+	}
+
+	now := time.Now()
+	if s := reader.starts["b1"]; !s.Equal(mid.Period.Start(now)) {
+		t.Errorf("b1 read from %v, want its mid-month start %v", s, mid.Period.Start(now))
+	}
+	if s := reader.starts["b2"]; !s.Equal(core.UsagePeriod{}.Start(now)) {
+		t.Errorf("b2 read from %v, want the calendar month start", s)
+	}
+	if got["b1"][workloadA].APIRequests != 10 {
+		t.Errorf("returned usage = %+v, want the reader's", got)
+	}
+	if tracker.WithinLimits("b1", reads(1), 0, 0) {
+		t.Error("b1 spent its 10 requests this cycle and should be refused")
+	}
+}
+
+// TestRefreshUsage_ErrorKeepsTheBaseline asserts a failed read leaves the
+// previous baseline in force rather than clearing it.
+func TestRefreshUsage_ErrorKeepsTheBaseline(t *testing.T) {
+	t.Parallel()
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{"b1": capped(t, 10, 0, 0)})
+	spent(tracker, "b1", 10, 0, 0)
+	sentinel := errors.New("db down")
+
+	if _, err := tracker.RefreshUsage(t.Context(), &startsReader{err: sentinel}); !errors.Is(err, sentinel) {
+		t.Fatalf("RefreshUsage = %v, want %v", err, sentinel)
+	}
+	if tracker.WithinLimits("b1", reads(1), 0, 0) {
+		t.Error("a failed refresh cleared the spent baseline")
+	}
+}
+
+// TestCycleUsage_AddsUnflushedFromTheCycleStart asserts the reported usage is
+// the flushed baseline plus unflushed charges inside the cycle, and charges
+// from before the cycle began are left out.
+func TestCycleUsage_AddsUnflushedFromTheCycleStart(t *testing.T) {
+	t.Parallel()
+	backend := NewLocalCounterBackend([]string{"b1"})
+	tracker := NewUsageTracker(backend, nil)
+	spent(tracker, "b1", 0, 100, 0)
+	backend.Charge("b1", oldBucket, Charge{EgressBytes: 50})
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 7, 0)
+
+	got := tracker.CycleUsage()["b1"]
+
+	if got.EgressBytes != 107 || got.APIRequests != 1 {
+		t.Errorf("CycleUsage = %+v, want 107 egress and 1 request", got)
+	}
+}
+
 // TestNearLimit_PoolReachesThreshold asserts one tight pool is enough to want
 // a shorter flush interval, even when the byte dimensions have room.
 func TestNearLimit_PoolReachesThreshold(t *testing.T) {
@@ -543,10 +643,10 @@ func TestFlushUsage_AppliesAndSettles(t *testing.T) {
 		t.Fatalf("applied %d batches, want 1", len(flusher.applied))
 	}
 	b := flusher.applied[0]
-	if b.ID != "" || b.Backend != "b1" || b.Period != CurrentPeriod() {
-		t.Errorf("batch = %+v, want b1 in the current period with no ID", b)
+	if b.ID != "" || b.Backend != "b1" || len(b.Buckets) != 1 || b.Buckets[core.UsageBucket(time.Now())] == nil {
+		t.Errorf("batch = %+v, want b1 in the current hour's bucket with no ID", b)
 	}
-	if u := b.Workloads.Total(); u.APIRequests != 11 || u.EgressBytes != 100 || u.IngressBytes != 50 || u.Pools[core.PoolAll] != 11 {
+	if u := totalOf(b); u.APIRequests != 11 || u.EgressBytes != 100 || u.IngressBytes != 50 || u.Pools[core.PoolAll] != 11 {
 		t.Errorf("batch usage = %+v, want 11/100/50 and 11 against %q", u, core.PoolAll)
 	}
 	if got := loaded(backend, "b1"); !got.IsZero() {
@@ -574,7 +674,7 @@ func TestFlushUsage_FailedApplyKeepsTheBatch(t *testing.T) {
 	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
 		t.Fatalf("second flush: %v", err)
 	}
-	if len(flusher.applied) != 1 || flusher.applied[0].Workloads.Total().APIRequests != 10 {
+	if len(flusher.applied) != 1 || totalOf(flusher.applied[0]).APIRequests != 10 {
 		t.Errorf("second flush applied %+v, want the kept batch of 10", flusher.applied)
 	}
 }
@@ -630,34 +730,6 @@ func TestFlushUsage_PlainBackendSkipsShared(t *testing.T) {
 	}
 }
 
-// TestCurrentPeriod_RefreshesAnExpiredCache asserts a cached month past its
-// end is replaced rather than returned.
-func TestCurrentPeriod_RefreshesAnExpiredCache(t *testing.T) {
-	t.Parallel()
-	currentMonth.Store(&monthCache{period: "1999-01", until: time.Unix(0, 0)})
-
-	want := time.Now().UTC().Format(core.PeriodLayout)
-	if got := CurrentPeriod(); got != want {
-		t.Errorf("CurrentPeriod() = %q, want %q", got, want)
-	}
-	if c := currentMonth.Load(); c.period != want || !c.until.After(time.Now()) {
-		t.Errorf("cache = %+v, want %q until a future instant", c, want)
-	}
-}
-
-// TestFlushPeriods_CurrentThenPrevious asserts the flush covers the current
-// month and the one before it.
-func TestFlushPeriods_CurrentThenPrevious(t *testing.T) {
-	t.Parallel()
-	periods := flushPeriods()
-	if len(periods) != 2 || periods[0] != CurrentPeriod() {
-		t.Fatalf("flushPeriods() = %v, want the current period first", periods)
-	}
-	if periods[1] >= periods[0] {
-		t.Errorf("previous period %q should sort before %q", periods[1], periods[0])
-	}
-}
-
 // -------------------------------------------------------------------------
 // Backend accessor
 // -------------------------------------------------------------------------
@@ -676,13 +748,12 @@ func TestBackend_ReturnsUnderlyingBackend(t *testing.T) {
 // CurrentPeriod
 // -------------------------------------------------------------------------
 
-// TestCurrentPeriod_Format verifies the current period format contract.
-// Asserts that CurrentPeriod() = , want YYYY-MM format.
-func TestCurrentPeriod_Format(t *testing.T) {
+// TestCurrentPeriod_IsTheCalendarMonth verifies the fleet-wide label is the
+// current calendar month in UTC.
+func TestCurrentPeriod_IsTheCalendarMonth(t *testing.T) {
 	t.Parallel()
-	p := CurrentPeriod()
-	if len(p) != 7 || p[4] != '-' {
-		t.Errorf("CurrentPeriod() = %q, want YYYY-MM format", p)
+	if got, want := CurrentPeriod(), time.Now().UTC().Format(core.PeriodLayout); got != want {
+		t.Errorf("CurrentPeriod() = %q, want %q", got, want)
 	}
 }
 
@@ -724,8 +795,8 @@ func newFakeShared() *fakeShared {
 // TakeShared returns the one staged batch, as a shared store would after a
 // stage.
 func (f *fakeShared) TakeShared(_ context.Context) []core.UsageBatch {
-	return []core.UsageBatch{{ID: stagedBatchID, Backend: "b1", Period: CurrentPeriod(),
-		Workloads: core.WorkloadUsage{workloadA: {UsageStat: core.UsageStat{APIRequests: 7}}}}}
+	return []core.UsageBatch{{ID: stagedBatchID, Backend: "b1",
+		Buckets: core.BucketUsage{oldBucket: {workloadA: {UsageStat: core.UsageStat{APIRequests: 7}}}}}}
 }
 
 // Settle records a staged batch's outcome and hands a local batch to the

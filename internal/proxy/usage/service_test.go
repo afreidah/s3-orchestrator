@@ -62,7 +62,10 @@ func (f *fakeStores) ApplyUsageBatch(_ context.Context, b *core.UsageBatch) erro
 	if f.applyErr != nil {
 		return f.applyErr
 	}
-	f.applied[b.Backend] += b.Workloads.Total().APIRequests
+	_ = b.Each(func(_ time.Time, _ string, u *core.Usage) error {
+		f.applied[b.Backend] += u.APIRequests
+		return nil
+	})
 	return nil
 }
 

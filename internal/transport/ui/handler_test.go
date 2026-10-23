@@ -94,7 +94,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	}, nil).AnyTimes()
 	mockStore.EXPECT().LedgerStats(gomock.Any()).Return(core.LedgerStats{"b1": {Objects: 42}}, nil).AnyTimes()
 	mockStore.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 0}, nil).AnyTimes()
-	mockStore.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+	mockStore.EXPECT().GetUsageSince(gomock.Any(), gomock.Any()).
 		Return(map[string]core.WorkloadUsage{"b1": {"client": {
 			UsageStat: core.UsageStat{APIRequests: 100},
 			Pools:     core.PoolUsage{core.PoolAll: 100},

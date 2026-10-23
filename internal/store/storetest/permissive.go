@@ -82,7 +82,7 @@ func Permissive(m *MockMetadataStore) {
 	r.GetStalePending(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetUnderReplicatedObjects(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetUnderReplicatedObjectsExcluding(a, a, a, a).Return(nil, nil).AnyTimes()
-	r.GetUsageForPeriod(a, a).Return(nil, nil).AnyTimes()
+	r.GetUsageSince(a, a).Return(nil, nil).AnyTimes()
 	r.ImportObject(a, a).Return(core.ImportSkippedExisting, nil).AnyTimes()
 	r.InsertNotification(a, a, a, a).Return(nil).AnyTimes()
 	r.InsertPendingIfFits(a, a, a).Return(true, nil).AnyTimes()

@@ -264,12 +264,16 @@ type BackendStateStore interface {
 }
 
 // UsageFlusher defines the store method the usage flush writes through.
-// ApplyUsageBatch adds each workload's totals and pools in a batch to its
-// period's rows in one transaction. A batch with an ID records it there too, and one whose ID is
-// already recorded changes nothing, so a batch found again after its commit is
-// not counted twice.
+// ApplyUsageBatch adds a batch's buckets in one transaction, applies a batch
+// with an ID at most once, and drops buckets older than UsageRetention.
 type UsageFlusher interface {
 	ApplyUsageBatch(ctx context.Context, b *UsageBatch) error
+}
+
+// UsageReader reads usage back. GetUsageSince sums each backend's buckets from
+// its own start onward, by workload; a backend absent from starts is not read.
+type UsageReader interface {
+	GetUsageSince(ctx context.Context, starts map[string]time.Time) (map[string]WorkloadUsage, error)
 }
 
 // AdvisoryLocker defines the leader-election helper used by background
@@ -286,7 +290,6 @@ type DashboardStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	LedgerStats(ctx context.Context) (LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]WorkloadUsage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 }
 

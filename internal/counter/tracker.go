@@ -5,7 +5,8 @@
 //
 // Tracks in-memory usage counters (API requests, egress, ingress) per backend,
 // enforces configurable monthly usage limits, and periodically flushes deltas to
-// PostgreSQL. Counters are keyed by calendar month for automatic period rollover.
+// the store. Counters are keyed by hourly bucket, independent of any backend's
+// cycle; a backend's usage is the sum of its buckets from its cycle's start.
 //
 // The limits map and baseline map are held behind atomic.Pointer snapshots
 // (copy-on-write): read paths do a single atomic load with zero locking and
@@ -42,7 +43,23 @@ import (
 type UsageTracker struct {
 	backend  Backend
 	limits   atomic.Pointer[map[string]core.UsageLimits]
-	baseline atomic.Pointer[map[string]core.Usage]
+	baseline atomic.Pointer[map[string]cycleBaseline]
+}
+
+// cycleBaseline is a backend's flushed usage in its current cycle, with the
+// cycle's start and next reset as of when it was read.
+type cycleBaseline struct {
+	used        core.Usage
+	start, next time.Time
+}
+
+// at returns the flushed usage and cycle start that apply at now. Once the
+// reset has passed, a new cycle has begun with nothing flushed yet.
+func (b *cycleBaseline) at(now time.Time) (core.Usage, time.Time) {
+	if now.Before(b.next) {
+		return b.used, b.start
+	}
+	return core.Usage{}, b.next
 }
 
 // NewUsageTracker creates a usage tracker with the given counter backend
@@ -94,7 +111,7 @@ func (u *UsageTracker) record(ctx context.Context, backendName string, ops []s3o
 		}
 		c.Pools = append(c.Pools, pools...)
 	}
-	u.backend.Charge(backendName, c)
+	u.backend.Charge(backendName, core.UsageBucket(time.Now()), c)
 	if t := audit.TallyOf(ctx); t != nil {
 		t.Add(backendName, audit.BackendUsage{APIRequests: c.APIRequests, EgressBytes: c.EgressBytes, IngressBytes: c.IngressBytes})
 	}
@@ -132,7 +149,16 @@ func (u *UsageTracker) WithinLimits(backendName string, ops []s3op.Operation, eg
 // against a configuration that never existed.
 type usageSnapshot struct {
 	limits    map[string]core.UsageLimits
-	baselines map[string]core.Usage
+	baselines map[string]cycleBaseline
+}
+
+// cycle returns a backend's flushed usage in its current cycle and when the
+// cycle began. With no baseline yet, the cycle comes from its period.
+func (s usageSnapshot) cycle(name string, now time.Time) (core.Usage, time.Time) {
+	if b, ok := s.baselines[name]; ok {
+		return b.at(now)
+	}
+	return core.Usage{}, s.limits[name].Period.Start(now)
 }
 
 // snapshot loads the copy-on-write views in one go. Callers that check
@@ -147,16 +173,15 @@ func (u *UsageTracker) snapshot() usageSnapshot {
 // allocate.
 var unflushedPool = sync.Pool{New: func() any { return new(core.Usage) }}
 
-// withUsed calls fn with a backend's usage so far this period, as the flushed
-// baseline and what is charged and not yet flushed, and returns fn's answer.
-// The two are kept apart rather than summed, which would build a new pool
-// map on every call.
+// withUsed calls fn with a backend's flushed and unflushed usage this cycle.
+// The two stay apart, since summing them would build a pool map per call.
 func (s usageSnapshot) withUsed(backend Backend, name string, fn func(base core.Usage, cur *core.Usage) bool) bool {
 	cur := unflushedPool.Get().(*core.Usage)
 	defer unflushedPool.Put(cur)
 	cur.Reset()
-	backend.Load(name, cur)
-	return fn(s.baselines[name], cur)
+	base, since := s.cycle(name, time.Now())
+	backend.Load(name, since, cur)
+	return fn(base, cur)
 }
 
 // withinLimitsSnapshot is the snapshot-aware core of WithinLimits. A pool
@@ -233,14 +258,68 @@ func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
 // BASELINE MANAGEMENT
 // -------------------------------------------------------------------------
 
-// SetBaselines replaces every backend's flushed usage for the current period
-// in one swap. A backend absent from baselines has none, which is how a new
-// period starts at zero.
+// SetBaselines replaces every backend's flushed usage for its current cycle in
+// one swap. A backend absent from baselines starts its cycle at zero.
 func (u *UsageTracker) SetBaselines(baselines map[string]core.Usage) {
-	if baselines == nil {
-		baselines = make(map[string]core.Usage)
+	u.setBaselines(baselines, time.Now())
+}
+
+// setBaselines stores each backend's flushed usage with its cycle's bounds at
+// now, for every backend counted or limited.
+func (u *UsageTracker) setBaselines(baselines map[string]core.Usage, now time.Time) {
+	limits := *u.limits.Load()
+	out := make(map[string]cycleBaseline, len(limits))
+	for _, name := range u.names(limits) {
+		p := limits[name].Period
+		out[name] = cycleBaseline{used: baselines[name], start: p.Start(now), next: p.Next(now)}
 	}
-	u.baseline.Store(&baselines)
+	u.baseline.Store(&out)
+}
+
+// names lists every backend the tracker counts or holds limits for: the
+// counted ones first, in their configured order.
+func (u *UsageTracker) names(limits map[string]core.UsageLimits) []string {
+	names := slices.Clone(u.backend.Backends())
+	for name := range limits {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// RefreshUsage reads each backend's flushed usage in its current cycle and
+// makes it the baseline admission is judged against. Returns it by workload.
+func (u *UsageTracker) RefreshUsage(ctx context.Context, store core.UsageReader) (map[string]core.WorkloadUsage, error) {
+	now := time.Now()
+	limits := *u.limits.Load()
+	names := u.names(limits)
+	starts := make(map[string]time.Time, len(names))
+	for _, name := range names {
+		starts[name] = limits[name].Period.Start(now)
+	}
+	usage, err := store.GetUsageSince(ctx, starts)
+	if err != nil {
+		return nil, err
+	}
+	u.setBaselines(core.Totals(usage), now)
+	return usage, nil
+}
+
+// CycleUsage returns each backend's usage so far in its current cycle: the
+// flushed baseline plus what is charged and not yet flushed.
+func (u *UsageTracker) CycleUsage() map[string]core.Usage {
+	snap := u.snapshot()
+	now := time.Now()
+	out := make(map[string]core.Usage, len(snap.limits))
+	for _, name := range u.names(snap.limits) {
+		base, since := snap.cycle(name, now)
+		var used core.Usage
+		used.Add(base)
+		u.backend.Load(name, since, &used)
+		out[name] = used
+	}
+	return out
 }
 
 // NearLimit returns true if any backend's effective usage (baseline +
@@ -279,39 +358,11 @@ func nearLimit(base core.Usage, cur *core.Usage, lim core.UsageLimits, threshold
 // FLUSH
 // -------------------------------------------------------------------------
 
-// defaultPeriod is the calendar month in UTC, the period every backend counts
-// over.
-var defaultPeriod core.UsagePeriod
-
-// monthCache is the formatted current month and the instant it stops being
-// current.
-type monthCache struct {
-	period string
-	until  time.Time
-}
-
-// currentMonth caches CurrentPeriod's answer, which every charge and limit
-// check asks for, so formatting it does not allocate on the request path.
-var currentMonth atomic.Pointer[monthCache]
-
-// CurrentPeriod returns the current month as "YYYY-MM" for usage
-// aggregation.
+// CurrentPeriod returns the current calendar month in UTC as "YYYY-MM", for
+// the fleet-wide period label the status API reports.
 func CurrentPeriod() string {
-	now := time.Now()
-	if c := currentMonth.Load(); c != nil && now.Before(c.until) {
-		return c.period
-	}
-	c := &monthCache{period: defaultPeriod.Current(now), until: defaultPeriod.Next(now)}
-	currentMonth.Store(c)
-	return c.period
-}
-
-// flushPeriods returns the current and the previous month. A flush takes both,
-// so charges made just before a rollover are flushed into the month they
-// belong to after it.
-func flushPeriods() []string {
-	start := defaultPeriod.Start(time.Now())
-	return []string{defaultPeriod.Current(start), defaultPeriod.Current(start.Add(-time.Nanosecond))}
+	var calendar core.UsagePeriod
+	return calendar.Current(time.Now())
 }
 
 // FlushUsage writes every batch of counters the backend hands over to the
@@ -332,7 +383,7 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store core.UsageFlusher) 
 			slog.ErrorContext(ctx, "usage flush failed",
 				logfmt.Component("usage_tracker"),
 				slog.String("backend", b.Backend),
-				slog.String("period", b.Period),
+				slog.Int("buckets", len(b.Buckets)),
 				"error", err,
 			)
 			lastErr = err

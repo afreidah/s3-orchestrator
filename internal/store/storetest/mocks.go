@@ -809,19 +809,19 @@ func (mr *MockMetadataStoreMockRecorder) GetUnderReplicatedObjectsExcluding(ctx,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnderReplicatedObjectsExcluding", reflect.TypeOf((*MockMetadataStore)(nil).GetUnderReplicatedObjectsExcluding), ctx, factor, limit, excludedBackends)
 }
 
-// GetUsageForPeriod mocks base method.
-func (m *MockMetadataStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
+// GetUsageSince mocks base method.
+func (m *MockMetadataStore) GetUsageSince(ctx context.Context, starts map[string]time.Time) (map[string]core.WorkloadUsage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
+	ret := m.ctrl.Call(m, "GetUsageSince", ctx, starts)
 	ret0, _ := ret[0].(map[string]core.WorkloadUsage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetUsageForPeriod indicates an expected call of GetUsageForPeriod.
-func (mr *MockMetadataStoreMockRecorder) GetUsageForPeriod(ctx, period any) *gomock.Call {
+// GetUsageSince indicates an expected call of GetUsageSince.
+func (mr *MockMetadataStoreMockRecorder) GetUsageSince(ctx, starts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockMetadataStore)(nil).GetUsageForPeriod), ctx, period)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageSince", reflect.TypeOf((*MockMetadataStore)(nil).GetUsageSince), ctx, starts)
 }
 
 // ImportObject mocks base method.

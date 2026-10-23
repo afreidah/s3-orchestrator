@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Tests for the in-memory atomic counter backend. Validates charge and load,
-// the take and settle round trip, period keying, unknown backend handling, and
+// the take and settle round trip, bucket keying, unknown backend handling, and
 // concurrent charges racing a take.
 // -------------------------------------------------------------------------------
 
@@ -14,6 +14,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -21,17 +22,37 @@ import (
 const (
 	backendB1  = "b1"
 	poolClassA = "class_a"
-	oldPeriod  = "2020-01"
 	workloadA  = "scrub"
 	workloadB  = "client"
 )
 
-// loaded returns a backend's unflushed counters as a fresh value, the way a
-// caller that wants one reading uses Load.
+// oldBucket is a bucket well before any test's current one.
+var oldBucket = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// loaded returns a backend's unflushed counters in every bucket as a fresh
+// value, the way a caller that wants one reading uses Load.
 func loaded(b Backend, name string) core.Usage {
 	var u core.Usage
-	b.Load(name, &u)
+	b.Load(name, time.Time{}, &u)
 	return u
+}
+
+// workloadsOf sums a batch's buckets per workload, for assertions about what
+// was charged regardless of the hour it was charged in.
+func workloadsOf(b core.UsageBatch) core.WorkloadUsage {
+	out := make(core.WorkloadUsage)
+	_ = b.Each(func(_ time.Time, workload string, u *core.Usage) error {
+		w := out[workload]
+		w.Add(*u)
+		out[workload] = w
+		return nil
+	})
+	return out
+}
+
+// totalOf sums every bucket and workload in a batch.
+func totalOf(b core.UsageBatch) core.Usage {
+	return workloadsOf(b).Total()
 }
 
 // poolsOf builds request pools from names, for a Charge.
@@ -49,8 +70,8 @@ func TestLocalCounterBackend_ChargeAndLoad(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1})
 
-	cb.Charge(backendB1, Charge{APIRequests: 2, EgressBytes: 1024, IngressBytes: 2048, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
-	cb.Charge(backendB1, Charge{APIRequests: 3, Pools: poolsOf(poolClassA), PoolN: 3})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 2, EgressBytes: 1024, IngressBytes: 2048, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 3, Pools: poolsOf(poolClassA), PoolN: 3})
 
 	got := loaded(cb, backendB1)
 	if got.APIRequests != 5 || got.EgressBytes != 1024 || got.IngressBytes != 2048 {
@@ -67,7 +88,7 @@ func TestLocalCounterBackend_PoolListedTwiceIsChargedTwice(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1})
 
-	cb.Charge(backendB1, Charge{APIRequests: 2, Pools: poolsOf(poolClassA, poolClassA), PoolN: 1})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 2, Pools: poolsOf(poolClassA, poolClassA), PoolN: 1})
 
 	if got := loaded(cb, backendB1).Pools[poolClassA]; got != 2 {
 		t.Errorf("class_a = %d, want 2", got)
@@ -80,9 +101,9 @@ func TestLocalCounterBackend_IgnoresEmptyAndUnknown(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1})
 
-	cb.Charge(backendB1, Charge{})
-	cb.Charge(backendB1, Charge{Pools: poolsOf(poolClassA)})
-	cb.Charge("unknown", Charge{APIRequests: 5})
+	cb.Charge(backendB1, oldBucket, Charge{})
+	cb.Charge(backendB1, oldBucket, Charge{Pools: poolsOf(poolClassA)})
+	cb.Charge("unknown", oldBucket, Charge{APIRequests: 5})
 
 	if got := loaded(cb, "unknown"); !got.IsZero() {
 		t.Errorf("unknown backend = %+v, want zero", got)
@@ -98,7 +119,7 @@ func TestLocalCounterBackend_ZeroPoolNChargesNoPool(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1})
 
-	cb.Charge(backendB1, Charge{APIRequests: 1, Pools: poolsOf(poolClassA)})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 1, Pools: poolsOf(poolClassA)})
 
 	got := loaded(cb, backendB1)
 	if got.APIRequests != 1 || got.Pools != nil {
@@ -111,8 +132,8 @@ func TestLocalCounterBackend_ZeroPoolNChargesNoPool(t *testing.T) {
 func TestLocalCounterBackend_SplitsByWorkload(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1})
-	cb.Charge(backendB1, Charge{Workload: workloadA, APIRequests: 2, EgressBytes: 100})
-	cb.Charge(backendB1, Charge{Workload: workloadB, APIRequests: 3, EgressBytes: 50})
+	cb.Charge(backendB1, oldBucket, Charge{Workload: workloadA, APIRequests: 2, EgressBytes: 100})
+	cb.Charge(backendB1, oldBucket, Charge{Workload: workloadB, APIRequests: 3, EgressBytes: 50})
 
 	if got := loaded(cb, backendB1); got.APIRequests != 5 || got.EgressBytes != 150 {
 		t.Errorf("Load = %+v, want both workloads summed", got)
@@ -121,7 +142,7 @@ func TestLocalCounterBackend_SplitsByWorkload(t *testing.T) {
 	if len(batches) != 1 {
 		t.Fatalf("Take returned %d batches, want 1", len(batches))
 	}
-	w := batches[0].Workloads
+	w := workloadsOf(batches[0])
 	if w[workloadA].EgressBytes != 100 || w[workloadB].EgressBytes != 50 {
 		t.Errorf("workloads = %+v, want 100 for %s and 50 for %s", w, workloadA, workloadB)
 	}
@@ -132,8 +153,8 @@ func TestLocalCounterBackend_SplitsByWorkload(t *testing.T) {
 func TestLocalCounterBackend_TakeEmptiesTheCounters(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{backendB1, "b2"})
-	cb.Charge(backendB1, Charge{APIRequests: 10, Pools: poolsOf(poolClassA), PoolN: 10})
-	cb.Charge("b2", Charge{EgressBytes: 300})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 10, Pools: poolsOf(poolClassA), PoolN: 10})
+	cb.Charge("b2", oldBucket, Charge{EgressBytes: 300})
 
 	batches := cb.Take(context.Background())
 	if len(batches) != 2 {
@@ -141,15 +162,15 @@ func TestLocalCounterBackend_TakeEmptiesTheCounters(t *testing.T) {
 	}
 	byBackend := map[string]core.UsageBatch{}
 	for _, b := range batches {
-		if b.ID != "" || b.Period != CurrentPeriod() {
-			t.Errorf("batch %+v, want no ID and the current period", b)
+		if b.ID != "" {
+			t.Errorf("batch %+v, want no ID", b)
 		}
 		byBackend[b.Backend] = b
 	}
-	if u := byBackend[backendB1].Workloads.Total(); u.APIRequests != 10 || u.Pools[poolClassA] != 10 {
+	if u := totalOf(byBackend[backendB1]); u.APIRequests != 10 || u.Pools[poolClassA] != 10 {
 		t.Errorf("b1 batch = %+v, want 10 requests and 10 against class_a", u)
 	}
-	if u := byBackend["b2"].Workloads.Total(); u.EgressBytes != 300 {
+	if u := totalOf(byBackend["b2"]); u.EgressBytes != 300 {
 		t.Errorf("b2 batch = %+v, want 300 egress", u)
 	}
 	if got := loaded(cb, backendB1); !got.IsZero() {
@@ -163,7 +184,7 @@ func TestLocalCounterBackend_SettleRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	cb := NewLocalCounterBackend([]string{backendB1})
-	cb.Charge(backendB1, Charge{APIRequests: 4, Pools: poolsOf(poolClassA), PoolN: 4})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 4, Pools: poolsOf(poolClassA), PoolN: 4})
 
 	batches := cb.Take(ctx)
 	cb.Settle(ctx, &batches[0], true)
@@ -171,37 +192,56 @@ func TestLocalCounterBackend_SettleRoundTrip(t *testing.T) {
 		t.Fatalf("Take after an applied settle = %+v, want nothing", got)
 	}
 
-	cb.Charge(backendB1, Charge{APIRequests: 4, Pools: poolsOf(poolClassA), PoolN: 4})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 4, Pools: poolsOf(poolClassA), PoolN: 4})
 	batches = cb.Take(ctx)
 	cb.Settle(ctx, &batches[0], false)
 	if got := loaded(cb, backendB1); got.APIRequests != 4 || got.Pools[poolClassA] != 4 {
 		t.Errorf("Load after an unapplied settle = %+v, want the batch back", got)
 	}
 	again := cb.Take(ctx)
-	if len(again) != 1 || again[0].Workloads.Total().APIRequests != 4 {
+	if len(again) != 1 || totalOf(again[0]).APIRequests != 4 {
 		t.Errorf("Take after an unapplied settle = %+v, want the batch again", again)
 	}
 }
 
-// TestLocalCounterBackend_SettleKeepsThePeriod asserts a batch put back by
-// Settle stays in its own period rather than moving into the current one.
-func TestLocalCounterBackend_SettleKeepsThePeriod(t *testing.T) {
+// TestLocalCounterBackend_SettleKeepsTheBucket asserts a batch put back by
+// Settle stays in its own bucket, outside a window that starts after it.
+func TestLocalCounterBackend_SettleKeepsTheBucket(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	cb := NewLocalCounterBackend([]string{backendB1})
-	old := core.UsageBatch{Backend: backendB1, Period: oldPeriod, Workloads: core.WorkloadUsage{workloadA: {
+	old := core.UsageBatch{Backend: backendB1, Buckets: core.BucketUsage{oldBucket: {workloadA: {
 		UsageStat: core.UsageStat{APIRequests: 7},
 		Pools:     core.PoolUsage{poolClassA: 7},
-	}}}
+	}}}}
 
 	cb.Settle(ctx, &old, false)
 
-	if got := loaded(cb, backendB1); !got.IsZero() {
-		t.Errorf("current period = %+v, want zero; the batch belongs to %s", got, oldPeriod)
+	var recent core.Usage
+	cb.Load(backendB1, oldBucket.Add(time.Hour), &recent)
+	if !recent.IsZero() {
+		t.Errorf("window after %v = %+v, want zero", oldBucket, recent)
 	}
 	batches := cb.Take(ctx)
-	if len(batches) != 1 || batches[0].Period != oldPeriod || batches[0].Workloads[workloadA].Pools[poolClassA] != 7 {
-		t.Errorf("Take = %+v, want the batch back in %s", batches, oldPeriod)
+	if len(batches) != 1 || batches[0].Buckets[oldBucket][workloadA].Pools[poolClassA] != 7 {
+		t.Errorf("Take = %+v, want the batch back in its bucket", batches)
+	}
+}
+
+// TestLocalCounterBackend_LoadSince asserts Load sums only buckets starting
+// at or after since, so a check reads the current cycle alone.
+func TestLocalCounterBackend_LoadSince(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{backendB1})
+	cycleStart := oldBucket.Add(24 * time.Hour)
+	cb.Charge(backendB1, cycleStart.Add(-time.Hour), Charge{APIRequests: 5})
+	cb.Charge(backendB1, cycleStart, Charge{APIRequests: 2})
+	cb.Charge(backendB1, cycleStart.Add(3*time.Hour), Charge{APIRequests: 1})
+
+	var u core.Usage
+	cb.Load(backendB1, cycleStart, &u)
+	if u.APIRequests != 3 {
+		t.Errorf("APIRequests since %v = %d, want 3", cycleStart, u.APIRequests)
 	}
 }
 
@@ -214,7 +254,7 @@ func TestLocalCounterBackend_Backends(t *testing.T) {
 	}
 
 	cb := NewLocalCounterBackend(nil)
-	cb.Charge(backendB1, Charge{APIRequests: 1})
+	cb.Charge(backendB1, oldBucket, Charge{APIRequests: 1})
 	if got := loaded(cb, backendB1); !got.IsZero() || len(cb.Backends()) != 0 {
 		t.Errorf("nil backends: Load = %+v, Backends = %v, want nothing tracked", got, cb.Backends())
 	}
@@ -231,18 +271,18 @@ func TestLocalCounterBackend_ChargesRacingTake(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		for range iterations {
-			cb.Charge(backendB1, Charge{APIRequests: 1})
+			cb.Charge(backendB1, oldBucket, Charge{APIRequests: 1})
 		}
 	})
 	var total int64
 	for range 50 {
 		for _, b := range cb.Take(ctx) {
-			total += b.Workloads.Total().APIRequests
+			total += totalOf(b).APIRequests
 		}
 	}
 	wg.Wait()
 	for _, b := range cb.Take(ctx) {
-		total += b.Workloads.Total().APIRequests
+		total += totalOf(b).APIRequests
 	}
 
 	if total != iterations {

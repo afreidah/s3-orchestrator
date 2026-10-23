@@ -32,11 +32,11 @@ type BackendQuotaStripe struct {
 
 type BackendRequestUsage struct {
 	BackendName string
-	Period      string
 	Pool        string
 	Requests    int64
 	UpdatedAt   pgtype.Timestamptz
 	Workload    string
+	BucketStart pgtype.Timestamptz
 }
 
 type BackendState struct {
@@ -50,12 +50,12 @@ type BackendState struct {
 
 type BackendUsage struct {
 	BackendName  string
-	Period       string
 	ApiRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
 	UpdatedAt    pgtype.Timestamptz
 	Workload     string
+	BucketStart  pgtype.Timestamptz
 }
 
 type Bucket struct {

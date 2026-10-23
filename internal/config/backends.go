@@ -185,10 +185,25 @@ func usageResetErrs(prefix string, b *BackendConfig) []error {
 	if b.UsageResetDay < 0 || b.UsageResetDay > MaxUsageResetDay {
 		errs = append(errs, prefixedDetail(prefix, ErrUsageResetDayRange, strconv.Itoa(b.UsageResetDay)))
 	}
-	if _, err := b.UsageResetLocation(); err != nil {
+	loc, err := b.UsageResetLocation()
+	switch {
+	case err != nil:
 		errs = append(errs, prefixedDetail(prefix, ErrUsageResetTimezone, fmt.Sprintf("%q", b.UsageResetTimezone)))
+	case !wholeHourZone(loc, time.Now()):
+		errs = append(errs, prefixedDetail(prefix, ErrUsageResetPartialHour, fmt.Sprintf("%q", b.UsageResetTimezone)))
 	}
 	return errs
+}
+
+// wholeHourZone reports whether loc stays a whole number of hours from UTC
+// for the year from now, so its midnights land on hourly usage buckets.
+func wholeHourZone(loc *time.Location, now time.Time) bool {
+	for day := range 366 {
+		if _, offset := now.AddDate(0, 0, day).In(loc).Zone(); offset%3600 != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // MaxUsageResetDay is the last day a usage cycle may start on: the last day

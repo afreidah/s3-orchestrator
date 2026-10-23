@@ -2010,6 +2010,28 @@ func TestBackendConfig_UsageResetErrors(t *testing.T) {
 	}
 }
 
+// TestBackendConfig_UsageResetPartialHourZone verifies a zone off UTC by part
+// of an hour, at any time of year, is refused and a whole-hour zone is not.
+func TestBackendConfig_UsageResetPartialHourZone(t *testing.T) {
+	t.Parallel()
+	for zone, wantErr := range map[string]bool{
+		"Asia/Kolkata":        true,
+		"Australia/Lord_Howe": true,
+		"America/New_York":    false,
+		"Europe/Berlin":       false,
+	} {
+		t.Run(zone, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			cfg.Backends[0].UsageResetTimezone = zone
+			err := cfg.SetDefaultsAndValidate()
+			if got := errors.Is(err, ErrUsageResetPartialHour); got != wantErr {
+				t.Errorf("partial-hour error = %v (err %v), want %v", got, err, wantErr)
+			}
+		})
+	}
+}
+
 // TestMetricsConfig_FleetInterval defaults the fleet interval and rejects one
 // short enough to scan the ledger continuously.
 func TestMetricsConfig_FleetInterval(t *testing.T) {

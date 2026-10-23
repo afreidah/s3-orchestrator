@@ -29,18 +29,19 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestAggregator_Success assembles the dashboard from the fleet snapshot plus
-// the live usage and directory reads.
+// TestAggregator_Success assembles the dashboard from the fleet snapshot, the
+// tracker's cycle usage, and the directory read.
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
+	usage := NewMockUsageReader(ctrl)
+	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
+	usage.EXPECT().CycleUsage().Return(map[string]core.Usage{"b1": {
+		UsageStat: core.UsageStat{APIRequests: 10},
+		Pools:     core.PoolUsage{core.PoolAll: 10},
+	}})
 	store := storetest.NewMockDashboardStore(ctrl)
-	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
-		Return(map[string]core.WorkloadUsage{"b1": {"client": {
-			UsageStat: core.UsageStat{APIRequests: 10},
-			Pools:     core.PoolUsage{core.PoolAll: 10},
-		}}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil)
 	fleet := newStubFleet(ctrl, &metrics.FleetSnapshot{
@@ -53,7 +54,7 @@ func TestAggregator_Success(t *testing.T) {
 		Multipart: map[string]int64{"b1": 1},
 	})
 
-	da := New(store, stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
+	da := New(store, usage, nil, []string{"b1"}, fleet, nil)
 	data, err := da.GetData(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -96,13 +97,6 @@ type dashboardRead struct {
 func dashboardReads() []dashboardRead {
 	a := gomock.Any()
 	return []dashboardRead{
-		{"usage stats",
-			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.WorkloadUsage{}, nil)
-			},
-			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().GetUsageForPeriod(a, a).Return(nil, err)
-			}},
 		{"directory children",
 			func(m *storetest.MockDashboardStore) {
 				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil)

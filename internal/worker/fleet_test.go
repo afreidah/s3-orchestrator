@@ -119,7 +119,7 @@ func newFleet(
 // assertions that read them.
 func loadUsage(b counter.Backend, name string) core.Usage {
 	var u core.Usage
-	b.Load(name, &u)
+	b.Load(name, time.Time{}, &u)
 	return u
 }
 

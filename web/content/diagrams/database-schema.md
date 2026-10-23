@@ -54,7 +54,7 @@ window.s3oDiagram = {
     '    backend_quotas -->|striped byte total| backend_quota_stripes',
     '    backend_quotas -->|tracks objects| object_locations',
     '    backend_quotas -->|tracks uploads| multipart_uploads',
-    '    backend_quotas -->|monthly usage| backend_usage',
+    '    backend_quotas -->|hourly usage| backend_usage',
     '    backend_quotas -->|usage per pool| backend_request_usage',
     '    backend_quotas -->|in-flight intents| pending_objects',
     '    backend_quotas -->|pending deletes| cleanup_queue',
@@ -96,16 +96,16 @@ window.s3oDiagram = {
     backend_request_usage: {
       title: 'backend_request_usage',
       badge: 'core', badgeText: 'core table',
-      body: '<p>Monthly call counts per named request budget. <code>backend_usage.api_requests</code> counts every call a backend served, which is the right figure to report and the wrong one to admit against: providers meter operation classes separately, so charging a delete against an upload budget locks a backend out of writes while its read allowance sits unused.</p>' +
+      body: '<p>Hourly call counts per named request budget. <code>backend_usage.api_requests</code> counts every call a backend served, which is the right figure to report and the wrong one to admit against: providers meter operation classes separately, so charging a delete against an upload budget locks a backend out of writes while its read allowance sits unused.</p>' +
         '<p>Pools are additive - an operation charges every pool that contains it - so these rows do not sum to <code>api_requests</code> and are not a decomposition of it. Bytes stay in <code>backend_usage</code>, because providers do not class bytes.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY (composite), FK to backend_quotas</td></tr>' +
-        '<tr><td class="pk">period</td><td>TEXT</td><td>PRIMARY KEY (composite); the billing month the count belongs to</td></tr>' +
+        '<tr><td class="pk">bucket_start</td><td>TIMESTAMPTZ</td><td>PRIMARY KEY (composite); the UTC hour the calls were made in</td></tr>' +
         '<tr><td class="pk">workload</td><td>TEXT</td><td>PRIMARY KEY (composite); the workload that made the calls, as in <code>backend_usage</code></td></tr>' +
         '<tr><td class="pk">pool</td><td>TEXT</td><td>PRIMARY KEY (composite); the budget name from config, so the count is keyed rather than columnar and a new pool needs no migration</td></tr>' +
-        '<tr><td>requests</td><td>BIGINT</td><td>Calls charged to this pool in the period</td></tr>' +
+        '<tr><td>requests</td><td>BIGINT</td><td>Calls charged to this pool in the hour</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush that touched the row</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, period, workload, pool) for the per-pool flush &bull; idx_backend_request_usage_period (period) for the admission baseline, which loads a whole period at once</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, bucket_start, workload, pool) for the per-pool flush, the cycle read and the prune &bull; idx_backend_request_usage_bucket_start (bucket_start)</p>' +
         '<p>Used by: <a href="../admission-control/">admission</a> (per-pool headroom), <a href="../usage-quotas/">usage reporting</a>, and the usage flush that writes the in-memory counters down.</p>' +
         '<p class="ac-metric">Metrics: s3o_usage_pool_requests{backend,pool}, s3o_usage_pool_limit{backend,pool}</p>'
     },
@@ -208,18 +208,18 @@ window.s3oDiagram = {
     backend_usage: {
       title: 'backend_usage',
       badge: 'usage', badgeText: 'usage tracking',
-      body: '<p>Monthly rolling usage counters per backend and workload. Keyed by <code>(backend_name, period, workload)</code> where period is <code>YYYY-MM</code> format. A backend\'s totals, which limits are judged against, are the sum of its workloads. In-memory atomic counters are flushed to this table periodically via <code>FlushUsageDeltas</code> (upsert with atomic ADD).</p>' +
+      body: '<p>Hourly usage counters per backend and workload. Keyed by <code>(backend_name, bucket_start, workload)</code> where bucket_start is the UTC hour of the charge. A backend\'s cycle is the sum of its buckets from the cycle\'s start, and its totals, which limits are judged against, are the sum of its workloads. Buckets older than 100 days are pruned on flush. In-memory atomic counters are flushed to this table periodically via <code>FlushUsageDeltas</code> (upsert with atomic ADD).</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>PK + FK &rarr; backend_quotas</td></tr>' +
-        '<tr><td class="pk">period</td><td>TEXT</td><td>PK, e.g. "2026-03"</td></tr>' +
+        '<tr><td class="pk">bucket_start</td><td>TIMESTAMPTZ</td><td>PK, the UTC hour, e.g. 2026-03-01 14:00</td></tr>' +
         '<tr><td class="pk">workload</td><td>TEXT</td><td>PK; what made the charge: client, scrub, replication, and so on. unknown for a charge with none</td></tr>' +
         '<tr><td>api_requests</td><td>BIGINT</td><td>S3 API call count</td></tr>' +
         '<tr><td>egress_bytes</td><td>BIGINT</td><td>Bytes downloaded from backend</td></tr>' +
         '<tr><td>ingress_bytes</td><td>BIGINT</td><td>Bytes uploaded to backend</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush time</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (backend_name, period, workload)</p>' +
-        '<p>Used by: <a href="../write-path/">write path</a> eligibility filter (BackendsWithinLimits baseline), usage flush <a href="../background-services/">background service</a>, dashboard monthly usage chart.</p>' +
-        '<p class="ac-metric">Key queries: FlushUsageDeltas (INSERT ON CONFLICT DO UPDATE), GetUsageForPeriod</p>'
+        '<p class="ac-idx"><b>Indexes:</b> PK (backend_name, bucket_start, workload) &bull; idx_backend_usage_bucket_start (bucket_start)</p>' +
+        '<p>Used by: <a href="../write-path/">write path</a> eligibility filter (BackendsWithinLimits baseline), usage flush <a href="../background-services/">background service</a>.</p>' +
+        '<p class="ac-metric">Key queries: FlushUsageDeltas (INSERT ON CONFLICT DO UPDATE), GetUsageSince, PruneUsageBuckets</p>'
     },
     cleanup_queue: {
       title: 'cleanup_queue',
@@ -403,12 +403,12 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 |-------|---------|-------------|
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
 | **backend_quota_stripes** | A backend's stored byte total, split across rows so concurrent writes take different row locks | `(backend_name, stripe_id)` |
-| **backend_request_usage** | Monthly call counts per named request budget, which is what admission charges against | `(backend_name, period, workload, pool)` |
+| **backend_request_usage** | Hourly call counts per named request budget, which is what admission charges against | `(backend_name, bucket_start, workload, pool)` |
 | **object_locations** | Maps objects to backends (supports replication) and records the path each copy occupies | `(object_key, backend_name)` |
 | **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
-| **backend_usage** | Monthly API/bandwidth counters per backend and workload | `(backend_name, period, workload)` |
+| **backend_usage** | Hourly API/bandwidth counters per backend and workload | `(backend_name, bucket_start, workload)` |
 | **cleanup_queue** | Bytes waiting to be deleted, queued by the transaction that stopped recording them | `id` (auto-increment) |
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
 | **pending_objects** | In-flight write intents, claimed by every write before its bytes land (admission and crash recovery) | `intent_id` (UUID) |
@@ -469,3 +469,4 @@ An arrow is a one-to-many relationship, from the parent table to the child. In a
 | `00044_multipart_completion_heartbeat` | Add nullable `completion_heartbeat_at` to `multipart_uploads`. A completion sets it before reading the parts and renews it while it runs; while it is fresh, part records and aborts refuse the upload, so neither can delete bytes the assembly is reading. SQLite (0031) adds the same column |
 | `00045_notification_outbox_pending_index` | Rebuild `idx_notification_outbox_pending` on `next_retry` without the `attempts < 10` filter, since the notifier removes a row at its endpoint's `max_retries` and a higher limit left rows stuck. Built `CONCURRENTLY` outside a transaction. SQLite (0032) rebuilds the same index |
 | `00046_usage_workload` | Add `workload` to the primary keys of `backend_usage` and `backend_request_usage`, so usage is split by what caused it. Existing rows become `unknown`. SQLite (0033) rebuilds both tables |
+| `00047_usage_buckets` | Key `backend_usage` and `backend_request_usage` by `bucket_start`, the UTC hour of the charge, instead of a monthly period, so each backend's cycle can start on its own day and zone. Each monthly row becomes one bucket at the start of its month. SQLite (0034) rebuilds both tables |

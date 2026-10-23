@@ -199,7 +199,7 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 	rec.OperationFailed(ctx, s3op.PutObject, "b1", time.Now(), errors.New("boom")) // class_a + metric
 
 	var all core.Usage
-	cb.Load("b1", &all)
+	cb.Load("b1", time.Time{}, &all)
 	if got := all.Pools["class_a"]; got != 4 {
 		t.Errorf("class_a = %d, want 4 (APICall, Ingress, PutSuccess, OperationFailed)", got)
 	}
@@ -238,7 +238,7 @@ func TestOperation_EmitsTheMetricWithoutCharging(t *testing.T) {
 		t.Errorf("metric operation = %q, want HeadObject", got)
 	}
 	var u core.Usage
-	cb.Load("b1", &u)
+	cb.Load("b1", time.Time{}, &u)
 	if u.APIRequests != 0 {
 		t.Errorf("api_requests = %d, want 0; Operation records no charge", u.APIRequests)
 	}

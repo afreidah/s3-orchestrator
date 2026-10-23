@@ -132,14 +132,15 @@ func (f *fakeRedis) TxPipeline() redis.Pipeliner {
 	return &fakeTx{owner: f}
 }
 
-// seed sets a hash field directly, for state a test needs before it starts.
-func (f *fakeRedis) seed(key, field string, n int64) {
+// seed sets one counter of workloadA in oldBucket directly, for state a test
+// needs before it starts.
+func (f *fakeRedis) seed(key, name string, n int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.hashes[key] == nil {
 		f.hashes[key] = map[string]string{}
 	}
-	f.hashes[key][field] = strconv.FormatInt(n, 10)
+	f.hashes[key][seededField(name)] = strconv.FormatInt(n, 10)
 }
 
 // has reports whether a key exists.
@@ -218,9 +219,14 @@ func newHashBackend(t *testing.T, client RedisClient, backends ...string) *Redis
 	}
 }
 
-// liveKey is the live hash for a backend in the current period.
+// liveKey is the live hash for a backend.
 func liveKey(backend string) string {
-	return testPrefix + ":usage:" + CurrentPeriod() + ":" + backend
+	return testPrefix + ":usage:" + backend
+}
+
+// seededField is the hash field seed writes a counter under.
+func seededField(name string) string {
+	return fieldPrefix(oldBucket, workloadA) + name
 }
 
 // byBackend indexes batches by backend name.
@@ -232,20 +238,21 @@ func byBackend(batches []core.UsageBatch) map[string]core.UsageBatch {
 	return out
 }
 
-// TestCharge_WritesOneHashPerBackendAndPeriod pins the key layout: totals and
-// pools are fields of one hash, and the hash gets the key TTL.
-func TestCharge_WritesOneHashPerBackendAndPeriod(t *testing.T) {
+// TestCharge_WritesOneHashPerBackend pins the key layout: totals and pools are
+// fields of one hash under their bucket and workload, and the hash gets the
+// key TTL.
+func TestCharge_WritesOneHashPerBackend(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
 
-	r.Charge(backendB1, Charge{Workload: workloadA, APIRequests: 2, IngressBytes: 512, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
+	r.Charge(backendB1, oldBucket, Charge{Workload: workloadA, APIRequests: 2, IngressBytes: 512, Pools: poolsOf(poolClassA, "class_b"), PoolN: 2})
 
 	h := fr.hashes[liveKey(backendB1)]
 	want := map[string]string{
-		"w:scrub:" + fieldAPIRequests:  "2",
-		"w:scrub:" + fieldIngressBytes: "512",
-		"w:scrub:pool:class_a":         "2",
-		"w:scrub:pool:class_b":         "2",
+		"1577836800:w:scrub:" + fieldAPIRequests:  "2",
+		"1577836800:w:scrub:" + fieldIngressBytes: "512",
+		"1577836800:w:scrub:pool:class_a":         "2",
+		"1577836800:w:scrub:pool:class_b":         "2",
 	}
 	if !maps.Equal(h, want) {
 		t.Errorf("hash = %v, want %v; zero fields are not written", h, want)
@@ -254,7 +261,7 @@ func TestCharge_WritesOneHashPerBackendAndPeriod(t *testing.T) {
 		t.Errorf("TTL = %v, want %v", fr.ttls[liveKey(backendB1)], keyTTL)
 	}
 
-	r.Charge(backendB1, Charge{})
+	r.Charge(backendB1, oldBucket, Charge{})
 	if got := loaded(r, backendB1); got.APIRequests != 2 || got.Pools[poolClassA] != 2 {
 		t.Errorf("Load = %+v, want 2 requests and 2 against class_a", got)
 	}
@@ -266,7 +273,7 @@ func TestCharge_DropsAnUnknownBackend(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
 
-	r.Charge("unknown", Charge{APIRequests: 1})
+	r.Charge("unknown", oldBucket, Charge{APIRequests: 1})
 
 	if fr.has(liveKey("unknown")) {
 		t.Error("a charge for an unknown backend reached Redis")
@@ -283,8 +290,8 @@ func TestTakeShared_EscapesGlobCharsInThePrefix(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
 	r.prefix = "te*st[1]"
-	fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "own"), fieldAPIRequests, 1)
-	fr.seed("teXst1:usage-staged:"+CurrentPeriod()+":b1:other", fieldAPIRequests, 2)
+	fr.seed(r.stagedKey(backendB1, "own"), fieldAPIRequests, 1)
+	fr.seed("teXst1:usage-staged:b1:other", fieldAPIRequests, 2)
 
 	batches := r.TakeShared(context.Background())
 
@@ -300,7 +307,7 @@ func TestCharge_FailureKeepsTheChargeLocally(t *testing.T) {
 	fr.execErr = errRedisDown
 	r := newHashBackend(t, fr)
 
-	r.Charge(backendB1, Charge{APIRequests: 3})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 3})
 
 	if !r.inFallback() {
 		t.Error("a failure on an open breaker should enter fallback")
@@ -318,8 +325,8 @@ func TestCharge_FailureKeepsTheChargeLocally(t *testing.T) {
 func TestLoad_AddsLocalToTheHash(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
-	r.Charge(backendB1, Charge{APIRequests: 5, Pools: poolsOf(poolClassA), PoolN: 5})
-	r.local.Charge(backendB1, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 5, Pools: poolsOf(poolClassA), PoolN: 5})
+	r.local.Charge(backendB1, oldBucket, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
 
 	if got := loaded(r, backendB1); got.APIRequests != 7 || got.Pools[poolClassA] != 7 {
 		t.Errorf("Load = %+v, want 7 requests and 7 against class_a", got)
@@ -339,7 +346,7 @@ func TestFallback_ChargesAndLoadsLocally(t *testing.T) {
 	r.setFallback(true)
 	t.Cleanup(func() { r.setFallback(false) })
 
-	r.Charge(backendB1, Charge{APIRequests: 4})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 4})
 
 	if fr.has(liveKey(backendB1)) {
 		t.Error("a charge in fallback reached Redis")
@@ -356,8 +363,8 @@ func TestTakeShared_StagesAndReturnsBatches(t *testing.T) {
 	const colonBackend = "eu:west"
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr, backendB1, colonBackend, "idle")
-	r.Charge(backendB1, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
-	r.Charge(colonBackend, Charge{EgressBytes: 100})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 2, Pools: poolsOf(poolClassA), PoolN: 2})
+	r.Charge(colonBackend, oldBucket, Charge{EgressBytes: 100})
 
 	batches := byBackend(r.TakeShared(context.Background()))
 
@@ -367,13 +374,13 @@ func TestTakeShared_StagesAndReturnsBatches(t *testing.T) {
 	if len(batches) != 2 {
 		t.Fatalf("TakeShared returned %v, want b1 and eu:west", batches)
 	}
-	if b := batches[backendB1]; b.ID == "" || b.Period != CurrentPeriod() || b.Workloads.Total().APIRequests != 2 || b.Workloads.Total().Pools[poolClassA] != 2 {
-		t.Errorf("b1 batch = %+v, want an ID, the current period, and the charge", b)
+	if b := batches[backendB1]; b.ID == "" || totalOf(b).APIRequests != 2 || totalOf(b).Pools[poolClassA] != 2 {
+		t.Errorf("b1 batch = %+v, want an ID and the charge", b)
 	}
-	if b := batches[colonBackend]; b.ID == "" || b.Workloads.Total().EgressBytes != 100 {
+	if b := batches[colonBackend]; b.ID == "" || totalOf(b).EgressBytes != 100 {
 		t.Errorf("eu:west batch = %+v, want an ID and 100 egress", b)
 	}
-	if fr.has(liveKey(backendB1)) || !fr.has(r.stagedKey(CurrentPeriod(), backendB1, batches[backendB1].ID)) {
+	if fr.has(liveKey(backendB1)) || !fr.has(r.stagedKey(backendB1, batches[backendB1].ID)) {
 		t.Error("the live hash should have moved to its staged key")
 	}
 }
@@ -384,19 +391,19 @@ func TestSettle_StagedBatch(t *testing.T) {
 	ctx := context.Background()
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr, backendB1, "b2")
-	r.Charge(backendB1, Charge{APIRequests: 1})
-	r.Charge("b2", Charge{APIRequests: 2})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 1})
+	r.Charge("b2", oldBucket, Charge{APIRequests: 2})
 
 	first := byBackend(r.TakeShared(ctx))
 	applied, kept := first[backendB1], first["b2"]
 	r.Settle(ctx, &applied, true)
 	r.Settle(ctx, &kept, false)
 
-	if fr.has(r.stagedKey(applied.Period, applied.Backend, applied.ID)) {
+	if fr.has(r.stagedKey(applied.Backend, applied.ID)) {
 		t.Error("an applied staged hash should be deleted")
 	}
 	again := r.TakeShared(ctx)
-	if len(again) != 1 || again[0].ID != kept.ID || again[0].Workloads.Total().APIRequests != 2 {
+	if len(again) != 1 || again[0].ID != kept.ID || totalOf(again[0]).APIRequests != 2 {
 		t.Errorf("second take = %+v, want only the kept b2 batch %q", again, kept.ID)
 	}
 }
@@ -406,12 +413,12 @@ func TestSettle_StagedBatch(t *testing.T) {
 func TestSettle_InFallbackKeepsTheStagedHash(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
-	key := r.stagedKey(CurrentPeriod(), backendB1, "abc")
+	key := r.stagedKey(backendB1, "abc")
 	fr.seed(key, fieldAPIRequests, 1)
 	r.setFallback(true)
 	t.Cleanup(func() { r.setFallback(false) })
 
-	r.Settle(context.Background(), &core.UsageBatch{ID: "abc", Backend: backendB1, Period: CurrentPeriod()}, true)
+	r.Settle(context.Background(), &core.UsageBatch{ID: "abc", Backend: backendB1}, true)
 
 	if !fr.has(key) {
 		t.Error("the staged hash was deleted in fallback")
@@ -422,29 +429,33 @@ func TestSettle_InFallbackKeepsTheStagedHash(t *testing.T) {
 // backend's to settle.
 func TestSettle_LocalBatchReturnsToLocal(t *testing.T) {
 	r := newHashBackend(t, newFakeRedis())
-	b := core.UsageBatch{Backend: backendB1, Period: CurrentPeriod(),
-		Workloads: core.WorkloadUsage{workloadA: {UsageStat: core.UsageStat{APIRequests: 6}}}}
+	b := core.UsageBatch{Backend: backendB1, Buckets: core.BucketUsage{oldBucket: {workloadA: {UsageStat: core.UsageStat{APIRequests: 6}}}}}
 
 	r.Settle(context.Background(), &b, false)
 
 	batches := r.Take(context.Background())
-	if len(batches) != 1 || batches[0].Workloads[workloadA].APIRequests != 6 {
+	if len(batches) != 1 || batches[0].Buckets[oldBucket][workloadA].APIRequests != 6 {
 		t.Errorf("Take = %+v, want the local batch of 6", batches)
 	}
 }
 
-// TestTakeShared_TakesThePreviousMonth asserts a hash left in the previous
-// period is staged too, so the end of a month is flushed after it rolls over.
-func TestTakeShared_TakesThePreviousMonth(t *testing.T) {
+// TestLoad_SkipsBucketsBeforeSince asserts Load sums only the hash's buckets
+// from since onward, while a flush still takes every bucket.
+func TestLoad_SkipsBucketsBeforeSince(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
-	previous := flushPeriods()[1]
-	fr.seed(r.hashKey(previous, backendB1), fieldAPIRequests, 9)
+	since := oldBucket.Add(time.Hour)
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 5})
+	r.Charge(backendB1, since, Charge{APIRequests: 2})
 
+	var u core.Usage
+	r.Load(backendB1, since, &u)
+	if u.APIRequests != 2 {
+		t.Errorf("Load since %v = %d requests, want 2", since, u.APIRequests)
+	}
 	batches := r.TakeShared(context.Background())
-
-	if len(batches) != 1 || batches[0].Period != previous || batches[0].Workloads.Total().APIRequests != 9 {
-		t.Errorf("TakeShared = %+v, want the %s batch of 9", batches, previous)
+	if len(batches) != 1 || len(batches[0].Buckets) != 2 || totalOf(batches[0]).APIRequests != 7 {
+		t.Errorf("TakeShared = %+v, want both buckets, 7 requests", batches)
 	}
 }
 
@@ -455,18 +466,18 @@ func TestTakeShared_SkipsWhatCannotBeRead(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
 	fr.seed(stagedPrefix+"garbage", fieldAPIRequests, 1)
-	fr.hashes[r.stagedKey(CurrentPeriod(), "empty", "e1")] = map[string]string{}
-	good := r.stagedKey(CurrentPeriod(), backendB1, "g1")
+	fr.hashes[r.stagedKey("empty", "e1")] = map[string]string{}
+	good := r.stagedKey(backendB1, "g1")
 	fr.seed(good, fieldAPIRequests, 3)
-	fr.hashes[good][fieldEgressBytes] = "NaN"
-	fr.hashes[good]["unrelated"] = "5"
+	fr.hashes[good][seededField(fieldEgressBytes)] = "NaN"
+	fr.hashes[good][fieldIngressBytes] = "5"
 
 	batches := r.TakeShared(context.Background())
 
 	if len(batches) != 1 {
 		t.Fatalf("TakeShared = %+v, want only g1", batches)
 	}
-	if u := batches[0].Workloads.Total(); batches[0].ID != "g1" || u.APIRequests != 3 || u.EgressBytes != 0 {
+	if u := totalOf(batches[0]); batches[0].ID != "g1" || u.APIRequests != 3 || u.EgressBytes != 0 || u.IngressBytes != 0 {
 		t.Errorf("TakeShared = %+v, want g1 with 3 requests", batches)
 	}
 }
@@ -476,7 +487,7 @@ func TestTakeShared_SkipsWhatCannotBeRead(t *testing.T) {
 func TestTakeShared_StageErrorStillReadsStaged(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
-	fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "left"), fieldAPIRequests, 4)
+	fr.seed(r.stagedKey(backendB1, "left"), fieldAPIRequests, 4)
 	fr.renameErr = errRedisDown
 
 	batches := r.TakeShared(context.Background())
@@ -499,7 +510,7 @@ func TestTakeShared_ReadErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fr := newFakeRedis()
 			r := newHashBackend(t, fr)
-			fr.seed(r.stagedKey(CurrentPeriod(), backendB1, "s1"), fieldAPIRequests, 1)
+			fr.seed(r.stagedKey(backendB1, "s1"), fieldAPIRequests, 1)
 			tc.inject(fr)
 
 			if got := r.TakeShared(context.Background()); len(got) != 0 {
@@ -518,16 +529,15 @@ func TestParseStagedKey(t *testing.T) {
 		want core.UsageBatch
 		ok   bool
 	}{
-		{key: stagedPrefix + "2026-10:b1:ID1", want: core.UsageBatch{ID: "ID1", Backend: backendB1, Period: "2026-10"}, ok: true},
-		{key: stagedPrefix + "2026-10:eu:west:1:ID2", want: core.UsageBatch{ID: "ID2", Backend: "eu:west:1", Period: "2026-10"}, ok: true},
-		{key: "other:usage-staged:2026-10:b1:ID1"},
-		{key: stagedPrefix + "2026-10"},
-		{key: stagedPrefix + "2026-10:b1:"},
-		{key: stagedPrefix + "2026-10::ID1"},
-		{key: stagedPrefix + "2026-10:b1ID"},
+		{key: stagedPrefix + "b1:ID1", want: core.UsageBatch{ID: "ID1", Backend: backendB1}, ok: true},
+		{key: stagedPrefix + "eu:west:1:ID2", want: core.UsageBatch{ID: "ID2", Backend: "eu:west:1"}, ok: true},
+		{key: "other:usage-staged:b1:ID1"},
+		{key: stagedPrefix + "b1"},
+		{key: stagedPrefix + "b1:"},
+		{key: stagedPrefix + ":ID1"},
 	} {
 		got, ok := r.parseStagedKey(tc.key)
-		if ok != tc.ok || got.ID != tc.want.ID || got.Backend != tc.want.Backend || got.Period != tc.want.Period {
+		if ok != tc.ok || got.ID != tc.want.ID || got.Backend != tc.want.Backend {
 			t.Errorf("parseStagedKey(%q) = %+v, %v; want %+v, %v", tc.key, got, ok, tc.want, tc.ok)
 		}
 	}

@@ -39,7 +39,7 @@ type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	LedgerStats(ctx context.Context) (core.LedgerStats, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error)
+	core.UsageReader
 	CountReplicationBacklog(ctx context.Context, factor int) (core.ReplicationBacklog, error)
 }
 
@@ -143,10 +143,10 @@ func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
 	return nil
 }
 
-// updateUsageGauges refreshes the monthly usage gauges and seeds the
-// usage tracker baselines used by the in-process limit checks.
+// updateUsageGauges refreshes the tracker's cycle baselines, which the
+// in-process limit checks use, and republishes the usage gauges from them.
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	byWorkload, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
+	byWorkload, err := mc.usage.RefreshUsage(ctx, mc.store)
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
 		return
@@ -162,9 +162,6 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 		telemetry.UsageEgressBytes.WithLabelValues(name).Set(float64(u.EgressBytes))
 		telemetry.UsageIngressBytes.WithLabelValues(name).Set(float64(u.IngressBytes))
 	}
-	// The whole map is replaced, so a new month with no rows yet starts every
-	// backend at zero.
-	mc.usage.SetBaselines(usage)
 	mc.updateLimitGauges(usage)
 	updateWorkloadGauges(byWorkload)
 }

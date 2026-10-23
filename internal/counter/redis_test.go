@@ -112,7 +112,7 @@ func TestNewRedisCounterBackend_UnreachableStartsInFallback(t *testing.T) {
 	if !r.inFallback() {
 		t.Fatal("backend not in fallback with Redis unreachable at startup")
 	}
-	r.Charge(backendB1, Charge{APIRequests: 5})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 5})
 	if got := loaded(r, backendB1).APIRequests; got != 5 {
 		t.Errorf("Load = %d from the local counters, want 5", got)
 	}
@@ -196,7 +196,7 @@ func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
 
 	r := recoveringBackend(mock, newTestCB())
-	r.Charge(backendB1, Charge{APIRequests: 100, EgressBytes: 1024})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 100, EgressBytes: 1024})
 
 	r.tryRecover()
 
@@ -204,7 +204,7 @@ func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
 		t.Error("expected fallback to be cleared after recovery")
 	}
 	batches := r.Take(context.Background())
-	if len(batches) != 1 || batches[0].Workloads.Total().APIRequests != 100 || batches[0].ID != "" {
+	if len(batches) != 1 || totalOf(batches[0]).APIRequests != 100 || batches[0].ID != "" {
 		t.Errorf("Take after recovery = %+v, want the local batch of 100 with no ID", batches)
 	}
 }
@@ -217,7 +217,7 @@ func TestTryRecover_PingFailure_NoOp(t *testing.T) {
 	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("", errors.New("connection refused")))
 
 	r := recoveringBackend(mock, newTestCB())
-	r.Charge(backendB1, Charge{APIRequests: 50})
+	r.Charge(backendB1, oldBucket, Charge{APIRequests: 50})
 
 	r.tryRecover()
 

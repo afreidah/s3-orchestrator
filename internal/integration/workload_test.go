@@ -20,6 +20,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -29,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestWorkload_EveryChargeNamesItsWorkload fails when any path charges a
@@ -49,11 +51,12 @@ func TestWorkload_EveryChargeNamesItsWorkload(t *testing.T) {
 
 	charged := map[string]bool{}
 	for _, b := range h.stack.Runtime.Usage().Backend().Take(ctx) {
-		for workload, u := range b.Workloads {
+		_ = b.Each(func(_ time.Time, workload string, u *core.Usage) error {
 			if !u.IsZero() {
 				charged[workload] = true
 			}
-		}
+			return nil
+		})
 	}
 	if charged[string(audit.WorkloadUnknown)] {
 		t.Errorf("a charge was recorded as %q; workloads charged: %v", audit.WorkloadUnknown, charged)

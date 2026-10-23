@@ -3,11 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// Covers ApplyUsageBatch and GetUsageForPeriod against a real Postgres: totals
-// and pools accumulate additively, a batch with an ID applies at most once, old
-// flush IDs are pruned, a failed batch writes nothing, and reads are scoped to
-// one period. Each test writes under its own backend name because the fixture
-// database is shared by the whole suite.
+// Covers ApplyUsageBatch and GetUsageSince against a real Postgres: totals and
+// pools accumulate additively per bucket, a batch with an ID applies at most
+// once, old flush IDs and buckets are pruned, a failed batch writes nothing, and
+// reads sum each backend's buckets from its own start. Each test writes under
+// its own backend name because the fixture database is shared by the whole
+// suite.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -17,27 +18,28 @@ package postgres
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// pgUsagePeriod and pgUsagePool name the period and pool the usage tests write.
-const (
-	pgUsagePeriod = "2026-05"
-	pgUsagePool   = "class_a"
-)
+// pgUsagePool names the pool the usage tests write.
+const pgUsagePool = "class_a"
 
-// pgUsageBatch builds a batch for backend in pgUsagePeriod with the given ID,
+// pgUsageBucket is the bucket the usage tests charge: recent enough that the
+// retention prune keeps it.
+var pgUsageBucket = core.UsageBucket(time.Now().Add(-48 * time.Hour))
+
+// pgUsageBatch builds a batch for backend in pgUsageBucket with the given ID,
 // API request count and pools, all charged to the client workload.
 func pgUsageBatch(backend, id string, api int64, pools core.PoolUsage) *core.UsageBatch {
 	return &core.UsageBatch{
 		ID:      id,
 		Backend: backend,
-		Period:  pgUsagePeriod,
-		Workloads: core.WorkloadUsage{"client": {
+		Buckets: core.BucketUsage{pgUsageBucket: {"client": {
 			UsageStat: core.UsageStat{APIRequests: api, EgressBytes: 2 * api, IngressBytes: 3 * api},
 			Pools:     pools,
-		}},
+		}}},
 	}
 }
 
@@ -50,15 +52,23 @@ func pgApplyBatch(t *testing.T, s *Store, b *core.UsageBatch) {
 	}
 }
 
-// pgReadUsage returns backend's usage for period, failing the test on a read
-// error.
-func pgReadUsage(t *testing.T, s *Store, backend, period string) core.Usage {
+// pgUsageFor returns backend's usage from since onward and whether the read
+// held a row for it at all.
+func pgUsageFor(t *testing.T, s *Store, backend string, since time.Time) (core.Usage, bool) {
 	t.Helper()
-	usage, err := s.GetUsageForPeriod(context.Background(), period)
+	usage, err := s.GetUsageSince(context.Background(), map[string]time.Time{backend: since})
 	if err != nil {
-		t.Fatalf("GetUsageForPeriod: %v", err)
+		t.Fatalf("GetUsageSince: %v", err)
 	}
-	return usage[backend].Total()
+	w, ok := usage[backend]
+	return w.Total(), ok
+}
+
+// pgReadUsage returns backend's whole retained usage, summed.
+func pgReadUsage(t *testing.T, s *Store, backend string) core.Usage {
+	t.Helper()
+	u, _ := pgUsageFor(t, s, backend, time.Time{})
+	return u
 }
 
 // pgFlushIDRecorded reports whether usage_flushes holds id.
@@ -77,7 +87,13 @@ func pgFlushIDRecorded(t *testing.T, s *Store, id string) bool {
 // The usage tables reference backend_quotas, so a batch needs a row there.
 func pgUsageBackend(t *testing.T, s *Store) string {
 	t.Helper()
-	name := uniqueKey(t, "backend")
+	return pgRegisterBackend(t, s, uniqueKey(t, "backend"))
+}
+
+// pgRegisterBackend registers a backend under name and returns the name.
+// Used directly by the tests that need a second backend.
+func pgRegisterBackend(t *testing.T, s *Store, name string) string {
+	t.Helper()
 	if _, err := s.pool.Exec(context.Background(),
 		`INSERT INTO backend_quotas (backend_name, bytes_limit) VALUES ($1, 0) ON CONFLICT DO NOTHING`, name); err != nil {
 		t.Fatalf("register backend %s: %v", name, err)
@@ -106,7 +122,7 @@ func TestStoreInt_ApplyUsageBatch_AccumulatesTotalsAndPools(t *testing.T) {
 	pgApplyBatch(t, s, pgUsageBatch(backend, "", 10, core.PoolUsage{pgUsagePool: 10, "class_b": 4}))
 	pgApplyBatch(t, s, pgUsageBatch(backend, "", 5, core.PoolUsage{pgUsagePool: 5, "class_c": 0}))
 
-	u := pgReadUsage(t, s, backend, pgUsagePeriod)
+	u := pgReadUsage(t, s, backend)
 	if u.UsageStat != (core.UsageStat{APIRequests: 15, EgressBytes: 30, IngressBytes: 45}) {
 		t.Errorf("totals = %+v, want 15/30/45", u.UsageStat)
 	}
@@ -127,12 +143,12 @@ func TestStoreInt_ApplyUsageBatch_AppliesIDOnce(t *testing.T) {
 
 	pgApplyBatch(t, s, pgUsageBatch(backend, first, 4, core.PoolUsage{pgUsagePool: 4}))
 	pgApplyBatch(t, s, pgUsageBatch(backend, first, 4, core.PoolUsage{pgUsagePool: 4}))
-	if u := pgReadUsage(t, s, backend, pgUsagePeriod); u.APIRequests != 4 || u.Pools[pgUsagePool] != 4 {
+	if u := pgReadUsage(t, s, backend); u.APIRequests != 4 || u.Pools[pgUsagePool] != 4 {
 		t.Fatalf("after a repeated ID usage = %+v, want it counted once", u)
 	}
 
 	pgApplyBatch(t, s, pgUsageBatch(backend, second, 1, core.PoolUsage{pgUsagePool: 1}))
-	if u := pgReadUsage(t, s, backend, pgUsagePeriod); u.APIRequests != 5 || u.Pools[pgUsagePool] != 5 {
+	if u := pgReadUsage(t, s, backend); u.APIRequests != 5 || u.Pools[pgUsagePool] != 5 {
 		t.Errorf("after a new ID usage = %+v, want 5 requests and class_a=5", u)
 	}
 	if !pgFlushIDRecorded(t, s, first) || !pgFlushIDRecorded(t, s, second) {
@@ -158,6 +174,63 @@ func TestStoreInt_ApplyUsageBatch_PrunesOldFlushIDs(t *testing.T) {
 	}
 }
 
+// TestStoreInt_ApplyUsageBatch_PrunesOldBuckets verifies a flush drops its
+// backend's buckets older than the retention window, pools included, and
+// leaves other backends alone.
+func TestStoreInt_ApplyUsageBatch_PrunesOldBuckets(t *testing.T) {
+	s := adapterPgStore(t)
+	flushed, untouched := pgUsageBackend(t, s), pgRegisterBackend(t, s, uniqueKey(t, "untouched"))
+	expired := core.UsageBucket(time.Now().Add(-core.UsageRetention - time.Hour))
+	for _, backend := range []string{flushed, untouched} {
+		if _, err := s.pool.Exec(context.Background(),
+			`INSERT INTO backend_usage (backend_name, bucket_start, workload, api_requests) VALUES ($1, $2, 'client', 7)`,
+			backend, expired); err != nil {
+			t.Fatalf("seed expired totals for %s: %v", backend, err)
+		}
+		if _, err := s.pool.Exec(context.Background(),
+			`INSERT INTO backend_request_usage (backend_name, bucket_start, workload, pool, requests) VALUES ($1, $2, 'client', $3, 7)`,
+			backend, expired, pgUsagePool); err != nil {
+			t.Fatalf("seed expired pool for %s: %v", backend, err)
+		}
+	}
+
+	pgApplyBatch(t, s, pgUsageBatch(flushed, "", 1, core.PoolUsage{pgUsagePool: 1}))
+
+	if u := pgReadUsage(t, s, flushed); u.APIRequests != 1 || u.Pools[pgUsagePool] != 1 {
+		t.Errorf("flushed backend = %+v, want only the recent bucket", u)
+	}
+	if u := pgReadUsage(t, s, untouched); u.APIRequests != 7 || u.Pools[pgUsagePool] != 7 {
+		t.Errorf("other backend = %+v, want its bucket kept until its own flush", u)
+	}
+}
+
+// TestStoreInt_GetUsageSince_EachBackendItsOwnStart verifies every backend is
+// summed from its own start, and a backend not asked for is not read.
+func TestStoreInt_GetUsageSince_EachBackendItsOwnStart(t *testing.T) {
+	s := adapterPgStore(t)
+	late, early := pgUsageBackend(t, s), pgRegisterBackend(t, s, uniqueKey(t, "early"))
+	earlier := pgUsageBucket.Add(-24 * time.Hour)
+	for _, backend := range []string{late, early} {
+		b := pgUsageBatch(backend, "", 2, core.PoolUsage{pgUsagePool: 2})
+		b.Buckets[earlier] = core.WorkloadUsage{"client": {UsageStat: core.UsageStat{APIRequests: 5}, Pools: core.PoolUsage{pgUsagePool: 5}}}
+		pgApplyBatch(t, s, b)
+	}
+
+	usage, err := s.GetUsageSince(context.Background(), map[string]time.Time{late: pgUsageBucket, early: earlier})
+	if err != nil {
+		t.Fatalf("GetUsageSince: %v", err)
+	}
+	if u := usage[late].Total(); u.APIRequests != 2 || u.Pools[pgUsagePool] != 2 {
+		t.Errorf("late start = %+v, want only the bucket from its start", u)
+	}
+	if u := usage[early].Total(); u.APIRequests != 7 || u.Pools[pgUsagePool] != 7 {
+		t.Errorf("early start = %+v, want both buckets", u)
+	}
+	if _, ok := pgUsageFor(t, s, late, pgUsageBucket.Add(time.Hour)); ok {
+		t.Error("a start after every bucket read a row")
+	}
+}
+
 // TestStoreInt_ApplyUsageBatch_FailureWritesNothing verifies a failure at any
 // step rolls back the whole batch, flush ID included, so it applies on a retry.
 func TestStoreInt_ApplyUsageBatch_FailureWritesNothing(t *testing.T) {
@@ -177,7 +250,7 @@ func TestStoreInt_ApplyUsageBatch_FailureWritesNothing(t *testing.T) {
 				pgUsageBatch(backend, flushID, 3, core.PoolUsage{pgUsagePool: 3})); err == nil {
 				t.Fatal("ApplyUsageBatch should fail when a write is rejected")
 			}
-			if u := pgReadUsage(t, s, backend, pgUsagePeriod); !u.IsZero() {
+			if u := pgReadUsage(t, s, backend); !u.IsZero() {
 				t.Errorf("usage = %+v, want nothing written by a failed batch", u)
 			}
 			if pgFlushIDRecorded(t, s, flushID) {
@@ -210,31 +283,6 @@ func pgRejectWrites(t *testing.T, s *Store, table string) {
 	})
 }
 
-// TestStoreInt_GetUsageForPeriod_ScopedToPeriod pins the monthly rollover:
-// budgets reset because the read is keyed by period, with no reset job to run.
-func TestStoreInt_GetUsageForPeriod_ScopedToPeriod(t *testing.T) {
-	s := adapterPgStore(t)
-	backend := pgUsageBackend(t, s)
-
-	pgApplyBatch(t, s, pgUsageBatch(backend, "", 9, core.PoolUsage{pgUsagePool: 9}))
-
-	if u, ok := pgUsageFor(t, s, backend, "2026-06"); ok {
-		t.Errorf("backend carried %+v into the next period, want none", u)
-	}
-}
-
-// pgUsageFor returns backend's usage for period and whether the read held a
-// row for it at all.
-func pgUsageFor(t *testing.T, s *Store, backend, period string) (core.Usage, bool) {
-	t.Helper()
-	usage, err := s.GetUsageForPeriod(context.Background(), period)
-	if err != nil {
-		t.Fatalf("GetUsageForPeriod: %v", err)
-	}
-	w, ok := usage[backend]
-	return w.Total(), ok
-}
-
 // TestStoreInt_UsageQueries_SurfaceDatabaseErrors keeps a failing database
 // from reading as an unused budget or a flush that succeeded.
 func TestStoreInt_UsageQueries_SurfaceDatabaseErrors(t *testing.T) {
@@ -245,7 +293,7 @@ func TestStoreInt_UsageQueries_SurfaceDatabaseErrors(t *testing.T) {
 	if err := s.ApplyUsageBatch(ctx, pgUsageBatch(uniqueKey(t, "backend"), "", 1, nil)); err == nil {
 		t.Error("ApplyUsageBatch should surface a cancelled context")
 	}
-	if _, err := s.GetUsageForPeriod(ctx, pgUsagePeriod); err == nil {
-		t.Error("GetUsageForPeriod should surface a cancelled context")
+	if _, err := s.GetUsageSince(ctx, map[string]time.Time{"b": {}}); err == nil {
+		t.Error("GetUsageSince should surface a cancelled context")
 	}
 }

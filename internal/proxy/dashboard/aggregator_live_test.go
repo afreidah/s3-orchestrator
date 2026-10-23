@@ -35,7 +35,6 @@ import (
 // about.
 func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 	store := storetest.NewMockDashboardStore(ctrl)
-	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.WorkloadUsage{}, nil).AnyTimes()
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	return store
@@ -75,6 +74,7 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFle
 func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 	usage := NewMockUsageReader(ctrl)
 	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
+	usage.EXPECT().CycleUsage().Return(map[string]core.Usage{}).AnyTimes()
 	return usage
 }
 

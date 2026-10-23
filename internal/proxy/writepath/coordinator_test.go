@@ -81,7 +81,7 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 // assertions that read them.
 func loadUsage(b counter.Backend, name string) core.Usage {
 	var u core.Usage
-	b.Load(name, &u)
+	b.Load(name, time.Time{}, &u)
 	return u
 }
 

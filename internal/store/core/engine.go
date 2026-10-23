@@ -27,6 +27,7 @@ type engineRoles interface {
 	ExpiredObjectsLister
 	BackendStateStore
 	UsageFlusher
+	UsageReader
 	AdvisoryLocker
 	DashboardStore
 	LifecycleAdmin

@@ -16,6 +16,7 @@ package counter
 
 import (
 	"context"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -24,21 +25,18 @@ import (
 // INTERFACE
 // -------------------------------------------------------------------------
 
-// Backend abstracts the storage of per-backend usage counters: the request and
-// byte totals plus a keyed set of request pools, kept per backend, period and
-// workload. Implementations must be safe for concurrent use.
+// Backend abstracts the storage of per-backend usage counters, kept per
+// backend, hourly bucket and workload. Implementations must be safe for
+// concurrent use.
 //
-// Charge records one charge in the current period. Load adds the current
-// period's unflushed counters of every workload into u, so the limit check
-// that calls it on every request can reuse one value. Take hands this
-// process's counters over for a flush, one batch per backend and period
-// carrying each workload, and Settle tells the backend
-// whether the store applied a batch; a batch that was not applied is kept and
-// flushed again.
+// Charge records one charge in its bucket. Load adds every workload's
+// unflushed counters in buckets from since onward into u. Take hands this
+// process's counters over for a flush, one batch per backend, and Settle keeps
+// a batch the store did not apply for the next flush.
 type Backend interface {
 	Backends() []string
-	Charge(backend string, c Charge)
-	Load(backend string, u *core.Usage)
+	Charge(backend string, bucket time.Time, c Charge)
+	Load(backend string, since time.Time, u *core.Usage)
 	Take(ctx context.Context) []core.UsageBatch
 	Settle(ctx context.Context, b *core.UsageBatch, applied bool)
 }

@@ -81,11 +81,12 @@ type FleetView interface {
 	ServedCalls(name string) core.BackendCalls
 }
 
-// UsageReader is the usage surface the aggregator reads: the configured
-// per-backend limits it renders alongside consumption. *counter.UsageTracker
-// satisfies it.
+// UsageReader is the usage surface the aggregator reads: each backend's usage
+// so far this cycle and the limits it renders it against.
+// *counter.UsageTracker satisfies it.
 type UsageReader interface {
 	GetLimits() map[string]core.UsageLimits
+	CycleUsage() map[string]core.Usage
 }
 
 // ScrubReachReader names the backends the scrub queue draws from right now,
@@ -198,12 +199,8 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 		PlaintextCopies:        snap.Ledger.PlaintextCopies(),
 		CompressionStats:       snap.Ledger.Compression(),
 		ActiveMultipartCounts:  snap.Multipart,
+		UsageStats:             da.usage.CycleUsage(),
 	}
-	usage, err := da.store.GetUsageForPeriod(ctx, data.UsagePeriod)
-	if err != nil {
-		return nil, err
-	}
-	data.UsageStats = core.Totals(usage)
 	da.decorateLiveState(ctx, data)
 	return data, nil
 }

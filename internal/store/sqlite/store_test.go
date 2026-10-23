@@ -119,6 +119,17 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{34, func() {
+			for _, table := range []string{"backend_usage", "backend_request_usage"} {
+				exec("drop the "+table+" bucket index", `DROP INDEX IF EXISTS idx_`+table+`_bucket_start`)
+				exec("rename "+table+"'s bucket back to a period",
+					`ALTER TABLE `+table+` RENAME COLUMN bucket_start TO period`)
+				exec("shorten "+table+"'s bucket to its month",
+					`UPDATE `+table+` SET period = substr(period, 1, 7)`)
+			}
+			exec("restore the pool period index",
+				`CREATE INDEX IF NOT EXISTS idx_backend_request_usage_period ON backend_request_usage(period)`)
+		}},
 		{32, func() {
 			exec("drop the pending outbox index", `DROP INDEX idx_notification_outbox_pending`)
 			exec("restore the partial pending outbox index", `

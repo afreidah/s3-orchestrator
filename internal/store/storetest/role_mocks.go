@@ -792,21 +792,6 @@ func (mr *MockDashboardStoreMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockDashboardStore)(nil).GetQuotaStats), ctx)
 }
 
-// GetUsageForPeriod mocks base method.
-func (m *MockDashboardStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.WorkloadUsage, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUsageForPeriod", ctx, period)
-	ret0, _ := ret[0].(map[string]core.WorkloadUsage)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUsageForPeriod indicates an expected call of GetUsageForPeriod.
-func (mr *MockDashboardStoreMockRecorder) GetUsageForPeriod(ctx, period any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockDashboardStore)(nil).GetUsageForPeriod), ctx, period)
-}
-
 // LedgerStats mocks base method.
 func (m *MockDashboardStore) LedgerStats(ctx context.Context) (core.LedgerStats, error) {
 	m.ctrl.T.Helper()

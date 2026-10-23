@@ -20,6 +20,7 @@ package core
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
@@ -296,13 +297,64 @@ func Totals(usage map[string]WorkloadUsage) map[string]Usage {
 	return out
 }
 
-// UsageBatch is one backend's counters for one period, taken for a flush. ID
-// is set for a batch staged in shared storage, which more than one flush can
-// find, so the store applies a batch with an ID at most once. A batch held
-// only in this process's memory has no ID.
+// UsageBucketSize is the span one usage bucket counts. An hour keeps every
+// whole-hour zone's midnight on a bucket boundary.
+const UsageBucketSize = time.Hour
+
+// UsageRetention is how long usage buckets are kept.
+const UsageRetention = 100 * 24 * time.Hour
+
+// UsageBucket returns the start of the UTC bucket t falls in. Usage is
+// recorded per bucket, independent of any backend's cycle.
+func UsageBucket(t time.Time) time.Time {
+	return t.UTC().Truncate(UsageBucketSize)
+}
+
+// BucketUsage is one backend's usage by bucket start and workload.
+type BucketUsage map[time.Time]WorkloadUsage
+
+// Add adds u to a workload's usage in one bucket, creating the bucket on
+// first use.
+func (b BucketUsage) Add(bucket time.Time, workload string, u Usage) {
+	if b[bucket] == nil {
+		b[bucket] = make(WorkloadUsage)
+	}
+	w := b[bucket][workload]
+	w.Add(u)
+	b[bucket][workload] = w
+}
+
+// UsageBatch is one backend's counters by bucket, taken for a flush. A batch
+// staged in shared storage has an ID, and the store applies it at most once.
 type UsageBatch struct {
-	ID        string
-	Backend   string
-	Period    string
-	Workloads WorkloadUsage
+	ID      string
+	Backend string
+	Buckets BucketUsage
+}
+
+// Each calls fn for every bucket and workload the batch carries, stopping at
+// the first error.
+func (b *UsageBatch) Each(fn func(bucket time.Time, workload string, u *Usage) error) error {
+	for bucket, workloads := range b.Buckets {
+		for workload, u := range workloads {
+			if err := fn(bucket, workload, &u); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// AddUsageRow folds one row of a usage read into usage. A workload with
+// several pools comes back as rows repeating its totals, so totals are set.
+func AddUsageRow(usage map[string]WorkloadUsage, backend, workload string, stat UsageStat, pool *string, requests *int64) {
+	if usage[backend] == nil {
+		usage[backend] = make(WorkloadUsage)
+	}
+	u := usage[backend][workload]
+	u.UsageStat = stat
+	if pool != nil && requests != nil {
+		u.AddPool(*pool, *requests)
+	}
+	usage[backend][workload] = u
 }

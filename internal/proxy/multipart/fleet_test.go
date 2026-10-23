@@ -85,7 +85,7 @@ func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.St
 // period.
 func (f *fleet) usageOf(name string) core.Usage {
 	var u core.Usage
-	f.Runtime.Usage().Backend().Load(name, &u)
+	f.Runtime.Usage().Backend().Load(name, time.Time{}, &u)
 	return u
 }
 

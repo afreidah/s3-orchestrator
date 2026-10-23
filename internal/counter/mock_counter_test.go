@@ -12,6 +12,7 @@ package counter
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
@@ -56,27 +57,27 @@ func (mr *MockBackendMockRecorder) Backends() *gomock.Call {
 }
 
 // Charge mocks base method.
-func (m *MockBackend) Charge(backend string, c Charge) {
+func (m *MockBackend) Charge(backend string, bucket time.Time, c Charge) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Charge", backend, c)
+	m.ctrl.Call(m, "Charge", backend, bucket, c)
 }
 
 // Charge indicates an expected call of Charge.
-func (mr *MockBackendMockRecorder) Charge(backend, c any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Charge(backend, bucket, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Charge", reflect.TypeOf((*MockBackend)(nil).Charge), backend, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Charge", reflect.TypeOf((*MockBackend)(nil).Charge), backend, bucket, c)
 }
 
 // Load mocks base method.
-func (m *MockBackend) Load(backend string, u *core.Usage) {
+func (m *MockBackend) Load(backend string, since time.Time, u *core.Usage) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Load", backend, u)
+	m.ctrl.Call(m, "Load", backend, since, u)
 }
 
 // Load indicates an expected call of Load.
-func (mr *MockBackendMockRecorder) Load(backend, u any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Load(backend, since, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBackend)(nil).Load), backend, u)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBackend)(nil).Load), backend, since, u)
 }
 
 // Settle mocks base method.
