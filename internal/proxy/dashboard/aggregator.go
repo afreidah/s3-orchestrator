@@ -61,6 +61,7 @@ type Data struct {
 	CompressionStats       map[string]core.CompressionStat
 	ActiveMultipartCounts  map[string]int64
 	UsageStats             map[string]core.Usage
+	UsageCycles            map[string]core.UsageCycle
 	UsageLimits            map[string]core.UsageLimits
 	UsagePeriod            string
 	TopLevelEntries        *core.DirectoryListResult
@@ -86,7 +87,7 @@ type FleetView interface {
 // *counter.UsageTracker satisfies it.
 type UsageReader interface {
 	GetLimits() map[string]core.UsageLimits
-	CycleUsage() map[string]core.Usage
+	CycleUsage() map[string]core.CycleUsage
 }
 
 // ScrubReachReader names the backends the scrub queue draws from right now,
@@ -139,6 +140,18 @@ func (da *Aggregator) scrubbableBackends() []string {
 		return da.order
 	}
 	return da.scrub.ReachableBackends()
+}
+
+// splitCycleUsage separates each backend's cycle usage into its figures and
+// its cycle. Both come from one read, so a figure and its label agree.
+func splitCycleUsage(in map[string]core.CycleUsage) (map[string]core.Usage, map[string]core.UsageCycle) {
+	usage := make(map[string]core.Usage, len(in))
+	cycles := make(map[string]core.UsageCycle, len(in))
+	for name, cu := range in {
+		usage[name] = cu.Usage
+		cycles[name] = cu.Cycle
+	}
+	return usage, cycles
 }
 
 // decorateLiveState fills in the fields that come from the running fleet
@@ -199,8 +212,8 @@ func (da *Aggregator) GetStatus(ctx context.Context) (*Data, error) {
 		PlaintextCopies:        snap.Ledger.PlaintextCopies(),
 		CompressionStats:       snap.Ledger.Compression(),
 		ActiveMultipartCounts:  snap.Multipart,
-		UsageStats:             da.usage.CycleUsage(),
 	}
+	data.UsageStats, data.UsageCycles = splitCycleUsage(da.usage.CycleUsage())
 	da.decorateLiveState(ctx, data)
 	return data, nil
 }

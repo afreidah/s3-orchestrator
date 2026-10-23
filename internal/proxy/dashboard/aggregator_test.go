@@ -17,6 +17,7 @@ package dashboard
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -37,9 +38,10 @@ func TestAggregator_Success(t *testing.T) {
 
 	usage := NewMockUsageReader(ctrl)
 	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
-	usage.EXPECT().CycleUsage().Return(map[string]core.Usage{"b1": {
-		UsageStat: core.UsageStat{APIRequests: 10},
-		Pools:     core.PoolUsage{core.PoolAll: 10},
+	cycle := core.UsagePeriod{ResetDay: 15}.Cycle(time.Now())
+	usage.EXPECT().CycleUsage().Return(map[string]core.CycleUsage{"b1": {
+		Usage: core.Usage{UsageStat: core.UsageStat{APIRequests: 10}, Pools: core.PoolUsage{core.PoolAll: 10}},
+		Cycle: cycle,
 	}})
 	store := storetest.NewMockDashboardStore(ctrl)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -65,6 +67,9 @@ func TestAggregator_Success(t *testing.T) {
 	}
 	if u := data.UsageStats["b1"]; u.APIRequests != 10 || u.Pools[core.PoolAll] != 10 {
 		t.Errorf("UsageStats = %+v, want b1 with 10 requests on the wildcard pool", data.UsageStats)
+	}
+	if data.UsageCycles["b1"] != cycle {
+		t.Errorf("UsageCycles = %+v, want b1 in %+v", data.UsageCycles, cycle)
 	}
 	if data.ObjectCounts["b1"] != 5 {
 		t.Errorf("ObjectCounts = %d, want 5", data.ObjectCounts["b1"])

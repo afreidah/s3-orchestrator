@@ -62,11 +62,17 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.169.x (current)
+### v0.170.x (current)
+
+**Each backend's usage cycle on every surface ([#1772](https://github.com/afreidah/s3-orchestrator/issues/1772), v0.170.0)**
+
+`/admin/api/status` gives each backend a `usage_cycle` with its `start`, `next_reset` and `timezone`. The top-level `usage_period` stays for older clients but is only the calendar month in UTC; read each backend's `usage_cycle` instead. The TUI marks each usage-limit bar with its backend's cycle and drops the fleet-wide period from the dashboard and the Backends title, `admin status` adds a Cycle column to the usage-limits table in place of the `Usage period:` line, and the web dashboard's Monthly Usage section becomes Usage with a Cycle column. In `/ui/api/dashboard`, `UsageLimits[*].Period` now encodes as `{"reset_day", "timezone"}` instead of an empty zone, and `UsageCycles` carries each backend's cycle. A new gauge, `s3o_usage_cycle_reset_timestamp_seconds{backend}`, publishes each backend's next reset. No migration and no config change.
+
+### v0.169.x
 
 **Usage counted per backend cycle ([#1771](https://github.com/afreidah/s3-orchestrator/issues/1771), v0.169.0)**
 
-Usage is now recorded in hourly UTC buckets, and each backend's usage is read from the start of its own cycle, set by `usage_reset_day` and `usage_reset_timezone`. Limits, the status API, the TUI, the web dashboard and the `s3o_usage_*` gauges all report the current cycle. `usage_reset_timezone` must now be a whole number of hours from UTC all year. Buckets older than 100 days are pruned. Migration `00047_usage_buckets` (SQLite `0034_usage_buckets`) rekeys `backend_usage` and `backend_request_usage` by `bucket_start` and keeps each existing monthly row as one bucket at the start of its month.
+Usage is now recorded in hourly UTC buckets, and each backend's usage is read from the start of its own cycle, set by `usage_reset_day` and `usage_reset_timezone`. Limits and every usage figure count the current cycle; the labels that name it follow in v0.170.0. `usage_reset_timezone` must now be a whole number of hours from UTC all year. Buckets older than 100 days are pruned. Migration `00047_usage_buckets` (SQLite `0034_usage_buckets`) rekeys `backend_usage` and `backend_request_usage` by `bucket_start` and keeps each existing monthly row as one bucket at the start of its month.
 
 **Operator action items after upgrade:**
 

@@ -107,11 +107,10 @@ func TestApplyStatus(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.backends.loading = true
 	m.applyStatus(&adminapi.StatusResponse{
-		DBHealthy:   true,
-		UsagePeriod: "2026-07",
-		Backends:    []adminapi.BackendStatus{{Name: "b1", Healthy: true}},
+		DBHealthy: true,
+		Backends:  []adminapi.BackendStatus{{Name: "b1", Healthy: true}},
 	})
-	if m.backends.loading || !m.backends.dbHealthy || m.backends.usagePeriod != "2026-07" {
+	if m.backends.loading || !m.backends.dbHealthy {
 		t.Errorf("state = %+v", m.backends)
 	}
 	if len(m.backends.list.items) != 1 || len(m.backends.list.table.Rows()) != 1 {
@@ -143,9 +142,8 @@ func TestBackendsHeaderView_CountAndDBHealth(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.backends.list.setItems([]adminapi.BackendStatus{{Name: "b1"}, {Name: "b2"}})
 	m.backends.dbHealthy = true
-	m.backends.usagePeriod = "2026-07"
 	out := m.backendsHeaderView()
-	for _, want := range []string{"2 configured", "db: healthy", "2026-07"} {
+	for _, want := range []string{"2 configured", "db: healthy"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing %q: %q", want, out)
 		}

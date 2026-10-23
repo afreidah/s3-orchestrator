@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -68,6 +69,41 @@ func TestDashboard_BadgesRefusingBackends(t *testing.T) {
 	}
 	if row := rowFor("fine"); strings.Contains(row, "badge-") || strings.Contains(row, "class=") {
 		t.Errorf("fine row = %s, want no badge or highlight", row)
+	}
+}
+
+// TestDashboard_UsageShowsEachBackendsCycle verifies the Usage section labels
+// each backend's row with its own cycle rather than one fleet-wide month.
+func TestDashboard_UsageShowsEachBackendsCycle(t *testing.T) {
+	t.Parallel()
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	data := &dashboard.Data{
+		BackendOrder: []string{"c2", "r2"},
+		UsageCycles: map[string]core.UsageCycle{
+			"c2": core.UsagePeriod{ResetDay: 15}.Cycle(now),
+			"r2": core.UsagePeriod{Location: la}.Cycle(now),
+		},
+		UsagePeriod:     "2026-10",
+		TopLevelEntries: &core.DirectoryListResult{},
+	}
+	var buf bytes.Buffer
+	if err := loadTemplates().ExecuteTemplate(&buf, "dashboard.html", dashboardPage{Data: data}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := buf.String()
+	_, rest, found := strings.Cut(out, "<h2>Usage</h2>")
+	section, _, ok := strings.Cut(rest, "</section>")
+	if !found || !ok || strings.Contains(out, "Monthly Usage") {
+		t.Fatalf("no Usage section, or the old Monthly Usage heading remains:\n%s", out)
+	}
+	for _, want := range []string{"<td>c2</td>", "Oct 15 - Nov 15 UTC", "<td>r2</td>", "Oct 1 - Nov 1 America/Los_Angeles"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Usage section missing %q:\n%s", want, section)
+		}
 	}
 }
 
@@ -129,32 +165,6 @@ func TestCounterVecTotal(t *testing.T) {
 
 	if got := counterVecTotal(vec); got != 3 {
 		t.Errorf("populated vec total = %v, want 3 (2 read + 1 scrub)", got)
-	}
-}
-
-// TestFormatNumber verifies the format number contract.
-// Asserts that formatNumber() = , want.
-func TestFormatNumber(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input int64
-		want  string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{999, "999"},
-		{1000, "1,000"},
-		{12345, "12,345"},
-		{1000000, "1,000,000"},
-		{-42, "-42"},
-		{-1234, "-1,234"},
-	}
-
-	for _, tt := range tests {
-		got := formatNumber(tt.input)
-		if got != tt.want {
-			t.Errorf("formatNumber(%d) = %q, want %q", tt.input, got, tt.want)
-		}
 	}
 }
 

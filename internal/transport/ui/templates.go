@@ -45,8 +45,9 @@ var staticFS, _ = fs.Sub(embeddedFS, "static")
 func loadTemplates() *template.Template {
 	funcMap := template.FuncMap{
 		"formatBytes":    humanize.Bytes,
-		"formatNumber":   formatNumber,
+		"formatNumber":   humanize.Comma,
 		"formatDuration": humanize.Duration,
+		"formatCycle":    humanize.Cycle,
 		"pct":            pct,
 		"pctFloat":       pctFloat,
 		"barClass":       barClass,
@@ -78,25 +79,6 @@ func ratio(a, b int64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.2f", float64(a)/float64(b))
-}
-
-// formatNumber formats an integer with comma separators.
-func formatNumber(n int64) string {
-	if n < 0 {
-		return "-" + formatNumber(-n)
-	}
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c)) //nolint:gosec // G115: ASCII digit rune, always fits in byte
-	}
-	return string(result)
 }
 
 // pct returns a formatted percentage string, or "unlimited" if limit is 0.

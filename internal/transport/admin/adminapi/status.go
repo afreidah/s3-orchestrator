@@ -14,6 +14,8 @@ package adminapi
 import "time"
 
 // StatusResponse is a snapshot of instance and per-backend operational state.
+// UsagePeriod is the calendar month in UTC, kept for older clients; each
+// backend's own cycle is its BackendStatus.UsageCycle.
 type StatusResponse struct {
 	DBHealthy   bool            `json:"db_healthy"`
 	UsagePeriod string          `json:"usage_period"`
@@ -50,8 +52,8 @@ type IntegrityStatus struct {
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
 //
-// UsageLimits measures the period's usage against each limit the backend
-// enforces.
+// UsageLimits measures the cycle's usage against each limit the backend
+// enforces, and UsageCycle is the cycle the usage figures are counted in.
 type BackendStatus struct {
 	Name         string   `json:"name"`
 	Healthy      bool     `json:"healthy"`
@@ -68,6 +70,15 @@ type BackendStatus struct {
 	CompressionSavedBytes int64 `json:"compression_saved_bytes"`
 
 	UsageLimits []UsageMeter `json:"usage_limits"`
+	UsageCycle  UsageCycle   `json:"usage_cycle"`
+}
+
+// UsageCycle is the usage cycle a backend is in: when it began, when it next
+// resets, and the IANA zone its reset day is counted in.
+type UsageCycle struct {
+	Start     time.Time `json:"start"`
+	NextReset time.Time `json:"next_reset"`
+	Timezone  string    `json:"timezone"`
 }
 
 // UsageMeter is one usage limit a backend enforces and what the current period

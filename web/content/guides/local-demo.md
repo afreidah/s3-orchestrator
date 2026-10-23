@@ -143,7 +143,7 @@ The dashboard provides a real-time overview of the system:
 
 - **Storage Summary** - total bytes used and capacity across all backends with a progress bar
 - **Backends Table** - per-backend quota usage, object count, and active multipart uploads
-- **Monthly Usage** - API requests, egress, and ingress per backend
+- **Usage** - each backend's current usage cycle, with its API requests, egress, and ingress
 - **Objects** - interactive directory tree; click folders to expand, click files to download
 - **Configuration** - virtual buckets, routing strategy, replication factor, and rate limit status
 - **Logs** - recent structured log output, filterable by severity level

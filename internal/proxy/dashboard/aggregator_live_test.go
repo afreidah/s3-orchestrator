@@ -74,7 +74,7 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFle
 func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 	usage := NewMockUsageReader(ctrl)
 	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
-	usage.EXPECT().CycleUsage().Return(map[string]core.Usage{}).AnyTimes()
+	usage.EXPECT().CycleUsage().Return(map[string]core.CycleUsage{}).AnyTimes()
 	return usage
 }
 

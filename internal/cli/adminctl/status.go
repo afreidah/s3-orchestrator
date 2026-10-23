@@ -30,7 +30,7 @@ func cmdStatus(_ []string, c *client) int {
 }
 
 // renderStatus renders the status payload as a backends table led by the
-// backend name, followed by the DB health and usage period. Returning an error
+// backend name, followed by the usage limits and DB health. Returning an error
 // (e.g. an unexpected shape) makes the client fall back to raw JSON.
 func renderStatus(w io.Writer, body []byte) error {
 	var s adminapi.StatusResponse
@@ -61,20 +61,22 @@ func renderStatus(w io.Writer, body []byte) error {
 	if err := renderUsageLimits(w, s.Backends); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\nUsage period:  %s\n", s.DBHealthy, s.UsagePeriod)
+	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\n", s.DBHealthy)
 	return err
 }
 
 // renderUsageLimits renders every usage limit the backends enforce, one row
-// each, with what the period has used of it. A fleet with no limits prints
-// nothing.
+// each, with what the backend's own cycle has used of it. A fleet with no
+// limits prints nothing.
 func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 	var rows [][]string
 	for i := range backends {
+		c := backends[i].UsageCycle
 		for _, u := range backends[i].UsageLimits {
 			format := output.MeterFormat(u.Kind)
 			rows = append(rows, []string{
 				backends[i].Name,
+				humanize.Cycle(c.Start, c.NextReset, c.Timezone),
 				output.MeterLabel(u.Kind, u.Budget),
 				format(u.Used),
 				format(u.Limit),
@@ -88,5 +90,5 @@ func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return err
 	}
-	return output.Table(w, []string{"Backend", "Usage limit", "Used", "Limit", "Use%"}, rows)
+	return output.Table(w, []string{"Backend", "Cycle", "Usage limit", "Used", "Limit", "Use%"}, rows)
 }

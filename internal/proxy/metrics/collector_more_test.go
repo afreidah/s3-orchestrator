@@ -151,6 +151,9 @@ func TestUpdateQuotaMetrics_PublishesLimitGauges(t *testing.T) {
 	if got := testutil.ToFloat64(telemetry.UsageIngressLimitBytes.WithLabelValues("b1")); got != 0 {
 		t.Errorf("ingress limit gauge = %v, want 0 for an unlimited backend", got)
 	}
+	if got, want := testutil.ToFloat64(telemetry.UsageCycleResetTimestamp.WithLabelValues("b1")), float64(lim.Period.Cycle(time.Now()).Next.Unix()); got != want {
+		t.Errorf("cycle reset gauge = %v, want %v", got, want)
+	}
 }
 
 // TestUpdateQuotaMetrics_SeedsBaselinesFromJoinedUsage verifies the pools read

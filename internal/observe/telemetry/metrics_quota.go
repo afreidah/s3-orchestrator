@@ -93,22 +93,33 @@ var (
 		[]string{"backend"},
 	)
 
-	// UsageAPIRequests tracks the current month's API request count per backend.
+	// UsageAPIRequests tracks each backend's API request count in its current
+	// usage cycle.
 	UsageAPIRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_api_requests",
-			Help: "Current month API request count per backend (from DB)",
+			Help: "API request count per backend in its current usage cycle (from DB)",
 		},
 		[]string{"backend"},
 	)
 
-	// UsagePoolRequests tracks the current month's request count per backend
-	// request pool. Pools are additive, so these do not sum to
+	// UsageCycleResetTimestamp publishes when each backend's usage cycle next
+	// resets, so a dashboard can show the time left in the cycle.
+	UsageCycleResetTimestamp = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_cycle_reset_timestamp_seconds",
+			Help: "Unix time each backend's usage cycle next resets",
+		},
+		[]string{"backend"},
+	)
+
+	// UsagePoolRequests tracks each backend request pool's count in the
+	// backend's current cycle. Pools are additive, so these do not sum to
 	// s3o_usage_api_requests.
 	UsagePoolRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_pool_requests",
-			Help: "Current month request count per backend request pool (from DB)",
+			Help: "Request count per backend request pool in the current usage cycle (from DB)",
 		},
 		[]string{"backend", "pool"},
 	)
@@ -123,20 +134,20 @@ var (
 		[]string{"backend", "pool"},
 	)
 
-	// UsageEgressBytes tracks the current month's egress bytes per backend.
+	// UsageEgressBytes tracks each backend's egress bytes in its current cycle.
 	UsageEgressBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_egress_bytes",
-			Help: "Current month egress bytes per backend (from DB)",
+			Help: "Egress bytes per backend in its current usage cycle (from DB)",
 		},
 		[]string{"backend"},
 	)
 
-	// UsageIngressBytes tracks the current month's ingress bytes per backend.
+	// UsageIngressBytes tracks each backend's ingress bytes in its current cycle.
 	UsageIngressBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_ingress_bytes",
-			Help: "Current month ingress bytes per backend (from DB)",
+			Help: "Ingress bytes per backend in its current usage cycle (from DB)",
 		},
 		[]string{"backend"},
 	)
@@ -166,7 +177,7 @@ var (
 	UsageWorkloadAPIRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_workload_api_requests",
-			Help: "Current month API request count per backend and workload (from DB)",
+			Help: "API request count per backend and workload in the current usage cycle (from DB)",
 		},
 		[]string{"backend", "workload"},
 	)
@@ -176,7 +187,7 @@ var (
 	UsageWorkloadBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_usage_workload_bytes",
-			Help: "Current month bytes per backend, workload and direction (from DB)",
+			Help: "Bytes per backend, workload and direction in the current usage cycle (from DB)",
 		},
 		[]string{"backend", "workload", "direction"},
 	)

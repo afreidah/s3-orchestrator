@@ -24,7 +24,8 @@ const statusBody = `{
   "backends": [
     {"name":"minio-1","healthy":true,"refused_calls":[],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":10737418240,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0},
     {"name":"minio-2","healthy":false,"refused_calls":["GetObject"],"draining":true,"flags":["cordoned","draining"],"bytes_used":1048576,"bytes_limit":10737418240,"object_count":7,"api_requests":3,"ingress_bytes":2048,"egress_bytes":512,
-     "usage_limits":[{"kind":"egress","used":512,"limit":1024},{"kind":"requests","budget":"all","used":3,"limit":1200}]},
+     "usage_limits":[{"kind":"egress","used":512,"limit":1024},{"kind":"requests","budget":"all","used":3,"limit":1200}],
+     "usage_cycle":{"start":"2026-06-15T00:00:00-07:00","next_reset":"2026-07-15T00:00:00-07:00","timezone":"America/Los_Angeles"}},
     {"name":"minio-3","healthy":false,"refused_calls":["PutObject","GetObject","HeadObject","DeleteObject","DeleteObjects","CopyObject","ListObjects"],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":0,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0}
   ],
   "db_healthy": true,
@@ -56,11 +57,14 @@ func TestStatus_TextTable(t *testing.T) {
 	for _, want := range []string{
 		"minio-1", "minio-2", "10.0 GiB", "1.0 MiB",
 		"Health", "Refused", "State", "healthy", "degraded", "down", "GetObject", "cordoned,draining",
-		"DB healthy:    true", "Usage period:  2026-06",
+		"DB healthy:    true",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Usage period") {
+		t.Errorf("status output still prints the fleet-wide period:\n%s", out)
 	}
 	// The backend name must lead its row: minio-2 appears before its byte sizes.
 	if i, j := strings.Index(out, "minio-2"), strings.Index(out, "1.0 MiB"); i < 0 || j < 0 || i > j {
@@ -78,7 +82,7 @@ func TestStatus_UsageLimitsTable(t *testing.T) {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"Usage limit", "Use%", "egress", "512 B", "1.0 KiB", "50%", "requests:all", "1,200", "0%"} {
+	for _, want := range []string{"Cycle", "Jun 15 - Jul 15 America/Los_Angeles", "Usage limit", "Use%", "egress", "512 B", "1.0 KiB", "50%", "requests:all", "1,200", "0%"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}

@@ -124,6 +124,8 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 		for i, m := range meters {
 			bs.UsageLimits[i] = adminapi.UsageMeter(m)
 		}
+		cycle := data.UsageCycles[name]
+		bs.UsageCycle = adminapi.UsageCycle{Start: cycle.Start, NextReset: cycle.Next, Timezone: cycle.Zone()}
 		bs.CompressionSavedBytes = data.CompressionSaved(name)
 		backends = append(backends, bs)
 	}

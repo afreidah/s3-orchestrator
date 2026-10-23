@@ -13,6 +13,7 @@ package admin
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -97,6 +98,30 @@ func TestBackendStatuses_UsageLimits(t *testing.T) {
 	}
 	if got[1].UsageLimits == nil || len(got[1].UsageLimits) != 0 {
 		t.Errorf("b2 usage limits = %#v, want an empty non-nil list", got[1].UsageLimits)
+	}
+}
+
+// TestBackendStatuses_UsageCycle verifies each backend carries its own cycle,
+// with its bounds and the IANA name of the zone it is counted in.
+func TestBackendStatuses_UsageCycle(t *testing.T) {
+	t.Parallel()
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	mid := core.UsagePeriod{ResetDay: 15, Location: la}.Cycle(now)
+	cal := core.UsagePeriod{}.Cycle(now)
+	got := backendStatuses(&dashboard.Data{
+		BackendOrder: []string{"b1", "b2"},
+		UsageCycles:  map[string]core.UsageCycle{"b1": mid, "b2": cal},
+	})
+
+	if c := got[0].UsageCycle; !c.Start.Equal(mid.Start) || !c.NextReset.Equal(mid.Next) || c.Timezone != "America/Los_Angeles" {
+		t.Errorf("b1 cycle = %+v, want %v - %v in America/Los_Angeles", c, mid.Start, mid.Next)
+	}
+	if c := got[1].UsageCycle; !c.Start.Equal(cal.Start) || !c.NextReset.Equal(cal.Next) || c.Timezone != "UTC" {
+		t.Errorf("b2 cycle = %+v, want the calendar month in UTC", c)
 	}
 }
 

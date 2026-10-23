@@ -509,18 +509,17 @@ func TestSetBaselines_ReplacesEveryBackend(t *testing.T) {
 }
 
 // TestCycleBaseline_ClearsAtTheReset asserts flushed usage applies until the
-// cycle's reset and reads as zero from then, starting at the reset.
+// cycle's reset and reads as zero from then, in the following cycle.
 func TestCycleBaseline_ClearsAtTheReset(t *testing.T) {
 	t.Parallel()
-	start := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
-	next := start.AddDate(0, 1, 0)
-	b := cycleBaseline{used: core.Usage{APIRequests: 9}, start: start, next: next}
+	cycle := core.UsagePeriod{ResetDay: 15}.Cycle(time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC))
+	b := cycleBaseline{used: core.Usage{APIRequests: 9}, cycle: cycle}
 
-	if used, since := b.at(next.Add(-time.Nanosecond)); used.APIRequests != 9 || !since.Equal(start) {
-		t.Errorf("before the reset = %+v since %v, want 9 since %v", used, since, start)
+	if used, c := b.at(cycle.Next.Add(-time.Nanosecond)); used.APIRequests != 9 || c != cycle {
+		t.Errorf("before the reset = %+v in %+v, want 9 in %+v", used, c, cycle)
 	}
-	if used, since := b.at(next); !used.IsZero() || !since.Equal(next) {
-		t.Errorf("at the reset = %+v since %v, want zero since %v", used, since, next)
+	if used, c := b.at(cycle.Next); !used.IsZero() || c != cycle.Following() {
+		t.Errorf("at the reset = %+v in %+v, want zero in %+v", used, c, cycle.Following())
 	}
 }
 
@@ -557,10 +556,10 @@ func TestRefreshUsage_ReadsEachBackendFromItsCycleStart(t *testing.T) {
 	}
 
 	now := time.Now()
-	if s := reader.starts["b1"]; !s.Equal(mid.Period.Start(now)) {
-		t.Errorf("b1 read from %v, want its mid-month start %v", s, mid.Period.Start(now))
+	if s, want := reader.starts["b1"], mid.Period.Cycle(now).Start; !s.Equal(want) {
+		t.Errorf("b1 read from %v, want its mid-month start %v", s, want)
 	}
-	if s := reader.starts["b2"]; !s.Equal(core.UsagePeriod{}.Start(now)) {
+	if s := reader.starts["b2"]; !s.Equal(core.UsagePeriod{}.Cycle(now).Start) {
 		t.Errorf("b2 read from %v, want the calendar month start", s)
 	}
 	if got["b1"][workloadA].APIRequests != 10 {
@@ -598,10 +597,36 @@ func TestCycleUsage_AddsUnflushedFromTheCycleStart(t *testing.T) {
 	backend.Charge("b1", oldBucket, Charge{EgressBytes: 50})
 	tracker.Record(t.Context(), "b1", s3op.GetObject, 7, 0)
 
-	got := tracker.CycleUsage()["b1"]
+	got := tracker.CycleUsage()["b1"].Usage
 
 	if got.EgressBytes != 107 || got.APIRequests != 1 {
 		t.Errorf("CycleUsage = %+v, want 107 egress and 1 request", got)
+	}
+}
+
+// TestCycleUsage_ReportsEachBackendsCycle asserts each backend's usage comes
+// with its own cycle: the one its baseline was read in, rolled forward once
+// the reset has passed, or its period's current cycle before any baseline.
+func TestCycleUsage_ReportsEachBackendsCycle(t *testing.T) {
+	t.Parallel()
+	mid := capped(t, 10, 0, 0)
+	mid.Period = core.UsagePeriod{ResetDay: 15, Location: time.FixedZone("west", -7*3600)}
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{"b1": mid})
+	now := time.Now()
+
+	got := tracker.CycleUsage()
+	if c, want := got["b1"].Cycle, mid.Period.Cycle(now); c != want {
+		t.Errorf("b1 before any baseline = %+v, want %+v", c, want)
+	}
+
+	stale := mid.Period.Cycle(now.AddDate(0, -1, 0))
+	tracker.baseline.Store(&map[string]cycleBaseline{"b1": {used: core.Usage{APIRequests: 4}, cycle: stale}})
+	got = tracker.CycleUsage()
+	if cu := got["b1"]; cu.Cycle != stale.Following() || cu.Usage.APIRequests != 0 {
+		t.Errorf("b1 after its reset = %+v, want zero usage in %+v", cu, stale.Following())
+	}
+	if c, want := got["b2"].Cycle, (core.UsagePeriod{}).Cycle(now); c != want {
+		t.Errorf("b2 = %+v, want the calendar month %+v", c, want)
 	}
 }
 

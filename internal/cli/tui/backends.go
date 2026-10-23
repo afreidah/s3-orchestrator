@@ -30,13 +30,12 @@ import (
 
 // backendsView holds the state of the backends status pane.
 type backendsView struct {
-	list        sortTable[adminapi.BackendStatus] // one row per configured backend, in server order until sorted
-	dbHealthy   bool                              // metadata database health
-	usagePeriod string                            // period the usage counters cover
-	integrity   adminapi.IntegrityStatus          // how far behind content verification is
-	loading     bool                              // a status fetch is in flight
-	err         error                             // last fetch error, if any
-	drain       drainWatch                        // the drain this pane is following, if any
+	list      sortTable[adminapi.BackendStatus] // one row per configured backend, in server order until sorted
+	dbHealthy bool                              // metadata database health
+	integrity adminapi.IntegrityStatus          // how far behind content verification is
+	loading   bool                              // a status fetch is in flight
+	err       error                             // last fetch error, if any
+	drain     drainWatch                        // the drain this pane is following, if any
 }
 
 // newBackendsView builds the pane's empty state.
@@ -193,7 +192,6 @@ func (m *model) requeueBackendDLQ(backend string) tea.Cmd {
 func (m *model) applyStatus(resp *adminapi.StatusResponse) {
 	m.backends.list.setItems(resp.Backends)
 	m.backends.dbHealthy = resp.DBHealthy
-	m.backends.usagePeriod = resp.UsagePeriod
 	m.backends.integrity = resp.Integrity
 	healthy := resp.DBHealthy
 	m.dbHealthy = &healthy // surface globally for the sidebar indicator
@@ -536,9 +534,6 @@ func (m *model) backendsPaneView() string {
 // backendsHeaderView renders the title bar with the backend count and DB health.
 func (m *model) backendsHeaderView() string {
 	title := fmt.Sprintf("backends   %d configured", len(m.backends.list.received))
-	if m.backends.usagePeriod != "" {
-		title += "   usage period: " + m.backends.usagePeriod
-	}
 	titleLine := m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 	header := titleLine + "\n" + m.backendsStatsLine()
 	if line := m.drainProgressLine(); line != "" {

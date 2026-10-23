@@ -150,26 +150,22 @@ func (m *model) dashboardCapacity() string {
 	return m.meterBlock("capacity", rows)
 }
 
-// dashboardUsageLimits renders one bar per usage limit a backend enforces:
-// egress, ingress and each request budget. A backend lists only the limits it
-// has, so unlimited dimensions never appear, and with none anywhere the block
-// is left out.
+// dashboardUsageLimits renders one bar per usage limit a backend enforces,
+// each marked with the backend's own cycle. Unlimited dimensions never appear,
+// and with no limits anywhere the block is left out.
 func (m *model) dashboardUsageLimits() string {
 	var rows []meterRow
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
+		cycle := pathStyle.Render(humanize.Cycle(b.UsageCycle.Start, b.UsageCycle.NextReset, b.UsageCycle.Timezone))
 		for _, u := range b.UsageLimits {
-			rows = append(rows, meterRow{name: b.Name + " " + output.MeterLabel(u.Kind, u.Budget), used: u.Used, limit: u.Limit, format: output.MeterFormat(u.Kind)})
+			rows = append(rows, meterRow{name: b.Name + " " + output.MeterLabel(u.Kind, u.Budget), used: u.Used, limit: u.Limit, format: output.MeterFormat(u.Kind), markers: cycle})
 		}
 	}
 	if len(rows) == 0 {
 		return ""
 	}
-	label := "usage limits"
-	if m.backends.usagePeriod != "" {
-		label += "   " + pathStyle.Render("period "+m.backends.usagePeriod)
-	}
-	return m.meterBlock(label, rows)
+	return m.meterBlock("usage limits", rows)
 }
 
 // meterBlock renders rows under a heading, each as a bar followed by its
@@ -328,8 +324,8 @@ func (m *model) dashboardCompression() string {
 	return statusOKStyle.Render(humanize.Bytes(saved)) + " saved"
 }
 
-// dashboardUsage renders the fleet's request and transfer totals for the
-// current usage period.
+// dashboardUsage renders the fleet's request and transfer totals, each backend
+// counted over its own current cycle.
 func (m *model) dashboardUsage() string {
 	var requests, ingress, egress int64
 	for i := range m.backends.list.received {
@@ -338,12 +334,8 @@ func (m *model) dashboardUsage() string {
 		ingress += b.IngressBytes
 		egress += b.EgressBytes
 	}
-	usage := fmt.Sprintf("%s requests   %s in   %s out",
-		humanize.Comma(requests), humanize.Bytes(ingress), humanize.Bytes(egress))
-	if m.backends.usagePeriod != "" {
-		usage += "   " + pathStyle.Render("period "+m.backends.usagePeriod)
-	}
-	return usage
+	return fmt.Sprintf("%s requests   %s in   %s out   %s",
+		humanize.Comma(requests), humanize.Bytes(ingress), humanize.Bytes(egress), pathStyle.Render("current cycles"))
 }
 
 // dashboardCleanup renders the depths of the cleanup queue and its dead-letter

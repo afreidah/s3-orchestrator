@@ -1349,6 +1349,8 @@ components:
                     items:
                         type: string
                     type: array
+                usage_cycle:
+                    $ref: '#/components/schemas/UsageCycle'
                 usage_limits:
                     items:
                         $ref: '#/components/schemas/UsageMeter'
@@ -1367,6 +1369,7 @@ components:
                 - ingress_bytes
                 - compression_saved_bytes
                 - usage_limits
+                - usage_cycle
             type: object
         BackfillChecksumsResponse:
             properties:
@@ -2423,6 +2426,21 @@ components:
                 max_multipart_uploads:
                     format: int64
                     type: integer
+            type: object
+        UsageCycle:
+            properties:
+                next_reset:
+                    format: date-time
+                    type: string
+                start:
+                    format: date-time
+                    type: string
+                timezone:
+                    type: string
+            required:
+                - start
+                - next_reset
+                - timezone
             type: object
         UsageFlushResponse:
             properties:

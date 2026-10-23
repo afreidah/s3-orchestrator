@@ -55,8 +55,11 @@ Returns the full dashboard data. Quota, object, multipart, integrity, plaintext 
   "UsageStats": {
     "oci": {"APIRequests": 1234, "EgressBytes": 5242880, "IngressBytes": 10485760, "Pools": {"all": 1234}}
   },
+  "UsageCycles": {
+    "oci": {"Start": "2026-03-15T00:00:00-07:00", "Next": "2026-04-15T00:00:00-07:00"}
+  },
   "UsageLimits": {
-    "oci": {"EgressByteLimit": 10737418240, "IngressByteLimit": 0}
+    "oci": {"EgressByteLimit": 10737418240, "IngressByteLimit": 0, "Period": {"reset_day": 15, "timezone": "America/Los_Angeles"}}
   },
   "UsagePeriod": "2026-03",
   "TopLevelEntries": {

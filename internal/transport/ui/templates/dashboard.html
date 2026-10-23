@@ -233,13 +233,14 @@
   </section>
   {{end}}
 
-  <!-- Monthly Usage -->
+  <!-- Usage -->
   <section>
-    <h2>Monthly Usage ({{.Data.UsagePeriod}})</h2>
+    <h2>Usage</h2>
     <table>
       <thead>
         <tr>
           <th>Backend</th>
+          <th>Cycle</th>
           <th class="num">API Requests</th>
           <th>Request Budgets</th>
           <th class="num">Egress</th>
@@ -252,8 +253,10 @@
         {{range .Data.BackendOrder}}
           {{$usage := index $.Data.UsageStats .}}
           {{$limits := index $.Data.UsageLimits .}}
+          {{$cycle := index $.Data.UsageCycles .}}
           <tr>
             <td>{{.}}</td>
+            <td>{{formatCycle $cycle.Start $cycle.Next $cycle.Zone}}</td>
             <td class="num">{{formatNumber $usage.APIRequests}}</td>
             <td>
               {{- if not $limits.Pools}}unlimited

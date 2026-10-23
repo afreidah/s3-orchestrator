@@ -47,19 +47,19 @@ type UsageTracker struct {
 }
 
 // cycleBaseline is a backend's flushed usage in its current cycle, with the
-// cycle's start and next reset as of when it was read.
+// cycle as of when it was read.
 type cycleBaseline struct {
-	used        core.Usage
-	start, next time.Time
+	used  core.Usage
+	cycle core.UsageCycle
 }
 
-// at returns the flushed usage and cycle start that apply at now. Once the
-// reset has passed, a new cycle has begun with nothing flushed yet.
-func (b *cycleBaseline) at(now time.Time) (core.Usage, time.Time) {
-	if now.Before(b.next) {
-		return b.used, b.start
+// at returns the flushed usage and the cycle that apply at now. Once the reset
+// has passed, the following cycle has begun with nothing flushed yet.
+func (b *cycleBaseline) at(now time.Time) (core.Usage, core.UsageCycle) {
+	if now.Before(b.cycle.Next) {
+		return b.used, b.cycle
 	}
-	return core.Usage{}, b.next
+	return core.Usage{}, b.cycle.Following()
 }
 
 // NewUsageTracker creates a usage tracker with the given counter backend
@@ -152,13 +152,13 @@ type usageSnapshot struct {
 	baselines map[string]cycleBaseline
 }
 
-// cycle returns a backend's flushed usage in its current cycle and when the
-// cycle began. With no baseline yet, the cycle comes from its period.
-func (s usageSnapshot) cycle(name string, now time.Time) (core.Usage, time.Time) {
+// cycle returns a backend's flushed usage in its current cycle and the cycle.
+// With no baseline yet, the cycle comes from its period.
+func (s usageSnapshot) cycle(name string, now time.Time) (core.Usage, core.UsageCycle) {
 	if b, ok := s.baselines[name]; ok {
 		return b.at(now)
 	}
-	return core.Usage{}, s.limits[name].Period.Start(now)
+	return core.Usage{}, s.limits[name].Period.Cycle(now)
 }
 
 // snapshot loads the copy-on-write views in one go. Callers that check
@@ -179,8 +179,8 @@ func (s usageSnapshot) withUsed(backend Backend, name string, fn func(base core.
 	cur := unflushedPool.Get().(*core.Usage)
 	defer unflushedPool.Put(cur)
 	cur.Reset()
-	base, since := s.cycle(name, time.Now())
-	backend.Load(name, since, cur)
+	base, cycle := s.cycle(name, time.Now())
+	backend.Load(name, cycle.Start, cur)
 	return fn(base, cur)
 }
 
@@ -270,8 +270,7 @@ func (u *UsageTracker) setBaselines(baselines map[string]core.Usage, now time.Ti
 	limits := *u.limits.Load()
 	out := make(map[string]cycleBaseline, len(limits))
 	for _, name := range u.names(limits) {
-		p := limits[name].Period
-		out[name] = cycleBaseline{used: baselines[name], start: p.Start(now), next: p.Next(now)}
+		out[name] = cycleBaseline{used: baselines[name], cycle: limits[name].Period.Cycle(now)}
 	}
 	u.baseline.Store(&out)
 }
@@ -296,7 +295,7 @@ func (u *UsageTracker) RefreshUsage(ctx context.Context, store core.UsageReader)
 	names := u.names(limits)
 	starts := make(map[string]time.Time, len(names))
 	for _, name := range names {
-		starts[name] = limits[name].Period.Start(now)
+		starts[name] = limits[name].Period.Cycle(now).Start
 	}
 	usage, err := store.GetUsageSince(ctx, starts)
 	if err != nil {
@@ -306,18 +305,18 @@ func (u *UsageTracker) RefreshUsage(ctx context.Context, store core.UsageReader)
 	return usage, nil
 }
 
-// CycleUsage returns each backend's usage so far in its current cycle: the
-// flushed baseline plus what is charged and not yet flushed.
-func (u *UsageTracker) CycleUsage() map[string]core.Usage {
+// CycleUsage returns each backend's usage so far in its current cycle, the
+// flushed baseline plus what is charged and not yet flushed, with the cycle.
+func (u *UsageTracker) CycleUsage() map[string]core.CycleUsage {
 	snap := u.snapshot()
 	now := time.Now()
-	out := make(map[string]core.Usage, len(snap.limits))
+	out := make(map[string]core.CycleUsage, len(snap.limits))
 	for _, name := range u.names(snap.limits) {
-		base, since := snap.cycle(name, now)
-		var used core.Usage
-		used.Add(base)
-		u.backend.Load(name, since, &used)
-		out[name] = used
+		base, cycle := snap.cycle(name, now)
+		cu := core.CycleUsage{Cycle: cycle}
+		cu.Usage.Add(base)
+		u.backend.Load(name, cycle.Start, &cu.Usage)
+		out[name] = cu
 	}
 	return out
 }

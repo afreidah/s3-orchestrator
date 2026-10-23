@@ -5,12 +5,14 @@
 //
 // Pins where a backend's monthly cycle starts and ends: the calendar-month
 // default, a mid-month reset day on either side of its boundary, month and year
-// rollovers, and a zone whose offset changes across daylight saving time.
+// rollovers, a zone whose offset changes across daylight saving time, the
+// cycle after a reset, and the period's JSON form.
 // -------------------------------------------------------------------------------
 
 package core
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -42,14 +44,15 @@ func TestUsagePeriod_ZeroIsCalendarMonthUTC(t *testing.T) {
 		{time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC), "2026-12-01T00:00:00Z", "2026-12", "2027-01-01T00:00:00Z"},
 		{time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), "2027-01-01T00:00:00Z", "2027-01", "2027-02-01T00:00:00Z"},
 	} {
-		if got := p.Start(tc.now).UTC().Format(time.RFC3339); got != tc.start {
-			t.Errorf("Start(%v) = %s, want %s", tc.now, got, tc.start)
+		c := p.Cycle(tc.now)
+		if got := c.Start.UTC().Format(time.RFC3339); got != tc.start {
+			t.Errorf("Cycle(%v).Start = %s, want %s", tc.now, got, tc.start)
 		}
 		if got := p.Current(tc.now); got != tc.label {
 			t.Errorf("Current(%v) = %s, want %s", tc.now, got, tc.label)
 		}
-		if got := p.Next(tc.now).UTC().Format(time.RFC3339); got != tc.next {
-			t.Errorf("Next(%v) = %s, want %s", tc.now, got, tc.next)
+		if got := c.Next.UTC().Format(time.RFC3339); got != tc.next {
+			t.Errorf("Cycle(%v).Next = %s, want %s", tc.now, got, tc.next)
 		}
 	}
 }
@@ -72,8 +75,8 @@ func TestUsagePeriod_ResetDay(t *testing.T) {
 		if got := p.Current(tc.now); got != tc.label {
 			t.Errorf("Current(%v) = %s, want %s", tc.now, got, tc.label)
 		}
-		if got := p.Next(tc.now).UTC().Format(time.RFC3339); got != tc.next {
-			t.Errorf("Next(%v) = %s, want %s", tc.now, got, tc.next)
+		if got := p.Cycle(tc.now).Next.UTC().Format(time.RFC3339); got != tc.next {
+			t.Errorf("Cycle(%v).Next = %s, want %s", tc.now, got, tc.next)
 		}
 	}
 }
@@ -90,23 +93,45 @@ func TestUsagePeriod_Location(t *testing.T) {
 		t.Errorf("Current = %s, want 2026-10 until Pacific midnight", got)
 	}
 	// Nov 1 starts at 07:00 UTC while PDT is still in effect.
-	if got := p.Next(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)).UTC(); !got.Equal(time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)) {
+	if got := p.Cycle(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)).Next.UTC(); !got.Equal(time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)) {
 		t.Errorf("Next in October = %v, want 2026-11-01 07:00 UTC", got)
 	}
 	// Dec 1 starts at 08:00 UTC once PST is in effect.
-	if got := p.Next(time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)).UTC(); !got.Equal(time.Date(2026, 12, 1, 8, 0, 0, 0, time.UTC)) {
+	if got := p.Cycle(time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)).Next.UTC(); !got.Equal(time.Date(2026, 12, 1, 8, 0, 0, 0, time.UTC)) {
 		t.Errorf("Next in November = %v, want 2026-12-01 08:00 UTC", got)
 	}
 }
 
-// TestUsagePeriod_PreviousIsTheInstantBefore verifies the label of the cycle
-// before the current one is the label of the instant just before Start, which
-// is how a flush finds the counters of a cycle that has just ended.
-func TestUsagePeriod_PreviousIsTheInstantBefore(t *testing.T) {
+// TestUsageCycle_FollowingIsTheNextCycle verifies the cycle after a reset is
+// the one the period computes for that instant, across a DST change, and that
+// it keeps the period's zone.
+func TestUsageCycle_FollowingIsTheNextCycle(t *testing.T) {
 	t.Parallel()
-	p := UsagePeriod{ResetDay: 25}
-	start := p.Start(time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC))
-	if got := p.Current(start.Add(-time.Nanosecond)); got != "2025-11" {
-		t.Errorf("previous label = %s, want 2025-11", got)
+	p := UsagePeriod{ResetDay: 15, Location: mustZone(t, "America/Los_Angeles")}
+	c := p.Cycle(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC))
+	got, want := c.Following(), p.Cycle(c.Next)
+	if !got.Start.Equal(want.Start) || !got.Next.Equal(want.Next) {
+		t.Errorf("Following = %v - %v, want %v - %v", got.Start, got.Next, want.Start, want.Next)
+	}
+	if got.Zone() != "America/Los_Angeles" {
+		t.Errorf("Zone = %q, want America/Los_Angeles", got.Zone())
+	}
+}
+
+// TestUsagePeriod_MarshalJSON verifies a period encodes as its reset day and
+// zone name, with the defaults filled in for the zero value.
+func TestUsagePeriod_MarshalJSON(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		p    UsagePeriod
+		want string
+	}{
+		{UsagePeriod{}, `{"reset_day":1,"timezone":"UTC"}`},
+		{UsagePeriod{ResetDay: 15, Location: mustZone(t, "America/Los_Angeles")}, `{"reset_day":15,"timezone":"America/Los_Angeles"}`},
+	} {
+		got, err := json.Marshal(tc.p)
+		if err != nil || string(got) != tc.want {
+			t.Errorf("Marshal(%+v) = %s, %v; want %s", tc.p, got, err, tc.want)
+		}
 	}
 }

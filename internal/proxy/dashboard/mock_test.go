@@ -164,10 +164,10 @@ func (m *MockUsageReader) EXPECT() *MockUsageReaderMockRecorder {
 }
 
 // CycleUsage mocks base method.
-func (m *MockUsageReader) CycleUsage() map[string]core.Usage {
+func (m *MockUsageReader) CycleUsage() map[string]core.CycleUsage {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CycleUsage")
-	ret0, _ := ret[0].(map[string]core.Usage)
+	ret0, _ := ret[0].(map[string]core.CycleUsage)
 	return ret0
 }
 

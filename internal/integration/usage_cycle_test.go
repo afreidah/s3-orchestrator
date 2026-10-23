@@ -41,7 +41,7 @@ func TestUsageCycle_ReadsFromTheZonedCycleStart(t *testing.T) {
 	tracker := h.stack.Runtime.Usage()
 	tracker.UpdateLimits(map[string]core.UsageLimits{name: lim})
 
-	start := lim.Period.Start(time.Now())
+	start := lim.Period.Cycle(time.Now()).Start
 	for bucket, egress := range map[time.Time]int64{start.Add(-time.Hour): 5000, start: 300} {
 		if _, err := h.db.ExecContext(ctx,
 			`INSERT INTO backend_usage (backend_name, bucket_start, workload, egress_bytes) VALUES ($1, $2, 'client', $3)`,
@@ -53,7 +53,7 @@ func TestUsageCycle_ReadsFromTheZonedCycleStart(t *testing.T) {
 	if _, err := tracker.RefreshUsage(ctx, h.store); err != nil {
 		t.Fatalf("RefreshUsage: %v", err)
 	}
-	if got := tracker.CycleUsage()[name].EgressBytes; got != 300 {
+	if got := tracker.CycleUsage()[name].Usage.EgressBytes; got != 300 {
 		t.Errorf("cycle egress = %d, want only the 300 from the cycle start", got)
 	}
 	get := []s3op.Operation{s3op.GetObject}
@@ -68,7 +68,7 @@ func TestUsageCycle_ReadsFromTheZonedCycleStart(t *testing.T) {
 	if _, err := tracker.RefreshUsage(ctx, h.store); err != nil {
 		t.Fatalf("RefreshUsage after the write: %v", err)
 	}
-	if got := tracker.CycleUsage()[name]; got.IngressBytes != 128 || got.EgressBytes != 300 {
+	if got := tracker.CycleUsage()[name].Usage; got.IngressBytes != 128 || got.EgressBytes != 300 {
 		t.Errorf("cycle usage after the write = %+v, want 128 ingress and 300 egress", got)
 	}
 }

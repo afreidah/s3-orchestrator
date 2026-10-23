@@ -31,15 +31,15 @@ func dashboardModel(t *testing.T) *model {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 30
 	m.applyStatus(&adminapi.StatusResponse{
-		DBHealthy:   true,
-		UsagePeriod: "2026-10",
+		DBHealthy: true,
 		Backends: []adminapi.BackendStatus{
 			{Name: "minio-a", Healthy: true, Flags: []string{"draining"}, BytesUsed: 9 << 30, BytesLimit: 10 << 30,
 				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30,
 				UsageLimits: []adminapi.UsageMeter{
 					{Kind: "egress", Used: 5 << 30, Limit: 5 << 30},
 					{Kind: "requests", Budget: "writes", Used: 1200, Limit: 4800},
-				}},
+				},
+				UsageCycle: wireCycle(15, "America/Los_Angeles", -7)},
 			{Name: "minio-b", RefusedCalls: []string{"GetObject"}, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
 			{Name: "minio-c", RefusedCalls: []string{"PutObject", "GetObject", "HeadObject", "DeleteObject", "DeleteObjects", "CopyObject", "ListObjects"}},
 		},
@@ -51,6 +51,14 @@ func dashboardModel(t *testing.T) *model {
 		dlq:   &adminapi.CleanupDLQResponse{Depth: 2},
 	})
 	return m
+}
+
+// wireCycle builds an October-to-November usage cycle starting on day in a
+// zone with the given UTC offset, the way it arrives in a status response.
+func wireCycle(day int, zone string, offsetHours int) adminapi.UsageCycle {
+	loc := time.FixedZone(zone, offsetHours*3600)
+	start := time.Date(2026, 10, day, 0, 0, 0, 0, loc)
+	return adminapi.UsageCycle{Start: start, NextReset: start.AddDate(0, 1, 0), Timezone: zone}
 }
 
 // assertContains fails the test for every want missing from got.
@@ -96,7 +104,7 @@ func TestDashboard_UsageLimits(t *testing.T) {
 	t.Parallel()
 	got := dashboardModel(t).dashboardUsageLimits()
 	assertContains(t, got,
-		"usage limits", "period 2026-10",
+		"usage limits", "Oct 15 - Nov 15 America/Los_Angeles",
 		"minio-a egress", "5.0 GiB / 5.0 GiB", "100%", "[####",
 		"minio-a requests:writes", "1,200 / 4,800", "25%")
 	for _, absent := range []string{"minio-b", "minio-c", "ingress"} {
@@ -107,6 +115,27 @@ func TestDashboard_UsageLimits(t *testing.T) {
 	for line := range strings.SplitSeq(got, "\n") {
 		if strings.Contains(line, "minio-a egress") && strings.Contains(line, "-]") {
 			t.Errorf("the exhausted limit is not drawn as a full bar: %q", line)
+		}
+	}
+}
+
+// TestDashboard_UsageLimitsMixedCycles verifies each backend's bars carry
+// that backend's own cycle, not one fleet-wide period.
+func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 140, 30
+	egress := []adminapi.UsageMeter{{Kind: "egress", Used: 1, Limit: 10}}
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
+		{Name: "c2", UsageLimits: egress, UsageCycle: wireCycle(15, "UTC", 0)},
+		{Name: "r2", UsageLimits: egress, UsageCycle: wireCycle(1, "America/Los_Angeles", -7)},
+	}})
+	want := map[string]string{"c2 egress": "Oct 15 - Nov 15 UTC", "r2 egress": "Oct 1 - Nov 1 America/Los_Angeles"}
+	for line := range strings.SplitSeq(m.dashboardUsageLimits(), "\n") {
+		for name, cycle := range want {
+			if strings.Contains(line, name) && !strings.Contains(line, cycle) {
+				t.Errorf("%s line lacks its cycle %q: %q", name, cycle, line)
+			}
 		}
 	}
 }
@@ -137,7 +166,7 @@ func TestDashboard_Summary(t *testing.T) {
 		"oldest 1h", "3 unreachable",
 		"1,500 plaintext copies",
 		"2.0 GiB saved",
-		"1,234 requests", "1.0 GiB in", "3.0 GiB out", "period 2026-10",
+		"1,234 requests", "1.0 GiB in", "3.0 GiB out", "current cycles",
 		"4 pending", "2 dead-lettered")
 }
 
