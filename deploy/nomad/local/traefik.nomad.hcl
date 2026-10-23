@@ -50,10 +50,10 @@ job "traefik" {
       }
 
       # The perf suite can hold thousands of connections open when an
-      # upstream slows, which runs Traefik past 256 MB.
+      # upstream slows, which runs Traefik past 512 MB.
       resources {
         cpu    = 1000
-        memory = 512
+        memory = 2048
       }
     }
   }
