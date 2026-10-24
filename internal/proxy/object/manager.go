@@ -33,16 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// Single-operation admission sets. Package-level so the read and write paths
-// do not allocate a one-element slice per request just to name the operation
-// they are asking about.
-var (
-	getObjectOp  = []s3op.Operation{s3op.GetObject}
-	headObjectOp = []s3op.Operation{s3op.HeadObject}
-	putObjectOp  = []s3op.Operation{s3op.PutObject}
-	copyObjectOp = []s3op.Operation{s3op.CopyObject}
-)
-
 // managerSpanPrefix is prepended to every OpenTelemetry span name the
 // Manager creates so traces clearly distinguish the manager
 // layer ("Manager GetObject") from the backend layer ("Backend
@@ -61,20 +51,19 @@ type Stores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              Runtime                // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
-	coord             *writepath.Coordinator // write-path helpers shared with the multipart manager
-	stores            Stores                 // direct store access for read paths and quota inspection
-	encryptor         *encryption.Encryptor
-	codec             Codec
-	compression       config.CompressionConfig
-	cache             *LocationCache
-	objectCache       objcache.ObjectCache // nil when object data caching is disabled
-	parallelBroadcast bool
-	copiesPerWrite    int // 1 leaves every copy after the first to the replicator
-	detached          DetachedRegistry
-	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
-	failover          *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
-	log               *slog.Logger
+	core           Runtime                // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	coord          *writepath.Coordinator // write-path helpers shared with the multipart manager
+	stores         Stores                 // direct store access for read paths and quota inspection
+	encryptor      *encryption.Encryptor
+	codec          Codec
+	compression    config.CompressionConfig
+	cache          *LocationCache
+	objectCache    objcache.ObjectCache // nil when object data caching is disabled
+	copiesPerWrite int                  // 1 leaves every copy after the first to the replicator
+	detached       DetachedRegistry
+	integrityCfg   *syncutil.AtomicConfig[config.IntegrityConfig]
+	failover       *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
+	log            *slog.Logger
 }
 
 // Deps bundles New's dependencies. A nil Codec disables compression in both
@@ -115,18 +104,17 @@ func New(d *Deps) *Manager {
 		must.NotNil("d.Detached", d.Detached)
 	}
 	return &Manager{
-		core:              d.Core,
-		coord:             d.Coord,
-		stores:            d.Stores,
-		encryptor:         d.Encryptor,
-		codec:             d.Codec,
-		compression:       d.Compression,
-		cache:             d.LocationCache,
-		objectCache:       d.ObjectCache,
-		parallelBroadcast: d.ParallelBroadcast,
-		copiesPerWrite:    max(d.CopiesPerWrite, 1),
-		detached:          d.Detached,
-		integrityCfg:      d.IntegrityCfg,
+		core:           d.Core,
+		coord:          d.Coord,
+		stores:         d.Stores,
+		encryptor:      d.Encryptor,
+		codec:          d.Codec,
+		compression:    d.Compression,
+		cache:          d.LocationCache,
+		objectCache:    d.ObjectCache,
+		copiesPerWrite: max(d.CopiesPerWrite, 1),
+		detached:       d.Detached,
+		integrityCfg:   d.IntegrityCfg,
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.Core,
 			Cache:                        d.LocationCache,
@@ -154,7 +142,7 @@ func (o *Manager) LocationCache() *LocationCache {
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
 func (o *Manager) CanAcceptWrite(size int64) bool {
-	return len(o.core.EligibleForWrite(putObjectOp, 0, size)) > 0
+	return len(o.core.EligibleForWrite(s3op.PutObject, 0, size)) > 0
 }
 
 // BackendCapacityStats returns the current per-backend used/limit byte

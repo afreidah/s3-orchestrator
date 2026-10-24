@@ -7,9 +7,9 @@
 // a joined string. A string forces tests to match on substrings, which makes
 // the message a de-facto API: a harmless reword silently breaks assertions.
 //
-// Each validator wraps its sentinel using fmt.Errorf("%w:
-// <detail>", ErrX), and tests check with errors.Is(err, ErrX). Rewording the
-// detail suffix is free; only the sentinel value is the contract.
+// Each validator wraps its sentinel as fmt.Errorf("%w: <detail>", ErrX), and
+// tests check with errors.Is(err, ErrX). Rewording the detail suffix is free;
+// only the sentinel value is the contract.
 // -------------------------------------------------------------------------------
 
 package config
@@ -64,9 +64,8 @@ var (
 	ErrBucketNameHasSlash  = errors.New("bucket name must not contain '/'")
 	ErrDuplicateBucketName = errors.New("duplicate bucket name")
 	ErrNoCredential        = errors.New("at least one credential is required")
-	ErrInvalidCredential   = errors.New("must have access_key_id+secret_access_key or token")
+	ErrInvalidCredential   = errors.New("must have both access_key_id and secret_access_key")
 	ErrDuplicateCredential = errors.New("duplicate access_key_id")
-	ErrDuplicateToken      = errors.New("duplicate proxy token")
 	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
 )
 

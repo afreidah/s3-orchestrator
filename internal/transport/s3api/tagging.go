@@ -24,7 +24,6 @@ import (
 	"sort"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -195,11 +194,7 @@ func (s *Server) handleGetObjectTagging(ctx context.Context, w http.ResponseWrit
 	if err != nil {
 		return writeTaggingError(w, err), err
 	}
-	if err := writeXML(w, http.StatusOK, taggingDocumentFrom(tags)); err != nil {
-		s.logger().ErrorContext(ctx, "failed to write tagging response", "key", key, logfmt.Err(err))
-		return http.StatusOK, err
-	}
-	return http.StatusOK, nil
+	return respondXML(w, taggingDocumentFrom(tags))
 }
 
 // handlePutObjectTagging replaces the object's whole tag set with the one in

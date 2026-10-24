@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -81,7 +80,6 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 		Backends: backends,
 		Stores:   stores,
 		Usage:    usage,
-		Quota:    counter.NewQuotaTracker(),
 	}), stores, backends, usage
 }
 
@@ -224,7 +222,7 @@ func TestReconcileBackend_ImportsAndDeletes(t *testing.T) {
 	stores.EXPECT().DeleteObjectLocation(gomock.Any(), &core.ObjectLocation{ObjectKey: "vb/x", BackendName: "b1", StorageKey: "vb/x"}, 0, "").
 		Return(nil, nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", gomock.Any()).Times(1)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
@@ -248,7 +246,7 @@ func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 			core.ObjectLocation{ObjectKey: "vb/a"},
 			core.ObjectLocation{ObjectKey: "vb/b"},
 		)).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Any mutation at all would be a bug.
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).Times(0)
@@ -274,7 +272,7 @@ func TestReconcileBackend_StrayImportedAsUnmanaged(t *testing.T) {
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "stray.txt", SizeBytes: 9}}}), nil).AnyTimes()
 	stores.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// unmanaged = true, and the key is untouched.
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("stray.txt", "b1", 9, true)).Return(core.ImportInserted, nil)
@@ -302,7 +300,7 @@ func TestReconcileBackend_StrayDoesNotChurn(t *testing.T) {
 			core.ObjectLocation{ObjectKey: "stray.txt"},
 			core.ObjectLocation{ObjectKey: "vb/a"},
 		)).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).Times(0)
 	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
@@ -327,7 +325,7 @@ func TestReconcileBackend_PropagatesListingError(t *testing.T) {
 	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory(), listErr: want}, nil).AnyTimes()
 	stores.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
 	if err == nil {
@@ -362,7 +360,7 @@ func TestReconcileBackend_CoversEveryVirtualBucket(t *testing.T) {
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "one/a", SizeBytes: 1}, {Key: "two/b", SizeBytes: 2}}}), nil).AnyTimes()
 	stores.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Both buckets are imported as managed in the same pass.
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("one/a", "b1", 1, false)).Return(core.ImportInserted, nil)
@@ -394,9 +392,9 @@ func TestSyncBackend_ImportsAndCountsSkips(t *testing.T) {
 	stores.EXPECT().ListedPathStates(gomock.Any(), "b1", []string{"vb/new", "vb/known"}).
 		Return(map[string]core.PathState{"vb/known": core.PathRecorded}, nil)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/new", "b1", 1, false)).Return(core.ImportInserted, nil)
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", int64(1)).Times(1)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
@@ -417,9 +415,9 @@ func TestSyncBackend_SkipsKeyWithPendingDelete(t *testing.T) {
 	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/deleted", "b1", 1, false)).
 		Return(core.ImportSkippedPendingCleanup, nil)
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", int64(1)).Times(1)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
@@ -439,9 +437,9 @@ func TestSyncBackend_ImportErrorAborts(t *testing.T) {
 	ledgerHoldsNone(stores)
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any()).
 		Return(core.ImportSkippedExisting, errors.New("import boom"))
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err == nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err == nil {
 		t.Error("expected the import error to propagate")
 	}
 }
@@ -464,9 +462,9 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 		Return(core.ImportInserted, nil).AnyTimes()
 	// One charge per page, as each is consumed. A single lump charge of 3 is
 	// what let a walk finish before anything noticed it had gone over.
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", int64(1)).Times(3)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(3)
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
 }
@@ -482,14 +480,14 @@ func TestSyncBackend_RefusedWhenOutOfAPIBudget(t *testing.T) {
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
 
 	// The backend is never resolved and no page is ever charged: the refusal
 	// has to land before any of that, or it has not saved anything.
 	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory()}, nil).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	_, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	_, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("SyncBackend error = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -503,9 +501,9 @@ func TestSyncBackend_NoPagesChargesNothing(t *testing.T) {
 	m, _, backends, usage := newTestManager(t, ctrl)
 
 	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory()}, nil).AnyTimes()
-	usage.EXPECT().APICalls(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
@@ -522,7 +520,7 @@ func TestSyncBackend_UnknownBackendFails(t *testing.T) {
 
 	backends.EXPECT().GetBackend(gomock.Any()).Return(nil, errors.New("unknown")).AnyTimes()
 
-	if _, _, err := m.SyncBackend(t.Context(), "nope", "vb", nil); err == nil {
+	if _, _, err := m.SyncBackend(t.Context(), "nope", nil); err == nil {
 		t.Error("expected an error for an unknown backend")
 	}
 }
@@ -554,7 +552,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
 
 	lister := newPagedLister([][]backend.ListedObject{
 		{{Key: "vb/a", SizeBytes: 1}},
@@ -569,11 +567,11 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 		usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false),
 	)
 	// Charged once, for the page that was actually fetched.
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", int64(1)).Times(1)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).
 		Return(core.ImportInserted, nil)
 
-	imported, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	imported, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("a pass that stopped at the limit did the work it could afford; want no error, got %v", err)
 	}
@@ -604,9 +602,9 @@ func TestSyncBackend_ChargesEachPageAsItGoes(t *testing.T) {
 	// Three pages, three single-page charges. A lump charge would arrive as
 	// one call for 3, which is what let the overage go unnoticed until it had
 	// already happened.
-	usage.EXPECT().APICalls(gomock.Any(), s3op.ListObjects, "b1", int64(1)).Times(3)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(3)
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
 }
@@ -620,7 +618,7 @@ func TestReconcileBackend_RefusesAnExhaustedBackend(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker()})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister(nil), nil).AnyTimes()
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)

@@ -11,7 +11,9 @@ package adminctl
 
 import (
 	"flag"
-	"fmt"
+	"net/http"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdLogLevel implements `s3-orchestrator admin log-level [-set=LEVEL]`.
@@ -23,8 +25,7 @@ func cmdLogLevel(args []string, c *client) int {
 		return 1
 	}
 	if *set != "" {
-		body := fmt.Sprintf(`{"level":%q}`, *set)
-		return c.put("/admin/api/log-level", body, nil)
+		return c.sendJSON(http.MethodPut, "/admin/api/log-level", adminapi.SetLogLevelRequest{Level: *set}, nil)
 	}
 	return c.get("/admin/api/log-level", nil)
 }

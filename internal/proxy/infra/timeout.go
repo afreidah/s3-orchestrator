@@ -77,13 +77,13 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 	src, dst := req.Src, req.Dst
 	// A refusal is tagged with the leg that had no headroom: another source
 	// may have egress left, but a destination that is full ends the attempt.
-	if !c.Acct().Allow(src.Name, []s3op.Operation{s3op.GetObject}, req.SizeEstimate, 0) {
+	if !c.Acct().Allow(src.Name, s3op.GetObject, req.SizeEstimate, 0) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseRead,
 			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
 		}
 	}
-	if !c.Acct().Allow(dst.Name, []s3op.Operation{s3op.PutObject}, 0, req.SizeEstimate) {
+	if !c.Acct().Allow(dst.Name, s3op.PutObject, 0, req.SizeEstimate) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseWrite,
 			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),

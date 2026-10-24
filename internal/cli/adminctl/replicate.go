@@ -14,5 +14,5 @@ import "net/http"
 
 // cmdReplicate implements `s3-orchestrator admin replicate`.
 func cmdReplicate(_ []string, c *client) int {
-	return c.stream(http.MethodPost, "/admin/api/replicate", "")
+	return c.stream(http.MethodPost, "/admin/api/replicate")
 }

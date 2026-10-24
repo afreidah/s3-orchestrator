@@ -312,9 +312,9 @@ func TestStoreInt_CompleteCleanupItems_EmptyIsNoOp(t *testing.T) {
 }
 
 // TestStoreInt_OrphanBytes_DerivedFromQueueAndDLQ asserts a backend's orphan
-// bytes are the sum of its queued and dead-lettered rows in backend_capacity,
-// GetQuotaStats and ListBackendQuotaUsage alike, that they count against the
-// bytes the backend has available, and that a retired row stops counting.
+// bytes are the sum of its queued and dead-lettered rows in backend_capacity
+// and GetQuotaStats alike, that they count against the bytes the backend has
+// available, and that a retired row stops counting.
 func TestStoreInt_OrphanBytes_DerivedFromQueueAndDLQ(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -399,7 +399,7 @@ func TestStoreInt_RetryCleanupItem_ClearsClaim(t *testing.T) {
 }
 
 // assertOrphanBytes checks the backend's orphan bytes read the same through
-// backend_capacity, GetQuotaStats and ListBackendQuotaUsage.
+// backend_capacity and GetQuotaStats.
 func assertOrphanBytes(t *testing.T, s *Store, backend string, want int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -411,18 +411,8 @@ func assertOrphanBytes(t *testing.T, s *Store, backend string, want int64) {
 	if err != nil {
 		t.Fatalf("GetQuotaStats: %v", err)
 	}
-	usage, err := s.ListBackendQuotaUsage(ctx)
-	if err != nil {
-		t.Fatalf("ListBackendQuotaUsage: %v", err)
-	}
-	var listed int64 = -1
-	for _, u := range usage {
-		if u.BackendName == backend {
-			listed = u.OrphanBytes
-		}
-	}
-	if view != want || stats[backend].OrphanBytes != want || listed != want {
-		t.Errorf("orphan bytes = view %d, stats %d, usage %d; want %d", view, stats[backend].OrphanBytes, listed, want)
+	if view != want || stats[backend].OrphanBytes != want {
+		t.Errorf("orphan bytes = view %d, stats %d; want %d", view, stats[backend].OrphanBytes, want)
 	}
 }
 

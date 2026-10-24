@@ -114,7 +114,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 
 	// Arm a one-shot failure on the atomic commit. The backend PUT and
 	// the InsertPending that precedes it both succeed; only the
-	// RecordObjectAndClearPending call returns errSimulatedDBOutage.
+	// RecordObject call returns errSimulatedCommitFailure.
 	//
 	// Bypass the S3 client here: the AWS SDK retries 5xx responses and
 	// would consume the one-shot flag on the first attempt, then succeed

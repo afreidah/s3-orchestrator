@@ -252,7 +252,7 @@ func TestGroupByKey_MultipleKeysAndReplicas(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// applyQuotaDeltas - #687 deadlock regression
+// chargeStripes - lock ordering
 // -------------------------------------------------------------------------
 
 // quotaTxStub is the TxAdapter implementation the quota and tag
@@ -396,8 +396,8 @@ func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *Ob
 // the same backend set request the rows in identical order.
 func TestChargeStripes_StableOrderAcrossInputs(t *testing.T) {
 	t.Parallel()
-	deltasA := QuotaDeltas{"minio-3": -100, "minio-1": -50, "minio-2": -75}
-	deltasB := QuotaDeltas{"minio-2": -75, "minio-3": -100, "minio-1": -50}
+	deltasA := quotaDeltas{"minio-3": -100, "minio-1": -50, "minio-2": -75}
+	deltasB := quotaDeltas{"minio-2": -75, "minio-3": -100, "minio-1": -50}
 
 	txA := &quotaTxStub{}
 	txB := &quotaTxStub{}
@@ -429,7 +429,7 @@ func TestChargeStripes_StableOrderAcrossInputs(t *testing.T) {
 func TestChargeStripes_SignedAndZero(t *testing.T) {
 	t.Parallel()
 	tx := &quotaTxStub{}
-	deltas := QuotaDeltas{
+	deltas := quotaDeltas{
 		"a": -100,
 		"b": 200,
 		"c": 0,
@@ -460,7 +460,7 @@ func TestChargeStripes_PropagatesError(t *testing.T) {
 	t.Parallel()
 	want := errors.New("simulated DB error")
 	tx := &quotaTxStub{failOn: "b", failErr: want}
-	deltas := QuotaDeltas{"a": 10, "b": 20, "c": 30}
+	deltas := quotaDeltas{"a": 10, "b": 20, "c": 30}
 	err := chargeStripes(context.Background(), tx, "bucket/key", deltas)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want wrap of %v", err, want)
@@ -478,7 +478,7 @@ func TestChargeStripes_EmptyMap(t *testing.T) {
 	if err := chargeStripes(context.Background(), tx, "bucket/key", nil); err != nil {
 		t.Errorf("nil map err = %v, want nil", err)
 	}
-	if err := chargeStripes(context.Background(), tx, "bucket/key", QuotaDeltas{}); err != nil {
+	if err := chargeStripes(context.Background(), tx, "bucket/key", quotaDeltas{}); err != nil {
 		t.Errorf("empty map err = %v, want nil", err)
 	}
 	if len(tx.adjustments) != 0 {
@@ -493,7 +493,7 @@ func TestChargeStripes_EmptyMap(t *testing.T) {
 func TestChargeStripes_KeySelectsTheStripe(t *testing.T) {
 	t.Parallel()
 	tx := &stripeRecordingTxStub{}
-	deltas := QuotaDeltas{"a": 100, "b": 100}
+	deltas := quotaDeltas{"a": 100, "b": 100}
 	if err := chargeStripes(context.Background(), tx, "bucket/one", deltas); err != nil {
 		t.Fatalf("chargeStripes: %v", err)
 	}

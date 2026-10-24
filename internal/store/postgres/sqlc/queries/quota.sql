@@ -33,13 +33,12 @@ ON CONFLICT (backend_name, stripe_id) DO UPDATE
 SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used;
 
 -- name: GetAllQuotaStats :many
-SELECT c.backend_name,
-       c.bytes_used,
-       c.bytes_limit,
-       c.orphan_bytes,
-       q.updated_at
-FROM backend_capacity c
-JOIN backend_quotas q ON q.backend_name = c.backend_name;
+-- Every backend's ceiling and what occupies it: the striped byte total, orphans
+-- awaiting cleanup, and the writes that have not landed yet. The figures come
+-- from backend_capacity, the same view admission tests against, and they are
+-- rows every instance can read, which is what makes them fleet-wide.
+SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
+FROM backend_capacity;
 
 -- name: LedgerGroups :many
 -- The ledger in one grouped pass, by backend, stored form and managed flag, so
@@ -103,14 +102,6 @@ SELECT backend_name, delta FROM drift;
 SELECT pg_advisory_xact_lock(@lock_space::int, hashtext(backend_name))
 FROM backend_quotas
 WHERE backend_name = @backend_name AND bytes_limit > 0;
-
--- name: ListBackendQuotaUsage :many
--- Every backend's ceiling and what occupies it: the striped byte total, orphans
--- awaiting cleanup, and the writes that have not landed yet. The figures come
--- from backend_capacity, the same view admission tests against, and they are
--- rows every instance can read, which is what makes them fleet-wide.
-SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
-FROM backend_capacity;
 
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

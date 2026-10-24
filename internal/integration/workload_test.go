@@ -181,7 +181,7 @@ func driveWorkers(t *testing.T, h *harness) {
 	h.workers.CleanupWorker.ProcessCleanupQueue(ctx)
 
 	rec := reconcile.NewManager(&reconcile.Deps{
-		Backends: h.stack.Runtime, Stores: h.store, Usage: h.stack.Runtime.Acct(), Quota: h.stack.Runtime.Quota(),
+		Backends: h.stack.Runtime, Stores: h.store, Usage: h.stack.Runtime.Acct(),
 	})
 	for _, name := range h.order {
 		if _, err := rec.ReconcileBackend(ctx, name, []string{virtualBucket}); err != nil {

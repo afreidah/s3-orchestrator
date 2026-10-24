@@ -490,9 +490,9 @@ func (q *Queries) GetObjectBackendsForKeys(ctx context.Context, objectKeys []str
 }
 
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        COALESCE($19::timestamptz, NOW()))
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        COALESCE($20::timestamptz, NOW()))
 `
 
 type InsertObjectLocationParams struct {
@@ -514,12 +514,14 @@ type InsertObjectLocationParams struct {
 	Etag                     *string
 	ContentType              *string
 	UserMetadata             []byte
+	Managed                  bool
 	CreatedAt                pgtype.Timestamptz
 }
 
-// A placed copy carries the object's write time and its compression probe,
-// since the bytes are the same bytes; a fresh write passes no time and is
-// stamped now.
+// A placed copy carries the object's write time, its compression probe and
+// whether it is managed, since the bytes are the same bytes; a fresh write
+// passes no time and is stamped now. InsertObjectLocationIfNotExists takes the
+// same parameters, so one mapping feeds both.
 func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLocationParams) error {
 	_, err := q.db.Exec(ctx, insertObjectLocation,
 		arg.ObjectKey,
@@ -540,14 +542,16 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 		arg.Etag,
 		arg.ContentType,
 		arg.UserMetadata,
+		arg.Managed,
 		arg.CreatedAt,
 	)
 	return err
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        COALESCE($20::timestamptz, NOW()))
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -566,6 +570,8 @@ type InsertObjectLocationIfNotExistsParams struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	CompressionProbeSize     *int64
+	CompressionProbeLevel    *string
 	Etag                     *string
 	ContentType              *string
 	UserMetadata             []byte
@@ -588,6 +594,8 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 		arg.CompressionLevel,
 		arg.CompressionFormatVersion,
 		arg.LogicalSize,
+		arg.CompressionProbeSize,
+		arg.CompressionProbeLevel,
 		arg.Etag,
 		arg.ContentType,
 		arg.UserMetadata,

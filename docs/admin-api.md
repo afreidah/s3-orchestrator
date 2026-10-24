@@ -74,7 +74,7 @@ Thirteen endpoints run long enough that a single response is unhelpful: `rebalan
 s3-orchestrator admin scrub
 ```
 
-Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `progress` as work advances, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand asks for the stream and renders it as live progress.
+Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand asks for the stream and renders it as live progress.
 
 ## Restricting a pass to one backend
 

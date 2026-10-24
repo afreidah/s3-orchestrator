@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Serves the in-memory structured-log ring buffer. The admin API mounts it for
-// the TUI, which authenticates with the admin token, and the web dashboard
-// mounts the same handler behind its session auth, so both surfaces share one
-// query contract and one wire shape.
+// the TUI, which signs its requests with SigV4, and the web dashboard mounts
+// the same handler behind its session auth, so both surfaces share one query
+// contract and one wire shape.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -64,7 +65,7 @@ func LogsHandler(logs LogReader) http.HandlerFunc {
 // logQueryOpts parses the logs query parameters into buffer query options.
 func logQueryOpts(q url.Values) telemetry.LogQueryOpts {
 	return telemetry.LogQueryOpts{
-		MinLevel:  telemetry.ParseLevel(q.Get("level")),
+		MinLevel:  config.ParseLogLevel(q.Get("level")),
 		Since:     parseLogTimestamp(q.Get("since")),
 		Before:    parseLogTimestamp(q.Get("before")),
 		Component: q.Get("component"),

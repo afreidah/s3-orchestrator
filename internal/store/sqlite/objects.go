@@ -14,7 +14,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -42,14 +41,10 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 	if len(keys) == 0 {
 		return map[string][]string{}, nil
 	}
-	keysJSON, err := json.Marshal(keys)
-	if err != nil {
-		return nil, fmt.Errorf("marshal keys: %w", err)
-	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name
 		FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object backends for keys: %w", err)
 	}
@@ -478,10 +473,6 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	if len(backends) == 0 {
 		return nil, nil
 	}
-	backendsJSON, err := json.Marshal(backends)
-	if err != nil {
-		return nil, fmt.Errorf("encode scrub backend list: %w", err)
-	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+objectColumns+`
 		FROM object_locations
@@ -489,7 +480,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 		  AND backend_name IN (SELECT value FROM json_each(?))
 		  AND COALESCE(last_scrubbed_at, created_at) < ?
 		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-		LIMIT ?`, string(backendsJSON), formatTime(scrubbedBefore), limit)
+		LIMIT ?`, jsonList(backends), formatTime(scrubbedBefore), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
@@ -502,16 +493,12 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 	if len(backends) == 0 {
 		return 0, nil
 	}
-	backendsJSON, err := json.Marshal(backends)
-	if err != nil {
-		return 0, fmt.Errorf("encode scrub backend list: %w", err)
-	}
 	return s.countRows(ctx, "scrub candidates", `
 		SELECT count(*)
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
 		  AND backend_name IN (SELECT value FROM json_each(?))
-		  AND COALESCE(last_scrubbed_at, created_at) < ?`, string(backendsJSON), formatTime(scrubbedBefore))
+		  AND COALESCE(last_scrubbed_at, created_at) < ?`, jsonList(backends), formatTime(scrubbedBefore))
 }
 
 // ListCopiesByForm returns up to limit copies after the cursor that the filter

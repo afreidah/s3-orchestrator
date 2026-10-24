@@ -6,8 +6,8 @@
 // The wire shape every fleet-wide rewrite pass reports. Compression and
 // encryption run the same driver over the same ledger and differ only in what
 // they do to each object's bytes, so they report through one type rather than a
-// near-copy each. Kept in the leaf adminapi package so the server, the web UI
-// and the out-of-process client depend on one definition.
+// near-copy each. Kept in the leaf adminapi package with the other wire types
+// the admin API publishes.
 // -------------------------------------------------------------------------------
 
 package adminapi

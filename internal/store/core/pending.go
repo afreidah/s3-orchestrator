@@ -28,7 +28,6 @@ import (
 type promoteOutcome struct {
 	result  PendingPromoteResult
 	cleanup []CleanupItem
-	deltas  QuotaDeltas
 }
 
 // promotePendingTx is the transactional body of PromotePending. The
@@ -72,11 +71,10 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 }
 
 // commitPromotion finalises a non-superseded intent: clears prior copies,
-// inserts the new object_location row, and deletes the pending row in the same
-// transaction. The per-backend byte deltas ride out on the outcome for the
-// caller to apply.
+// inserts the new object_location row, charges the bytes that moved, and
+// deletes the pending row in the same transaction.
 func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
-	deltas := make(QuotaDeltas, len(existing)+1)
+	deltas := make(quotaDeltas, len(existing)+1)
 	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, existing, deltas)
 	if err != nil {
 		return promoteOutcome{}, err
@@ -85,7 +83,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
-	deltas.Add(p.BackendName, p.SizeBytes)
+	deltas.add(p.BackendName, p.SizeBytes)
 	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
 		return promoteOutcome{}, err
 	}
@@ -96,7 +94,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	return promoteOutcome{result: PendingPromoteCommitted, cleanup: cleanup, deltas: deltas}, nil
+	return promoteOutcome{result: PendingPromoteCommitted, cleanup: cleanup}, nil
 }
 
 // resolveCompanion settles a companion-copy intent left by a process that died
@@ -125,11 +123,10 @@ func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, exist
 
 // companionOutcome carries the resolution of an extra copy out of the
 // transactional body, shaped like promoteOutcome so both resolution paths hand
-// their caller the same three things.
+// their caller the same two things.
 type companionOutcome struct {
 	result  CompanionCommitResult
 	cleanup []CleanupItem
-	deltas  QuotaDeltas
 }
 
 // commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
@@ -150,21 +147,20 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
 	}
-	deltas := QuotaDeltas{p.BackendName: p.SizeBytes}
-	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+	if err := chargeStripes(ctx, tx, p.ObjectKey, quotaDeltas{p.BackendName: p.SizeBytes}); err != nil {
 		return companionOutcome{}, err
 	}
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return companionOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
 	}
-	return companionOutcome{result: CompanionCopyCommitted, deltas: deltas}, nil
+	return companionOutcome{result: CompanionCopyCommitted}, nil
 }
 
 // discardUntrustedCopy resolves an upload overtaken by a newer write by queueing
 // its bytes, which sit at a path no other write shares. Nothing is debited
 // because the bytes were never recorded.
 func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
-	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonCompanionUntrusted, []removedCopy{intentBytes(p, "")})
+	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonCompanionUntrusted, []removedCopy{intentBytes(p)})
 	if err != nil {
 		return companionOutcome{}, err
 	}
@@ -202,7 +198,7 @@ func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep,
 // clearExistingCopies deletes every prior copy of the key and accumulates
 // per-backend negative deltas in the supplied map. Every copy's bytes are
 // returned for the caller to queue, each one naming the path it occupies.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas QuotaDeltas) ([]removedCopy, error) {
+func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas quotaDeltas) ([]removedCopy, error) {
 	if len(existing) == 0 {
 		return nil, nil
 	}
@@ -210,7 +206,7 @@ func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing
 		return nil, fmt.Errorf("delete existing copies: %w", err)
 	}
 	for _, ec := range existing {
-		deltas.Add(ec.BackendName, -ec.SizeBytes)
+		deltas.add(ec.BackendName, -ec.SizeBytes)
 	}
 	return removedFromExisting(existing), nil
 }

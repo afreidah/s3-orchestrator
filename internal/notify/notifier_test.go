@@ -505,13 +505,13 @@ func TestEmit_FillsCloudEventsDefaults(t *testing.T) {
 		t.Fatal("expected payload to be captured")
 	}
 	// Verify defaults were filled by checking the serialized payload
-	if !contains(ms.payload(), `"specversion":"1.0"`) {
+	if !strings.Contains(ms.payload(), `"specversion":"1.0"`) {
 		t.Error("expected specversion 1.0 in payload")
 	}
-	if !contains(ms.payload(), `"source":"/s3-orchestrator"`) {
+	if !strings.Contains(ms.payload(), `"source":"/s3-orchestrator"`) {
 		t.Error("expected source /s3-orchestrator in payload")
 	}
-	if !contains(ms.payload(), `"datacontenttype":"application/json"`) {
+	if !strings.Contains(ms.payload(), `"datacontenttype":"application/json"`) {
 		t.Error("expected datacontenttype in payload")
 	}
 }
@@ -751,36 +751,6 @@ func TestRun_ClosesOnShutdown(t *testing.T) {
 	event.Publish(event.ServiceStopping, "", nil)
 	if got := ms.inserts(); got != 0 {
 		t.Errorf("outbox rows after Run returned = %d, want 0", got)
-	}
-}
-
-// contains is a small substring helper used by the tests below to
-// assert log lines without depending on slog's exact formatting.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && strings.Contains(s, substr)
-}
-
-// TestHasPrefix verifies the has prefix contract.
-// Asserts that hasPrefix(, ) = , want.
-func TestHasPrefix(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		key, prefix string
-		want        bool
-	}{
-		{"uploads/photo.jpg", "uploads/", true},
-		{"uploads/photo.jpg", "downloads/", false},
-		{"uploads/photo.jpg", "", true},
-		{"", "uploads/", false},
-		{"uploads/photo.jpg", "uploads/photo.jpg", true},
-		{"up", "uploads/", false},
-	}
-
-	for _, tt := range tests {
-		got := hasPrefix(tt.key, tt.prefix)
-		if got != tt.want {
-			t.Errorf("hasPrefix(%q, %q) = %v, want %v", tt.key, tt.prefix, got, tt.want)
-		}
 	}
 }
 

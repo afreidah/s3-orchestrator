@@ -144,9 +144,11 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 }
 
 // testServicesWith is testServices over the given mover, for the rewrite tests
-// that assert on what was placed.
-func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore, mover Mover) *Services {
+// that assert on what was placed. The mover moves between the same backends the
+// fleet is built over.
+func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc *encryption.Encryptor, encStore RewriteStore, mover *fakeMover) *Services {
 	t.Helper()
+	mover.backends = backends
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mock)
 
@@ -747,7 +749,6 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 	svc := NewEncryption(EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
-		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
 		Mover:     &fakeMover{},
 	})
 
@@ -783,7 +784,6 @@ func TestRotateKey_ReplacedCopyIsSkipped(t *testing.T) {
 	svc := NewEncryption(EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
-		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
 		Mover:     &fakeMover{},
 	})
 
@@ -891,7 +891,6 @@ func TestRotateKey_AllStaleSkipsCurrentKey(t *testing.T) {
 	svc := NewEncryption(EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
-		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
 		Mover:     &fakeMover{},
 	})
 	res, err := svc.RotateKey(context.Background(), "", true)
@@ -1099,8 +1098,8 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	if res.Total != 1 || res.Failed != 1 || res.Succeeded != 0 {
 		t.Errorf("res = %+v, want total=1 failed=1 succeeded=0", res)
 	}
-	if n := len(mover.moveRequests()); n != 0 {
-		t.Errorf("MoveObject calls = %d, want none for a backend that is gone", n)
+	if n := len(mover.placements()); n != 0 {
+		t.Errorf("placements = %d, want none for a backend that is gone", n)
 	}
 }
 
@@ -1388,7 +1387,6 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	svc := NewEncryption(EncryptionDeps{
 		Encryptor: testEncryptor(t),
 		Store:     store,
-		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
 		Mover:     &fakeMover{},
 	})
 

@@ -51,7 +51,6 @@ type RotateKeyResult struct {
 type EncryptionDeps struct {
 	Encryptor *encryption.Encryptor
 	Store     RewriteStore
-	Runtime   RuntimeOps
 	Mover     Mover
 }
 
@@ -62,19 +61,16 @@ type Encryption struct {
 	log       *slog.Logger
 	encryptor *encryption.Encryptor
 	store     RewriteStore
-	runtime   RuntimeOps
 	mover     Mover
 }
 
 // NewEncryption is the explicit-deps constructor.
 func NewEncryption(d EncryptionDeps) *Encryption {
-	must.NotNil("d.Runtime", d.Runtime)
 	must.NotNil("d.Mover", d.Mover)
 	return &Encryption{
 		log:       slog.Default().With(logfmt.Component("ops")),
 		encryptor: d.Encryptor,
 		store:     d.Store,
-		runtime:   d.Runtime,
 		mover:     d.Mover,
 	}
 }
@@ -214,7 +210,7 @@ func (e *Encryption) rotateOneLocation(ctx context.Context, loc *core.ObjectLoca
 	}
 
 	telemetry.KeyRotationObjectsTotal.WithLabelValues("success").Inc()
-	return batch.ItemResult{Outcome: batch.ItemSucceeded}
+	return batch.Succeeded()
 }
 
 // rotateFailed records one non-fatal rotation failure, so each failure path in
@@ -222,12 +218,12 @@ func (e *Encryption) rotateOneLocation(ctx context.Context, loc *core.ObjectLoca
 func (e *Encryption) rotateFailed(ctx context.Context, msg, key string, err error) batch.ItemResult {
 	e.log.WarnContext(ctx, "key rotation "+msg, "key", key, "error", err)
 	telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-	return batch.ItemResult{Outcome: batch.ItemFailed}
+	return batch.Failed()
 }
 
 // rewriteEnv exposes this service's collaborators to the shared driver. A
 // pass changes only the envelope, so an encoding is carried through rather
 // than decoded and no codec is needed.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, runtime: e.runtime, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
+	return bulkRewriteEnv{log: e.log, mover: e.mover, layers: &storedform.Layers{Encryptor: e.encryptor}}
 }

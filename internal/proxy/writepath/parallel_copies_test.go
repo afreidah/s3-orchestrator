@@ -166,7 +166,7 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
-		Return(core.CompanionCopyCommitted, nil, core.QuotaDeltas{"b2": 4096}, nil)
+		Return(core.CompanionCopyCommitted, nil, nil)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b2"}), nil)
 	coord := New(infra.New(&infra.Config{
@@ -199,7 +199,7 @@ func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		Return(core.CompanionCopyUntrusted,
 			[]core.CleanupItem{cleanupRow(7, "b2", "k!loser", core.CleanupReasonCompanionUntrusted, 4096)},
-			nil, nil)
+			nil)
 	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(7)).DoAndReturn(retireAll)
 
 	be := backendtest.NewInMemory()
@@ -235,7 +235,7 @@ func TestCommitCompanionCopy_StoreErrorLeavesTheIntent(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
-		Return(core.CompanionCopyCommitted, nil, nil, errors.New("db down"))
+		Return(core.CompanionCopyCommitted, nil, errors.New("db down"))
 
 	be := backendtest.NewInMemory()
 	if _, err := be.PutObject(context.Background(), "k", strings.NewReader("bytes"), 5, "text/plain", nil); err != nil {

@@ -117,7 +117,7 @@ func TestPutObject_Overwrite_DisplacedDeleteFails_RetriesRow(t *testing.T) {
 
 	store, c := settleStore(t, func(s *storetest.MockMetadataStore) {
 		s.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-			Return([]core.CleanupItem{displacedRow(7, "b2", "overwritten-key", 500)}, nil, nil).AnyTimes()
+			Return([]core.CleanupItem{displacedRow(7, "b2", "overwritten-key", 500)}, nil).AnyTimes()
 	})
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
@@ -140,7 +140,7 @@ func TestPutObject_Overwrite_DisplacedDeleteSucceeds_RetiresRow(t *testing.T) {
 
 	store, c := settleStore(t, func(s *storetest.MockMetadataStore) {
 		s.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-			Return([]core.CleanupItem{displacedRow(3, "b2", "key1", 3)}, nil, nil).AnyTimes()
+			Return([]core.CleanupItem{displacedRow(3, "b2", "key1", 3)}, nil).AnyTimes()
 	})
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
@@ -162,7 +162,7 @@ func TestPutObject_Overwrite_DisplacedUnknownBackend_RetiresRow(t *testing.T) {
 	t.Parallel()
 	store, c := settleStore(t, func(s *storetest.MockMetadataStore) {
 		s.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-			Return([]core.CleanupItem{displacedRow(5, "gone", "key1", 300)}, nil, nil).AnyTimes()
+			Return([]core.CleanupItem{displacedRow(5, "gone", "key1", 300)}, nil).AnyTimes()
 	})
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
@@ -185,7 +185,7 @@ func TestDeleteObject_BackendDeleteFails_RetriesRow(t *testing.T) {
 
 	store, c := settleStore(t, func(s *storetest.MockMetadataStore) {
 		s.EXPECT().DeleteObject(gomock.Any(), "mykey").
-			Return(deletedRows("mykey", "b1"), nil, nil).AnyTimes()
+			Return(deletedRows("mykey", "b1"), nil).AnyTimes()
 	})
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
@@ -234,7 +234,7 @@ func TestPutObject_RecordFails_LeavesIntentForReaper(t *testing.T) {
 	t.Parallel()
 	store, c := settleStore(t, func(s *storetest.MockMetadataStore) {
 		s.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-			Return(nil, nil, errors.New("db error")).AnyTimes()
+			Return(nil, errors.New("db error")).AnyTimes()
 	})
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 

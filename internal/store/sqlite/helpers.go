@@ -14,6 +14,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -139,6 +140,17 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// jsonList renders a string list as the JSON array json_each expands, so a
+// query takes a whole list as one fixed parameter. An empty or nil list is
+// "[]", since json_each reads "null" as a single NULL element.
+func jsonList(values []string) string {
+	if len(values) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(values) // a []string always encodes
+	return string(b)
 }
 
 // -------------------------------------------------------------------------

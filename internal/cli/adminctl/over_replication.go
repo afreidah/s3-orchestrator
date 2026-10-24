@@ -32,7 +32,7 @@ func cmdOverReplication(args []string, c *client) int {
 		if *batchSize > 0 {
 			q.Set(queryBatch, strconv.Itoa(*batchSize))
 		}
-		return c.stream(http.MethodPost, withQuery("/admin/api/over-replication", q), "")
+		return c.stream(http.MethodPost, withQuery("/admin/api/over-replication", q))
 	}
 	return c.get("/admin/api/over-replication", nil)
 }

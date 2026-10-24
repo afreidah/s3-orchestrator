@@ -136,7 +136,7 @@ func TestManager_RestartsAfterFailure(t *testing.T) {
 				stop := runManager(mgr)
 				defer stop()
 
-				synctest.Sleep(defaultInitialBackoff - time.Millisecond)
+				synctest.Sleep(initialBackoff - time.Millisecond)
 				if got := svc.calls.Load(); got != 1 {
 					t.Errorf("calls before the backoff = %d, want 1", got)
 				}

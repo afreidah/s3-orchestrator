@@ -62,7 +62,7 @@ type RuntimeOptions struct {
 	MaxObjectSizes  map[string]int64
 	AdmissionSem    chan struct{}
 	Backend         counter.Backend
-	QuotaBaselines  map[string]core.BackendQuotaUsage
+	QuotaBaselines  map[string]core.QuotaStat
 
 	Metrics           metrics.Deps // when set, installs a collector
 	ReplicationFactor func() int   // under-replication gauge; read only when Metrics is set
@@ -72,10 +72,10 @@ type RuntimeOptions struct {
 // does at startup; without them every write is refused. Backends with no
 // supplied baseline are unlimited, so a test that does not care about quota
 // never has a write refused.
-func NewQuotaTracker(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
-	primed := make(map[string]core.BackendQuotaUsage, len(names))
+func NewQuotaTracker(names []string, baselines map[string]core.QuotaStat) *counter.QuotaTracker {
+	primed := make(map[string]core.QuotaStat, len(names))
 	for _, name := range names {
-		primed[name] = core.BackendQuotaUsage{BackendName: name}
+		primed[name] = core.QuotaStat{BackendName: name}
 	}
 	maps.Copy(primed, baselines)
 	tracker := counter.NewQuotaTracker()

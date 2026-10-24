@@ -92,26 +92,3 @@ func TestResolve_LoaderError(t *testing.T) {
 		t.Fatalf("err = %v, want a wrap of boom", err)
 	}
 }
-
-// TestFirstNonEmpty covers the precedence helper Resolve is built on.
-func TestFirstNonEmpty(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name string
-		in   []string
-		want string
-	}{
-		{"first wins", []string{"a", "b"}, "a"},
-		{"skips empties", []string{"", "", "c"}, "c"},
-		{"all empty", []string{"", ""}, ""},
-		{"none", nil, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := firstNonEmpty(tc.in...); got != tc.want {
-				t.Errorf("firstNonEmpty(%v) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}

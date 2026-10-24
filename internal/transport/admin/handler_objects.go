@@ -6,8 +6,8 @@
 // The object namespace as an operator sees it from a terminal: browse one
 // delimiter-grouped page, stream a single object down, store one, and remove
 // either a single key or everything under a prefix. The same operations back
-// the dashboard's file browser, so a token-authenticated caller reaches
-// exactly what a session-authenticated one does.
+// the dashboard's file browser, so a caller signing with a credential reaches
+// exactly what a session holding that credential does.
 // -------------------------------------------------------------------------------
 
 package admin

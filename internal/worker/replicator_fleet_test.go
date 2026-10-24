@@ -138,7 +138,7 @@ func TestReplicate_QueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db down")).AnyTimes()
 	storetest.Permissive(store)
 
@@ -156,9 +156,7 @@ func TestReplicate_QueryError(t *testing.T) {
 // tests share: under-replicated returns, GetBackendWithSpace chosen-from-
 // eligible behaviour, and a PlaceCopy captured into pt.
 func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.ObjectLocation, pt *placeCopyTracker) {
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(locations, nil).AnyTimes()
-	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(locations, nil).AnyTimes()
 	store.EXPECT().PlaceCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubPlaceCopy(pt)).AnyTimes()
@@ -196,23 +194,6 @@ func TestReplicate_Success(t *testing.T) {
 	}
 }
 
-// TestFindReplicaTarget_ExcludesExistingCopies pins the exclusion
-// filter.
-func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	storetest.Permissive(store)
-
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
-
-	exclusion := map[string]bool{"b1": true, "b2": true}
-	target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
-	if target != "b3" {
-		t.Errorf("expected b3, got %q", target)
-	}
-}
-
 // TestReplicate_FullTargetRecordsNoCopy asserts a target without room produces
 // no copy: the claim refuses the target even though ranking proposed the
 // backend, so nothing is copied to it.
@@ -220,7 +201,7 @@ func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
 	// Every target declines the claim, which is how a full backend reports itself.
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(false, nil).AnyTimes()

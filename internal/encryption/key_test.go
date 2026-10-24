@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
@@ -175,6 +176,29 @@ func rotationPair(t *testing.T) (multi *MultiKeyProvider, primary, previous *Sta
 	primary = staticProvider(t, randomKey(t))
 	previous = staticProvider(t, randomKey(t))
 	return NewMultiKeyProvider(primary, []KeyProvider{previous}), primary, previous
+}
+
+// closingProvider is a key provider that counts how often it is closed, for
+// the tests that check a close reaches it.
+type closingProvider struct {
+	KeyProvider
+	closed atomic.Int32
+}
+
+// Close records the call.
+func (p *closingProvider) Close() { p.closed.Add(1) }
+
+// TestMultiKeyProvider_CloseReachesEveryMember asserts closing a rotation
+// provider closes each member that holds something, the primary included,
+// and skips one that has nothing to close.
+func TestMultiKeyProvider_CloseReachesEveryMember(t *testing.T) {
+	t.Parallel()
+	primary := &closingProvider{KeyProvider: staticProvider(t, randomKey(t))}
+	previous := &closingProvider{KeyProvider: staticProvider(t, randomKey(t))}
+	NewMultiKeyProvider(primary, []KeyProvider{staticProvider(t, randomKey(t)), previous}).Close()
+	if primary.closed.Load() != 1 || previous.closed.Load() != 1 {
+		t.Errorf("closed = primary %d, previous %d, want 1 each", primary.closed.Load(), previous.closed.Load())
+	}
 }
 
 // TestMultiKeyProvider_WrapUsePrimary asserts new DEKs are wrapped with the

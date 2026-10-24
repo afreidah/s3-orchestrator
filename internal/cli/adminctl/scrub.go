@@ -31,7 +31,7 @@ func cmdScrub(args []string, c *client) int {
 	}
 
 	if *key != "" {
-		return c.post("/admin/api/object-scrub?key="+url.QueryEscape(*key), "", nil)
+		return c.post(withQuery("/admin/api/object-scrub", url.Values{"key": {*key}}), nil)
 	}
 
 	q := url.Values{}
@@ -41,5 +41,5 @@ func cmdScrub(args []string, c *client) int {
 	if *backend != "" {
 		q.Set(queryBackend, *backend)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/scrub", q), "")
+	return c.stream(http.MethodPost, withQuery("/admin/api/scrub", q))
 }

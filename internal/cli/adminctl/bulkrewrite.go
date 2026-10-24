@@ -36,5 +36,5 @@ func runBulkRewrite(args []string, c *client, name, path string) int {
 	if *backend != "" {
 		q.Set(queryBackend, *backend)
 	}
-	return c.post(withQuery(path, q), "", nil)
+	return c.post(withQuery(path, q), nil)
 }

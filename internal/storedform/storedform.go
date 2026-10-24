@@ -418,10 +418,6 @@ func (l *Layers) encode(r io.Reader, logical int64, out *Reformed) (io.Reader, i
 		return nil, 0, &Declined{EncodedSize: enc.Size}
 	}
 	out.release = append(out.release, enc.Body.Cleanup)
-	encoded, err := enc.Body.Reader()
-	if err != nil {
-		return nil, 0, fmt.Errorf("read back encoded object: %w", err)
-	}
 	Describe(out.Form, l.Compression.Level, logical)
-	return encoded, enc.Size, nil
+	return enc.Body.Reader(), enc.Size, nil
 }

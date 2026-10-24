@@ -458,3 +458,13 @@ func writeXML(w http.ResponseWriter, status int, v any) error {
 	_, err := w.Write(buf.Bytes())
 	return err
 }
+
+// respondXML writes v as a 200 XML response and returns the status and error
+// a handler reports for it. The request log names the operation, so the error
+// needs no label of its own.
+func respondXML(w http.ResponseWriter, v any) (int, error) {
+	if err := writeXML(w, http.StatusOK, v); err != nil {
+		return http.StatusOK, fmt.Errorf("write XML response: %w", err)
+	}
+	return http.StatusOK, nil
+}

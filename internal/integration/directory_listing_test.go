@@ -52,12 +52,12 @@ func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
 	prefix := dirTestPrefix(t, "dirtest-replicated")
 	key := prefix + "file.txt"
 
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	placeReplica(t, ctx, key, "minio-1", "minio-2")
 	t.Cleanup(func() {
-		_, _, _ = testStore.DeleteObject(context.Background(), key)
+		_, _ = testStore.DeleteObject(context.Background(), key)
 	})
 
 	result, err := testStore.ListDirectoryChildren(ctx, prefix, "", 100)
@@ -85,11 +85,11 @@ func TestPgListDirectoryChildren_FileRowSingle(t *testing.T) {
 	prefix := dirTestPrefix(t, "dirtest-single")
 	key := prefix + "file.txt"
 
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _, _ = testStore.DeleteObject(context.Background(), key)
+		_, _ = testStore.DeleteObject(context.Background(), key)
 	})
 
 	result, err := testStore.ListDirectoryChildren(ctx, prefix, "", 100)
@@ -119,17 +119,17 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	repKey := parent + "child/replicated.txt"
 	singleKey := parent + "child/single.txt"
 
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: repKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: repKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(replicated): %v", err)
 	}
 	placeReplica(t, ctx, repKey, "minio-1", "minio-2")
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: singleKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: singleKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(single): %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		_, _, _ = testStore.DeleteObject(bg, repKey)
-		_, _, _ = testStore.DeleteObject(bg, singleKey)
+		_, _ = testStore.DeleteObject(bg, repKey)
+		_, _ = testStore.DeleteObject(bg, singleKey)
 	})
 
 	result, err := testStore.ListDirectoryChildren(ctx, parent, "", 100)
@@ -162,16 +162,16 @@ func TestPgListDirectoryChildren_UnderscorePrefix(t *testing.T) {
 	fileKey := prefix + "file.txt"
 	subKey := prefix + "sub/inner.txt"
 
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: fileKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: fileKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(file): %v", err)
 	}
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: subKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: subKey, Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(sub): %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		_, _, _ = testStore.DeleteObject(bg, fileKey)
-		_, _, _ = testStore.DeleteObject(bg, subKey)
+		_, _ = testStore.DeleteObject(bg, fileKey)
+		_, _ = testStore.DeleteObject(bg, subKey)
 	})
 
 	result, err := testStore.ListDirectoryChildren(ctx, prefix, "", 100)

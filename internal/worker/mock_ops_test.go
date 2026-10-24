@@ -435,9 +435,9 @@ func (mr *MockBackendSyncerMockRecorder) ReconcileBackend(ctx, backendName, know
 }
 
 // SyncBackend mocks base method.
-func (m *MockBackendSyncer) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (int, int, error) {
+func (m *MockBackendSyncer) SyncBackend(ctx context.Context, backendName string, knownBuckets []string) (int, int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SyncBackend", ctx, backendName, bucket, knownBuckets)
+	ret := m.ctrl.Call(m, "SyncBackend", ctx, backendName, knownBuckets)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(int)
 	ret2, _ := ret[2].(error)
@@ -445,9 +445,9 @@ func (m *MockBackendSyncer) SyncBackend(ctx context.Context, backendName, bucket
 }
 
 // SyncBackend indicates an expected call of SyncBackend.
-func (mr *MockBackendSyncerMockRecorder) SyncBackend(ctx, backendName, bucket, knownBuckets any) *gomock.Call {
+func (mr *MockBackendSyncerMockRecorder) SyncBackend(ctx, backendName, knownBuckets any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncBackend", reflect.TypeOf((*MockBackendSyncer)(nil).SyncBackend), ctx, backendName, bucket, knownBuckets)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncBackend", reflect.TypeOf((*MockBackendSyncer)(nil).SyncBackend), ctx, backendName, knownBuckets)
 }
 
 // MockFleetOps is a mock of FleetOps interface.

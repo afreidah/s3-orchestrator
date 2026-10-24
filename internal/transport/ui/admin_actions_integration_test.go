@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -51,8 +52,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	// The handler drives real workers, whose passes read the ledger. These are
 	// incidental to the wrapper-closure behaviour under test.
-	mock.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	mock.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().CountReplicationBacklog(gomock.Any(), gomock.Any()).Return(core.ReplicationBacklog{}, nil).AnyTimes()
 	mock.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
@@ -146,8 +146,8 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	}
 
 	res := waitForResult(t, h, "replicate")
-	if !res.OK || res.Skipped != "" {
-		t.Errorf("result = %+v, want OK and no Skipped reason", res)
+	if res.Error != "" || res.Skipped != "" {
+		t.Errorf("result = %+v, want no error and no Skipped reason", res)
 	}
 	if res.Counts.Count != 0 {
 		t.Errorf("Count = %d, want 0 (empty store)", res.Counts.Count)
@@ -188,7 +188,13 @@ func TestHandleAPIDownload_StreamsObject(t *testing.T) {
 		}),
 	}
 
-	reader := auth.NewUser("reader", "reader", map[string]core.PermissionSet{"test-bucket": core.PermRead})
+	reg, err := auth.NewBucketRegistry(&provisioning.View{Users: []provisioning.User{{
+		ID: "reader", Name: "reader", Grants: map[string]core.PermissionSet{"test-bucket": core.PermRead},
+	}}})
+	if err != nil {
+		t.Fatalf("NewBucketRegistry: %v", err)
+	}
+	reader, _ := reg.UserByID("reader")
 	w := httptest.NewRecorder()
 	h.handleAPIDownload(w, httptest.NewRequestWithContext(withUser(context.Background(), reader),
 		http.MethodGet, "/api/download?key=test-bucket/dir/file.txt", nil))
@@ -228,7 +234,6 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 		encryption: ops.NewEncryption(ops.EncryptionDeps{
 			Encryptor: enc,
 			Store:     store,
-			Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
 			Mover:     opstest.NewMockMover(gomock.NewController(t)),
 		}),
 	}
@@ -241,7 +246,7 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 	}
 
 	res := waitForResult(t, h, "encrypt-existing")
-	if !res.OK || res.Skipped != "" {
+	if res.Error != "" || res.Skipped != "" {
 		t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 	}
 }
@@ -274,7 +279,7 @@ func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 			}
 
 			res := waitForResult(t, h, tc.opName)
-			if !res.OK || res.Skipped != "" {
+			if res.Error != "" || res.Skipped != "" {
 				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 			}
 		})
@@ -296,7 +301,7 @@ func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	}
 
 	res := waitForResult(t, h, opCleanExcess)
-	if !res.OK || res.Skipped != "" {
+	if res.Error != "" || res.Skipped != "" {
 		t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 	}
 }
@@ -382,7 +387,7 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 			}
 
 			res := waitForResult(t, h, tc.opName)
-			if !res.OK || res.Skipped != "" {
+			if res.Error != "" || res.Skipped != "" {
 				t.Fatalf("result = %+v, want a completed pass with no skip reason", res)
 			}
 
@@ -484,11 +489,10 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 			h := &Handler{
 				log: slog.Default(),
 				compression: ops.NewCompression(&ops.CompressionDeps{
-					Codec:   codec,
-					Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-					Store:   store,
-					Runtime: opstest.NewMockRuntimeOps(gomock.NewController(t)),
-					Mover:   opstest.NewMockMover(gomock.NewController(t)),
+					Codec:  codec,
+					Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+					Store:  store,
+					Mover:  opstest.NewMockMover(gomock.NewController(t)),
 				}),
 			}
 
@@ -499,7 +503,7 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 			}
 
 			res := waitForResult(t, h, tc.opName)
-			if !res.OK || res.Skipped != "" {
+			if res.Error != "" || res.Skipped != "" {
 				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 			}
 		})

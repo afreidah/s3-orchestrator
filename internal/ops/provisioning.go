@@ -27,7 +27,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -60,7 +59,6 @@ type ProvisioningDeps struct {
 // Provisioning serves the bucket and credential administration shared by the
 // admin API and the web UI.
 type Provisioning struct {
-	log      *slog.Logger
 	store    ProvisioningStore
 	objects  NamespaceCounter
 	registry RegistryPublisher
@@ -70,7 +68,6 @@ type Provisioning struct {
 // NewProvisioning is the explicit-deps constructor.
 func NewProvisioning(d ProvisioningDeps) *Provisioning {
 	return &Provisioning{
-		log:      slog.Default().With(logfmt.Component("ops")),
 		store:    d.Store,
 		objects:  d.Objects,
 		registry: d.Registry,
@@ -117,7 +114,7 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := findStoredBucket(&view, b.Name); ok {
+	if hasStoredBucket(&view, b.Name) {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
 	}
 	// Rejected here rather than at assembly: a rule the matcher cannot read
@@ -144,11 +141,8 @@ func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := findStoredBucket(&view, b.Name); !ok {
-		if _, declared := findBucket(view.Buckets, b.Name); declared {
-			return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, b.Name)
-		}
-		return fmt.Errorf("%w: %q", ErrBucketNotFound, b.Name)
+	if err := requireStoredBucket(&view, b.Name); err != nil {
+		return err
 	}
 	// Rejected for the same reason create rejects it: a rule the matcher cannot
 	// read stores cleanly and then fails every registry rebuild afterwards.
@@ -170,11 +164,8 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := findStoredBucket(&view, name); !ok {
-		if _, declared := findBucket(view.Buckets, name); declared {
-			return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, name)
-		}
-		return fmt.Errorf("%w: %q", ErrBucketNotFound, name)
+	if err := requireStoredBucket(&view, name); err != nil {
+		return err
 	}
 	// A shadowed row serves nothing, so removing it takes nothing away: the
 	// objects and grants belong to the config bucket standing in front of it,
@@ -254,12 +245,9 @@ func (p *Provisioning) RenameUser(ctx context.Context, id, name string) error {
 	if err != nil {
 		return err
 	}
-	u, ok := findUser(view.Users, id)
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrUserNotFound, id)
-	}
-	if u.Source == provisioning.SourceConfig {
-		return fmt.Errorf("%w: user %q", ErrConfigDeclared, id)
+	u, err := storedUser(&view, id)
+	if err != nil {
+		return err
 	}
 	if err := p.store.RenameUser(ctx, id, name); err != nil {
 		return err
@@ -279,12 +267,9 @@ func (p *Provisioning) DeleteUser(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	u, ok := findUser(view.Users, id)
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrUserNotFound, id)
-	}
-	if u.Source == provisioning.SourceConfig {
-		return fmt.Errorf("%w: user %q", ErrConfigDeclared, id)
+	u, err := storedUser(&view, id)
+	if err != nil {
+		return err
 	}
 	if len(u.Buckets) > 0 {
 		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(len(u.Buckets)), "grant"))
@@ -339,12 +324,8 @@ func (p *Provisioning) CreateCredential(
 	if err != nil {
 		return NewCredential{}, err
 	}
-	u, ok := findUser(view.Users, userID)
-	if !ok {
-		return NewCredential{}, fmt.Errorf("%w: %q", ErrUserNotFound, userID)
-	}
-	if u.Source == provisioning.SourceConfig {
-		return NewCredential{}, fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
+	if _, err := storedUser(&view, userID); err != nil {
+		return NewCredential{}, err
 	}
 
 	accessKey, secret := keys.AccessKeyID, keys.SecretAccessKey
@@ -444,12 +425,8 @@ func (p *Provisioning) checkGrant(
 	if err != nil {
 		return err
 	}
-	u, ok := findUser(view.Users, userID)
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrUserNotFound, userID)
-	}
-	if u.Source == provisioning.SourceConfig {
-		return fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
+	if _, err := storedUser(&view, userID); err != nil {
+		return err
 	}
 	if err := p.checkResource(&view, resource); err != nil {
 		return err
@@ -472,12 +449,8 @@ func (p *Provisioning) DeleteGrant(ctx context.Context, userID string, resource 
 	if err != nil {
 		return err
 	}
-	u, ok := findUser(view.Users, userID)
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrUserNotFound, userID)
-	}
-	if u.Source == provisioning.SourceConfig {
-		return fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
+	if _, err := storedUser(&view, userID); err != nil {
+		return err
 	}
 	if err := p.store.DeleteGrant(ctx, userID, resource); err != nil {
 		return err
@@ -562,14 +535,40 @@ func findBucket(buckets []provisioning.Bucket, name string) (provisioning.Bucket
 	return provisioning.Bucket{}, false
 }
 
-// findStoredBucket returns the store's row for a name, whether or not a config
-// bucket is currently shadowing it, since the bucket mutations act on store
-// rows.
-func findStoredBucket(v *provisioning.View, name string) (provisioning.Bucket, bool) {
+// hasStoredBucket reports whether the store holds a row for a name, whether or
+// not a config bucket is currently shadowing it, since the bucket mutations act
+// on store rows.
+func hasStoredBucket(v *provisioning.View, name string) bool {
 	if b, ok := findBucket(v.Buckets, name); ok && b.Source == provisioning.SourceStore {
-		return b, true
+		return true
 	}
-	return findBucket(v.Shadowed, name)
+	_, ok := findBucket(v.Shadowed, name)
+	return ok
+}
+
+// requireStoredBucket refuses a bucket mutation whose target has no store row,
+// naming whether the config file declares it or it does not exist at all.
+func requireStoredBucket(v *provisioning.View, name string) error {
+	if hasStoredBucket(v, name) {
+		return nil
+	}
+	if _, declared := findBucket(v.Buckets, name); declared {
+		return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, name)
+	}
+	return fmt.Errorf("%w: %q", ErrBucketNotFound, name)
+}
+
+// storedUser returns the user with an id, refusing one that does not exist and
+// one the config file declares, since provisioning changes only store rows.
+func storedUser(v *provisioning.View, id string) (provisioning.User, error) {
+	u, ok := findUser(v.Users, id)
+	if !ok {
+		return provisioning.User{}, fmt.Errorf("%w: %q", ErrUserNotFound, id)
+	}
+	if u.Source == provisioning.SourceConfig {
+		return provisioning.User{}, fmt.Errorf("%w: user %q", ErrConfigDeclared, id)
+	}
+	return u, nil
 }
 
 // findUser returns the merged user with an id.

@@ -37,9 +37,8 @@ var corsMethods = map[string]bool{
 // TYPES
 // -------------------------------------------------------------------------
 
-// CredentialConfig holds a single set of client credentials for accessing a
-// virtual bucket. Supports SigV4 (access_key_id + secret_access_key) or legacy
-// token auth.
+// CredentialConfig holds a single SigV4 keypair for accessing a virtual
+// bucket: access_key_id and secret_access_key, both required.
 type CredentialConfig struct {
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`

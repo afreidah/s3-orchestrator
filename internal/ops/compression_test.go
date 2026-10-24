@@ -29,12 +29,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"go.uber.org/mock/gomock"
-
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -210,23 +208,19 @@ func newCompression(t *testing.T, store RewriteStore, cfg config.CompressionConf
 	return newCompressionWith(t, store, cfg, payload, testCodec(t), nil)
 }
 
-// newCompressionWith builds the service over the given codec and encryptor.
-// The codec is an interface so a test can hand in a failing one.
+// newCompressionWith builds the service over the given codec and encryptor,
+// with the fake backend as backend-a, where every row in these tests lives. The
+// codec is an interface so a test can hand in a failing one.
 func newCompressionWith(t *testing.T, store RewriteStore, cfg config.CompressionConfig, payload []byte, codec storedform.Codec, enc *encryption.Encryptor) (*Compression, *fakeBackend, *fakeMover) {
 	t.Helper()
-	ctrl := gomock.NewController(t)
 	be := &fakeBackend{payload: payload}
-	mover := &fakeMover{}
-
-	runtime := opstest.NewMockRuntimeOps(ctrl)
-	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
+	mover := &fakeMover{backends: map[string]s3be.ObjectBackend{"backend-a": be}}
 
 	return NewCompression(&CompressionDeps{
 		Codec:     codec,
 		Config:    cfg,
 		Encryptor: enc,
 		Store:     store,
-		Runtime:   runtime,
 		Mover:     mover,
 	}), be, mover
 }
@@ -712,11 +706,9 @@ func TestDecompressExisting_KeepsTheEnvelope(t *testing.T) {
 // that rather than rewriting anything.
 func TestCompressExisting_WithoutCodec(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
 	svc := NewCompression(&CompressionDeps{
-		Store:   &oneRowStore{},
-		Runtime: opstest.NewMockRuntimeOps(ctrl),
-		Mover:   &fakeMover{},
+		Store: &oneRowStore{},
+		Mover: &fakeMover{},
 	})
 
 	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, ErrCompressionUnavailable) {

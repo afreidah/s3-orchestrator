@@ -77,82 +77,67 @@ func (r *RecordObjectRequest) committedIntents() []string {
 	return ids
 }
 
-// mutationResult is what a mutation's transactional body hands back: the
-// cleanup rows it queued for the bytes it stopped recording and the byte deltas
-// it charged. Paired in one value because WithTxVal carries a single result,
-// and separating them would mean two transactions to learn one outcome.
-type mutationResult struct {
-	cleanup []CleanupItem
-	deltas  QuotaDeltas
-}
-
 // RecordObject records an object's copies, replacing every existing copy of the
-// key, and returns the cleanup rows it queued for the displaced bytes plus the
-// backend byte deltas. The key's pending intents, except those in Placing, are
-// cleared in the same transaction. A write whose own intent a newer write
-// already cleared records nothing and queues only its own bytes.
-func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) ([]CleanupItem, QuotaDeltas, error) {
+// key, and returns the cleanup rows it queued for the displaced bytes. The
+// key's pending intents, except those in Placing, are cleared in the same
+// transaction. A write whose own intent a newer write already cleared records
+// nothing and queues only its own bytes.
+func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]CleanupItem, error) {
 	// A request with no copies would clear the key and put nothing back.
 	if len(req.Copies) == 0 {
-		return nil, nil, ErrNoCopiesToRecord
+		return nil, ErrNoCopiesToRecord
 	}
 	if err := ValidateTags(req.Tags); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (mutationResult, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		return recordObjectTx(ctx, tx, req)
 	})
-	return res.cleanup, res.deltas, err
 }
 
-// recordObjectTx is the shared transactional body. Per-backend byte deltas are
-// aggregated and handed back rather than written here, so the transaction holds
-// no backend_quotas lock and concurrent writes to one backend do not queue
-// behind each other.
-func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) (mutationResult, error) {
+// recordObjectTx is the shared transactional body. The bytes each copy adds or
+// displaces are charged to the key's quota stripe inside the transaction, so
+// the counter commits or rolls back with the rows.
+func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
 	if err := tx.AcquireKeyLock(ctx, req.Key); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	held, err := intentsHeld(ctx, tx, req.committedIntents())
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	if !held {
 		return discardOvertakenWrite(ctx, tx, req)
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, req.Key)
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
-	deltas := make(QuotaDeltas, len(existing)+len(req.Copies))
+	deltas := make(quotaDeltas, len(existing)+len(req.Copies))
 	displaced, err := clearExistingCopies(ctx, tx, req.Key, existing, deltas)
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	// A PUT replaces the tag set too, even when the key had no copies, so
 	// leftover tag rows are swept. Tags commit in the same transaction as the
 	// object.
 	if err := replaceObjectTagsTx(ctx, tx, req.Key, req.Tags); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	for _, c := range req.Copies {
 		if err := tx.InsertObjectLocation(ctx, ObjectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
-			return mutationResult{}, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
+			return nil, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
 		}
-		deltas.Add(c.Backend, req.Size)
+		deltas.add(c.Backend, req.Size)
 	}
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.keepIntents(), req.committedIntents())
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded...))
-	if err != nil {
-		return mutationResult{}, err
-	}
-	return mutationResult{cleanup: cleanup, deltas: deltas}, nil
+	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded...))
 }
 
 // intentsHeld reports whether every intent the write is committing still
@@ -175,21 +160,17 @@ func intentsHeld(ctx context.Context, tx TxAdapter, intentIDs []string) (bool, e
 // recorded, its remaining intents are dropped, and its own bytes are queued.
 // The newer write already queued those bytes when it cleared the intent, but
 // the upload may have landed after that delete ran.
-func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) (mutationResult, error) {
+func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
 	own := make([]removedCopy, 0, len(req.Copies))
 	for _, c := range req.Copies {
 		if c.IntentID != "" {
 			if err := tx.DeletePending(ctx, c.IntentID); err != nil {
-				return mutationResult{}, fmt.Errorf("delete overtaken intent: %w", err)
+				return nil, fmt.Errorf("delete overtaken intent: %w", err)
 			}
 		}
 		own = append(own, removedCopy{BackendName: c.Backend, StorageKey: c.StorageKey, SizeBytes: req.Size})
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, req.Key, CleanupReasonSupersededIntent, own)
-	if err != nil {
-		return mutationResult{}, err
-	}
-	return mutationResult{cleanup: cleanup}, nil
+	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonSupersededIntent, own)
 }
 
 // -------------------------------------------------------------------------
@@ -197,56 +178,51 @@ func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectR
 // -------------------------------------------------------------------------
 
 // DeleteObject removes all copies of an object and returns the cleanup rows it
-// queued for their bytes plus the byte deltas their removal made. Returns
-// ErrObjectNotFound if the object doesn't exist.
-func DeleteObject(ctx context.Context, runner Runner, key string) ([]CleanupItem, QuotaDeltas, error) {
-	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (mutationResult, error) {
+// queued for their bytes. Returns ErrObjectNotFound if the object doesn't
+// exist.
+func (o TxOps) DeleteObject(ctx context.Context, key string) ([]CleanupItem, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		return deleteObjectTx(ctx, tx, key)
 	})
-	return res.cleanup, res.deltas, err
 }
 
 // deleteObjectTx is the transactional body of DeleteObject: clear the key's
 // copies, its tags and its intents, debit what those copies held, and queue
 // their bytes.
-func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResult, error) {
+func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) ([]CleanupItem, error) {
 	// The key lock comes before the row read on every path, because tagging
 	// calls touch only object_tags and are excluded by the key lock alone.
 	// Taking it in the same order everywhere prevents deadlock.
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	if len(existing) == 0 {
-		return mutationResult{}, ErrObjectNotFound
+		return nil, ErrObjectNotFound
 	}
 	if err := tx.DeleteObjectCopies(ctx, key); err != nil {
-		return mutationResult{}, fmt.Errorf("delete object copies: %w", err)
+		return nil, fmt.Errorf("delete object copies: %w", err)
 	}
 	if err := clearTagsForKey(ctx, tx, key); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	// A delete keeps no intents: an upload still running is placing a copy of
 	// an object that no longer exists.
 	superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
 	if err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
-	deltas := make(QuotaDeltas, len(existing))
+	deltas := make(quotaDeltas, len(existing))
 	for _, ec := range existing {
-		deltas.Add(ec.BackendName, -ec.SizeBytes)
+		deltas.add(ec.BackendName, -ec.SizeBytes)
 	}
 	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
-	cleanup, err := enqueueRemoved(ctx, tx, key, CleanupReasonDeleted, append(removedFromExisting(existing), superseded...))
-	if err != nil {
-		return mutationResult{}, err
-	}
-	return mutationResult{cleanup: cleanup, deltas: deltas}, nil
+	return enqueueRemoved(ctx, tx, key, CleanupReasonDeleted, append(removedFromExisting(existing), superseded...))
 }
 
 // -------------------------------------------------------------------------
@@ -254,75 +230,70 @@ func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResu
 // -------------------------------------------------------------------------
 
 // DeleteObjectsBatch removes every copy and intent of the supplied keys in one
-// transaction and returns the cleanup rows it queued for their bytes plus the
-// per-backend byte deltas.
-func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) ([]CleanupItem, QuotaDeltas, error) {
+// transaction and returns the cleanup rows it queued for their bytes.
+func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, error) {
 	if len(keys) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
-	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (mutationResult, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		return deleteObjectsBatchTx(ctx, tx, keys)
 	})
-	return res.cleanup, res.deltas, err
 }
 
 // deleteObjectsBatchTx is the transactional body of DeleteObjectsBatch. Each
 // removed key's intents are cleared as DeleteObject clears them, so an upload
 // still running cannot commit a copy of an object the batch removed.
-func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) (mutationResult, error) {
+func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
 	if err := lockInOrder(ctx, keys, tx.AcquireKeyLock); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	rows, err := tx.GetCopiesForKeysForUpdate(ctx, keys)
 	if err != nil || len(rows) == 0 {
-		return mutationResult{}, err
+		return nil, err
 	}
 	if err := tx.DeleteObjectsByKeys(ctx, keys); err != nil {
-		return mutationResult{}, fmt.Errorf("delete object copies by keys: %w", err)
+		return nil, fmt.Errorf("delete object copies by keys: %w", err)
 	}
 	if err := clearTagsForKeys(ctx, tx, keys); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
-	removed, deltas, perKey := splitRemovedCopies(rows, len(keys))
+	removed, perKey := splitRemovedCopies(rows, len(keys))
 	if err := chargeStripesByKey(ctx, tx, perKey); err != nil {
-		return mutationResult{}, err
+		return nil, err
 	}
 	var cleanup []CleanupItem
 	for _, key := range slices.Sorted(maps.Keys(removed)) {
 		superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
 		if err != nil {
-			return mutationResult{}, err
+			return nil, err
 		}
 		queued, err := enqueueRemoved(ctx, tx, key, CleanupReasonDeleted, append(removed[key], superseded...))
 		if err != nil {
-			return mutationResult{}, err
+			return nil, err
 		}
 		cleanup = append(cleanup, queued...)
 	}
-	return mutationResult{cleanup: cleanup, deltas: deltas}, nil
+	return cleanup, nil
 }
 
-// splitRemovedCopies folds the removed rows into the three views the batch
-// needs: the bytes each key queues, the per-backend totals the caller reports,
-// and the per-key totals the stripe charge uses, since each key's bytes belong
-// on the stripe its own name selects.
-func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]removedCopy, QuotaDeltas, map[string]QuotaDeltas) {
+// splitRemovedCopies folds the removed rows into the two views the batch needs:
+// the bytes each key queues, and the per-key totals the stripe charge uses,
+// since each key's bytes belong on the stripe its own name selects.
+func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]removedCopy, map[string]quotaDeltas) {
 	removed := make(map[string][]removedCopy, keyCount)
-	deltas := make(QuotaDeltas)
-	perKey := make(map[string]QuotaDeltas, keyCount)
+	perKey := make(map[string]quotaDeltas, keyCount)
 	for _, r := range rows {
 		removed[r.ObjectKey] = append(removed[r.ObjectKey], removedCopy{
 			BackendName: r.BackendName,
 			StorageKey:  r.StorageKey,
 			SizeBytes:   r.SizeBytes,
 		})
-		deltas.Add(r.BackendName, -r.SizeBytes)
 		if perKey[r.ObjectKey] == nil {
-			perKey[r.ObjectKey] = make(QuotaDeltas)
+			perKey[r.ObjectKey] = make(quotaDeltas)
 		}
-		perKey[r.ObjectKey].Add(r.BackendName, -r.SizeBytes)
+		perKey[r.ObjectKey].add(r.BackendName, -r.SizeBytes)
 	}
-	return removed, deltas, perKey
+	return removed, perKey
 }
 
 // lockInOrder takes lock on every distinct name in sorted order, so concurrent
@@ -353,8 +324,8 @@ func lockInOrder(ctx context.Context, names []string, lock func(context.Context,
 // keepAtLeast > 0 removes the copy only while the object holds more copies
 // than that, returning ErrCopyNotExcess otherwise, and refuses with
 // ErrCopyHoldsOnlyDEK the copy that would leave the object unreadable.
-func DeleteObjectLocation(ctx context.Context, runner Runner, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
+func (o TxOps) DeleteObjectLocation(ctx context.Context, loc *ObjectLocation, keepAtLeast int, reason string) ([]CleanupItem, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		key := loc.ObjectKey
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
 			return nil, err
@@ -388,7 +359,7 @@ func removeCopyRow(ctx context.Context, tx TxAdapter, key string, held *Existing
 			return err
 		}
 	}
-	return chargeStripes(ctx, tx, key, QuotaDeltas{held.BackendName: -held.SizeBytes})
+	return chargeStripes(ctx, tx, key, quotaDeltas{held.BackendName: -held.SizeBytes})
 }
 
 // removableCopy returns the copy in the locked re-read that loc names, or the
@@ -458,8 +429,8 @@ type placeOutcome struct {
 // or replaced since the caller read it is ErrCopyChanged, and a target that
 // already holds another copy is ErrTargetRefused; either way nothing is
 // recorded, and the copied bytes are queued for deletion in their place.
-func PlaceCopy(ctx context.Context, runner Runner, p *Placement) (int64, []CleanupItem, error) {
-	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (placeOutcome, error) {
+func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupItem, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (placeOutcome, error) {
 		return placeCopyTx(ctx, tx, p)
 	})
 	if err != nil {
@@ -483,7 +454,7 @@ func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (placeOutcome,
 	if !held {
 		// A client write took the key mid-copy and queued these bytes when it
 		// cleared the intent, but the upload may have landed after that delete.
-		cleanup, err := enqueueRemoved(ctx, tx, key, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent, "")})
+		cleanup, err := enqueueRemoved(ctx, tx, key, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent)})
 		return placeOutcome{cleanup: cleanup, refusal: ErrCopyChanged}, err
 	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
@@ -512,13 +483,13 @@ func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (placeOutcome,
 func (p *Placement) commit(ctx context.Context, tx TxAdapter, src *ObjectLocation) (placeOutcome, error) {
 	key := src.ObjectKey
 	placed := p.placedCopy(src)
-	deltas := QuotaDeltas{}
+	deltas := quotaDeltas{}
 	var cleanup []CleanupItem
 	if p.RemoveSource {
 		if err := tx.DeleteObjectFromBackend(ctx, key, src.BackendName); err != nil {
 			return placeOutcome{}, err
 		}
-		deltas.Add(src.BackendName, -src.SizeBytes)
+		deltas.add(src.BackendName, -src.SizeBytes)
 		queued, err := enqueueRemoved(ctx, tx, key, p.Reasons.SourceDelete, []removedCopy{{
 			BackendName: src.BackendName, StorageKey: src.StorageKey, SizeBytes: src.SizeBytes,
 		}})
@@ -530,7 +501,7 @@ func (p *Placement) commit(ctx context.Context, tx TxAdapter, src *ObjectLocatio
 	if err := tx.InsertObjectLocation(ctx, placed); err != nil {
 		return placeOutcome{}, fmt.Errorf("insert placed copy on %s: %w", placed.BackendName, err)
 	}
-	deltas.Add(placed.BackendName, placed.SizeBytes)
+	deltas.add(placed.BackendName, placed.SizeBytes)
 	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
 		return placeOutcome{}, err
 	}
@@ -636,8 +607,8 @@ func (o ImportOutcome) String() string {
 // existing row. A key with a pending cleanup on that backend is skipped:
 // importing it would undo the delete, and the cleanup queue already tracks the
 // orphan and its bytes.
-func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) (ImportOutcome, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
+func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
 		// Bytes at a recorded path belong to a known copy under its real key;
 		// without the recorded check a sync would import every per-write path
 		// as an object named after its path.

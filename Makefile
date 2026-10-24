@@ -332,7 +332,7 @@ fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
 	go test -fuzz=FuzzDeleteObjectsXML -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzCompleteMultipartXML -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzIsValidRequestID -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
-	go test -fuzz=FuzzExtractClientIP -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
+	go test -fuzz=FuzzExtractClientIP -fuzztime=$(FUZZ_TIME) ./internal/transport/httputil/
 	go test -fuzz=FuzzValidMetadataToken -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=$(FUZZ_TIME) ./internal/transport/httputil/
 	go test -fuzz=FuzzPatternMatches -fuzztime=$(FUZZ_TIME) ./internal/transport/cors/

@@ -21,26 +21,14 @@ func (c *BackendRuntime) Usage() *counter.UsageTracker {
 	return c.usage
 }
 
-// MaxObjectSize returns the per-backend max object size; 0 means
-// unlimited.
-func (c *BackendRuntime) MaxObjectSize(name string) int64 {
-	return c.maxObjectSizes[name]
-}
-
 // EligibleForWrite returns the write targets, in configured order, that are
-// within usage limits and max object size for the given operation.
-func (c *BackendRuntime) EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string {
+// within usage limits and max object size for one call of op.
+func (c *BackendRuntime) EligibleForWrite(op s3op.Operation, egress, ingress int64) []string {
 	return slices.DeleteFunc(c.WriteTargets(), func(name string) bool {
-		return !c.withinLimits(name, ops, egress, ingress)
+		if !c.usage.WithinLimits(name, op, egress, ingress) {
+			return true
+		}
+		maxSize := c.maxObjectSizes[name]
+		return maxSize > 0 && ingress > maxSize
 	})
-}
-
-// withinLimits combines the live usage check and the static max-object-size
-// check for one backend.
-func (c *BackendRuntime) withinLimits(name string, ops []s3op.Operation, egress, ingress int64) bool {
-	if !c.usage.WithinLimits(name, ops, egress, ingress) {
-		return false
-	}
-	maxSize := c.maxObjectSizes[name]
-	return maxSize <= 0 || ingress <= maxSize
 }

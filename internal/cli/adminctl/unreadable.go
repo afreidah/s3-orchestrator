@@ -35,7 +35,7 @@ func cmdUnreadable(args []string, c *client) int {
 		if *batchSize > 0 {
 			q.Set(queryBatch, strconv.Itoa(*batchSize))
 		}
-		return c.stream(http.MethodPost, withQuery(unreadablePath, q), "")
+		return c.stream(http.MethodPost, withQuery(unreadablePath, q))
 	}
 	if *limit > 0 {
 		q.Set("limit", strconv.Itoa(*limit))

@@ -13,7 +13,6 @@
 package auth
 
 import (
-	"maps"
 	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -33,13 +32,6 @@ type User struct {
 	admin      map[core.Resource]core.PermissionSet
 }
 
-// WithAllBuckets attaches what this user's bucket wildcard carries, which
-// applies to every bucket including ones declared after the registry was built.
-func (u *User) WithAllBuckets(perms core.PermissionSet) *User {
-	u.allBuckets = perms
-	return u
-}
-
 // AllBuckets reports what this user's bucket wildcard allows, which authorizes
 // operations spanning the whole namespace. Zero means no wildcard.
 func (u *User) AllBuckets() core.PermissionSet {
@@ -49,38 +41,12 @@ func (u *User) AllBuckets() core.PermissionSet {
 	return u.allBuckets
 }
 
-// NewUser builds a user holding the given bucket grants. A nil or absent entry
-// means the user does not reach that bucket at all, which is a different answer
-// from reaching it with no permissions. Control-plane grants are added with
-// WithAdmin.
-func NewUser(id, name string, grants map[string]core.PermissionSet) *User {
-	u := &User{
-		ID:     id,
-		Name:   name,
-		grants: make(map[string]core.PermissionSet, len(grants)),
-	}
-	maps.Copy(u.grants, grants)
-	return u
-}
-
-// WithAdmin attaches the control-plane grants this user holds, keyed on the
-// resource each names.
-func (u *User) WithAdmin(admin map[core.Resource]core.PermissionSet) *User {
-	u.admin = maps.Clone(admin)
-	return u
-}
-
 // CanReach reports whether this user holds a grant on the named bucket, of any
 // kind. A nil user reaches nothing. It is separate from Can because the two
 // refusals differ: no grant at all versus a grant missing a permission.
 func (u *User) CanReach(bucket string) bool {
-	if u == nil {
-		return false
-	}
-	if _, ok := u.grants[bucket]; ok {
-		return true
-	}
-	return u.allBuckets != 0
+	_, ok := u.Permissions(bucket)
+	return ok
 }
 
 // Can reports whether this user's grant on the named bucket carries every
@@ -88,13 +54,8 @@ func (u *User) CanReach(bucket string) bool {
 // answers alone, without the wildcard unioned in, so a bucket-specific grant
 // can narrow wildcard access on that bucket.
 func (u *User) Can(bucket string, want core.PermissionSet) bool {
-	if u == nil {
-		return false
-	}
-	if held, ok := u.grants[bucket]; ok {
-		return held.Has(want)
-	}
-	return u.allBuckets != 0 && u.allBuckets.Has(want)
+	held, ok := u.Permissions(bucket)
+	return ok && held.Has(want)
 }
 
 // Permissions reports what this user's grant on the named bucket carries, and
@@ -129,14 +90,7 @@ func (u *User) Buckets() []string {
 // CanAdmin reports whether this user may act on the control-plane resource, as
 // the union of its named grant and the kind's wildcard. Nothing is implicit.
 func (u *User) CanAdmin(resource core.Resource, want core.PermissionSet) bool {
-	if u == nil {
-		return false
-	}
-	held := u.admin[resource]
-	if resource.Kind != core.ResourceOrchestrator && !resource.IsWildcard() {
-		held |= u.admin[core.Resource{Kind: resource.Kind, Name: core.ResourceWildcard}]
-	}
-	return held.Has(want)
+	return u != nil && u.AdminPermissions(resource).Has(want)
 }
 
 // AdminPermissions reports what this user holds on the named resource, the

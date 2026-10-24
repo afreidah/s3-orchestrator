@@ -189,7 +189,7 @@ Key metrics to alert on:
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3o_quota_bytes_available{backend="..."}` | Alert when approaching 0 - backend is almost full (accounts for orphan bytes) |
+| `s3o_quota_bytes_available{backend="..."}` | Alert when approaching 0 - backend is almost full (accounts for orphan bytes and writes still uploading) |
 | `s3o_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
 | `s3o_quota_claims_declined_total{backend="..."}` | Sustained non-zero means that backend is full and refusing writes; when every candidate refuses, the request fails with 507 |
 | `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
@@ -265,7 +265,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_quota_bytes_used` | Gauge | backend | Current bytes used |
 | `s3o_quota_bytes_limit` | Gauge | backend | Quota limit |
 | `s3o_quota_orphan_bytes` | Gauge | backend | Bytes the backend's `cleanup_queue` and `cleanup_dlq` rows still have to delete |
-| `s3o_quota_bytes_available` | Gauge | backend | Remaining space (limit - used - orphan) |
+| `s3o_quota_bytes_available` | Gauge | backend | Remaining space (limit - used - orphan - in flight), the figure admission tests against |
 | `s3o_quota_claims_declined_total` | Counter | backend | Writes a backend refused for want of room |
 | `s3o_objects_count` | Gauge | backend | Stored object count |
 | `s3o_active_multipart_uploads` | Gauge | backend | In-progress uploads |

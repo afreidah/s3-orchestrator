@@ -8,7 +8,7 @@
 // the backend runtime's eligibility filters at the backend state manager so
 // AcceptsWrites and IsDraining reflect live state.
 //
-// Called once from cli/serve after NewInjector.
+// Called once by the runtime after NewInjector.
 // -------------------------------------------------------------------------------
 
 package di

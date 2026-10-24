@@ -28,7 +28,7 @@ import (
 
 // trackerWith builds a tracker over the named baselines, which is the state
 // production leaves it in after a refresh.
-func trackerWith(baselines map[string]core.BackendQuotaUsage) *QuotaTracker {
+func trackerWith(baselines map[string]core.QuotaStat) *QuotaTracker {
 	q := NewQuotaTracker()
 	q.SetBaselines(baselines)
 	return q
@@ -43,7 +43,7 @@ func trackerWith(baselines map[string]core.BackendQuotaUsage) *QuotaTracker {
 // caller can tell "no room" from "nothing known".
 func TestQuotaTracker_Baseline_ReportsWhetherItHoldsTheRow(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesLimit: 1000},
 	})
 
@@ -60,7 +60,7 @@ func TestQuotaTracker_Baseline_ReportsWhetherItHoldsTheRow(t *testing.T) {
 // read would fault on.
 func TestQuotaTracker_SetBaselines_NilClearsRatherThanPanics(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesLimit: 1000},
 	})
 
@@ -84,7 +84,7 @@ func TestQuotaTracker_SetBaselines_NilClearsRatherThanPanics(t *testing.T) {
 // candidate does not have.
 func TestQuotaTracker_Available_ReportsTheSnapshotHeadroom(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 400, OrphanBytes: 100, InflightBytes: 50},
 	})
 
@@ -98,7 +98,7 @@ func TestQuotaTracker_Available_ReportsTheSnapshotHeadroom(t *testing.T) {
 // sort ahead of an empty one.
 func TestQuotaTracker_Available_ClampsAtZeroWhenOverCommitted(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 500},
 	})
 
@@ -112,7 +112,7 @@ func TestQuotaTracker_Available_ClampsAtZeroWhenOverCommitted(t *testing.T) {
 // with no row drops out of routing entirely.
 func TestQuotaTracker_Available_UnlimitedAndUnknownBackends(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"unlimited": {BackendName: "unlimited"},
 	})
 
@@ -129,7 +129,7 @@ func TestQuotaTracker_Available_UnlimitedAndUnknownBackends(t *testing.T) {
 // backend reports zero so it ranks ahead of any bounded one.
 func TestQuotaTracker_Utilization_ReportsTheFractionSpokenFor(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"half":      {BackendName: "half", BytesLimit: 1000, BytesUsed: 400, OrphanBytes: 100},
 		"unlimited": {BackendName: "unlimited", BytesUsed: 1 << 40},
 	})
@@ -150,7 +150,7 @@ func TestQuotaTracker_Utilization_ReportsTheFractionSpokenFor(t *testing.T) {
 // caller's slice alone.
 func TestQuotaTracker_RankByUtilization_OrdersEmptiestFirst(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"full":   {BackendName: "full", BytesLimit: 1000, BytesUsed: 900},
 		"middle": {BackendName: "middle", BytesLimit: 1000, BytesUsed: 500},
 		"empty":  {BackendName: "empty", BytesLimit: 1000, BytesUsed: 10},
@@ -172,7 +172,7 @@ func TestQuotaTracker_RankByUtilization_OrdersEmptiestFirst(t *testing.T) {
 // reload.
 func TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"a": {BackendName: "a", BytesLimit: 1000},
 		"b": {BackendName: "b", BytesLimit: 1000},
 	})
@@ -190,7 +190,7 @@ func TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced(t *testing
 // would be counted twice.
 func TestQuotaTracker_SetBaselines_DropsWhatWasPlaced(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"a": {BackendName: "a", BytesLimit: 1000},
 	})
 	q.NotePlacement("a", 400)
@@ -199,7 +199,7 @@ func TestQuotaTracker_SetBaselines_DropsWhatWasPlaced(t *testing.T) {
 	}
 
 	// The reload reports the bytes as stored, so the correction must go.
-	q.SetBaselines(map[string]core.BackendQuotaUsage{
+	q.SetBaselines(map[string]core.QuotaStat{
 		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 400},
 	})
 
@@ -213,7 +213,7 @@ func TestQuotaTracker_SetBaselines_DropsWhatWasPlaced(t *testing.T) {
 // what reloading it is for.
 func TestQuotaTracker_RankByUtilization_RefreshChangesTheOrder(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
+	q := trackerWith(map[string]core.QuotaStat{
 		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 100},
 		"b": {BackendName: "b", BytesLimit: 1000, BytesUsed: 900},
 	})
@@ -222,29 +222,12 @@ func TestQuotaTracker_RankByUtilization_RefreshChangesTheOrder(t *testing.T) {
 		t.Fatalf("ranked %v, want a first while it is the emptier", got)
 	}
 
-	q.SetBaselines(map[string]core.BackendQuotaUsage{
+	q.SetBaselines(map[string]core.QuotaStat{
 		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 900},
 		"b": {BackendName: "b", BytesLimit: 1000, BytesUsed: 100},
 	})
 
 	if got := q.RankByUtilization([]string{"a", "b"}); got[0] != "b" {
 		t.Errorf("ranked %v, want b first once the refresh reversed them", got)
-	}
-}
-
-// -------------------------------------------------------------------------
-// DELTAS
-// -------------------------------------------------------------------------
-
-// TestQuotaDeltas_Add_LeavesANilMapAlone asserts a path that never allocated a
-// map is not forced to, which is what lets a caller pass nil through.
-func TestQuotaDeltas_Add_LeavesANilMapAlone(t *testing.T) {
-	t.Parallel()
-	var deltas core.QuotaDeltas
-
-	deltas.Add("b1", 100)
-
-	if deltas != nil {
-		t.Errorf("deltas = %v, want nil", deltas)
 	}
 }

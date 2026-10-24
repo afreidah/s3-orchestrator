@@ -170,7 +170,7 @@ func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	const key = "bkt/replica"
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -216,7 +216,7 @@ func TestDrainRecord_OtherBackendsStillAdmit(t *testing.T) {
 func TestCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bkt/left", Copies: []core.ObjectCopy{{Backend: drainBackendName}}, Size: 1,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -225,7 +225,7 @@ func TestCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if completes(t, s, drainBackendName) {
 		t.Fatal("completed with an object row still on the backend")
 	}
-	if _, _, err := s.DeleteObject(ctx, "bkt/left"); err != nil {
+	if _, err := s.DeleteObject(ctx, "bkt/left"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 	if !completes(t, s, drainBackendName) {
@@ -242,7 +242,7 @@ func TestCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 func TestCompleteDrain_IgnoresUnmanagedRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "stray/key", Copies: []core.ObjectCopy{{Backend: drainBackendName}}, Size: 1,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)

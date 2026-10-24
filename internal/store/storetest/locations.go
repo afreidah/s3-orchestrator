@@ -30,11 +30,9 @@ func LocationOn(t testing.TB, s LocationLister, key, backendName string) *core.O
 	if err != nil {
 		t.Fatalf("GetAllObjectLocations: %v", err)
 	}
-	for i := range locs {
-		if locs[i].BackendName == backendName {
-			return &locs[i]
-		}
+	loc := core.LocationOn(locs, backendName)
+	if loc == nil {
+		t.Fatalf("no copy of %q on %q; have %+v", key, backendName, locs)
 	}
-	t.Fatalf("no copy of %q on %q; have %+v", key, backendName, locs)
-	return nil
+	return loc
 }

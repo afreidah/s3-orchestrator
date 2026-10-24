@@ -147,10 +147,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		UploadId: uploadID,
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode create multipart response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // errCopyRangeMalformed and errCopyRangeUnsatisfiable separate a copy-source
@@ -272,10 +269,7 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 		ETag:         etag,
 		LastModified: head.LastModified.UTC().Format(time.RFC3339),
 	}
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode copy part response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // handleUploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=X.
@@ -346,10 +340,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		ETag:   etag,
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode complete multipart response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // checkMultipartTotalSize validates the combined assembled size against
@@ -451,10 +442,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 		})
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode list multipart uploads response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // handleListParts handles GET /{bucket}/{key}?uploadId=X, returning one page
@@ -462,7 +450,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 // user-facing key for the XML response. NextPartNumberMarker is the last part
 // returned, or 0 when the page is empty, and is reported even when the page is
 // not truncated, as S3 does.
-func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, _ string) (int, error) {
+func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 
 	maxParts, err := parseListingCount(r, "max-parts", listingPageLimit, listingPageLimit)
@@ -503,8 +491,5 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *
 		result.NextPartNumberMarker = parts[len(parts)-1].PartNumber
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode list parts response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }

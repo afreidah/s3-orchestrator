@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -71,8 +72,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	compress := storedform.ShouldCompress(&o.compression, o.codec, size)
 	eligible := []string{}
 	if !compress {
-		if eligible = o.core.EligibleForWrite(putObjectOp, 0, o.physicalSize(size)); len(eligible) == 0 {
-			return "", rejectPutForUsage(span, operation)
+		if eligible = o.core.EligibleForWrite(s3op.PutObject, 0, o.physicalSize(size)); len(eligible) == 0 {
+			return "", writepath.RejectForUsage(span, operation)
 		}
 	}
 
@@ -83,8 +84,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	defer plan.cleanup()
 
 	if compress {
-		if eligible = o.core.EligibleForWrite(putObjectOp, 0, plan.uploadSize); len(eligible) == 0 {
-			return "", rejectPutForUsage(span, operation)
+		if eligible = o.core.EligibleForWrite(s3op.PutObject, 0, plan.uploadSize); len(eligible) == 0 {
+			return "", writepath.RejectForUsage(span, operation)
 		}
 	}
 
@@ -106,12 +107,12 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 			return "", res.fatalErr
 		}
 		if res.putErr == nil {
-			o.finalizePutSuccess(ctx, span, operation, key, res.backend, res.uploadSize, start, failedBackends)
+			o.finalizePutSuccess(ctx, span, operation, key, res.backend, plan.uploadSize, start, failedBackends)
 			return res.etag, nil
 		}
 		lastErr = res.putErr
 		failedBackends = append(failedBackends, res.backend)
-		eligible = withoutBackend(eligible, res.backend)
+		eligible = slices.DeleteFunc(eligible, func(name string) bool { return name == res.backend })
 		o.log.WarnContext(ctx, "PutObject: backend write failed, trying next",
 			"key", key, "failed_backend", res.backend, "error", res.putErr,
 			"remaining_backends", len(eligible))
@@ -119,14 +120,6 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 
 	observe.RecordSpanError(span, lastErr)
 	return "", lastErr
-}
-
-// rejectPutForUsage records a write turned away because no backend had room,
-// and returns the error PutObject surfaces for it.
-func rejectPutForUsage(span trace.Span, operation s3op.Operation) error {
-	telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
-	observe.MarkSpanError(span, "usage limits exceeded on all backends")
-	return core.ErrInsufficientStorage
 }
 
 // putPlan is one PUT's payload, its sizes, and the stored form a row records it
@@ -230,11 +223,7 @@ func (o *Manager) compressPutPlan(plan *putPlan, compress bool) error {
 	if !compress {
 		return nil
 	}
-	plain, err := plan.body.Reader()
-	if err != nil {
-		return err
-	}
-	enc, err := storedform.Compress(o.codec, plain, plan.logicalSize, o.compression.MinRatio)
+	enc, err := storedform.Compress(o.codec, plan.body.Reader(), plan.logicalSize, o.compression.MinRatio)
 	if err != nil {
 		return err
 	}
@@ -256,11 +245,7 @@ func (o *Manager) encryptPutPlan(ctx context.Context, plan *putPlan) error {
 	if o.encryptor == nil {
 		return nil
 	}
-	stored, err := plan.body.Reader()
-	if err != nil {
-		return err
-	}
-	sealed, err := storedform.Seal(ctx, o.encryptor, stored, plan.storedSize, nil)
+	sealed, err := storedform.Seal(ctx, o.encryptor, plan.body.Reader(), plan.storedSize, nil)
 	if err != nil {
 		return err
 	}
@@ -292,14 +277,12 @@ func (o *Manager) describeStoredBytes(plan *putPlan) {
 
 // putAttemptResult is the outcome of one backend PUT attempt. A non-nil
 // fatalErr ends the call; a non-nil putErr drops the backend and retries on the
-// rest. uploadSize is what the attempt sent, which is what the backend is
-// charged.
+// rest.
 type putAttemptResult struct {
-	backend    string
-	etag       string
-	uploadSize int64
-	fatalErr   error
-	putErr     error
+	backend  string
+	etag     string
+	fatalErr error
+	putErr   error
 }
 
 // bufferPutBody materializes the request body (memory below
@@ -318,69 +301,29 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 	return mb, etag.Hex(etagHasher), etag.Hex(hasher), nil
 }
 
-// attemptPutOnBackend performs one backend PUT attempt: replay the prepared
-// payload, claim a destination with a pending intent, upload, then promote the
-// intent on success.
+// attemptPutOnBackend performs one backend PUT attempt: claim a destination
+// with a pending intent, upload the prepared payload, then promote the intent
+// on success. The payload was built once, ahead of the failover loop, and every
+// attempt replays the same bytes.
 func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation s3op.Operation, req *PutObjectRequest, plan *putPlan, eligible []string) putAttemptResult {
-	key := req.Key
-	// The payload was built once, ahead of the loop; an attempt replays it. The
-	// materialized body rewinds on every Reader() call, so a retry sends the
-	// same bytes the last attempt sent rather than rebuilding them.
-	uploadBody, err := plan.body.Reader()
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return putAttemptResult{fatalErr: err}
-	}
-	uploadSize, form := plan.uploadSize, plan.form
-
 	// The intent is both the record a failed commit is resolved from and the
 	// bytes admission counts against the backend, so the insert that writes it
 	// decides whether the backend has room. Ranking only proposes an order.
 	identity := putIdentity(plan.etagDigest, req)
-	intent := writepath.NewPendingIntent(key, uploadSize, form, identity)
+	intent := writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity)
 	backendName, err := o.coord.ClaimWriteTarget(ctx, intent, eligible)
 	if err != nil {
 		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
 	}
-	intentID := intent.IntentID
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
-	be, err := o.core.GetBackend(backendName)
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return putAttemptResult{backend: backendName, fatalErr: err}
-	}
-
-	bctx, bcancel := o.core.WithTimeout(ctx)
-	// Written at the intent's own path, never the object's key, so an overwrite
-	// never modifies bytes in place and each write's cleanup reaches only its
-	// own bytes. The backend's ETag describes the stored bytes and is discarded.
-	_, err = be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, req.ContentType, req.Metadata)
-	bcancel()
-	if err != nil {
-		o.core.Acct().APICall(ctx, s3op.PutObject, backendName)
-		// Leave the pending row for the reaper. A backend PUT error does
-		// not reliably mean the bytes are absent: the response could have
-		// been lost mid-flight, so the reaper HEADs the backend on its
-		// next tick and either promotes or drops the intent.
+	if err := o.uploadCopy(ctx, req, plan, intent); err != nil {
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	// A backend cordoned or put into a drain after the claim should not get the
-	// object, so abort the commit and let the write try another backend. The
-	// intent is dropped and its bytes queued in one transaction. The check
-	// reads cached backend state, so a change made on another instance is
-	// caught late, but a drain cannot finish while this intent exists.
-	if !o.core.BackendFlags(backendName).AcceptedBy(core.AcceptForWrite) {
-		o.log.WarnContext(ctx, "backend stopped accepting writes mid-write; aborting commit",
-			"key", key, "backend", backendName)
-		o.refuseWriteTarget(ctx, intent)
-		return putAttemptResult{backend: backendName, putErr: errWriteTargetRefused}
-	}
-
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
-		Key: key, Size: uploadSize, Form: form, Identity: identity, Tags: req.Tags,
-		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intentID, StorageKey: intent.StorageKey}},
+		Key: req.Key, Size: plan.uploadSize, Form: plan.form, Identity: identity, Tags: req.Tags,
+		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intent.IntentID, StorageKey: intent.StorageKey}},
 	}); err != nil {
 		// Classified like the placement failure above: with placement decided in
 		// memory, the commit is now where a database outage first shows up, and
@@ -390,7 +333,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// The ETag the client is told is the one recorded, not the one the backend
 	// returned: with compression or encryption on those differ, and a later
 	// HEAD answers from the row.
-	return putAttemptResult{backend: backendName, etag: identity.ETag, uploadSize: uploadSize}
+	return putAttemptResult{backend: backendName, etag: identity.ETag}
 }
 
 // putIdentity assembles what a later read reports for this object without
@@ -427,14 +370,3 @@ func (o *Manager) refuseWriteTarget(ctx context.Context, p *core.PendingObject) 
 // so the outer failover loop drops the backend from the eligible set and
 // retries elsewhere instead of treating the abort as a generic backend failure.
 var errWriteTargetRefused = errors.New("aborted: backend stopped accepting writes mid-write")
-
-// withoutBackend returns eligible with name removed in original order.
-func withoutBackend(eligible []string, name string) []string {
-	remaining := make([]string, 0, len(eligible)-1)
-	for _, n := range eligible {
-		if n != name {
-			remaining = append(remaining, n)
-		}
-	}
-	return remaining
-}

@@ -85,24 +85,6 @@ func TestValidateManifestShape(t *testing.T) {
 	}
 }
 
-// TestNormalizeETag pins the quoting forms a client may send. S3 SDKs differ
-// on quoting, so the comparison has to see through it or every quoted
-// manifest would be rejected as a mismatch.
-func TestNormalizeETag(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct{ in, want string }{
-		{`"abc"`, "abc"},
-		{"abc", "abc"},
-		{`W/"abc"`, "abc"},
-		{`  "abc"  `, "abc"},
-		{"", ""},
-	} {
-		if got := normalizeETag(c.in); got != c.want {
-			t.Errorf("normalizeETag(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 // storedParts is the two-part upload the stored-comparison cases run against:
 // one 5 MiB part followed by a small final part, which is the shape S3 allows.
 func storedParts() []core.MultipartPart {
@@ -113,7 +95,7 @@ func storedParts() []core.MultipartPart {
 }
 
 // TestValidateManifestAgainstStored covers the checks that need the stored
-// rows: existence, ETag match, and the non-final size floor.
+// rows: ETag match and the non-final size floor.
 func TestValidateManifestAgainstStored(t *testing.T) {
 	t.Parallel()
 
@@ -151,11 +133,6 @@ func TestValidateManifestAgainstStored(t *testing.T) {
 				{PartNumber: 1, ETag: "etag-one-v2", SizeBytes: MinPartSizeBytes},
 			},
 			enforceMinSize: true, wantCode: "InvalidPart",
-		},
-		{
-			name:     "part never uploaded",
-			manifest: []core.CompletePart{{PartNumber: 1, ETag: "etag-one"}, {PartNumber: 9, ETag: "nope"}},
-			stored:   storedParts(), enforceMinSize: true, wantCode: "InvalidPart",
 		},
 		{
 			name:     "undersized non-final part",

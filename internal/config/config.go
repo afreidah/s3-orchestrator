@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -246,10 +247,8 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
-	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
 	errs = append(errs, c.Notifications.setDefaultsAndValidate()...)
-	errs = append(errs, c.Debug.FlightRecorder.setDefaultsAndValidate()...)
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}
@@ -257,11 +256,14 @@ func (c *Config) validatePerTypeSections() []error {
 }
 
 // applyDefaultsOnlyTypes handles sub-configs that have only zero-value
-// defaults (no validation errors possible): circuit breakers, cleanup
-// queue concurrency, reconcile interval.
+// defaults (no validation errors possible): circuit breakers, lifecycle batch
+// size, the flight recorder window, cleanup queue concurrency, reconcile
+// interval.
 func (c *Config) applyDefaultsOnlyTypes() {
 	c.CircuitBreaker.setDefaults()
 	c.BackendCircuitBreaker.setDefaults()
+	c.Lifecycle.setDefaults()
+	c.Debug.FlightRecorder.setDefaults()
 	if c.CleanupQueue.Concurrency <= 0 {
 		c.CleanupQueue.Concurrency = 10
 	}
@@ -423,14 +425,7 @@ func circuitBreakerChanged(old, next CircuitBreakerConfig) bool {
 		old.DegradedBroadcastParallelism != next.DegradedBroadcastParallelism {
 		return true
 	}
-	return derefBoolDefault(old.DegradedReadsEnabled, true) != derefBoolDefault(next.DegradedReadsEnabled, true)
-}
-
-func derefBoolDefault(p *bool, def bool) bool {
-	if p == nil {
-		return def
-	}
-	return *p
+	return boolDefault(old.DegradedReadsEnabled, true) != boolDefault(next.DegradedReadsEnabled, true)
 }
 
 // redisFieldsChanged handles the *RedisConfig pointer-nullable case  -
@@ -495,11 +490,11 @@ func boolDefault(p *bool, def bool) bool {
 	return def
 }
 
-// ParseLogLevel maps a log level string to a slog.Level. Returns slog.LevelInfo
-// for unrecognized values. Callers should validate via SetDefaultsAndValidate
-// before calling this function.
+// ParseLogLevel maps a log level name, in any case, to a slog.Level. An empty
+// or unrecognized name yields slog.LevelInfo, so a log query that names no
+// level withholds DEBUG entries until asked for them.
 func ParseLogLevel(s string) slog.Level {
-	switch s {
+	switch strings.ToLower(s) {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":

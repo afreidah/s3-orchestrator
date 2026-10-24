@@ -132,14 +132,13 @@ var errDBDown = errors.New("db down")
 // MATCHERS AND BUILDERS
 // -------------------------------------------------------------------------
 
-// moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
-func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
+// moveReq builds the standard rebalance MoveRequest the MoveObject tests share,
+// from sourceName to destName.
+func moveReq() *MoveRequest {
 	return &MoveRequest{
-		Source:      &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
-		SrcBackend:  src,
-		DestBackend: dest,
-		DestName:    destName,
-		Profile:     RebalanceMove,
+		Source:   &core.ObjectLocation{ObjectKey: "k", BackendName: sourceName, StorageKey: srcPath, SizeBytes: 4},
+		DestName: destName,
+		Profile:  RebalanceMove,
 	}
 }
 
@@ -222,7 +221,7 @@ func TestMoveObject_ClaimsThenCopiesThenPlaces(t *testing.T) {
 	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(11)).DoAndReturn(retireAll)
 
 	coord, counters := newMoveCoordinator(sourceName, src, destName, dest, store)
-	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	movedSize, err := coord.MoveObject(context.Background(), moveReq())
 	if err != nil {
 		t.Fatalf("MoveObject: %v", err)
 	}
@@ -248,7 +247,7 @@ func TestMoveObject_ClaimRefusedCopiesNothing(t *testing.T) {
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(false, nil)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	_, err := coord.MoveObject(context.Background(), moveReq())
 	if !errors.Is(err, core.ErrTargetRefused) || !core.PlacementDeclined(err) {
 		t.Fatalf("err = %v, want a declined placement wrapping ErrTargetRefused", err)
 	}
@@ -265,7 +264,7 @@ func TestMoveObject_ClaimErrorCopiesNothing(t *testing.T) {
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, errDBDown)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	_, err := coord.MoveObject(context.Background(), moveReq())
 	if !errors.Is(err, errDBDown) || core.PlacementDeclined(err) {
 		t.Fatalf("err = %v, want the claim failure, not a declined placement", err)
 	}
@@ -304,8 +303,22 @@ func TestMoveObject_CopyFailureDiscardsTheClaim(t *testing.T) {
 	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(5)).DoAndReturn(retireAll)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
+	if _, err := coord.MoveObject(context.Background(), moveReq()); err == nil {
 		t.Fatal("expected the copy failure to surface")
+	}
+}
+
+// TestMoveObject_UnknownBackendClaimsNothing asserts a move naming a backend
+// the fleet does not have fails before anything is claimed or copied. The
+// store mock has no expectations, so any claim fails the test.
+func TestMoveObject_UnknownBackendClaimsNothing(t *testing.T) {
+	t.Parallel()
+	for _, known := range []string{sourceName, destName} {
+		ctrl := gomock.NewController(t)
+		coord := newCoordinatorWithBackend(known, backendtest.NewMockObjectBackend(ctrl), NewMockCoordinatorStores(ctrl))
+		if _, err := coord.MoveObject(context.Background(), moveReq()); err == nil {
+			t.Errorf("move with only %s configured succeeded, want a backend-not-found error", known)
+		}
 	}
 }
 
@@ -332,7 +345,7 @@ func TestMoveObject_RefusedPlacementSettlesTheOrphan(t *testing.T) {
 			store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(9)).DoAndReturn(retireAll)
 
 			coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-			_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+			_, err := coord.MoveObject(context.Background(), moveReq())
 			if !errors.Is(err, declined) || !core.PlacementDeclined(err) {
 				t.Fatalf("err = %v, want a declined placement wrapping %v", err, declined)
 			}
@@ -354,7 +367,7 @@ func TestMoveObject_PlacementErrorIsNotDeclined(t *testing.T) {
 	store.EXPECT().PlaceCopy(gomock.Any(), placementOf(written, RebalanceMove.Reasons)).Return(int64(0), nil, errDBDown)
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
-	_, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	_, err := coord.MoveObject(context.Background(), moveReq())
 	if !errors.Is(err, errDBDown) || core.PlacementDeclined(err) {
 		t.Fatalf("err = %v, want the store failure, not a declined placement", err)
 	}
@@ -409,7 +422,7 @@ func TestMoveObject_ReformInPlace(t *testing.T) {
 
 	coord := newCoordinatorWithBackend(sourceName, be, store)
 	var seen string
-	req := moveReq(be, be)
+	req := moveReq()
 	req.DestName = sourceName
 	req.Profile = RewriteMove
 	req.Reform = reformTo("zz", form, &seen)
@@ -439,7 +452,7 @@ func TestMoveObject_ReformClaimRefusedWritesNothing(t *testing.T) {
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 	var seen string
-	req := moveReq(src, dest)
+	req := moveReq()
 	req.Profile = RewriteMove
 	req.Reform = reformTo("encoded", &core.StoredForm{}, &seen)
 	if _, err := coord.MoveObject(context.Background(), req); !errors.Is(err, core.ErrTargetRefused) {
@@ -465,7 +478,7 @@ func TestMoveObject_ReformedCopyFailureDiscards(t *testing.T) {
 
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, store)
 	var seen string
-	req := moveReq(src, dest)
+	req := moveReq()
 	req.Profile = RewriteMove
 	req.Reform = reformTo("encoded", &core.StoredForm{}, &seen)
 	if _, err := coord.MoveObject(context.Background(), req); err == nil {
@@ -485,7 +498,7 @@ func TestMoveObject_ReformErrorWritesNothing(t *testing.T) {
 
 	sentinel := errors.New("reform failed")
 	coord := newCoordinatorWith2Backends(sourceName, src, destName, dest, NewMockCoordinatorStores(ctrl))
-	req := moveReq(src, dest)
+	req := moveReq()
 	req.Reform = func(context.Context, *s3be.GetObjectResult) (*storedform.Reformed, error) {
 		return nil, sentinel
 	}
@@ -857,7 +870,7 @@ func TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced(t *testing.T
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return([]core.CleanupItem{
 		cleanupRow(1, "old", "k!replaced", core.CleanupReasonOverwritten, 50),
 		cleanupRow(2, "stale", "k!superseded", core.CleanupReasonSupersededIntent, 70),
-	}, nil, nil)
+	}, nil)
 	store.EXPECT().CompleteCleanupItems(gomock.Any(), retiring(1, 2)).DoAndReturn(retireAll)
 	events := recordAuditEvents(t)
 
@@ -875,7 +888,7 @@ func TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced(t *testing.T
 func TestRecordObjectAndPromoteIntent_FreshKeyAuditsNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, nil, nil)
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, nil)
 	events := recordAuditEvents(t)
 
 	coord := newCoordinatorWithStore(store)
@@ -887,6 +900,23 @@ func TestRecordObjectAndPromoteIntent_FreshKeyAuditsNothing(t *testing.T) {
 	}
 }
 
+// TestRankReplicaTargets_ExcludesExistingCopies asserts a backend that already
+// holds a copy is never proposed as a replica target.
+func TestRankReplicaTargets_ExcludesExistingCopies(t *testing.T) {
+	t.Parallel()
+	names := []string{"b1", "b2", "b3"}
+	coord := New(infra.New(&infra.Config{
+		Backends: map[string]s3be.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()},
+		Order:    names,
+		Usage:    counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil),
+		Quota:    counter.NewQuotaTracker(),
+	}), NewMockCoordinatorStores(gomock.NewController(t)))
+
+	if got := coord.RankReplicaTargets(50, map[string]bool{"b1": true, "b2": true}); !slices.Equal(got, []string{"b3"}) {
+		t.Errorf("RankReplicaTargets = %v, want [b3]", got)
+	}
+}
+
 // TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut verifies a failed
 // commit surfaces, still charges the PUT the backend served, and deletes
 // nothing: the intent stays for the reaper.
@@ -894,7 +924,7 @@ func TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, nil, errDBDown)
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, errDBDown)
 
 	counters := counter.NewLocalCounterBackend([]string{"new"})
 	coord := New(infra.New(&infra.Config{

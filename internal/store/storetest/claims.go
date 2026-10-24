@@ -58,23 +58,6 @@ func CheckCopyClaims(t *testing.T, s CopyClaimer, full, roomy, spare string) {
 // the store does, asking insert whether each candidate takes the next intent.
 func ClaimCopiesVia(insert func(context.Context, *core.PendingObject, core.BackendFlags) (bool, error)) func(context.Context, []*core.PendingObject, []string, core.BackendFlags) (core.CopyClaims, error) {
 	return func(ctx context.Context, intents []*core.PendingObject, ranked []string, accepts core.BackendFlags) (core.CopyClaims, error) {
-		var out core.CopyClaims
-		for _, name := range ranked {
-			if len(out.Claimed) == len(intents) {
-				break
-			}
-			p := intents[len(out.Claimed)]
-			p.BackendName = name
-			fits, err := insert(ctx, p, accepts)
-			if err != nil {
-				return core.CopyClaims{}, err
-			}
-			if fits {
-				out.Claimed = append(out.Claimed, p)
-			} else {
-				out.Declined = append(out.Declined, name)
-			}
-		}
-		return out, nil
+		return core.ClaimInRankOrder(ctx, intents, ranked, accepts, insert)
 	}
 }

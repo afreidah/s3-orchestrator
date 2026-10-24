@@ -136,32 +136,28 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 // stays queued, and is tallied in skipped so the caller logs once per
 // backend instead of once per intent.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) batch.ItemResult {
-	var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
-	WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() {
+	return WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() batch.ItemResult {
 		be, err := r.deps.GetBackend(p.BackendName)
 		if err != nil {
-			res = batch.ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}
-			return
+			return batch.ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}
 		}
 
 		if !backend.ServedCalls(be).Has(core.RequiredForProbe) {
 			cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
 			cnt.(*atomic.Int32).Add(1)
-			res = batch.ItemResult{Outcome: batch.ItemFailed}
-			return
+			return batch.Failed()
 		}
 
 		switch r.probeBackend(ctx, be, p) {
 		case probeFound:
-			res = batch.ItemResult{Outcome: r.handlePromotion(ctx, p)}
+			return batch.ItemResult{Outcome: r.handlePromotion(ctx, p)}
 		case probeNotFound:
-			res = batch.ItemResult{Outcome: r.dropIntent(ctx, p, "head_404")}
-		case probeError:
+			return batch.ItemResult{Outcome: r.dropIntent(ctx, p, "head_404")}
+		default:
 			// Transient backend or network error; leave for the next tick.
-			res = batch.ItemResult{Outcome: batch.ItemFailed}
+			return batch.Failed()
 		}
 	})
-	return res
 }
 
 // -------------------------------------------------------------------------
@@ -229,7 +225,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 // handlers. Each handler updates metrics, audit logs, and the resolved/
 // failed counters as appropriate.
 func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject) batch.ItemOutcome {
-	result, cleanup, _, err := r.store.PromotePending(ctx, p)
+	result, cleanup, err := r.store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
 			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))

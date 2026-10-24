@@ -66,7 +66,7 @@ func listByForm(t *testing.T, s *Store, f *core.FormFilter) []core.ObjectLocatio
 // RecordObject, stored as form.
 func recordForm(t *testing.T, s *Store, key string, size int64, form *core.StoredForm) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: formBackend}}, Size: size, Form: form,
 	}); err != nil {
 		t.Fatalf("RecordObject(%s): %v", key, err)

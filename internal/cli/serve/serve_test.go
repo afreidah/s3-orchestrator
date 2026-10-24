@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------
@@ -83,7 +85,7 @@ backends:
 func TestRun_InvalidConfigPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Run(ctx, "/nonexistent/config.yaml", "all", &bytes.Buffer{})
+	err := Run(ctx, "/nonexistent/config.yaml", config.ModeAll, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -98,7 +100,7 @@ func TestRun_InvalidConfig(t *testing.T) {
 	path := writeTestConfig(t, "server:\n  listen_addr: ':9000'\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Run(ctx, path, "all", &bytes.Buffer{}); err == nil {
+	if err := Run(ctx, path, config.ModeAll, &bytes.Buffer{}); err == nil {
 		t.Fatal("expected error for invalid config")
 	}
 }
@@ -115,7 +117,7 @@ func TestRun_StartsAndStops(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run(ctx, path, "all", &bytes.Buffer{})
+		errCh <- Run(ctx, path, config.ModeAll, &bytes.Buffer{})
 	}()
 
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)

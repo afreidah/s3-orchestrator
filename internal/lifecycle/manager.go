@@ -46,46 +46,30 @@ type entry struct {
 	runner Runner
 }
 
-// Default supervisor backoff: a service that exits or panics is restarted
-// after initialBackoff, doubled each subsequent immediate failure up to
-// maxBackoff, reset to initial once the service has run healthily for at
-// least backoffReset. Tests override via SetBackoff for sub-second runs.
+// Supervisor backoff: a service that exits or panics is restarted after
+// initialBackoff, doubled each subsequent immediate failure up to maxBackoff,
+// reset to initial once the service has run healthily for at least
+// backoffReset.
 const (
-	defaultInitialBackoff = 1 * time.Second
-	defaultMaxBackoff     = 30 * time.Second
-	defaultBackoffReset   = 60 * time.Second
+	initialBackoff = 1 * time.Second
+	maxBackoff     = 30 * time.Second
+	backoffReset   = 60 * time.Second
 )
 
 // Manager registers and supervises background services.
 type Manager struct {
 	services []entry
 	log      *slog.Logger
-
-	initialBackoff time.Duration
-	maxBackoff     time.Duration
-	backoffReset   time.Duration
 }
 
 // -------------------------------------------------------------------------
 // MANAGER LIFECYCLE
 // -------------------------------------------------------------------------
 
-// NewManager creates an empty service manager with production backoff
-// defaults.
+// NewManager creates an empty service manager that restarts a failed service
+// with the supervisor backoff.
 func NewManager() *Manager {
-	return &Manager{
-		log:            slog.Default().With(logfmt.Component("lifecycle_manager")),
-		initialBackoff: defaultInitialBackoff,
-		maxBackoff:     defaultMaxBackoff,
-		backoffReset:   defaultBackoffReset,
-	}
-}
-
-// SetBackoff overrides the supervisor's restart backoff. Call it before Run.
-func (m *Manager) SetBackoff(initial, maximum, reset time.Duration) {
-	m.initialBackoff = initial
-	m.maxBackoff = maximum
-	m.backoffReset = reset
+	return &Manager{log: slog.Default().With(logfmt.Component("lifecycle_manager"))}
 }
 
 // Register adds a named service. Services start in registration order and stop
@@ -197,10 +181,10 @@ func (m *Manager) Stop(timeout time.Duration) {
 // supervise runs a single service in a loop and restarts it with
 // exponential backoff if Run returns or panics while ctx is still
 // alive. The backoff resets to initialBackoff after the service runs
-// healthily for at least healthyResetWindow so a long-stable service
+// healthily for at least backoffReset so a long-stable service
 // doesn't carry stale backoff state into a fresh fault.
 func (m *Manager) supervise(ctx context.Context, e entry) {
-	backoff := m.initialBackoff
+	backoff := initialBackoff
 
 	for {
 		start := time.Now()
@@ -229,8 +213,8 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		}
 
 		// Reset backoff if the service ran long enough to be considered healthy.
-		if time.Since(start) >= m.backoffReset {
-			backoff = m.initialBackoff
+		if time.Since(start) >= backoffReset {
+			backoff = initialBackoff
 		}
 
 		m.log.WarnContext(ctx, "restarting service after backoff",
@@ -245,6 +229,6 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		}
 
 		// Exponential backoff capped at maxBackoff.
-		backoff = min(backoff*2, m.maxBackoff)
+		backoff = min(backoff*2, maxBackoff)
 	}
 }

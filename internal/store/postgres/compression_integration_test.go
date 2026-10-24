@@ -95,10 +95,10 @@ func TestStoreInt_CompressionListings_AreComplements(t *testing.T) {
 
 	verbatimKey := uniqueKey(t, "compress-verbatim")
 	encodedKey := uniqueKey(t, "compress-encoded")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: verbatimKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: verbatimKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: encodedKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: encodedKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -140,7 +140,7 @@ func seedEncodedCopies(t *testing.T, s *Store, ctx context.Context, total int) m
 	want := map[string]bool{}
 	for i := range total {
 		key := uniqueKey(t, fmt.Sprintf("obj-%d", i))
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
 			t.Fatalf("RecordObject %s: %v", key, err)
 		}
 		want[key] = true
@@ -230,7 +230,7 @@ func TestStoreInt_CompressRewrite_MovesQuotaAndEnvelope(t *testing.T) {
 
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "compress-quota")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -280,7 +280,7 @@ func TestStoreInt_DecompressRewrite_ClearsEncoding(t *testing.T) {
 
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "decompress-clear")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -316,10 +316,10 @@ func TestStoreInt_CompressionStats_PerBackendTotals(t *testing.T) {
 
 	encodedKey := uniqueKey(t, "stats-encoded")
 	verbatimKey := uniqueKey(t, "stats-verbatim")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: encodedKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: encodedKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 300, Form: encodedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: verbatimKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 900}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: verbatimKey, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 900}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

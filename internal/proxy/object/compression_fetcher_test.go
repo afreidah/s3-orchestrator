@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -266,7 +267,7 @@ func TestStoredRangeFetcher_ChargesEveryFetch(t *testing.T) {
 
 	// One more API call than the object could afford proves each fetch was
 	// charged rather than the read as a whole.
-	if s.rt.usage.WithinLimits("be1", getObjectOp, 0, 0) != true {
+	if s.rt.usage.WithinLimits("be1", s3op.GetObject, 0, 0) != true {
 		t.Fatal("unlimited backend reported over its limit")
 	}
 	limited := newFakeRangeRuntime("be1", requestCapped(t, fetches, 0, 0))

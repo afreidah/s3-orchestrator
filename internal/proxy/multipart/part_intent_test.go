@@ -195,7 +195,7 @@ func TestCompleteMultipartUpload_UploadRemovalFails_KeepsObject(t *testing.T) {
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: partUploadID, ObjectKey: "multi/key", BackendName: "b1", ContentType: "application/zip"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	store.EXPECT().DeleteMultipartUpload(gomock.Any(), partUploadID, reasonCompletePart, gomock.Any()).
 		Return(nil, errors.New("db error"))
 	multipartStubs(t, store)

@@ -117,8 +117,8 @@ func DeleteBatchCompleted(ctx context.Context, span trace.Span, totalKeys, delet
 
 // GetCompleted marks a successful GetObject. Emits the storage.GetObject
 // audit log. Used for both backend reads (backend = backend name) and
-// data-cache hits (backend = "cache"). Does not set span status: the read
-// path currently relies on span.End for completion.
+// data-cache hits (backend = "cache"). Does not set span status; the read
+// path's own span handling does.
 func GetCompleted(ctx context.Context, key, backend string, size int64) {
 	audit.Log(ctx, "storage.GetObject",
 		slog.String("key", key),
@@ -128,8 +128,8 @@ func GetCompleted(ctx context.Context, key, backend string, size int64) {
 }
 
 // HeadCompleted marks a successful HeadObject. Emits the
-// storage.HeadObject audit log. Does not set span status (parity with
-// today's behavior).
+// storage.HeadObject audit log. Like GetCompleted, it does not set span
+// status.
 func HeadCompleted(ctx context.Context, key, backend string, size int64) {
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),

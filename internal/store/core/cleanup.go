@@ -46,8 +46,8 @@ func enqueueRemoved(ctx context.Context, tx TxAdapter, objectKey, reason string,
 
 // intentBytes is the upload an intent names, for queueing when the intent is
 // dropped without its bytes being recorded.
-func intentBytes(p *PendingObject, reason string) removedCopy {
-	return removedCopy{BackendName: p.BackendName, StorageKey: p.StorageKey, SizeBytes: p.SizeBytes, Reason: reason}
+func intentBytes(p *PendingObject) removedCopy {
+	return removedCopy{BackendName: p.BackendName, StorageKey: p.StorageKey, SizeBytes: p.SizeBytes}
 }
 
 // -------------------------------------------------------------------------
@@ -58,8 +58,8 @@ func intentBytes(p *PendingObject, reason string) removedCopy {
 // its bytes under reason, for a write that gave up after uploading. An intent
 // already gone was resolved by whoever removed it, which queued its bytes, so
 // nothing is returned for it.
-func DiscardPending(ctx context.Context, runner Runner, p *PendingObject, reason string) ([]CleanupItem, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
+func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
 			return nil, err
 		}
@@ -77,5 +77,5 @@ func dropIntent(ctx context.Context, tx TxAdapter, p *PendingObject, reason stri
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return nil, fmt.Errorf("delete discarded intent: %w", err)
 	}
-	return enqueueRemoved(ctx, tx, p.ObjectKey, reason, []removedCopy{intentBytes(p, "")})
+	return enqueueRemoved(ctx, tx, p.ObjectKey, reason, []removedCopy{intentBytes(p)})
 }

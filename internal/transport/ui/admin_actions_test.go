@@ -114,8 +114,8 @@ func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
 	}
 
 	res := waitForResult(t, h, "encrypt-existing-test")
-	if !res.OK {
-		t.Errorf("result.OK = false, want true")
+	if res.Error != "" {
+		t.Errorf("result.Error = %q, want none", res.Error)
 	}
 	want := adminActionCounts{Count: 7, Failed: 1, Total: 8}
 	if res.Counts != want {
@@ -138,7 +138,7 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 		}))
 
 	res := waitForResult(t, h, "scrub-test")
-	if res.Skipped != ops.ErrIntegrityDisabled.Reason || !res.OK || res.Error != "" {
+	if res.Skipped != ops.ErrIntegrityDisabled.Reason || res.Error != "" {
 		t.Errorf("result = %+v, want a successful skip carrying the reason", res)
 	}
 }
@@ -207,7 +207,6 @@ func TestWriteAdminActionStatus_Done_PropagatesCounts(t *testing.T) {
 		t.Fatal("test pre-condition: TryStart")
 	}
 	h.asyncOps.Complete("done-op", &asyncResult{
-		OK:     true,
 		Counts: adminActionCounts{Count: 5, Failed: 2, Total: 7},
 	})
 
@@ -240,7 +239,7 @@ func TestWriteAdminActionStatus_Skipped(t *testing.T) {
 	if !h.asyncOps.TryStart("skip-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
-	h.asyncOps.Complete("skip-op", &asyncResult{OK: true, Skipped: "factor <= 1"})
+	h.asyncOps.Complete("skip-op", &asyncResult{Skipped: "factor <= 1"})
 
 	w := httptest.NewRecorder()
 	h.writeAdminActionStatus(w, noopOp("skip-op"))
@@ -431,7 +430,7 @@ func TestHandleAPILifecycle_ReportsCountsThroughStatus(t *testing.T) {
 	}
 
 	res := waitForResult(t, h, opLifecycle)
-	if !res.OK || res.Skipped != "" {
+	if res.Error != "" || res.Skipped != "" {
 		t.Fatalf("result = %+v, want a completed sweep", res)
 	}
 

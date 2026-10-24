@@ -156,7 +156,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	sc.SetConfig(&config.IntegrityConfig{})
 
 	rec := reconcile.NewManager(&reconcile.Deps{
-		Backends: rt, Stores: mock, Usage: rt.Acct(), Quota: rt.Quota(),
+		Backends: rt, Stores: mock, Usage: rt.Acct(),
 	})
 	exp := expiry.New(mock, st.Objects, nil)
 	exp.SetConfig(&config.LifecycleConfig{})

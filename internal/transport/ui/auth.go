@@ -43,6 +43,7 @@ import (
 // revoked key or a lost admin-read grant signs the user out.
 func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w)
 		user, ok := h.sessionUser(r)
 		if !ok || !canUseDashboard(user) {
 			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
@@ -57,7 +58,7 @@ func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.Handle
 		// CSRF check on state-changing API requests
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 			if !h.validCSRFToken(r) {
-				h.log.WarnContext(r.Context(), "cSRF token mismatch", "path", r.URL.Path, "client_addr", r.RemoteAddr)
+				h.log.WarnContext(r.Context(), "CSRF token mismatch", "path", r.URL.Path, "client_addr", r.RemoteAddr)
 				httputil.WriteJSONError(w, http.StatusForbidden, "CSRF token missing or invalid")
 				return
 			}

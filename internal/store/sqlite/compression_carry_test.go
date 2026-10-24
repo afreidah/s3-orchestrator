@@ -107,7 +107,7 @@ func TestPlaceCopy_MoveCarriesRepresentation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/moved", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/moved", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		t.Fatal("seed: pending row missing")
 	}
 
-	if _, _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 
@@ -172,12 +172,11 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 		t.Fatal("seed: pending row missing")
 	}
 
-	_, _, deltas, err := s.PromotePending(ctx, &stale[0])
-	if err != nil {
+	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if got := deltas["backend-a"]; got != 4096 {
-		t.Errorf("delta = %d, want the 4096 that landed on the backend", got)
+	if stats, _ := s.GetQuotaStats(ctx); stats["backend-a"].BytesUsed != 4096 {
+		t.Errorf("bytes used = %d, want the 4096 that landed on the backend", stats["backend-a"].BytesUsed)
 	}
 }
 
@@ -190,7 +189,7 @@ func TestPlaceCopy_ReplicaCarriesRepresentation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -241,7 +240,7 @@ func TestPlaceCopy_MoveCarriesCompressionProbe(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 4096}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustPatchCopy(t, s, "bucket/random.bin", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 4090, Level: "default"}})
@@ -262,7 +261,7 @@ func TestListCopiesByForm_CandidatesExcludeRecordedDeclines(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustPatchCopy(t, s, "bucket/random.bin", "backend-a", &core.CopyPatch{Probe: &core.CompressionProbe{Size: 900, Level: "default"}})
@@ -292,10 +291,10 @@ func TestListCopiesByForm_CandidatesExcludeBelowMinSize(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/small.txt", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/small.txt", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/large.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 9000}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/large.bin", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 9000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -314,10 +313,10 @@ func TestListCopiesByForm_CompressionSplit(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/plain", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/plain", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 40, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 40, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -353,7 +352,7 @@ func TestListCopiesByForm_CandidatesPageByCursor(t *testing.T) {
 	const total = 5
 	for i := range total {
 		key := fmt.Sprintf("bucket/obj-%d", i)
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 			t.Fatalf("RecordObject %s: %v", key, err)
 		}
 	}
@@ -403,7 +402,7 @@ func TestCompressInPlace_MovesQuota(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/shrinking", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/shrinking", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	// The counter is what this rewrite moves, and a write no longer sets it,
@@ -443,7 +442,7 @@ func TestDecompressInPlace_ClearsTheEncoding(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/expanding", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 250, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/expanding", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 250, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -470,13 +469,13 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-a", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 250, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-a", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 250, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-b", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 150, Form: compressedForm()}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-b", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 150, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/verbatim", Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 900}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/verbatim", Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 900}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

@@ -366,7 +366,7 @@ func TestMain(m *testing.M) {
 	testStack = stack
 	testCoord = writepath.New(stack.Runtime, db)
 	testReconciler = reconcile.NewManager(&reconcile.Deps{
-		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(), Quota: stack.Runtime.Quota(),
+		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(),
 	})
 	testWorkers = workers
 
@@ -983,7 +983,7 @@ type FailableStore struct {
 	inner                   *postgres.Store
 	mu                      sync.Mutex
 	failing                 bool
-	failCommitOnce          bool // when true, RecordObjectAndClearPending fails once, then auto-clears
+	failCommitOnce          bool // when true, the next RecordObject carrying an intent fails, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to
@@ -1021,12 +1021,12 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 // triggers degraded mode. A commit carrying a pending intent also honours the
 // one-shot fail-commit flag with the plain errSimulatedCommitFailure, so the
 // caller fails the PUT instead of entering degraded mode.
-func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, error) {
 	if f.isFailing() {
-		return nil, nil, errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
 	if commitCarriesIntent(req) && f.consumeFailCommitOnce() {
-		return nil, nil, errSimulatedCommitFailure
+		return nil, errSimulatedCommitFailure
 	}
 	return f.inner.RecordObject(ctx, req)
 }
@@ -1042,8 +1042,8 @@ func commitCarriesIntent(req *core.RecordObjectRequest) bool {
 	return false
 }
 
-// SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending
-// so the next PUT lands its bytes on the backend, inserts a pending intent,
+// SetFailCommitOnce arms a one-shot failure on the next RecordObject carrying
+// an intent, so the next PUT lands its bytes on the backend, inserts a pending intent,
 // and then sees the metadata commit fail  -  exactly the data-loss scenario
 // the pending-row pattern exists to recover from.
 func (f *FailableStore) SetFailCommitOnce() {
@@ -1067,9 +1067,9 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 
 // DeleteObject is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, error) {
 	if f.isFailing() {
-		return nil, nil, errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.DeleteObject(ctx, key)
 }
@@ -1081,15 +1081,6 @@ func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter stri
 		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
-}
-
-// ListBackendQuotaUsage is an integration-test fixture helper; see file header
-// for the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
-	if f.isFailing() {
-		return nil, errSimulatedDBOutage
-	}
-	return f.inner.ListBackendQuotaUsage(ctx)
 }
 
 // CreateMultipartUpload is an integration-test fixture helper; see file header for
@@ -1119,13 +1110,13 @@ func (f *FailableStore) RecordPart(ctx context.Context, p *core.RecordPartParams
 	return f.inner.RecordPart(ctx, p)
 }
 
-// GetParts is an integration-test fixture helper; see file header for
+// ListParts is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
+func (f *FailableStore) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.GetParts(ctx, uploadID)
+	return f.inner.ListParts(ctx, uploadID, afterPart, limit)
 }
 
 // DeleteMultipartUpload is an integration-test fixture helper; see file header for
@@ -1229,11 +1220,11 @@ func (f *FailableStore) PlaceCopy(ctx context.Context, p *core.Placement) (int64
 
 // GetUnderReplicatedObjects is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
+func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
+	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit, excluded)
 }
 
 // GetOverReplicatedObjects is an integration-test fixture helper; see file header for

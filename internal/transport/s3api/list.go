@@ -15,7 +15,6 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -149,7 +148,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
 
 	xmlResult := xmlListResultV1{
-		Xmlns:          "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:          s3XMLNS,
 		Name:           bucket,
 		Prefix:         userPrefix,
 		Marker:         marker,
@@ -161,11 +160,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 		CommonPrefixes: commonPrefixes,
 	}
 
-	if err := writeXML(w, http.StatusOK, xmlResult); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode list response: %w", err)
-	}
-
-	return http.StatusOK, nil
+	return respondXML(w, xmlResult)
 }
 
 // handleListObjectsV2 processes GET requests at the bucket level, returning an
@@ -205,7 +200,7 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
 
 	xmlResult := xmlListResultV2{
-		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:                 s3XMLNS,
 		Name:                  bucket,
 		Prefix:                userPrefix,
 		Delimiter:             delimiter,
@@ -221,9 +216,5 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 		xmlResult.ContinuationToken = continuationToken
 	}
 
-	if err := writeXML(w, http.StatusOK, xmlResult); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode list response: %w", err)
-	}
-
-	return http.StatusOK, nil
+	return respondXML(w, xmlResult)
 }

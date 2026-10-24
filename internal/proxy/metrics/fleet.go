@@ -250,14 +250,14 @@ func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapsho
 // rely on this signal to expand capacity before writes start failing with 507.
 func (mc *Collector) warnNearCapacity(ctx context.Context, stats map[string]core.QuotaStat) {
 	for name, stat := range stats {
-		if stat.BytesLimit == 0 {
+		if stat.Unlimited() {
 			continue
 		}
-		utilization := float64(stat.BytesUsed+stat.OrphanBytes) / float64(stat.BytesLimit)
+		utilization := float64(stat.Occupied()) / float64(stat.BytesLimit)
 		if utilization < capacityWarningUtilization {
 			continue
 		}
-		available := stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes
+		available := stat.BytesLimit - stat.Occupied()
 		mc.log.WarnContext(ctx, "backend approaching capacity",
 			"backend", name,
 			"utilization_pct", int(utilization*100),
@@ -305,14 +305,13 @@ func applyQuotaGauges(stats map[string]core.QuotaStat) {
 	for name, stat := range stats {
 		telemetry.QuotaBytesUsed.WithLabelValues(name).Set(float64(stat.BytesUsed))
 		telemetry.QuotaOrphanBytes.WithLabelValues(name).Set(float64(stat.OrphanBytes))
-		if stat.BytesLimit == 0 {
+		if stat.Unlimited() {
 			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(0)
 			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(0)
 			continue
 		}
 		telemetry.QuotaBytesLimit.WithLabelValues(name).Set(float64(stat.BytesLimit))
-		telemetry.QuotaBytesAvailable.WithLabelValues(name).
-			Set(float64(stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes))
+		telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(stat.BytesLimit - stat.Occupied()))
 	}
 }
 

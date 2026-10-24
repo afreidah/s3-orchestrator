@@ -28,14 +28,10 @@ type FlightRecorderConfig struct {
 	MinAge  time.Duration `yaml:"min_age"` // soft lower bound on the trace window age
 }
 
-// setDefaultsAndValidate populates defaults and returns any validation
-// errors. A disabled recorder skips validation entirely.
-func (fr *FlightRecorderConfig) setDefaultsAndValidate() []error {
-	if !fr.Enabled {
-		return nil
-	}
-	if fr.MinAge <= 0 {
+// setDefaults gives an enabled recorder its default window age. A disabled
+// recorder is left as written, since nothing reads it.
+func (fr *FlightRecorderConfig) setDefaults() {
+	if fr.Enabled && fr.MinAge <= 0 {
 		fr.MinAge = 30 * time.Second
 	}
-	return nil
 }

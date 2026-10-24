@@ -116,7 +116,7 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 		AccessKeyID: c.AccessKeyID,
 		UserID:      c.UserID,
 		Secret:      c.Secret,
-		Label:       nullableString(c.Label),
+		Label:       strPtr(c.Label),
 		Disabled:    c.Disabled,
 	}); err != nil {
 		return fmt.Errorf("create credential %s: %w", c.AccessKeyID, err)
@@ -247,30 +247,13 @@ func userFromRow(r *db.User) core.User {
 
 // credentialFromRow converts a sqlc credentials row into the canonical type.
 func credentialFromRow(r *db.Credential) core.Credential {
-	label := ""
-	if r.Label != nil {
-		label = *r.Label
-	}
 	return core.Credential{
 		AccessKeyID: r.AccessKeyID,
 		UserID:      r.UserID,
 		Secret:      r.Secret,
-		Label:       label,
+		Label:       derefStr(r.Label),
 		Disabled:    r.Disabled,
 		CreatedAt:   r.CreatedAt.Time,
 		LastUsedAt:  timestamptzPtr(r.LastUsedAt),
 	}
-}
-
-// -------------------------------------------------------------------------
-// HELPERS
-// -------------------------------------------------------------------------
-
-// nullableString returns a *string for a column that stores NULL rather than
-// the empty value, which label does when a credential carries no name.
-func nullableString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }

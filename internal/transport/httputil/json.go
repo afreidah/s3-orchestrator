@@ -4,11 +4,10 @@
 // Author: Alex Freidah
 //
 // Shared helpers every transport handler uses to read and write JSON.
-// Centralising them ensures error responses never escape with malformed
-// JSON (a previous string-concatenated implementation in the UI package
-// would corrupt the body when the message contained a quote or
-// backslash), enforces a request body size cap on every decode path,
-// and keeps method-validation boilerplate out of individual handlers.
+// Centralising them ensures error responses are always encoded JSON, so a
+// message containing a quote or backslash cannot corrupt the body, enforces
+// a request body size cap on every decode path, and keeps method-validation
+// boilerplate out of individual handlers.
 // -------------------------------------------------------------------------------
 
 package httputil

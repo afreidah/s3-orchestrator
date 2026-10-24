@@ -41,7 +41,7 @@ const (
 // stored in every form column and carrying an etag named for its path.
 func recordWrite(t *testing.T, s *Store, storageKey string, size int64) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: placedKey, Size: size, Form: fullyPopulatedForm(),
 		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: storageKey}},
 		Identity: &core.ObjectIdentity{ETag: `"` + storageKey + `"`},

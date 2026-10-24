@@ -168,9 +168,9 @@ func addRoute(doc *document, rt *Route) error {
 		return err
 	}
 	op.Responses["200"] = success
-	// Every route is mounted behind the same token middleware, so every
+	// Every route is mounted behind the same authentication guard, so every
 	// route can answer 401.
-	op.Responses["401"] = response{Description: "Missing or invalid admin token"}
+	op.Responses["401"] = response{Description: "Missing or invalid SigV4 credentials"}
 
 	path := openAPIPath(rt.Path)
 	if doc.Paths[path] == nil {

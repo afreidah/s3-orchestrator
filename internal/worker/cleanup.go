@@ -66,7 +66,10 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 			Concurrency: deps.Concurrency,
 			Name:        "cleanup",
 			Admit: func(ctx context.Context, fn func()) {
-				WithAdmission(ctx, deps.Ops, WorkerNameCleanup, fn)
+				WithAdmission(ctx, deps.Ops, WorkerNameCleanup, func() struct{} {
+					fn()
+					return struct{}{}
+				})
 			},
 		}),
 		instanceID:       deps.InstanceID,

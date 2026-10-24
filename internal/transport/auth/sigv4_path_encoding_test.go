@@ -98,7 +98,7 @@ func TestSigV4_RoundTripEncodedKey(t *testing.T) {
 				t.Fatalf("SignHTTP: %v", err)
 			}
 
-			if err := VerifySigV4(req, accessKey, secretKey); err != nil {
+			if err := verifySigV4(req, secretKey); err != nil {
 				t.Fatalf("VerifySigV4 rejected an SDK-signed request for key %q: %v", tc.rawKey, err)
 			}
 		})
@@ -157,7 +157,7 @@ func TestSigV4_PathSubstitution_NotAccepted(t *testing.T) {
 		}
 	}
 
-	if err := VerifySigV4(substitutedReq, accessKey, secretKey); err == nil {
+	if err := verifySigV4(substitutedReq, secretKey); err == nil {
 		t.Fatal("VerifySigV4 accepted a path-substituted request; signature must reflect the wire form, not the decoded path")
 	}
 }

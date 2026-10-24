@@ -49,7 +49,7 @@ func TestInt_PendingIntent_ClearedByOverwritingWrite(t *testing.T) {
 
 	// Record a real object_locations row for the same key on a different
 	// backend. The intent describes an object this write replaces.
-	displaced, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{
+	displaced, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: internalKey(key), Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100,
 	})
 	if err != nil {

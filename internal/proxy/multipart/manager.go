@@ -20,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -229,7 +228,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 
 	// Checked against what the part will occupy, which for an encrypted upload
 	// is the envelope rather than the bytes the client sent.
-	if !mp.core.Usage().WithinLimits(mu.BackendName, []s3op.Operation{s3op.UploadPart}, 0, mp.physicalPartSize(mu, size)) {
+	if !mp.core.Usage().WithinLimits(mu.BackendName, s3op.UploadPart, 0, mp.physicalPartSize(mu, size)) {
 		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
@@ -314,10 +313,8 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 }
 
 // GetParts returns all parts for a multipart upload, each reporting the ETag
-// UploadPart handed the client rather than the one the backend holds. A resumed
-// upload rebuilds its completion manifest from this list, so it must get back
-// the values completion validates against; the two differ once the stored part
-// is an encryption envelope.
+// and size UploadPart handed the client rather than what the backend holds;
+// the two differ once the stored part is an encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
 	const operation = s3op.GetParts
 	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
@@ -327,7 +324,7 @@ func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) (
 	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return nil, err
 	}
-	parts, err := mp.stores.GetParts(ctx, uploadID)
+	parts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -462,22 +459,26 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 	return nil
 }
 
-// collectRequestedParts loads every part for uploadID, validates that all
-// requested part numbers were uploaded, then returns the requested
-// subset sorted in part-number order ready for assembly.
+// collectRequestedParts loads every part for uploadID and returns the ones the
+// manifest names, in manifest order, which validateManifestShape has already
+// made ascending. A requested part that was never uploaded fails the
+// completion, naming every one missing.
 func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, uploadID string, partNumbers []int) ([]core.MultipartPart, error) {
-	allParts, err := mp.stores.GetParts(ctx, uploadID)
+	allParts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartNumber)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, err
 	}
-	uploaded := make(map[int]bool, len(allParts))
+	byNumber := make(map[int]*core.MultipartPart, len(allParts))
 	for i := range allParts {
-		uploaded[allParts[i].PartNumber] = true
+		byNumber[allParts[i].PartNumber] = &allParts[i]
 	}
+	parts := make([]core.MultipartPart, 0, len(partNumbers))
 	var missing []int
 	for _, pn := range partNumbers {
-		if !uploaded[pn] {
+		if p, ok := byNumber[pn]; ok {
+			parts = append(parts, *p)
+		} else {
 			missing = append(missing, pn)
 		}
 	}
@@ -486,20 +487,6 @@ func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, u
 		observe.MarkSpanError(span, msg)
 		return nil, &core.S3Error{StatusCode: http.StatusBadRequest, Code: "InvalidPart", Message: msg}
 	}
-
-	requested := make(map[int]bool, len(partNumbers))
-	for _, pn := range partNumbers {
-		requested[pn] = true
-	}
-	var parts []core.MultipartPart
-	for i := range allParts {
-		if requested[allParts[i].PartNumber] {
-			parts = append(parts, allParts[i])
-		}
-	}
-	slices.SortFunc(parts, func(a, b core.MultipartPart) int {
-		return a.PartNumber - b.PartNumber
-	})
 	return parts, nil
 }
 
@@ -606,18 +593,13 @@ func (mp *Manager) abortMatching(ctx context.Context, filter core.MultipartUploa
 		CursorOf: func(mu core.MultipartUpload) string { return mu.UploadID },
 	}
 	runner := batch.Runner[core.MultipartUpload]{Name: "multipart-abort", Concurrency: 1}
-	var total batch.Summary
-	stop, err := pager.Walk(ctx, func(ctx context.Context, uploads []core.MultipartUpload) (batch.Step, error) {
-		sum := runner.Run(ctx, uploads, func(ctx context.Context, mu core.MultipartUpload) batch.ItemResult {
-			mp.log.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey, "backend", mu.BackendName)
-			if err := mp.abortByMultipartRow(ctx, &mu); err != nil {
-				mp.log.ErrorContext(ctx, "failed to abort multipart upload", "upload_id", mu.UploadID, "error", err)
-				return batch.ItemResult{Outcome: batch.ItemFailed}
-			}
-			return batch.ItemResult{Outcome: batch.ItemSucceeded}
-		})
-		total = total.Plus(sum)
-		return batch.Step{Progress: sum.Succeeded}, nil
+	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, mu core.MultipartUpload) batch.ItemResult {
+		mp.log.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey, "backend", mu.BackendName)
+		if err := mp.abortByMultipartRow(ctx, &mu); err != nil {
+			mp.log.ErrorContext(ctx, "failed to abort multipart upload", "upload_id", mu.UploadID, "error", err)
+			return batch.Failed()
+		}
+		return batch.Succeeded()
 	})
 	if stop == batch.Errored {
 		mp.log.ErrorContext(ctx, "failed to list multipart uploads",
@@ -848,8 +830,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 
 	// The create call's tags land in the same transaction, so a completed upload
-	// is never briefly untagged. The bytes are charged here from what the ledger
-	// recorded, with no reservation.
+	// is never briefly untagged. The bytes are charged from the size the ledger
+	// records.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
 		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID, StorageKey: intent.StorageKey}},
@@ -993,11 +975,7 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 		return nil, fmt.Errorf("compress assembled object: %w", err)
 	}
 	a := &assembledBody{encoded: enc.Body}
-	reader, err := enc.Body.Reader()
-	if err != nil {
-		a.cleanup()
-		return nil, fmt.Errorf("read back assembled object: %w", err)
-	}
+	reader := enc.Body.Reader()
 	if enc.Worth {
 		a.body, a.size, a.compressed = reader, enc.Size, true
 		return a, nil

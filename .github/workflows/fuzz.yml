@@ -51,7 +51,7 @@ jobs:
           - target: FuzzLoginThrottle_RemoteAddr
             package: ./internal/transport/httputil/
           - target: FuzzExtractClientIP
-            package: ./internal/transport/s3api/
+            package: ./internal/transport/httputil/
           - target: FuzzValidMetadataToken
             package: ./internal/transport/s3api/
           - target: FuzzParsePlaintextRange

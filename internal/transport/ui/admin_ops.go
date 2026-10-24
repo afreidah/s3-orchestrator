@@ -6,7 +6,7 @@
 // Worker-driven admin operations the dashboard exposes. Each long-running
 // op returns 202 Accepted immediately while the work runs in a goroutine
 // tracked by asyncOps; clients poll the matching /status endpoint to
-// surface progress and final results. writeAsyncOpStatus is the shared
+// surface progress and final results. writeAdminActionStatus is the shared
 // JSON shape every status endpoint emits so the dashboard can render a
 // single status pane regardless of which op is running. Sync is the
 // odd one out - it is synchronous because backend sync is fast enough
@@ -30,8 +30,6 @@ import (
 // handleAPIRebalance triggers an on-demand rebalance in the background.
 // Returns 202 Accepted immediately; poll /api/rebalance/status for results.
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	h.startAdminAction(w, r, h.rebalanceOp())
 }
 
@@ -70,8 +68,6 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Reques
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
 // background. Returns 202 Accepted immediately; poll /api/clean-excess/status.
 func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	h.startAdminAction(w, r, h.cleanExcessOp())
 }
 
@@ -109,8 +105,6 @@ func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Requ
 // records objects into one bucket from one backend's listing, so it needs write
 // on the bucket and admin-maintain on that backend.
 func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -146,7 +140,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imported, skipped, err := h.syncOps.SyncBackend(r.Context(), req.Backend, req.Bucket, h.buckets.Names())
+	imported, skipped, err := h.syncOps.SyncBackend(r.Context(), req.Backend, h.buckets.Names())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, "sync failed")

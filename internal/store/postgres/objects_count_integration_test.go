@@ -26,10 +26,10 @@ func recordForCount(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
 	ctx := context.Background()
 	req := &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}
-	if _, _, err := s.RecordObject(ctx, req); err != nil {
+	if _, err := s.RecordObject(ctx, req); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(ctx, key) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(ctx, key) })
 }
 
 // TestStoreInt_CountObjectsByPrefix_CountsKeysNotCopies verifies a replicated

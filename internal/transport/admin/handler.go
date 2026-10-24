@@ -5,12 +5,8 @@
 //
 // Handler/Deps types and constructor for the admin API exposed under
 // /admin/api/. The per-domain endpoint implementations live in
-// handler_<domain>.go siblings: route registration + auth in
-// handler_routes.go; observability endpoints in handler_status.go; cache
-// admin in handler_cache.go; replication + over-replication in
-// handler_replication.go; backend drain/remove in handler_backends.go;
-// key rotation + bulk encrypt/decrypt in handler_encryption.go;
-// integrity scrub/backfill/reconcile in handler_integrity.go.
+// handler_<domain>.go siblings, route registration in handler_routes.go, and
+// authentication and authorization in authz.go.
 // -------------------------------------------------------------------------------
 
 package admin

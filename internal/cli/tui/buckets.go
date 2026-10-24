@@ -16,7 +16,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -69,14 +68,9 @@ type bucketsErrMsg struct{ err error }
 // loadBuckets returns a command that fetches the provisioning snapshot off the
 // main loop.
 func (m *model) loadBuckets() tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetProvisioning(context.Background())
-		if err != nil {
-			return bucketsErrMsg{err}
-		}
-		return bucketsLoadedMsg{resp}
-	}
+	return fetchCmd(m.client.GetProvisioning,
+		func(r *adminapi.ProvisioningResponse) tea.Msg { return bucketsLoadedMsg{r} },
+		func(err error) tea.Msg { return bucketsErrMsg{err} })
 }
 
 // -------------------------------------------------------------------------

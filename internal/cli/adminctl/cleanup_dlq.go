@@ -46,9 +46,9 @@ func cmdCleanupDLQ(args []string, c *client) int {
 	}
 
 	if sub == "requeue" {
-		return c.post("/admin/api/cleanup-dlq/requeue?"+q.Encode(), "", renderCleanupDLQRequeue)
+		return c.post(withQuery("/admin/api/cleanup-dlq/requeue", q), renderCleanupDLQRequeue)
 	}
-	return c.get("/admin/api/cleanup-dlq?"+q.Encode(), renderCleanupDLQList)
+	return c.get(withQuery("/admin/api/cleanup-dlq", q), renderCleanupDLQList)
 }
 
 // renderCleanupDLQList renders the DLQ listing as a table led by the backend,

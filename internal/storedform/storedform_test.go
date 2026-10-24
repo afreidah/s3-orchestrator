@@ -171,11 +171,7 @@ func seed(t *testing.T, l *Layers, plain []byte, flags core.StoredFlags) ([]byte
 		if err != nil {
 			t.Fatalf("Compress: %v", err)
 		}
-		r, err := enc.Body.Reader()
-		if err != nil {
-			t.Fatalf("encoded reader: %v", err)
-		}
-		stored = readAll(t, r)
+		stored = readAll(t, enc.Body.Reader())
 		enc.Body.Cleanup()
 		Describe(form, "default", int64(len(plain)))
 	}
@@ -628,11 +624,7 @@ func TestCompress_Worth(t *testing.T) {
 	if enc.Size >= int64(len(payload)) || enc.Body.Size() != enc.Size {
 		t.Errorf("Size = %d, body = %d, payload = %d", enc.Size, enc.Body.Size(), len(payload))
 	}
-	r, err := enc.Body.Reader()
-	if err != nil {
-		t.Fatalf("Reader: %v", err)
-	}
-	decoded, closeFn, err := Decode(codec, r, Describe(nil, "default", int64(len(payload))))
+	decoded, closeFn, err := Decode(codec, enc.Body.Reader(), Describe(nil, "default", int64(len(payload))))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}

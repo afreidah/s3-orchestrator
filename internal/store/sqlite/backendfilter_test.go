@@ -80,7 +80,7 @@ func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
 	ctx := context.Background()
 
 	key := "bucket/raced"
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
 		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w1"}},
 		Size:     100,
@@ -89,7 +89,7 @@ func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	read := storetest.LocationOn(t, s, key, "backend-a")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
 		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w2"}},
 		Size:     140,
@@ -116,7 +116,7 @@ func TestConversionRace_ConvertsAnUnchangedCopy(t *testing.T) {
 	ctx := context.Background()
 
 	key := "bucket/quiet"
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key:      key,
 		Copies:   []core.ObjectCopy{{Backend: "backend-a", StorageKey: key + "!w1"}},
 		Size:     100,

@@ -3,14 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// Implements the Postgres engine bindings for object_locations - the
-// canonical (object_key, backend_name) ledger of which backends hold
-// which objects. Wraps the engine-agnostic core orchestration
-// (RecordObject, DeleteObject, MoveObjectLocation, ImportObject) and
-// exposes the read-side queries the manager and dashboard consume.
-// Listing queries use the (object_key, created_at) index for stable
-// pagination; pagination tokens are advanced past emitted CommonPrefix
-// entries so a delimiter scan never re-emits the same prefix.
+// Implements the Postgres read-side bindings for object_locations - the
+// canonical (object_key, backend_name) ledger of which backends hold which
+// objects - that the manager and dashboard consume; the writes are core's
+// shared transactions. Listing queries use the (object_key, created_at) index
+// for stable pagination; pagination tokens are advanced past emitted
+// CommonPrefix entries so a delimiter scan never re-emits the same prefix.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -36,7 +34,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 		BackendName: backendName,
 		AfterSize:   after.SizeBytes,
 		AfterKey:    after.ObjectKey,
-		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		RowLimit:    rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
@@ -52,7 +50,7 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
 		BackendName: backendName,
 		StorageKey:  afterStorageKey,
-		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Limit:       rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
@@ -80,7 +78,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	rows, err := s.queries.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{
 		Prefix:     escapedPrefix,
 		StartAfter: startAfter,
-		MaxKeys:    int32(maxKeys + 1),
+		MaxKeys:    rowLimit(maxKeys + 1),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
@@ -130,7 +128,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 		Prefix:     prefix,
 		Delim:      delimiter,
 		StartAfter: startAfter,
-		Lim:        int32(maxKeys + 1),
+		Lim:        rowLimit(maxKeys + 1),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
@@ -179,7 +177,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 		Cutoff:   pgTimestamptz(q.Cutoff),
 		TagCount: int32(len(q.Tags)), //nolint:gosec // G115: capped at MaxTagsPerObject by config validation
 		Tags:     tags,
-		MaxKeys:  int32(q.Limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		MaxKeys:  rowLimit(q.Limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
@@ -216,67 +214,20 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	fileRows, err := s.queries.ListDirectChildren(ctx, db.ListDirectChildrenParams{
 		Prefix:     escapedPrefix,
 		StartAfter: startAfter,
-		MaxKeys:    int32(maxKeys + 1),
+		MaxKeys:    rowLimit(maxKeys + 1),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list direct children: %w", err)
 	}
 
-	// Build a lookup of file details by relative name.
-	type fileDetail struct {
-		Backends  []string
-		SizeBytes int64
-		CreatedAt string
-	}
-	fileLookup := make(map[string]fileDetail, len(fileRows))
-	hasMore := len(fileRows) > maxKeys
-	if hasMore {
-		fileRows = fileRows[:maxKeys]
-	}
-	for _, row := range fileRows {
-		relName := row.ObjectKey[len(prefix):]
-		fileLookup[relName] = fileDetail{
-			Backends:  row.BackendNames,
-			SizeBytes: row.SizeBytes,
-			CreatedAt: row.CreatedAt.Time.Format("2006-01-02 15:04"),
-		}
-	}
-
-	result := &core.DirectoryListResult{
-		Entries: make([]core.DirEntry, 0, len(stats)),
-	}
-
-	for _, s := range stats {
-		entry := core.DirEntry{
-			Name:      prefix + s.Name,
-			IsDir:     s.IsDir,
-			FileCount: s.FileCount,
-			TotalSize: s.TotalSize,
-		}
-		if !s.IsDir {
-			detail, ok := fileLookup[s.Name]
-			if !ok {
-				// File is outside the current page.
-				continue
-			}
-			entry.Backends = detail.Backends
-			entry.CreatedAt = detail.CreatedAt
-			// Per-file row reports the logical object size, not the
-			// replica-sum returned by GetDirectoryStats; SizeBytes is
-			// a single replica's size and matches what the user
-			// uploaded.
-			entry.TotalSize = detail.SizeBytes
-		}
-		result.Entries = append(result.Entries, entry)
-	}
-
-	if hasMore {
-		lastKey := fileRows[len(fileRows)-1].ObjectKey
-		result.HasMore = true
-		result.NextCursor = lastKey
-	}
-
-	return result, nil
+	return core.BuildDirectoryListing(prefix,
+		mapSlice(stats, func(r *db.GetDirectoryStatsRow) core.DirStat {
+			return core.DirStat{Name: r.Name, IsDir: r.IsDir, FileCount: r.FileCount, TotalSize: r.TotalSize}
+		}),
+		mapSlice(fileRows, func(r *db.ListDirectChildrenRow) core.DirFile {
+			return core.DirFile{ObjectKey: r.ObjectKey, Backends: r.BackendNames, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+		}),
+		maxKeys), nil
 }
 
 // RecordObjectIdentity fills the identity columns a read had to ask a backend

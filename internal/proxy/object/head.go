@@ -40,7 +40,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	result, backendName, err := o.failover.Read(ctx, "HeadObject", key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
-			if !o.core.Usage().WithinLimits(beName, headObjectOp, 0, 0) {
+			if !o.core.Usage().WithinLimits(beName, s3op.HeadObject, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
@@ -131,9 +131,6 @@ func (o *Manager) headFromMetadata(ctx context.Context, key string, locs []core.
 		ETag:         loc.Identity.ETag,
 		LastModified: loc.CreatedAt,
 		Metadata:     loc.Identity.UserMetadata,
-	}
-	if !loc.Form().Any(core.StoredLayers) {
-		res.Size = loc.SizeBytes
 	}
 	telemetry.HeadServedFromMetadataTotal.Inc()
 	pobserve.HeadCompleted(ctx, key, "metadata", res.Size)

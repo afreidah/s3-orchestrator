@@ -302,12 +302,7 @@ func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []fun
 	if err != nil {
 		return nil, nil, noop, fmt.Errorf("materialize signed-payload body: %w", err)
 	}
-	seekable, err := mb.Reader()
-	if err != nil {
-		mb.Cleanup()
-		return nil, nil, noop, fmt.Errorf("read materialized body: %w", err)
-	}
-	return seekable, nil, mb.Cleanup, nil
+	return mb.Reader(), nil, mb.Cleanup, nil
 }
 
 // PutObject uploads an object to the backend.

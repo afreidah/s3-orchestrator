@@ -218,7 +218,7 @@ window.s3oDiagram = {
         '<tr><td>ingress_bytes</td><td>BIGINT</td><td>Bytes uploaded to backend</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (backend_name, bucket_start, workload) &bull; idx_backend_usage_bucket_start (bucket_start)</p>' +
-        '<p>Used by: <a href="../write-path/">write path</a> eligibility filter (BackendsWithinLimits baseline), usage flush <a href="../background-services/">background service</a>.</p>' +
+        '<p>Used by: <a href="../write-path/">write path</a> eligibility filter (WithinLimits baseline), usage flush <a href="../background-services/">background service</a>.</p>' +
         '<p class="ac-metric">Key queries: FlushUsageDeltas (INSERT ON CONFLICT DO UPDATE), GetUsageSince, PruneUsageBuckets</p>'
     },
     cleanup_queue: {

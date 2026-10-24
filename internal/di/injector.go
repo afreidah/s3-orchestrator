@@ -50,7 +50,7 @@ func NewInjector(deps InjectorDeps) do.Injector {
 	registerValues(inj, deps.Config, deps.Mode, deps.LogLevel, deps.LogBuffer)
 	registerInfrastructure(inj)
 	registerBackendStack(inj)
-	registerWorkers(inj, deps.Config, deps.Mode)
+	registerWorkers(inj, deps.Mode)
 	registerTransport(inj)
 	registerOptionalFeatures(inj, deps.Config)
 
@@ -111,7 +111,7 @@ func registerBackendStack(inj do.Injector) {
 
 // registerWorkers wires the background workers and the drain manager. The
 // Reconciler registers only in worker-side modes.
-func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
+func registerWorkers(inj do.Injector, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
 	do.Provide(inj, ProvideReplicator)
 	do.Provide(inj, ProvideOverReplicationCleaner)
@@ -155,7 +155,6 @@ func provideIf[T any](inj do.Injector, enabled bool, provider func(do.Injector) 
 func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
 	do.Provide(inj, ProvideCodec)
 	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptor)
-	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptionProvider)
 	provideIf(inj, cfg.Redis != nil, ProvideRedisCounterBackend)
 	provideIf(inj, cfg.Cache.Enabled, ProvideObjectCache)
 	provideIf(inj, cfg.RateLimit.Enabled, ProvideRateLimiter)

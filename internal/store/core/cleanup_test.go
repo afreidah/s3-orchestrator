@@ -66,6 +66,12 @@ func (r *stubRunner) WithTx(ctx context.Context, fn func(ctx context.Context, tx
 	return fn(ctx, r.tx)
 }
 
+// stubOps binds the shared transactional methods to a stub runner over tx, so
+// a test drives them the way an engine store does.
+func stubOps(tx TxAdapter) TxOps {
+	return NewTxOps(&stubRunner{tx: tx})
+}
+
 // -------------------------------------------------------------------------
 // ENQUEUE REMOVED
 // -------------------------------------------------------------------------
@@ -164,7 +170,7 @@ func discardedIntent() *PendingObject {
 func TestDiscardPending_DropsAndQueues(t *testing.T) {
 	t.Parallel()
 	stub := &discardTxStub{}
-	cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: stub}, discardedIntent(), "put_failed")
+	cleanup, err := stubOps(stub).DiscardPending(context.Background(), discardedIntent(), "put_failed")
 	if err != nil {
 		t.Fatalf("DiscardPending: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestDiscardPending_DropsAndQueues(t *testing.T) {
 func TestDiscardPending_IntentAlreadyGone(t *testing.T) {
 	t.Parallel()
 	stub := &discardTxStub{lost: true}
-	cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: stub}, discardedIntent(), "put_failed")
+	cleanup, err := stubOps(stub).DiscardPending(context.Background(), discardedIntent(), "put_failed")
 	if err != nil || cleanup != nil || len(stub.deleted) != 0 {
 		t.Errorf("cleanup=%+v err=%v deleted=%v, want nothing", cleanup, err, stub.deleted)
 	}
@@ -202,7 +208,7 @@ func TestDiscardPending_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, err := DiscardPending(context.Background(), &stubRunner{tx: tx}, discardedIntent(), "put_failed")
+			cleanup, err := stubOps(tx).DiscardPending(context.Background(), discardedIntent(), "put_failed")
 			if !errors.Is(err, sentinel) || cleanup != nil {
 				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
 			}

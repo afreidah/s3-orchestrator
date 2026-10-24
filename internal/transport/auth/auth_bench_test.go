@@ -65,7 +65,7 @@ func BenchmarkVerifySigV4(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = VerifySigV4(r, accessKey, secret)
+		_ = verifySigV4(r, secret)
 	}
 }
 
@@ -154,7 +154,7 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 
 			b.ResetTimer()
 			for b.Loop() {
-				_ = VerifySigV4(r, accessKey, secret)
+				_ = verifySigV4(r, secret)
 			}
 		})
 	}

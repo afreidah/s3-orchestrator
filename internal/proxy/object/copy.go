@@ -45,7 +45,7 @@ func (o *Manager) headSourceForCopy(
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.StoredForm, bool) {
 	for i := range locations {
-		if !o.core.Usage().WithinLimits(locations[i].BackendName, copyObjectOp, 0, 0) {
+		if !o.core.Usage().WithinLimits(locations[i].BackendName, s3op.CopyObject, 0, 0) {
 			continue
 		}
 		be, ok := o.core.Backends()[locations[i].BackendName]

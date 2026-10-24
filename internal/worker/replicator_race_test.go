@@ -54,7 +54,7 @@ func TestReplicateObject_SupersededCopyLeavesTheWritesCopy(t *testing.T) {
 	store := newDrainStore(t, "b1", "b2")
 	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
 	b1.Objects[key+"!w1"] = backendtest.Object{Data: data}
-	if _, _, err := store.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := store.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Size: int64(len(data)),
 		Copies: []core.ObjectCopy{{Backend: "b1", StorageKey: key + "!w1"}},
 	}); err != nil {

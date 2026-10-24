@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -39,22 +38,17 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		}
 	}
 
-	now := now()
 	var encKey any
 	if len(params.EncryptionKey) > 0 {
 		encKey = params.EncryptionKey
-	}
-	var keyID any
-	if params.KeyID != "" {
-		keyID = params.KeyID
 	}
 	return s.execChanged(ctx, "failed to create multipart upload",
 		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity
 		 WHERE backend_name = ? AND (flags & ~?) = 0`,
-		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID,
-		core.EncodeTags(params.Tags), now, params.BackendName, core.AcceptForWrite,
+		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey,
+		nullableString(params.KeyID), core.EncodeTags(params.Tags), now(), params.BackendName, core.AcceptForWrite,
 	)
 }
 
@@ -120,21 +114,6 @@ func (s *Store) EndMultipartCompletion(ctx context.Context, uploadID string) err
 // PARTS
 // -------------------------------------------------------------------------
 
-// GetParts returns all parts for a multipart upload, ordered by part number.
-func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
-		 FROM multipart_parts
-		 WHERE upload_id = ?
-		 ORDER BY part_number`,
-		uploadID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get parts: %w", err)
-	}
-	return collectRows(rows, "parts", scanPart)
-}
-
 // ListParts returns up to limit parts numbered above afterPart, ordered by
 // part number.
 func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
@@ -152,8 +131,7 @@ func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit
 	return collectRows(rows, "parts", scanPart)
 }
 
-// scanPart reads one multipart_parts row selected in the column order GetParts
-// and ListParts share.
+// scanPart reads one multipart_parts row selected in ListParts' column order.
 func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 	var (
 		p          core.MultipartPart
@@ -185,7 +163,7 @@ func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	escapedPrefix := likeEscape(prefix)
+	escapedPrefix := likeEscaper.Replace(prefix)
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT upload_id, object_key, content_type, created_at
@@ -227,7 +205,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 	return s.countRows(ctx, "active multipart uploads",
 		`SELECT COUNT(*) FROM multipart_uploads
 		 WHERE object_key LIKE ? || '%' ESCAPE '\'`,
-		likeEscape(bucketPrefix))
+		likeEscaper.Replace(bucketPrefix))
 }
 
 // ScanMultipartUploads returns up to limit uploads matching filter after
@@ -309,20 +287,17 @@ func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 		return core.MultipartUpload{}, err
 	}
 	mu.ContentType = nullStringValue(contentType)
-	if metaJSON.Valid && metaJSON.String != "" {
-		if err := json.Unmarshal([]byte(metaJSON.String), &mu.Metadata); err != nil {
-			return core.MultipartUpload{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
+	var err error
+	if mu.Metadata, err = core.DecodeUserMetadata([]byte(nullStringValue(metaJSON))); err != nil {
+		return core.MultipartUpload{}, err
 	}
 	if len(encryptionKey) > 0 {
 		mu.EncryptionKey = encryptionKey
 		mu.Encrypted = true
 	}
 	mu.KeyID = nullStringValue(keyID)
-	var parseErr error
-	mu.CreatedAt, parseErr = parseTime(createdAt)
-	if parseErr != nil {
-		return core.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+	if mu.CreatedAt, err = parseTime(createdAt); err != nil {
+		return core.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 	}
 	return mu, nil
 }
@@ -337,10 +312,4 @@ func scanMultipartUploads(rows *sql.Rows) ([]core.MultipartUpload, error) {
 		}
 		return mu, nil
 	})
-}
-
-// likeEscape escapes SQL LIKE wildcards in prefix strings.
-func likeEscape(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
 }

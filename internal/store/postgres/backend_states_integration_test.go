@@ -106,12 +106,12 @@ func pgCompletes(t *testing.T, s *Store, backend string) bool {
 func pgRecordOn(t *testing.T, s *Store, backend, suffix string) string {
 	t.Helper()
 	key := uniqueKey(t, suffix)
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(context.Background(), key) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(context.Background(), key) })
 	return key
 }
 
@@ -250,7 +250,7 @@ func TestPgCompleteDrain_WaitsForAnObjectRow(t *testing.T) {
 	if pgCompletes(t, s, backend) {
 		t.Fatal("completed with an object row still on the backend")
 	}
-	if _, _, err := s.DeleteObject(context.Background(), key); err != nil {
+	if _, err := s.DeleteObject(context.Background(), key); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 	if !pgCompletes(t, s, backend) {

@@ -68,7 +68,7 @@ func newExcessStub(s *excessTxStub) *excessTxStub {
 // have their own assertions.
 func runRemoveExcess(stub *excessTxStub, key, backend string, keepAtLeast int) (bool, error) {
 	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
-	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, keepAtLeast, "")
+	_, err := stubOps(stub).DeleteObjectLocation(context.Background(), loc, keepAtLeast, "")
 	return err == nil, err
 }
 
@@ -168,7 +168,7 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}})
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 1}
-	dropped, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 2, "over_replication")
+	dropped, err := stubOps(stub).DeleteObjectLocation(context.Background(), loc, 2, "over_replication")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

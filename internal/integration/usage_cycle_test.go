@@ -56,8 +56,7 @@ func TestUsageCycle_ReadsFromTheZonedCycleStart(t *testing.T) {
 	if got := tracker.CycleUsage()[name].Usage.EgressBytes; got != 300 {
 		t.Errorf("cycle egress = %d, want only the 300 from the cycle start", got)
 	}
-	get := []s3op.Operation{s3op.GetObject}
-	if !tracker.WithinLimits(name, get, 700, 0) || tracker.WithinLimits(name, get, 701, 0) {
+	if !tracker.WithinLimits(name, s3op.GetObject, 700, 0) || tracker.WithinLimits(name, s3op.GetObject, 701, 0) {
 		t.Error("admission should leave exactly 700 bytes of egress this cycle")
 	}
 

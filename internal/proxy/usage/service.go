@@ -98,15 +98,11 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 // first write is judged against real rows rather than an empty snapshot, and
 // after every flush so the deltas just written are not counted twice.
 func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
-	usage, err := s.stores.ListBackendQuotaUsage(ctx)
+	stats, err := s.stores.GetQuotaStats(ctx)
 	if err != nil {
 		return fmt.Errorf("read backend quota usage: %w", err)
 	}
-	baselines := make(map[string]core.BackendQuotaUsage, len(usage))
-	for _, u := range usage {
-		baselines[u.BackendName] = u
-	}
-	s.quota.SetBaselines(baselines)
+	s.quota.SetBaselines(stats)
 	return nil
 }
 

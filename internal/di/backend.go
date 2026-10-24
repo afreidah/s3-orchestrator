@@ -216,16 +216,6 @@ func ProvideCodec(i do.Injector) (*compression.Codec, error) {
 	return c, nil
 }
 
-// ProvideEncryptionProvider creates the key provider for admin key rotation
-// operations. Only registered when encryption is enabled.
-func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	return encryption.NewKeyProviderFromConfig(&cfg.Encryption)
-}
-
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error) {
 	r := newResolver(i)
@@ -563,7 +553,6 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 		Backends: rt,
 		Stores:   stores,
 		Usage:    rt.Acct(),
-		Quota:    rt.Quota(),
 		Codec:    codec,
 		Log:      slog.Default().With(logfmt.Component("reconcile")),
 	}), nil

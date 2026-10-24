@@ -35,7 +35,7 @@ type fakeStores struct {
 	reconciled     map[string]int64
 	reconcileErr   error
 	reconcileCalls int
-	baselines      []core.BackendQuotaUsage
+	baselines      map[string]core.QuotaStat
 	baselineCalls  int
 	baselineErr    error
 }
@@ -75,14 +75,8 @@ func (f *fakeStores) ReconcileUsage(_ context.Context) (map[string]int64, error)
 	return f.reconciled, f.reconcileErr
 }
 
-// GetQuotaStats answers with no stats; the service never reads them.
+// GetQuotaStats answers the baseline refresh with whatever the test seeded.
 func (f *fakeStores) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
-	return nil, nil
-}
-
-// ListBackendQuotaUsage answers the baseline refresh with whatever the test
-// seeded.
-func (f *fakeStores) ListBackendQuotaUsage(_ context.Context) ([]core.BackendQuotaUsage, error) {
 	f.baselineCalls++
 	return f.baselines, f.baselineErr
 }
@@ -198,7 +192,7 @@ func TestReconcileUsage_Errors(t *testing.T) {
 func TestRefreshQuotaBaselines_LoadsTheRows(t *testing.T) {
 	t.Parallel()
 	stores := newFakeStores()
-	stores.baselines = []core.BackendQuotaUsage{{BackendName: "b1", BytesLimit: 1000, BytesUsed: 400}}
+	stores.baselines = map[string]core.QuotaStat{"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 400}}
 	s, quota := newServiceWithQuota(t, stores)
 
 	if err := s.RefreshQuotaBaselines(context.Background()); err != nil {

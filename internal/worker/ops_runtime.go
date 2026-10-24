@@ -20,16 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-)
-
-// Single-operation admission sets shared by the background workers.
-// Package-level so a pass that checks a backend per object does not allocate
-// a one-element slice for every check.
-var (
-	getObjectOp = []s3op.Operation{s3op.GetObject}
-	putObjectOp = []s3op.Operation{s3op.PutObject}
 )
 
 // Ops is the subset of *infra.BackendRuntime every background worker takes.

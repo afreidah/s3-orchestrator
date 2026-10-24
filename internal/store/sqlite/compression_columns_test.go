@@ -113,20 +113,20 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "RecordObject",
 			key:  "bucket/record",
 			write: func(t *testing.T, s *Store, key string) {
-				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
+				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 					t.Fatalf("RecordObject: %v", err)
 				}
 			},
 		},
 		{
-			name: "RecordObjectAndClearPending",
+			name: "RecordObject clearing an intent",
 			key:  "bucket/record-clear",
 			write: func(t *testing.T, s *Store, key string) {
 				intent := pendingFixture("intent-x", key)
 				if _, err := s.InsertPendingIfFits(ctx, &intent, core.AcceptForWrite); err != nil {
 					t.Fatalf("InsertPendingIfFits: %v", err)
 				}
-				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 					Key: key, Size: 1024, Form: form,
 					Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-x"}},
 				}); err != nil {
@@ -206,7 +206,7 @@ func TestPendingPromote_PreservesRepresentation(t *testing.T) {
 		t.Errorf("pending row lost compression metadata: %+v", stale[0])
 	}
 
-	if _, _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	assertFormPreserved(t, readBackOne(t, s, "bucket/promoted"), form)
@@ -222,7 +222,7 @@ func TestPlaceCopy_ReplicaPreservesRepresentation(t *testing.T) {
 	ctx := context.Background()
 	form := fullyPopulatedForm()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustRecordReplica(t, s, "bucket/replicated", "backend-b", "backend-a", 1024)

@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -223,8 +224,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	defer s.reportCoverage(ctx, affordable)
 
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
-	// object body, so a wider window can hammer the backends. Concurrency is a
-	// parameter now, so raising it later is a config change, not a rewrite.
+	// object body, so a wider window can hammer the backends.
 	runner := batch.Runner[core.ObjectLocation]{
 		Name:        "scrub",
 		Log:         s.log,
@@ -283,7 +283,7 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 func (s *Scrubber) admits(backend string, egress int64) bool {
 	usage := s.deps.Usage()
 	reserve := s.Config().ScrubReserve(usage.GetLimits()[backend].EgressByteLimit)
-	return usage.WithinLimits(backend, getObjectOp, egress+reserve, 0)
+	return usage.WithinLimits(backend, s3op.GetObject, egress+reserve, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -367,7 +367,7 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) batc
 		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusUnreadable}
 	}
 	if match {
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
+		return batch.Succeeded()
 	}
 	return batch.ItemResult{Outcome: batch.ItemFailed, Status: "mismatch"}
 }
@@ -468,18 +468,13 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 		Observer:    observer,
 		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
 	}
-	var total batch.Summary
-	stop, err := pager.Walk(ctx, func(ctx context.Context, locs []core.ObjectLocation) (batch.Step, error) {
-		sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-			if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
-				s.log.WarnContext(ctx, "failed to purge unreadable copy",
-					"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
-				return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
-			}
-			return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
-		})
-		total = total.Plus(sum)
-		return batch.Step{Progress: sum.Succeeded}, nil
+	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
+		if err := s.discardCopy(ctx, &loc, "unreadable_purged"); err != nil {
+			s.log.WarnContext(ctx, "failed to purge unreadable copy",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+			return batch.Failed()
+		}
+		return batch.Succeeded()
 	})
 	if stop == batch.Errored {
 		s.log.ErrorContext(ctx, "failed to list unreadable copies", "error", err)
@@ -528,7 +523,7 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 	if hashErr != nil {
 		s.log.WarnContext(ctx, "failed to hash object",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
+		return batch.Failed()
 	}
 	// The pass read the whole body to produce the digest, so the copy is
 	// verified by construction and stamped as scrubbed in the same write.
@@ -540,10 +535,10 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to store hash",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
+		return batch.Failed()
 	}
 	s.recordETag(ctx, loc, digests.MD5)
-	return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
+	return batch.Succeeded()
 }
 
 // undecodable reports whether a hashing error is permanent rather than an outage

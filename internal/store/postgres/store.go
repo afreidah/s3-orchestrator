@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Manages quota tracking and object location storage in PostgreSQL. Tracks which
-// backend stores each object and how much quota each backend has used. Provides
-// atomic operations to ensure quota limits are respected.
+// The PostgreSQL Store: the pool and its circuit breaker, migrations and the
+// schema check, the transaction helpers core's shared methods run through, and
+// the row converters every query file maps sqlc rows with.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -162,10 +162,9 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 // Updated when new migration files are added.
 const ExpectedSchemaVersion = 47
 
-// VerifySchemaVersion checks that the database schema version matches
-// what this binary expects. Returns an error if the schema is older
-// than expected (partial migration failure). Logs a warning if the
-// schema is newer (possible downgrade).
+// VerifySchemaVersion checks that the database schema version matches what
+// this binary expects. Returns an error if the schema is older (a partial
+// migration) or newer (an outdated binary) than expected.
 func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	var version int64
 	err := s.pool.QueryRow(ctx,
@@ -201,32 +200,20 @@ func (s *Store) withTx(ctx context.Context, fn func(*db.Queries) error) error {
 	if err := fn(db.New(wrapDBTX(tx, s.cb))); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
-}
-
-// WithTx satisfies core.Runner by opening a transaction, wrapping the
-// sqlc Queries in a pgTxAdapter, and invoking fn. Commits on a nil
-// return; rolls back otherwise. Lets engine-agnostic core helpers
-// orchestrate multi-statement operations against the postgres engine.
-func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	adapter := &pgTxAdapter{q: db.New(wrapDBTX(tx, s.cb)), instanceID: s.instanceID}
-	if err := fn(ctx, adapter); err != nil {
-		return err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 	return nil
 }
 
-// Compile-time check that *Store implements every store role.
-var _ = core.AssertEngine[*Store]
+// WithTx satisfies core.Runner by running fn in a transaction over a
+// pgTxAdapter, so engine-agnostic core helpers can orchestrate multi-statement
+// operations against the postgres engine.
+func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
+	return s.withTx(ctx, func(q *db.Queries) error {
+		return fn(ctx, &pgTxAdapter{q: q, instanceID: s.instanceID})
+	})
+}
 
 // slimObjectRow is the minimum surface of sqlc rows that project an
 // ObjectLocation without encryption columns. Implemented by the four list

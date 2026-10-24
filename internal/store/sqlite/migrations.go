@@ -199,9 +199,9 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 // -------------------------------------------------------------------------
 
 // VerifySchemaVersion checks that the database schema version matches what
-// this binary expects. Returns an error if schema_version is missing or if
-// the recorded version is older than expected. Logs a warning if the schema
-// is newer (possible downgrade).
+// this binary expects. Returns an error if schema_version is missing, or if the
+// recorded version is older (a partial migration) or newer (an outdated
+// binary) than expected.
 func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	version, exists, err := s.currentSchemaVersion(ctx)
 	if err != nil {

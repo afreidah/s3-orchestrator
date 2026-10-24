@@ -15,5 +15,5 @@ import "net/http"
 // cmdLifecycle implements `s3-orchestrator admin lifecycle`. Streams a line per
 // expired object, then the total.
 func cmdLifecycle(_ []string, c *client) int {
-	return c.stream(http.MethodPost, "/admin/api/lifecycle", "")
+	return c.stream(http.MethodPost, "/admin/api/lifecycle")
 }

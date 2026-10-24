@@ -3,8 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Reusable circuit breaker state machine shared by both the database wrapper
-// (CircuitBreakerStore) and the backend wrapper (CircuitBreakerBackend). Callers
+// Reusable circuit breaker state machine shared by the database driver
+// chokepoint (store.NewDatabaseBreaker) and the backend wrapper
+// (CircuitBreakerBackend). Callers
 // provide a pluggable error filter so only domain-relevant failures trip the
 // breaker.
 //
@@ -421,12 +422,4 @@ func (cb *CircuitBreaker) Call[T any](fn func() (T, error)) (T, error) {
 	}
 	result, err := fn()
 	return result, cb.PostCheck(err)
-}
-
-// CallNoResult wraps a call that returns only error with circuit breaker logic.
-func (cb *CircuitBreaker) CallNoResult(fn func() error) error {
-	if err := cb.PreCheck(); err != nil {
-		return err
-	}
-	return cb.PostCheck(fn())
 }

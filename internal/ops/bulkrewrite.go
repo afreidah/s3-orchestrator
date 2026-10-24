@@ -90,10 +90,9 @@ type bulkRewriteOp struct {
 // running the pass. Declared so the driver serves the compression passes as
 // well as the encryption ones rather than being tied to either.
 type bulkRewriteEnv struct {
-	log     *slog.Logger
-	runtime RuntimeOps
-	mover   Mover
-	layers  *storedform.Layers
+	log    *slog.Logger
+	mover  Mover
+	layers *storedform.Layers
 }
 
 // rewriteOutcome is what one object's rewrite attempt produced.
@@ -225,17 +224,11 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // form the pass wants. Failures are logged and counted rather than returned,
 // so one bad object does not end the pass.
 func (op bulkRewriteOp) processLocation(ctx context.Context, env bulkRewriteEnv, loc *core.ObjectLocation) rewriteOutcome {
-	be, err := env.runtime.GetBackend(loc.BackendName)
-	if err != nil {
-		return op.failed(ctx, env, "backend not found", loc, err)
-	}
 	want := op.want(loc)
-	_, err = env.mover.MoveObject(ctx, &writepath.MoveRequest{
-		Source:      loc,
-		SrcBackend:  be,
-		DestBackend: be,
-		DestName:    loc.BackendName,
-		Profile:     writepath.RewriteMove,
+	_, err := env.mover.MoveObject(ctx, &writepath.MoveRequest{
+		Source:   loc,
+		DestName: loc.BackendName,
+		Profile:  writepath.RewriteMove,
 		Reform: func(ctx context.Context, src *s3be.GetObjectResult) (*storedform.Reformed, error) {
 			return env.layers.Reform(ctx, src.Body, src.Size, &loc.StoredForm, want)
 		},

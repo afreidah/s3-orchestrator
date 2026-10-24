@@ -19,8 +19,8 @@ import (
 // a key naming no single bucket needs the bucket wildcard.
 func TestAuthorizeKey(t *testing.T) {
 	t.Parallel()
-	reader := NewUser("r", "reader", map[string]core.PermissionSet{"photos": core.PermRead | core.PermList})
-	everything := NewUser("w", "wildcard", nil).WithAllBuckets(core.PermAll)
+	reader := newUser("r", "reader", map[string]core.PermissionSet{"photos": core.PermRead | core.PermList})
+	everything := newUser("w", "wildcard", nil).withAllBuckets(core.PermAll)
 
 	for _, tc := range []struct {
 		name       string
@@ -55,7 +55,7 @@ func TestAuthorizeKey(t *testing.T) {
 func TestUserByAccessKey(t *testing.T) {
 	t.Parallel()
 	br := &BucketRegistry{byAccessKey: map[string]entry{
-		"AKIAKNOWN": {secret: "s", user: NewUser("u1", "one", nil)},
+		"AKIAKNOWN": {secret: "s", user: newUser("u1", "one", nil)},
 	}}
 	if u, ok := br.UserByAccessKey("AKIAKNOWN"); !ok || u.ID != "u1" {
 		t.Errorf("UserByAccessKey(known) = %v, %v; want u1, true", u, ok)

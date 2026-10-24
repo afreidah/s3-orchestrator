@@ -49,7 +49,7 @@ func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*h
 // A nil baseline leaves the single backend unlimited.
 func newTestServerWithQuota(
 	t *testing.T,
-	baselines map[string]core.BackendQuotaUsage,
+	baselines map[string]core.QuotaStat,
 	opts ...func(*storetest.MockMetadataStore),
 ) (*httptest.Server, *storetest.MockMetadataStore, *backendtest.InMemory) {
 	t.Helper()
@@ -440,7 +440,7 @@ func TestPut_DBUnavailable(t *testing.T) {
 	// outage surfaces when the write is recorded rather than when it is placed.
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-			Return(nil, nil, core.ErrDBUnavailable).AnyTimes()
+			Return(nil, core.ErrDBUnavailable).AnyTimes()
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
@@ -852,7 +852,7 @@ func TestDelete_Success(t *testing.T) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 			Return([]core.CleanupItem{
 				{ID: 1, BackendName: "b1", ObjectKey: "mybucket/testkey", SizeBytes: 2},
-			}, core.QuotaDeltas{"b1": -2}, nil).AnyTimes()
+			}, nil).AnyTimes()
 	})
 
 	backend.Objects["mybucket/testkey"] = backendtest.Object{Data: []byte("hi")}
@@ -873,7 +873,7 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return(nil, nil, core.ErrObjectNotFound).AnyTimes()
+			Return(nil, core.ErrObjectNotFound).AnyTimes()
 	})
 
 	resp := doReq(t, ts, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
@@ -891,14 +891,12 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 
 // batchDeleteOnB1 stubs DeleteObjectsBatch with every key holding one
 // one-byte copy on b1, queued for cleanup.
-func batchDeleteOnB1(_ context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func batchDeleteOnB1(_ context.Context, keys []string) ([]core.CleanupItem, error) {
 	items := make([]core.CleanupItem, 0, len(keys))
-	deltas := core.QuotaDeltas{}
 	for i, k := range keys {
 		items = append(items, core.CleanupItem{ID: int64(i + 1), BackendName: "b1", ObjectKey: k, SizeBytes: 1})
-		deltas.Add("b1", -1)
 	}
-	return items, deltas, nil
+	return items, nil
 }
 
 // TestDeleteObjects_Success verifies the delete objects success contract.
@@ -907,7 +905,7 @@ func TestDeleteObjects_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
+			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
 			DoAndReturn(batchDeleteOnB1).AnyTimes()
 	})
@@ -937,7 +935,7 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
+			Return([]core.CleanupItem{{ID: 1, BackendName: "b1", ObjectKey: "mybucket/key1", SizeBytes: 1}}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
 			DoAndReturn(batchDeleteOnB1).AnyTimes()
 	})
@@ -1015,7 +1013,7 @@ func TestDeleteObjects_WholeBatchFailure(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, nil, &core.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}).AnyTimes()
+			Return(nil, &core.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}).AnyTimes()
 	})
 
 	body := strings.NewReader(`<Delete><Object><Key>good</Key></Object><Object><Key>bad</Key></Object></Delete>`)
@@ -1047,7 +1045,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	// Typed S3Error case.
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "db down"}).AnyTimes()
+			Return(nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "db down"}).AnyTimes()
 	})
 
 	body := strings.NewReader(`<Delete><Object><Key>k1</Key></Object><Object><Key>k2</Key></Object></Delete>`)
@@ -1066,7 +1064,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	// Untyped error case -> InternalError fallback.
 	tsUntyped, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, nil, errors.New("untyped backend error")).AnyTimes()
+			Return(nil, errors.New("untyped backend error")).AnyTimes()
 	})
 
 	bodyUntyped := strings.NewReader(`<Delete><Object><Key>k1</Key></Object></Delete>`)

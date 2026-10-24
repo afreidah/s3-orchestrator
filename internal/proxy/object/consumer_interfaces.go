@@ -35,7 +35,7 @@ type Runtime interface {
 	BackendFlags(name string) core.BackendFlags
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
-	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
+	EligibleForWrite(op s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Quota() *counter.QuotaTracker
 }

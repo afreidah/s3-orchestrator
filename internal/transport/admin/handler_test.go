@@ -93,35 +93,35 @@ func TestLogLevel_Get(t *testing.T) {
 	}
 }
 
-// TestLogLevel_Put verifies the log level put contract.
-// Asserts that status = , want.
+// TestLogLevel_Put verifies a PUT sets the level and reports it back, whatever
+// case the client names it in.
 func TestLogLevel_Put(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
+	for _, level := range []string{"debug", "DEBUG"} {
+		h := newTestHandler(t)
+		mux := http.NewServeMux()
+		h.Register(mux)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
-		strings.NewReader(`{"level":"debug"}`))
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
+			strings.NewReader(`{"level":"`+level+`"}`))
+		signRoot(t, req)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want %d", level, w.Code, http.StatusOK)
+		}
 
-	var resp adminapi.LogLevelResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Level != "debug" {
-		t.Errorf("level = %q, want %q", resp.Level, "debug")
-	}
-
-	// Verify the level actually changed
-	if h.logLevel.Level() != slog.LevelDebug {
-		t.Errorf("logLevel = %v, want %v", h.logLevel.Level(), slog.LevelDebug)
+		var resp adminapi.LogLevelResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Level != "debug" {
+			t.Errorf("%s: level = %q, want %q", level, resp.Level, "debug")
+		}
+		if h.logLevel.Level() != slog.LevelDebug {
+			t.Errorf("%s: logLevel = %v, want %v", level, h.logLevel.Level(), slog.LevelDebug)
+		}
 	}
 }
 

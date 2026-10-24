@@ -203,13 +203,12 @@ func (mr *MockObjectStoreMockRecorder) CountObjectsByPrefix(ctx, prefix any) *go
 }
 
 // DeleteObject mocks base method.
-func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
 	ret0, _ := ret[0].([]core.CleanupItem)
-	ret1, _ := ret[1].(core.QuotaDeltas)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
@@ -234,13 +233,12 @@ func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeas
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
 	ret0, _ := ret[0].([]core.CleanupItem)
-	ret1, _ := ret[1].(core.QuotaDeltas)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectsBatch indicates an expected call of DeleteObjectsBatch.
@@ -386,13 +384,12 @@ func (mr *MockObjectStoreMockRecorder) PlaceCopy(ctx, p any) *gomock.Call {
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.CleanupItem)
-	ret1, _ := ret[1].(core.QuotaDeltas)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.

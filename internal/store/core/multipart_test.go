@@ -136,7 +136,7 @@ func TestRecordPart_RejectsPartNumberOutOfRange(t *testing.T) {
 		stub := &partTxStub{}
 		p := partParams()
 		p.PartNumber = n
-		if _, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p); err == nil {
+		if _, err := stubOps(stub).RecordPart(context.Background(), p); err == nil {
 			t.Errorf("part %d: expected an error", n)
 		}
 		if len(stub.locks) != 0 {
@@ -151,7 +151,7 @@ func TestRecordPart_RejectsPartNumberOutOfRange(t *testing.T) {
 func TestRecordPart_FreshPartQueuesNothing(t *testing.T) {
 	t.Parallel()
 	stub := &partTxStub{}
-	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, partParams())
+	cleanup, err := stubOps(stub).RecordPart(context.Background(), partParams())
 	if err != nil {
 		t.Fatalf("RecordPart: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRecordPart_QueuesTheReplacedPart(t *testing.T) {
 			replaced := tc.replaced
 			stub := &partTxStub{replaced: &replaced}
 			queuer := &queueRecorder{TxAdapter: stub}
-			cleanup, err := RecordPart(context.Background(), &stubRunner{tx: queuer}, partParams())
+			cleanup, err := stubOps(queuer).RecordPart(context.Background(), partParams())
 			if err != nil {
 				t.Fatalf("RecordPart: %v", err)
 			}
@@ -206,7 +206,7 @@ func TestRecordPart_LostIntentQueuesTheUpload(t *testing.T) {
 	t.Parallel()
 	stub := &partTxStub{lost: true}
 	p := partParams()
-	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p)
+	cleanup, err := stubOps(stub).RecordPart(context.Background(), p)
 	if !errors.Is(err, ErrIntentLost) {
 		t.Fatalf("err = %v, want ErrIntentLost", err)
 	}
@@ -240,7 +240,7 @@ func TestRecordPart_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, err := RecordPart(context.Background(), &stubRunner{tx: tx}, partParams())
+			cleanup, err := stubOps(tx).RecordPart(context.Background(), partParams())
 			if !errors.Is(err, sentinel) {
 				t.Fatalf("err = %v, want the %s failure", err, name)
 			}
@@ -259,7 +259,7 @@ func TestRecordPart_RefusedWhileCompletionHoldsTheMark(t *testing.T) {
 	stub := &partTxStub{heartbeat: markCutoff.Add(time.Second)}
 	p := partParams()
 	p.CompletionStaleBefore = markCutoff
-	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p)
+	cleanup, err := stubOps(stub).RecordPart(context.Background(), p)
 	if !errors.Is(err, ErrCompletionInProgress) {
 		t.Fatalf("err = %v, want ErrCompletionInProgress", err)
 	}
@@ -282,7 +282,7 @@ func TestRecordPart_RecordsPastAStaleOrAbsentMark(t *testing.T) {
 			stub := &partTxStub{heartbeat: heartbeat}
 			p := partParams()
 			p.CompletionStaleBefore = markCutoff
-			if _, err := RecordPart(context.Background(), &stubRunner{tx: stub}, p); err != nil {
+			if _, err := stubOps(stub).RecordPart(context.Background(), p); err != nil {
 				t.Fatalf("RecordPart: %v", err)
 			}
 			if len(stub.upserted) != 1 {
@@ -297,7 +297,7 @@ func TestRecordPart_RecordsPastAStaleOrAbsentMark(t *testing.T) {
 func TestRecordPart_GoneUploadIsNotFound(t *testing.T) {
 	t.Parallel()
 	stub := &partTxStub{gone: true}
-	cleanup, err := RecordPart(context.Background(), &stubRunner{tx: stub}, partParams())
+	cleanup, err := stubOps(stub).RecordPart(context.Background(), partParams())
 	if !errors.Is(err, ErrMultipartUploadNotFound) {
 		t.Fatalf("err = %v, want ErrMultipartUploadNotFound", err)
 	}
@@ -329,7 +329,7 @@ func TestDeleteMultipartUpload_QueuesEveryPart(t *testing.T) {
 					{PartNumber: 2, SizeBytes: 200, StorageKey: "__multipart/up-1/2!w"},
 				},
 			}
-			cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+			cleanup, err := stubOps(stub).DeleteMultipartUpload(context.Background(), partUploadID, "abort", markCutoff)
 			if err != nil {
 				t.Fatalf("DeleteMultipartUpload: %v", err)
 			}
@@ -356,7 +356,7 @@ func TestDeleteMultipartUpload_RefusedWhileCompletionHoldsTheMark(t *testing.T) 
 		heartbeat:   markCutoff.Add(time.Second),
 		uploadParts: []MultipartPart{{PartNumber: 1, SizeBytes: 100}},
 	}
-	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+	cleanup, err := stubOps(stub).DeleteMultipartUpload(context.Background(), partUploadID, "abort", markCutoff)
 	if !errors.Is(err, ErrCompletionInProgress) {
 		t.Fatalf("err = %v, want ErrCompletionInProgress", err)
 	}
@@ -370,7 +370,7 @@ func TestDeleteMultipartUpload_RefusedWhileCompletionHoldsTheMark(t *testing.T) 
 func TestDeleteMultipartUpload_GoneQueuesNothing(t *testing.T) {
 	t.Parallel()
 	stub := &partTxStub{gone: true}
-	cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: stub}, partUploadID, "abort", markCutoff)
+	cleanup, err := stubOps(stub).DeleteMultipartUpload(context.Background(), partUploadID, "abort", markCutoff)
 	if err != nil || len(cleanup) != 0 || len(stub.removed) != 0 {
 		t.Errorf("cleanup = %+v removed = %v err = %v, want nothing", cleanup, stub.removed, err)
 	}
@@ -390,7 +390,7 @@ func TestDeleteMultipartUpload_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, err := DeleteMultipartUpload(context.Background(), &stubRunner{tx: tx}, partUploadID, "abort", markCutoff)
+			cleanup, err := stubOps(tx).DeleteMultipartUpload(context.Background(), partUploadID, "abort", markCutoff)
 			if !errors.Is(err, sentinel) || cleanup != nil {
 				t.Errorf("cleanup = %+v err = %v, want the %s failure and nothing queued", cleanup, err, name)
 			}

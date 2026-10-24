@@ -41,7 +41,7 @@ func TestRecordObject_RoundTripsIdentity(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{
 			ETag:         `"written"`,
@@ -72,7 +72,7 @@ func TestRecordObjectIdentity_FillsOnlyWhatIsUnknown(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{ETag: `"original"`},
 	}); err != nil {
@@ -131,13 +131,13 @@ func TestRecordObjectIdentity_SkipsAReplacedRead(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!old"}},
 	}); err != nil {
 		t.Fatalf("RecordObject(old): %v", err)
 	}
 	read := *storetest.LocationOn(t, s, "bucket/k", "backend-a")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!new"}},
 	}); err != nil {
 		t.Fatalf("RecordObject(new): %v", err)
@@ -160,7 +160,7 @@ func TestListObjects_CarriesTheStoredETag(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/with-etag", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
 		Identity: &core.ObjectIdentity{ETag: `"listed"`},
 	}); err != nil {
@@ -191,7 +191,7 @@ func TestListObjectsDelimited_CarriesTheStoredETag(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/leaf.txt", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
 		Identity: &core.ObjectIdentity{ETag: `"leaf-etag"`},
 	}); err != nil {
@@ -221,7 +221,7 @@ func TestRecordObjectIdentity_NilIsANoOp(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{ETag: `"kept"`},
 	}); err != nil {

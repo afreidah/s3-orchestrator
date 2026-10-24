@@ -21,7 +21,6 @@ const ContentType = "application/x-ndjson"
 // Event kinds. Every streamed line carries exactly one Kind.
 const (
 	KindStart     = "start"      // first line: operation accepted and beginning
-	KindProgress  = "progress"   // emitted as work advances (single-line update)
 	KindStepStart = "step_start" // a named unit of work began (no newline yet)
 	KindStepEnd   = "step_end"   // that unit finished (completes the line)
 	KindResult    = "result"     // final line: terminal outcome
@@ -41,8 +40,8 @@ const (
 type Event struct {
 	Kind       string         `json:"event"`
 	Op         string         `json:"op,omitempty"`          // start: operation name
-	Message    string         `json:"message,omitempty"`     // progress label or skip reason
-	Processed  int            `json:"processed,omitempty"`   // cumulative items handled
+	Message    string         `json:"message,omitempty"`     // step label or skip reason
+	Processed  int            `json:"processed,omitempty"`   // result: items handled
 	Outcome    string         `json:"outcome,omitempty"`     // result: ok|skipped|failed
 	Error      string         `json:"error,omitempty"`       // result: failure detail
 	DurationMs int64          `json:"duration_ms,omitempty"` // result: wall-clock elapsed

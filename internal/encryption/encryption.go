@@ -74,6 +74,15 @@ func (e *Encryptor) ChunkSize() int { return e.chunkSize }
 // Provider returns the underlying KeyProvider.
 func (e *Encryptor) Provider() KeyProvider { return e.provider }
 
+// Shutdown releases what the key provider holds, such as a Vault provider's
+// token renewal. The DI container calls it once the process stops, and only
+// for an Encryptor that was built.
+func (e *Encryptor) Shutdown() {
+	if closer, ok := e.provider.(interface{ Close() }); ok {
+		closer.Close()
+	}
+}
+
 // -------------------------------------------------------------------------
 // ENCRYPT
 // -------------------------------------------------------------------------

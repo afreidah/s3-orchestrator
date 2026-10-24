@@ -13,7 +13,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -45,14 +44,9 @@ type cacheErrMsg struct{ err error }
 
 // loadCache returns a command that fetches the cache snapshot off the main loop.
 func (m *model) loadCache() tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetCacheStats(context.Background())
-		if err != nil {
-			return cacheErrMsg{err}
-		}
-		return cacheLoadedMsg{resp}
-	}
+	return fetchCmd(m.client.GetCacheStats,
+		func(r *adminapi.CacheStatsResponse) tea.Msg { return cacheLoadedMsg{r} },
+		func(err error) tea.Msg { return cacheErrMsg{err} })
 }
 
 // -------------------------------------------------------------------------

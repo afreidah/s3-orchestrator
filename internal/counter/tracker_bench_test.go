@@ -56,9 +56,8 @@ func BenchmarkUsageTracker_WithinLimits(b *testing.B) {
 	tracker := NewUsageTracker(cb, benchLimits(b))
 	tracker.SetBaselines(benchBaselines())
 
-	ops := []s3op.Operation{s3op.PutObject}
 	for b.Loop() {
-		tracker.WithinLimits("oci", ops, 0, 1024)
+		tracker.WithinLimits("oci", s3op.PutObject, 0, 1024)
 	}
 }
 
@@ -69,10 +68,9 @@ func BenchmarkUsageTracker_WithinLimits_Parallel(b *testing.B) {
 	tracker := NewUsageTracker(cb, benchLimits(b))
 	tracker.SetBaselines(benchBaselines())
 
-	ops := []s3op.Operation{s3op.PutObject}
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			tracker.WithinLimits("oci", ops, 0, 1024)
+			tracker.WithinLimits("oci", s3op.PutObject, 0, 1024)
 		}
 	})
 }
@@ -81,10 +79,9 @@ func BenchmarkUsageTracker_WithinLimits_Parallel(b *testing.B) {
 // limit check at zero allocations, which the benchmarks only report.
 func TestUsageTracker_RequestPathDoesNotAllocate(t *testing.T) {
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"oci"}), benchLimits(t))
-	ops := []s3op.Operation{s3op.PutObject}
 	allocs := testing.AllocsPerRun(100, func() {
 		tracker.Record(t.Context(), "oci", s3op.PutObject, 1024, 0)
-		tracker.WithinLimits("oci", ops, 0, 1024)
+		tracker.WithinLimits("oci", s3op.PutObject, 0, 1024)
 	})
 	if allocs != 0 {
 		t.Errorf("Record + WithinLimits allocate %v times per call, want 0", allocs)

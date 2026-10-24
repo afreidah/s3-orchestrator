@@ -17,10 +17,10 @@ a store method does not require touching a long checklist.
 | Package | Role |
 |---|---|
 | `internal/store/core` | Role interfaces (`ObjectStore`, `QuotaStore`, `ReplicationStore`, ...). Shared error sentinels and value types live here. There is deliberately no composite of them: see below. |
-| `internal/store/sqlite` | Concrete `*Store` for SQLite. Asserts the full role set at compile time via `core.AssertEngine`. |
-| `internal/store/postgres` | Concrete `*Store` for PostgreSQL. Same compile-time assertions. |
-| `internal/store/storetest` | Declares the test-only composite `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`, plus per-role mocks (`MockObjectStore`, `MockQuotaStore`, ...) in `role_mocks.go`. |
-| `internal/di` | Declares the unexported `metadataStore` composite, the only place production code holds an opened engine before splitting it into roles. |
+| `internal/store/sqlite` | Concrete `*Store` for SQLite. |
+| `internal/store/postgres` | Concrete `*Store` for PostgreSQL. |
+| `internal/store/storetest` | Declares the test-only composite `storetest.MetadataStore` and hosts the mockgen-generated `MockMetadataStore`, plus per-role mocks (`MockObjectStore`, `MockCleanupStore`, ...) in `role_mocks.go`. |
+| `internal/di` | Declares the unexported `metadataStore` composite, the only place production code holds an opened engine before splitting it into roles. `openStore` returns either engine as it, which is the compile-time check that both implement every role. |
 | `internal/store/circuitbreaker.go` | `NewDatabaseBreaker` and the error filter; the breaker is installed at the SQL driver chokepoint so every store call passes through it. |
 
 Worker / handler / proxy packages **never** import `internal/store/sqlite`
@@ -38,8 +38,8 @@ to this page.
 
 1. Add the method to the role interface in `internal/store/core/interfaces.go`.
 2. Implement it on both `internal/store/sqlite/*.go` and
-   `internal/store/postgres/*.go`. The `core.AssertEngine` check in
-   `sqlite/store.go` and `postgres/store.go` fails the build if either
+   `internal/store/postgres/*.go`. `openStore` in `internal/di/store.go`
+   returns both engines as `metadataStore`, so the build fails if either
    implementation is missing, naming the method that is absent.
 3. From the repo root run `go generate ./internal/store/storetest/...`
    to regenerate the gomock mocks: `MockMetadataStore` for the composite
@@ -60,10 +60,9 @@ to this page.
 1. Declare the interface in `internal/store/core/interfaces.go`. Keep it
    to the operations one consumer actually performs; resist the urge
    to bundle unrelated methods.
-2. Embed the role in the `engineRoles` constraint in
-   `internal/store/core/engine.go` so both engines must implement it, and
-   in the unexported `metadataStore` composite in `internal/di/store.go`
-   so the opened engine still satisfies what DI carries.
+2. Embed the role in the unexported `metadataStore` composite in
+   `internal/di/store.go`, which both engines are returned as, so the
+   build fails until both implement it.
 3. Embed the same interface in `internal/store/storetest/interface.go`
    so mockgen picks up the new methods.
 4. Hand the role interface to consumers as a constructor argument. There
@@ -78,8 +77,8 @@ to this page.
   SQL driver chokepoint, so adding a method needs no decorator update.
   See `internal/store/circuitbreaker.go` and the `isDBError` filter for
   the application-vs-DB error classification.
-- **Per-role compile-time assertions**: `core.AssertEngine[*Store]`
-  covers every role in one line. Adding
+- **Per-role compile-time assertions**: `openStore` returning each
+  engine as `metadataStore` covers every role. Adding
   `var _ core.ObjectStore = (*Store)(nil)` would be redundant.
 - **Hand-written mocks**: the gomock-generated `MockMetadataStore` and
   per-role mocks are what the test suite uses. New methods appear there
@@ -91,7 +90,7 @@ to this page.
 
 | Check | Where | What it catches |
 |---|---|---|
-| `core.AssertEngine[*Store]` | `sqlite/store.go`, `postgres/store.go` | Either store implementation missing a method the role set requires. |
+| `openStore` returning `metadataStore` | `internal/di/store.go` | Either store implementation missing a method the role set requires. |
 | Compile-time `var _ core.TxAdapter = ...` | `sqlite/adapter.go`, `postgres/adapter.go` | Tx-scoped role implementations missing methods. |
 | `go generate ./internal/store/storetest/...` | `storetest/interface.go` | Out-of-date mock after an interface change. |
 | Driver-level circuit breaker | `internal/store/circuitbreaker.go` | New store methods automatically get CB semantics. |

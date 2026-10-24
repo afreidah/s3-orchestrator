@@ -38,7 +38,7 @@ const healthCheckTimeout = 10 * time.Second
 // UsageGate admits and charges the checks against a backend's usage budget.
 // Satisfied by *counter.UsageTracker.
 type UsageGate interface {
-	WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool
+	WithinLimits(backendName string, op s3op.Operation, egress, ingress int64) bool
 	Record(ctx context.Context, backendName string, op s3op.Operation, egress, ingress int64)
 }
 
@@ -94,7 +94,7 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 		return
 	}
 
-	if !p.usage.WithinLimits(p.backend, []s3op.Operation{p.probe.Op}, 0, 0) {
+	if !p.usage.WithinLimits(p.backend, p.probe.Op, 0, 0) {
 		return
 	}
 	p.usage.Record(ctx, p.backend, p.probe.Op, 0, 0)

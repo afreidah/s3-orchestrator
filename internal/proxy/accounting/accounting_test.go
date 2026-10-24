@@ -74,7 +74,7 @@ func TestAllow_UnlimitedBackendAdmitsEverything(t *testing.T) {
 	t.Parallel()
 	rec, _ := newTestRecorder(t, []string{"b1"}, nil)
 
-	if !rec.Allow("b1", []s3op.Operation{s3op.PutObject}, 1<<40, 1<<40) {
+	if !rec.Allow("b1", s3op.PutObject, 1<<40, 1<<40) {
 		t.Error("a backend with no limits refused an operation")
 	}
 }
@@ -89,7 +89,7 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 		limits        core.UsageLimits
 		spent         core.UsageStat
 		spentPools    core.PoolUsage
-		ops           []s3op.Operation
+		op            s3op.Operation
 		egress, ingre int64
 		want          bool
 	}{
@@ -99,13 +99,14 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 			spent:      core.UsageStat{APIRequests: 10},
 			spentPools: core.PoolUsage{core.PoolAll: 10},
 			// One more request is one too many.
-			ops:  []s3op.Operation{s3op.PutObject},
+			op:   s3op.PutObject,
 			want: false,
 		},
 		{
 			name:   "egress exhausted",
 			limits: byteCaps(t, 100, 0),
 			spent:  core.UsageStat{EgressBytes: 60},
+			op:     s3op.GetObject,
 			egress: 50,
 			want:   false,
 		},
@@ -113,6 +114,7 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 			name:   "ingress exhausted",
 			limits: byteCaps(t, 0, 100),
 			spent:  core.UsageStat{IngressBytes: 60},
+			op:     s3op.PutObject,
 			ingre:  50,
 			want:   false,
 		},
@@ -120,6 +122,7 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 			name:   "egress limit does not refuse an ingress-only operation",
 			limits: byteCaps(t, 100, 0),
 			spent:  core.UsageStat{EgressBytes: 100},
+			op:     s3op.PutObject,
 			ingre:  50,
 			want:   true,
 		},
@@ -127,7 +130,7 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 			name:   "operation that still fits",
 			limits: byteCaps(t, 100, 0),
 			spent:  core.UsageStat{EgressBytes: 40},
-			ops:    []s3op.Operation{s3op.GetObject},
+			op:     s3op.GetObject,
 			egress: 50,
 			want:   true,
 		},
@@ -138,8 +141,8 @@ func TestAllow_RefusesPastEachLimit(t *testing.T) {
 			rec, tracker := newTestRecorder(t, []string{"b1"}, map[string]core.UsageLimits{"b1": tt.limits})
 			tracker.SetBaselines(map[string]core.Usage{"b1": {UsageStat: tt.spent, Pools: tt.spentPools}})
 
-			if got := rec.Allow("b1", tt.ops, tt.egress, tt.ingre); got != tt.want {
-				t.Errorf("Allow(%v, %d, %d) = %v, want %v", tt.ops, tt.egress, tt.ingre, got, tt.want)
+			if got := rec.Allow("b1", tt.op, tt.egress, tt.ingre); got != tt.want {
+				t.Errorf("Allow(%v, %d, %d) = %v, want %v", tt.op, tt.egress, tt.ingre, got, tt.want)
 			}
 		})
 	}
@@ -153,17 +156,16 @@ func TestAllow_SeesWhatTheRecordMethodsSpend(t *testing.T) {
 	rec, _ := newTestRecorder(t, []string{"b1"}, map[string]core.UsageLimits{
 		"b1": byteCaps(t, 100, 0),
 	})
-	read := []s3op.Operation{s3op.GetObject}
 
-	if !rec.Allow("b1", read, 60, 0) {
+	if !rec.Allow("b1", s3op.GetObject, 60, 0) {
 		t.Fatal("first operation refused with a full budget")
 	}
 	rec.Egress(t.Context(), s3op.GetObject, "b1", 60)
 
-	if rec.Allow("b1", read, 60, 0) {
+	if rec.Allow("b1", s3op.GetObject, 60, 0) {
 		t.Error("second operation admitted; the spend from the first was not visible to Allow")
 	}
-	if !rec.Allow("b1", read, 40, 0) {
+	if !rec.Allow("b1", s3op.GetObject, 40, 0) {
 		t.Error("an operation that fits in what remains was refused")
 	}
 }
@@ -190,35 +192,33 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 	})
 
 	ctx := t.Context()
-	rec.APICall(ctx, s3op.PutObject, "b1")                                         // class_a
-	rec.APICalls(ctx, s3op.ListObjects, "b1", 3)                                   // class_b x3, one paginated walk
-	rec.Egress(ctx, s3op.GetObject, "b1", 500)                                     // class_b
-	rec.Ingress(ctx, s3op.UploadPart, "b1", 700)                                   // class_a
-	rec.PutSuccess(ctx, s3op.PutObject, "b1", 900, time.Now())                     // class_a + metric
-	rec.GetSuccess(ctx, s3op.GetObject, "b1", 100, time.Now())                     // class_b + metric
-	rec.OperationFailed(ctx, s3op.PutObject, "b1", time.Now(), errors.New("boom")) // class_a + metric
+	rec.APICall(ctx, s3op.ListObjects, "b1")                            // class_b
+	rec.Egress(ctx, s3op.GetObject, "b1", 500)                          // class_b
+	rec.Ingress(ctx, s3op.UploadPart, "b1", 700)                        // class_a
+	rec.PutSuccess(ctx, s3op.PutObject, "b1", 900, time.Now())          // class_a + metric
+	rec.Operation(s3op.PutObject, "b1", time.Now(), errors.New("boom")) // metric only
 
 	var all core.Usage
 	cb.Load("b1", time.Time{}, &all)
-	if got := all.Pools["class_a"]; got != 4 {
-		t.Errorf("class_a = %d, want 4 (APICall, Ingress, PutSuccess, OperationFailed)", got)
+	if got := all.Pools["class_a"]; got != 2 {
+		t.Errorf("class_a = %d, want 2 (Ingress, PutSuccess)", got)
 	}
-	if got := all.Pools["class_b"]; got != 5 {
-		t.Errorf("class_b = %d, want 5 (3 list pages, Egress, GetSuccess)", got)
-	}
-
-	if all.APIRequests != 9 {
-		t.Errorf("api_requests = %d, want 9; every call counts toward the total", all.APIRequests)
-	}
-	if all.EgressBytes != 600 || all.IngressBytes != 1600 {
-		t.Errorf("bytes = %d egress / %d ingress, want 600 / 1600", all.EgressBytes, all.IngressBytes)
+	if got := all.Pools["class_b"]; got != 2 {
+		t.Errorf("class_b = %d, want 2 (APICall, Egress)", got)
 	}
 
-	// The three combo helpers emit the operation metric; the bare charges do
+	if all.APIRequests != 4 {
+		t.Errorf("api_requests = %d, want 4; every charged call counts toward the total", all.APIRequests)
+	}
+	if all.EgressBytes != 500 || all.IngressBytes != 1600 {
+		t.Errorf("bytes = %d egress / %d ingress, want 500 / 1600", all.EgressBytes, all.IngressBytes)
+	}
+
+	// PutSuccess and Operation emit the operation metric; the bare charges do
 	// not, which is what keeps a failover attempt from logging a second
 	// observation for one client operation.
-	if len(ops) != 3 {
-		t.Errorf("operation metric emitted %d times (%v), want 3", len(ops), ops)
+	if len(ops) != 2 {
+		t.Errorf("operation metric emitted %d times (%v), want 2", len(ops), ops)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestAllow_UnknownBackendAdmits(t *testing.T) {
 		"b1": byteCaps(t, 1, 0),
 	})
 
-	if !rec.Allow("b-unknown", []s3op.Operation{s3op.GetObject}, 1<<30, 0) {
+	if !rec.Allow("b-unknown", s3op.GetObject, 1<<30, 0) {
 		t.Error("a backend with no limits entry was refused")
 	}
 }

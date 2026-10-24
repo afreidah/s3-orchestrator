@@ -42,7 +42,7 @@ func TestRecordObject_IntentClearFailureAborts(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("clear failed")
 	stub := &intentClearingTxStub{quotaTxStub: &quotaTxStub{}, clearErr: sentinel}
-	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	_, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
 	})
 	if !errors.Is(err, sentinel) {
@@ -59,7 +59,7 @@ func TestDeleteObject_IntentClearFailureAborts(t *testing.T) {
 		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 10}}},
 		clearErr:    sentinel,
 	}
-	_, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	_, err := stubOps(stub).DeleteObject(context.Background(), "k")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("expected the clear error, got %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 			{IntentID: "stale", BackendName: "b2", StorageKey: "k!stale", SizeBytes: 70},
 		},
 	}
-	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	displaced, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
 	})
 	if err != nil {
@@ -130,14 +130,14 @@ func TestRecordObject_OvertakenWriteRecordsNothing(t *testing.T) {
 	stub := &overtakenTxStub{multiCopyTxStub: newMultiCopyStub([]ExistingCopy{
 		{BackendName: "b1", StorageKey: "k!newer", SizeBytes: 50},
 	})}
-	displaced, deltas, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	displaced, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if len(stub.inserted) != 0 || len(stub.ops) != 0 || len(deltas) != 0 || len(stub.cleared) != 0 {
-		t.Errorf("overtaken write changed the key: rows=%v ops=%+v deltas=%v cleared=%v", stub.inserted, stub.ops, deltas, stub.cleared)
+	if len(stub.inserted) != 0 || len(stub.ops) != 0 || len(stub.cleared) != 0 {
+		t.Errorf("overtaken write changed the key: rows=%v ops=%+v cleared=%v", stub.inserted, stub.ops, stub.cleared)
 	}
 	want := []CleanupItem{{BackendName: "b1", ObjectKey: "k", StorageKey: "k!mine", SizeBytes: 100, Reason: CleanupReasonSupersededIntent}}
 	if !slices.Equal(displaced, want) {
@@ -157,7 +157,7 @@ func TestDeleteObject_ClearsIntents(t *testing.T) {
 		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}},
 		pending:     []SupersededIntent{{IntentID: "stale", BackendName: "b2", SizeBytes: 70}},
 	}
-	displaced, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	displaced, err := stubOps(stub).DeleteObject(context.Background(), "k")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
@@ -207,7 +207,7 @@ func newMultiCopyStub(existing []ExistingCopy) *multiCopyTxStub {
 func TestRecordObject_CommitsEveryCopy(t *testing.T) {
 	t.Parallel()
 	stub := newMultiCopyStub(nil)
-	_, deltas, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	_, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100,
 		Copies: []ObjectCopy{{Backend: "b1", IntentID: "i-1"}, {Backend: "b2", IntentID: "i-2"}},
 	})
@@ -222,13 +222,8 @@ func TestRecordObject_CommitsEveryCopy(t *testing.T) {
 			t.Errorf("row %d = %s/%d, want %s/100", i, stub.inserted[i].BackendName, stub.inserted[i].SizeBytes, want)
 		}
 	}
-	for _, backend := range []string{"b1", "b2"} {
-		if deltas[backend] != 100 {
-			t.Errorf("delta for %s = %d, want 100", backend, deltas[backend])
-		}
-	}
-	if len(stub.ops) != 2 {
-		t.Errorf("expected a stripe charge per copy, got %+v", stub.ops)
+	if want := []quotaOp{{"b1", 100}, {"b2", 100}}; !slices.Equal(stub.ops, want) {
+		t.Errorf("stripe charges = %+v, want %+v", stub.ops, want)
 	}
 	if len(stub.cleared) != 1 || stub.cleared[0] != "k" {
 		t.Errorf("expected the key's intents cleared once, got %v", stub.cleared)
@@ -246,7 +241,7 @@ func TestRecordObject_DisplacesEveryPriorCopy(t *testing.T) {
 		{BackendName: "b2", StorageKey: "k!old2", SizeBytes: 20},
 		{BackendName: "b3", StorageKey: "k!old3", SizeBytes: 30},
 	})
-	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	displaced, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100,
 		Copies: []ObjectCopy{
 			{Backend: "b1", StorageKey: "k!new1"},
@@ -278,7 +273,7 @@ func TestRecordObject_KeepsTheIntentsItIsStillPlacing(t *testing.T) {
 		{BackendName: "b2", StorageKey: "k!old2", SizeBytes: 20},
 		{BackendName: "b3", StorageKey: "k!old3", SizeBytes: 30},
 	})
-	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	displaced, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100,
 		Copies:  []ObjectCopy{{Backend: "b1", IntentID: "i-1", StorageKey: "k!new1"}},
 		Placing: []ObjectCopy{{Backend: "b2", IntentID: "i-2", StorageKey: "k!new2"}},
@@ -300,7 +295,7 @@ func TestRecordObject_KeepsTheIntentsItIsStillPlacing(t *testing.T) {
 func TestRecordObject_NoCopies(t *testing.T) {
 	t.Parallel()
 	stub := newMultiCopyStub([]ExistingCopy{{BackendName: "b1", SizeBytes: 10}})
-	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Size: 100})
+	_, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{Key: "k", Size: 100})
 	if !errors.Is(err, ErrNoCopiesToRecord) {
 		t.Fatalf("expected ErrNoCopiesToRecord, got %v", err)
 	}
@@ -314,7 +309,7 @@ func TestRecordObject_NoCopies(t *testing.T) {
 // assert on.
 func runDeleteLocation(stub *excessTxStub, key, backend string) error {
 	loc := &ObjectLocation{ObjectKey: key, BackendName: backend}
-	_, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, "")
+	_, err := stubOps(stub).DeleteObjectLocation(context.Background(), loc, 0, "")
 	return err
 }
 
@@ -347,7 +342,7 @@ func TestDeleteObjectsBatch_ClearsTagsForEveryKey(t *testing.T) {
 		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10},
 		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 20},
 	}})
-	if _, _, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, []string{"k2", "k1"}); err != nil {
+	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1"}); err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
 	if len(stub.tagKeysCleared) != 1 {
@@ -364,7 +359,7 @@ func TestDeleteObjectsBatch_LockError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock failed")
 	stub := newBatchStub(&batchTxStub{quotaTxStub: &quotaTxStub{keyLockErr: sentinel}})
-	if _, _, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, []string{"k1"}); !errors.Is(err, sentinel) {
+	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k1"}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the lock error, got %v", err)
 	}
 }
@@ -379,7 +374,7 @@ func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 		quotaTxStub: &quotaTxStub{tagClearErr: sentinel},
 		keyed:       []KeyedExistingCopy{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 10}},
 	})
-	if _, _, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, []string{"k1"}); !errors.Is(err, sentinel) {
+	if _, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k1"}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
 	if len(stub.ops) != 0 {
@@ -415,7 +410,7 @@ func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 		{ObjectKey: "k2", BackendName: "b1", StorageKey: "k2!a", SizeBytes: 20},
 		{ObjectKey: "k1", BackendName: "b1", StorageKey: "k1!a", SizeBytes: 10},
 	}})}
-	cleanup, deltas, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, []string{"k2", "k1", "missing"})
+	cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), []string{"k2", "k1", "missing"})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
@@ -431,8 +426,8 @@ func TestDeleteObjectsBatch_ClearsIntentsAndQueues(t *testing.T) {
 	if !slices.Equal(cleanup, want) {
 		t.Errorf("cleanup = %+v, want %+v", cleanup, want)
 	}
-	if deltas["b1"] != -30 {
-		t.Errorf("deltas = %+v, want b1 -30", deltas)
+	if want := []quotaOp{{"b1", -10}, {"b1", -20}}; !slices.Equal(stub.ops, want) {
+		t.Errorf("stripe charges = %+v, want each key debited on its own stripe: %+v", stub.ops, want)
 	}
 }
 
@@ -449,7 +444,7 @@ func TestDeleteObjectsBatch_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, _, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: tx}, []string{"k1"})
+			cleanup, err := stubOps(tx).DeleteObjectsBatch(context.Background(), []string{"k1"})
 			if !errors.Is(err, sentinel) || cleanup != nil {
 				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
 			}
@@ -463,9 +458,9 @@ func TestDeleteObjectsBatch_NothingToDelete(t *testing.T) {
 	t.Parallel()
 	stub := newBatchStub(&batchTxStub{})
 	for _, keys := range [][]string{nil, {"missing"}} {
-		cleanup, deltas, err := DeleteObjectsBatch(context.Background(), &stubRunner{tx: stub}, keys)
-		if err != nil || cleanup != nil || deltas != nil {
-			t.Errorf("keys %v: cleanup=%+v deltas=%+v err=%v, want nothing", keys, cleanup, deltas, err)
+		cleanup, err := stubOps(stub).DeleteObjectsBatch(context.Background(), keys)
+		if err != nil || cleanup != nil || len(stub.ops) != 0 {
+			t.Errorf("keys %v: cleanup=%+v ops=%+v err=%v, want nothing", keys, cleanup, stub.ops, err)
 		}
 	}
 }
@@ -479,7 +474,7 @@ func TestDeleteObject_QueuesEveryCopy(t *testing.T) {
 		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 10},
 		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 20},
 	}})
-	cleanup, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	cleanup, err := stubOps(stub).DeleteObject(context.Background(), "k")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
@@ -492,7 +487,7 @@ func TestDeleteObject_QueuesEveryCopy(t *testing.T) {
 	}
 
 	empty := newExcessStub(&excessTxStub{})
-	if _, _, err := DeleteObject(context.Background(), &stubRunner{tx: empty}, "k"); !errors.Is(err, ErrObjectNotFound) {
+	if _, err := stubOps(empty).DeleteObject(context.Background(), "k"); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("err = %v, want ErrObjectNotFound", err)
 	}
 }
@@ -512,7 +507,7 @@ func TestDeleteObject_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, _, err := DeleteObject(context.Background(), &stubRunner{tx: tx}, "k")
+			cleanup, err := stubOps(tx).DeleteObject(context.Background(), "k")
 			if !errors.Is(err, sentinel) || cleanup != nil {
 				t.Errorf("cleanup=%+v err=%v, want the %s failure", cleanup, err, name)
 			}
@@ -539,7 +534,7 @@ func TestRecordObject_QueuesDisplacedCopies(t *testing.T) {
 		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", StorageKey: "k!old", SizeBytes: 10}}},
 		pending:     []SupersededIntent{{IntentID: "stale", BackendName: "b2", StorageKey: "k!stale", SizeBytes: 7}},
 	}
-	cleanup, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	cleanup, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
 	})
 	if err != nil {
@@ -572,7 +567,7 @@ func TestRecordObject_FailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cleanup, _, err := RecordObject(context.Background(), &stubRunner{tx: tx}, &RecordObjectRequest{
+			cleanup, err := stubOps(tx).RecordObject(context.Background(), &RecordObjectRequest{
 				Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
 			})
 			if !errors.Is(err, sentinel) || cleanup != nil {
@@ -595,7 +590,7 @@ func TestRecordObject_OvertakenFailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, _, err := RecordObject(context.Background(), &stubRunner{tx: tx}, &RecordObjectRequest{
+			_, err := stubOps(tx).RecordObject(context.Background(), &RecordObjectRequest{
 				Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
 			})
 			if !errors.Is(err, sentinel) {
@@ -650,7 +645,7 @@ func (s *overtakenDeleteFailStub) DeletePending(context.Context, string) error {
 func TestRecordObject_ClearsTagsOnWrite(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{}
-	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); err != nil {
+	if _, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -665,7 +660,7 @@ func TestRecordObject_TagClearError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("tag clear failed")
 	stub := &quotaTxStub{tagClearErr: sentinel}
-	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); !errors.Is(err, sentinel) {
+	if _, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
 	if len(stub.ops) != 0 {
@@ -692,7 +687,7 @@ func TestDeleteObjectLocation_LockError(t *testing.T) {
 func TestDeleteObject_ClearsTags(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}})
-	if _, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k"); err != nil {
+	if _, err := stubOps(stub).DeleteObject(context.Background(), "k"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -706,7 +701,7 @@ func TestDeleteObject_LockError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock failed")
 	stub := newExcessStub(&excessTxStub{lockErr: sentinel})
-	if _, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k"); !errors.Is(err, sentinel) {
+	if _, err := stubOps(stub).DeleteObject(context.Background(), "k"); !errors.Is(err, sentinel) {
 		t.Errorf("expected the lock error, got %v", err)
 	}
 }
@@ -719,7 +714,7 @@ func TestDeleteObject_TagClearError(t *testing.T) {
 		quotaTxStub: &quotaTxStub{tagClearErr: sentinel},
 		existing:    []ExistingCopy{{BackendName: "b1", SizeBytes: 100}},
 	})
-	if _, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k"); !errors.Is(err, sentinel) {
+	if _, err := stubOps(stub).DeleteObject(context.Background(), "k"); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
 	if len(stub.ops) != 0 {
@@ -737,7 +732,7 @@ func TestDeleteObjectLocation_QueuesLockedSize(t *testing.T) {
 		{BackendName: "b2", SizeBytes: 200},
 	}})
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!1", SizeBytes: 1}
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, "scrub")
+	removed, err := stubOps(stub).DeleteObjectLocation(context.Background(), loc, 0, "scrub")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -761,7 +756,7 @@ func TestDeleteObjectLocation_EmptyReasonQueuesNothing(t *testing.T) {
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}})
 	queuer := &queueRecorder{TxAdapter: stub}
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1"}
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: queuer}, loc, 0, "")
+	removed, err := stubOps(queuer).DeleteObjectLocation(context.Background(), loc, 0, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -881,7 +876,7 @@ func TestDeleteObjectLocation_KeepsOverwrittenCopy(t *testing.T) {
 		{BackendName: "b1", StorageKey: "k!new", SizeBytes: 200},
 	}})
 	loc := &ObjectLocation{ObjectKey: "k", BackendName: "b1", StorageKey: "k!old"}
-	removed, err := DeleteObjectLocation(context.Background(), &stubRunner{tx: stub}, loc, 0, CleanupReasonDeleted)
+	removed, err := stubOps(stub).DeleteObjectLocation(context.Background(), loc, 0, CleanupReasonDeleted)
 	if !errors.Is(err, ErrCopyChanged) {
 		t.Fatalf("expected ErrCopyChanged, got %v", err)
 	}
@@ -923,7 +918,7 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{pendingCleanup: true}
 
-	outcome, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+	outcome, err := stubOps(stub).ImportObject(context.Background(),
 		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
@@ -942,7 +937,7 @@ func TestImportObject_SuppressedByInFlightIntent(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{pathInFlight: true}
 
-	outcome, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+	outcome, err := stubOps(stub).ImportObject(context.Background(),
 		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
@@ -967,7 +962,7 @@ func TestImportObject_KeepsBackendWriteTime(t *testing.T) {
 	stub := &quotaTxStub{}
 	written := time.Date(2024, 3, 9, 8, 15, 0, 0, time.UTC)
 
-	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+	if _, err := stubOps(stub).ImportObject(context.Background(),
 		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100, WrittenAt: written}); err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -988,7 +983,7 @@ func TestImportObject_StampsWhenBackendReportsNoTime(t *testing.T) {
 	stub := &quotaTxStub{}
 	before := time.Now()
 
-	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+	if _, err := stubOps(stub).ImportObject(context.Background(),
 		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100}); err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -1009,7 +1004,7 @@ func TestImportObject_PendingCleanupCheckError(t *testing.T) {
 	sentinel := errors.New("queue unreadable")
 	stub := &quotaTxStub{pendingErr: sentinel}
 
-	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+	if _, err := stubOps(stub).ImportObject(context.Background(),
 		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100}); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want the check error to abort the import", err)
 	}

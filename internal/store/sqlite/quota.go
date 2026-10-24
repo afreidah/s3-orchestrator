@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Implements quota enforcement, backend space selection and usage delta
-// flushing for the SQLite backend. Uses dynamic IN clause expansion for
-// backend-filtered queries.
+// Implements the SQLite quota and usage bindings: per-backend limits, the
+// capacity snapshot, the usage drift reconcile, the ledger figures, and the
+// usage flush and its reads.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -45,28 +45,21 @@ func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendCo
 	})
 }
 
-// GetQuotaStats returns quota statistics for all backends.
+// GetQuotaStats returns each backend's ceiling and the byte totals a write is
+// judged against, keyed by backend. The figures come from backend_capacity,
+// the same view admission tests against.
 func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.backend_name, c.bytes_used, c.bytes_limit, c.orphan_bytes, q.updated_at
-		FROM backend_capacity c
-		JOIN backend_quotas q ON q.backend_name = c.backend_name`)
+		SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
+		FROM backend_capacity`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quota stats: %w", err)
 	}
 	return collectMap(rows, "quota stats", func(rows *sql.Rows) (string, core.QuotaStat, error) {
-		var (
-			qs        core.QuotaStat
-			updatedAt string
-		)
-		if err := rows.Scan(&qs.BackendName, &qs.BytesUsed, &qs.BytesLimit, &qs.OrphanBytes, &updatedAt); err != nil {
+		var qs core.QuotaStat
+		if err := rows.Scan(&qs.BackendName, &qs.BytesLimit, &qs.BytesUsed, &qs.OrphanBytes, &qs.InflightBytes); err != nil {
 			return "", core.QuotaStat{}, fmt.Errorf("failed to scan quota stat: %w", err)
 		}
-		parsed, err := parseTime(updatedAt)
-		if err != nil {
-			return "", core.QuotaStat{}, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAt, err)
-		}
-		qs.UpdatedAt = parsed
 		return qs.BackendName, qs, nil
 	})
 }
@@ -113,25 +106,6 @@ func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 		return nil, err
 	}
 	return drift, nil
-}
-
-// ListBackendQuotaUsage returns each backend's ceiling and the byte totals a
-// write is judged against, for the quota tracker's baseline refresh. The figures
-// come from backend_capacity, the same view admission tests against.
-func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
-		FROM backend_capacity`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query backend quota usage: %w", err)
-	}
-	return collectRows(rows, "backend quota usage", func(rows *sql.Rows) (core.BackendQuotaUsage, error) {
-		var u core.BackendQuotaUsage
-		if err := rows.Scan(&u.BackendName, &u.BytesLimit, &u.BytesUsed, &u.OrphanBytes, &u.InflightBytes); err != nil {
-			return core.BackendQuotaUsage{}, fmt.Errorf("failed to scan backend quota usage: %w", err)
-		}
-		return u, nil
-	})
 }
 
 // LedgerStats returns every per-backend ledger figure from one pass over

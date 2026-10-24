@@ -187,15 +187,14 @@ func stubRecordPart(c *multipartCalls, replaced []core.CleanupItem, err error) f
 	}
 }
 
-func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		backend := req.Copies[0].Backend
 		c.recordObject = append(c.recordObject, multipartObjectCall{
-			Key: req.Key, Backend: backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+			Key: req.Key, Backend: req.Copies[0].Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 		})
-		return nil, core.QuotaDeltas{backend: req.Size}, err
+		return nil, err
 	}
 }
 
@@ -272,7 +271,7 @@ func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 		Return(false, nil).AnyTimes()
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 3}}, nil).AnyTimes()
 	multipartStubs(t, store)
 	storetest.Permissive(store)
@@ -356,9 +355,9 @@ func completeStoreSetup(t *testing.T, mu *core.MultipartUpload, parts []core.Mul
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(mu, nil).AnyTimes()
 	if partsErr != nil {
-		store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(nil, partsErr).AnyTimes()
+		store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, partsErr).AnyTimes()
 	} else {
-		store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+		store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	}
 	c := multipartStubs(t, store)
 	c.seed(mu.UploadID, mu.BackendName, parts)
@@ -706,7 +705,7 @@ func TestCompleteMultipartUpload_MarkHeld(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	store.EXPECT().BeginMultipartCompletion(gomock.Any(), "upload-1", gomock.Any()).Return(false, nil)
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
@@ -1355,8 +1354,8 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 			})
 			return nil, nil
 		}).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string) ([]core.MultipartPart, error) {
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _, _ int) ([]core.MultipartPart, error) {
 			partsCallsMu.Lock()
 			defer partsCallsMu.Unlock()
 			out := make([]core.MultipartPart, len(partsCalls))
@@ -1464,7 +1463,7 @@ func TestCompleteMultipartUpload_UnwrapDEKError(t *testing.T) {
 			EncryptionKey: encryption.PackKeyData(make([]byte, encryption.NonceSize), []byte("not-a-real-wrapped-dek")),
 			KeyID:         "test-0",
 		}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e", SizeBytes: 1, Encrypted: false}}, nil).AnyTimes()
 	storetest.Permissive(store)
 
@@ -1636,12 +1635,12 @@ func TestCompleteMultipartUpload_CommitFailure_PreservesParts(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	// The commit is what fails here, after the assembly PUT has succeeded.
 	// Registered before multipartStubs so it wins: gomock matches in
 	// declaration order and multipartStubs stubs RecordObject as succeeding.
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-		Return(nil, nil, errors.New("db down")).AnyTimes()
+		Return(nil, errors.New("db down")).AnyTimes()
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 

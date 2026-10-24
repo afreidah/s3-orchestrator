@@ -123,6 +123,3 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx conte
 	defer s.mu.Unlock()
 	return true, fn(ctx)
 }
-
-// Compile-time check that *Store implements every store role.
-var _ = core.AssertEngine[*Store]

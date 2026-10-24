@@ -40,7 +40,7 @@ import (
 // and is dropped when the snapshot is replaced. A backend absent from the
 // snapshot ranks as having no room.
 type QuotaTracker struct {
-	baseline atomic.Pointer[map[string]core.BackendQuotaUsage]
+	baseline atomic.Pointer[map[string]core.QuotaStat]
 	placed   Registry[string, atomic.Int64]
 
 	writeMu sync.Mutex // serializes the copy-on-write baseline swap; readers never take it
@@ -53,7 +53,7 @@ type QuotaTracker struct {
 // NewQuotaTracker creates a tracker with an empty snapshot and no placements.
 func NewQuotaTracker() *QuotaTracker {
 	q := &QuotaTracker{}
-	empty := make(map[string]core.BackendQuotaUsage)
+	empty := make(map[string]core.QuotaStat)
 	q.baseline.Store(&empty)
 	return q
 }
@@ -85,11 +85,11 @@ func (q *QuotaTracker) placedOn(backend string) int64 {
 // SetBaselines replaces the per-backend baseline snapshot. Called at startup
 // and after every flush, with the rows as the flush left them.
 //
-// Copy-on-write: the map is swapped in whole so a reservation reads one
-// consistent view rather than a row that changed under it mid-decision.
-func (q *QuotaTracker) SetBaselines(baselines map[string]core.BackendQuotaUsage) {
+// Copy-on-write: the map is swapped in whole so a ranking reads one consistent
+// view rather than a row that changed under it mid-decision.
+func (q *QuotaTracker) SetBaselines(baselines map[string]core.QuotaStat) {
 	if baselines == nil {
-		baselines = make(map[string]core.BackendQuotaUsage)
+		baselines = make(map[string]core.QuotaStat)
 	}
 	q.writeMu.Lock()
 	defer q.writeMu.Unlock()
@@ -100,7 +100,7 @@ func (q *QuotaTracker) SetBaselines(baselines map[string]core.BackendQuotaUsage)
 }
 
 // Baseline returns one backend's snapshot and whether the tracker holds it.
-func (q *QuotaTracker) Baseline(backend string) (core.BackendQuotaUsage, bool) {
+func (q *QuotaTracker) Baseline(backend string) (core.QuotaStat, bool) {
 	base, ok := (*q.baseline.Load())[backend]
 	return base, ok
 }

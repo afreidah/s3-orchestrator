@@ -292,7 +292,7 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 				BackendName: "b1",
 				ContentType: "text/plain",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		m.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return([]core.MultipartPart{
 				{PartNumber: 1, ETag: `"part1"`, SizeBytes: 4},
 			}, nil).AnyTimes()
@@ -365,7 +365,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 				BackendName: "b1",
 				ContentType: "text/plain",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		m.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, nil).AnyTimes() // no parts to clean up
 	})
 

@@ -46,15 +46,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 ON CONFLICT (upload_id, part_number) DO UPDATE SET
     etag = $3, plaintext_etag = $4, size_bytes = $5, encrypted = $6, encryption_key = $7, key_id = $8, plaintext_size = $9, storage_key = $10, created_at = NOW();
 
--- name: GetParts :many
-SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
-FROM multipart_parts
-WHERE upload_id = $1
-ORDER BY part_number;
-
 -- name: ListParts :many
 -- One page of an upload's parts: those numbered above after_part, in order.
--- Selects the same columns as GetParts so both map through one converter.
 SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at
 FROM multipart_parts
 WHERE upload_id = @upload_id

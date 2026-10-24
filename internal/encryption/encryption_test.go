@@ -730,6 +730,28 @@ func TestEncryptor_Provider(t *testing.T) {
 	}
 }
 
+// TestEncryptor_ShutdownClosesProvider asserts shutting the encryptor down
+// closes a provider that holds something, and is a no-op for one that does
+// not.
+func TestEncryptor_ShutdownClosesProvider(t *testing.T) {
+	t.Parallel()
+	p := &closingProvider{KeyProvider: testKeyProvider(t)}
+	enc, err := NewEncryptor(p, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc.Shutdown()
+	if got := p.closed.Load(); got != 1 {
+		t.Errorf("provider closed %d times, want 1", got)
+	}
+
+	plain, err := NewEncryptor(testKeyProvider(t), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain.Shutdown()
+}
+
 // -------------------------------------------------------------------------
 // DECRYPT ERROR PATHS
 // -------------------------------------------------------------------------

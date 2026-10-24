@@ -4,8 +4,7 @@
 // Author: Alex Freidah
 //
 // Implements the NotificationOutbox role interface the event delivery system
-// uses. These methods are not on a request-time role interface and are not
-// wrapped by CircuitBreakerStore.
+// uses.
 // -------------------------------------------------------------------------------
 
 package sqlite

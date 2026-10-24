@@ -145,14 +145,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	)
 
 	excluded := r.UnhealthyBackends(cfg.UnhealthyThreshold)
-
-	var locations []core.ObjectLocation
-	var err error
-	if len(excluded) > 0 {
-		locations, err = r.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
-	} else {
-		locations, err = r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
-	}
+	locations, err := r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues(batch.OutcomeError).Inc()
 		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
@@ -177,14 +170,12 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		Key:         func(t replicaTask) string { return t.key },
 	}
 	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) batch.ItemResult {
-		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
-		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
+		return WithAdmission(ctx, r.ops, WorkerNameReplicator, func() batch.ItemResult {
 			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
 			r.reportObjectOutcome(ctx, &outcome)
 			created.Add(int64(outcome.Created))
-			res = replicaOutcomeResult(&outcome)
+			return replicaOutcomeResult(&outcome)
 		})
-		return res
 	})
 
 	summary := ReplicationSummary{Summary: sum, CopiesCreated: int(created.Load())}
@@ -266,9 +257,9 @@ func (o ReplicationOutcome) Failed() int {
 func replicaOutcomeResult(o *ReplicationOutcome) batch.ItemResult {
 	switch {
 	case o.Failed() > 0:
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
+		return batch.Failed()
 	case o.Created > 0:
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
+		return batch.Succeeded()
 	default:
 		// No copy was attempted: target selection found nowhere to put one.
 		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
@@ -298,8 +289,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	maxAttempts := needed + len(r.ops.Backends())
 	for attempt := 0; out.Created < needed && attempt < maxAttempts; attempt++ {
 		remaining := needed - out.Created
-		target := r.FindReplicaTarget(ctx, key, sizeEstimate, exclusion)
-		if target == "" {
+		// Capacity is settled by the conditional insert that records the copy,
+		// so the first-ranked target can still decline.
+		ranked := r.placement.RankReplicaTargets(sizeEstimate, exclusion)
+		if len(ranked) == 0 {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
 			event.Publish(event.ReplicationTargetExhausted, key, map[string]any{
@@ -312,6 +305,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			out.NoTarget = true
 			break
 		}
+		target := ranked[0]
 
 		intent, claimed := r.claimReplicaTarget(ctx, key, target, sizeEstimate, &out)
 		if !claimed {
@@ -437,18 +431,6 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 		}
 	}
 	return m
-}
-
-// FindReplicaTarget names the next backend to try for a replication copy,
-// using the same routing strategy as normal writes. Returns an empty string
-// when no candidate is left. Capacity is settled later by the conditional
-// insert that records the copy, so a target named here can still decline.
-func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	ranked := r.placement.RankReplicaTargets(size, exclusion)
-	if len(ranked) == 0 {
-		return ""
-	}
-	return ranked[0]
 }
 
 // CopyToReplica reads the object from an existing copy and writes it to the

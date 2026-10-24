@@ -291,7 +291,7 @@ func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
 			", Signature="+signature)
 
-	err := VerifySigV4(r, accessKey, secret)
+	err := verifySigV4(r, secret)
 	if err == nil {
 		t.Error("stale timestamp (30m) should be rejected")
 	}
@@ -323,7 +323,7 @@ func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 			", SignedHeaders=x-amz-content-sha256;x-amz-date"+
 			", Signature="+signature)
 
-	err := VerifySigV4(r, accessKey, secret)
+	err := verifySigV4(r, secret)
 	if err == nil {
 		t.Error("request without host in SignedHeaders should be rejected")
 	}
@@ -680,7 +680,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 	r.URL.RawQuery = q.Encode()
 
 	err := verifyPresignedSigV4(r,
-		keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: true},
+		secret,
 		accessKey+"/"+credentialScope, "host", signature, dateStamp, "3600")
 	if err == nil {
 		t.Error("expired presigned URL should be rejected")
@@ -713,7 +713,7 @@ func TestPresigned_InvalidExpiry(t *testing.T) {
 		t.Run(expires, func(t *testing.T) {
 			err := verifyPresignedSigV4(
 				&http.Request{URL: &url.URL{}, Host: "localhost"},
-				keyMaterial{AccessKeyID: "AKID", SecretAccessKey: "SECRET", Known: true},
+				"SECRET",
 				"AKID/20260326/us-east-1/s3/aws4_request",
 				"host",
 				"fakesig",
@@ -794,7 +794,7 @@ func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
 	t.Parallel()
 	err := verifyPresignedSigV4(
 		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		keyMaterial{AccessKeyID: "AKID", SecretAccessKey: "SECRET", Known: true},
+		"SECRET",
 		"AKID/20260326/us-east-1/s3/aws4_request",
 		"x-amz-date", // missing "host"
 		"fakesig",
@@ -867,7 +867,7 @@ func TestPresigned_OverflowExpiry(t *testing.T) {
 	t.Parallel()
 	err := verifyPresignedSigV4(
 		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		keyMaterial{AccessKeyID: "AKID", SecretAccessKey: "SECRET", Known: true},
+		"SECRET",
 		"AKID/20260329/us-east-1/s3/aws4_request",
 		"host",
 		"fakesig",
@@ -897,7 +897,7 @@ func TestSigV4_CredentialDateMismatch(t *testing.T) {
 				"Host":       {"localhost"},
 			},
 		},
-		keyMaterial{AccessKeyID: "AKID", SecretAccessKey: "SECRET", Known: true},
+		"SECRET",
 		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
 		"host",
 		"fakesig",
@@ -919,7 +919,7 @@ func TestPresigned_CredentialDateMismatch(t *testing.T) {
 
 	err := verifyPresignedSigV4(
 		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		keyMaterial{AccessKeyID: "AKID", SecretAccessKey: "SECRET", Known: true},
+		"SECRET",
 		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
 		"host",
 		"fakesig",

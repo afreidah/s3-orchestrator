@@ -1,12 +1,11 @@
 // -------------------------------------------------------------------------------
-// Quota Flush - Batched byte-counter writes
+// Quota Charge - Byte-Counter Writes
 //
 // Author: Alex Freidah
 //
-// The write side of the byte counter. Every mutation reports what it changed
-// and the tracker accumulates those deltas in memory; this is where a flush
-// interval's worth of them reaches backend_quotas, one statement per backend
-// rather than one per object.
+// The write side of the byte counter. Every mutation charges what it changed to
+// the key's quota stripe inside its own transaction, one statement per backend
+// it touched, so the counter commits or rolls back with the rows.
 // -------------------------------------------------------------------------------
 
 package core
@@ -26,7 +25,7 @@ import (
 // the same transaction as the object_locations change, so the counter cannot
 // drift from the ledger. Backends are written in sorted order so concurrent
 // transactions queue rather than deadlock.
-func chargeStripes(ctx context.Context, tx TxAdapter, key string, deltas QuotaDeltas) error {
+func chargeStripes(ctx context.Context, tx TxAdapter, key string, deltas quotaDeltas) error {
 	if len(deltas) == 0 {
 		return nil
 	}
@@ -45,7 +44,7 @@ func chargeStripes(ctx context.Context, tx TxAdapter, key string, deltas QuotaDe
 // chargeStripesByKey is the batch form: each key's copies are charged to that
 // key's own stripe, so a batch spreads across rows the way the individual
 // writes it replaces would have.
-func chargeStripesByKey(ctx context.Context, tx TxAdapter, perKey map[string]QuotaDeltas) error {
+func chargeStripesByKey(ctx context.Context, tx TxAdapter, perKey map[string]quotaDeltas) error {
 	for _, key := range slices.Sorted(maps.Keys(perKey)) {
 		if err := chargeStripes(ctx, tx, key, perKey[key]); err != nil {
 			return err

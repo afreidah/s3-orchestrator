@@ -6,10 +6,9 @@
 // Shared lifecycle.Runner implementation that drives a worker function on a
 // fixed interval under a PostgreSQL advisory lock. Owns audit-context
 // creation per tick, lock-busy / startup-jitter handling, per-service
-// health snapshotting, and the worker-tick telemetry counters. Moved out
-// of internal/di to its own package so worker subsystems can construct
-// their own services without going through DI, leaving DI focused on
-// wiring.
+// health snapshotting, and the worker-tick telemetry counters. A package
+// of its own so worker subsystems can construct their services without
+// going through DI.
 // -------------------------------------------------------------------------------
 
 package tickrunner
@@ -28,20 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-)
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// MsgPassFailed / MsgPassCompleted / MsgQuotaMetricsRefreshFailed are
-// the canonical terminal-event log messages shared by the periodic
-// "pass" workers (rebalance, replication, over-replication). Held as
-// constants so the three nearly-identical work closures cannot drift.
-const (
-	MsgPassFailed                = "pass failed"
-	MsgPassCompleted             = "pass completed"
-	MsgQuotaMetricsRefreshFailed = "quota metrics refresh failed after pass"
 )
 
 // -------------------------------------------------------------------------
@@ -100,9 +85,9 @@ func HandlePassResult(ctx context.Context, log *slog.Logger, manager QuotaMetric
 		return err
 	}
 	if count > 0 {
-		log.InfoContext(ctx, MsgPassCompleted, countKey, count)
+		log.InfoContext(ctx, "pass completed", countKey, count)
 		if qerr := manager.UpdateQuotaMetrics(ctx); qerr != nil {
-			log.WarnContext(ctx, MsgQuotaMetricsRefreshFailed, "error", qerr)
+			log.WarnContext(ctx, "quota metrics refresh failed after pass", "error", qerr)
 		}
 	}
 	return nil
@@ -239,7 +224,7 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 		s.recordSkip()
 	case workErr != nil:
-		s.log.ErrorContext(ctx, MsgPassFailed, "error", workErr)
+		s.log.ErrorContext(ctx, "pass failed", "error", workErr)
 		s.recordHealth(false, workErr)
 	default:
 		s.recordHealth(true, nil)

@@ -19,6 +19,10 @@ import (
 	"time"
 )
 
+// MaxPartNumber is the highest part number S3 allows, so it also bounds how
+// many parts one upload can hold.
+const MaxPartNumber = 10000
+
 // -------------------------------------------------------------------------
 // RECORD PART
 // -------------------------------------------------------------------------
@@ -35,11 +39,11 @@ type partOutcome struct {
 // cleanup rows it queued for the bytes of a part it replaced. A part whose
 // intent is gone was resolved by the pending reaper mid-upload; its bytes are
 // queued and ErrIntentLost returned.
-func RecordPart(ctx context.Context, runner Runner, p *RecordPartParams) ([]CleanupItem, error) {
-	if p.PartNumber < 1 || p.PartNumber > 10000 {
-		return nil, fmt.Errorf("invalid part number %d: must be between 1 and 10000", p.PartNumber)
+func (o TxOps) RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error) {
+	if p.PartNumber < 1 || p.PartNumber > MaxPartNumber {
+		return nil, fmt.Errorf("invalid part number %d: must be between 1 and %d", p.PartNumber, MaxPartNumber)
 	}
-	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (partOutcome, error) {
+	out, err := WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) (partOutcome, error) {
 		return recordPartTx(ctx, tx, p)
 	})
 	if err != nil {
@@ -69,7 +73,7 @@ func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partO
 		return partOutcome{}, err
 	}
 	if !held {
-		cleanup, err := enqueueRemoved(ctx, tx, partPath, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent, "")})
+		cleanup, err := enqueueRemoved(ctx, tx, partPath, CleanupReasonSupersededIntent, []removedCopy{intentBytes(p.Intent)})
 		return partOutcome{cleanup: cleanup, refusal: ErrIntentLost}, err
 	}
 	replaced, err := tx.UpsertPart(ctx, p)
@@ -97,8 +101,8 @@ func recordPartTx(ctx context.Context, tx TxAdapter, p *RecordPartParams) (partO
 // DeleteMultipartUpload removes an upload and its parts and queues every part's
 // bytes under reason. An upload already gone queues nothing, and one whose
 // completion renewed its mark after staleBefore is refused.
-func DeleteMultipartUpload(ctx context.Context, runner Runner, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
+func (o TxOps) DeleteMultipartUpload(ctx context.Context, uploadID, reason string, staleBefore time.Time) ([]CleanupItem, error) {
+	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
 		backendName, err := lockUploadIdle(ctx, tx, uploadID, staleBefore)
 		if err != nil || backendName == "" {
 			return nil, err

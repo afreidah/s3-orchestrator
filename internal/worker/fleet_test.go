@@ -51,7 +51,7 @@ type fleetOpts struct {
 	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
 	Draining       []string                    // backends the runtime should report as draining
 
-	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; nil leaves every backend unlimited, non-nil is the whole world
+	QuotaBaselines map[string]core.QuotaStat // seeds the byte counter; nil leaves every backend unlimited, non-nil is the whole world
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
@@ -130,12 +130,12 @@ func loadUsage(b counter.Backend, name string) core.Usage {
 // that is not about quota never has one refuse a write. A caller that states
 // any gets exactly those: a backend left out is one the ledger has no quota row
 // for, which the tracker treats as having no room rather than infinite room.
-func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
+func newFleetQuota(names []string, baselines map[string]core.QuotaStat) *counter.QuotaTracker {
 	primed := baselines
 	if primed == nil {
-		primed = make(map[string]core.BackendQuotaUsage, len(names))
+		primed = make(map[string]core.QuotaStat, len(names))
 		for _, name := range names {
-			primed[name] = core.BackendQuotaUsage{BackendName: name}
+			primed[name] = core.QuotaStat{BackendName: name}
 		}
 	}
 	quota := counter.NewQuotaTracker()

@@ -144,6 +144,7 @@ func TestNormalize_StripsQuotesAndWeakPrefix(t *testing.T) {
 		{`"abc"`, "abc"},
 		{`W/"abc"`, "abc"},
 		{"abc", "abc"},
+		{`  "abc"  `, "abc"},
 		{"", ""},
 	}
 	for _, tc := range tests {

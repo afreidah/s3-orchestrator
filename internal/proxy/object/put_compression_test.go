@@ -264,7 +264,7 @@ func TestPut_PendingIntentSizedByStoredBytes(t *testing.T) {
 	var intents []core.PendingObject
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-		Return(nil, nil, errors.New("commit failed")).AnyTimes()
+		Return(nil, errors.New("commit failed")).AnyTimes()
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, p *core.PendingObject, _ core.BackendFlags) (bool, error) {
 			intents = append(intents, *p)

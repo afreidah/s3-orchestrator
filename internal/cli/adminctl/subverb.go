@@ -14,6 +14,7 @@ package adminctl
 
 import (
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 )
@@ -57,12 +58,31 @@ func exitCodeFor(missing bool) int {
 func printVerbUsage(c *client, noun string, verbs []verb) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Usage: s3-orchestrator admin %s <verb> [flags]\n\nVerbs:\n", noun)
+	writeVerbs(&b, verbs)
+	fmt.Fprint(c.stderr, b.String())
+}
+
+// writeVerbs writes one aligned line per verb: its name, then its summary.
+// The admin usage and every noun's usage share it.
+func writeVerbs(w io.Writer, verbs []verb) {
 	width := 0
 	for _, v := range verbs {
 		width = max(width, len(v.Name))
 	}
 	for _, v := range verbs {
-		fmt.Fprintf(&b, "  %-*s  %s\n", width, v.Name, v.Summary)
+		fmt.Fprintf(w, "  %-*s  %s\n", width, v.Name, v.Summary)
 	}
-	fmt.Fprint(c.stderr, b.String())
+}
+
+// verbList joins the verbs' names the way a sentence lists them, as in
+// "list, create or delete".
+func verbList(verbs []verb) string {
+	names := make([]string, len(verbs))
+	for i := range verbs {
+		names[i] = verbs[i].Name
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }

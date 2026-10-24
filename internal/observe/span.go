@@ -3,16 +3,16 @@
 //
 // Author: Alex Freidah
 //
-// Run wraps a unit of work with the four cross-cutting concerns that every
-// instrumented method previously hand-rolled: span lifecycle, success/error
-// status, OpenTelemetry RecordError, and operation-metrics emission. Call
-// sites build an Op describing the trace span (name, kind, attrs) and an
-// optional Recorder for Prometheus, then hand a closure to Run.
+// Run wraps a unit of work with the four cross-cutting concerns every
+// instrumented method needs: span lifecycle, success/error status,
+// OpenTelemetry RecordError, and operation-metrics emission. Call sites build
+// an Op describing the trace span (name, kind, attrs) and an optional Recorder
+// for Prometheus, then hand a closure to Run.
 //
-// The helper enforces invariants the hand-written boilerplate often missed:
+// The helper enforces the invariants on every call site:
 //   - span.End() always fires (defer).
 //   - SetStatus(Ok) on success and SetStatus(Error) + RecordError on failure
-//     fire uniformly; previous code only set Ok at some sites.
+//     fire uniformly.
 //   - The recorder receives the wall-clock duration via the captured start.
 //
 // Usage:

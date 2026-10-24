@@ -65,16 +65,15 @@ func (s *ProbeScheduler[T]) FirstSuccess(ctx context.Context, probe Probe[T]) (r
 	// loop calls launchNext after each failure to refill a free slot; on
 	// success the remaining pending entries are never launched.
 	launched := 0
-	launchNext := func() bool {
+	launchNext := func() {
 		if launched >= len(s.pending) {
-			return false
+			return
 		}
 		p := s.pending[launched]
 		launched++
 		probeCtx, cancel := context.WithCancel(ctx) //nolint:gosec // G118: cancel reaches the call graph via the cancels map -> cancelLosers / all-failed loop.
 		cancels[p.name] = cancel
 		go runBackendProbe(probeCtx, p.name, p.be, probe, ch)
-		return true
 	}
 	for range initial {
 		launchNext()

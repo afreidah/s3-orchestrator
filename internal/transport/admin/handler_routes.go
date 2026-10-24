@@ -95,6 +95,17 @@ const (
 // rather than a JSON document.
 const mediaOctetStream = "application/octet-stream"
 
+// The parameters more than one entry declares, built once so a route cannot
+// describe a shared parameter differently from its siblings.
+var (
+	objectKeyPath     = param{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey}
+	backendScope      = param{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope}
+	bucketNamePath    = param{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName}
+	userIDPath        = param{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID}
+	resourceNamePath  = param{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descResourceName}
+	resourceKindQuery = param{Name: paramKind, In: inQuery, Type: typeString, Description: descResourceKind}
+)
+
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
 // for the routes that do not need them, which is most of them.
 //
@@ -206,7 +217,7 @@ func (h *Handler) routes() []route {
 			Summary:      "Download one object",
 			ResponseType: mediaOctetStream,
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermRead, Resource: paramKey,
 		},
@@ -216,7 +227,7 @@ func (h *Handler) routes() []route {
 			RequestType: mediaOctetStream,
 			Response:    adminapi.ObjectUploadResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermWrite, Resource: paramKey,
 		},
@@ -225,7 +236,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Read one object's tag set",
 			Response: adminapi.ObjectTagsResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermRead, Resource: paramKey,
 		},
@@ -235,7 +246,7 @@ func (h *Handler) routes() []route {
 			Request:  adminapi.ObjectTagsRequest{},
 			Response: adminapi.ObjectTagsResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermTags, Resource: paramKey,
 		},
@@ -244,7 +255,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Clear one object's tag set",
 			Response: adminapi.ObjectTagsResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermTags, Resource: paramKey,
 		},
@@ -253,7 +264,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Delete one object",
 			Response: adminapi.ObjectDeleteResponse{},
 			Params: []param{
-				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+				objectKeyPath,
 			},
 			Perm: core.PermDelete, Resource: paramKey,
 		},
@@ -424,56 +435,20 @@ func (h *Handler) routes() []route {
 			Response: adminapi.RotateEncryptionKeyResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminKeys,
 		},
-		{
-			Method: http.MethodPost, Pattern: "/admin/api/encrypt-existing", Handler: h.handleEncryptExisting,
-			Summary:  "Encrypt every plaintext object on its own backend",
-			Response: adminapi.EncryptExistingResponse{},
-			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
-			},
-			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
-		},
-		{
-			Method: http.MethodPost, Pattern: "/admin/api/decrypt-existing", Handler: h.handleDecryptExisting,
-			Summary:  "Rewrite every encrypted object back to plaintext",
-			Response: adminapi.DecryptExistingResponse{},
-			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
-			},
-			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
-		},
-		{
-			Method: http.MethodPost, Pattern: "/admin/api/compress-existing", Handler: h.handleCompressExisting,
-			Summary:  "Store every uncompressed object as chunked zstd",
-			Response: adminapi.CompressExistingResponse{},
-			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
-			},
-			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
-		},
-		{
-			Method: http.MethodPost, Pattern: "/admin/api/decompress-existing", Handler: h.handleDecompressExisting,
-			Summary:  "Rewrite every compressed object back to its stored bytes",
-			Response: adminapi.DecompressExistingResponse{},
-			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
-			},
-			Stream: adminstream.Event{},
-			Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
-		},
+		bulkRewriteRoute("/admin/api/encrypt-existing", h.handleEncryptExisting,
+			"Encrypt every plaintext object on its own backend", adminapi.EncryptExistingResponse{}),
+		bulkRewriteRoute("/admin/api/decrypt-existing", h.handleDecryptExisting,
+			"Rewrite every encrypted object back to plaintext", adminapi.DecryptExistingResponse{}),
+		bulkRewriteRoute("/admin/api/compress-existing", h.handleCompressExisting,
+			"Store every uncompressed object as chunked zstd", adminapi.CompressExistingResponse{}),
+		bulkRewriteRoute("/admin/api/decompress-existing", h.handleDecompressExisting,
+			"Rewrite every compressed object back to its stored bytes", adminapi.DecompressExistingResponse{}),
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,
 			Summary:  "Verify stored content hashes against backend data",
 			Response: adminapi.ScrubResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
+				backendScope,
 				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects verified in this pass"},
 			},
 			Stream: adminstream.Event{},
@@ -493,7 +468,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Compute content hashes for objects missing one",
 			Response: adminapi.BackfillChecksumsResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
+				backendScope,
 				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
 				{Name: "delay_ms", In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
@@ -525,7 +500,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Reconcile backend storage against the object ledger",
 			Response: adminapi.ReconcileResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
+				backendScope,
 			},
 			Stream: adminstream.Event{},
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
@@ -585,7 +560,7 @@ func (h *Handler) routes() []route {
 			Request:  adminapi.UpdateBucketRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName},
+				bucketNamePath,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -594,7 +569,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Remove a virtual bucket that holds no objects and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName},
+				bucketNamePath,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -611,7 +586,7 @@ func (h *Handler) routes() []route {
 			Request:  adminapi.RenameUserRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+				userIDPath,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -620,7 +595,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Remove an identity that holds no credentials and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+				userIDPath,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -653,9 +628,9 @@ func (h *Handler) routes() []route {
 			Request:  adminapi.SetGrantRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descResourceName},
-				{Name: paramKind, In: inQuery, Type: typeString, Description: descResourceKind},
+				userIDPath,
+				resourceNamePath,
+				resourceKindQuery,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
@@ -664,12 +639,29 @@ func (h *Handler) routes() []route {
 			Summary:  "Withdraw one user's access to one resource",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
-				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
-				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descResourceName},
-				{Name: paramKind, In: inQuery, Type: typeString, Description: descResourceKind},
+				userIDPath,
+				resourceNamePath,
+				resourceKindQuery,
 			},
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
+	}
+}
+
+// bulkRewriteRoute is one of the passes that rewrite every copy into another
+// stored form on its own backend. They share every field but the path, the
+// handler, the summary and the response type.
+func bulkRewriteRoute(pattern string, handler http.HandlerFunc, summary string, response any) route {
+	return route{
+		Method: http.MethodPost, Pattern: pattern, Handler: handler,
+		Summary:  summary,
+		Response: response,
+		Params: []param{
+			backendScope,
+			{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
+		},
+		Stream: adminstream.Event{},
+		Kind:   core.ResourceBackend, Perm: core.PermAdminConvert, Resource: paramBackend,
 	}
 }
 

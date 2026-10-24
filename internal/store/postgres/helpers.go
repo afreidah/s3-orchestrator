@@ -13,6 +13,7 @@ package postgres
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,6 +34,12 @@ func timestamptzPtr(ts pgtype.Timestamptz) *time.Time {
 	}
 	t := ts.Time
 	return &t
+}
+
+// rowLimit narrows a row count to the int32 a LIMIT parameter takes, clamped to
+// [0, MaxInt32] so a caller's int can never wrap into a different limit.
+func rowLimit(n int) int32 {
+	return int32(min(max(n, 0), math.MaxInt32)) //nolint:gosec // G115: clamped to the int32 range above
 }
 
 // changed reports whether an :execrows write touched a row, for the
@@ -140,7 +147,9 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 
 // objectInsertParams maps a core.ObjectLocation onto the sqlc insert
 // struct, attaching the representation metadata that is present. A zero
-// CreatedAt passes NULL, which the query stamps as now.
+// CreatedAt passes NULL, which the query stamps as now. The conditional insert
+// takes the same parameters, so it converts this struct rather than mapping
+// the location again.
 func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams {
 	form := loc.Recorded()
 	params := db.InsertObjectLocationParams{
@@ -159,6 +168,7 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 		LogicalSize:              int64Ptr(form.LogicalSize),
 		CompressionProbeSize:     int64Ptr(loc.CompressionProbeSize),
 		CompressionProbeLevel:    strPtr(loc.CompressionProbeLevel),
+		Managed:                  !loc.Unmanaged,
 		CreatedAt:                pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
 	}
 	if id := loc.Identity; id != nil {
@@ -170,32 +180,4 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 		params.UserMetadata, _ = core.EncodeUserMetadata(id.UserMetadata)
 	}
 	return params
-}
-
-// objectInsertIfNotExistsParams builds the conditional-insert params from the
-// same mapping the unconditional insert uses, so the two can only ever write
-// the same columns from the same location. They previously diverged, and the
-// conditional one silently dropped every encryption field.
-func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLocationIfNotExistsParams {
-	p := objectInsertParams(loc)
-	return db.InsertObjectLocationIfNotExistsParams{
-		ObjectKey:                p.ObjectKey,
-		BackendName:              p.BackendName,
-		StorageKey:               p.StorageKey,
-		SizeBytes:                p.SizeBytes,
-		Encrypted:                p.Encrypted,
-		EncryptionKey:            p.EncryptionKey,
-		KeyID:                    p.KeyID,
-		PlaintextSize:            p.PlaintextSize,
-		ContentHash:              p.ContentHash,
-		CompressionAlgorithm:     p.CompressionAlgorithm,
-		CompressionLevel:         p.CompressionLevel,
-		CompressionFormatVersion: p.CompressionFormatVersion,
-		LogicalSize:              p.LogicalSize,
-		Etag:                     p.Etag,
-		ContentType:              p.ContentType,
-		UserMetadata:             p.UserMetadata,
-		Managed:                  !loc.Unmanaged,
-		CreatedAt:                p.CreatedAt,
-	}
 }

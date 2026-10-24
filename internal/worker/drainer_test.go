@@ -98,7 +98,7 @@ func putOn(t *testing.T, s *sqlite.Store, be *backendtest.InMemory, backendName,
 	t.Helper()
 	data := []byte("data-" + key)
 	be.Objects[key] = backendtest.Object{Data: data}
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: backendName}}, Size: int64(len(data)),
 	}); err != nil {
 		t.Fatalf("RecordObject(%s): %v", key, err)
@@ -147,7 +147,7 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
-	if !d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
+	if !d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
 		t.Fatal("drainOne failed with a copy on another backend")
 	}
 	if src.Has("key1") {
@@ -178,7 +178,7 @@ func TestDrainOne_OtherCopyGone_MovesInstead(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if !d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
+	if !d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
 		t.Fatal("drainOne failed to move the object once its other copy was gone")
 	}
 	if moves != 1 {
@@ -199,7 +199,7 @@ func TestDrainOne_KeepsTheOnlyUsableKey(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": backendtest.NewInMemory()}, nil)
-	if d.drainOne(context.Background(), src, "b1", drainedObject(), alsoOnB2) {
+	if d.drainOne(context.Background(), "b1", drainedObject(), alsoOnB2) {
 		t.Fatal("drainOne dropped the copy holding the only usable key")
 	}
 	if !src.Has("key1") {
@@ -227,7 +227,7 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
 	obj := drainedObject()
-	if !d.drainOne(context.Background(), src, "b1", obj, onlyOnB1) {
+	if !d.drainOne(context.Background(), "b1", obj, onlyOnB1) {
 		t.Fatal("drainOne failed to move the only copy")
 	}
 	if placed.Source != obj || placed.Intent == nil || placed.Intent.BackendName != "b2" || !placed.RemoveSource {
@@ -268,7 +268,7 @@ func TestDrainOne_RefusedMove_SettlesTheCopyItLeft(t *testing.T) {
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-			if d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
+			if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1) {
 				t.Fatal("drainOne reported success")
 			}
 			if dst.Has(path) {
@@ -301,7 +301,7 @@ func TestDrainOne_PlacementError_LeavesTheCopyForTheReaper(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
-	if d.drainOne(context.Background(), src, "b1", drainedObject(), onlyOnB1) {
+	if d.drainOne(context.Background(), "b1", drainedObject(), onlyOnB1) {
 		t.Fatal("drainOne reported success")
 	}
 	if !dst.Has(path) {
@@ -346,7 +346,7 @@ func TestDrainOne_Failures(t *testing.T) {
 			storetest.Permissive(store)
 
 			d := newDrainerFor(t, store, backends, nil)
-			if d.drainOne(context.Background(), src, "b1", drainedObject(), tc.copies) {
+			if d.drainOne(context.Background(), "b1", drainedObject(), tc.copies) {
 				t.Error("drainOne reported success")
 			}
 		})
@@ -363,7 +363,7 @@ func TestMovePage_CopyLookupFailureEndsThePage(t *testing.T) {
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src}, nil)
-	sum, err := d.movePage(context.Background(), src, "b1", []core.ObjectLocation{*drainedObject()}, nil)
+	sum, err := d.movePage(context.Background(), "b1", []core.ObjectLocation{*drainedObject()}, nil)
 	if err == nil {
 		t.Fatal("movePage succeeded with a failed copy lookup")
 	}
@@ -381,7 +381,7 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 	store := newPermissiveStore(t)
 	rt, _ := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest}, &fleetOpts{
 		Order: []string{"src", "dest"},
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
+		QuotaBaselines: map[string]core.QuotaStat{
 			"src":  {BackendName: "src", BytesLimit: 100, BytesUsed: 90},
 			"dest": {BackendName: "dest", BytesLimit: 100},
 		},
@@ -396,7 +396,7 @@ func TestMoveOff_UsesTheDrainReasons(t *testing.T) {
 
 	d := NewDrainer(DrainerDeps{Ops: rt, Placement: placement, Store: store, AbortUploads: func(context.Context, string) {}})
 	obj := &core.ObjectLocation{ObjectKey: "k", SizeBytes: 50, BackendName: "src"}
-	if !d.moveOff(context.Background(), src, "src", obj) {
+	if !d.moveOff(context.Background(), "src", obj) {
 		t.Fatal("moveOff reported failure")
 	}
 	if got == nil || got.Profile != writepath.DrainMove || got.Source != obj || got.DestName != "dest" {

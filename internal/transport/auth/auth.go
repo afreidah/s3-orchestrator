@@ -244,9 +244,7 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 	if ok {
 		secret = e.secret
 	}
-	mat, err := verifySigV4Parsed(r,
-		keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
-		credential, signedHeaders, signature)
+	mat, err := verifySigV4Parsed(r, secret, credential, signedHeaders, signature)
 	if err != nil || !ok {
 		return nil, nil, errors.New(errAuthFailed)
 	}
@@ -271,52 +269,16 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 //
 // We therefore derive on every request, paying ~4 HMAC-SHA256 ops
 // (~few microseconds, dwarfed by network latency) to keep both paths
-// timing-equivalent. The previous signingKeyCache var was removed for
-// this reason; do not reintroduce it without a constant-time strategy
-// that doesn't leak known-vs-unknown.
-
-// keyMaterial bundles the access-key triple SigV4 verification needs
-// to derive the signing key. The Known flag distinguishes a real
-// caller-supplied key from the dummy fallback used to keep authentication
-// constant-time when the access key is not registered.
-type keyMaterial struct {
-	AccessKeyID     string
-	SecretAccessKey string
-	Known           bool
-}
-
-// VerifySigV4 checks an AWS Signature Version 4 Authorization header against
-// the provided credentials. The caller is responsible for resolving the correct
-// credentials via BucketRegistry. Returns nil if the signature is valid. The
-// request path calls verifySigV4Parsed directly with the header already split.
-func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return fmt.Errorf("missing Authorization header")
-	}
-
-	if !strings.HasPrefix(authHeader, sigV4Prefix) {
-		return fmt.Errorf("unsupported auth scheme")
-	}
-
-	parts := authHeader[len(sigV4Prefix):]
-	credential, signedHeadersStr, signature := parseSigV4FieldsDirect(parts)
-	if credential == "" || signedHeadersStr == "" || signature == "" {
-		return fmt.Errorf("malformed Authorization header")
-	}
-
-	_, err := verifySigV4Parsed(r,
-		keyMaterial{AccessKeyID: accessKeyID, SecretAccessKey: secretAccessKey, Known: true},
-		credential, signedHeadersStr, signature)
-	return err
-}
+// timing-equivalent. A signing-key cache needs a constant-time strategy
+// that doesn't leak known-vs-unknown before it can be added.
 
 // verifySigV4Parsed verifies the signature using pre-parsed Authorization
 // header fields and, when the request declares a streaming payload via
 // the X-Amz-Content-Sha256 header, returns the StreamingMaterial the
-// transport layer needs to verify the chunk chain. Avoids a redundant
-// parse when called from AuthenticateAndResolveBucket.
-func verifySigV4Parsed(r *http.Request, key keyMaterial, credential, signedHeadersStr, signature string) (*StreamingMaterial, error) {
+// transport layer needs to verify the chunk chain. secret is the access
+// key's secret, or the dummy one for an unregistered key so the check takes
+// the same time either way.
+func verifySigV4Parsed(r *http.Request, secret, credential, signedHeadersStr, signature string) (*StreamingMaterial, error) {
 	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
 	if err != nil {
 		return nil, err
@@ -338,7 +300,7 @@ func verifySigV4Parsed(r *http.Request, key keyMaterial, credential, signedHeade
 	}
 
 	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	signingKey, err := verifySigV4Signature(canonicalRequest, signature, key, dateStamp, region, service, amzDate)
+	signingKey, err := verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate)
 	if err != nil {
 		return nil, err
 	}
@@ -381,10 +343,10 @@ func parseSigV4Time(amzDate, dateStamp string) (time.Time, error) {
 // constant time. Returns the derived signing key on success so the
 // caller can chain it into per-chunk validation for streaming requests.
 // Shared by the header and presigned verification paths.
-func verifySigV4Signature(canonicalRequest, signature string, key keyMaterial, dateStamp, region, service, amzDate string) ([]byte, error) {
+func verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate string) ([]byte, error) {
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(key.SecretAccessKey, dateStamp, region, service)
+	signingKey := deriveSigningKey(secret, dateStamp, region, service)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
 		return nil, fmt.Errorf("signature mismatch")
@@ -427,9 +389,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (*User, error) 
 		secret = e.secret
 	}
 
-	if err := verifyPresignedSigV4(r,
-		keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
-		credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
+	if err := verifyPresignedSigV4(r, secret, credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
 		return nil, errors.New(errAuthFailed)
 	}
 
@@ -440,7 +400,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (*User, error) 
 // SigV4, the date and expiry come from query parameters, the X-Amz-Signature
 // parameter is excluded from the canonical query string, and the payload hash
 // is always UNSIGNED-PAYLOAD.
-func verifyPresignedSigV4(r *http.Request, key keyMaterial, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
+func verifyPresignedSigV4(r *http.Request, secret, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
 	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
 	if err != nil {
 		return err
@@ -454,7 +414,7 @@ func verifyPresignedSigV4(r *http.Request, key keyMaterial, credential, signedHe
 	}
 
 	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
-	_, err = verifySigV4Signature(canonicalRequest, signature, key, dateStamp, region, service, amzDate)
+	_, err = verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate)
 	return err
 }
 

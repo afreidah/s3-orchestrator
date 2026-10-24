@@ -26,7 +26,7 @@ type WriteRuntime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	RoutingStrategy() config.RoutingStrategy
 	Quota() *counter.QuotaTracker
-	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
+	EligibleForWrite(op s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 	StreamCopy(ctx context.Context, req *backend.CopyRequest) (int64, error)

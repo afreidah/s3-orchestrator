@@ -21,7 +21,7 @@ import (
 // cmdCacheFlush implements `s3-orchestrator admin cache-flush`. Drops every
 // entry; the server returns 503 when caching is disabled.
 func cmdCacheFlush(_ []string, c *client) int {
-	return c.post("/admin/api/cache/flush", "", nil)
+	return c.post("/admin/api/cache/flush", nil)
 }
 
 // cmdCacheStats implements `s3-orchestrator admin cache-stats`. Reports the
@@ -43,7 +43,7 @@ func cmdCacheInvalidate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -key is required")
 		return 1
 	}
-	return c.delete("/admin/api/cache/keys/"+url.PathEscape(*key), nil)
+	return c.delete("/admin/api/cache/keys/" + url.PathEscape(*key))
 }
 
 // cmdCacheInvalidatePrefix implements `s3-orchestrator admin
@@ -60,5 +60,5 @@ func cmdCacheInvalidatePrefix(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -prefix is required")
 		return 1
 	}
-	return c.delete("/admin/api/cache/prefix?prefix="+url.QueryEscape(*prefix), nil)
+	return c.delete(withQuery("/admin/api/cache/prefix", url.Values{"prefix": {*prefix}}))
 }

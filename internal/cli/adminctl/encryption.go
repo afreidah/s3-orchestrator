@@ -13,9 +13,9 @@
 package adminctl
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
@@ -51,10 +51,6 @@ func cmdRotateEncryptionKey(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: exactly one of -old-key-id or -all-stale is required")
 		return 1
 	}
-	body, err := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale})
-	if err != nil {
-		fmt.Fprintf(c.stderr, fmtError, err)
-		return 1
-	}
-	return c.post("/admin/api/rotate-encryption-key", string(body), nil)
+	return c.sendJSON(http.MethodPost, "/admin/api/rotate-encryption-key",
+		adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale}, nil)
 }

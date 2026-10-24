@@ -16,5 +16,5 @@ import "net/http"
 // cmdRebalance implements `s3-orchestrator admin rebalance`. Streams a line per
 // move, then the total.
 func cmdRebalance(_ []string, c *client) int {
-	return c.stream(http.MethodPost, "/admin/api/rebalance", "")
+	return c.stream(http.MethodPost, "/admin/api/rebalance")
 }

@@ -117,7 +117,7 @@ func TestCompleteMultipartUpload_BeginErrorSurfaces(t *testing.T) {
 	sentinel := errors.New("db error")
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(markUpload(), nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	store.EXPECT().BeginMultipartCompletion(gomock.Any(), "upload-1", gomock.Any()).Return(false, sentinel)
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
@@ -140,7 +140,7 @@ func TestCompleteMultipartUpload_BeginPassesStaleCutoff(t *testing.T) {
 	var cutoff time.Time
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(markUpload(), nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	store.EXPECT().BeginMultipartCompletion(gomock.Any(), "upload-1", gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, staleBefore time.Time) (bool, error) {
 			cutoff = staleBefore
@@ -165,7 +165,7 @@ func TestCompleteMultipartUpload_EndFailureKeepsObject(t *testing.T) {
 	parts := putParts(t, be, 1)
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(markUpload(), nil).AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
 	store.EXPECT().EndMultipartCompletion(gomock.Any(), "upload-1").Return(errors.New("db error"))
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)

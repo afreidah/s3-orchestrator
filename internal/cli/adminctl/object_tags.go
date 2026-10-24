@@ -11,9 +11,9 @@
 package adminctl
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -72,14 +72,9 @@ func cmdObjectTags(args []string, c *client) int {
 	path := "/admin/api/objects/tags/" + url.PathEscape(*key)
 	switch {
 	case *clearTags:
-		return c.delete(path, nil)
+		return c.delete(path)
 	case len(tags) > 0:
-		body, err := json.Marshal(adminapi.ObjectTagsRequest{Tags: tags})
-		if err != nil {
-			fmt.Fprintf(c.stderr, "error: encode tags: %v\n", err)
-			return 1
-		}
-		return c.put(path, string(body), nil)
+		return c.sendJSON(http.MethodPut, path, adminapi.ObjectTagsRequest{Tags: tags}, nil)
 	default:
 		return c.get(path, nil)
 	}

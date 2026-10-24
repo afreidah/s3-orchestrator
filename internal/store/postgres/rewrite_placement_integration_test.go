@@ -35,7 +35,7 @@ const rewrittenSuffix = "!rw"
 // backend at the path suffix names, carrying a content hash.
 func (f *placementFixture) recordPlain(t *testing.T, suffix string, size int64) {
 	t.Helper()
-	if _, _, err := f.s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := f.s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: f.key, Size: size, Form: &core.StoredForm{ContentHash: "plain-hash"},
 		Copies: []core.ObjectCopy{{Backend: f.src, StorageKey: f.key + suffix}},
 	}); err != nil {

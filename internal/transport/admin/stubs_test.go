@@ -134,7 +134,6 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
-		Runtime:   newRuntimeOps(t),
 		Mover:     newOpsMover(t),
 	})
 }
@@ -145,11 +144,10 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.RewriteStore) {
 	t.Helper()
 	h.compression = ops.NewCompression(&ops.CompressionDeps{
-		Codec:   codec,
-		Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-		Store:   store,
-		Runtime: newRuntimeOps(t),
-		Mover:   newOpsMover(t),
+		Codec:  codec,
+		Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+		Store:  store,
+		Mover:  newOpsMover(t),
 	})
 }
 

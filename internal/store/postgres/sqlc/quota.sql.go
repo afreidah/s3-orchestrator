@@ -74,23 +74,22 @@ func (q *Queries) GetActiveMultipartCountsByBackend(ctx context.Context) ([]GetA
 }
 
 const getAllQuotaStats = `-- name: GetAllQuotaStats :many
-SELECT c.backend_name,
-       c.bytes_used,
-       c.bytes_limit,
-       c.orphan_bytes,
-       q.updated_at
-FROM backend_capacity c
-JOIN backend_quotas q ON q.backend_name = c.backend_name
+SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
+FROM backend_capacity
 `
 
 type GetAllQuotaStatsRow struct {
-	BackendName string
-	BytesUsed   int64
-	BytesLimit  int64
-	OrphanBytes int64
-	UpdatedAt   pgtype.Timestamptz
+	BackendName   string
+	BytesLimit    int64
+	BytesUsed     int64
+	OrphanBytes   int64
+	InflightBytes int64
 }
 
+// Every backend's ceiling and what occupies it: the striped byte total, orphans
+// awaiting cleanup, and the writes that have not landed yet. The figures come
+// from backend_capacity, the same view admission tests against, and they are
+// rows every instance can read, which is what makes them fleet-wide.
 func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, error) {
 	rows, err := q.db.Query(ctx, getAllQuotaStats)
 	if err != nil {
@@ -102,10 +101,10 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, 
 		var i GetAllQuotaStatsRow
 		if err := rows.Scan(
 			&i.BackendName,
-			&i.BytesUsed,
 			&i.BytesLimit,
+			&i.BytesUsed,
 			&i.OrphanBytes,
-			&i.UpdatedAt,
+			&i.InflightBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -163,49 +162,6 @@ func (q *Queries) LedgerGroups(ctx context.Context) ([]LedgerGroupsRow, error) {
 			&i.ObjectBytes,
 			&i.NeverScrubbed,
 			&i.OldestTouched,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listBackendQuotaUsage = `-- name: ListBackendQuotaUsage :many
-SELECT backend_name, bytes_limit, bytes_used, orphan_bytes, inflight_bytes
-FROM backend_capacity
-`
-
-type ListBackendQuotaUsageRow struct {
-	BackendName   string
-	BytesLimit    int64
-	BytesUsed     int64
-	OrphanBytes   int64
-	InflightBytes int64
-}
-
-// Every backend's ceiling and what occupies it: the striped byte total, orphans
-// awaiting cleanup, and the writes that have not landed yet. The figures come
-// from backend_capacity, the same view admission tests against, and they are
-// rows every instance can read, which is what makes them fleet-wide.
-func (q *Queries) ListBackendQuotaUsage(ctx context.Context) ([]ListBackendQuotaUsageRow, error) {
-	rows, err := q.db.Query(ctx, listBackendQuotaUsage)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListBackendQuotaUsageRow{}
-	for rows.Next() {
-		var i ListBackendQuotaUsageRow
-		if err := rows.Scan(
-			&i.BackendName,
-			&i.BytesLimit,
-			&i.BytesUsed,
-			&i.OrphanBytes,
-			&i.InflightBytes,
 		); err != nil {
 			return nil, err
 		}

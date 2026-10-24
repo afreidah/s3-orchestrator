@@ -98,7 +98,6 @@ func New(d *Deps) *Services {
 		Encryption: NewEncryption(EncryptionDeps{
 			Encryptor: d.Encryptor,
 			Store:     d.EncStore,
-			Runtime:   d.Runtime,
 			Mover:     d.Mover,
 		}),
 		Compression: NewCompression(&CompressionDeps{
@@ -106,7 +105,6 @@ func New(d *Deps) *Services {
 			Config:    d.Cfg.Compression,
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
-			Runtime:   d.Runtime,
 			Mover:     d.Mover,
 		}),
 		Provision: NewProvisioning(ProvisioningDeps{

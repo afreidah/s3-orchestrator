@@ -141,16 +141,11 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 		Observer:    obs,
 		Key:         func(o core.ObjectLocation) string { return o.ObjectKey },
 	}
-	var total batch.Summary
-	stop, err := pager.Walk(ctx, func(ctx context.Context, objects []core.ObjectLocation) (batch.Step, error) {
-		sum := runner.Run(ctx, objects, func(ctx context.Context, o core.ObjectLocation) batch.ItemResult {
-			if err := m.deleteExpired(ctx, rule, o.ObjectKey); err != nil {
-				return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
-			}
-			return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
-		})
-		total = total.Plus(sum)
-		return batch.Step{Progress: sum.Succeeded}, nil
+	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, o core.ObjectLocation) batch.ItemResult {
+		if err := m.deleteExpired(ctx, rule, o.ObjectKey); err != nil {
+			return batch.Failed()
+		}
+		return batch.Succeeded()
 	})
 	if stop == batch.Errored {
 		m.logger().ErrorContext(ctx, "failed to list expired objects",

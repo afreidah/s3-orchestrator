@@ -218,11 +218,6 @@ func (m *model) runEventLine(e *adminstream.Event) string {
 	switch e.Kind {
 	case adminstream.KindStart:
 		return e.Op + " started"
-	case adminstream.KindProgress:
-		if e.Message != "" {
-			return "  " + e.Message
-		}
-		return fmt.Sprintf("  processed %d", e.Processed)
 	case adminstream.KindStepStart:
 		m.run.pending = e.Message
 		return ""

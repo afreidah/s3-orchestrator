@@ -24,15 +24,10 @@ import (
 // runtime package, and blocks until ctx is cancelled (SIGINT/SIGTERM)
 // or the runtime returns an error. Errors are returned to the caller
 // instead of calling os.Exit so this function is unit-testable.
-func Run(ctx context.Context, configPath, mode string, stdout io.Writer) error {
+func Run(ctx context.Context, configPath string, m config.Mode, stdout io.Writer) error {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-	}
-
-	m, err := config.ParseMode(mode)
-	if err != nil {
-		return err
 	}
 
 	rt, err := runtime.New(runtime.Options{

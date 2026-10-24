@@ -237,7 +237,7 @@ func (a *pgTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []
 // already exist for (key, backend). Returns true when the row was newly
 // inserted.
 func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
-	inserted, err := a.q.InsertObjectLocationIfNotExists(ctx, objectInsertIfNotExistsParams(loc))
+	inserted, err := a.q.InsertObjectLocationIfNotExists(ctx, db.InsertObjectLocationIfNotExistsParams(objectInsertParams(loc)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

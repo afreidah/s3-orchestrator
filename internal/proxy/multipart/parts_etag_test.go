@@ -94,7 +94,7 @@ func TestGetParts_ReportsTheETagTheClientWasGiven(t *testing.T) {
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).
 		AnyTimes()
-	store.EXPECT().GetParts(gomock.Any(), "upload-1").
+	store.EXPECT().ListParts(gomock.Any(), "upload-1", gomock.Any(), gomock.Any()).
 		Return([]core.MultipartPart{
 			{
 				PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123",

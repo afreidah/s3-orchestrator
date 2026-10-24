@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -542,15 +543,12 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 		Key:         RebalanceMove.progressLabel,
 	}
 	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) batch.ItemResult {
-		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the move
-		WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() {
+		return WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() batch.ItemResult {
 			if r.ExecuteOneMove(ctx, mv, strategy) {
-				res = batch.ItemResult{Outcome: batch.ItemSucceeded}
-			} else {
-				res = batch.ItemResult{Outcome: batch.ItemFailed}
+				return batch.Succeeded()
 			}
+			return batch.Failed()
 		})
-		return res
 	})
 }
 
@@ -559,24 +557,10 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 // and delete the source bytes. Returns true when all steps succeed.
 func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
 	key, from := move.Source.ObjectKey, move.Source.BackendName
-	srcBackend, ok := r.ops.Backends()[from]
-	if !ok {
-		r.log.ErrorContext(ctx, "source backend not found", "backend", from)
-		return false
-	}
-
-	destBackend, ok := r.ops.Backends()[move.ToBackend]
-	if !ok {
-		r.log.ErrorContext(ctx, "destination backend not found", "backend", move.ToBackend)
-		return false
-	}
-
 	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Source:      move.Source,
-		SrcBackend:  srcBackend,
-		DestBackend: destBackend,
-		DestName:    move.ToBackend,
-		Profile:     writepath.RebalanceMove,
+		Source:   move.Source,
+		DestName: move.ToBackend,
+		Profile:  writepath.RebalanceMove,
 	})
 	if err != nil {
 		if core.PlacementDeclined(err) {
@@ -673,10 +657,10 @@ func (b *usageBudget) allows(src, dest string, size int64) bool {
 	if b == nil || b.usage == nil {
 		return true
 	}
-	if !b.usage.WithinLimits(src, getObjectOp, b.egress[src]+size, 0) {
+	if !b.usage.WithinLimits(src, s3op.GetObject, b.egress[src]+size, 0) {
 		return false
 	}
-	return b.usage.WithinLimits(dest, putObjectOp, 0, b.ingress[dest]+size)
+	return b.usage.WithinLimits(dest, s3op.PutObject, 0, b.ingress[dest]+size)
 }
 
 // commit records a planned move against both backends' allowances.

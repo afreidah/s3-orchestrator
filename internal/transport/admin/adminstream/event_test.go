@@ -45,13 +45,13 @@ func TestEvent_JSONFieldNames(t *testing.T) {
 
 func TestEvent_OmitsEmptyFields(t *testing.T) {
 	t.Parallel()
-	b, err := json.Marshal(Event{Kind: KindProgress, Processed: 10})
+	b, err := json.Marshal(Event{Kind: KindResult, Processed: 10})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	got := string(b)
-	if got != `{"event":"progress","processed":10}` {
-		t.Errorf("progress event = %s, want only event+processed", got)
+	if got != `{"event":"result","processed":10}` {
+		t.Errorf("result event = %s, want only event+processed", got)
 	}
 }
 

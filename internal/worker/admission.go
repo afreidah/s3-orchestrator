@@ -5,8 +5,7 @@
 //
 // Free helper that wraps the AcquireAdmission / ReleaseAdmission /
 // telemetry-rejection triplet every worker repeats around its inner
-// per-item loop body. Kept as a free function rather than an interface
-// method so the existing mocks need no regeneration.
+// per-item loop body.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -30,15 +29,17 @@ const (
 	WorkerNameReplicator      = "replicator"
 )
 
-// WithAdmission acquires an admission slot, runs fn if granted, and
-// releases the slot afterward. When admission is rejected, increments
-// the per-worker rejection counter and returns without invoking fn.
-// name must be one of the WorkerName* constants above.
-func WithAdmission(ctx context.Context, ac Ops, name string, fn func()) {
+// WithAdmission acquires an admission slot, runs fn if granted, releases the
+// slot afterward, and returns what fn returned. A rejected admission counts on
+// the per-worker rejection counter and returns the zero value without running
+// fn, which for a batch.ItemResult is a skipped item. name must be one of the
+// WorkerName* constants above.
+func WithAdmission[T any](ctx context.Context, ac Ops, name string, fn func() T) T {
 	if !ac.AcquireAdmission(ctx) {
 		telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues(name).Inc()
-		return
+		var zero T
+		return zero
 	}
 	defer ac.ReleaseAdmission()
-	fn()
+	return fn()
 }

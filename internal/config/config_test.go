@@ -883,8 +883,8 @@ func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
 	if err == nil {
 		t.Error("credential with no auth method should fail validation")
 	}
-	if !strings.Contains(err.Error(), "must have access_key_id+secret_access_key or token") {
-		t.Errorf("error should mention missing auth, got: %v", err)
+	if !errors.Is(err, ErrInvalidCredential) {
+		t.Errorf("error should be ErrInvalidCredential, got: %v", err)
 	}
 }
 
@@ -3106,8 +3106,9 @@ func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
-// TestParseLogLevel verifies the parse log level contract.
-// Asserts that ParseLogLevel() = , want.
+// TestParseLogLevel covers the name-to-level mapping config, the admin API and
+// the log query all share: any case is accepted, and an empty or unknown name
+// is Info.
 func TestParseLogLevel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3115,9 +3116,11 @@ func TestParseLogLevel(t *testing.T) {
 		want  slog.Level
 	}{
 		{"debug", slog.LevelDebug},
+		{"DEBUG", slog.LevelDebug},
 		{"info", slog.LevelInfo},
-		{"warn", slog.LevelWarn},
-		{"error", slog.LevelError},
+		{"Warn", slog.LevelWarn},
+		{"ERROR", slog.LevelError},
+		{"", slog.LevelInfo},
 		{"unknown", slog.LevelInfo},
 	}
 	for _, tt := range tests {

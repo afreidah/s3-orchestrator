@@ -1,9 +1,10 @@
-// Package admin implements the token-authenticated admin HTTP API mounted under
-// /admin/api. It splits into read-only observability endpoints (status,
-// object-locations, cleanup-queue, worker health, reload-status) and control
-// endpoints (object read and write, backend add/remove, usage-flush and
-// reconcile, log-level, and the key-rotation and encrypt/decrypt-existing
-// operations).
+// Package admin implements the admin HTTP API mounted under /admin/api. Every
+// request is SigV4-signed with a credential from the same registry the S3 API
+// uses, and authorized against the grants that credential's user holds. It
+// splits into read-only observability endpoints (status, object-locations,
+// cleanup-queue, worker health, reload-status) and control endpoints (object
+// read and write, backend drain and removal, reconcile, log-level,
+// provisioning, and the key-rotation and bulk-rewrite operations).
 //
 // The work itself lives in internal/ops. A handler here parses the request,
 // calls the matching operation, and renders what it reports: counts as JSON,

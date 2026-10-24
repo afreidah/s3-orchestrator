@@ -196,28 +196,28 @@ func (m *MockUsageRecorder) EXPECT() *MockUsageRecorderMockRecorder {
 	return m.recorder
 }
 
-// APICalls mocks base method.
-func (m *MockUsageRecorder) APICalls(ctx context.Context, op s3op.Operation, backendName string, n int64) {
+// APICall mocks base method.
+func (m *MockUsageRecorder) APICall(ctx context.Context, op s3op.Operation, backendName string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "APICalls", ctx, op, backendName, n)
+	m.ctrl.Call(m, "APICall", ctx, op, backendName)
 }
 
-// APICalls indicates an expected call of APICalls.
-func (mr *MockUsageRecorderMockRecorder) APICalls(ctx, op, backendName, n any) *gomock.Call {
+// APICall indicates an expected call of APICall.
+func (mr *MockUsageRecorderMockRecorder) APICall(ctx, op, backendName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "APICalls", reflect.TypeOf((*MockUsageRecorder)(nil).APICalls), ctx, op, backendName, n)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "APICall", reflect.TypeOf((*MockUsageRecorder)(nil).APICall), ctx, op, backendName)
 }
 
 // Allow mocks base method.
-func (m *MockUsageRecorder) Allow(backendName string, ops []s3op.Operation, egress, ingress int64) bool {
+func (m *MockUsageRecorder) Allow(backendName string, op s3op.Operation, egress, ingress int64) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Allow", backendName, ops, egress, ingress)
+	ret := m.ctrl.Call(m, "Allow", backendName, op, egress, ingress)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // Allow indicates an expected call of Allow.
-func (mr *MockUsageRecorderMockRecorder) Allow(backendName, ops, egress, ingress any) *gomock.Call {
+func (mr *MockUsageRecorderMockRecorder) Allow(backendName, op, egress, ingress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockUsageRecorder)(nil).Allow), backendName, ops, egress, ingress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockUsageRecorder)(nil).Allow), backendName, op, egress, ingress)
 }

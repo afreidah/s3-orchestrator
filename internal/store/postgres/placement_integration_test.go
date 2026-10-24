@@ -61,7 +61,7 @@ func newPlacementFixture(t *testing.T, dstQuota int64) *placementFixture {
 	}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(context.Background(), f.key) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(context.Background(), f.key) })
 	return f
 }
 
@@ -69,7 +69,7 @@ func newPlacementFixture(t *testing.T, dstQuota int64) *placementFixture {
 // suffix names, stored in every form column and carrying an etag named for it.
 func (f *placementFixture) recordWrite(t *testing.T, suffix string, size int64) {
 	t.Helper()
-	if _, _, err := f.s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := f.s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: f.key, Size: size, Form: fullyPopulatedForm(),
 		Copies:   []core.ObjectCopy{{Backend: f.src, StorageKey: f.key + suffix}},
 		Identity: &core.ObjectIdentity{ETag: `"` + suffix + `"`},
@@ -288,6 +288,26 @@ func TestPgPlaceCopy_MoveCarriesTheSourceRow(t *testing.T) {
 	}
 	if used := readBytesUsed(t, f.s, f.dst); used != 100 {
 		t.Errorf("target bytes = %d, want 100 after the move", used)
+	}
+}
+
+// TestPgPlaceCopy_MoveKeepsAnUnmanagedCopyUnmanaged verifies a copy placed
+// from an unmanaged row is recorded unmanaged too, so moving it does not turn
+// bytes outside every bucket prefix into an object workers act on.
+func TestPgPlaceCopy_MoveKeepsAnUnmanagedCopyUnmanaged(t *testing.T) {
+	f := newPlacementFixture(t, 1<<30)
+	if _, err := f.s.ImportObject(context.Background(), &core.ImportObjectRequest{
+		Key: f.key, Backend: f.src, Size: 100, Unmanaged: true,
+	}); err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	src := storetest.LocationOn(t, f.s, f.key, f.src)
+
+	if _, _, err := f.place(t, src, movedSuffix, true); err != nil {
+		t.Fatalf("PlaceCopy: %v", err)
+	}
+	if got := readBackOne(t, f.s, f.key); !got.Unmanaged {
+		t.Errorf("moved copy on %s is managed, want it unmanaged like its source", got.BackendName)
 	}
 }
 

@@ -127,9 +127,6 @@ func TestToFatObjectLocations_EveryRowType(t *testing.T) {
 	if got := toFatObjectLocations([]db.GetUnderReplicatedObjectsRow{{ObjectKey: "b", CreatedAt: now}}); got[0].ObjectKey != "b" {
 		t.Error("GetUnderReplicatedObjectsRow not converted")
 	}
-	if got := toFatObjectLocations([]db.GetUnderReplicatedObjectsExcludingRow{{ObjectKey: "c", CreatedAt: now}}); got[0].ObjectKey != "c" {
-		t.Error("GetUnderReplicatedObjectsExcludingRow not converted")
-	}
 	if got := toFatObjectLocations([]db.GetOverReplicatedObjectsRow{{ObjectKey: "d", CreatedAt: now}}); got[0].ObjectKey != "d" {
 		t.Error("GetOverReplicatedObjectsRow not converted")
 	}

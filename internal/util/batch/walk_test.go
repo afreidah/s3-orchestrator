@@ -271,6 +271,42 @@ func TestRows_YieldsTheListError(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// RUN PAGES
+// -------------------------------------------------------------------------
+
+// TestRunPages_TalliesEveryPage verifies each page's rows go through the runner
+// and the summaries add up across pages.
+func TestRunPages_TalliesEveryPage(t *testing.T) {
+	t.Parallel()
+	var cursors []string
+	sum, stop, err := cursorPager([]string{"a", "b", "c", "d", "e"}, 2, &cursors).RunPages(context.Background(), Runner[string]{Concurrency: 1},
+		func(_ context.Context, r string) ItemResult {
+			if r == "c" {
+				return Failed()
+			}
+			return Succeeded()
+		})
+	if err != nil || stop != Exhausted {
+		t.Fatalf("RunPages = (%v, %v), want (exhausted, nil)", stop, err)
+	}
+	if sum.Planned != 5 || sum.Succeeded != 4 || sum.Failed != 1 {
+		t.Errorf("summary = %+v, want 5 planned, 4 succeeded and 1 failed", sum)
+	}
+}
+
+// TestRunPages_SucceededRowsAreTheProgress verifies a head walk whose page
+// succeeds nothing ends, since only succeeded rows count as progress.
+func TestRunPages_SucceededRowsAreTheProgress(t *testing.T) {
+	t.Parallel()
+	queue := []int{1, 2, 3}
+	sum, stop, _ := headPager(&queue, 2).RunPages(context.Background(), Runner[int]{Concurrency: 1},
+		func(context.Context, int) ItemResult { return Failed() })
+	if stop != NoProgress || sum.Failed != 2 {
+		t.Errorf("RunPages = (%+v, %v), want 2 failed and a no-progress stop", sum, stop)
+	}
+}
+
 // TestStop_String verifies every reason has a distinct log name.
 func TestStop_String(t *testing.T) {
 	t.Parallel()

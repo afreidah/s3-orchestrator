@@ -357,10 +357,9 @@ Until a mock is needed, the interface declaration alone documents the dependency
 
 If none apply - single impl, single consumer, no test fake, no cycle, no boundary - pass the concrete `*Type` directly. Examples cut: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, `object.Coordinator`. Splitting one dependency into role interfaces that nothing uses on its own fails the same test.
 
-**There is no exported union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union exists in exactly three places, none of them reachable from a feature package:
+**There is no exported union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union exists in exactly two places, neither of them reachable from a feature package:
 
-- `core.engineRoles`, unexported, and a generic constraint rather than an interface: `core.AssertEngine[*Store]` is how each engine states it implements everything, and a constraint cannot be a variable type, so nothing can depend on it.
-- `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles.
+- `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles. `openStore` returns either engine as it, which is also the compile-time check that each implements everything.
 - `storetest.MetadataStore`, the mockgen target, so one generated mock stands in wherever a test needs a fully-populated store.
 
 The union is not a fact about the domain: nothing in persistence requires one object to implement all nineteen roles, and a design that split persistence across several objects would satisfy every role interface and violate nothing. What it encodes is that there happens to be one store type per engine, which is wiring rather than domain.
@@ -432,17 +431,14 @@ Per-backend usage and per-operation metric accounting flow through one shared he
 
 | Intent | Use | Avoid |
 |---|---|---|
-| May this backend take the call (usage limits) | `acct.Allow(backend, ops, egress, ingress)` | `Usage().WithinLimits(...)` |
-| Backend call attempted, no bytes (success or failure) | `acct.APICall(op, backend)` | `Usage().Record(b, 1, 0, 0)` |
-| N backend calls (paginated lists, multipart bulks) | `acct.APICalls(op, backend, n)` | `Usage().Record(b, n, 0, 0)` |
-| Successful GET-like (bytes left the backend) | `acct.Egress(op, backend, size)` | `Usage().Record(b, 1, size, 0)` |
-| Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(op, backend, size)` | `Usage().Record(b, 1, 0, size)` |
+| May this backend take the call (usage limits) | `acct.Allow(backend, op, egress, ingress)` | `Usage().WithinLimits(...)` |
+| Backend call attempted, no bytes (success or failure) | `acct.APICall(op, backend)` | `Usage().Record(b, op, 0, 0)` |
+| Successful GET-like (bytes left the backend) | `acct.Egress(op, backend, size)` | `Usage().Record(b, op, size, 0)` |
+| Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(op, backend, size)` | `Usage().Record(b, op, 0, size)` |
 | Per-operation Prometheus histogram | `acct.Operation(op, backend, start, err)` | `RecordOperation(op, b, start, err)` |
 | Common combo: Operation + Ingress | `acct.PutSuccess(op, backend, size, start)` | both above, two lines |
-| Common combo: Operation + Egress | `acct.GetSuccess(op, backend, size, start)` | both above, two lines |
-| The call reached the backend and failed | `acct.OperationFailed(op, backend, start, err)` | Operation + APICall, two lines |
 
-The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, 1, 0, size)` vs `Record(b, 1, size, 0)` form is eliminated because ingress vs egress is named in the method.
+The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, op, 0, size)` vs `Record(b, op, size, 0)` form is eliminated because ingress vs egress is named in the method.
 
 Backend-to-backend copies (replication, rebalance, drain and the bulk rewrite passes) are charged inside `StreamCopy`, which admits both legs and records what each one moved, so their callers charge nothing.
 
@@ -544,7 +540,7 @@ responsibility matches; an outer layer must not import a more outer layer, and
 inner layers must never import the transport packages.
 
 ```
-cmd/s3-orchestrator/         # Binary entry point: one file per subcommand, dispatch + os.Exit
+cmd/s3-orchestrator/         # Binary entry point: one subcommand table, dispatch + os.Exit
 internal/
   cli/                       # Subcommand implementations
     serve/                   # `serve`: load config, build a runtime.Runtime, run it
@@ -907,14 +903,14 @@ a `BackendConfig` option (`ForcePathStyle`, `DisableChecksum` and
 
 ### Adding a Store Method or Role
 
-The mechanical checklist - which interfaces to touch, `core.AssertEngine`,
-the mocks - is in [`docs/contributing/store.md`](contributing/store.md),
+The mechanical checklist - which interfaces to touch, the compile-time
+check, the mocks - is in [`docs/contributing/store.md`](contributing/store.md),
 the source of truth for the store. In short: a method goes on a role
 interface in `internal/store/core/interfaces.go`, is implemented in both
 `internal/store/postgres` and `internal/store/sqlite`, and the mocks are
 regenerated with `make generate`. A new role is also embedded in
-`core.engineRoles`, in `di.metadataStore`, and in
-`storetest.MetadataStore`. Three things are easy to miss:
+`di.metadataStore` and in `storetest.MetadataStore`. Three things are easy
+to miss:
 
 - `internal/store/storetest/permissive.go` is hand-written. A new method
   that a fixture may pass through needs a stanza there; mockgen does not

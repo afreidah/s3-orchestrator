@@ -127,10 +127,10 @@ under_replicated AS (
     SELECT ol.object_key
     FROM object_locations ol
     LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.managed
+    WHERE ol.backend_name != ALL($1::text[]) AND ol.managed
     GROUP BY ol.object_key, i.copies
-    HAVING COUNT(*) + COALESCE(i.copies, 0) < $1::bigint
-    LIMIT $2
+    HAVING COUNT(*) + COALESCE(i.copies, 0) < $2::bigint
+    LIMIT $3
 )
 SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
@@ -139,8 +139,9 @@ ORDER BY ol.object_key ASC, ol.created_at ASC
 `
 
 type GetUnderReplicatedObjectsParams struct {
-	Factor  int64
-	MaxKeys int32
+	Excluded []string
+	Factor   int64
+	MaxKeys  int32
 }
 
 type GetUnderReplicatedObjectsRow struct {
@@ -166,10 +167,7 @@ type GetUnderReplicatedObjectsRow struct {
 // Author: Alex Freidah
 //
 // sqlc-input definitions backing the replicator and over-replication
-// cleaner: under-replicated and over-replicated scans, the conditional
-// replica insert that returns the source row's size_bytes, and the
-// excess-copy removal. The "excluding" variant of the under-replicated
-// scan lets workers skip backends that are draining or circuit-broken.
+// cleaner: the under- and over-replicated scans and the backlog count.
 // -----------------------------------------------------------------------------
 // A key's copies are the rows it holds plus the intents still uploading one,
 // because a write that places its own copies commits them a moment apart and
@@ -187,8 +185,12 @@ type GetUnderReplicatedObjectsRow struct {
 // counts too, harmlessly, since that write replaces the object; one left by a
 // write that never finished holds replication off only until the reaper
 // clears it.
+//
+// Copies on an excluded backend do not count, but an intent there still does:
+// excluding a backend says the worker will not place a copy there, not that a
+// copy already going there is absent. An empty list excludes nothing.
 func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]GetUnderReplicatedObjectsRow, error) {
-	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Factor, arg.MaxKeys)
+	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Excluded, arg.Factor, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -196,89 +198,6 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 	items := []GetUnderReplicatedObjectsRow{}
 	for rows.Next() {
 		var i GetUnderReplicatedObjectsRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.StorageKey,
-			&i.SizeBytes,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.CompressionAlgorithm,
-			&i.CompressionLevel,
-			&i.CompressionFormatVersion,
-			&i.LogicalSize,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getUnderReplicatedObjectsExcluding = `-- name: GetUnderReplicatedObjectsExcluding :many
-WITH inflight AS (
-    SELECT object_key, COUNT(*) AS copies
-    FROM pending_objects
-    GROUP BY object_key
-),
-under_replicated AS (
-    SELECT ol.object_key
-    FROM object_locations ol
-    LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.backend_name != ALL($1::text[]) AND ol.managed
-    GROUP BY ol.object_key, i.copies
-    HAVING COUNT(*) + COALESCE(i.copies, 0) < $2::bigint
-    LIMIT $3
-)
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
-FROM object_locations ol
-JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC
-`
-
-type GetUnderReplicatedObjectsExcludingParams struct {
-	Excluded []string
-	Factor   int64
-	MaxKeys  int32
-}
-
-type GetUnderReplicatedObjectsExcludingRow struct {
-	ObjectKey                string
-	BackendName              string
-	StorageKey               string
-	SizeBytes                int64
-	Encrypted                bool
-	EncryptionKey            []byte
-	KeyID                    *string
-	PlaintextSize            *int64
-	ContentHash              *string
-	CompressionAlgorithm     *string
-	CompressionLevel         *string
-	CompressionFormatVersion *int16
-	LogicalSize              *int64
-	CreatedAt                pgtype.Timestamptz
-}
-
-// Counts a key's in-flight copies the same way GetUnderReplicatedObjects does.
-// An intent on an excluded backend still counts, because excluding a backend
-// says the worker will not place a copy there, not that a copy already going
-// there is absent.
-func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg GetUnderReplicatedObjectsExcludingParams) ([]GetUnderReplicatedObjectsExcludingRow, error) {
-	rows, err := q.db.Query(ctx, getUnderReplicatedObjectsExcluding, arg.Excluded, arg.Factor, arg.MaxKeys)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetUnderReplicatedObjectsExcludingRow{}
-	for rows.Next() {
-		var i GetUnderReplicatedObjectsExcludingRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,

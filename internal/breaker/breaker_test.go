@@ -263,7 +263,7 @@ func TestCB_NilErrorIsSuccess(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Call / CallNoResult helpers
+// Call helper
 // -------------------------------------------------------------------------
 
 // TestCBCall_PassesThrough verifies the cbcall passes through contract.
@@ -294,30 +294,6 @@ func TestCBCall_CircuitOpen(t *testing.T) {
 	}
 	if called {
 		t.Fatal("function should not be called when circuit is open")
-	}
-}
-
-// TestCallNoResult_PassesThrough verifies the call no result passes through contract.
-// Asserts that unexpected error:.
-func TestCBCallNoResult_PassesThrough(t *testing.T) {
-	t.Parallel()
-	cb := newTestBreaker(3, time.Minute)
-	err := cb.CallNoResult(func() error { return nil })
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestCallNoResult_CircuitOpen verifies the call no result circuit open contract.
-// Asserts that expected sentinel, got.
-func TestCBCallNoResult_CircuitOpen(t *testing.T) {
-	t.Parallel()
-	cb := newTestBreaker(1, time.Minute)
-	_ = cb.PostCheck(errTest) // trip
-
-	err := cb.CallNoResult(func() error { return nil })
-	if !errors.Is(err, errSentinel) {
-		t.Fatalf("expected sentinel, got %v", err)
 	}
 }
 

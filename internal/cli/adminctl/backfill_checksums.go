@@ -43,5 +43,5 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	if *backend != "" {
 		q.Set(queryBackend, *backend)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/backfill-checksums", q), "")
+	return c.stream(http.MethodPost, withQuery("/admin/api/backfill-checksums", q))
 }

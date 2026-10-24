@@ -160,25 +160,31 @@ func (f *copyFanout) upload(ctx context.Context, p *core.PendingObject) {
 }
 
 // uploadCopy puts one copy's bytes on its backend, replaying the shared
-// payload. A drain that started after the backend was claimed is caught the
-// same way the sequential path catches it, before anything is recorded.
+// payload. The bytes go to the intent's own path, never the object's key, so an
+// overwrite never modifies bytes in place and each write's cleanup reaches only
+// its own bytes. The backend's ETag describes the stored bytes and is discarded.
+//
+// A failed PUT leaves the intent for the reaper: the error does not prove the
+// bytes are absent, since the response could have been lost mid-flight. A
+// backend cordoned or put into a drain after the claim does not get the object;
+// its intent is dropped and errWriteTargetRefused returned. That check reads
+// cached backend state, so a change made on another instance is caught late,
+// but a drain cannot finish while the intent exists.
 func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *putPlan, p *core.PendingObject) error {
 	be, err := o.core.GetBackend(p.BackendName)
 	if err != nil {
 		return err
 	}
-	body, err := plan.body.Reader()
-	if err != nil {
-		return err
-	}
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	_, err = be.PutObject(bctx, p.StorageKey, body, plan.uploadSize, req.ContentType, req.Metadata)
+	_, err = be.PutObject(bctx, p.StorageKey, plan.body.Reader(), plan.uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 		return err
 	}
 	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
+		o.log.WarnContext(ctx, "backend stopped accepting writes mid-write; aborting commit",
+			"key", req.Key, "backend", p.BackendName)
 		o.refuseWriteTarget(ctx, p)
 		return errWriteTargetRefused
 	}

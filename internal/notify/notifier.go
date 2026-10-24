@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -188,7 +189,7 @@ func (n *Notifier) fanOutToEndpoints(ev *event.Event, payload []byte) {
 		if !event.MatchesFilter(ev.Type, ep.Events) {
 			continue
 		}
-		if ep.Prefix != "" && ev.Subject != "" && !hasPrefix(ev.Subject, ep.Prefix) {
+		if ep.Prefix != "" && ev.Subject != "" && !strings.HasPrefix(ev.Subject, ep.Prefix) {
 			continue
 		}
 		if err := n.store.InsertNotification(ctx, ev.Type, string(payload), ep.URL); err != nil {
@@ -290,11 +291,6 @@ func (n *Notifier) findEndpoint(url string) *config.NotificationEndpoint {
 	return nil
 }
 
-// hasPrefix checks if a key starts with the given prefix.
-func hasPrefix(key, prefix string) bool {
-	return len(key) >= len(prefix) && key[:len(prefix)] == prefix
-}
-
 // generateEventID creates a random hex event identifier.
 func generateEventID() string {
 	b := make([]byte, 12)
@@ -314,12 +310,12 @@ func (n *Notifier) processPendingRow(ctx context.Context, row core.NotificationR
 	start := time.Now()
 	if err := n.deliver(ctx, row, ep); err != nil {
 		n.handleDeliveryFailure(ctx, row, ep, err)
-		return batch.ItemResult{Outcome: batch.ItemFailed}
+		return batch.Failed()
 	}
 	telemetry.NotificationSentTotal.WithLabelValues(ep.URL, row.EventType).Inc()
 	telemetry.NotificationDuration.WithLabelValues(ep.URL).Observe(time.Since(start).Seconds())
 	n.completeOrLog(ctx, row.ID, "delivered")
-	return batch.ItemResult{Outcome: batch.ItemSucceeded}
+	return batch.Succeeded()
 }
 
 // handleDeliveryFailure retries the row while the endpoint's max_retries

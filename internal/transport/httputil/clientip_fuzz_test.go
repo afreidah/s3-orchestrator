@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Rate Limiter Fuzz Tests - Client IP Extraction
+// Client IP Fuzz Tests
 //
 // Author: Alex Freidah
 //
@@ -8,7 +8,7 @@
 // IPv6 brackets, empty chains, and adversarial XFF values never cause panics.
 // -------------------------------------------------------------------------------
 
-package s3api
+package httputil
 
 import (
 	"context"

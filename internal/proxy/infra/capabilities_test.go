@@ -89,22 +89,6 @@ func TestBackendRegistry_Accepted_AppliesTheMask(t *testing.T) {
 // usagePolicy
 // -------------------------------------------------------------------------
 
-func TestUsagePolicy_WithinLimits_MaxObjectSizeEnforced(t *testing.T) {
-	t.Parallel()
-	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
-	// No limits => baseline check is always within; max-object-size is
-	// the only thing that can reject ingress here.
-	p := &BackendRuntime{usage: tracker, maxObjectSizes: map[string]int64{"b1": 1024}}
-
-	writes := []s3op.Operation{s3op.PutObject}
-	if !p.withinLimits("b1", writes, 0, 512) {
-		t.Error("withinLimits = false for 512 < 1024 max; want true")
-	}
-	if p.withinLimits("b1", writes, 0, 2048) {
-		t.Error("withinLimits = true for 2048 > 1024 max; want false")
-	}
-}
-
 func TestUsagePolicy_EligibleForWrite_PreservesOrder(t *testing.T) {
 	t.Parallel()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
@@ -115,7 +99,7 @@ func TestUsagePolicy_EligibleForWrite_PreservesOrder(t *testing.T) {
 		maxObjectSizes: map[string]int64{"b2": 100},
 	}
 
-	got := p.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 500)
+	got := p.EligibleForWrite(s3op.PutObject, 0, 500)
 	// b2 is dropped (500 > 100 max); b1, b3 stay in configured order.
 	if len(got) != 2 || got[0] != "b1" || got[1] != "b3" {
 		t.Errorf("EligibleForWrite = %v, want [b1 b3]", got)

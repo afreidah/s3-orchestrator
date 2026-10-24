@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -90,7 +91,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 	// on the target would miss the replica or hash a different object.
 	replica := source.CopyAt(target, targetStorageKey)
 
-	if !r.ops.Usage().WithinLimits(target, getObjectOp, replica.SizeBytes, 0) {
+	if !r.ops.Usage().WithinLimits(target, s3op.GetObject, replica.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		r.log.WarnContext(ctx, "replica verification declined by usage limits",
 			"key", source.ObjectKey, "target", target, "size", replica.SizeBytes)

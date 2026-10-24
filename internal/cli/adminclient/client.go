@@ -4,14 +4,13 @@
 // Author: Alex Freidah
 //
 // The HTTP half of talking to the admin API, shared by every out-of-process
-// consumer: request construction, token auth, the deadline split between
+// consumer: request construction, SigV4 signing, the deadline split between
 // one-shot calls and progress streams, and the typed non-2xx error.
 //
 // The wire shapes already live in one place (transport/admin/adminapi) so the
 // server and its clients cannot disagree about JSON. This package is the same
-// argument applied to the transport: adminctl and the TUI previously carried
-// their own copies of all of it, including two independently written parsers
-// for the same error body.
+// argument applied to the transport, so adminctl and the TUI share one request
+// path and one parser for the error body.
 //
 // Presentation stays with the caller. This package returns values and errors;
 // it never renders, never writes to a terminal, and never chooses an exit code.

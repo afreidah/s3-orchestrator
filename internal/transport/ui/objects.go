@@ -39,8 +39,6 @@ import (
 // lazy-loaded file browser. The root lists only the buckets the user may list;
 // below it, the prefix's bucket must grant list.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	prefix := r.URL.Query().Get("prefix")
 	if prefix != "" && !h.validBucketPrefix(prefix) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
@@ -78,8 +76,6 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDelete deletes a single object by key.
 func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -109,8 +105,6 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDeletePrefix deletes all objects under a given key prefix.
 func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -153,8 +147,6 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 
 // handleAPIUpload uploads a file via multipart form data.
 func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -205,8 +197,6 @@ func uploadContentType(header *multipart.FileHeader) string {
 
 // handleAPIDownload streams an object to the browser as a file download.
 func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	if !httputil.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -233,15 +223,13 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeObjectError renders a failed object operation, keeping the rejection
-// reasons the dashboard already understands distinct from a server fault.
+// reasons the dashboard shows distinct from a server fault.
 func (h *Handler) writeObjectError(w http.ResponseWriter, r *http.Request, err error, msg, key string) {
 	switch {
-	case errors.Is(err, ops.ErrKeyRequired):
-		httputil.WriteJSONError(w, http.StatusBadRequest, errKeyRequired)
-	case errors.Is(err, ops.ErrPrefixRequired):
-		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix is required")
-	case errors.Is(err, ops.ErrInvalidKey):
-		httputil.WriteJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
+	case errors.Is(err, ops.ErrKeyRequired),
+		errors.Is(err, ops.ErrPrefixRequired),
+		errors.Is(err, ops.ErrInvalidKey):
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ops.ErrNotFound):
 		httputil.WriteJSONError(w, http.StatusNotFound, "not found")
 	default:

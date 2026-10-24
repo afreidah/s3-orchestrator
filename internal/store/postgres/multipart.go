@@ -27,12 +27,6 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
-// errUnmarshalMetadata is the wrap format string used by every site
-// that unmarshals the JSONB metadata column. Centralised so the audit
-// log "failed to unmarshal metadata" string stays grep-able and a typo
-// in one site doesn't drift from the others.
-const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
-
 // -------------------------------------------------------------------------
 // UPLOAD LIFECYCLE
 // -------------------------------------------------------------------------
@@ -149,37 +143,26 @@ type multipartRow struct {
 // unmarshal of Metadata so the slice-returning callers do not carry
 // parallel loop bodies.
 func toMultipartUpload(r *multipartRow) (core.MultipartUpload, error) {
-	mu := core.MultipartUpload{
+	meta, err := core.DecodeUserMetadata(r.Metadata)
+	if err != nil {
+		return core.MultipartUpload{}, err
+	}
+	return core.MultipartUpload{
 		UploadID:      r.UploadID,
 		ObjectKey:     r.ObjectKey,
 		BackendName:   r.BackendName,
 		ContentType:   derefStr(r.ContentType),
+		Metadata:      meta,
 		EncryptionKey: r.EncryptionKey,
 		KeyID:         derefStr(r.KeyID),
 		Encrypted:     len(r.EncryptionKey) > 0,
 		CreatedAt:     r.CreatedAt,
-	}
-	if len(r.Metadata) > 0 {
-		if err := json.Unmarshal(r.Metadata, &mu.Metadata); err != nil {
-			return core.MultipartUpload{}, fmt.Errorf(errUnmarshalMetadata, err)
-		}
-	}
-	return mu, nil
+	}, nil
 }
 
 // -------------------------------------------------------------------------
 // PARTS
 // -------------------------------------------------------------------------
-
-// GetParts returns all parts for a multipart upload, ordered by part number.
-func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
-	rows, err := s.queries.GetParts(ctx, uploadID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get parts: %w", err)
-	}
-
-	return mapSlice(rows, multipartPartFromRow), nil
-}
 
 // ListParts returns up to limit parts numbered above afterPart, ordered by
 // part number.
@@ -187,20 +170,18 @@ func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit
 	rows, err := s.queries.ListParts(ctx, db.ListPartsParams{
 		UploadID:  uploadID,
 		AfterPart: int32(afterPart), //nolint:gosec // G115: the S3 handler parses the marker as a 32-bit integer
-		RowLimit:  int32(limit),     //nolint:gosec // G115: limit is a small caller-controlled page size
+		RowLimit:  rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list parts: %w", err)
 	}
-	return mapSlice(rows, func(r *db.ListPartsRow) core.MultipartPart {
-		return multipartPartFromRow((*db.GetPartsRow)(r))
-	}), nil
+	return mapSlice(rows, multipartPartFromRow), nil
 }
 
-// multipartPartFromRow converts a sqlc GetParts row into the canonical
+// multipartPartFromRow converts a sqlc ListParts row into the canonical
 // core.MultipartPart shape, safely dereferencing nullable KeyID and
 // PlaintextSize.
-func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
+func multipartPartFromRow(r *db.ListPartsRow) core.MultipartPart {
 	return core.MultipartPart{
 		Encrypted:     r.Encrypted,
 		EncryptionKey: r.EncryptionKey,
@@ -246,7 +227,7 @@ func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartU
 		BackendFilter: filter.Backend,
 		CreatedBefore: cutoff,
 		AfterUploadID: afterUploadID,
-		RowLimit:      int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		RowLimit:      rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan multipart uploads: %w", err)
@@ -278,7 +259,7 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
 		Prefix:     &escapedPrefix,
-		MaxUploads: int32(maxUploads), //nolint:gosec // G115: maxUploads is a small caller-controlled value
+		MaxUploads: rowLimit(maxUploads),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)

@@ -6,11 +6,8 @@
 // Persistence layer for the pending_objects table. The write path inserts an
 // intent before the backend PUT and removes it on a successful metadata
 // commit. Intents that survive a failed commit are resolved by the pending
-// reaper via PromotePending, which mirrors RecordObject's quota and copy
-// bookkeeping while honoring the conservative ambiguous-case contract: if
-// the destination backend already holds a row for the key, the reaper
-// leaves the intent for operator review rather than guessing whether the
-// bytes-on-disk belong to the failed PUT or to a subsequent overwrite.
+// reaper through core's PromotePending; this file holds the reads the reaper
+// drives it from and the row mapping the intent insert uses.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -28,9 +25,8 @@ import (
 // PENDING OBJECT OPERATIONS
 // -------------------------------------------------------------------------
 
-// DeletePending removes a pending intent. Called by the write path on a
-// successful commit (atomically inside the same transaction as RecordObject)
-// and by the reaper on the HEAD-404 path.
+// DeletePending removes a pending intent outside any transaction, which the
+// reaper does when a HEAD finds the intent's bytes never landed.
 func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 	return s.direct().DeletePending(ctx, intentID)
 }
@@ -41,7 +37,7 @@ func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {
 	rows, err := s.queries.GetStalePendingObjects(ctx, db.GetStalePendingObjectsParams{
 		OlderThan: pgTimestamptz(olderThan),
-		MaxKeys:   int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		MaxKeys:   rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get stale pending objects: %w", err)

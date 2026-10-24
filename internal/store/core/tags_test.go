@@ -121,7 +121,7 @@ func TestReplaceObjectTags_ClearsThenInserts(t *testing.T) {
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 	tags := []Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}
 
-	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", tags); err != nil {
+	if err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", tags); err != nil {
 		t.Fatalf("ReplaceObjectTags() error = %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -139,7 +139,7 @@ func TestReplaceObjectTags_RejectsBeforeTransaction(t *testing.T) {
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 	bad := []Tag{{Key: "k", Value: "1"}, {Key: "k", Value: "2"}}
 
-	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", bad); !errors.Is(err, ErrDuplicateTagKey) {
+	if err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", bad); !errors.Is(err, ErrDuplicateTagKey) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want ErrDuplicateTagKey", err)
 	}
 	if len(stub.tagsCleared) != 0 || len(stub.tagsInserted) != 0 {
@@ -156,7 +156,7 @@ func TestReplaceObjectTags_LockError(t *testing.T) {
 	sentinel := errors.New("lock failed")
 	stub := &quotaTxStub{keyLockErr: sentinel, existingCopies: storedCopy()}
 
-	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
+	err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want the lock error", err)
 	}
@@ -173,7 +173,7 @@ func TestReplaceObjectTags_ClearError(t *testing.T) {
 	sentinel := errors.New("clear failed")
 	stub := &quotaTxStub{tagClearErr: sentinel, existingCopies: storedCopy()}
 
-	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
+	err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want the clear error", err)
 	}
@@ -189,7 +189,7 @@ func TestReplaceObjectTags_InsertError(t *testing.T) {
 	sentinel := errors.New("insert failed")
 	stub := &quotaTxStub{tagInsertErr: sentinel, existingCopies: storedCopy()}
 
-	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub},
+	err := stubOps(stub).ReplaceObjectTags(context.Background(),
 		"k", []Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want the insert error", err)
@@ -203,7 +203,7 @@ func TestReplaceObjectTags_NotFound(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{}
 
-	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "gone", []Tag{{Key: "a", Value: "1"}})
+	err := stubOps(stub).ReplaceObjectTags(context.Background(), "gone", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want ErrObjectNotFound", err)
 	}
@@ -252,7 +252,7 @@ func TestRecordObject_RejectsInvalidTags(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 
-	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+	_, err := stubOps(stub).RecordObject(context.Background(), &RecordObjectRequest{
 		Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100,
 		Tags: []Tag{{Key: "a", Value: "1"}, {Key: "a", Value: "2"}},
 	})
@@ -273,7 +273,7 @@ func TestReplaceObjectTags_ExistenceCheckError(t *testing.T) {
 	sentinel := errors.New("copy read failed")
 	stub := &quotaTxStub{existingErr: sentinel}
 
-	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
+	err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("ReplaceObjectTags() error = %v, want the read error", err)
 	}
@@ -289,7 +289,7 @@ func TestDeleteObjectTags_NotFound(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{}
 
-	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "gone"); !errors.Is(err, ErrObjectNotFound) {
+	if err := stubOps(stub).DeleteObjectTags(context.Background(), "gone"); !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("DeleteObjectTags() error = %v, want ErrObjectNotFound", err)
 	}
 	if len(stub.tagsCleared) != 0 {
@@ -304,7 +304,7 @@ func TestDeleteObjectTags_LockError(t *testing.T) {
 	sentinel := errors.New("lock failed")
 	stub := &quotaTxStub{keyLockErr: sentinel, existingCopies: storedCopy()}
 
-	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "k"); !errors.Is(err, sentinel) {
+	if err := stubOps(stub).DeleteObjectTags(context.Background(), "k"); !errors.Is(err, sentinel) {
 		t.Fatalf("DeleteObjectTags() error = %v, want the lock error", err)
 	}
 	if len(stub.tagsCleared) != 0 {
@@ -318,7 +318,7 @@ func TestDeleteObjectTags_ClearsSet(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 
-	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "k"); err != nil {
+	if err := stubOps(stub).DeleteObjectTags(context.Background(), "k"); err != nil {
 		t.Fatalf("DeleteObjectTags() error = %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -358,7 +358,7 @@ func TestReplaceObjectTags_EmptySetClears(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 
-	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", nil); err != nil {
+	if err := stubOps(stub).ReplaceObjectTags(context.Background(), "k", nil); err != nil {
 		t.Fatalf("ReplaceObjectTags() error = %v", err)
 	}
 	if len(stub.tagsCleared) != 1 {

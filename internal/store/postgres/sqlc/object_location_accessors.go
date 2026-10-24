@@ -114,29 +114,6 @@ func (r GetUnderReplicatedObjectsRow) GetCompressionFormatVersion() *int16 {
 	return r.CompressionFormatVersion
 }
 
-// GetUnderReplicatedObjectsExcludingRow
-
-func (r GetUnderReplicatedObjectsExcludingRow) GetObjectKey() string             { return r.ObjectKey }
-func (r GetUnderReplicatedObjectsExcludingRow) GetStorageKey() string            { return r.StorageKey }
-func (r GetUnderReplicatedObjectsExcludingRow) GetBackendName() string           { return r.BackendName }
-func (r GetUnderReplicatedObjectsExcludingRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r GetUnderReplicatedObjectsExcludingRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
-func (r GetUnderReplicatedObjectsExcludingRow) GetEncrypted() bool               { return r.Encrypted }
-func (r GetUnderReplicatedObjectsExcludingRow) GetEncryptionKey() []byte         { return r.EncryptionKey }
-func (r GetUnderReplicatedObjectsExcludingRow) GetKeyID() *string                { return r.KeyID }
-func (r GetUnderReplicatedObjectsExcludingRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
-func (r GetUnderReplicatedObjectsExcludingRow) GetContentHash() *string          { return r.ContentHash }
-func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionLevel() *string {
-	return r.CompressionLevel
-}
-func (r GetUnderReplicatedObjectsExcludingRow) GetLogicalSize() *int64 { return r.LogicalSize }
-func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionAlgorithm() *string {
-	return r.CompressionAlgorithm
-}
-func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionFormatVersion() *int16 {
-	return r.CompressionFormatVersion
-}
-
 // GetOverReplicatedObjectsRow
 
 func (r GetOverReplicatedObjectsRow) GetObjectKey() string             { return r.ObjectKey }

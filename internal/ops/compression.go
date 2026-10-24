@@ -41,7 +41,6 @@ type CompressionDeps struct {
 	Config    config.CompressionConfig
 	Encryptor *encryption.Encryptor
 	Store     RewriteStore
-	Runtime   RuntimeOps
 	Mover     Mover
 }
 
@@ -51,31 +50,28 @@ type CompressionDeps struct {
 //
 // Encryptor may be nil, in which case encrypted copies are refused.
 type Compression struct {
-	log     *slog.Logger
-	cfg     config.CompressionConfig
-	store   RewriteStore
-	runtime RuntimeOps
-	mover   Mover
-	layers  *storedform.Layers
+	log    *slog.Logger
+	cfg    config.CompressionConfig
+	store  RewriteStore
+	mover  Mover
+	layers *storedform.Layers
 }
 
 // NewCompression is the explicit-deps constructor.
 func NewCompression(d *CompressionDeps) *Compression {
-	must.NotNil("d.Runtime", d.Runtime)
 	must.NotNil("d.Mover", d.Mover)
 	return &Compression{
-		log:     slog.Default().With(logfmt.Component("ops")),
-		cfg:     d.Config,
-		store:   d.Store,
-		runtime: d.Runtime,
-		mover:   d.Mover,
-		layers:  &storedform.Layers{Encryptor: d.Encryptor, Codec: d.Codec, Compression: d.Config},
+		log:    slog.Default().With(logfmt.Component("ops")),
+		cfg:    d.Config,
+		store:  d.Store,
+		mover:  d.Mover,
+		layers: &storedform.Layers{Encryptor: d.Encryptor, Codec: d.Codec, Compression: d.Config},
 	}
 }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, runtime: c.runtime, mover: c.mover, layers: c.layers}
+	return bulkRewriteEnv{log: c.log, mover: c.mover, layers: c.layers}
 }
 
 // -------------------------------------------------------------------------

@@ -54,8 +54,8 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(2, 5, nil)
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 10, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", []string{"unified"}).Return(2, 5, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", []string{"unified"}).Return(0, 10, nil)
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
@@ -73,8 +73,8 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", gomock.Any()).Return(0, 0, context.DeadlineExceeded)
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", gomock.Any()).Return(1, 0, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", gomock.Any()).Return(0, 0, context.DeadlineExceeded)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", gomock.Any()).Return(1, 0, nil)
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
@@ -94,7 +94,7 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", []string{"unified"}).Return(0, 0, nil)
 	// Zero imports: UpdateQuotaMetrics is skipped, but ReconcileUsage still runs.
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
 
@@ -113,7 +113,7 @@ func TestReconciler_ReconcileUsageError(t *testing.T) {
 	usageRec := NewMockUsageReconciler(ctrl)
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", []string{"unified"}).Return(0, 0, nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
@@ -165,7 +165,7 @@ func TestReconciler_SkipsDrainingBackends(t *testing.T) {
 
 	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
 	fleet.EXPECT().Accepted([]string{"b1", "b2"}, core.AcceptForReconcile).Return([]string{"b2"})
-	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 0, nil)
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", []string{"unified"}).Return(0, 0, nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})

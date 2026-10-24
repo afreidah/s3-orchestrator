@@ -27,11 +27,12 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
--- A placed copy carries the object's write time and its compression probe,
--- since the bytes are the same bytes; a fresh write passes no time and is
--- stamped now.
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, created_at)
-VALUES (@object_key, @backend_name, @storage_key, @size_bytes, @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash, @compression_algorithm, @compression_level, @compression_format_version, @logical_size, @compression_probe_size, @compression_probe_level, @etag, @content_type, @user_metadata,
+-- A placed copy carries the object's write time, its compression probe and
+-- whether it is managed, since the bytes are the same bytes; a fresh write
+-- passes no time and is stamped now. InsertObjectLocationIfNotExists takes the
+-- same parameters, so one mapping feeds both.
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, managed, created_at)
+VALUES (@object_key, @backend_name, @storage_key, @size_bytes, @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash, @compression_algorithm, @compression_level, @compression_format_version, @logical_size, @compression_probe_size, @compression_probe_level, @etag, @content_type, @user_metadata, @managed,
         COALESCE(sqlc.narg(created_at)::timestamptz, NOW()));
 
 -- ListObjectsByBackend backs the rebalance, placement and drain candidate
@@ -140,8 +141,9 @@ WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, compression_probe_size, compression_probe_level, etag, content_type, user_metadata, managed, created_at)
+VALUES (@object_key, @backend_name, @storage_key, @size_bytes, @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash, @compression_algorithm, @compression_level, @compression_format_version, @logical_size, @compression_probe_size, @compression_probe_level, @etag, @content_type, @user_metadata, @managed,
+        COALESCE(sqlc.narg(created_at)::timestamptz, NOW()))
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 

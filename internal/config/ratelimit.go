@@ -14,6 +14,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"net"
 	"time"
@@ -81,10 +82,10 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 		return errs
 	}
 
-	r.RequestsPerSec = defaulted(r.RequestsPerSec, 100)
-	r.Burst = defaulted(r.Burst, 200)
-	r.CleanupInterval = defaulted(r.CleanupInterval, 1*time.Minute)
-	r.CleanupMaxAge = defaulted(r.CleanupMaxAge, 5*time.Minute)
+	r.RequestsPerSec = cmp.Or(r.RequestsPerSec, 100)
+	r.Burst = cmp.Or(r.Burst, 200)
+	r.CleanupInterval = cmp.Or(r.CleanupInterval, 1*time.Minute)
+	r.CleanupMaxAge = cmp.Or(r.CleanupMaxAge, 5*time.Minute)
 
 	if r.RequestsPerSec <= 0 {
 		errs = append(errs, ErrRateLimitRPSNotPositive)
@@ -98,9 +99,9 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 
 // setDefaults sets defaults.
 func (cb *CircuitBreakerConfig) setDefaults() {
-	cb.FailureThreshold = defaulted(cb.FailureThreshold, 3)
-	cb.OpenTimeout = defaulted(cb.OpenTimeout, 15*time.Second)
-	cb.CacheTTL = defaulted(cb.CacheTTL, 60*time.Second)
+	cb.FailureThreshold = cmp.Or(cb.FailureThreshold, 3)
+	cb.OpenTimeout = cmp.Or(cb.OpenTimeout, 15*time.Second)
+	cb.CacheTTL = cmp.Or(cb.CacheTTL, 60*time.Second)
 	// Zero means fan out to every backend; a negative value is normalised to
 	// zero so a typo cannot disable the broadcast.
 	if cb.DegradedBroadcastParallelism < 0 {
@@ -118,6 +119,6 @@ func (bcb *BackendCircuitBreakerConfig) setDefaults() {
 	if !bcb.Enabled {
 		return
 	}
-	bcb.FailureThreshold = defaulted(bcb.FailureThreshold, 5)
-	bcb.OpenTimeout = defaulted(bcb.OpenTimeout, 5*time.Minute)
+	bcb.FailureThreshold = cmp.Or(bcb.FailureThreshold, 5)
+	bcb.OpenTimeout = cmp.Or(bcb.OpenTimeout, 5*time.Minute)
 }

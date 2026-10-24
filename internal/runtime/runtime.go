@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/di"
-	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -301,7 +300,6 @@ func (r *Runtime) shutdown() {
 	<-r.bgDone
 	r.lifecyc.Stop(10 * time.Second)
 
-	closeEncryptionProvider(r.inj)
 	// Caches close before the final flush: the eviction goroutines are what
 	// would otherwise still be running while the counters are read.
 	r.svc.objects.LocationCache().Close()
@@ -344,19 +342,6 @@ func (r *Runtime) drainDetachedUploads(ctx context.Context) {
 	if remaining := detached.Wait(drainCtx); remaining > 0 {
 		r.log.WarnContext(ctx, "shutdown deadline reached with copies still uploading; leaving them to the reaper",
 			"in_flight", remaining)
-	}
-}
-
-// closeEncryptionProvider closes the encryption key provider if one was
-// resolved and implements an optional Close method. The provider's
-// Close method is optional because not every provider holds OS handles.
-func closeEncryptionProvider(inj do.Injector) {
-	encProvider, err := do.Invoke[encryption.KeyProvider](inj)
-	if err != nil {
-		return
-	}
-	if closer, ok := encProvider.(interface{ Close() }); ok {
-		closer.Close()
 	}
 }
 

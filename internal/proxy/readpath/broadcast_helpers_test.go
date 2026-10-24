@@ -3,10 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// The branch entry points (tryBackendsSequentially, tryBackendsInParallel)
-// are covered end-to-end by TestGetObject_DBUnavailable_* and
-// TestGetObject_ParallelBroadcast_* in manager_objects_test.go. These tests
-// pin the small extracted helpers directly.
+// The broadcast entry point (tryAllBackends) is covered end-to-end by
+// TestGetObject_DBUnavailable_* and TestGetObject_ParallelBroadcast_* in
+// internal/proxy/object. These tests pin the small extracted helpers directly.
 // -------------------------------------------------------------------------------
 
 package readpath
@@ -38,28 +37,21 @@ func noopSpan() trace.Span {
 // broadcastAllFailed
 // -------------------------------------------------------------------------
 
-// TestBroadcastAllFailed_NilErrorReturnsObjectNotFound verifies the broadcast all failed nil error returns object not found contract.
-// Asserts that name = , want empty.
-func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
+// TestBroadcastAllFailed_NoErrorsReturnsObjectNotFound asserts a broadcast
+// with no probe errors, because no backend was probed, reports not found.
+func TestBroadcastAllFailed_NoErrorsReturnsObjectNotFound(t *testing.T) {
 	t.Parallel()
-	_, name, err := broadcastAllFailed[int](noopSpan(), nil)
-	if name != "" {
-		t.Errorf("name = %q, want empty", name)
-	}
-	if !errors.Is(err, core.ErrObjectNotFound) {
+	if err := broadcastAllFailed(noopSpan(), nil); !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("err = %v, want chain containing ErrObjectNotFound", err)
 	}
 }
 
-// TestBroadcastAllFailed_WrapsLastError verifies the broadcast all failed wraps last error contract.
-// Asserts that name = , want empty.
+// TestBroadcastAllFailed_WrapsLastError asserts the last probe error is the
+// one wrapped, so the server maps the failure by what the final backend said.
 func TestBroadcastAllFailed_WrapsLastError(t *testing.T) {
 	t.Parallel()
 	lastErr := errors.New("backend on fire")
-	_, name, err := broadcastAllFailed[int](noopSpan(), lastErr)
-	if name != "" {
-		t.Errorf("name = %q, want empty", name)
-	}
+	err := broadcastAllFailed(noopSpan(), []error{errors.New("earlier"), lastErr})
 	if !errors.Is(err, lastErr) {
 		t.Errorf("err chain missing underlying: %v", err)
 	}

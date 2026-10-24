@@ -69,14 +69,12 @@ func spent(tracker *UsageTracker, name string, api, egress, ingress int64) {
 	tracker.SetBaselines(baselines)
 }
 
-// reads is n GetObject operations, for the cases that care about how many
-// calls are proposed rather than which.
-func reads(n int) []s3op.Operation {
-	ops := make([]s3op.Operation, n)
-	for i := range ops {
-		ops[i] = s3op.GetObject
+// recordCalls charges n calls of op to backend, one Record at a time, for the
+// cases that seed unflushed usage rather than test the charge itself.
+func recordCalls(ctx context.Context, tracker *UsageTracker, backend string, op s3op.Operation, n int) {
+	for range n {
+		tracker.Record(ctx, backend, op, 0, 0)
 	}
-	return ops
 }
 
 // -------------------------------------------------------------------------
@@ -184,7 +182,7 @@ func TestWithinLimits_AllWithinLimits(t *testing.T) {
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
 		"b1": capped(t, 1000, 1000, 1000),
 	})
-	if !tracker.WithinLimits("b1", reads(1), 1, 1) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 1, 1) {
 		t.Error("should be within limits at zero usage")
 	}
 }
@@ -195,10 +193,10 @@ func TestWithinLimits_APILimitExceeded(t *testing.T) {
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
 		"b1": capped(t, 100, 0, 0),
 	})
-	spent(tracker, "b1", 99, 0, 0)
+	spent(tracker, "b1", 100, 0, 0)
 
-	if tracker.WithinLimits("b1", reads(2), 0, 0) {
-		t.Error("should exceed request limit (99 + 2 > 100)")
+	if tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
+		t.Error("should exceed request limit (100 + 1 > 100)")
 	}
 }
 
@@ -210,7 +208,7 @@ func TestWithinLimits_EgressLimitExceeded(t *testing.T) {
 	})
 	spent(tracker, "b1", 0, 900, 0)
 
-	if tracker.WithinLimits("b1", nil, 200, 0) {
+	if tracker.WithinLimits("b1", s3op.GetObject, 200, 0) {
 		t.Error("should exceed egress limit (900 + 200 > 1000)")
 	}
 }
@@ -223,7 +221,7 @@ func TestWithinLimits_IngressLimitExceeded(t *testing.T) {
 	})
 	spent(tracker, "b1", 0, 0, 400)
 
-	if tracker.WithinLimits("b1", nil, 0, 200) {
+	if tracker.WithinLimits("b1", s3op.PutObject, 0, 200) {
 		t.Error("should exceed ingress limit (400 + 200 > 500)")
 	}
 }
@@ -233,7 +231,7 @@ func TestWithinLimits_NoLimitsConfigured(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 
-	if !tracker.WithinLimits("b1", reads(999), 999999, 999999) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 999999, 999999) {
 		t.Error("should be within limits when no limits configured")
 	}
 }
@@ -245,25 +243,27 @@ func TestWithinLimits_UnknownBackend(t *testing.T) {
 		"b1": capped(t, 100, 0, 0),
 	})
 
-	if !tracker.WithinLimits("unknown", reads(999), 0, 0) {
+	if !tracker.WithinLimits("unknown", s3op.GetObject, 0, 0) {
 		t.Error("unknown backend should be within limits (no config)")
 	}
 }
 
-// TestWithinLimits_IncludesUnflushedCounters verifies the within limits includes unflushed counters path by exercising tracker.SetBaseline, tracker.RecordN, tracker.WithinLimits.
+// TestWithinLimits_IncludesUnflushedCounters asserts admission judges the
+// flushed baseline plus the unflushed counters, not the baseline alone.
 func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
 		"b1": capped(t, 100, 0, 0),
 	})
 	spent(tracker, "b1", 50, 0, 0)
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 40) // baseline 50 + unflushed 40 = 90 effective
+	recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 49) // baseline 50 + unflushed 49 = 99 effective
 
-	if !tracker.WithinLimits("b1", reads(5), 0, 0) {
-		t.Error("90 + 5 = 95 should be within limit of 100")
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
+		t.Error("99 + 1 = 100 should be within limit of 100")
 	}
-	if tracker.WithinLimits("b1", reads(15), 0, 0) {
-		t.Error("90 + 15 = 105 should exceed limit of 100")
+	tracker.Record(t.Context(), "b1", s3op.GetObject, 0, 0)
+	if tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
+		t.Error("100 + 1 = 101 should exceed limit of 100")
 	}
 }
 
@@ -288,10 +288,10 @@ func TestWithinLimits_PoolsAreIndependent(t *testing.T) {
 		Pools:     core.PoolUsage{"class_a": 10},
 	}})
 
-	if tracker.WithinLimits("b1", []s3op.Operation{s3op.PutObject}, 0, 0) {
+	if tracker.WithinLimits("b1", s3op.PutObject, 0, 0) {
 		t.Error("the write pool is spent; a write must be refused")
 	}
-	if !tracker.WithinLimits("b1", []s3op.Operation{s3op.GetObject}, 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("the read pool is untouched; a read must still be admitted")
 	}
 }
@@ -307,30 +307,13 @@ func TestWithinLimits_PoolsAreAdditive(t *testing.T) {
 			{Name: "lists", Operations: []string{string(s3op.ListObjects)}, Limit: 5},
 		}),
 	})
-	tracker.RecordN(t.Context(), "b1", s3op.ListObjects, 5)
+	recordCalls(t.Context(), tracker, "b1", s3op.ListObjects, 5)
 
-	if tracker.WithinLimits("b1", []s3op.Operation{s3op.ListObjects}, 0, 0) {
+	if tracker.WithinLimits("b1", s3op.ListObjects, 0, 0) {
 		t.Error("the list sub-cap is spent even though the aggregate has room")
 	}
-	if !tracker.WithinLimits("b1", []s3op.Operation{s3op.GetObject}, 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("a read charges only the aggregate, which has room")
-	}
-}
-
-// TestRecord_IgnoresEmptyCharges covers the guards on the charging path. A
-// caller with nothing to charge must move no counter: charging an empty
-// operation set as one call would inflate the request total on paths that
-// batch, and a non-positive repeat count is a caller bug, not a credit.
-func TestRecord_IgnoresEmptyCharges(t *testing.T) {
-	t.Parallel()
-	backend := NewLocalCounterBackend([]string{"b1"})
-	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
-
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 0)
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, -5)
-
-	if got := loaded(backend, "b1"); !got.IsZero() {
-		t.Errorf("counters = %+v, want all zero for empty charges", got)
 	}
 }
 
@@ -345,9 +328,9 @@ func TestWithinLimits_ZeroLimitPoolCountsWithoutRefusing(t *testing.T) {
 			{Name: "watched", Operations: []string{string(s3op.GetObject)}, Limit: 0},
 		}),
 	})
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 1000)
+	recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 1000)
 
-	if !tracker.WithinLimits("b1", reads(1), 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("a pool with no ceiling must never refuse")
 	}
 	if got := loaded(backend, "b1").Pools["watched"]; got != 1000 {
@@ -369,9 +352,9 @@ func TestWithinLimits_UnchargedPoolIsNotConsulted(t *testing.T) {
 			{Name: "reads", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
 		}),
 	})
-	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 1)
+	recordCalls(t.Context(), tracker, "b1", s3op.PutObject, 1)
 
-	if !tracker.WithinLimits("b1", reads(1), 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("a read was refused by a spent write budget it never charges")
 	}
 }
@@ -387,12 +370,12 @@ func TestWithinLimits_UnmeteredNeverRefuses(t *testing.T) {
 			[]core.PoolSpec{{Name: core.PoolAll, Operations: []string{s3op.Wildcard}, Limit: 1}},
 			s3op.DeleteObject),
 	})
-	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 1) // the only metered call the budget allows
+	recordCalls(t.Context(), tracker, "b1", s3op.PutObject, 1) // the only metered call the budget allows
 
-	if tracker.WithinLimits("b1", []s3op.Operation{s3op.PutObject}, 0, 0) {
+	if tracker.WithinLimits("b1", s3op.PutObject, 0, 0) {
 		t.Error("the budget is spent; a metered write must be refused")
 	}
-	if !tracker.WithinLimits("b1", []s3op.Operation{s3op.DeleteObject}, 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.DeleteObject, 0, 0) {
 		t.Error("a delete the provider does not bill must never be refused")
 	}
 
@@ -423,26 +406,6 @@ func TestRecord_ChargesCtxWorkload(t *testing.T) {
 	w := workloadsOf(batches[0])
 	if w[string(audit.WorkloadScrub)].EgressBytes != 10 || w[string(audit.WorkloadUnknown)].EgressBytes != 5 {
 		t.Errorf("workloads = %+v, want 10 for scrub and 5 for unknown", w)
-	}
-}
-
-// -------------------------------------------------------------------------
-// BackendsWithinLimits
-// -------------------------------------------------------------------------
-
-// TestBackendsWithinLimits_FiltersCorrectly verifies the backends within limits filters correctly contract.
-// Asserts that expected [b2], got.
-func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
-	t.Parallel()
-	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{
-		"b1": capped(t, 10, 0, 0),
-		"b2": capped(t, 1000, 0, 0),
-	})
-	spent(tracker, "b1", 10, 0, 0) // at limit
-
-	eligible := tracker.BackendsWithinLimits([]string{"b1", "b2"}, reads(1), 0, 0)
-	if len(eligible) != 1 || eligible[0] != "b2" {
-		t.Errorf("expected [b2], got %v", eligible)
 	}
 }
 
@@ -495,15 +458,15 @@ func TestSetBaselines_ReplacesEveryBackend(t *testing.T) {
 
 	tracker.SetBaselines(map[string]core.Usage{"b2": {Pools: core.PoolUsage{core.PoolAll: 1000}}})
 
-	if !tracker.WithinLimits("b1", reads(999), 0, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("b1 is absent from the new baselines and should start at zero")
 	}
-	if tracker.WithinLimits("b2", reads(1), 0, 0) {
+	if tracker.WithinLimits("b2", s3op.GetObject, 0, 0) {
 		t.Error("b2 is still spent in the new baselines")
 	}
 
 	tracker.SetBaselines(nil)
-	if !tracker.WithinLimits("b2", reads(999), 0, 0) {
+	if !tracker.WithinLimits("b2", s3op.GetObject, 0, 0) {
 		t.Error("nil baselines should clear every backend")
 	}
 }
@@ -565,7 +528,7 @@ func TestRefreshUsage_ReadsEachBackendFromItsCycleStart(t *testing.T) {
 	if got["b1"][workloadA].APIRequests != 10 {
 		t.Errorf("returned usage = %+v, want the reader's", got)
 	}
-	if tracker.WithinLimits("b1", reads(1), 0, 0) {
+	if tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("b1 spent its 10 requests this cycle and should be refused")
 	}
 }
@@ -581,7 +544,7 @@ func TestRefreshUsage_ErrorKeepsTheBaseline(t *testing.T) {
 	if _, err := tracker.RefreshUsage(t.Context(), &startsReader{err: sentinel}); !errors.Is(err, sentinel) {
 		t.Fatalf("RefreshUsage = %v, want %v", err, sentinel)
 	}
-	if tracker.WithinLimits("b1", reads(1), 0, 0) {
+	if tracker.WithinLimits("b1", s3op.GetObject, 0, 0) {
 		t.Error("a failed refresh cleared the spent baseline")
 	}
 }
@@ -640,7 +603,7 @@ func TestNearLimit_PoolReachesThreshold(t *testing.T) {
 			{Name: "reads", Operations: []string{string(s3op.GetObject)}, Limit: 1000},
 		}),
 	})
-	tracker.RecordN(t.Context(), "b1", s3op.PutObject, 9)
+	recordCalls(t.Context(), tracker, "b1", s3op.PutObject, 9)
 
 	if !tracker.NearLimit(0.8) {
 		t.Error("the write pool is at 90% and should count as near its limit")
@@ -657,7 +620,7 @@ func TestFlushUsage_AppliesAndSettles(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 10)
+	recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 10)
 	tracker.Record(t.Context(), "b1", s3op.GetObject, 100, 50)
 
 	flusher := &recordingFlusher{}
@@ -685,7 +648,7 @@ func TestFlushUsage_FailedApplyKeepsTheBatch(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(cb, map[string]core.UsageLimits{"b1": capped(t, 1000, 0, 0)})
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 10)
+	recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 10)
 
 	if err := tracker.FlushUsage(context.Background(), &recordingFlusher{err: errDBDown}); !errors.Is(err, errDBDown) {
 		t.Fatalf("FlushUsage error = %v, want %v", err, errDBDown)
@@ -720,7 +683,7 @@ func TestFlushUsage_SharedBatches(t *testing.T) {
 			t.Parallel()
 			backend := newFakeShared()
 			tracker := NewUsageTracker(backend, nil)
-			tracker.RecordN(t.Context(), "b1", s3op.GetObject, 3)
+			recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 3)
 
 			flusher := &recordingFlusher{err: tc.err}
 			if err := tracker.FlushUsage(context.Background(), flusher); !errors.Is(err, tc.err) {
@@ -744,7 +707,7 @@ func TestFlushUsage_SharedBatches(t *testing.T) {
 func TestFlushUsage_PlainBackendSkipsShared(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(plainBackend{newFakeShared()}, nil)
-	tracker.RecordN(t.Context(), "b1", s3op.GetObject, 3)
+	recordCalls(t.Context(), tracker, "b1", s3op.GetObject, 3)
 
 	flusher := &recordingFlusher{}
 	if err := tracker.FlushUsage(context.Background(), flusher); err != nil {
@@ -850,7 +813,7 @@ func TestRecord_AddsToContextTally(t *testing.T) {
 
 	tracker.Record(ctx, "b1", s3op.GetObject, 100, 0)
 	tracker.Record(ctx, "b1", s3op.PutObject, 0, 40)
-	tracker.RecordN(ctx, "b2", s3op.ListObjectsV2, 3)
+	recordCalls(ctx, tracker, "b2", s3op.ListObjectsV2, 3)
 	tracker.Record(context.Background(), "b1", s3op.GetObject, 999, 0)
 
 	want := audit.Usage{

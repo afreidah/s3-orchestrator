@@ -25,11 +25,7 @@ func (s *Store) ListBackendStates(ctx context.Context) ([]core.BackendStateRecor
 	if err != nil {
 		return nil, fmt.Errorf("list backend states: %w", err)
 	}
-	out := make([]core.BackendStateRecord, len(rows))
-	for i := range rows {
-		out[i] = backendStateFromRow(&rows[i])
-	}
-	return out, nil
+	return mapSlice(rows, backendStateFromRow), nil
 }
 
 // SetBackendFlag sets one flag on the backend, creating its record when it has

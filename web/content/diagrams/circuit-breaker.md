@@ -15,7 +15,7 @@ The calls a backend is serving form one bitset, `core.BackendCalls`, read with a
 window.s3oDiagram = {
   source: [
     'flowchart TD',
-    '    CALL([cb.Call /<br>cb.CallNoResult]):::entry --> PRE{PreCheck}:::decision',
+    '    CALL([cb.Call]):::entry --> PRE{PreCheck}:::decision',
     '',
     '    PRE -->|state = closed| EXEC[Execute<br>Operation]:::process',
     '',
@@ -53,9 +53,9 @@ window.s3oDiagram = {
 
   info: {
     CALL: {
-      title: 'cb.Call / cb.CallNoResult',
+      title: 'cb.Call',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Methods on <code>breaker.CircuitBreaker</code> that guard one operation. <code>cb.Call(fn)</code> handles functions returning <code>(T, error)</code>; <code>cb.CallNoResult(fn)</code> handles <code>error</code>-only functions.</p><p><code>CircuitBreakerBackend</code> guards PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects, CopyObject and ListObjects this way, running each call through the backend breaker and then that call\'s own breaker. The database breaker runs the same PreCheck and PostCheck around every SQL Exec, Query and QueryRow in the store driver (SQLite or PostgreSQL).</p><p>The Redis counter backend never calls PreCheck. It only feeds call results to PostCheck to count failures.</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
+      body: '<p>Methods on <code>breaker.CircuitBreaker</code> that guard one operation. <code>cb.Call(fn)</code> runs a function returning <code>(T, error)</code>; a caller with an <code>error</code>-only operation runs PreCheck and PostCheck around it directly.</p><p><code>CircuitBreakerBackend</code> guards PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects, CopyObject and ListObjects this way, running each call through the backend breaker and then that call\'s own breaker. The database breaker runs the same PreCheck and PostCheck around every SQL Exec, Query and QueryRow in the store driver (SQLite or PostgreSQL).</p><p>The Redis counter backend never calls PreCheck. It only feeds call results to PostCheck to count failures.</p><p>Flow: PreCheck &rarr; execute &rarr; PostCheck. If PreCheck returns an error, the real operation is never called.</p>'
     },
     PRE: {
       title: 'PreCheck',

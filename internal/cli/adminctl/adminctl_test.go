@@ -34,6 +34,12 @@ var testCreds = Credentials{ //nolint:gosec // G101: test credential
 	SecretKey:   "adminctl-test-secret",
 }
 
+// Command runs one admin CLI command in text output mode and returns its exit
+// code, so a test drives a subcommand without parsing process-level flags.
+func Command(cmd string, args []string, baseAddr string, creds Credentials, stdout, stderr io.Writer) int {
+	return CommandWithFormat(cmd, args, baseAddr, creds, output.FormatText, stdout, stderr)
+}
+
 // TestMain clears the credential environment variables before the suite runs.
 // A developer's exported admin address or keypair would otherwise leak into the
 // tests that exercise config-file loading and flag precedence.
@@ -68,6 +74,30 @@ func TestRun_FlagTarget(t *testing.T) {
 	}
 	if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
 		t.Errorf("server saw Authorization %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
+	}
+}
+
+// TestRun_UsageListsEveryCommand verifies the usage printed with no command
+// names every dispatchable command, and builds each provisioning summary from
+// that noun's verbs.
+func TestRun_UsageListsEveryCommand(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := Run(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, want 0 for bare usage", code)
+	}
+	usage := errb.String()
+	for _, table := range [][]verb{adminCommands, provisioningCommands} {
+		for _, v := range table {
+			if !strings.Contains(usage, "  "+v.Name+" ") {
+				t.Errorf("usage does not list %q", v.Name)
+			}
+		}
+	}
+	if !strings.Contains(usage, "list, create, rename or delete an identity") {
+		t.Errorf("user summary not built from its verbs:\n%s", usage)
+	}
+	if got := verbList([]verb{{Name: "list"}}); got != "list" {
+		t.Errorf("verbList of one verb = %q, want %q", got, "list")
 	}
 }
 

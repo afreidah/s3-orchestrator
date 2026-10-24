@@ -12,7 +12,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -43,14 +42,9 @@ type configErrMsg struct{ err error }
 // loadConfig returns a command that fetches the running configuration off the
 // main loop.
 func (m *model) loadConfig() tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetConfig(context.Background())
-		if err != nil {
-			return configErrMsg{err}
-		}
-		return configLoadedMsg{resp}
-	}
+	return fetchCmd(m.client.GetConfig,
+		func(r *adminapi.ConfigResponse) tea.Msg { return configLoadedMsg{r} },
+		func(err error) tea.Msg { return configErrMsg{err} })
 }
 
 // -------------------------------------------------------------------------

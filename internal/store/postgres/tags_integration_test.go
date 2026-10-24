@@ -44,7 +44,7 @@ func tagNames(tags []core.Tag) []string {
 func seedTaggedObject(t *testing.T, s *Store, key, backend string, tags []core.Tag) {
 	t.Helper()
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 	if tags != nil {
@@ -94,7 +94,7 @@ func TestStoreInt_GetAllObjectLocations_TagCountOnEveryCopy(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "tags-count")
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}, {Backend: "backend-b"}}, Size: 1024,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -279,7 +279,7 @@ func TestStoreInt_ObjectTags_OverwriteClearsSet(t *testing.T) {
 	key := uniqueKey(t, "tags-overwrite")
 
 	seedTaggedObject(t, s, key, "backend-a", []core.Tag{{Key: "old", Value: "1"}})
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 2048}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 2048}); err != nil {
 		t.Fatalf("RecordObject (overwrite): %v", err)
 	}
 	assertNoTags(t, s, key, "overwrite left the previous object's tags behind")
@@ -293,7 +293,7 @@ func TestStoreInt_ObjectTags_DeleteObjectCascades(t *testing.T) {
 	key := uniqueKey(t, "tags-doomed")
 
 	seedTaggedObject(t, s, key, "backend-a", []core.Tag{{Key: "k", Value: "v"}})
-	if _, _, err := s.DeleteObject(ctx, key); err != nil {
+	if _, err := s.DeleteObject(ctx, key); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 	assertNoTags(t, s, key, "tags survived the object")
@@ -310,7 +310,7 @@ func TestStoreInt_ObjectTags_BatchDeleteCascades(t *testing.T) {
 	for _, k := range keys {
 		seedTaggedObject(t, s, k, "backend-a", []core.Tag{{Key: "k", Value: "v"}})
 	}
-	if _, _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
+	if _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
 	for _, k := range keys {

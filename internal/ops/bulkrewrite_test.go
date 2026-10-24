@@ -32,11 +32,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"go.uber.org/mock/gomock"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
@@ -166,20 +165,14 @@ func (f moverFunc) MoveObject(ctx context.Context, req *writepath.MoveRequest) (
 	return f(ctx, req)
 }
 
-// pagingEnv builds the collaborators the driver needs, over a backend that
-// serves anything and a mover that does what move says.
+// pagingEnv builds the collaborators the driver needs, over a mover that does
+// what move says.
 func pagingEnv(t *testing.T, move moverFunc) bulkRewriteEnv {
 	t.Helper()
-	ctrl := gomock.NewController(t)
-
-	runtime := opstest.NewMockRuntimeOps(ctrl)
-	runtime.EXPECT().GetBackend(gomock.Any()).Return(&fakeBackend{payload: []byte("payload")}, nil).AnyTimes()
-
 	return bulkRewriteEnv{
-		log:     slog.New(slog.DiscardHandler),
-		runtime: runtime,
-		mover:   move,
-		layers:  &storedform.Layers{},
+		log:    slog.New(slog.DiscardHandler),
+		mover:  move,
+		layers: &storedform.Layers{},
 	}
 }
 
@@ -540,15 +533,11 @@ func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
 	enc := testEncryptor(t)
 	payload := []byte("hello world")
 	be := &fakeBackend{payload: payload}
-	ctrl := gomock.NewController(t)
-	runtime := opstest.NewMockRuntimeOps(ctrl)
-	runtime.EXPECT().GetBackend("backend-a").Return(be, nil).Times(1)
-	mover := &fakeMover{}
+	mover := &fakeMover{backends: map[string]s3be.ObjectBackend{"backend-a": be}}
 	env := bulkRewriteEnv{
-		log:     slog.New(slog.DiscardHandler),
-		runtime: runtime,
-		mover:   mover,
-		layers:  &storedform.Layers{Encryptor: enc},
+		log:    slog.New(slog.DiscardHandler),
+		mover:  mover,
+		layers: &storedform.Layers{Encryptor: enc},
 	}
 	set := newShrinkingSet(1)
 	set.rows[0].ContentHash = "hash"
@@ -566,9 +555,6 @@ func TestRunBulkRewrite_MovesOntoTheSourceBackend(t *testing.T) {
 	req := reqs[0]
 	if req.DestName != "backend-a" || req.Source.BackendName != "backend-a" {
 		t.Errorf("move %s -> %s, want backend-a onto itself", req.Source.BackendName, req.DestName)
-	}
-	if req.SrcBackend != be || req.DestBackend != be {
-		t.Error("move did not read from and write to the copy's own backend")
 	}
 	if req.Profile != writepath.RewriteMove {
 		t.Errorf("profile = %+v, want RewriteMove", req.Profile)

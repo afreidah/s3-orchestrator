@@ -911,7 +911,7 @@ func TestScrub_LeavesTheReserveForClientReads(t *testing.T) {
 	if sum.Deferred != 5 {
 		t.Errorf("Deferred = %d, want 5", sum.Deferred)
 	}
-	if !tracker.WithinLimits("b1", getObjectOp, 700, 0) {
+	if !tracker.WithinLimits("b1", s3op.GetObject, 700, 0) {
 		t.Error("a client read inside the reserve was refused")
 	}
 }

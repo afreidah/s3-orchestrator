@@ -16,6 +16,7 @@
 package admintarget
 
 import (
+	"cmp"
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -38,7 +39,7 @@ const (
 // when the address is still missing. Credentials never come from the server
 // config, which holds the deployment's own identity rather than the operator's.
 func Resolve(addrFlag string, loadCfg func() (*config.Config, error)) (string, error) {
-	if addr := firstNonEmpty(addrFlag, os.Getenv(EnvAddr)); addr != "" {
+	if addr := cmp.Or(addrFlag, os.Getenv(EnvAddr)); addr != "" {
 		return addr, nil
 	}
 	cfg, err := loadCfg()
@@ -46,14 +47,4 @@ func Resolve(addrFlag string, loadCfg func() (*config.Config, error)) (string, e
 		return "", err
 	}
 	return cfg.Server.ListenAddr, nil
-}
-
-// firstNonEmpty returns the first non-empty string, or "" if all are empty.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

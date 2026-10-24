@@ -16,8 +16,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
-// runVersion prints the binary version, Go version, and platform to stdout.
-func runVersion() { // codecov:ignore -- trivial fmt.Printf, no branching logic
+// runVersion prints the binary version, Go version, and platform to stdout. It
+// takes no arguments and always succeeds.
+func runVersion([]string) int { // codecov:ignore -- trivial fmt.Printf, no branching logic
 	fmt.Printf("s3-orchestrator %s %s %s/%s\n",
 		telemetry.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	return 0
 }

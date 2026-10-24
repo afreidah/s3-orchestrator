@@ -20,13 +20,13 @@ import (
 
 // The roles below are the whole persistence contract. Each consumer declares
 // its own dependency in terms of the ones it calls, and both *postgres.Store
-// and *sqlite.Store satisfy every role, asserted through AssertEngine.
+// and *sqlite.Store satisfy every role, which internal/di checks at compile
+// time by returning either engine as its unexported union.
 //
-// There is deliberately no interface unioning them. The union is not a fact
-// about the domain - it is a fact about there being one store type per engine
-// - so it exists only as the unexported engineRoles constraint in engine.go,
-// which no consumer can hold, and unexported in internal/di, which is the only
-// place that holds an opened engine before splitting it into these roles.
+// There is deliberately no exported interface unioning them. The union is not
+// a fact about the domain - it is a fact about there being one store type per
+// engine - so it lives unexported in internal/di, the only place that holds an
+// opened engine before splitting it into these roles.
 //
 // CB protection lives in each driver's DBTX chokepoint, so every role carries
 // the breaker semantics transparently.
@@ -50,9 +50,9 @@ import (
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
-	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]CleanupItem, QuotaDeltas, error)
-	DeleteObject(ctx context.Context, key string) ([]CleanupItem, QuotaDeltas, error)
-	DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, QuotaDeltas, error)
+	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]CleanupItem, error)
+	DeleteObject(ctx context.Context, key string) ([]CleanupItem, error)
+	DeleteObjectsBatch(ctx context.Context, keys []string) ([]CleanupItem, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
@@ -76,15 +76,15 @@ type TagStore interface {
 	DeleteObjectTags(ctx context.Context, key string) error
 }
 
-// QuotaStore defines the byte-counter reads and writes. Placement decisions use
-// the in-memory tracker, not these rows. ReconcileUsage brings each backend's
+// QuotaStore defines the byte-counter reads and writes. GetQuotaStats is the
+// snapshot the routing tracker ranks against; admission itself is decided by
+// the statements that claim space. ReconcileUsage brings each backend's
 // striped total to SUM(object_locations.size_bytes), read from one snapshot,
 // by adding the difference rather than overwriting the total, so a write that
 // commits alongside keeps its own adjustment. It returns the nonzero
 // per-backend deltas (truth - previous) it applied.
 type QuotaStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	ListBackendQuotaUsage(ctx context.Context) ([]BackendQuotaUsage, error)
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
@@ -103,7 +103,6 @@ type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) (bool, error)
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, p *RecordPartParams) ([]CleanupItem, error)
-	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]MultipartPart, error)
 	BeginMultipartCompletion(ctx context.Context, uploadID string, staleBefore time.Time) (bool, error)
 	RenewMultipartCompletion(ctx context.Context, uploadID string) (bool, error)
@@ -136,10 +135,11 @@ type CreateMultipartUploadParams struct {
 	Tags          []Tag  // applied to the object CompleteMultipartUpload produces
 }
 
-// ReplicationStore defines replication management operations.
+// ReplicationStore defines replication management operations. The
+// under-replicated scan does not count copies on the excluded backends, which
+// may be empty.
 type ReplicationStore interface {
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]ObjectLocation, error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountReplicationBacklog(ctx context.Context, factor int) (ReplicationBacklog, error)
 }
@@ -194,8 +194,8 @@ type PendingStore interface {
 	DeletePending(ctx context.Context, intentID string) error
 	DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error)
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
-	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, QuotaDeltas, error)
-	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, QuotaDeltas, error)
+	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []CleanupItem, error)
+	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []CleanupItem, error)
 	PendingDepth(ctx context.Context) (int64, error)
 }
 
@@ -297,10 +297,10 @@ type DashboardStore interface {
 // ADMIN ROLE INTERFACES
 // -------------------------------------------------------------------------
 
-// LifecycleAdmin defines startup, shutdown, and schema-management
-// operations on the concrete store. These methods are not wrapped by
-// CircuitBreakerStore - they run during boot before the breaker is wired
-// up, and Close() releases pool resources directly.
+// LifecycleAdmin defines startup, shutdown, and schema-management operations on
+// the concrete store. Migrations and the schema check run at boot outside the
+// circuit breaker the request-time roles go through, and Close releases pool
+// resources directly.
 type LifecycleAdmin interface {
 	RunMigrations(ctx context.Context) error
 	VerifySchemaVersion(ctx context.Context) error

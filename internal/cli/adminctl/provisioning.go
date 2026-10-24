@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -64,7 +65,6 @@ const (
 	errNameRequired      = "error: -name is required"
 	errUserRequired      = "error: -user is required"
 	errKeypairIncomplete = "error: -access-key and -secret-key must both be given, or both omitted"
-	errBucketRequired    = "error: -bucket is required"
 	errGrantNameRequired = "error: -name is required for a bucket or backend grant"
 
 	colSource = "Source"
@@ -74,34 +74,31 @@ const (
 // DISPATCH
 // -------------------------------------------------------------------------
 
-// cmdBucket implements `s3-orchestrator admin bucket <verb>`.
-var cmdBucket = nounCommand("bucket", []verb{
-	{"list", "List every virtual bucket, from the config file and the store", bucketList},
-	{"create", "Declare a virtual bucket in the store", bucketCreate},
-	{"delete", "Remove a stored virtual bucket that holds no objects and no grants", bucketDelete},
-})
-
-// cmdUser implements `s3-orchestrator admin user <verb>`.
-var cmdUser = nounCommand("user", []verb{
-	{"list", "List every identity and the buckets it reaches", userList},
-	{"create", "Declare an identity credentials can be issued against", userCreate},
-	{"rename", "Change the name an identity is read by", userRename},
-	{"delete", "Remove an identity that holds no credentials and no grants", userDelete},
-})
-
-// cmdCredential implements `s3-orchestrator admin credential <verb>`.
-var cmdCredential = nounCommand("credential", []verb{
-	{"list", "List every keypair, without its secret", credentialList},
-	{"issue", "Mint or register a keypair for a user and print it", credentialIssue},
-	{"revoke", "Revoke one keypair, leaving its siblings working", credentialRevoke},
-})
-
-// cmdGrant implements `s3-orchestrator admin grant <verb>`.
-var cmdGrant = nounCommand("grant", []verb{
-	{"add", "Let a user reach a bucket, a backend or the orchestrator", grantAdd},
-	{"set", "Declare exactly what a user reaches on one resource", grantSet},
-	{"remove", "Withdraw one user's access to one resource", grantRemove},
-})
+// The verbs each provisioning noun takes, as in `s3-orchestrator admin bucket
+// create`. The admin usage builds each noun's summary from its table.
+var (
+	bucketVerbs = []verb{
+		{"list", "List every virtual bucket, from the config file and the store", bucketList},
+		{"create", "Declare a virtual bucket in the store", bucketCreate},
+		{"delete", "Remove a stored virtual bucket that holds no objects and no grants", bucketDelete},
+	}
+	userVerbs = []verb{
+		{"list", "List every identity and the buckets it reaches", userList},
+		{"create", "Declare an identity credentials can be issued against", userCreate},
+		{"rename", "Change the name an identity is read by", userRename},
+		{"delete", "Remove an identity that holds no credentials and no grants", userDelete},
+	}
+	credentialVerbs = []verb{
+		{"list", "List every keypair, without its secret", credentialList},
+		{"issue", "Mint or register a keypair for a user and print it", credentialIssue},
+		{"revoke", "Revoke one keypair, leaving its siblings working", credentialRevoke},
+	}
+	grantVerbs = []verb{
+		{"add", "Let a user reach a bucket, a backend or the orchestrator", grantAdd},
+		{"set", "Declare exactly what a user reaches on one resource", grantSet},
+		{"remove", "Withdraw one user's access to one resource", grantRemove},
+	}
+)
 
 // -------------------------------------------------------------------------
 // BUCKETS
@@ -125,15 +122,10 @@ func bucketCreate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateBucketRequest{
+	return c.sendJSON(http.MethodPost, pathProvBuckets, adminapi.CreateBucketRequest{
 		Name:                *name,
 		MaxMultipartUploads: *maxMultipart,
-	})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.post(pathProvBuckets, string(body), nil)
+	}, nil)
 }
 
 // bucketDelete removes a stored virtual bucket.
@@ -148,7 +140,7 @@ func bucketDelete(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	return c.delete(pathProvBuckets+"/"+url.PathEscape(*name), nil)
+	return c.delete(pathProvBuckets + "/" + url.PathEscape(*name))
 }
 
 // -------------------------------------------------------------------------
@@ -174,12 +166,7 @@ func userCreate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateUserRequest{Name: *name})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.post(pathProvUsers, string(body), nil)
+	return c.sendJSON(http.MethodPost, pathProvUsers, adminapi.CreateUserRequest{Name: *name}, nil)
 }
 
 // userRename changes the name an identity is read by.
@@ -203,12 +190,7 @@ func userRename(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	body, err := json.Marshal(adminapi.RenameUserRequest{Name: *name})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.patch(pathProvUsers+"/"+url.PathEscape(*id), string(body), nil)
+	return c.sendJSON(http.MethodPatch, pathProvUsers+"/"+url.PathEscape(*id), adminapi.RenameUserRequest{Name: *name}, nil)
 }
 
 // userDelete removes an identity.
@@ -223,7 +205,7 @@ func userDelete(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -id is required")
 		return 1
 	}
-	return c.delete(pathProvUsers+"/"+url.PathEscape(*id), nil)
+	return c.delete(pathProvUsers + "/" + url.PathEscape(*id))
 }
 
 // -------------------------------------------------------------------------
@@ -258,17 +240,12 @@ func credentialIssue(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errKeypairIncomplete)
 		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateCredentialRequest{
+	return c.sendJSON(http.MethodPost, pathProvCreds, adminapi.CreateCredentialRequest{
 		UserID:          *user,
 		Label:           *label,
 		AccessKeyID:     *accessKey,
 		SecretAccessKey: *secretKey,
-	})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.post(pathProvCreds, string(body), renderNewCredential)
+	}, renderNewCredential)
 }
 
 // credentialRevoke revokes one keypair.
@@ -283,7 +260,7 @@ func credentialRevoke(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -access-key is required")
 		return 1
 	}
-	return c.delete(pathProvCreds+"/"+url.PathEscape(*accessKey), nil)
+	return c.delete(pathProvCreds + "/" + url.PathEscape(*accessKey))
 }
 
 // -------------------------------------------------------------------------
@@ -354,17 +331,12 @@ func grantAdd(args []string, c *client) int {
 	if !ok {
 		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateGrantRequest{
+	return c.sendJSON(http.MethodPost, pathProvGrants, adminapi.CreateGrantRequest{
 		UserID:      user,
 		Kind:        string(resource.Kind),
 		Name:        resource.Name,
 		Permissions: splitPermissions(*perms),
-	})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.post(pathProvGrants, string(body), nil)
+	}, nil)
 }
 
 // splitPermissions turns the flag value into the list the request carries. The
@@ -390,12 +362,7 @@ func grantSet(args []string, c *client) int {
 	if !ok {
 		return 1
 	}
-	body, err := json.Marshal(adminapi.SetGrantRequest{Permissions: splitPermissions(*perms)})
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
-		return 1
-	}
-	return c.put(grantPath(user, resource), string(body), nil)
+	return c.sendJSON(http.MethodPut, grantPath(user, resource), adminapi.SetGrantRequest{Permissions: splitPermissions(*perms)}, nil)
 }
 
 // grantRemove withdraws one user's access to one resource.
@@ -405,7 +372,7 @@ func grantRemove(args []string, c *client) int {
 	if !ok {
 		return 1
 	}
-	return c.delete(grantPath(user, resource), nil)
+	return c.delete(grantPath(user, resource))
 }
 
 // -------------------------------------------------------------------------

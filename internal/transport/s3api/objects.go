@@ -202,15 +202,10 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		setValidatorHeaders(w, result.ETag, result.LastModified)
 	}
 
-	w.Header().Set(headerContentType, result.ContentType)
+	setObjectHeaders(w, result.ContentType, result.Metadata, result.TagCount)
 	if result.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}
-	w.Header().Set("Accept-Ranges", "bytes")
-	for k, v := range result.Metadata {
-		w.Header().Set("x-amz-meta-"+k, v)
-	}
-	setTaggingCountHeader(w, result.TagCount)
 
 	status := http.StatusOK
 	if result.ContentRange != "" {
@@ -262,14 +257,9 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 		telemetry.AttrContentType.String(result.ContentType),
 	)
 
-	w.Header().Set(headerContentType, result.ContentType)
+	setObjectHeaders(w, result.ContentType, result.Metadata, result.TagCount)
 	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	setValidatorHeaders(w, result.ETag, result.LastModified)
-	w.Header().Set("Accept-Ranges", "bytes")
-	for k, v := range result.Metadata {
-		w.Header().Set("x-amz-meta-"+k, v)
-	}
-	setTaggingCountHeader(w, result.TagCount)
 
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
 		w.WriteHeader(status)
@@ -347,10 +337,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 		LastModified: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode copy response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // handleDeleteObjects processes POST /{bucket}?delete requests. Deletes up to
@@ -398,10 +385,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		}
 	}
 
-	if err := writeXML(w, http.StatusOK, resp); err != nil {
-		return http.StatusOK, fmt.Errorf("failed to encode delete objects response: %w", err)
-	}
-	return http.StatusOK, nil
+	return respondXML(w, resp)
 }
 
 // deleteObjectErrorFor extracts the S3-compatible error code and message for
@@ -460,9 +444,15 @@ func hasConditionals(r *http.Request) bool {
 		r.Header.Get(headerIfModifiedSince) != "" || r.Header.Get(headerIfUnmodifiedSince) != ""
 }
 
-// setTaggingCountHeader reports how many tags the object carries, omitting the
-// header for zero as S3 does.
-func setTaggingCountHeader(w http.ResponseWriter, tagCount int) {
+// setObjectHeaders writes the representation headers a GET and a HEAD of an
+// object both carry: content type, range support, user metadata, and how many
+// tags the object has, omitted for zero as S3 does.
+func setObjectHeaders(w http.ResponseWriter, contentType string, metadata map[string]string, tagCount int) {
+	w.Header().Set(headerContentType, contentType)
+	w.Header().Set("Accept-Ranges", "bytes")
+	for k, v := range metadata {
+		w.Header().Set("x-amz-meta-"+k, v)
+	}
 	if tagCount > 0 {
 		w.Header().Set(headerTaggingCount, strconv.Itoa(tagCount))
 	}

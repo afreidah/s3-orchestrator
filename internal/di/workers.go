@@ -74,8 +74,8 @@ func resolveWorkerCore(i do.Injector) (workerCore, error) {
 }
 
 // resolveWorkerCoreWithCfg pulls *config.Config first, then the worker
-// core, mirroring the historic resolution order. Resolving config first
-// lets feature-gated providers short-circuit before touching the runtime.
+// core. Resolving config first lets feature-gated providers short-circuit
+// before touching the runtime.
 func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
 	r := newResolver(i)
 	cfg := r.ResolveNamed[*config.Config]("Config")
@@ -223,25 +223,17 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 // register a service for it; the reconciler is also resolvable directly
 // for the admin handler's inspection endpoints.
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
-	c, err := resolveWorkerCoreWithCfg(i)
-	if err != nil {
-		return nil, err
-	}
-	declared, err := do.Invoke[*provisioning.Declared](i)
-	if err != nil {
-		return nil, err
-	}
-	rec, err := do.Invoke[*reconcile.Manager](i)
-	if err != nil {
-		return nil, err
-	}
-	usageSvc, err := do.Invoke[*usage.Service](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
+	declared := r.Resolve[*provisioning.Declared]()
+	rec := r.Resolve[*reconcile.Manager]()
+	usageSvc := r.Resolve[*usage.Service]()
+	if r.err != nil {
+		return nil, r.err
 	}
 	return worker.NewReconciler(&worker.ReconcilerDeps{
 		Syncer:  rec,
-		Fleet:   c.Runtime,
+		Fleet:   rt,
 		Usage:   usageSvc,
 		Buckets: declared,
 	}), nil

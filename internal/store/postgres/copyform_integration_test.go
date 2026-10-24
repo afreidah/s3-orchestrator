@@ -102,12 +102,12 @@ func pgKeysByForm(t *testing.T, s *Store, f *core.FormFilter) []string {
 func pgRecordForm(t *testing.T, s *Store, key, backend string, size int64, form *core.StoredForm) {
 	t.Helper()
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: size, Form: form,
 	}); err != nil {
 		t.Fatalf("RecordObject(%s): %v", key, err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(ctx, key) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(ctx, key) })
 }
 
 // pgFormFromFlags builds a stored form carrying the fields each flag in set
@@ -268,7 +268,7 @@ func TestStoreInt_ListCopiesByForm_NarrowsByBackendKeyAndManagement(t *testing.T
 	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: stray, Backend: formBackend, Size: 10, Unmanaged: true}); err != nil {
 		t.Fatalf("ImportObject(unmanaged): %v", err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(ctx, stray) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(ctx, stray) })
 
 	cases := []struct {
 		name string
@@ -364,13 +364,13 @@ func TestStoreInt_ListCopiesByForm_ReturnsWholeRows(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "whole")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: formBackend}}, Size: 1000,
 		Identity: &core.ObjectIdentity{ETag: `"etag-1"`},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	t.Cleanup(func() { _, _, _ = s.DeleteObject(ctx, key) })
+	t.Cleanup(func() { _, _ = s.DeleteObject(ctx, key) })
 	probe := &core.CopyPatch{Probe: &core.CompressionProbe{Size: 990, Level: formLevel}}
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, formBackend), probe); err != nil {
 		t.Fatalf("UpdateCopyMetadata(probe): %v", err)

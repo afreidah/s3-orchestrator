@@ -28,7 +28,7 @@ import (
 func TestUser_CanReach(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", grantsOn("photos", "backups"))
+	u := newUser("u1", "ci", grantsOn("photos", "backups"))
 	for _, want := range []string{"photos", "backups"} {
 		if !u.CanReach(want) {
 			t.Errorf("CanReach(%q) = false, want true", want)
@@ -59,7 +59,7 @@ func TestUser_NilReachesNothing(t *testing.T) {
 func TestUser_BucketsSorted(t *testing.T) {
 	t.Parallel()
 
-	got := NewUser("u1", "ci", grantsOn("zeta", "alpha", "mid")).Buckets()
+	got := newUser("u1", "ci", grantsOn("zeta", "alpha", "mid")).Buckets()
 	want := []string{"alpha", "mid", "zeta"}
 	if len(got) != len(want) {
 		t.Fatalf("Buckets() = %v, want %v", got, want)
@@ -278,7 +278,7 @@ func grantsOn(buckets ...string) map[string]core.PermissionSet {
 func TestUser_Can(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", map[string]core.PermissionSet{
+	u := newUser("u1", "ci", map[string]core.PermissionSet{
 		"readonly": core.PermListBuckets | core.PermList | core.PermRead,
 		"full":     core.PermAll,
 	})
@@ -329,7 +329,7 @@ func TestUser_CanNil(t *testing.T) {
 func TestUser_CanReachIsNotCan(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
+	u := newUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
 	if !u.CanReach("photos") {
 		t.Error("a read-only grant does not reach its bucket")
 	}
@@ -344,7 +344,7 @@ func TestUser_CanReachIsNotCan(t *testing.T) {
 func TestUser_BucketsNeedsListBuckets(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", map[string]core.PermissionSet{
+	u := newUser("u1", "ci", map[string]core.PermissionSet{
 		"listed":   core.PermListBuckets | core.PermWrite,
 		"unlisted": core.PermWrite,
 	})
@@ -361,10 +361,10 @@ func TestUser_BucketsNeedsListBuckets(t *testing.T) {
 func TestUser_CanAdminFallsBackToTheWildcard(t *testing.T) {
 	t.Parallel()
 
-	named := NewUser("u1", "ci", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+	named := newUser("u1", "ci", nil).withAdmin(map[core.Resource]core.PermissionSet{
 		{Kind: core.ResourceBackend, Name: "b1"}: core.PermAdminDrain,
 	})
-	wild := NewUser("u2", "ops", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+	wild := newUser("u2", "ops", nil).withAdmin(map[core.Resource]core.PermissionSet{
 		{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminDrain,
 	})
 
@@ -396,7 +396,7 @@ func TestUser_CanAdminFallsBackToTheWildcard(t *testing.T) {
 func TestUser_CanAdminRefusesWithoutAGrant(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermAll})
+	u := newUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermAll})
 	for _, on := range []core.Resource{
 		{Kind: core.ResourceOrchestrator},
 		{Kind: core.ResourceBackend, Name: "b1"},
@@ -418,7 +418,7 @@ func TestUser_CanAdminHoldsPermissionsApart(t *testing.T) {
 	t.Parallel()
 
 	instance := core.Resource{Kind: core.ResourceOrchestrator}
-	u := NewUser("u1", "monitor", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+	u := newUser("u1", "monitor", nil).withAdmin(map[core.Resource]core.PermissionSet{
 		instance: core.PermAdminRead,
 	})
 
@@ -439,12 +439,12 @@ func TestUser_CanAdminHoldsPermissionsApart(t *testing.T) {
 func TestUser_AllBucketsIsTheWildcard(t *testing.T) {
 	t.Parallel()
 
-	plain := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
+	plain := newUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
 	if got := plain.AllBuckets(); got != 0 {
 		t.Errorf("a user holding no wildcard reported %q", got)
 	}
 
-	wild := NewUser("u2", "ops", nil).WithAllBuckets(core.PermList | core.PermRead)
+	wild := newUser("u2", "ops", nil).withAllBuckets(core.PermList | core.PermRead)
 	if got := wild.AllBuckets(); got != core.PermList|core.PermRead {
 		t.Errorf("AllBuckets() = %q, want list,read", got)
 	}
@@ -459,9 +459,9 @@ func TestUser_AllBucketsIsTheWildcard(t *testing.T) {
 func TestUser_WildcardReachesAnUnnamedBucket(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ops", map[string]core.PermissionSet{
+	u := newUser("u1", "ops", map[string]core.PermissionSet{
 		"secrets": core.PermListBuckets,
-	}).WithAllBuckets(core.PermAll)
+	}).withAllBuckets(core.PermAll)
 
 	if !u.CanReach("anything") || !u.Can("anything", core.PermWrite) {
 		t.Error("the wildcard did not reach a bucket no grant names")

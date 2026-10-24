@@ -279,39 +279,37 @@ const (
 // QUOTAS AND USAGE
 // -------------------------------------------------------------------------
 
-// QuotaStat holds quota statistics for a single backend.
+// QuotaStat is one backend's byte ceiling and what occupies it: the striped
+// byte total, orphans awaiting cleanup, and the writes and multipart parts that
+// have not landed in bytes_used yet. It is read from backend_capacity, the view
+// admission tests against.
 type QuotaStat struct {
-	BackendName string
-	BytesUsed   int64
-	BytesLimit  int64
-	OrphanBytes int64
-	UpdatedAt   time.Time
-}
-
-// QuotaDeltas is the signed per-backend byte change a committed mutation made,
-// keyed by backend name. The caller applies it to the in-memory counter so the
-// transaction never locks the backend_quotas row.
-type QuotaDeltas map[string]int64
-
-// Add accumulates a signed delta for one backend. A nil map is left alone, so
-// a path that never allocated one is not forced to.
-func (q QuotaDeltas) Add(backendName string, delta int64) {
-	if q == nil {
-		return
-	}
-	q[backendName] += delta
-}
-
-// BackendQuotaUsage is one backend's quota row plus the bytes that occupy it
-// without appearing in bytes_used: orphans awaiting cleanup and incomplete
-// multipart parts. It is the baseline the in-memory quota tracker adds its
-// unflushed deltas to.
-type BackendQuotaUsage struct {
 	BackendName   string
-	BytesLimit    int64
 	BytesUsed     int64
+	BytesLimit    int64
 	OrphanBytes   int64
 	InflightBytes int64
+}
+
+// Unlimited reports whether the backend has no byte ceiling. A zero
+// bytes_limit is how the schema spells "no quota enforcement".
+func (q QuotaStat) Unlimited() bool {
+	return q.BytesLimit <= 0
+}
+
+// Occupied is the byte total a write is judged against: what the ledger has
+// recorded, plus what is on the backend but not yet recorded.
+func (q QuotaStat) Occupied() int64 {
+	return q.BytesUsed + q.OrphanBytes + q.InflightBytes
+}
+
+// quotaDeltas is the signed per-backend byte change a mutation makes, keyed by
+// backend name, gathered so chargeStripes can write each backend once.
+type quotaDeltas map[string]int64
+
+// add accumulates a signed delta for one backend.
+func (q quotaDeltas) add(backendName string, delta int64) {
+	q[backendName] += delta
 }
 
 // BackendStateRecord is one backend's state record. ObjectsMoved, LastError,
@@ -325,18 +323,6 @@ type BackendStateRecord struct {
 	LastError    string
 	StartedAt    time.Time
 	FinishedAt   *time.Time
-}
-
-// Unlimited reports whether the backend has no byte ceiling. A zero
-// bytes_limit is how the schema spells "no quota enforcement".
-func (b BackendQuotaUsage) Unlimited() bool {
-	return b.BytesLimit <= 0
-}
-
-// Occupied is the byte total a write is judged against: what the ledger has
-// recorded, plus what is on the backend but not yet recorded.
-func (b BackendQuotaUsage) Occupied() int64 {
-	return b.BytesUsed + b.OrphanBytes + b.InflightBytes
 }
 
 // -------------------------------------------------------------------------
@@ -643,6 +629,58 @@ func BuildDelimitedPage(entries []DelimitedEntry, maxKeys int) *ListDelimitedRes
 		} else {
 			result.Objects = append(result.Objects, entries[i].Leaf)
 		}
+	}
+	return result
+}
+
+// DirStat is one aggregated child of a directory prefix: a sub-directory
+// roll-up, or a file directly beneath the prefix. TotalSize sums every
+// replica, so a directory reports the physical storage it takes.
+type DirStat struct {
+	Name      string
+	IsDir     bool
+	FileCount int64
+	TotalSize int64
+}
+
+// DirFile is one file directly beneath a directory prefix: the backends
+// holding it, one replica's size, and when it was written.
+type DirFile struct {
+	ObjectKey string
+	Backends  []string
+	SizeBytes int64
+	CreatedAt time.Time
+}
+
+// dirTimeFormat is how a directory listing renders a file's write time.
+const dirTimeFormat = "2006-01-02 15:04"
+
+// BuildDirectoryListing merges the roll-ups for a prefix with one page of file
+// detail, fetched one row past maxKeys to detect truncation. A file outside
+// the page is left out, and a file reports one replica's size, which is what
+// the client uploaded, rather than the replica sum.
+func BuildDirectoryListing(prefix string, stats []DirStat, files []DirFile, maxKeys int) *DirectoryListResult {
+	result := &DirectoryListResult{Entries: make([]DirEntry, 0, len(stats))}
+	if len(files) > maxKeys {
+		files = files[:maxKeys]
+		result.HasMore = true
+		result.NextCursor = files[len(files)-1].ObjectKey
+	}
+	byName := make(map[string]*DirFile, len(files))
+	for i := range files {
+		byName[files[i].ObjectKey[len(prefix):]] = &files[i]
+	}
+	for _, s := range stats {
+		entry := DirEntry{Name: prefix + s.Name, IsDir: s.IsDir, FileCount: s.FileCount, TotalSize: s.TotalSize}
+		if !s.IsDir {
+			f, ok := byName[s.Name]
+			if !ok {
+				continue
+			}
+			entry.Backends, entry.TotalSize = f.Backends, f.SizeBytes
+			entry.CreatedAt = f.CreatedAt.Format(dirTimeFormat)
+		}
+		result.Entries = append(result.Entries, entry)
 	}
 	return result
 }

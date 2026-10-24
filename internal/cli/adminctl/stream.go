@@ -27,12 +27,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
-// stream issues a streaming request and renders the NDJSON event stream,
-// returning the process exit code. Unlike do, it sets no client timeout: the
-// server flushes a progress event per batch, so the connection stays active for
-// the life of the operation and Ctrl-C cancels it.
-func (c *client) stream(method, path, body string) int {
-	events, err := c.api.Stream(context.Background(), method, path, nil, bodyReader(body))
+// stream issues a bodiless streaming request and renders the NDJSON event
+// stream, returning the process exit code. Unlike do, it sets no client
+// timeout: the server flushes an event per item, so the connection stays
+// active for the life of the operation and Ctrl-C cancels it.
+func (c *client) stream(method, path string) int {
+	events, err := c.api.Stream(context.Background(), method, path, nil, nil)
 	if err != nil {
 		c.reportError(err)
 		return 1
@@ -73,12 +73,6 @@ func (c *client) renderStreamEvent(e *adminstream.Event) bool {
 	switch e.Kind {
 	case adminstream.KindStart:
 		fmt.Fprintf(c.stdout, "%s started\n", e.Op)
-	case adminstream.KindProgress:
-		if e.Message != "" {
-			fmt.Fprintf(c.stdout, "  %s\n", e.Message)
-		} else {
-			fmt.Fprintf(c.stdout, "  processed %d\n", e.Processed)
-		}
 	case adminstream.KindStepStart:
 		c.renderStepStart(e)
 	case adminstream.KindStepEnd:

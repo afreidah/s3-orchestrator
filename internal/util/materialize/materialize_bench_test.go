@@ -37,11 +37,7 @@ func runMaterializeCycle(b *testing.B, payload []byte, size int64) {
 		b.Fatalf("New: %v", err)
 	}
 	defer mb.Cleanup()
-	body, err := mb.Reader()
-	if err != nil {
-		b.Fatalf("Reader: %v", err)
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
+	if _, err := io.Copy(io.Discard, mb.Reader()); err != nil {
 		b.Fatalf("drain: %v", err)
 	}
 }

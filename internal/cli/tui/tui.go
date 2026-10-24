@@ -687,7 +687,7 @@ func (t target) signs() bool {
 func parseArgs(args []string) (target, theme, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
+	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr and its env var are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
 	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
 	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")

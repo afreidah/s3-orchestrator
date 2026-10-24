@@ -41,7 +41,7 @@ func tagNames(tags []core.Tag) []string {
 // hang off.
 func seedObject(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
@@ -102,7 +102,7 @@ func TestGetAllObjectLocations_TagCountOnEveryCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/tagged", Copies: []core.ObjectCopy{{Backend: "backend-a"}, {Backend: "backend-b"}}, Size: 1024,
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -366,7 +366,7 @@ func TestObjectTags_DeleteObjectCascades(t *testing.T) {
 	if err := s.ReplaceObjectTags(ctx, "bucket/doomed", []core.Tag{{Key: "k", Value: "v"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
-	if _, _, err := s.DeleteObject(ctx, "bucket/doomed"); err != nil {
+	if _, err := s.DeleteObject(ctx, "bucket/doomed"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestObjectTags_BatchDeleteCascades(t *testing.T) {
 		}
 	}
 
-	if _, _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
+	if _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
 

@@ -6,7 +6,7 @@
 // Resolves the identity behind an admin request and refuses the ones its grants
 // do not reach. The data-plane endpoints under /admin/api/objects reach the same
 // object service the S3 transport does, so they are authorized against the same
-// permission set rather than against the bearer token alone.
+// bucket permission set.
 //
 // Every route passes through one chokepoint here. The control-plane endpoints
 // declare a permission over a backend or over the instance, so a credential
@@ -40,51 +40,31 @@ const (
 )
 
 // -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
-
-// principal is who an admin request authenticated as.
-//
-// Every caller is a user holding grants, the root credential included: what
-// makes root privileged is the grants it holds, not a branch here.
-type principal struct {
-	User *auth.User
-}
-
-// id names this principal in a log line.
-func (p principal) id() string {
-	if p.User == nil {
-		return "unknown"
-	}
-	return p.User.ID
-}
-
-// -------------------------------------------------------------------------
 // AUTHENTICATION
 // -------------------------------------------------------------------------
 
-// authenticate resolves the credential a request carries. Reports whether one
-// proved an identity at all.
+// authenticate resolves the credential a request carries to the user it proves,
+// and reports whether it proved one at all. Every caller is a user holding
+// grants, the root credential included: what makes root privileged is the
+// grants it holds, not a branch here.
 //
 // A SigV4-signed request is verified the way the S3 API verifies one, against
 // the same registry, so one keypair reaches both surfaces.
-func (h *Handler) authenticate(r *http.Request) (principal, bool) {
+func (h *Handler) authenticate(r *http.Request) (*auth.User, bool) {
 	// Without a registry nothing can be resolved to an identity, so nothing is
-	// authenticated. The credential model is the only way in now, which means a
-	// handler assembled without one authorizes no request rather than falling
-	// back to the token.
+	// authenticated, and a handler assembled without one authorizes no request.
 	if h.registry == nil {
-		return principal{}, false
+		return nil, false
 	}
 	registry := h.registry()
 	if registry == nil {
-		return principal{}, false
+		return nil, false
 	}
 	user, _, err := registry.Authenticate(r)
 	if err != nil {
-		return principal{}, false
+		return nil, false
 	}
-	return principal{User: user}, true
+	return user, true
 }
 
 // -------------------------------------------------------------------------
@@ -114,7 +94,7 @@ func (h *Handler) guard(rt *route) http.HandlerFunc {
 //
 // Fails closed: a route declaring no permission is refused, and so is a bucket
 // route whose resource does not resolve to one bucket.
-func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, who *auth.User) bool {
 	// Nothing reaches a route that declared no permission. The table is tested
 	// for one, so this is unreachable by a served route and stays as the
 	// fallback that keeps the default closed.
@@ -126,7 +106,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 		return h.authorizeAdmin(w, r, rt, who)
 	}
 
-	bucket, reason, ok := auth.AuthorizeKey(who.User, h.resourceValue(r, rt), rt.Perm)
+	bucket, reason, ok := auth.AuthorizeKey(who, h.resourceValue(r, rt), rt.Perm)
 	if !ok {
 		h.refuse(r, w, rt, who, bucket, reason)
 		return false
@@ -137,12 +117,12 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 // authorizeAdmin refuses a control-plane request the caller's grants do not
 // carry. A backend route naming no backend runs fleet-wide, so it requires the
 // wildcard grant; a grant on one backend cannot start a pass over the others.
-func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
+func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request, rt *route, who *auth.User) bool {
 	resource := core.Resource{Kind: rt.kind()}
 	if resource.Kind == core.ResourceBackend {
 		resource.Name = cmp.Or(h.resourceValue(r, rt), core.ResourceWildcard)
 	}
-	if !who.User.CanAdmin(resource, rt.Perm) {
+	if !who.CanAdmin(resource, rt.Perm) {
 		h.refuseAdmin(r, w, rt, who, resource)
 		return false
 	}
@@ -180,13 +160,13 @@ func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, 
 // so an operator reading the audit stream can fix the grant without a second
 // lookup. Named to match the s3.ActionDenied entry the data path emits, so one
 // query finds a refusal whichever surface it happened on.
-func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who principal, bucket, reason string) {
-	held, _ := who.User.Permissions(bucket)
+func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who *auth.User, bucket, reason string) {
+	held, _ := who.Permissions(bucket)
 	h.log.WarnContext(r.Context(), "admin request not permitted by grant",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"client_addr", r.RemoteAddr,
-		"user", who.id(),
+		"user", who.ID,
 		"bucket", bucket,
 		"reason", reason,
 	)
@@ -207,13 +187,13 @@ func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who 
 // refuseAdmin writes the 403 a credential gets when its control-plane grants do
 // not carry the operation. Recorded separately from a denied object operation
 // so one query finds every control-plane refusal without the object traffic.
-func (h *Handler) refuseAdmin(r *http.Request, w http.ResponseWriter, rt *route, who principal, resource core.Resource) {
-	held := who.User.AdminPermissions(resource)
+func (h *Handler) refuseAdmin(r *http.Request, w http.ResponseWriter, rt *route, who *auth.User, resource core.Resource) {
+	held := who.AdminPermissions(resource)
 	h.log.WarnContext(r.Context(), "control-plane request not permitted by grant",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"client_addr", r.RemoteAddr,
-		"user", who.id(),
+		"user", who.ID,
 		"resource", resource.String(),
 	)
 	audit.Log(r.Context(), "admin.ControlPlaneDenied",

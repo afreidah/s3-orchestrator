@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Implements the Postgres engine bindings for backend quotas: per-backend
-// limits, the striped byte counters, orphan bytes, and the usage listing the
-// quota tracker refreshes its baselines from. Admission itself is tested
-// against the backend_capacity view inside the statements that claim space.
+// limits, the striped byte counters, and the capacity snapshot the quota
+// tracker refreshes its baselines from. Admission itself is tested against the
+// backend_capacity view inside the statements that claim space.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -46,7 +46,8 @@ func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendCo
 // STATISTICS
 // -------------------------------------------------------------------------
 
-// GetQuotaStats returns quota statistics for all backends.
+// GetQuotaStats returns each backend's ceiling and the byte totals a write is
+// judged against, keyed by backend.
 func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	rows, err := s.queries.GetAllQuotaStats(ctx)
 	if err != nil {
@@ -56,37 +57,15 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 	stats := make(map[string]core.QuotaStat, len(rows))
 	for _, row := range rows {
 		stats[row.BackendName] = core.QuotaStat{
-			BackendName: row.BackendName,
-			BytesUsed:   row.BytesUsed,
-			BytesLimit:  row.BytesLimit,
-			OrphanBytes: row.OrphanBytes,
-			UpdatedAt:   row.UpdatedAt.Time,
+			BackendName:   row.BackendName,
+			BytesUsed:     row.BytesUsed,
+			BytesLimit:    row.BytesLimit,
+			OrphanBytes:   row.OrphanBytes,
+			InflightBytes: row.InflightBytes,
 		}
 	}
 
 	return stats, nil
-}
-
-// ListBackendQuotaUsage returns each backend's ceiling and the byte totals a
-// write is judged against, for the quota tracker's baseline refresh.
-func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
-	rows, err := s.queries.ListBackendQuotaUsage(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query backend quota usage: %w", err)
-	}
-
-	usage := make([]core.BackendQuotaUsage, 0, len(rows))
-	for _, row := range rows {
-		usage = append(usage, core.BackendQuotaUsage{
-			BackendName:   row.BackendName,
-			BytesLimit:    row.BytesLimit,
-			BytesUsed:     row.BytesUsed,
-			OrphanBytes:   row.OrphanBytes,
-			InflightBytes: row.InflightBytes,
-		})
-	}
-
-	return usage, nil
 }
 
 // ReconcileUsage brings each backend's striped total to its ledger sum in one

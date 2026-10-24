@@ -122,6 +122,16 @@ func NewMultiKeyProvider(primary KeyProvider, previous []KeyProvider) *MultiKeyP
 // KeyID returns the primary key identifier.
 func (p *MultiKeyProvider) KeyID() string { return p.primary.KeyID() }
 
+// Close releases every provider this one holds that has something to release,
+// so a Vault primary wrapped for rotation still stops its token renewal.
+func (p *MultiKeyProvider) Close() {
+	for _, kp := range p.ordered {
+		if closer, ok := kp.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
+}
+
 // WrapDEK encrypts a DEK using the primary (current) master key.
 func (p *MultiKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
 	return p.primary.WrapDEK(ctx, dek)

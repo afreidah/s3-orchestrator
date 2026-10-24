@@ -435,30 +435,10 @@ func TestTeeHandler_FilterByComponent(t *testing.T) {
 	}
 }
 
-// TestParseLevel covers the name-to-level mapping the admin API and the
-// dashboard both filter by, including the case that decides what an operator
-// sees by default: an unset level is Info, so DEBUG entries are withheld until
-// asked for by name.
-func TestParseLevel(t *testing.T) {
-	t.Parallel()
-	cases := map[string]slog.Level{
-		"debug": slog.LevelDebug,
-		"INFO":  slog.LevelInfo,
-		"Warn":  slog.LevelWarn,
-		"ERROR": slog.LevelError,
-		"":      slog.LevelInfo,
-		"bogus": slog.LevelInfo,
-	}
-	for in, want := range cases {
-		if got := ParseLevel(in); got != want {
-			t.Errorf("ParseLevel(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
-// TestParseLevel_DefaultWithholdsDebug pins the consequence of that default
-// against the buffer itself, which is where an operator would notice it.
-func TestParseLevel_DefaultWithholdsDebug(t *testing.T) {
+// TestEntries_DefaultMinLevelWithholdsDebug pins what an operator sees by
+// default: an unset MinLevel is Info, so DEBUG entries are withheld until
+// asked for.
+func TestEntries_DefaultMinLevelWithholdsDebug(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
 	log := slog.New(NewTeeHandler(slog.NewJSONHandler(&bytes.Buffer{},
@@ -466,10 +446,10 @@ func TestParseLevel_DefaultWithholdsDebug(t *testing.T) {
 	log.DebugContext(context.Background(), "chatty")
 	log.InfoContext(context.Background(), "notable")
 
-	if got := buf.Entries(&LogQueryOpts{MinLevel: ParseLevel("")}); len(got) != 1 {
+	if got := buf.Entries(&LogQueryOpts{}); len(got) != 1 {
 		t.Fatalf("unset level returned %d entries, want only the Info one", len(got))
 	}
-	if got := buf.Entries(&LogQueryOpts{MinLevel: ParseLevel("DEBUG")}); len(got) != 2 {
+	if got := buf.Entries(&LogQueryOpts{MinLevel: slog.LevelDebug}); len(got) != 2 {
 		t.Errorf("explicit DEBUG returned %d entries, want both", len(got))
 	}
 }

@@ -14,7 +14,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,7 +32,7 @@ import (
 func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	rows, err := s.queries.GetPendingCleanups(ctx, db.GetPendingCleanupsParams{
 		MaxAttempts: core.MaxCleanupAttempts,
-		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		RowLimit:    rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending cleanups: %w", err)
@@ -68,7 +67,7 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	rows, err := s.queries.ClaimPendingCleanups(ctx, db.ClaimPendingCleanupsParams{
 		MaxAttempts: core.MaxCleanupAttempts,
 		GraceCutoff: pgtype.Timestamptz{Time: graceCutoff, Valid: true},
-		RowLimit:    int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		RowLimit:    rowLimit(limit),
 		ClaimedBy:   instanceID,
 	})
 	if err != nil {
@@ -197,16 +196,9 @@ func durationToInterval(d time.Duration) pgtype.Interval {
 // ListCleanupDLQ returns dead-lettered cleanup rows for operator inspection,
 // newest graduation first. An empty backend lists every backend.
 func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
-	// Convert only inside an in-range guard so the int->int32 narrowing is
-	// provably overflow-free; the admin handler already caps limit, this is
-	// defence in depth.
-	rowLimit := int32(math.MaxInt32)
-	if limit >= 0 && limit <= math.MaxInt32 {
-		rowLimit = int32(limit)
-	}
 	rows, err := s.queries.ListCleanupDLQ(ctx, db.ListCleanupDLQParams{
 		Backend:  backend,
-		RowLimit: rowLimit,
+		RowLimit: rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list cleanup dlq: %w", err)

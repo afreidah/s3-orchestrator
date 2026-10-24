@@ -207,7 +207,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 // egress of a response it keeps, from WireBytes. On success the caller owns
 // the body and the timeout cancel.
 func meteredGet(ctx context.Context, rt RangeFetchRuntime, be s3be.ObjectBackend, beName, path, rangeHeader string) (*s3be.GetObjectResult, context.CancelFunc, error) {
-	if !rt.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
+	if !rt.Usage().WithinLimits(beName, s3op.GetObject, 0, 0) {
 		return nil, nil, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	r, cancel, err := rt.GetWithTimeout(ctx, be, path, rangeHeader)
@@ -215,7 +215,7 @@ func meteredGet(ctx context.Context, rt RangeFetchRuntime, be s3be.ObjectBackend
 		rt.Acct().APICall(ctx, s3op.GetObject, beName)
 		return nil, nil, err
 	}
-	if !rt.Usage().WithinLimits(beName, getObjectOp, r.WireBytes(), 0) {
+	if !rt.Usage().WithinLimits(beName, s3op.GetObject, r.WireBytes(), 0) {
 		_ = r.Body.Close()
 		cancel()
 		rt.Acct().APICall(ctx, s3op.GetObject, beName)

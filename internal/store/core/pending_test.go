@@ -42,6 +42,12 @@ type promoteTxStub struct {
 	inserted []ObjectLocation
 	deleted  []string
 	cleared  [][]string
+	charges  []quotaOp
+}
+
+func (s *promoteTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int16, delta int64) error {
+	s.charges = append(s.charges, quotaOp{backend: backend, delta: delta})
+	return nil
 }
 
 func (s *promoteTxStub) AcquireKeyLock(context.Context, string) error {
@@ -126,7 +132,7 @@ func TestPendingRole_DefaultsToPrimary(t *testing.T) {
 func TestPromotePending_LocksKeyBeforeClaiming(t *testing.T) {
 	t.Parallel()
 	stub := &promoteTxStub{claimed: true}
-	if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent()); err != nil {
+	if _, _, err := stubOps(stub).PromotePending(context.Background(), companionIntent()); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	if len(stub.ops) < 2 || stub.ops[0] != "key_lock" || stub.ops[1] != "claim" {
@@ -143,7 +149,7 @@ func TestPromotePending_CompanionKeptWhenCopyRecorded(t *testing.T) {
 		claimed:        true,
 		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}, {BackendName: "b2", SizeBytes: 100}},
 	}
-	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	result, displaced, err := stubOps(stub).PromotePending(context.Background(), companionIntent())
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -170,7 +176,7 @@ func TestPromotePending_CompanionDiscardedWhenNoCopy(t *testing.T) {
 		claimed:        true,
 		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}},
 	}
-	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	result, displaced, err := stubOps(stub).PromotePending(context.Background(), companionIntent())
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -200,7 +206,7 @@ func TestPromotePending_PrimaryReplacesTheCopySet(t *testing.T) {
 	intent := companionIntent()
 	intent.Role = PendingRolePrimary
 
-	result, displaced, deltas, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	result, displaced, err := stubOps(stub).PromotePending(context.Background(), intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -213,8 +219,8 @@ func TestPromotePending_PrimaryReplacesTheCopySet(t *testing.T) {
 	if len(displaced) != 1 || displaced[0].BackendName != "b1" {
 		t.Errorf("expected the prior copy displaced, got %+v", displaced)
 	}
-	if deltas["b2"] != 100 || deltas["b1"] != -50 {
-		t.Errorf("deltas = %+v, want b2:+100 b1:-50", deltas)
+	if want := []quotaOp{{"b1", -50}, {"b2", 100}}; !slices.Equal(stub.charges, want) {
+		t.Errorf("stripe charges = %+v, want %+v", stub.charges, want)
 	}
 }
 
@@ -232,7 +238,7 @@ func TestPromotePending_CarriesTheStoredForm(t *testing.T) {
 		CompressionFormatVersion: 1, LogicalSize: 120,
 	}
 
-	if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent); err != nil {
+	if _, _, err := stubOps(stub).PromotePending(context.Background(), intent); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	if len(stub.inserted) != 1 {
@@ -258,15 +264,15 @@ func TestPromotePending_PrimarySupersededByNewerCopy(t *testing.T) {
 		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50, CreatedAt: time.Now()}},
 	}
 
-	result, cleanup, deltas, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	result, cleanup, err := stubOps(stub).PromotePending(context.Background(), intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	if result != PendingPromoteSuperseded {
 		t.Errorf("result = %v, want Superseded", result)
 	}
-	if len(stub.inserted) != 0 || len(deltas) != 0 {
-		t.Errorf("a superseded intent must record nothing: inserted=%+v deltas=%+v", stub.inserted, deltas)
+	if len(stub.inserted) != 0 || len(stub.charges) != 0 {
+		t.Errorf("a superseded intent must record nothing: inserted=%+v charges=%+v", stub.inserted, stub.charges)
 	}
 	if !slices.Equal(stub.deleted, []string{"i-1"}) {
 		t.Errorf("deleted intents = %v, want the superseded one", stub.deleted)
@@ -292,7 +298,7 @@ func TestPromotePending_SupersededDeleteFailureAborts(t *testing.T) {
 		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50, CreatedAt: time.Now()}},
 	}
 
-	result, cleanup, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	result, cleanup, err := stubOps(stub).PromotePending(context.Background(), intent)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want the delete failure", err)
 	}
@@ -308,11 +314,11 @@ func TestCompanion_QueueFailureRollsBack(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("queue failed")
 	reaper := &queueRecorder{TxAdapter: &promoteTxStub{claimed: true}, err: sentinel}
-	if _, cleanup, _, err := PromotePending(context.Background(), &stubRunner{tx: reaper}, companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
+	if _, cleanup, err := stubOps(reaper).PromotePending(context.Background(), companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
 		t.Errorf("PromotePending cleanup=%+v err=%v, want the queue failure", cleanup, err)
 	}
 	late := &queueRecorder{TxAdapter: &companionTxStub{claimed: false}, err: sentinel}
-	if _, cleanup, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: late}, companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
+	if _, cleanup, err := stubOps(late).CommitCompanionCopy(context.Background(), companionIntent()); !errors.Is(err, sentinel) || cleanup != nil {
 		t.Errorf("CommitCompanionCopy cleanup=%+v err=%v, want the queue failure", cleanup, err)
 	}
 }
@@ -333,7 +339,7 @@ func TestPromotePending_CommitFailuresRollBack(t *testing.T) {
 	for name, tx := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: tx}, intent); !errors.Is(err, sentinel) {
+			if _, _, err := stubOps(tx).PromotePending(context.Background(), intent); !errors.Is(err, sentinel) {
 				t.Errorf("err = %v, want the %s failure", err, name)
 			}
 		})
@@ -353,7 +359,7 @@ func TestPromotePending_SurfacesTransactionErrors(t *testing.T) {
 	for name, stub := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+			_, _, err := stubOps(stub).PromotePending(context.Background(), companionIntent())
 			if !errors.Is(err, sentinel) {
 				t.Errorf("expected the %s error, got %v", name, err)
 			}
@@ -372,7 +378,7 @@ func TestPromotePending_CompanionDeleteFailureAborts(t *testing.T) {
 	sentinel := errors.New("delete failed")
 	stub := &promoteTxStub{claimed: true, deleteErr: sentinel}
 
-	_, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	_, displaced, err := stubOps(stub).PromotePending(context.Background(), companionIntent())
 	if !errors.Is(err, sentinel) {
 		t.Errorf("expected the delete error, got %v", err)
 	}
@@ -386,7 +392,7 @@ func TestPromotePending_CompanionDeleteFailureAborts(t *testing.T) {
 func TestPromotePending_CompanionAlreadyResolved(t *testing.T) {
 	t.Parallel()
 	stub := &promoteTxStub{claimed: false}
-	result, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	result, _, err := stubOps(stub).PromotePending(context.Background(), companionIntent())
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -544,7 +550,7 @@ func TestCommitCompanionCopy_AddsTheCopy(t *testing.T) {
 	stub := &companionTxStub{claimed: true}
 	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
 
-	result, displaced, deltas, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	result, displaced, err := stubOps(stub).CommitCompanionCopy(context.Background(), p)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
 	}
@@ -554,8 +560,8 @@ func TestCommitCompanionCopy_AddsTheCopy(t *testing.T) {
 	if len(stub.inserted) != 1 || stub.inserted[0].BackendName != "b2" {
 		t.Fatalf("expected one row on b2, got %+v", stub.inserted)
 	}
-	if deltas["b2"] != 100 {
-		t.Errorf("delta for b2 = %d, want 100", deltas["b2"])
+	if !slices.Equal(stub.stripes, []int64{100}) {
+		t.Errorf("stripe charges = %v, want b2 charged 100", stub.stripes)
 	}
 	if !slices.Equal(stub.deleted, []string{"i-2"}) {
 		t.Errorf("intents removed = %v, want the committed one", stub.deleted)
@@ -576,7 +582,7 @@ func TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone(t *testing.T) {
 		BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion,
 	}
 
-	result, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	result, displaced, err := stubOps(stub).CommitCompanionCopy(context.Background(), p)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
 	}
@@ -614,15 +620,15 @@ func TestCommitCompanionCopy_LeavesTheWinnersRowAlone(t *testing.T) {
 		BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion,
 	}
 
-	_, displaced, deltas, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	_, displaced, err := stubOps(stub).CommitCompanionCopy(context.Background(), p)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
 	}
 	if len(stub.rowsPulled) != 0 {
 		t.Errorf("rows removed = %v, want the winner's row left alone", stub.rowsPulled)
 	}
-	if len(deltas) != 0 {
-		t.Errorf("deltas = %+v, want nothing charged for bytes never recorded", deltas)
+	if len(stub.stripes) != 0 {
+		t.Errorf("stripe charges = %v, want nothing charged for bytes never recorded", stub.stripes)
 	}
 	if len(displaced) != 1 {
 		t.Fatalf("displaced = %+v, want exactly the discarded upload's bytes", displaced)
@@ -645,7 +651,7 @@ func TestCommitCompanionCopy_ClaimErrorSurfaces(t *testing.T) {
 	stub := &companionTxStub{claimErr: sentinel}
 	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
 
-	_, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	_, displaced, err := stubOps(stub).CommitCompanionCopy(context.Background(), p)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want the claim failure", err)
 	}
@@ -668,7 +674,7 @@ func TestCommitCompanionCopy_RollsBackOnAFailedStep(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+			_, displaced, err := stubOps(stub).CommitCompanionCopy(context.Background(), p)
 			if err == nil {
 				t.Fatalf("expected the %s failure to surface", name)
 			}
@@ -730,7 +736,7 @@ func claimIntent() *PendingObject {
 func TestInsertPendingIfFits_LocksBackendBeforeInsert(t *testing.T) {
 	t.Parallel()
 	stub := &claimTxStub{fits: true}
-	fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite|FlagCordoned)
+	fits, err := stubOps(stub).InsertPendingIfFits(context.Background(), claimIntent(), AcceptForWrite|FlagCordoned)
 	if err != nil || !fits {
 		t.Fatalf("InsertPendingIfFits = %v, %v; want fits", fits, err)
 	}
@@ -751,7 +757,7 @@ func TestInsertPendingIfFits_LockErrorSkipsInsert(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock timeout")
 	stub := &claimTxStub{fits: true, lockErr: sentinel}
-	fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite)
+	fits, err := stubOps(stub).InsertPendingIfFits(context.Background(), claimIntent(), AcceptForWrite)
 	if !errors.Is(err, sentinel) || fits {
 		t.Errorf("InsertPendingIfFits = %v, %v; want false and the lock error", fits, err)
 	}
@@ -772,7 +778,7 @@ func TestInsertPendingIfFits_ReturnsInsertOutcome(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			fits, err := InsertPendingIfFits(context.Background(), &stubRunner{tx: stub}, claimIntent(), AcceptForWrite)
+			fits, err := stubOps(stub).InsertPendingIfFits(context.Background(), claimIntent(), AcceptForWrite)
 			if fits {
 				t.Errorf("fits = true, want false")
 			}
@@ -802,7 +808,7 @@ func copyIntents(n int) []*PendingObject {
 func TestClaimPendingCopies_LocksSortedThenClaimsRanked(t *testing.T) {
 	t.Parallel()
 	stub := &claimTxStub{fits: true}
-	claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b3", "b1", "b2"}, AcceptForWrite)
+	claims, err := stubOps(stub).ClaimPendingCopies(context.Background(), copyIntents(2), []string{"b3", "b1", "b2"}, AcceptForWrite)
 	if err != nil {
 		t.Fatalf("ClaimPendingCopies: %v", err)
 	}
@@ -825,7 +831,7 @@ func TestClaimPendingCopies_LocksSortedThenClaimsRanked(t *testing.T) {
 func TestClaimPendingCopies_SkipsAFullBackend(t *testing.T) {
 	t.Parallel()
 	stub := &claimTxStub{fits: true, full: map[string]bool{"b1": true}}
-	claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b1", "b2", "b3"}, AcceptForWrite)
+	claims, err := stubOps(stub).ClaimPendingCopies(context.Background(), copyIntents(2), []string{"b1", "b2", "b3"}, AcceptForWrite)
 	if err != nil {
 		t.Fatalf("ClaimPendingCopies: %v", err)
 	}
@@ -852,7 +858,7 @@ func TestClaimPendingCopies_ClaimsWhatFits(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: tc.stub}, copyIntents(2), tc.ranked, AcceptForWrite)
+			claims, err := stubOps(tc.stub).ClaimPendingCopies(context.Background(), copyIntents(2), tc.ranked, AcceptForWrite)
 			if err != nil || len(claims.Claimed) != tc.want {
 				t.Errorf("ClaimPendingCopies = %d claimed, %v; want %d", len(claims.Claimed), err, tc.want)
 			}
@@ -871,7 +877,7 @@ func TestClaimPendingCopies_ErrorClaimsNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			claims, err := ClaimPendingCopies(context.Background(), &stubRunner{tx: stub}, copyIntents(2), []string{"b1", "b2"}, AcceptForWrite)
+			claims, err := stubOps(stub).ClaimPendingCopies(context.Background(), copyIntents(2), []string{"b1", "b2"}, AcceptForWrite)
 			if !errors.Is(err, sentinel) {
 				t.Errorf("err = %v, want %v", err, sentinel)
 			}

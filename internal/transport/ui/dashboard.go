@@ -98,8 +98,6 @@ type integrityStats struct {
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	data, err := h.dashboardOps.GetData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
@@ -184,8 +182,6 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDashboard returns dashboard data as JSON.
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
-
 	data, err := h.dashboardOps.GetData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)

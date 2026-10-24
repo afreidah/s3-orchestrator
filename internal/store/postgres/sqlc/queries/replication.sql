@@ -4,10 +4,7 @@
 -- Author: Alex Freidah
 --
 -- sqlc-input definitions backing the replicator and over-replication
--- cleaner: under-replicated and over-replicated scans, the conditional
--- replica insert that returns the source row's size_bytes, and the
--- excess-copy removal. The "excluding" variant of the under-replicated
--- scan lets workers skip backends that are draining or circuit-broken.
+-- cleaner: the under- and over-replicated scans and the backlog count.
 -- -----------------------------------------------------------------------------
 
 -- name: GetUnderReplicatedObjects :many
@@ -27,30 +24,10 @@
 -- counts too, harmlessly, since that write replaces the object; one left by a
 -- write that never finished holds replication off only until the reaper
 -- clears it.
-WITH inflight AS (
-    SELECT object_key, COUNT(*) AS copies
-    FROM pending_objects
-    GROUP BY object_key
-),
-under_replicated AS (
-    SELECT ol.object_key
-    FROM object_locations ol
-    LEFT JOIN inflight i ON i.object_key = ol.object_key
-    WHERE ol.managed
-    GROUP BY ol.object_key, i.copies
-    HAVING COUNT(*) + COALESCE(i.copies, 0) < @factor::bigint
-    LIMIT @max_keys
-)
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
-FROM object_locations ol
-JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key ASC, ol.created_at ASC;
-
--- name: GetUnderReplicatedObjectsExcluding :many
--- Counts a key's in-flight copies the same way GetUnderReplicatedObjects does.
--- An intent on an excluded backend still counts, because excluding a backend
--- says the worker will not place a copy there, not that a copy already going
--- there is absent.
+--
+-- Copies on an excluded backend do not count, but an intent there still does:
+-- excluding a backend says the worker will not place a copy there, not that a
+-- copy already going there is absent. An empty list excludes nothing.
 WITH inflight AS (
     SELECT object_key, COUNT(*) AS copies
     FROM pending_objects

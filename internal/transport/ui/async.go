@@ -16,12 +16,11 @@ import "sync"
 // TYPES
 // -------------------------------------------------------------------------
 
-// asyncResult holds the outcome of a completed async operation. Counts carries
-// what the operation reported; the action's own response type decides which of
-// them it publishes and what it calls them. Skipped, when set, surfaces a
-// reason instead of a hard success.
+// asyncResult holds the outcome of a completed async operation: Error is set
+// when it failed. Counts carries what the operation reported; the action's own
+// response type decides which of them it publishes and what it calls them.
+// Skipped, when set, surfaces a reason instead of a hard success.
 type asyncResult struct {
-	OK      bool
 	Error   string
 	Skipped string
 	Counts  adminActionCounts

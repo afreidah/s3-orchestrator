@@ -118,7 +118,7 @@ func checkMarkRefuses(t *testing.T, s CompletionMarkStore, uploadID, backend str
 	if _, err := s.RecordPart(ctx, part); !errors.Is(err, core.ErrCompletionInProgress) {
 		t.Errorf("RecordPart while marked = %v, want ErrCompletionInProgress", err)
 	}
-	if parts, err := s.GetParts(ctx, uploadID); err != nil || len(parts) != 0 {
+	if parts, err := s.ListParts(ctx, uploadID, 0, core.MaxPartNumber); err != nil || len(parts) != 0 {
 		t.Errorf("parts while marked = %+v, %v; want the refused part unrecorded", parts, err)
 	}
 	if _, err := s.DeleteMultipartUpload(ctx, uploadID, completionMarkReason, freshCutoff()); !errors.Is(err, core.ErrCompletionInProgress) {
@@ -135,7 +135,7 @@ func checkMarkRefuses(t *testing.T, s CompletionMarkStore, uploadID, backend str
 	if _, err := s.RecordPart(ctx, part); err != nil {
 		t.Fatalf("RecordPart after End: %v", err)
 	}
-	if parts, err := s.GetParts(ctx, uploadID); err != nil || len(parts) != 1 {
+	if parts, err := s.ListParts(ctx, uploadID, 0, core.MaxPartNumber); err != nil || len(parts) != 1 {
 		t.Errorf("parts after End = %+v, %v; want the one part", parts, err)
 	}
 	cleanup, err := s.DeleteMultipartUpload(ctx, uploadID, completionMarkReason, freshCutoff())

@@ -183,19 +183,18 @@ func TestUpdateQuotaMetrics_SeedsBaselinesFromJoinedUsage(t *testing.T) {
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{name}), map[string]core.UsageLimits{name: lim})
 	mc := New(&CollectorDeps{Store: store, Usage: usage, ReplicationFactor: noReplication})
-	put := []s3op.Operation{s3op.PutObject}
 
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
-	if usage.WithinLimits(name, put, 0, 0) {
+	if usage.WithinLimits(name, s3op.PutObject, 0, 0) {
 		t.Error("a PUT was admitted against a pool the stored rows show as spent")
 	}
 
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
-	if !usage.WithinLimits(name, put, 0, 0) {
+	if !usage.WithinLimits(name, s3op.PutObject, 0, 0) {
 		t.Error("a PUT was refused after the period's rows came back empty")
 	}
 }
@@ -301,7 +300,7 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (usage error is non-fatal): %v", err)
 	}
-	if usage.WithinLimits("b1", []s3op.Operation{s3op.GetObject}, 1, 0) {
+	if usage.WithinLimits("b1", s3op.GetObject, 1, 0) {
 		t.Error("a failed usage read cleared the spent egress baseline")
 	}
 }

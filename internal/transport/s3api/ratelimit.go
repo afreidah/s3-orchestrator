@@ -170,12 +170,8 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// extractIP gets the client IP from the request, delegating to ExtractClientIP.
+// extractIP gets the client IP from the request, trusting X-Forwarded-For only
+// from the configured proxies.
 func (rl *RateLimiter) extractIP(r *http.Request) string {
-	return ExtractClientIP(r, rl.trustedProxies)
-}
-
-// ExtractClientIP delegates to httputil.ExtractClientIP.
-func ExtractClientIP(r *http.Request, trustedProxies []*net.IPNet) string {
-	return httputil.ExtractClientIP(r, trustedProxies)
+	return httputil.ExtractClientIP(r, rl.trustedProxies)
 }

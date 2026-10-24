@@ -32,7 +32,6 @@ import (
 	"crypto/sha1" //nolint:gosec // S3 checksum algorithm, not authentication
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -289,7 +288,7 @@ type chunkReader struct {
 	amzDate          string
 	decodedTarget    int64
 	trailerNames     []string
-	trailerChecksums map[string]trailerChecksum
+	trailerChecksums map[string]hash.Hash
 	checksumInitErr  error
 
 	buf     []byte // verified bytes pending delivery
@@ -370,7 +369,7 @@ func (r *chunkReader) advance() error {
 			return r.checksumInitErr
 		}
 		for _, checksum := range r.trailerChecksums {
-			checksum.Write(body)
+			_, _ = checksum.Write(body)
 		}
 	}
 
@@ -658,49 +657,26 @@ func missingDeclaredTrailers(declared []string, headers []trailerKV) []string {
 	return missing
 }
 
-// trailerChecksum incrementally computes one checksum declared through
-// x-amz-trailer. SumBase64 returns the big-endian checksum representation S3
-// uses on the wire.
-type trailerChecksum interface {
-	Write([]byte)
-	SumBase64() string
-}
-
-type hashTrailerChecksum struct{ h hash.Hash }
-
-func (c *hashTrailerChecksum) Write(p []byte) { _, _ = c.h.Write(p) }
-func (c *hashTrailerChecksum) SumBase64() string {
-	return base64.StdEncoding.EncodeToString(c.h.Sum(nil))
-}
-
-type crc32TrailerChecksum struct{ h hash.Hash32 }
-
-func (c *crc32TrailerChecksum) Write(p []byte) { _, _ = c.h.Write(p) }
-func (c *crc32TrailerChecksum) SumBase64() string {
-	var out [4]byte
-	binary.BigEndian.PutUint32(out[:], c.h.Sum32())
-	return base64.StdEncoding.EncodeToString(out[:])
-}
-
-func newTrailerChecksums(names []string) (map[string]trailerChecksum, error) {
-	checksums := make(map[string]trailerChecksum, len(names))
+// newTrailerChecksums starts a hash for each checksum declared through
+// x-amz-trailer, keyed by its trailer name. Every hash's Sum is big-endian,
+// which is the byte order S3 base64-encodes on the wire.
+func newTrailerChecksums(names []string) (map[string]hash.Hash, error) {
+	checksums := make(map[string]hash.Hash, len(names))
 	for _, name := range names {
-		var checksum trailerChecksum
 		switch name {
 		case "x-amz-checksum-crc32":
-			checksum = &crc32TrailerChecksum{h: crc32.NewIEEE()}
+			checksums[name] = crc32.NewIEEE()
 		case "x-amz-checksum-crc32c":
-			checksum = &crc32TrailerChecksum{h: crc32.New(crc32.MakeTable(crc32.Castagnoli))}
+			checksums[name] = crc32.New(crc32.MakeTable(crc32.Castagnoli))
 		case "x-amz-checksum-crc64nvme":
-			checksum = &hashTrailerChecksum{h: crc64.New(crc64.MakeTable(crc64NVMEReversed))}
+			checksums[name] = crc64.New(crc64.MakeTable(crc64NVMEReversed))
 		case "x-amz-checksum-sha1":
-			checksum = &hashTrailerChecksum{h: sha1.New()} //nolint:gosec // S3 checksum algorithm, not authentication
+			checksums[name] = sha1.New() //nolint:gosec // S3 checksum algorithm, not authentication
 		case "x-amz-checksum-sha256":
-			checksum = &hashTrailerChecksum{h: sha256.New()}
+			checksums[name] = sha256.New()
 		default:
 			return nil, trailerMalformed("unsupported unsigned trailer checksum %q", name)
 		}
-		checksums[name] = checksum
 	}
 	return checksums, nil
 }
@@ -712,7 +688,7 @@ func (r *chunkReader) verifyUnsignedTrailerChecksums(headers []trailerKV) error 
 	}
 	for name, checksum := range r.trailerChecksums {
 		provided := values[name]
-		expected := checksum.SumBase64()
+		expected := base64.StdEncoding.EncodeToString(checksum.Sum(nil))
 		if !hmac.Equal([]byte(expected), []byte(provided)) {
 			return fmt.Errorf("%w: %s", ErrTrailerChecksumMismatch, name)
 		}
@@ -785,12 +761,7 @@ func isHex(s string) bool {
 		return false
 	}
 	for i := range len(s) {
-		c := s[i]
-		switch {
-		case c >= '0' && c <= '9':
-		case c >= 'a' && c <= 'f':
-		case c >= 'A' && c <= 'F':
-		default:
+		if !isHexByte(s[i]) {
 			return false
 		}
 	}

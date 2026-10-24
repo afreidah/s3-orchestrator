@@ -55,7 +55,7 @@ func seedAdversarialKeys(t *testing.T, s *Store, backendName string) {
 		t.Fatalf("SyncQuotaLimits(%q): %v", backendName, err)
 	}
 	for _, k := range adversarialKeys {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k, Copies: []core.ObjectCopy{{Backend: backendName}}, Size: 1}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k, Copies: []core.ObjectCopy{{Backend: backendName}}, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%q, %q): %v", k, backendName, err)
 		}
 	}

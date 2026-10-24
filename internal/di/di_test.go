@@ -63,7 +63,6 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"MetadataStore", func(i do.Injector) error { _, err := provideMetadataStore(i); return err }},
 		{"Backends", func(i do.Injector) error { _, err := ProvideBackends(i); return err }},
 		{"Encryptor", func(i do.Injector) error { _, err := ProvideEncryptor(i); return err }},
-		{"EncryptionProvider", func(i do.Injector) error { _, err := ProvideEncryptionProvider(i); return err }},
 		{"RedisCounterBackend", func(i do.Injector) error { _, err := ProvideRedisCounterBackend(i); return err }},
 		{"ObjectCache", func(i do.Injector) error { _, err := ProvideObjectCache(i); return err }},
 		{"UsageService", func(i do.Injector) error { _, err := ProvideUsageService(i); return err }},
@@ -336,20 +335,6 @@ func TestProvideEncryptor_HappyPath(t *testing.T) {
 	}
 	if enc == nil {
 		t.Fatal("ProvideEncryptor returned nil encryptor")
-	}
-}
-
-// TestProvideEncryptionProvider_InvalidKey mirrors the Encryptor error path
-// for admin key rotation's separate KeyProvider registration.
-func TestProvideEncryptionProvider_InvalidKey(t *testing.T) {
-	t.Parallel()
-	inj := do.New()
-	do.ProvideValue(inj, &config.Config{
-		Encryption: config.EncryptionConfig{Enabled: true},
-	})
-	_, err := ProvideEncryptionProvider(inj)
-	if err == nil {
-		t.Fatal("expected error from ProvideEncryptionProvider with no key source, got nil")
 	}
 }
 
@@ -715,127 +700,12 @@ func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
 	}
 }
 
-// TestResolveAdminHandlerRequiredDeps_PartialDeps walks the dependency
-// list so every intermediate missing-dep return path in the helper is
-// exercised, not just the bare-injector first-invoke branch.
-func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	full := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
-	t.Cleanup(func() { _ = full.Shutdown() })
-
-	usageSvc, err := do.Invoke[*usage.Service](full)
-	if err != nil {
-		t.Fatalf("UsageService: %v", err)
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](full)
-	if err != nil {
-		t.Fatalf("DatabaseBreaker: %v", err)
-	}
-	stores, err := do.Invoke[metadataStore](full)
-	if err != nil {
-		t.Fatalf("metadataStore: %v", err)
-	}
-	repl, err := do.Invoke[*worker.Replicator](full)
-	if err != nil {
-		t.Fatalf("Replicator: %v", err)
-	}
-	overRep, err := do.Invoke[*worker.OverReplicationCleaner](full)
-	if err != nil {
-		t.Fatalf("OverReplicationCleaner: %v", err)
-	}
-	scrubber, err := do.Invoke[*worker.Scrubber](full)
-	if err != nil {
-		t.Fatalf("Scrubber: %v", err)
-	}
-
-	// Each step seeds one more dep than the previous; the helper should
-	// fail on the first unseeded dep at each stage.
-	steps := []struct {
-		name string
-		seed func(do.Injector)
-	}{
-		{"only-cfg", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-		}},
-		{"+usage", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-		}},
-		{"+cb", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-		}},
-		{"+logLevel", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue(i, new(slog.LevelVar))
-		}},
-		{"+stores", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue(i, stores)
-		}},
-		{"+replicator", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue(i, stores)
-			do.ProvideValue(i, repl)
-		}},
-		{"+overRep", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue(i, stores)
-			do.ProvideValue(i, repl)
-			do.ProvideValue(i, overRep)
-		}},
-		{"+scrubber", func(i do.Injector) {
-			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, usageSvc)
-			do.ProvideValue(i, cb)
-			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue(i, stores)
-			do.ProvideValue(i, repl)
-			do.ProvideValue(i, overRep)
-			do.ProvideValue(i, scrubber)
-		}},
-	}
-	for _, step := range steps {
-		t.Run(step.name, func(t *testing.T) {
-			t.Parallel()
-			inj := do.New()
-			step.seed(inj)
-			if _, err := resolveAdminHandlerRequiredDeps(inj); err == nil {
-				t.Fatal("expected error from partial deps")
-			}
-		})
-	}
-}
-
-// TestProvideReconciler_PartialDeps walks the resolve sequence so each
-// missing-dep return path is exercised.
+// TestProvideReconciler_PartialDeps asserts a missing dependency fails the
+// provider rather than building a reconciler with a nil collaborator.
 func TestProvideReconciler_PartialDeps(t *testing.T) {
 	t.Parallel()
-	// Bare injector: config missing.
 	if _, err := ProvideReconciler(do.New()); err == nil {
 		t.Error("expected error with no deps")
-	}
-	// Add only config: BackendRuntime missing.
-	step1 := do.New()
-	do.ProvideValue(step1, &config.Config{Buckets: []config.BucketConfig{{Name: "b1"}}})
-	if _, err := ProvideReconciler(step1); err == nil {
-		t.Error("expected error after seeding only config")
 	}
 }
 

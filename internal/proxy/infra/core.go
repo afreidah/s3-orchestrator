@@ -128,9 +128,9 @@ func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 	return c.routingStrategy
 }
 
-// Quota returns the byte-reservation tracker every write path consults before
-// it writes and credits after it commits. A deployment always has one: it is
-// what answers whether a backend has room, which no other component knows.
+// Quota returns the occupancy snapshot write placement ranks backends by. It
+// only orders candidates: whether a write fits is settled by the conditional
+// insert that claims the space.
 func (c *BackendRuntime) Quota() *counter.QuotaTracker {
 	return c.quota
 }

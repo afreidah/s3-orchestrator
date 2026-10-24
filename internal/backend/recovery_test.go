@@ -30,7 +30,7 @@ type fakeUsage struct {
 }
 
 // WithinLimits reports whether the fake is admitting calls.
-func (f *fakeUsage) WithinLimits(string, []s3op.Operation, int64, int64) bool {
+func (f *fakeUsage) WithinLimits(string, s3op.Operation, int64, int64) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.refuse

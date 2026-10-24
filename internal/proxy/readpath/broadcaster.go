@@ -64,9 +64,8 @@ func drainTimeoutOrDefault(backendTimeout time.Duration) time.Duration {
 	return backendTimeout
 }
 
-// Read tries all backends when the DB is unavailable. Checks the location
-// cache first for a known-good backend, then dispatches to either parallel
-// or sequential broadcast based on configuration.
+// broadcastRead tries all backends when the DB is unavailable. It checks the
+// location cache for a known-good backend first, then probes every backend.
 func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe Probe[T]) (value T, winner string, retErr error) {
 	bcStart := time.Now()
 	cacheHit := false
@@ -94,11 +93,7 @@ func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe
 		}
 	}
 
-	concurrency := 1
-	if b.parallel {
-		concurrency = len(b.core.BackendOrder())
-	}
-	return b.tryAllBackends(ctx, op, concurrency, probe)
+	return b.tryAllBackends(ctx, op, probe)
 }
 
 // broadcastOutcome classifies the terminal state of a degraded broadcast
@@ -117,42 +112,6 @@ func broadcastOutcome(cacheHit bool, err error) string {
 	default:
 		return "error"
 	}
-}
-
-// tryAllBackends dispatches to the sequential or parallel branch based
-// on concurrency. Both branches return the first backend whose probe
-// succeeds and cache the winner's name for future degraded reads.
-func (b *Broadcaster) tryAllBackends[T any](ctx context.Context, op readOp, concurrency int, probe Probe[T]) (T, string, error) {
-	if concurrency <= 1 {
-		return b.tryBackendsSequentially(ctx, op, probe)
-	}
-	return b.tryBackendsInParallel(ctx, op, probe)
-}
-
-// tryBackendsSequentially walks BackendOrder one backend at a time. The
-// first success short-circuits and is recorded as the broadcast winner;
-// otherwise the last error (if any) is wrapped as a degraded-read failure.
-func (b *Broadcaster) tryBackendsSequentially[T any](ctx context.Context, op readOp, probe Probe[T]) (T, string, error) {
-	var lastErr error
-	var tally broadcastErrTally
-	for _, name := range b.core.BackendOrder() {
-		be, ok := b.core.Backends()[name]
-		if !ok {
-			continue
-		}
-		// Degraded mode: no DB row available, probe must handle nil loc.
-		res, err := probe(ctx, name, nil, be)
-		if err != nil {
-			lastErr = err
-			tally.add(err)
-			continue
-		}
-		// First success wins; no losers to clean up. Value owns its lifecycle.
-		b.recordBroadcastWinner(op, name, res.Size, false)
-		return res.Value, name, nil
-	}
-	tally.recordMixedOutcomes(op.operation)
-	return broadcastAllFailed[T](op.span, lastErr)
 }
 
 // broadcastErrTally tracks the 404-vs-other distribution of probe
@@ -189,25 +148,24 @@ type broadcastResult[T any] struct {
 	cleanup func()
 }
 
-// tryBackendsInParallel runs the eligible backends through a bounded rolling
-// window via ProbeScheduler, then applies degraded-read policy to the outcome:
-// record the winner, or classify the collected failures (404 vs other) and wrap
+// tryAllBackends runs every configured backend through ProbeScheduler, one at a
+// time unless parallel broadcast is on, then applies degraded-read policy to the
+// outcome: record the winner, or classify the failures (404 vs other) and wrap
 // the all-failed terminal. The concurrency mechanics live in the scheduler.
-func (b *Broadcaster) tryBackendsInParallel[T any](ctx context.Context, op readOp, probe Probe[T]) (T, string, error) {
-	pending := b.eligibleBackends()
-	if len(pending) == 0 {
-		return broadcastAllFailed[T](op.span, nil)
+func (b *Broadcaster) tryAllBackends[T any](ctx context.Context, op readOp, probe Probe[T]) (T, string, error) {
+	parallelism := 1
+	if b.parallel {
+		parallelism = b.parallelism
 	}
-
 	sched := &ProbeScheduler[T]{
-		pending:      pending,
-		parallelism:  b.parallelism,
+		pending:      b.eligibleBackends(),
+		parallelism:  parallelism,
 		drainTimeout: b.drainTimeout,
 		operation:    op.operation,
 	}
 	res, errs, found := sched.FirstSuccess(ctx, probe)
 	if found {
-		b.recordBroadcastWinner(op, res.name, res.size, true)
+		b.recordBroadcastWinner(op, res.name, res.size)
 		return res.value, res.name, nil
 	}
 
@@ -216,11 +174,8 @@ func (b *Broadcaster) tryBackendsInParallel[T any](ctx context.Context, op readO
 		tally.add(e)
 	}
 	tally.recordMixedOutcomes(op.operation)
-	var lastErr error
-	if n := len(errs); n > 0 {
-		lastErr = errs[n-1]
-	}
-	return broadcastAllFailed[T](op.span, lastErr)
+	var zero T
+	return zero, "", broadcastAllFailed(op.span, errs)
 }
 
 // eligibleBackends returns the pending probes in BackendOrder, skipping
@@ -242,27 +197,26 @@ func (b *Broadcaster) eligibleBackends() []pendingProbe {
 // recordBroadcastWinner caches the winner's name for future degraded
 // reads, emits operation metrics, and sets the success-path span
 // attributes.
-func (b *Broadcaster) recordBroadcastWinner(op readOp, name string, size int64, parallel bool) {
+func (b *Broadcaster) recordBroadcastWinner(op readOp, name string, size int64) {
 	b.cache.Set(op.key, name)
 	b.core.Acct().Operation(op.operation, name, op.start, nil)
 	op.span.SetAttributes(telemetry.AttrBackendName.String(name))
 	op.span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-	if parallel {
+	if b.parallel {
 		op.span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
 	}
 	op.span.SetStatus(codes.Ok, "")
 }
 
-// broadcastAllFailed builds the all-failed return value. When at least
-// one backend returned an error, that error is wrapped so the server
-// can distinguish "backend unreachable" (502) from "object not found"
-// (404).
-func broadcastAllFailed[T any](span trace.Span, lastErr error) (T, string, error) {
-	var zero T
-	if lastErr != nil {
-		observe.RecordSpanError(span, lastErr)
-		return zero, "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
+// broadcastAllFailed builds the error for a broadcast no backend answered. The
+// last probe error is wrapped so the server can tell "backend unreachable"
+// (502) from "object not found" (404); with no probe errors it is not found.
+func broadcastAllFailed(span trace.Span, errs []error) error {
+	if len(errs) == 0 {
+		observe.MarkSpanError(span, "no backends available")
+		return core.ErrObjectNotFound
 	}
-	observe.MarkSpanError(span, "no backends available")
-	return zero, "", core.ErrObjectNotFound
+	lastErr := errs[len(errs)-1]
+	observe.RecordSpanError(span, lastErr)
+	return fmt.Errorf("all backends failed during degraded read: %w", lastErr)
 }

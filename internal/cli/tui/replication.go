@@ -14,7 +14,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -47,14 +46,9 @@ type replicationErrMsg struct{ err error }
 // loadReplication returns a command that fetches the replication snapshot off
 // the main loop, delivering a replicationLoadedMsg or replicationErrMsg.
 func (m *model) loadReplication() tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetReplicationStatus(context.Background())
-		if err != nil {
-			return replicationErrMsg{err}
-		}
-		return replicationLoadedMsg{resp}
-	}
+	return fetchCmd(m.client.GetReplicationStatus,
+		func(r *adminapi.ReplicationStatusResponse) tea.Msg { return replicationLoadedMsg{r} },
+		func(err error) tea.Msg { return replicationErrMsg{err} })
 }
 
 // -------------------------------------------------------------------------

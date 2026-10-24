@@ -178,10 +178,10 @@ func TestStoreInt_BackfillListing(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	if got := pgKeysByForm(t, s, &backfillCopies); !slices.Equal(got, []string{key}) {
 		t.Errorf("backfill listing = %v, want %s", got, key)
@@ -220,7 +220,7 @@ func pgProbeOn(t *testing.T, s *Store, key, backendName string) (int64, string) 
 // test can replace a copy with a newer write on the same backend.
 func recordAt(t *testing.T, s *Store, key, storageKey string) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 		Key: key, Size: 10, Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: storageKey}},
 	}); err != nil {
 		t.Fatalf("RecordObject(%s): %v", storageKey, err)
@@ -235,7 +235,7 @@ func TestStoreInt_UpdateCopyMetadata_ReplacedCopyIsChanged(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	recordAt(t, s, key, key+"!old")
 	read := *storetest.LocationOn(t, s, key, "backend-a")
@@ -262,10 +262,10 @@ func TestStoreInt_UpdateCopyMetadata_WritesOnlyTheFieldsSet(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	for _, p := range []*core.CopyPatch{
 		{EncryptionKey: []byte("dek"), KeyID: "key-2"},
@@ -297,7 +297,7 @@ func TestStoreInt_RecordObjectIdentity_SkipsAReplacedRead(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	recordAt(t, s, key, key+"!old")
 	read := *storetest.LocationOn(t, s, key, "backend-a")
@@ -323,10 +323,10 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}); err != nil {
 		t.Fatalf("UpdateCopyMetadata: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
@@ -366,7 +366,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 	}
 	// The second write commits the copy that answered its client, which clears
 	// the first write's intent and keeps its own still-running one.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Size: 100,
 		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
 		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: second.IntentID}},
@@ -374,7 +374,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, _, err := s.CommitCompanionCopy(ctx, &first)
+	result, displaced, err := s.CommitCompanionCopy(ctx, &first)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy first: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T)
 		t.Errorf("pending rows = %d, want the second copy's intent left in place", got)
 	}
 
-	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
+	result, displaced, err = s.CommitCompanionCopy(ctx, &second)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy second: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
@@ -426,7 +426,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 	}
 	// The write that placed them committed its first copy on backend-a and
 	// then died; both companions outlived it.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Size: 100,
 		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
 		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: first.IntentID}, {Backend: "backend-b", IntentID: second.IntentID}},
@@ -434,7 +434,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, _, err := s.PromotePending(ctx, &first)
+	result, displaced, err := s.PromotePending(ctx, &first)
 	if err != nil {
 		t.Fatalf("PromotePending first: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t 
 		t.Errorf("first reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
-	result, displaced, _, err = s.PromotePending(ctx, &second)
+	result, displaced, err = s.PromotePending(ctx, &second)
 	if err != nil {
 		t.Fatalf("PromotePending second: %v", err)
 	}
@@ -577,9 +577,9 @@ func TestStoreInt_RecordPartAndGetParts(t *testing.T) {
 
 	mustRecordPart(t, s, uploadID, 1, "etag-1", 1024, nil)
 	mustRecordPart(t, s, uploadID, 2, "etag-2", 2048, nil)
-	parts, err := s.GetParts(ctx, uploadID)
+	parts, err := s.ListParts(ctx, uploadID, 0, core.MaxPartNumber)
 	if err != nil {
-		t.Fatalf("GetParts: %v", err)
+		t.Fatalf("ListParts: %v", err)
 	}
 	if len(parts) != 2 || parts[0].PartNumber != 1 || parts[1].PartNumber != 2 {
 		t.Errorf("parts ordering or count wrong: %+v", parts)
@@ -663,7 +663,7 @@ func TestStoreInt_RecordPart_LostIntentQueuesTheUpload(t *testing.T) {
 		t.Fatalf("RecordPart = %v, want ErrIntentLost", err)
 	}
 	assertQueued(t, s, cleanup, "backend-a", intent.StorageKey, core.CleanupReasonSupersededIntent)
-	if parts, err := s.GetParts(ctx, uploadID); err != nil || len(parts) != 0 {
+	if parts, err := s.ListParts(ctx, uploadID, 0, core.MaxPartNumber); err != nil || len(parts) != 0 {
 		t.Errorf("parts = %+v, %v; want none recorded", parts, err)
 	}
 }
@@ -860,9 +860,9 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 50,
 	}
 	mustRecordPart(t, s, uploadID, 1, "etag", 1024, form)
-	parts, err := s.GetParts(ctx, uploadID)
+	parts, err := s.ListParts(ctx, uploadID, 0, core.MaxPartNumber)
 	if err != nil {
-		t.Fatalf("GetParts: %v", err)
+		t.Fatalf("ListParts: %v", err)
 	}
 	if len(parts) != 1 || !parts[0].Encrypted || parts[0].KeyID != "kid-1" || parts[0].PlaintextSize != 50 {
 		t.Errorf("encryption fields not preserved on part: %+v", parts)
@@ -876,43 +876,26 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 // QUOTA
 // -------------------------------------------------------------------------
 
-// TestStoreInt_ListBackendQuotaUsage verifies the routing view carries a row
-// per configured backend with the three byte totals a placement decision is
-// judged against. This is the query that replaced the placement SQL: the
-// tracker loads it once per flush and decides in memory from there, so a row
-// missing a total would route against a backend that is fuller than it reports.
-func TestStoreInt_ListBackendQuotaUsage(t *testing.T) {
-	s := adapterPgStore(t)
-	usage, err := s.ListBackendQuotaUsage(context.Background())
-	if err != nil {
-		t.Fatalf("ListBackendQuotaUsage: %v", err)
-	}
-	byName := make(map[string]core.BackendQuotaUsage, len(usage))
-	for _, u := range usage {
-		byName[u.BackendName] = u
-	}
-	got, ok := byName["backend-a"]
-	if !ok {
-		t.Fatalf("backend-a missing from usage: %+v", usage)
-	}
-	if got.BytesUsed < 0 || got.OrphanBytes < 0 || got.InflightBytes < 0 {
-		t.Errorf("negative byte total in usage row: %+v", got)
-	}
-	if got.Occupied() != got.BytesUsed+got.OrphanBytes+got.InflightBytes {
-		t.Errorf("Occupied disagrees with its parts: %+v", got)
-	}
-}
-
-// TestStoreInt_GetQuotaStats verifies the helper returns a row per
-// configured backend.
+// TestStoreInt_GetQuotaStats verifies the routing view carries a row per
+// configured backend with the three byte totals a placement decision is judged
+// against. The tracker loads it once per flush and ranks in memory from there,
+// so a row missing a total would route against a backend that is fuller than
+// it reports.
 func TestStoreInt_GetQuotaStats(t *testing.T) {
 	s := adapterPgStore(t)
 	stats, err := s.GetQuotaStats(context.Background())
 	if err != nil {
 		t.Fatalf("GetQuotaStats: %v", err)
 	}
-	if _, ok := stats["backend-a"]; !ok {
-		t.Errorf("backend-a missing from stats: %+v", stats)
+	got, ok := stats["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a missing from stats: %+v", stats)
+	}
+	if got.BytesUsed < 0 || got.OrphanBytes < 0 || got.InflightBytes < 0 {
+		t.Errorf("negative byte total in stats row: %+v", got)
+	}
+	if got.Occupied() != got.BytesUsed+got.OrphanBytes+got.InflightBytes {
+		t.Errorf("Occupied disagrees with its parts: %+v", got)
 	}
 }
 
@@ -941,10 +924,10 @@ func TestStoreInt_LedgerStats_CountsAndUnhashed(t *testing.T) {
 	before := pgLedger(t, s)["backend-a"]
 
 	key := uniqueKey(t, "ledger")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	after := pgLedger(t, s)["backend-a"]
 	if after.Objects != before.Objects+1 || after.Unhashed != before.Unhashed+1 {
@@ -965,11 +948,11 @@ func TestStoreInt_LedgerStats_CountsAndUnhashed(t *testing.T) {
 func TestStoreInt_ReplicationQueries(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
-	if _, err := s.GetUnderReplicatedObjects(ctx, 2, 100); err != nil {
+	if _, err := s.GetUnderReplicatedObjects(ctx, 2, 100, nil); err != nil {
 		t.Errorf("GetUnderReplicatedObjects: %v", err)
 	}
-	if _, err := s.GetUnderReplicatedObjectsExcluding(ctx, 2, 100, []string{"backend-c"}); err != nil {
-		t.Errorf("GetUnderReplicatedObjectsExcluding: %v", err)
+	if _, err := s.GetUnderReplicatedObjects(ctx, 2, 100, []string{"backend-c"}); err != nil {
+		t.Errorf("GetUnderReplicatedObjects excluding: %v", err)
 	}
 	if _, err := s.GetOverReplicatedObjects(ctx, 1, 100); err != nil {
 		t.Errorf("GetOverReplicatedObjects: %v", err)
@@ -994,7 +977,7 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
 	key := uniqueKey(t, "k")
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	primary := core.PendingObject{IntentID: uniqueKey(t, "primary"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1024}
 	companion := core.PendingObject{IntentID: uniqueKey(t, "companion"), ObjectKey: key, BackendName: "backend-c", SizeBytes: 1024, Role: core.PendingRoleCompanion}
@@ -1004,7 +987,7 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		}
 		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Size: 1024,
 		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
 		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: primary.IntentID}, {Backend: "backend-c", IntentID: companion.IntentID}},
@@ -1018,11 +1001,11 @@ func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
 		name  string
 		query func() ([]core.ObjectLocation, error)
 	}{
-		{"GetUnderReplicatedObjects", func() ([]core.ObjectLocation, error) {
-			return s.GetUnderReplicatedObjects(ctx, 3, 1000)
+		{"nothing excluded", func() ([]core.ObjectLocation, error) {
+			return s.GetUnderReplicatedObjects(ctx, 3, 1000, nil)
 		}},
-		{"GetUnderReplicatedObjectsExcluding", func() ([]core.ObjectLocation, error) {
-			return s.GetUnderReplicatedObjectsExcluding(ctx, 3, 1000, []string{"backend-d"})
+		{"backend-d excluded", func() ([]core.ObjectLocation, error) {
+			return s.GetUnderReplicatedObjects(ctx, 3, 1000, []string{"backend-d"})
 		}},
 	} {
 		under, err := tc.query()
@@ -1050,10 +1033,10 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	plaintext := core.FormFilter{Without: core.StoredEncrypted}
 	encrypted := core.FormFilter{With: core.StoredEncrypted}
@@ -1217,7 +1200,7 @@ func TestStoreInt_ListedPathStates(t *testing.T) {
 	seedIntentPg(t, s, intentAndQueued)
 	deadLetterPg(t, s, dlq)
 	for key, be := range map[string]string{rec: "backend-a", both: "backend-a", other: "backend-b"} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: be}}, Size: 1}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: be}}, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 	}
@@ -1330,7 +1313,7 @@ func TestStoreInt_ListExpiredObjectsPagesAfterTheCursor(t *testing.T) {
 	s := adapterPgStore(t)
 	prefix := uniqueKey(t, "expiry-page") + "/"
 	for _, k := range []string{"a", "b", "c"} {
-		if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+		if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 			Key: prefix + k, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
 		}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", k, err)
@@ -1367,7 +1350,7 @@ func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
 		{prefix + "none", nil},
 	}
 	for _, o := range objects {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 			Key: o.key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100, Tags: o.tags,
 		}); err != nil {
 			t.Fatalf("RecordObject %s: %v", o.key, err)
@@ -1476,15 +1459,15 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, k1) }()
+	defer func() { _, _ = s.DeleteObject(ctx, k1) }()
 	mustRecordReplica(t, s, k1, "backend-b", "backend-a")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, k2) }()
+	defer func() { _, _ = s.DeleteObject(ctx, k2) }()
 
 	got, err := s.GetObjectBackendsForKeys(ctx, []string{k1, k2, missing})
 	if err != nil {
@@ -1509,7 +1492,7 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 // short-circuits on an empty input without opening a transaction.
 func TestStoreInt_DeleteObjectsBatch_EmptyInput(t *testing.T) {
 	s := adapterPgStore(t)
-	got, _, err := s.DeleteObjectsBatch(context.Background(), nil)
+	got, err := s.DeleteObjectsBatch(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
 	}
@@ -1542,11 +1525,11 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	mustRecordReplica(t, s, k1, "backend-b", "backend-a")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
 
@@ -1555,7 +1538,7 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 		t.Fatalf("GetQuotaStats(before): %v", err)
 	}
 
-	got, _, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
+	got, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
@@ -1688,10 +1671,10 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 	oldKey := uniqueKey(t, "old")
 	freshKey := uniqueKey(t, "fresh")
 	for _, key := range []string{oldKey, freshKey} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+		defer func() { _, _ = s.DeleteObject(ctx, key) }()
 		hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
 		if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), hashed); err != nil {
 			t.Fatalf("UpdateCopyMetadata(%s): %v", key, err)
@@ -1776,10 +1759,10 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 	keyA := uniqueKey(t, "affordable")
 	keyB := uniqueKey(t, "declined")
 	for backend, key := range map[string]string{"backend-a": keyA, "backend-b": keyB} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+		defer func() { _, _ = s.DeleteObject(ctx, key) }()
 		hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
 		if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, backend), hashed); err != nil {
 			t.Fatalf("UpdateCopyMetadata(%s): %v", key, err)
@@ -1828,10 +1811,10 @@ func TestStoreInt_ScrubFloorExcludesRecentlyVerified(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "floor")
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 	hashed := &core.CopyPatch{ContentHash: "abc123", Scrubbed: true}
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), hashed); err != nil {
 		t.Fatalf("UpdateCopyMetadata: %v", err)
@@ -1869,10 +1852,10 @@ func TestStoreInt_LedgerStats_PlaintextCopies(t *testing.T) {
 	before := pgLedger(t, s).PlaintextCopies()
 
 	key := uniqueKey(t, "plaintext")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	after := pgLedger(t, s).PlaintextCopies()
 	if after != before+1 {
@@ -1911,13 +1894,13 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	// Hashed at write, not by backfill, which stamps: the replica insert carries
 	// the hash across without the stamp, leaving two hashed copies that differ
 	// only on whether the bytes were ever read back.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Form: &core.StoredForm{ContentHash: "abc123"},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 	mustRecordReplica(t, s, key, "backend-b", "backend-a")
 
 	if err := s.UpdateCopyMetadata(ctx, storetest.LocationOn(t, s, key, "backend-a"), &core.CopyPatch{Scrubbed: true}); err != nil {
@@ -1963,10 +1946,10 @@ func TestStoreInt_LedgerStats_CountsNeverVerifiedCopies(t *testing.T) {
 	reachable := []string{"backend-a", "backend-b"}
 
 	key := uniqueKey(t, "unverified-age")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 	// Hashed at write rather than by backfill, which stamps, so the copy is
 	// hashed and unverified: the state the coverage figures are about.
 	if _, err := s.pool.Exec(ctx,

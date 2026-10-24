@@ -111,6 +111,19 @@ func (p Pager[T, C]) Walk(ctx context.Context, visit func(ctx context.Context, r
 	}
 }
 
+// RunPages walks the listing and runs each page's rows through runner, then
+// returns the tally across every page with why the walk ended. A page's
+// succeeded rows are its progress.
+func (p Pager[T, C]) RunPages(ctx context.Context, runner Runner[T], fn func(context.Context, T) ItemResult) (Summary, Stop, error) {
+	var total Summary
+	stop, err := p.Walk(ctx, func(ctx context.Context, rows []T) (Step, error) {
+		sum := runner.Run(ctx, rows, fn)
+		total = total.Plus(sum)
+		return Step{Progress: sum.Succeeded}, nil
+	})
+	return total, stop, err
+}
+
 // proceed reports whether the walk may list another page, and when it may not,
 // why and with what error.
 func (p Pager[T, C]) proceed(ctx context.Context) (bool, Stop, error) {

@@ -83,7 +83,7 @@ func New(deps Deps) (*Server, error) {
 	metricsSrv := configureMetrics(mux, &deps.Cfg.Telemetry.Metrics)
 	registerHealthEndpoints(mux, HealthDeps{Ready: deps.Ready, DBBreaker: deps.DBBreaker})
 
-	if err := registerAdminHandler(mux, deps.Injector, deps.Cfg); err != nil {
+	if err := registerAdminHandler(mux, deps.Injector); err != nil {
 		return nil, err
 	}
 

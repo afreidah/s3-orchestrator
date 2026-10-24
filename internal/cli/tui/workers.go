@@ -13,7 +13,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -52,14 +51,9 @@ type workersErrMsg struct{ err error }
 
 // loadWorkers returns a command that fetches worker health off the main loop.
 func (m *model) loadWorkers() tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetWorkers(context.Background())
-		if err != nil {
-			return workersErrMsg{err}
-		}
-		return workersLoadedMsg{resp}
-	}
+	return fetchCmd(m.client.GetWorkers,
+		func(r *adminapi.WorkersResponse) tea.Msg { return workersLoadedMsg{r} },
+		func(err error) tea.Msg { return workersErrMsg{err} })
 }
 
 // -------------------------------------------------------------------------

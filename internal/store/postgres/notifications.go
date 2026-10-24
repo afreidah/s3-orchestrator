@@ -18,8 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -36,7 +34,7 @@ func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endp
 
 // GetPendingNotifications returns outbox rows ready for delivery.
 func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.NotificationRow, error) {
-	rows, err := s.queries.GetPendingNotifications(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
+	rows, err := s.queries.GetPendingNotifications(ctx, rowLimit(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +71,7 @@ func (s *Store) CompleteNotification(ctx context.Context, id int64) error {
 func (s *Store) RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
 	return s.queries.RetryNotification(ctx, db.RetryNotificationParams{
 		ID:        id,
-		Backoff:   pgtype.Interval{Microseconds: backoff.Microseconds(), Valid: true},
+		Backoff:   durationToInterval(backoff),
 		LastError: &lastError,
 	})
 }

@@ -24,23 +24,6 @@ import (
 // DIRECTORY LISTING
 // -------------------------------------------------------------------------
 
-// dirStat is one aggregated row from the directory stats query: either a
-// sub-directory roll-up or a single file entry directly beneath the prefix.
-type dirStat struct {
-	Name      string
-	IsDir     bool
-	FileCount int64
-	TotalSize int64
-}
-
-// fileDetail carries the per-file backend set, logical size, and display
-// timestamp used to enrich direct-child file entries in ListDirectoryChildren.
-type fileDetail struct {
-	Backends  []string
-	SizeBytes int64
-	CreatedAt string
-}
-
 // ListDirectoryChildren returns immediate children (directories and files)
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
@@ -54,31 +37,18 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	if err != nil {
 		return nil, err
 	}
-	fileLookup, fileKeys, err := queryDirectFileDetails(ctx, s, prefix, escapedPrefix, startAfter, maxKeys)
+	files, err := queryDirectFiles(ctx, s, prefix, escapedPrefix, startAfter, maxKeys)
 	if err != nil {
 		return nil, err
 	}
-
-	hasMore := len(fileKeys) > maxKeys
-	if hasMore {
-		fileKeys = fileKeys[:maxKeys]
-	}
-
-	result := &core.DirectoryListResult{
-		Entries: buildDirectoryEntries(prefix, stats, fileLookup),
-	}
-	if hasMore && len(fileKeys) > 0 {
-		result.HasMore = true
-		result.NextCursor = fileKeys[len(fileKeys)-1]
-	}
-	return result, nil
+	return core.BuildDirectoryListing(prefix, stats, files, maxKeys), nil
 }
 
 // queryDirectoryStats returns aggregate stats for each immediate child
 // under prefix. file_count counts distinct object_keys (logical files);
 // total_size sums every replica row so directory totals reflect physical
 // storage, matching the Storage Summary semantics.
-func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix string) ([]dirStat, error) {
+func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix string) ([]core.DirStat, error) {
 	const statsQuery = `
 		SELECT
 			CASE WHEN INSTR(SUBSTR(object_key, LENGTH(?) + 1), '/') > 0
@@ -103,25 +73,24 @@ func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix st
 	if err != nil {
 		return nil, fmt.Errorf("directory stats: %w", err)
 	}
-	return collectRows(rows, "directory stats", func(rows *sql.Rows) (dirStat, error) {
+	return collectRows(rows, "directory stats", func(rows *sql.Rows) (core.DirStat, error) {
 		var (
-			ds       dirStat
+			ds       core.DirStat
 			isDirInt int
 		)
 		if err := rows.Scan(&ds.Name, &isDirInt, &ds.FileCount, &ds.TotalSize); err != nil {
-			return dirStat{}, fmt.Errorf("scan directory stat: %w", err)
+			return core.DirStat{}, fmt.Errorf("scan directory stat: %w", err)
 		}
 		ds.IsDir = isDirInt == 1
 		return ds, nil
 	})
 }
 
-// queryDirectFileDetails pages through the direct-child files (entries
-// without a '/' after prefix), returning a rel-name -> backends/size/ctime
-// lookup plus the ordered object-key list used for the "has more" cursor.
-// Backends are aggregated into a sorted comma-separated string per
-// object_key. One extra row is fetched to detect truncation.
-func queryDirectFileDetails(ctx context.Context, s *Store, prefix, escapedPrefix, startAfter string, maxKeys int) (map[string]fileDetail, []string, error) {
+// queryDirectFiles pages through the direct-child files (entries without a '/'
+// after prefix) in key order. Backends are aggregated into a comma-separated
+// string per object_key and returned sorted. One extra row is fetched to
+// detect truncation.
+func queryDirectFiles(ctx context.Context, s *Store, prefix, escapedPrefix, startAfter string, maxKeys int) ([]core.DirFile, error) {
 	const fileQuery = `
 		SELECT object_key,
 		       GROUP_CONCAT(backend_name, ',') AS backends,
@@ -140,68 +109,24 @@ func queryDirectFileDetails(ctx context.Context, s *Store, prefix, escapedPrefix
 		escapedPrefix, prefix, prefix, startAfter, maxKeys+1,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list direct children: %w", err)
+		return nil, fmt.Errorf("list direct children: %w", err)
 	}
-	files, err := collectRows(rows, "file details", func(rows *sql.Rows) (directFile, error) {
+	return collectRows(rows, "file details", func(rows *sql.Rows) (core.DirFile, error) {
 		var (
-			df          directFile
+			f           core.DirFile
 			backendList string
 			createdAt   string
 		)
-		if err := rows.Scan(&df.objectKey, &backendList, &df.detail.SizeBytes, &createdAt); err != nil {
-			return directFile{}, fmt.Errorf("scan file detail: %w", err)
+		if err := rows.Scan(&f.ObjectKey, &backendList, &f.SizeBytes, &createdAt); err != nil {
+			return core.DirFile{}, fmt.Errorf("scan file detail: %w", err)
 		}
-		df.detail.Backends = splitAndSort(backendList)
-		df.detail.CreatedAt = formatTimestamp(createdAt)
-		return df, nil
+		f.Backends = splitAndSort(backendList)
+		var err error
+		if f.CreatedAt, err = parseTime(createdAt); err != nil {
+			return core.DirFile{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+		}
+		return f, nil
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// The caller needs both shapes of the same page: the details keyed by the
-	// name shown in the listing, and the object keys in order for the cursor.
-	lookup := make(map[string]fileDetail, len(files))
-	keys := make([]string, 0, len(files))
-	for _, f := range files {
-		lookup[f.objectKey[len(prefix):]] = f.detail
-		keys = append(keys, f.objectKey)
-	}
-	return lookup, keys, nil
-}
-
-// directFile is one row of the direct-children page, holding the object key
-// until the caller splits the page into its keyed and ordered halves.
-type directFile struct {
-	objectKey string
-	detail    fileDetail
-}
-
-// buildDirectoryEntries merges stats roll-ups with per-file details,
-// skipping files that fell outside the current page (no fileLookup entry).
-// File rows report the logical size from fileDetail rather than the
-// replica-summed total_size returned by the stats query.
-func buildDirectoryEntries(prefix string, stats []dirStat, fileLookup map[string]fileDetail) []core.DirEntry {
-	entries := make([]core.DirEntry, 0, len(stats))
-	for _, ds := range stats {
-		entry := core.DirEntry{
-			Name:      prefix + ds.Name,
-			IsDir:     ds.IsDir,
-			FileCount: ds.FileCount,
-			TotalSize: ds.TotalSize,
-		}
-		if !ds.IsDir {
-			detail, ok := fileLookup[ds.Name]
-			if !ok {
-				continue
-			}
-			entry.Backends = detail.Backends
-			entry.CreatedAt = detail.CreatedAt
-			entry.TotalSize = detail.SizeBytes
-		}
-		entries = append(entries, entry)
-	}
-	return entries
 }
 
 // splitAndSort turns a comma-separated GROUP_CONCAT result into a sorted
@@ -213,13 +138,4 @@ func splitAndSort(s string) []string {
 	parts := strings.Split(s, ",")
 	slices.Sort(parts)
 	return parts
-}
-
-// formatTimestamp converts an RFC3339 timestamp to a short display format.
-func formatTimestamp(ts string) string {
-	t, err := parseTime(ts)
-	if err != nil {
-		return ts
-	}
-	return t.Format("2006-01-02 15:04")
 }

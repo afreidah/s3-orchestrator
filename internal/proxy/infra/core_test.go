@@ -183,7 +183,7 @@ func TestCore_WriteTargets(t *testing.T) {
 	if want := []string{"healthy", "also-healthy"}; !slices.Equal(got, want) {
 		t.Errorf("WriteTargets = %v, want %v", got, want)
 	}
-	if eligible := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 1); !slices.Equal(eligible, got) {
+	if eligible := c.EligibleForWrite(s3op.PutObject, 0, 1); !slices.Equal(eligible, got) {
 		t.Errorf("EligibleForWrite = %v, want the write targets %v", eligible, got)
 	}
 }
@@ -198,12 +198,6 @@ func TestCore_UsageForwarders(t *testing.T) {
 	if c.Usage() == nil {
 		t.Error("Usage() returned nil")
 	}
-	if got := c.MaxObjectSize("b2"); got != 1024 {
-		t.Errorf("MaxObjectSize(b2) = %d, want 1024", got)
-	}
-	if got := c.MaxObjectSize("b1"); got != 0 {
-		t.Errorf("MaxObjectSize(b1) = %d, want 0 (unset)", got)
-	}
 }
 
 func TestCore_EligibleForWrite_AppliesAllFilters(t *testing.T) {
@@ -212,11 +206,11 @@ func TestCore_EligibleForWrite_AppliesAllFilters(t *testing.T) {
 	c.SetStateChecker(staticFlags{"b1": core.FlagDraining})
 
 	// b1 is draining -> excluded. b2 has max 1024; ingress 2048 -> excluded.
-	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 2048); len(got) != 0 {
+	if got := c.EligibleForWrite(s3op.PutObject, 0, 2048); len(got) != 0 {
 		t.Errorf("EligibleForWrite(2048) = %v, want []", got)
 	}
 	// b1 still draining; b2 within limit (ingress 512 < 1024) -> [b2].
-	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 512); len(got) != 1 || got[0] != "b2" {
+	if got := c.EligibleForWrite(s3op.PutObject, 0, 512); len(got) != 1 || got[0] != "b2" {
 		t.Errorf("EligibleForWrite(512) = %v, want [b2]", got)
 	}
 }

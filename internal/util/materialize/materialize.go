@@ -158,9 +158,9 @@ func (b *Body) Size() int64 {
 // Reader returns a new io.ReadSeeker at offset 0, independent of any other, so
 // concurrent uploads can read one payload. The tempfile form returns a section
 // reader because a shared *os.File has a single offset.
-func (b *Body) Reader() (io.ReadSeeker, error) {
+func (b *Body) Reader() io.ReadSeeker {
 	if b.file != nil {
-		return io.NewSectionReader(b.file, 0, b.size), nil
+		return io.NewSectionReader(b.file, 0, b.size)
 	}
-	return bytes.NewReader(b.buf.Bytes()), nil
+	return bytes.NewReader(b.buf.Bytes())
 }

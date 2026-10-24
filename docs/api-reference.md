@@ -47,8 +47,8 @@ Returns the full dashboard data. Quota, object, multipart, integrity, plaintext 
 {
   "BackendOrder": ["oci", "r2"],
   "QuotaStats": {
-    "oci": {"BackendName": "oci", "BytesUsed": 5242880, "BytesLimit": 10737418240, "UpdatedAt": "..."},
-    "r2": {"BackendName": "r2", "BytesUsed": 1048576, "BytesLimit": 10737418240, "UpdatedAt": "..."}
+    "oci": {"BackendName": "oci", "BytesUsed": 5242880, "BytesLimit": 10737418240, "OrphanBytes": 0, "InflightBytes": 0},
+    "r2": {"BackendName": "r2", "BytesUsed": 1048576, "BytesLimit": 10737418240, "OrphanBytes": 0, "InflightBytes": 0}
   },
   "ObjectCounts": {"oci": 42, "r2": 15},
   "ActiveMultipartCounts": {"oci": 0, "r2": 0},

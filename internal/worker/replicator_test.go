@@ -207,64 +207,6 @@ func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestFindReplicaTarget_SelectsBackendWithSpace verifies the find replica target selects backend with space contract.
-// Asserts that FindReplicaTarget = , want b2.
-func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
-
-	exclusion := map[string]bool{"b1": true}
-	pl.EXPECT().RankReplicaTargets(int64(50), exclusion).Return([]string{"b2"})
-
-	r := newTestReplicator(ops, pl, ms)
-
-	target := r.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
-	if target != "b2" {
-		t.Errorf("FindReplicaTarget = %q, want b2", target)
-	}
-}
-
-// TestFindReplicaTarget_NoSpace verifies the find replica target no space contract.
-// Asserts that FindReplicaTarget = , want empty (no space).
-func TestFindReplicaTarget_NoSpace(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
-
-	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return(nil)
-
-	r := newTestReplicator(ops, pl, ms)
-
-	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
-	if target != "" {
-		t.Errorf("FindReplicaTarget = %q, want empty (no space)", target)
-	}
-}
-
-// TestFindReplicaTarget_SelectionError verifies the find replica target selection error contract.
-// Asserts that FindReplicaTarget = , want empty (error).
-func TestFindReplicaTarget_SelectionError(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
-
-	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return(nil)
-
-	r := newTestReplicator(ops, pl, ms)
-
-	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
-	if target != "" {
-		t.Errorf("FindReplicaTarget = %q, want empty (error)", target)
-	}
-}
-
 // TestCopyToReplica_Success verifies the copy to replica success contract.
 // Asserts that unexpected error:.
 func TestCopyToReplica_Success(t *testing.T) {

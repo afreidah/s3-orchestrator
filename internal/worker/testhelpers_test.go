@@ -254,7 +254,6 @@ type mockMetadataStore struct {
 	promotedPending   []core.PendingObject
 	promoteResult     core.PendingPromoteResult
 	promoteCleanup    []core.CleanupItem
-	promoteDeltas     core.QuotaDeltas
 	promoteErr        error
 	pendingDepthVal   int64
 	pendingDepthErr   error
@@ -455,13 +454,7 @@ func newTestRecorder() *accounting.Recorder {
 
 // GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return withPaths(m.underReplicated), m.underReplicatedErr
-}
-
-// GetUnderReplicatedObjectsExcluding is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
+func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
 	return withPaths(m.underReplicated), m.underReplicatedErr
 }
 
@@ -598,11 +591,11 @@ func (m *mockMetadataStore) DeletePending(_ context.Context, intentID string) er
 // resolution outcome. The captured slice lets tests verify the reaper
 // passed is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.CleanupItem, core.QuotaDeltas, error) {
+func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.CleanupItem, error) {
 	if p != nil {
 		m.promotedPending = append(m.promotedPending, *p)
 	}
-	return m.promoteResult, m.promoteCleanup, m.promoteDeltas, m.promoteErr
+	return m.promoteResult, m.promoteCleanup, m.promoteErr
 }
 
 // PendingDepth returns the configured depth value (defaults to 0).

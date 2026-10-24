@@ -133,7 +133,7 @@ func TestStream_NotDrainedHint(t *testing.T) {
 
 func TestStream_JSONPassthrough(t *testing.T) {
 	t.Parallel()
-	lines := `{"event":"progress","processed":100}
+	lines := `{"event":"start","op":"backfill-checksums"}
 {"event":"result","outcome":"ok","processed":100}
 `
 	srv, _ := ndjsonServer(t, lines)
@@ -146,8 +146,8 @@ func TestStream_JSONPassthrough(t *testing.T) {
 	if strings.Count(strings.TrimSpace(stdout.String()), "\n") != 1 {
 		t.Errorf("expected 2 JSON lines, got:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `"event":"progress"`) {
-		t.Errorf("JSON passthrough missing progress event:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), `"event":"start"`) {
+		t.Errorf("JSON passthrough missing start event:\n%s", stdout.String())
 	}
 }
 

@@ -170,13 +170,11 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		Key:         func(t cleanupTask) string { return t.key },
 	}
 	sum := runner.Run(ctx, tasks, func(ctx context.Context, task cleanupTask) batch.ItemResult {
-		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the work
-		WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() {
+		return WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() batch.ItemResult {
 			n, failures := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
 			removed.Add(int64(n))
-			res = cleanupItemResult(n, failures)
+			return cleanupItemResult(n, failures)
 		})
-		return res
 	})
 
 	out.summary = OverReplicationSummary{Summary: sum, CopiesRemoved: int(removed.Load())}
@@ -190,9 +188,9 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 func cleanupItemResult(removed, failures int) batch.ItemResult {
 	switch {
 	case removed > 0:
-		return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
+		return batch.Succeeded()
 	case failures > 0:
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
+		return batch.Failed()
 	default:
 		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
 	}

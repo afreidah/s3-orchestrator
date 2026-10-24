@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -155,8 +154,7 @@ func inProgress(records []core.BackendStateRecord) []core.BackendStateRecord {
 // next tick should retry; a failure that ends the drain is recorded on it.
 func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord, observer progress.Observer) (batch.Summary, bool, error) {
 	name := rec.BackendName
-	src, err := d.ops.GetBackend(name)
-	if err != nil {
+	if _, err := d.ops.GetBackend(name); err != nil {
 		return batch.Summary{}, false, d.fail(ctx, rec, 0, fmt.Errorf("backend not configured: %w", err))
 	}
 	d.abortUploads(ctx, name)
@@ -180,7 +178,7 @@ func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord
 	}
 	var total batch.Summary
 	stop, err := pager.Walk(ctx, func(ctx context.Context, page []core.ObjectLocation) (batch.Step, error) {
-		sum, err := d.movePage(ctx, src, name, page, observer)
+		sum, err := d.movePage(ctx, name, page, observer)
 		if err != nil {
 			return batch.Step{}, err
 		}
@@ -210,7 +208,7 @@ func (d *Drainer) drainBackend(ctx context.Context, rec *core.BackendStateRecord
 // page's copies are looked up once, so an object another backend already holds
 // is dropped without a per-object lookup. A failed lookup ends the pass for the
 // next tick to retry.
-func (d *Drainer) movePage(ctx context.Context, src backend.ObjectBackend, srcName string, page []core.ObjectLocation, observer progress.Observer) (batch.Summary, error) {
+func (d *Drainer) movePage(ctx context.Context, srcName string, page []core.ObjectLocation, observer progress.Observer) (batch.Summary, error) {
 	keys := make([]string, len(page))
 	for i := range page {
 		keys[i] = page[i].ObjectKey
@@ -226,17 +224,14 @@ func (d *Drainer) movePage(ctx context.Context, src backend.ObjectBackend, srcNa
 		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
 	}
 	return runner.Run(ctx, page, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
-		var res batch.ItemResult // zero value (batch.ItemSkipped) when admission blocks the move
-		WithAdmission(ctx, d.ops, WorkerNameDrainer, func() {
-			if d.drainOne(ctx, src, srcName, &obj, copies[obj.ObjectKey]) {
-				telemetry.DrainObjectsMoved.Inc()
-				telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
-				res = batch.ItemResult{Outcome: batch.ItemSucceeded}
-			} else {
-				res = batch.ItemResult{Outcome: batch.ItemFailed}
+		return WithAdmission(ctx, d.ops, WorkerNameDrainer, func() batch.ItemResult {
+			if !d.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey]) {
+				return batch.Failed()
 			}
+			telemetry.DrainObjectsMoved.Inc()
+			telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
+			return batch.Succeeded()
 		})
-		return res
 	}), nil
 }
 
@@ -296,11 +291,11 @@ func (d *Drainer) fail(ctx context.Context, rec *core.BackendStateRecord, movedT
 // drainOne moves a single object off the draining backend. backends are the
 // backends the page lookup found holding a copy. When another one does, the
 // draining copy is dropped and nothing is transferred. Returns true on success.
-func (d *Drainer) drainOne(ctx context.Context, src backend.ObjectBackend, srcName string, obj *core.ObjectLocation, backends []string) bool {
+func (d *Drainer) drainOne(ctx context.Context, srcName string, obj *core.ObjectLocation, backends []string) bool {
 	if other := otherCopyBackend(backends, srcName); other != "" {
-		return d.dropDrainedCopy(ctx, src, srcName, obj, other)
+		return d.dropDrainedCopy(ctx, srcName, obj, other)
 	}
-	return d.moveOff(ctx, src, srcName, obj)
+	return d.moveOff(ctx, srcName, obj)
 }
 
 // otherCopyBackend returns a backend other than srcName that holds a copy, or
@@ -322,11 +317,11 @@ func otherCopyBackend(backends []string, srcName string) string {
 // cannot cost the last copy. If the other copy is gone, the object is moved
 // off instead. A copy that holds the only usable encryption key is kept, and
 // one a client overwrote since the page was read is left for the next pass.
-func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
+func (d *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core.ObjectLocation, otherBackend string) bool {
 	removed, err := d.store.DeleteObjectLocation(ctx, obj, 1, writepath.DrainMove.Reasons.SourceDelete)
 	switch {
 	case errors.Is(err, core.ErrCopyNotExcess):
-		return d.moveOff(ctx, src, srcName, obj)
+		return d.moveOff(ctx, srcName, obj)
 	case errors.Is(err, core.ErrCopyChanged):
 		return false
 	case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
@@ -350,17 +345,15 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend
 // moveOff copies an object the draining backend holds the only copy of to
 // another backend, moves its row there, and deletes the source bytes, all
 // through the coordinator's MoveObject.
-func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {
-	destName, dest, ok := d.pickDestination(ctx, srcName, obj)
+func (d *Drainer) moveOff(ctx context.Context, srcName string, obj *core.ObjectLocation) bool {
+	destName, ok := d.pickDestination(ctx, srcName, obj)
 	if !ok {
 		return false
 	}
 	movedSize, err := d.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Source:      obj,
-		SrcBackend:  src,
-		DestBackend: dest,
-		DestName:    destName,
-		Profile:     writepath.DrainMove,
+		Source:   obj,
+		DestName: destName,
+		Profile:  writepath.DrainMove,
 	})
 	if err != nil {
 		if !core.PlacementDeclined(err) {
@@ -382,21 +375,15 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 // room for the object. It reads the same in-memory view a client write is
 // ranked against, so a drain and a write do not disagree about where there is
 // room or which backends may take new bytes.
-func (d *Drainer) pickDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, backend.ObjectBackend, bool) {
+func (d *Drainer) pickDestination(ctx context.Context, srcName string, obj *core.ObjectLocation) (string, bool) {
 	candidates := slices.DeleteFunc(d.ops.WriteTargets(), func(name string) bool { return name == srcName })
 	quota := d.ops.Quota()
 	for _, name := range quota.RankByUtilization(candidates) {
-		if quota.Available(name) < obj.SizeBytes {
-			continue
+		if quota.Available(name) >= obj.SizeBytes {
+			return name, true
 		}
-		dest, err := d.ops.GetBackend(name)
-		if err != nil {
-			d.log.ErrorContext(ctx, "destination backend not found", "backend", name)
-			return "", nil, false
-		}
-		return name, dest, true
 	}
 	d.log.WarnContext(ctx, "no destination backend available",
 		"key", obj.ObjectKey, "size_bytes", obj.SizeBytes)
-	return "", nil, false
+	return "", false
 }

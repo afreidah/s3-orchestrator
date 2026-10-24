@@ -55,7 +55,7 @@ func TestRegisterAdminHandler_RateLimiterFailedFallsBack(t *testing.T) {
 	overrideFailingRateLimiter(inj)
 
 	mux := http.NewServeMux()
-	if err := registerAdminHandler(mux, inj, cfg); err != nil {
+	if err := registerAdminHandler(mux, inj); err != nil {
 		t.Fatalf("registerAdminHandler: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestRegisterS3Handler_RateLimiterFailedFallsBack(t *testing.T) {
 // "initialize admin handler" wrapped-error path against a bare injector
 // that has no admin.Handler provider.
 func TestRegisterAdminHandler_AdminHandlerInvokeFails(t *testing.T) {
-	err := registerAdminHandler(http.NewServeMux(), do.New(), &config.Config{})
+	err := registerAdminHandler(http.NewServeMux(), do.New())
 	if err == nil {
 		t.Fatal("expected error when admin.Handler is not registered")
 	}

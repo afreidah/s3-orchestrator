@@ -152,11 +152,11 @@ func DecodeTags(encoded string) ([]Tag, error) {
 // ReplaceObjectTags swaps an object's whole tag set for the supplied one in one
 // transaction, so concurrent taggers are last-writer-wins. An empty set leaves
 // the object untagged, as PutObjectTagging with an empty TagSet does.
-func ReplaceObjectTags(ctx context.Context, runner Runner, key string, tags []Tag) error {
+func (o TxOps) ReplaceObjectTags(ctx context.Context, key string, tags []Tag) error {
 	if err := ValidateTags(tags); err != nil {
 		return err
 	}
-	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
+	return o.runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
 			return err
 		}
@@ -203,8 +203,8 @@ func replaceObjectTagsTx(ctx context.Context, tx TxAdapter, key string, tags []T
 // DeleteObjectTags removes an object's whole tag set. Deleting a set that is
 // already empty is a no-op rather than an error: AWS returns 204 for
 // DeleteObjectTagging against an untagged object.
-func DeleteObjectTags(ctx context.Context, runner Runner, key string) error {
-	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
+func (o TxOps) DeleteObjectTags(ctx context.Context, key string) error {
+	return o.runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
 			return err
 		}

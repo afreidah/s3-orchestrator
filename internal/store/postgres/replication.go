@@ -4,12 +4,9 @@
 // Author: Alex Freidah
 //
 // Implements the Postgres engine bindings for the replication-related
-// queries: under-replicated and over-replicated scans, the conditional
-// replica insert that returns the source row's size_bytes (so callers
-// can keep object_locations and backend_quotas in sync without a
-// second read), and the over-replication excess-copy removal. The
-// "excluding" variant of the under-replicated scan lets the worker
-// skip backends that are draining or circuit-broken.
+// queries: the copy lookups, the under- and over-replicated scans, and the
+// backlog count. The under-replicated scan takes the backends the worker is
+// skipping, such as draining or circuit-broken ones.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -17,7 +14,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -72,31 +68,20 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 // -------------------------------------------------------------------------
 
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
-// replication factor. Returns all rows for those objects so callers know which
-// backends already have copies.
-func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
+// factor, not counting copies on the excluded backends. Returns all rows for
+// those objects so callers know which backends already have copies.
+func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
+	if excluded == nil {
+		// A nil slice binds as NULL, and != ALL(NULL) would match no row.
+		excluded = []string{}
+	}
 	rows, err := s.queries.GetUnderReplicatedObjects(ctx, db.GetUnderReplicatedObjectsParams{
-		Factor:  int64(factor),
-		MaxKeys: int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Excluded: excluded,
+		Factor:   int64(factor),
+		MaxKeys:  rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
-	}
-
-	return toFatObjectLocations(rows), nil
-}
-
-// GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
-// target factor, ignoring copies on the excluded backends. Returns all rows
-// for those objects so callers know the full picture.
-func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.GetUnderReplicatedObjectsExcluding(ctx, db.GetUnderReplicatedObjectsExcludingParams{
-		Excluded: excludedBackends,
-		Factor:   int64(factor),
-		MaxKeys:  int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to query under-replicated objects (excluding): %w", err)
 	}
 
 	return toFatObjectLocations(rows), nil
@@ -110,19 +95,9 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 // replication factor. Returns all rows for those objects so callers can
 // score each copy and decide which to remove.
 func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
-	var maxKeys int32
-	switch {
-	case limit <= 0:
-		maxKeys = 0
-	case limit > math.MaxInt32:
-		maxKeys = math.MaxInt32
-	default:
-		maxKeys = int32(limit)
-	}
-
 	rows, err := s.queries.GetOverReplicatedObjects(ctx, db.GetOverReplicatedObjectsParams{
 		Factor:  int64(factor),
-		MaxKeys: maxKeys,
+		MaxKeys: rowLimit(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)

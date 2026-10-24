@@ -7,7 +7,7 @@
 // (enable + threshold + interval), ReplicationConfig (factor and
 // concurrency), CleanupQueueConfig (concurrency), LifecycleRules
 // (prefix + expiration_days array), ReconcileConfig (interval), and
-// the PendingReaperConfig that controls the PUT-before-COMMIT intent
+// the PendingPatternConfig that controls the PUT-before-COMMIT intent
 // reaper. All blocks are hot-reloadable via SIGHUP; validators ensure
 // every interval is positive and every factor stays within sane
 // bounds so a misconfigured reload cannot disable a worker.
@@ -62,10 +62,9 @@ type CleanupQueueConfig struct {
 	ClaimGracePeriod      time.Duration `yaml:"claim_grace_period"`      // Reclaim stale per-row claims older than this (default: 5m)
 }
 
-// WritePathConfig gates write-path correctness features. The pending-row
-// pattern (PUT-before-COMMIT intent tracking) is on by default; operators
-// can disable it to fall back to the legacy delete-on-record-failure path,
-// which trades data-loss safety for one fewer round-trip per PUT.
+// WritePathConfig tunes the write path: the reaper behind the pending-row
+// pattern (PUT-before-COMMIT intent tracking, which every write uses),
+// multipart limits, and how many copies a write places in parallel.
 type WritePathConfig struct {
 	PendingPattern PendingPatternConfig `yaml:"pending_pattern"`
 	Multipart      MultipartConfig      `yaml:"multipart"`
@@ -171,16 +170,12 @@ func (r *LifecycleRule) filterID() string {
 // VALIDATION
 // -------------------------------------------------------------------------
 
-// setDefaultsAndValidate sets defaults and validate.
-func (c *LifecycleConfig) setDefaultsAndValidate() []error {
-	if len(c.Rules) == 0 {
-		return nil
-	}
-
-	if c.BatchSize <= 0 {
+// setDefaults gives a configuration with rules its default batch size. The
+// rules themselves are checked by validateLifecycleRules.
+func (c *LifecycleConfig) setDefaults() {
+	if len(c.Rules) > 0 && c.BatchSize <= 0 {
 		c.BatchSize = 100
 	}
-	return nil
 }
 
 // setDefaultsAndValidate sets defaults and validate.
@@ -191,11 +186,11 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 
 	var errs []error
 
-	r.Strategy = defaulted(r.Strategy, "pack")
-	r.Interval = defaulted(r.Interval, 6*time.Hour)
-	r.BatchSize = defaulted(r.BatchSize, 100)
-	r.Threshold = defaulted(r.Threshold, 0.1)
-	r.Concurrency = defaulted(r.Concurrency, 5)
+	r.Strategy = cmp.Or(r.Strategy, "pack")
+	r.Interval = cmp.Or(r.Interval, 6*time.Hour)
+	r.BatchSize = cmp.Or(r.BatchSize, 100)
+	r.Threshold = cmp.Or(r.Threshold, 0.1)
+	r.Concurrency = cmp.Or(r.Concurrency, 5)
 
 	if r.Strategy != "pack" && r.Strategy != "spread" {
 		errs = append(errs, ErrInvalidRebalanceStrategy)

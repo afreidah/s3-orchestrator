@@ -377,7 +377,7 @@ func (d *Manager) purgeOneObject(ctx context.Context, name string, obj *core.Obj
 	if err != nil && !errors.Is(err, core.ErrCopyChanged) {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
-		return batch.ItemResult{Outcome: batch.ItemFailed, Status: progress.StatusFailed}
+		return batch.Failed()
 	}
-	return batch.ItemResult{Outcome: batch.ItemSucceeded, Status: progress.StatusOK}
+	return batch.Succeeded()
 }

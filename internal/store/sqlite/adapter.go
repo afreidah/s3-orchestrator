@@ -15,7 +15,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -87,18 +86,12 @@ func (a *sqliteTxAdapter) ClaimPending(ctx context.Context, intentID string) (bo
 // for the length of the transaction, so nothing can insert an intent for this
 // key between the two statements.
 func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
-	if keep == nil {
-		keep = []string{}
-	}
-	keepJSON, err := json.Marshal(keep)
-	if err != nil {
-		return nil, fmt.Errorf("marshal kept intents: %w", err)
-	}
+	keepJSON := jsonList(keep)
 	rows, err := a.q.QueryContext(ctx,
 		`SELECT intent_id, backend_name, storage_key, size_bytes
 		   FROM pending_objects
 		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
-		objectKey, string(keepJSON))
+		objectKey, keepJSON)
 	if err != nil {
 		return nil, fmt.Errorf("read superseded intents: %w", err)
 	}
@@ -116,7 +109,7 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	if _, err := a.q.ExecContext(ctx,
 		`DELETE FROM pending_objects
 		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
-		objectKey, string(keepJSON)); err != nil {
+		objectKey, keepJSON); err != nil {
 		return nil, fmt.Errorf("clear pending intents for key: %w", err)
 	}
 	return cleared, nil
@@ -170,14 +163,10 @@ func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	keysJSON, err := json.Marshal(keys)
-	if err != nil {
-		return nil, fmt.Errorf("marshal keys: %w", err)
-	}
 	rows, err := a.q.QueryContext(ctx, `
 		SELECT object_key, backend_name, storage_key, size_bytes
 		FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys))
 	if err != nil {
 		return nil, fmt.Errorf("get copies for keys: %w", err)
 	}
@@ -198,13 +187,9 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 	if len(keys) == 0 {
 		return nil
 	}
-	keysJSON, err := json.Marshal(keys)
-	if err != nil {
-		return fmt.Errorf("marshal keys: %w", err)
-	}
 	if _, err := a.q.ExecContext(ctx, `
 		DELETE FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys)); err != nil {
 		return fmt.Errorf("delete objects by keys: %w", err)
 	}
 	return nil
@@ -299,10 +284,6 @@ func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, 
 	if len(paths) == 0 {
 		return map[string]core.PathState{}, nil
 	}
-	pathsJSON, err := json.Marshal(paths)
-	if err != nil {
-		return nil, fmt.Errorf("marshal listed paths: %w", err)
-	}
 	rows, err := a.q.QueryContext(ctx, `
 		SELECT storage_key, 3 FROM cleanup_queue
 		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))
@@ -315,7 +296,7 @@ func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, 
 		UNION ALL
 		SELECT storage_key, 1 FROM object_locations
 		 WHERE backend_name = ?1 AND storage_key IN (SELECT value FROM json_each(?2))`,
-		backend, string(pathsJSON))
+		backend, jsonList(paths))
 	if err != nil {
 		return nil, fmt.Errorf("look up listed paths: %w", err)
 	}
@@ -416,13 +397,9 @@ func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKey
 	if len(objectKeys) == 0 {
 		return nil
 	}
-	keysJSON, err := json.Marshal(objectKeys)
-	if err != nil {
-		return fmt.Errorf("marshal keys: %w", err)
-	}
 	if _, err := a.q.ExecContext(ctx, `
 		DELETE FROM object_tags
-		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys)); err != nil {
 		return fmt.Errorf("delete object tags for keys: %w", err)
 	}
 	return nil

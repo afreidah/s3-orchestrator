@@ -313,12 +313,8 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
-
-	srcBe := backendtest.NewMockObjectBackend(ctrl)
-	dstBe := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	// Capture the request so the rebalance reason profile wiring is asserted,
 	// not just the happy-path return.
 	var got *writepath.MoveRequest
@@ -339,7 +335,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	if got.Profile != writepath.RebalanceMove {
 		t.Errorf("MoveRequest.Profile = %+v, want RebalanceMove", got.Profile)
 	}
-	if got.Source != move.Source || got.SrcBackend != srcBe || got.DestBackend != dstBe || got.DestName != "b2" {
+	if got.Source != move.Source || got.DestName != "b2" {
 		t.Errorf("MoveRequest = %+v, want the planned source copy moved b1 -> b2", got)
 	}
 }
@@ -390,23 +386,6 @@ func TestExecuteOneMove_PlacementDeclined(t *testing.T) {
 				t.Error("expected no move when the placement is declined")
 			}
 		})
-	}
-}
-
-// TestExecuteOneMove_SourceBackendNotFound verifies the execute one move source backend not found path by exercising gomock.NewController, ops.EXPECT, r.ExecuteOneMove.
-func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
-
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
-
-	r := NewRebalancer(ops, pl, ms)
-	ok := r.ExecuteOneMove(context.Background(), planMove("key1", "gone", "b2", 0), "spread")
-	if ok {
-		t.Error("expected failure when source backend missing")
 	}
 }
 

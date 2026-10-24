@@ -109,13 +109,21 @@ type backendRequeuedMsg struct {
 // loadStatus returns a command that fetches the status snapshot off the main
 // loop, delivering the result back as a statusLoadedMsg or statusErrMsg.
 func (m *model) loadStatus() tea.Cmd {
-	client := m.client
+	return fetchCmd(m.client.GetStatus,
+		func(r *adminapi.StatusResponse) tea.Msg { return statusLoadedMsg{r} },
+		func(err error) tea.Msg { return statusErrMsg{err} })
+}
+
+// fetchCmd calls get off the main loop and delivers loaded with the response,
+// or failed with the error. Every pane that loads one snapshot builds its
+// command with it; the returned function must not touch the model.
+func fetchCmd[T any](get func(context.Context) (T, error), loaded func(T) tea.Msg, failed func(error) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := client.GetStatus(context.Background())
+		resp, err := get(context.Background())
 		if err != nil {
-			return statusErrMsg{err}
+			return failed(err)
 		}
-		return statusLoadedMsg{resp}
+		return loaded(resp)
 	}
 }
 

@@ -4,16 +4,17 @@
 // Author: Alex Freidah
 //
 // The transport seam shared by every admin subcommand. A client carries the
-// resolved target, auth token, output format, and writers; its verb methods
-// issue one authenticated request and render the outcome. JSON mode pretty-
-// prints the server's raw bytes (byte-stable for scripts); text mode runs a
-// per-command renderer, falling back to a generic key/value view.
+// signed API client for the resolved target, the output format, and writers;
+// its verb methods issue one authenticated request and render the outcome. JSON
+// mode pretty-prints the server's raw bytes (byte-stable for scripts); text
+// mode runs a per-command renderer, falling back to a generic key/value view.
 // -------------------------------------------------------------------------------
 
 package adminctl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,26 +48,31 @@ type renderFunc func(w io.Writer, body []byte) error
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// get/post/put/delete issue the named verb against path (appended to the
-// resolved base address) and render the response per the client's format.
+// get/post/delete issue the named verb against path (appended to the resolved
+// base address) and render the response per the client's format. A request
+// with a JSON body goes through sendJSON.
 func (c *client) get(path string, render renderFunc) int {
 	return c.do(http.MethodGet, path, "", render)
 }
 
-func (c *client) post(path, body string, render renderFunc) int {
-	return c.do(http.MethodPost, path, body, render)
+func (c *client) post(path string, render renderFunc) int {
+	return c.do(http.MethodPost, path, "", render)
 }
 
-func (c *client) put(path, body string, render renderFunc) int {
-	return c.do(http.MethodPut, path, body, render)
+func (c *client) delete(path string) int {
+	return c.do(http.MethodDelete, path, "", nil)
 }
 
-func (c *client) patch(path, body string, render renderFunc) int {
-	return c.do(http.MethodPatch, path, body, render)
-}
-
-func (c *client) delete(path string, render renderFunc) int {
-	return c.do(http.MethodDelete, path, "", render)
+// sendJSON encodes req as the request body and issues method against path,
+// rendering the response like do. An unencodable request is reported to
+// stderr and returns exit code 1.
+func (c *client) sendJSON(method, path string, req any, render renderFunc) int {
+	body, err := json.Marshal(req)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
+		return 1
+	}
+	return c.do(method, path, string(body), render)
 }
 
 // do performs one admin request and renders the outcome. Transport and read

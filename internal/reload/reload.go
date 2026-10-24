@@ -80,9 +80,7 @@ type Coordinator struct {
 }
 
 // New returns a Coordinator with the given deps. Watch must be called
-// to start observing SIGHUP. Deps is passed by pointer because it
-// embeds a slog.LevelVar pointer and the runtime needs to mutate the
-// underlying state through it.
+// to start observing SIGHUP.
 func New(deps *Deps) *Coordinator {
 	hooks := deps.Hooks
 	if hooks == nil {
@@ -149,8 +147,8 @@ func (c *Coordinator) PendingRestart() []string {
 	return config.NonReloadableFieldsChanged(c.startup, c.deps.CfgPtr.Load())
 }
 
-// Reload performs one full reload pass. Exposed so tests and admin
-// surfaces can trigger a reload without sending a real signal.
+// Reload performs one full reload pass, the one Watch runs on each SIGHUP.
+// Exposed so tests can trigger a reload without sending a real signal.
 // Returns the result of the pass; the same value is stored on the
 // coordinator and reachable via LastResult.
 func (c *Coordinator) Reload() *Result {

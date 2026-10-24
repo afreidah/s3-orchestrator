@@ -38,7 +38,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	)
 	defer span.End()
 
-	copies, _, err := o.stores.DeleteObject(ctx, key)
+	copies, err := o.stores.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
@@ -93,7 +93,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		results[i].Key = key
 	}
 
-	cleanup, _, err := o.stores.DeleteObjectsBatch(ctx, keys)
+	cleanup, err := o.stores.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.

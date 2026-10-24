@@ -19,7 +19,6 @@ package multipart
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -36,7 +35,7 @@ import (
 // MaxPartNumber because part numbers are unique and in range.
 const (
 	MinPartNumber = 1
-	MaxPartNumber = 10000
+	MaxPartNumber = core.MaxPartNumber
 	MaxPartCount  = MaxPartNumber
 
 	MinPartSizeBytes = 5 * 1024 * 1024 // every part except the last
@@ -45,14 +44,6 @@ const (
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// normalizeETag strips quotes and the weak prefix, since S3 clients differ on
-// whether they quote ETags.
-func normalizeETag(etag string) string {
-	e := strings.TrimSpace(etag)
-	e = strings.TrimPrefix(e, "W/")
-	return strings.Trim(e, `"`)
-}
 
 // validateManifestShape checks everything that can be known without reading
 // the stored parts: part numbers in range, strictly ascending, no duplicates,
@@ -117,51 +108,31 @@ func clientPartETag(p *core.MultipartPart) string {
 	return p.ETag
 }
 
-// clientPartSize returns the size of the bytes the client uploaded for this
-// part. An encrypted part is stored as a larger envelope, and a client resuming
-// an upload sums the listed sizes to find its offset, so the envelope size
-// would send it past the end of what it has written.
-func clientPartSize(p *core.MultipartPart) int64 {
-	if p.Encrypted {
-		return p.PlaintextSize
-	}
-	return p.SizeBytes
-}
-
 // presentToClient rewrites a stored part into what UploadPart told the client:
-// the digest of the bytes it sent and their size.
+// the digest of the bytes it sent and their size. An encrypted part is stored
+// as a larger envelope, and a client resuming an upload sums the listed sizes
+// to find its offset, so the envelope size would send it past the end of what
+// it has written.
 func presentToClient(p *core.MultipartPart) {
 	p.ETag = clientPartETag(p)
-	p.SizeBytes = clientPartSize(p)
+	p.SizeBytes = p.ClientSize(p.SizeBytes)
 }
 
 // validateManifestAgainstStored compares the manifest to the parts actually
-// held for the upload: every requested part must exist, its ETag must match,
-// and every part but the last must meet the minimum size. stored must be
-// sorted by part number, which collectRequestedParts guarantees.
+// held for the upload: each part's ETag must match, and every part but the
+// last must meet the minimum size. stored holds the manifest's parts in its
+// order, which collectRequestedParts guarantees.
 //
 // enforceMinSize lets an operator turn off the 5 MiB floor for deployments
 // whose existing writers upload smaller parts.
 func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.MultipartPart, enforceMinSize bool) error {
-	byNumber := make(map[int]*core.MultipartPart, len(stored))
-	for i := range stored {
-		byNumber[stored[i].PartNumber] = &stored[i]
-	}
-
 	for i, want := range manifest {
-		got, ok := byNumber[want.PartNumber]
-		if !ok {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "InvalidPart",
-				Message:    fmt.Sprintf("Part number %d was not uploaded", want.PartNumber),
-			}
-		}
+		got := &stored[i]
 		// An empty ETag means the client omitted it. S3 requires one, but
 		// rejecting that outright would break callers this proxy has always
 		// accepted, so an omitted ETag skips the comparison and every
 		// supplied one is checked.
-		if want.ETag != "" && normalizeETag(want.ETag) != normalizeETag(clientPartETag(got)) {
+		if want.ETag != "" && etag.Normalize(want.ETag) != etag.Normalize(clientPartETag(got)) {
 			return &core.S3Error{
 				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPart",
@@ -172,7 +143,7 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		// The final part carries whatever remains, so only the parts before
 		// it have to meet the floor.
 		isFinal := i == len(manifest)-1
-		if size := clientPartSize(got); enforceMinSize && !isFinal && size < MinPartSizeBytes {
+		if size := got.ClientSize(got.SizeBytes); enforceMinSize && !isFinal && size < MinPartSizeBytes {
 			return &core.S3Error{
 				StatusCode: http.StatusBadRequest,
 				Code:       "EntityTooSmall",

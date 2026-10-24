@@ -736,8 +736,8 @@ func TestSqlite_MoveRows_ErrorsRollBack(t *testing.T) {
 
 // TestSqlite_OrphanBytes_CountQueuedAndDeadLettered asserts a backend's
 // orphan bytes are the sum of its queued and dead-lettered rows, read the
-// same through backend_capacity, GetQuotaStats and ListBackendQuotaUsage,
-// and drop when the rows are retired.
+// same through backend_capacity and GetQuotaStats, and drop when the rows are
+// retired.
 func TestSqlite_OrphanBytes_CountQueuedAndDeadLettered(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -775,7 +775,7 @@ func TestSqlite_OrphanBytes_CountQueuedAndDeadLettered(t *testing.T) {
 }
 
 // assertOrphanBytes checks backend's orphan bytes read through
-// backend_capacity, GetQuotaStats and ListBackendQuotaUsage all equal want.
+// backend_capacity and GetQuotaStats both equal want.
 func assertOrphanBytes(t *testing.T, s *Store, backend string, want int64) {
 	t.Helper()
 	if got := orphanBytes(t, s, backend); got != want {
@@ -787,14 +787,5 @@ func assertOrphanBytes(t *testing.T, s *Store, backend string, want int64) {
 	}
 	if got := stats[backend].OrphanBytes; got != want {
 		t.Errorf("GetQuotaStats orphan_bytes(%s) = %d, want %d", backend, got, want)
-	}
-	usage, err := s.ListBackendQuotaUsage(context.Background())
-	if err != nil {
-		t.Fatalf("ListBackendQuotaUsage: %v", err)
-	}
-	for _, u := range usage {
-		if u.BackendName == backend && u.OrphanBytes != want {
-			t.Errorf("ListBackendQuotaUsage orphan_bytes(%s) = %d, want %d", backend, u.OrphanBytes, want)
-		}
 	}
 }

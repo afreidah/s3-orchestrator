@@ -15,11 +15,10 @@
 //
 // Every charge goes to the context's workload (audit.WithWorkload).
 //
-// Methods are named by intent (APICall, Ingress, Egress) and a few
-// combo helpers (PutSuccess, GetSuccess, OperationFailed) bundle the
-// Operation + bytes pair so the matching pair cannot drift. Held by
-// every storage subsystem and worker through the consumer-declared
-// Acct() contract.
+// Methods are named by intent (APICall, Ingress, Egress), and PutSuccess
+// bundles the Operation + bytes pair so the matching pair cannot drift. Held by
+// every storage subsystem and worker through the consumer-declared Acct()
+// contract.
 // -------------------------------------------------------------------------------
 
 package accounting
@@ -56,10 +55,10 @@ func New(usage *counter.UsageTracker, recordOp OperationRecordFunc) *Recorder {
 // ADMISSION
 // -------------------------------------------------------------------------
 
-// Allow reports whether the backend can absorb the proposed operation within
-// its monthly API-call, egress and ingress limits.
-func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress int64) bool {
-	return r.usage.WithinLimits(backend, ops, egress, ingress)
+// Allow reports whether the backend can absorb one call of op within its
+// monthly API-call, egress and ingress limits.
+func (r *Recorder) Allow(backend string, op s3op.Operation, egress, ingress int64) bool {
+	return r.usage.WithinLimits(backend, op, egress, ingress)
 }
 
 // -------------------------------------------------------------------------
@@ -70,13 +69,6 @@ func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress i
 // after every attempt that reached the backend, whatever the outcome.
 func (r *Recorder) APICall(ctx context.Context, op s3op.Operation, backend string) {
 	r.usage.Record(ctx, backend, op, 0, 0)
-}
-
-// APICalls credits n calls of the same operation. For paginated lists,
-// multipart completes that touch many part objects, and other multi-call
-// operations.
-func (r *Recorder) APICalls(ctx context.Context, op s3op.Operation, backend string, n int64) {
-	r.usage.RecordN(ctx, backend, op, n)
 }
 
 // -------------------------------------------------------------------------
@@ -116,19 +108,4 @@ func (r *Recorder) Operation(op s3op.Operation, backend string, start time.Time,
 func (r *Recorder) PutSuccess(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
 	r.recordOp(op.String(), backend, start, nil)
 	r.usage.Record(ctx, backend, op, 0, sizeBytes)
-}
-
-// GetSuccess is the canonical "GET succeeded" pair: emit the per-op
-// metric with a nil error and credit one API call + egress bytes.
-func (r *Recorder) GetSuccess(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
-	r.recordOp(op.String(), backend, start, nil)
-	r.usage.Record(ctx, backend, op, sizeBytes, 0)
-}
-
-// OperationFailed is the canonical "the call reached the backend and
-// failed" pair: emit the per-op metric with the err and credit one API
-// call (no bytes, since nothing transferred).
-func (r *Recorder) OperationFailed(ctx context.Context, op s3op.Operation, backend string, start time.Time, err error) {
-	r.recordOp(op.String(), backend, start, err)
-	r.usage.Record(ctx, backend, op, 0, 0)
 }

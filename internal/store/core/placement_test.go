@@ -148,7 +148,7 @@ func placeReasons() MoveReasons {
 // replica and with or without reformed bytes.
 func runPlaceOn(tx TxAdapter, src *ObjectLocation, intent *PendingObject, move, reformed bool) (int64, []CleanupItem, error) {
 	read := *src
-	return PlaceCopy(context.Background(), &stubRunner{tx: tx}, &Placement{
+	return stubOps(tx).PlaceCopy(context.Background(), &Placement{
 		Source:       &read,
 		Intent:       intent,
 		RemoveSource: move,

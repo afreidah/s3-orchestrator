@@ -43,7 +43,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/backends/{name}/cordon:
         delete:
             summary: 'Uncordon a backend: let new copies land on it again'
@@ -63,7 +63,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/BackendOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         post:
             summary: 'Cordon a backend: stop new copies landing on it'
             operationId: postBackendsNameCordon
@@ -82,7 +82,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/BackendOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/backends/{name}/drain:
         delete:
             summary: Cancel an active drain
@@ -102,7 +102,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/BackendOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         get:
             summary: Progress of an in-flight drain
             operationId: getBackendsNameDrain
@@ -121,7 +121,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/DrainProgressResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         post:
             summary: Start draining a backend
             operationId: postBackendsNameDrain
@@ -140,7 +140,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/BackendOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/backfill-checksums:
         post:
             summary: Compute content hashes for objects missing one
@@ -182,7 +182,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cache:
         get:
             summary: Object data cache utilization
@@ -195,7 +195,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CacheStatsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cache/flush:
         post:
             summary: Drop every entry from the object data cache
@@ -208,7 +208,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CacheInvalidateResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cache/keys/{key}:
         delete:
             summary: Drop one key from the object data cache
@@ -228,7 +228,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CacheInvalidateKeyResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cache/prefix:
         delete:
             summary: Drop every cache entry under a key prefix
@@ -248,7 +248,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CacheInvalidateResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cleanup-dlq:
         get:
             summary: Dead-lettered cleanup depth and a page of rows
@@ -274,7 +274,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CleanupDLQResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cleanup-dlq/requeue:
         post:
             summary: Move dead-lettered cleanups back into the queue
@@ -294,7 +294,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CleanupDLQRequeueResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/cleanup-queue:
         get:
             summary: Pending cleanup depth and a page of rows
@@ -307,7 +307,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CleanupQueueResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/compress-existing:
         post:
             summary: Store every uncompressed object as chunked zstd
@@ -337,7 +337,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/config:
         get:
             summary: Running configuration, with secrets redacted
@@ -350,7 +350,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConfigResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/decompress-existing:
         post:
             summary: Rewrite every compressed object back to its stored bytes
@@ -380,7 +380,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/decrypt-existing:
         post:
             summary: Rewrite every encrypted object back to plaintext
@@ -410,7 +410,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/encrypt-existing:
         post:
             summary: Encrypt every plaintext object on its own backend
@@ -440,7 +440,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/lifecycle:
         post:
             summary: Run one lifecycle expiration sweep
@@ -457,7 +457,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/log-level:
         get:
             summary: Current runtime log level
@@ -470,7 +470,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LogLevelResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         put:
             summary: Set the runtime log level
             operationId: putLogLevel
@@ -488,7 +488,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LogLevelResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/logs:
         get:
             summary: Recent records from the in-memory log buffer
@@ -532,7 +532,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LogsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/object-locations:
         get:
             summary: Backend placement for one object key
@@ -552,7 +552,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectLocationsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/object-scrub:
         post:
             summary: Verify every copy of one object now
@@ -572,7 +572,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ScrubKeyResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/objects:
         delete:
             summary: Delete every object under a prefix
@@ -592,7 +592,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectDeleteResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         get:
             summary: Page of stored objects
             operationId: getObjects
@@ -623,7 +623,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectListResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/objects/{key}:
         delete:
             summary: Delete one object
@@ -643,7 +643,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectDeleteResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         get:
             summary: Download one object
             operationId: getObjectsKey
@@ -663,7 +663,7 @@ paths:
                                 format: binary
                                 type: string
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         put:
             summary: Upload one object
             operationId: putObjectsKey
@@ -689,7 +689,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectUploadResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/objects/tags/{key}:
         delete:
             summary: Clear one object's tag set
@@ -709,7 +709,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectTagsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         get:
             summary: Read one object's tag set
             operationId: getObjectsTagsKey
@@ -728,7 +728,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectTagsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         put:
             summary: Replace one object's tag set
             operationId: putObjectsTagsKey
@@ -753,7 +753,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ObjectTagsResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/over-replication:
         get:
             summary: Count of objects holding surplus copies
@@ -766,7 +766,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/OverReplicationStatusResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         post:
             summary: Run one over-replication cleanup pass
             operationId: postOverReplication
@@ -789,7 +789,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning:
         get:
             summary: Buckets, users and credentials from both the config file and the store
@@ -802,7 +802,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/buckets:
         post:
             summary: Declare a virtual bucket
@@ -821,7 +821,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/buckets/{name}:
         delete:
             summary: Remove a virtual bucket that holds no objects and no grants
@@ -841,7 +841,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         patch:
             summary: Replace what a virtual bucket carries
             operationId: patchProvisioningBucketsName
@@ -866,7 +866,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/credentials:
         post:
             summary: Register a keypair for a user, minting one when none is supplied
@@ -885,7 +885,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CreateCredentialResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/credentials/{id}:
         delete:
             summary: Revoke one keypair, leaving its siblings working
@@ -905,7 +905,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/grants:
         post:
             summary: Let a user reach a resource
@@ -924,7 +924,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/grants/{id}/{name}:
         delete:
             summary: Withdraw one user's access to one resource
@@ -956,7 +956,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         put:
             summary: Declare exactly what one user reaches on one resource
             operationId: putProvisioningGrantsIdName
@@ -993,7 +993,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/users:
         post:
             summary: Declare an identity credentials can be issued against
@@ -1012,7 +1012,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/provisioning/users/{id}:
         delete:
             summary: Remove an identity that holds no credentials and no grants
@@ -1032,7 +1032,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         patch:
             summary: Rename an identity, leaving the ID its credentials and grants reference
             operationId: patchProvisioningUsersId
@@ -1057,7 +1057,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/rebalance:
         post:
             summary: Run one rebalance cycle
@@ -1074,7 +1074,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/reconcile:
         post:
             summary: Reconcile backend storage against the object ledger
@@ -1098,7 +1098,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/reload-status:
         get:
             summary: Outcome of the most recent config reload
@@ -1111,7 +1111,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ReloadStatusResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/replicate:
         post:
             summary: Run one replication cycle
@@ -1128,7 +1128,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/replication:
         get:
             summary: Replication backlog snapshot
@@ -1141,7 +1141,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ReplicationStatusResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/rotate-encryption-key:
         post:
             summary: Re-wrap sealed DEKs under the current primary key
@@ -1160,7 +1160,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/RotateEncryptionKeyResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/scrub:
         post:
             summary: Verify stored content hashes against backend data
@@ -1190,7 +1190,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/status:
         get:
             summary: Instance and per-backend operational state
@@ -1203,7 +1203,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/StatusResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/trace/snapshot:
         post:
             summary: Download a flight-recorder trace snapshot
@@ -1217,7 +1217,7 @@ paths:
                                 format: binary
                                 type: string
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/unreadable:
         get:
             summary: List copies that are encrypted with no key
@@ -1237,7 +1237,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/UnreadableListResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
         post:
             summary: Delete every copy that is encrypted with no key
             operationId: postUnreadable
@@ -1260,7 +1260,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Event'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/usage-flush:
         post:
             summary: Force a flush of usage counters to the database
@@ -1273,7 +1273,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/UsageFlushResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/usage-reconcile:
         post:
             summary: Recompute per-backend bytes_used from the object ledger
@@ -1286,7 +1286,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/UsageReconcileResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
     /admin/api/workers:
         get:
             summary: Last-tick health of every background service
@@ -1299,7 +1299,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WorkersResponse'
                 "401":
-                    description: Missing or invalid admin token
+                    description: Missing or invalid SigV4 credentials
 components:
     schemas:
         BackendOperationResponse:

@@ -14,7 +14,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,11 +36,10 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	if len(backends) == 0 {
 		return nil, nil
 	}
-	safeLimit := int32(max(1, min(limit, math.MaxInt32))) //nolint:gosec // clamped above
 	rows, err := s.queries.GetLeastRecentlyScrubbedObjects(ctx, db.GetLeastRecentlyScrubbedObjectsParams{
 		BackendNames:   backends,
 		ScrubbedBefore: pgtype.Timestamptz{Time: scrubbedBefore, Valid: true},
-		RowLimit:       safeLimit,
+		RowLimit:       rowLimit(max(1, limit)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
@@ -83,7 +81,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		ExceptKeyID:   f.ExceptKeyID,
 		AfterKey:      after.ObjectKey,
 		AfterBackend:  after.BackendName,
-		RowLimit:      int32(max(0, min(limit, math.MaxInt32))), //nolint:gosec // clamped
+		RowLimit:      rowLimit(limit),
 	}
 	if t := f.Candidates; t != nil {
 		p.MinSize, p.ProbeLevel, p.MinRatio = t.MinSize, t.Level, t.MinRatio

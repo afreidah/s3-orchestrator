@@ -15,8 +15,6 @@
 //   - objects.go        upload/download/delete/tree
 //   - admin_ops.go      rebalance/clean-excess/sync (async ops + status)
 //   - admin_actions.go  replicate/scrub/backfill/encrypt (async-action helpers)
-//   - logs.go           log-API route over the admin logs handler
-//   - responses.go      shared JSON read/write helpers
 //   - async.go          asyncOpTracker (shared by admin_ops and admin_actions)
 //   - templates.go      template loading + embedded static FS
 // -------------------------------------------------------------------------------
@@ -57,7 +55,6 @@ const (
 	contentTypeHTML      = "text/html; charset=utf-8"
 	headerContentType    = "Content-Type"
 	loginPath            = "/login"
-	errKeyRequired       = "key is required"
 	errLoginRenderFailed = "failed to render login page"
 	opCleanExcess        = "clean-excess"
 	opRebalance          = "rebalance"
@@ -71,7 +68,7 @@ const (
 // BackendSyncer is the backend-sync surface the UI's admin actions pane
 // invokes. *reconcile.Manager satisfies it.
 type BackendSyncer interface {
-	SyncBackend(ctx context.Context, backendName, virtualBucket string, virtualBuckets []string) (int, int, error)
+	SyncBackend(ctx context.Context, backendName string, virtualBuckets []string) (int, int, error)
 }
 
 // DashboardOps is the dashboard surface the UI reads: the aggregated snapshot

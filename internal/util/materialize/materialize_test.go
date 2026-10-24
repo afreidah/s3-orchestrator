@@ -37,10 +37,7 @@ func TestMemoryBranch(t *testing.T) {
 	if _, err := mb.Writer().Write(payload); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	body, err := mb.Reader()
-	if err != nil {
-		t.Fatalf("Reader: %v", err)
-	}
+	body := mb.Reader()
 	got, err := io.ReadAll(body)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -76,10 +73,7 @@ func TestTempfileBranch(t *testing.T) {
 	if _, err := mb.Writer().Write(payload); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	body, err := mb.Reader()
-	if err != nil {
-		t.Fatalf("Reader: %v", err)
-	}
+	body := mb.Reader()
 	got, err := io.ReadAll(body)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -121,12 +115,7 @@ func TestTempfileReadersAreIndependent(t *testing.T) {
 	errs := make([]error, copies)
 	for i := range copies {
 		wg.Go(func() {
-			r, err := mb.Reader()
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			read[i], errs[i] = io.ReadAll(r)
+			read[i], errs[i] = io.ReadAll(mb.Reader())
 		})
 	}
 	wg.Wait()
@@ -163,11 +152,7 @@ func TestHasherPopulatedDuringMaterialize(t *testing.T) {
 	}
 	// The body should still be replayable from offset 0 - hashing must not
 	// consume the materialized bytes.
-	rdr, err := mb.Reader()
-	if err != nil {
-		t.Fatalf("Reader: %v", err)
-	}
-	got, _ := io.ReadAll(rdr)
+	got, _ := io.ReadAll(mb.Reader())
 	if !bytes.Equal(got, payload) {
 		t.Errorf("body content drifted after hash: got %q want %q", got, payload)
 	}
@@ -185,11 +170,7 @@ func TestReaderResetsBetweenCalls(t *testing.T) {
 	defer mb.Cleanup()
 
 	for attempt := range 3 {
-		rdr, err := mb.Reader()
-		if err != nil {
-			t.Fatalf("attempt %d Reader: %v", attempt, err)
-		}
-		got, _ := io.ReadAll(rdr)
+		got, _ := io.ReadAll(mb.Reader())
 		if !bytes.Equal(got, payload) {
 			t.Errorf("attempt %d: got %q want %q", attempt, got, payload)
 		}

@@ -413,8 +413,7 @@ func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, 
 		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
 		return done(act, http.StatusNotImplemented), nil
 	case ActionHeadBucket:
-		st, e := s.handleHeadBucket(w)
-		return done(act, st), e
+		return done(act, s.handleHeadBucket(w)), nil
 	case ActionGetBucketVersioning:
 		st, e := s.handleGetBucketVersioning(w)
 		return done(act, st), e
@@ -509,7 +508,7 @@ func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWrite
 		st, e := s.handleAbortMultipartUpload(ctx, w, rk.bucket, rk.key, rk.uploadID)
 		return done(act, st), true, e
 	case ActionListParts:
-		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)
+		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key)
 		return done(act, st), true, e
 	}
 	return routed{}, false, nil

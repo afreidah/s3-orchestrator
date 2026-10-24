@@ -33,33 +33,39 @@ import (
 
 // registerAdminHandler mounts the admin API at /admin/. It is always mounted;
 // access is decided by the grants each caller's credential holds.
-func registerAdminHandler(mux *http.ServeMux, inj do.Injector, _ *config.Config) error {
+func registerAdminHandler(mux *http.ServeMux, inj do.Injector) error {
 	adminHandler, err := do.Invoke[*admin.Handler](inj)
 	if err != nil {
 		return fmt.Errorf("initialize admin handler: %w", err)
 	}
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)
-	var adminHTTP http.Handler = adminMux
-	rlRes := di.Optional[*s3api.RateLimiter](inj)
-	if rlRes.Failed() {
-		slog.WarnContext(context.Background(),
-			"rate limiter resolution failed; admin API will run without rate limiting",
-			logfmt.Component("httpserver"),
-			"error", rlRes.Err)
-	}
-	if rl := rlRes.Value; rl != nil {
-		adminHTTP = rl.Middleware(adminHTTP)
-	}
 	// Wraps the rate limiter too, so a panic anywhere in the admin chain
 	// returns a JSON 500 with a request id instead of a reset connection.
-	adminHTTP = httputil.PanicRecover("admin", adminPanicWriter)(adminHTTP)
+	adminHTTP := httputil.PanicRecover("admin", adminPanicWriter)(withRateLimit(inj, "admin API", adminMux))
 	mux.Handle("/admin/", adminHTTP)
 	slog.InfoContext(context.Background(), "admin API enabled",
 		logfmt.Component("httpserver"),
 		"path", "/admin/api/",
 	)
 	return nil
+}
+
+// withRateLimit wraps h in the per-IP rate limiter when one resolves. A failed
+// resolution is logged and leaves the surface unlimited rather than failing
+// startup.
+func withRateLimit(inj do.Injector, surface string, h http.Handler) http.Handler {
+	rlRes := di.Optional[*s3api.RateLimiter](inj)
+	if rlRes.Failed() {
+		slog.WarnContext(context.Background(),
+			"rate limiter resolution failed; "+surface+" will run without rate limiting",
+			logfmt.Component("httpserver"),
+			"error", rlRes.Err)
+	}
+	if rl := rlRes.Value; rl != nil {
+		return rl.Middleware(h)
+	}
+	return h
 }
 
 // registerUIHandler mounts the optional web UI dashboard. Panic recovery is
@@ -113,17 +119,7 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		return fmt.Errorf("initialize CORS policy: %w", err)
 	}
 
-	s3Handler := corsPolicy.Middleware(s3Server)
-	rlRes := di.Optional[*s3api.RateLimiter](inj)
-	if rlRes.Failed() {
-		slog.WarnContext(context.Background(),
-			"rate limiter resolution failed; S3 surface will run without rate limiting",
-			logfmt.Component("httpserver"),
-			"error", rlRes.Err)
-	}
-	if rl := rlRes.Value; rl != nil {
-		s3Handler = rl.Middleware(s3Handler)
-	}
+	s3Handler := withRateLimit(inj, "S3 surface", corsPolicy.Middleware(s3Server))
 
 	limits := s3api.AdmissionLimits{
 		ShedThreshold: cfg.Server.LoadShedThreshold,

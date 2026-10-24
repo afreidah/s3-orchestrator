@@ -78,8 +78,8 @@ func Multipart(partDigestsHex []string) (string, error) {
 	return `"` + hex.EncodeToString(sum.Sum(nil)) + "-" + strconv.Itoa(len(partDigestsHex)) + `"`, nil
 }
 
-// Normalize strips the quotes and the weak-comparison prefix so a value a
-// client quoted matches a stored one that is not (or the reverse).
+// Normalize strips surrounding space, the quotes and the weak-comparison prefix
+// so a value a client quoted matches a stored one that is not (or the reverse).
 func Normalize(v string) string {
-	return strings.Trim(strings.TrimPrefix(v, "W/"), `"`)
+	return strings.Trim(strings.TrimPrefix(strings.TrimSpace(v), "W/"), `"`)
 }

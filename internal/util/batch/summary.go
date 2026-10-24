@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 )
 
 // -------------------------------------------------------------------------
@@ -39,6 +40,18 @@ const (
 type ItemResult struct {
 	Outcome ItemOutcome
 	Status  string
+}
+
+// Succeeded is the result of an item that completed, reported as ok on the
+// progress stream.
+func Succeeded() ItemResult {
+	return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+}
+
+// Failed is the result of an item attempted but not completed, reported as
+// failed on the progress stream.
+func Failed() ItemResult {
+	return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
 }
 
 // Summary is the uniform result of one cycle of batch work.

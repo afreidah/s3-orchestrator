@@ -98,19 +98,16 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, buckets []string) (int
 		Buckets: xmlBuckets{Bucket: entries},
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // handleHeadBucket returns 200 with an empty body to confirm the bucket
 // exists. The bucket is guaranteed to exist because auth already resolved it.
-func (s *Server) handleHeadBucket(w http.ResponseWriter) (int, error) {
+func (s *Server) handleHeadBucket(w http.ResponseWriter) int {
 	w.Header().Set(headerContentType, "application/xml")
 	w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
 	w.WriteHeader(http.StatusOK)
-	return http.StatusOK, nil
+	return http.StatusOK
 }
 
 // handleGetBucketLocation returns a canned LocationConstraint response.
@@ -120,10 +117,7 @@ func (s *Server) handleGetBucketLocation(w http.ResponseWriter) (int, error) {
 		Xmlns: s3XMLNS,
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }
 
 // handleGetBucketVersioning returns an empty VersioningConfiguration to
@@ -134,8 +128,5 @@ func (s *Server) handleGetBucketVersioning(w http.ResponseWriter) (int, error) {
 		Xmlns: s3XMLNS,
 	}
 
-	if err := writeXML(w, http.StatusOK, result); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
+	return respondXML(w, result)
 }

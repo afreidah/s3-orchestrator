@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Unit coverage for the SQLite mirror of the pending_objects table. Exercises
-// every PendingStore method plus RecordObjectAndClearPending against an
+// every PendingStore method plus RecordObject's intent clearing against an
 // in-memory database, including the three PromotePending resolution branches
 // (committed, superseded, already-resolved) the timestamp-aware reaper relies
 // on.
@@ -243,7 +243,7 @@ func TestPromotePending_Committed(t *testing.T) {
 	}
 	intent = stale[0]
 
-	result, displaced, _, err := s.PromotePending(ctx, &intent)
+	result, displaced, err := s.PromotePending(ctx, &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestPromotePending_AlreadyResolved(t *testing.T) {
 	s := newTestStore(t)
 	intent := pendingFixture("missing", "bucket/k1")
 
-	result, displaced, _, err := s.PromotePending(context.Background(), &intent)
+	result, displaced, err := s.PromotePending(context.Background(), &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -304,11 +304,11 @@ func TestPromotePending_WriteAlreadyClearedTheIntent(t *testing.T) {
 	// Now record a successful object_locations row for the same key  -
 	// simulates a retry that committed normally after the original PUT's
 	// metadata commit failed.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Size: 200, Copies: []core.ObjectCopy{{Backend: "backend-a"}}}); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Size: 200, Copies: []core.ObjectCopy{{Backend: "backend-a"}}}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, _, err := s.PromotePending(ctx, &intent)
+	result, displaced, err := s.PromotePending(ctx, &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -337,14 +337,13 @@ func TestPromotePending_WriteAlreadyClearedTheIntent(t *testing.T) {
 // below; they are not duplicated here.
 
 // -------------------------------------------------------------------------
-// RecordObjectAndClearPending
+// RecordObject intent clearing
 // -------------------------------------------------------------------------
 
-// TestRecordObjectAndClearPending_DeletesIntent verifies the atomic
-// commit-and-clear path: the same transaction that records the object
-// location also deletes the pending row, leaving no orphan intent on
-// the synchronous success path.
-func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
+// TestRecordObject_DeletesIntent verifies the atomic commit-and-clear path: the
+// same transaction that records the object location also deletes the pending
+// row, leaving no orphan intent on the synchronous success path.
+func TestRecordObject_DeletesIntent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -354,40 +353,17 @@ func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k1", Size: 100, Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-1"}},
 	})
 	if err != nil {
-		t.Fatalf("RecordObjectAndClearPending: %v", err)
+		t.Fatalf("RecordObject: %v", err)
 	}
 	if len(displaced) != 0 {
 		t.Errorf("displaced = %+v, want none for fresh insert", displaced)
 	}
 	if got := queryPendingCount(t, s); got != 0 {
 		t.Errorf("pending row not deleted by atomic commit: %d", got)
-	}
-	if got := queryObjectLocationsCount(t, s, "bucket/k1"); got != 1 {
-		t.Errorf("object_locations row not created: %d", got)
-	}
-}
-
-// TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject
-// verifies that passing an empty intent ID skips the pending delete and
-// preserves the legacy RecordObject behaviour, so callers without the
-// pending pattern wired up still work.
-func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k1", Size: 100, Copies: []core.ObjectCopy{{Backend: "backend-a"}},
-	})
-	if err != nil {
-		t.Fatalf("RecordObjectAndClearPending: %v", err)
-	}
-	if len(displaced) != 0 {
-		t.Errorf("displaced = %+v, want none", displaced)
 	}
 	if got := queryObjectLocationsCount(t, s, "bucket/k1"); got != 1 {
 		t.Errorf("object_locations row not created: %d", got)
@@ -417,7 +393,7 @@ func TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 	}
 	// The second write commits the copy that answered its client, which clears
 	// the first write's intent and keeps its own still-running one.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Size: 100,
 		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
 		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: "i-second"}},
@@ -425,7 +401,7 @@ func TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, _, err := s.CommitCompanionCopy(ctx, &first)
+	result, displaced, err := s.CommitCompanionCopy(ctx, &first)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy first: %v", err)
 	}
@@ -440,7 +416,7 @@ func TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 		t.Errorf("pending rows = %d, want the second copy's intent left in place", got)
 	}
 
-	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
+	result, displaced, err = s.CommitCompanionCopy(ctx, &second)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy second: %v", err)
 	}
@@ -475,7 +451,7 @@ func TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.
 	}
 	// The write that placed them committed its first copy on backend-a and
 	// then died; both companions outlived it.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k", Size: 100,
 		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
 		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: "i-first"}, {Backend: "backend-b", IntentID: "i-second"}},
@@ -483,7 +459,7 @@ func TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, _, err := s.PromotePending(ctx, &first)
+	result, displaced, err := s.PromotePending(ctx, &first)
 	if err != nil {
 		t.Fatalf("PromotePending first: %v", err)
 	}
@@ -494,7 +470,7 @@ func TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.
 		t.Errorf("first reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
-	result, displaced, _, err = s.PromotePending(ctx, &second)
+	result, displaced, err = s.PromotePending(ctx, &second)
 	if err != nil {
 		t.Fatalf("PromotePending second: %v", err)
 	}

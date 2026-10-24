@@ -69,7 +69,6 @@ type adminActionOp[R any] struct {
 // isn't already running, then fires the work in a goroutine and returns
 // 202 Accepted. R is the action's response type.
 func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request, op adminActionOp[R]) {
-	setSecurityHeaders(w)
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -87,13 +86,13 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 		switch {
 		case skipped:
 			h.log.InfoContext(ctx, op.name+" skipped", "reason", reason)
-			h.asyncOps.Complete(op.name, &asyncResult{OK: true, Counts: counts, Skipped: reason})
+			h.asyncOps.Complete(op.name, &asyncResult{Counts: counts, Skipped: reason})
 		case err != nil:
 			h.log.ErrorContext(ctx, op.name+" failed", "error", err)
 			h.asyncOps.Complete(op.name, &asyncResult{Error: op.name + " failed"})
 		default:
 			h.log.InfoContext(ctx, op.name+" completed", "count", counts.Count)
-			h.asyncOps.Complete(op.name, &asyncResult{OK: true, Counts: counts})
+			h.asyncOps.Complete(op.name, &asyncResult{Counts: counts})
 		}
 	}()
 
@@ -106,7 +105,6 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 // The three states that carry no counts render without the action's own type;
 // only a finished run reaches render.
 func (h *Handler) writeAdminActionStatus[R any](w http.ResponseWriter, op adminActionOp[R]) {
-	setSecurityHeaders(w)
 	w.Header().Set(headerContentType, contentTypeJSON)
 	enc := json.NewEncoder(w)
 

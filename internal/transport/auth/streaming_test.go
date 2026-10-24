@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -287,7 +288,7 @@ func TestUnsignedTrailerChecksumAlgorithms(t *testing.T) {
 				t.Fatalf("newTrailerChecksums: %v", err)
 			}
 			checksums[name].Write([]byte(payload))
-			if got := checksums[name].SumBase64(); got != want {
+			if got := base64.StdEncoding.EncodeToString(checksums[name].Sum(nil)); got != want {
 				t.Errorf("checksum = %q, want %q", got, want)
 			}
 		})

@@ -27,5 +27,5 @@ func cmdReconcile(args []string, c *client) int {
 	if *backendName != "" {
 		q.Set(queryBackend, *backendName)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/reconcile", q), "")
+	return c.stream(http.MethodPost, withQuery("/admin/api/reconcile", q))
 }

@@ -77,7 +77,7 @@ type fleetOpts struct {
 	CopiesPerWrite int                  // above 1, a PUT places its copies itself instead of leaving them to the replicator
 	MaxDetached    int                  // ceiling on writes whose copies outlive the response; defaults to a number no test reaches
 
-	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; unnamed backends are unlimited
+	QuotaBaselines map[string]core.QuotaStat // seeds the byte counter; unnamed backends are unlimited
 
 	ParallelBroadcast            bool // fans degraded-mode reads out concurrently
 	DegradedBroadcastParallelism int  // caps those concurrent probes; 0 is uncapped
@@ -183,10 +183,10 @@ func newFleet(
 // primed, which production does from backend_quotas before the listener opens.
 // A backend the caller said nothing about is unlimited, so a test that is not
 // about quota never has one refuse a write.
-func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
-	primed := make(map[string]core.BackendQuotaUsage, len(names))
+func newFleetQuota(names []string, baselines map[string]core.QuotaStat) *counter.QuotaTracker {
+	primed := make(map[string]core.QuotaStat, len(names))
 	for _, name := range names {
-		primed[name] = core.BackendQuotaUsage{BackendName: name}
+		primed[name] = core.QuotaStat{BackendName: name}
 	}
 	maps.Copy(primed, baselines)
 	quota := counter.NewQuotaTracker()

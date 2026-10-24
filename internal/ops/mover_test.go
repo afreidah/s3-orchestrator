@@ -5,7 +5,7 @@
 //
 // A rewrite pass hands each copy to the Mover, which reads it, reforms it on
 // the way and places the result. This fake does the same steps against the
-// test's backends, so a pass runs its Reform closure over real bytes, and it
+// backends it is given, so a pass runs its Reform closure over real bytes, and it
 // records what it was asked and what it placed. A configured placement error
 // stands in for the store declining or failing the placement.
 // -------------------------------------------------------------------------------
@@ -15,9 +15,11 @@ package ops
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"sync"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -35,12 +37,14 @@ type placedCopy struct {
 	body   []byte
 }
 
-// fakeMover moves copies between the request's backends the way the write
-// coordinator does, without a store. placeErr, when set, is returned after the
-// bytes are written, as a placement the store declined or failed. onPlaced
-// runs for each placement that succeeded.
+// fakeMover moves copies between the named backends the way the write
+// coordinator does, without a store. A name missing from backends fails the
+// move. placeErr, when set, is returned after the bytes are written, as a
+// placement the store declined or failed. onPlaced runs for each placement
+// that succeeded.
 type fakeMover struct {
 	mu       sync.Mutex
+	backends map[string]s3be.ObjectBackend
 	placeErr error
 	onPlaced func(loc *core.ObjectLocation)
 	requests []writepath.MoveRequest
@@ -58,7 +62,12 @@ func (m *fakeMover) MoveObject(ctx context.Context, req *writepath.MoveRequest) 
 	m.requests = append(m.requests, *req)
 	m.mu.Unlock()
 
-	src, err := req.SrcBackend.GetObject(ctx, req.Source.ObjectKey, "")
+	srcBe, srcOK := m.backends[req.Source.BackendName]
+	dest, destOK := m.backends[req.DestName]
+	if !srcOK || !destOK {
+		return 0, fmt.Errorf("move %s -> %s: backend not found", req.Source.BackendName, req.DestName)
+	}
+	src, err := srcBe.GetObject(ctx, req.Source.ObjectKey, "")
 	if err != nil {
 		return 0, err
 	}
@@ -77,7 +86,7 @@ func (m *fakeMover) MoveObject(ctx context.Context, req *writepath.MoveRequest) 
 	if err != nil {
 		return 0, err
 	}
-	if _, err := req.DestBackend.PutObject(ctx, req.Source.ObjectKey, bytes.NewReader(data), size, "", nil); err != nil {
+	if _, err := dest.PutObject(ctx, req.Source.ObjectKey, bytes.NewReader(data), size, "", nil); err != nil {
 		return 0, err
 	}
 	if m.placeErr != nil {

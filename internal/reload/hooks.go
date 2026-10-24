@@ -62,6 +62,23 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 	}
 }
 
+// applyResolved resolves T and hands it to apply. A provider that failed to
+// build fails the hook, one this run mode never registered skips it, and
+// otherwise apply's error decides between applied and failed.
+func applyResolved[T any](inj do.Injector, what string, apply func(T) error) (HookStatus, error) {
+	res := di.Optional[T](inj)
+	switch res.Resolution {
+	case di.ResolutionFailed:
+		return HookFailed, resolutionError(what, res.Err)
+	case di.ResolutionDisabled:
+		return HookSkipped, nil
+	}
+	if err := apply(res.Value); err != nil {
+		return HookFailed, err
+	}
+	return HookApplied, nil
+}
+
 // -------------------------------------------------------------------------
 // TLS CERTIFICATE
 // -------------------------------------------------------------------------
@@ -110,19 +127,14 @@ func (h *bucketAuthHook) Check(_, newCfg *config.Config) error {
 // boot does. Rebuilding from the file alone would drop every bucket and
 // credential created through the API on each reload.
 func (h *bucketAuthHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*s3api.Server](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("S3 server", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	registry, err := di.AssembleBucketRegistry(ctx, h.inj, newCfg)
-	if err != nil {
-		return HookFailed, err
-	}
-	res.Value.SetBucketAuth(registry)
-	return HookApplied, nil
+	return applyResolved(h.inj, "S3 server", func(srv *s3api.Server) error {
+		registry, err := di.AssembleBucketRegistry(ctx, h.inj, newCfg)
+		if err != nil {
+			return err
+		}
+		srv.SetBucketAuth(registry)
+		return nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -153,23 +165,18 @@ func (*corsHook) Check(_, newCfg *config.Config) error {
 // bucket created through the provisioning API keeps its rules across a reload
 // instead of having them dropped back to whatever the file declares.
 func (h *corsHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
-	res := di.Optional[*cors.Policy](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("CORS policy", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	declared := di.Optional[*provisioning.Declared](h.inj)
-	if declared.Failed() {
-		return HookFailed, resolutionError("declared buckets", declared.Err)
-	}
-	rules, err := cors.NewRegistry(declared.Value.Buckets())
-	if err != nil {
-		return HookFailed, err
-	}
-	res.Value.SetRules(rules)
-	return HookApplied, nil
+	return applyResolved(h.inj, "CORS policy", func(policy *cors.Policy) error {
+		declared := di.Optional[*provisioning.Declared](h.inj)
+		if declared.Failed() {
+			return resolutionError("declared buckets", declared.Err)
+		}
+		rules, err := cors.NewRegistry(declared.Value.Buckets())
+		if err != nil {
+			return err
+		}
+		policy.SetRules(rules)
+		return nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -189,15 +196,10 @@ func (h *rateLimitHook) Apply(_ context.Context, _, newCfg *config.Config) (Hook
 	if !newCfg.RateLimit.Enabled {
 		return HookSkipped, nil
 	}
-	res := di.Optional[*s3api.RateLimiter](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("rate limiter", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	res.Value.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
-	return HookApplied, nil
+	return applyResolved(h.inj, "rate limiter", func(rl *s3api.RateLimiter) error {
+		rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
+		return nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -212,17 +214,9 @@ type quotaSyncHook struct {
 func (*quotaSyncHook) Name() string                    { return "quota_sync" }
 func (*quotaSyncHook) Check(_, _ *config.Config) error { return nil }
 func (h *quotaSyncHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[core.LifecycleAdmin](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("lifecycle admin", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	if err := res.Value.SyncQuotaLimits(ctx, newCfg.Backends); err != nil {
-		return HookFailed, err
-	}
-	return HookApplied, nil
+	return applyResolved(h.inj, "lifecycle admin", func(admin core.LifecycleAdmin) error {
+		return admin.SyncQuotaLimits(ctx, newCfg.Backends)
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -238,25 +232,20 @@ type usageLimitsHook struct {
 func (*usageLimitsHook) Name() string                    { return "usage_limits" }
 func (*usageLimitsHook) Check(_, _ *config.Config) error { return nil }
 func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*infra.BackendRuntime](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("backend runtime", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
-	for i := range newCfg.Backends {
-		bcfg := &newCfg.Backends[i]
-		lim, err := di.UsageLimitsFor(bcfg)
-		if err != nil {
-			return HookFailed, fmt.Errorf("backend %s: %w", bcfg.Name, err)
+	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
+		limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
+		for i := range newCfg.Backends {
+			bcfg := &newCfg.Backends[i]
+			lim, err := di.UsageLimitsFor(bcfg)
+			if err != nil {
+				return fmt.Errorf("backend %s: %w", bcfg.Name, err)
+			}
+			limits[bcfg.Name] = lim
 		}
-		limits[bcfg.Name] = lim
-	}
-	var applier usageLimitsApplier = res.Value.Usage()
-	applier.UpdateLimits(limits)
-	return HookApplied, nil
+		var applier usageLimitsApplier = rt.Usage()
+		applier.UpdateLimits(limits)
+		return nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -397,15 +386,10 @@ type opsHook struct {
 func (*opsHook) Name() string                    { return "ops" }
 func (*opsHook) Check(_, _ *config.Config) error { return nil }
 func (h *opsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*ops.Services](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("operations layer", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	res.Value.UpdateConfig(newCfg)
-	return HookApplied, nil
+	return applyResolved(h.inj, "operations layer", func(svc *ops.Services) error {
+		svc.UpdateConfig(newCfg)
+		return nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -420,13 +404,8 @@ type uiHandlerHook struct {
 func (*uiHandlerHook) Name() string                    { return "ui_handler" }
 func (*uiHandlerHook) Check(_, _ *config.Config) error { return nil }
 func (h *uiHandlerHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*ui.Handler](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("UI handler", res.Err)
-	}
-	if res.Value == nil {
-		return HookSkipped, nil
-	}
-	res.Value.UpdateConfig(newCfg)
-	return HookApplied, nil
+	return applyResolved(h.inj, "UI handler", func(handler *ui.Handler) error {
+		handler.UpdateConfig(newCfg)
+		return nil
+	})
 }

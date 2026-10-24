@@ -51,25 +51,6 @@ type LogQueryOpts struct {
 	Component string     // filter by "component" attribute value
 }
 
-// ParseLevel maps a caller-supplied level name onto the MinLevel a query
-// filters by. An empty or unrecognized name yields slog's zero value, which is
-// LevelInfo and so excludes DEBUG entries; ask for "DEBUG" explicitly to see
-// them. Unlike levelToSlog below, this reads untrusted input, so an unknown
-// name has to land on a usable default rather than the most permissive one.
-func ParseLevel(name string) slog.Level {
-	switch strings.ToUpper(name) {
-	case "DEBUG":
-		return slog.LevelDebug
-	case "INFO":
-		return slog.LevelInfo
-	case "WARN":
-		return slog.LevelWarn
-	case "ERROR":
-		return slog.LevelError
-	}
-	return 0
-}
-
 // -------------------------------------------------------------------------
 // LOG BUFFER
 // -------------------------------------------------------------------------

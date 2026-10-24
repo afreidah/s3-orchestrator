@@ -212,41 +212,9 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	}), nil
 }
 
-// adminHandlerRequiredDeps is the typed return shape of
-// resolveAdminHandlerRequiredDeps. Optional deps (encryptor, object
-// cache, reconciler) are resolved separately via Optional[T].
-type adminHandlerRequiredDeps struct {
-	cfg      *config.Config
-	usageSvc *usage.Service
-	cb       *breaker.CircuitBreaker
-	logLevel *slog.LevelVar
-	stores   metadataStore
-	states   *backendstate.Manager
-	ops      *ops.Services
-}
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// resolveAdminHandlerRequiredDeps invokes every required dependency the
-// admin handler needs and bails on the first error.
-func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
-	r := newResolver(i)
-	d := adminHandlerRequiredDeps{
-		cfg:      r.Resolve[*config.Config](),
-		usageSvc: r.Resolve[*usage.Service](),
-		cb:       r.Resolve[*breaker.CircuitBreaker](),
-		logLevel: r.Resolve[*slog.LevelVar](),
-		stores:   r.Resolve[metadataStore](),
-		states:   r.Resolve[*backendstate.Manager](),
-		ops:      r.Resolve[*ops.Services](),
-	}
-	if r.err != nil {
-		return d, r.err
-	}
-	return d, nil
-}
 
 // toAdminWorkerHealth copies a lifecycle.WorkerHealth slice into the
 // matching adminapi wire type. The two shapes are intentionally kept
@@ -271,11 +239,22 @@ func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []adminapi.WorkerHealth
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ProvideAdminHandler creates the admin API handler.
+// ProvideAdminHandler creates the admin API handler. The required
+// dependencies are resolved together; the optional ones (reconciler, worker
+// health, flight recorder, cache, log buffer) leave their endpoints inert
+// when absent.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
-	d, err := resolveAdminHandlerRequiredDeps(i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	usageSvc := r.Resolve[*usage.Service]()
+	cb := r.Resolve[*breaker.CircuitBreaker]()
+	logLevel := r.Resolve[*slog.LevelVar]()
+	stores := r.Resolve[metadataStore]()
+	states := r.Resolve[*backendstate.Manager]()
+	opsSvc := r.Resolve[*ops.Services]()
+	aggregator := r.Resolve[*dashboard.Aggregator]()
+	runtime := r.Resolve[*infra.BackendRuntime]()
+	if r.err != nil {
+		return nil, r.err
 	}
 	recRes := Optional[*worker.Reconciler](i)
 	if recRes.Failed() {
@@ -297,36 +276,28 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	// handler ends up holding a nil *trace.FlightRecorder and the
 	// snapshot endpoint responds 503.
 	frRes := Optional[*debug.FlightRecorderService](i)
-	aggregator, err := do.Invoke[*dashboard.Aggregator](i)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := do.Invoke[*infra.BackendRuntime](i)
-	if err != nil {
-		return nil, err
-	}
 	deps := &admin.Deps{
-		BackendOps:   d.usageSvc,
+		BackendOps:   usageSvc,
 		Dashboard:    aggregator,
-		Objects:      d.ops.Objects,
-		Integrity:    d.ops.Integrity,
-		Replication:  d.ops.Replication,
-		Rebalance:    d.ops.Rebalance,
-		Expiry:       d.ops.Lifecycle,
-		Encryption:   d.ops.Encryption,
-		Compression:  d.ops.Compression,
-		Provision:    d.ops.Provision,
-		States:       d.states,
-		StateStore:   d.stores,
-		DBHealthy:    d.cb.IsHealthy,
+		Objects:      opsSvc.Objects,
+		Integrity:    opsSvc.Integrity,
+		Replication:  opsSvc.Replication,
+		Rebalance:    opsSvc.Rebalance,
+		Expiry:       opsSvc.Lifecycle,
+		Encryption:   opsSvc.Encryption,
+		Compression:  opsSvc.Compression,
+		Provision:    opsSvc.Provision,
+		States:       states,
+		StateStore:   stores,
+		DBHealthy:    cb.IsHealthy,
 		WorkerHealth: workerHealth,
-		Cleanup:      d.stores,
+		Cleanup:      stores,
 		ObjectCache:  resolveOptionalCache(i),
 		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
 		Registry:     adminBucketRegistry(i),
 		BackendNames: runtime.BackendOrder,
-		LogLevel:     d.logLevel,
+		LogLevel:     logLevel,
 	}
 	// Set the log buffer only when a real one resolves; assigning a nil
 	// *telemetry.LogBuffer to the interface field would make the /logs

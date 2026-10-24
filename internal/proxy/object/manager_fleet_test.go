@@ -86,28 +86,27 @@ func (c *objectsCalls) retriedRows() []int64 {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.CleanupItem, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		backend := req.Copies[0].Backend
 		c.recordObject = append(c.recordObject, objRecordCall{
-			Key: req.Key, Backend: backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+			Key: req.Key, Backend: req.Copies[0].Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 			Placing: slices.Clone(req.Placing),
 		})
-		return nil, core.QuotaDeltas{backend: req.Size}, err
+		return nil, err
 	}
 }
 
 // stubObjCommitCompanion records an extra copy committing after the response
 // and reports it as recorded, which is what the store does while the intent is
 // still there.
-func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
-	return func(_ context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, core.QuotaDeltas, error) {
+func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, error) {
+	return func(_ context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.CleanupItem, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.companionCopy = append(c.companionCopy, *p)
-		return core.CompanionCopyCommitted, nil, core.QuotaDeltas{p.BackendName: p.SizeBytes}, nil
+		return core.CompanionCopyCommitted, nil, nil
 	}
 }
 
@@ -236,7 +235,7 @@ func deleteObjectStore(t *testing.T, resp []core.CleanupItem, err error) *storet
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
-	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(resp, nil, err).AnyTimes()
+	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(resp, err).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -391,7 +390,7 @@ func TestPutObject_PackStrategy_FillsTheFirstBackend(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": first, "b2": second}, &fleetOpts{
 		Order:          []string{"b1", "b2"},
 		BackendTimeout: 30 * time.Second,
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
+		QuotaBaselines: map[string]core.QuotaStat{
 			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
 			"b2": {BackendName: "b2", BytesLimit: 1000},
 		},
@@ -419,7 +418,7 @@ func TestPutObject_SpreadStrategy_PicksTheEmptiest(t *testing.T) {
 		Order:          []string{"b1", "b2"},
 		Routing:        config.RoutingSpread,
 		BackendTimeout: 30 * time.Second,
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
+		QuotaBaselines: map[string]core.QuotaStat{
 			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
 			"b2": {BackendName: "b2", BytesLimit: 1000},
 		},
@@ -604,7 +603,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "cleanup-key", Body: bytes.NewReader([]byte("data")), Size: 4}); err == nil {
-		t.Fatal("expected error from RecordObjectAndClearPending failure")
+		t.Fatal("expected error from the RecordObject failure")
 	}
 	if !be.HasCopyOf("cleanup-key") {
 		t.Error("be bytes should be retained for the pending reaper to resolve")
@@ -1296,17 +1295,15 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 
 // stubBatchDelete returns a DoAndReturn that drives DeleteObjectsBatch: every
 // key held one byte on backendName, and the batch queues a cleanup row for it.
-func stubBatchDelete(backendName string) func(context.Context, []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
-	return func(_ context.Context, keys []string) ([]core.CleanupItem, core.QuotaDeltas, error) {
+func stubBatchDelete(backendName string) func(context.Context, []string) ([]core.CleanupItem, error) {
+	return func(_ context.Context, keys []string) ([]core.CleanupItem, error) {
 		rows := make([]core.CleanupItem, len(keys))
-		deltas := make(core.QuotaDeltas)
 		for i, k := range keys {
 			rows[i] = core.CleanupItem{
 				ID: int64(i + 1), BackendName: backendName, ObjectKey: k, Reason: core.CleanupReasonDeleted, SizeBytes: 1,
 			}
-			deltas.Add(backendName, -1)
 		}
-		return rows, deltas, nil
+		return rows, nil
 	}
 }
 
@@ -1362,7 +1359,7 @@ func TestDeleteObjects_DBFailureFailsAll(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		Return(nil, nil, errors.New("db error")).AnyTimes()
+		Return(nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)

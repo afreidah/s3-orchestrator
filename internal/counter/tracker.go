@@ -13,8 +13,8 @@
 // then operate on the immutable map; write paths take a small mutex,
 // allocate a new map with the change, and atomically swap. This removes
 // the RWMutex pair from every WithinLimits call (which fires on every
-// backend operation) and lets BackendsWithinLimits / NearLimit observe a
-// consistent snapshot across the loop instead of re-locking per backend.
+// backend operation) and lets NearLimit observe a consistent snapshot across
+// the loop instead of re-locking per backend.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -72,44 +72,17 @@ func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *Usage
 	return u
 }
 
-// Record increments the usage counters for a backend under ctx's workload.
-// Operations no pool charges are still counted in api_requests.
+// Record charges one call of op to a backend under ctx's workload: once against
+// the request total, once against every pool that contains op, and the bytes
+// it moved. Operations no pool charges are still counted in api_requests.
 func (u *UsageTracker) Record(ctx context.Context, backendName string, op s3op.Operation, egress, ingress int64) {
-	u.record(ctx, backendName, []s3op.Operation{op}, 1, egress, ingress)
-}
-
-// RecordN credits n calls of the same operation, for the paths that make a
-// run of identical requests before reporting: a paginated list walks a bucket
-// one page at a time and charges for every page.
-func (u *UsageTracker) RecordN(ctx context.Context, backendName string, op s3op.Operation, n int64) {
-	u.record(ctx, backendName, []s3op.Operation{op}, n, 0, 0)
-}
-
-// record is the single charging path: each operation counts once per
-// repetition against the backend's request total, and once per repetition
-// against every pool that contains it, all in one charge to ctx's workload.
-func (u *UsageTracker) record(ctx context.Context, backendName string, ops []s3op.Operation, each, egress, ingress int64) {
-	if len(ops) == 0 || each <= 0 {
-		return
-	}
 	c := Charge{
 		Workload:     string(cmp.Or(audit.WorkloadOf(ctx), audit.WorkloadUnknown)),
-		APIRequests:  int64(len(ops)) * each,
+		APIRequests:  1,
 		EgressBytes:  egress,
 		IngressBytes: ingress,
-		PoolN:        each,
-	}
-	lim := (*u.limits.Load())[backendName]
-	for i, op := range ops {
-		pools := lim.PoolsFor(op)
-		if i == 0 {
-			// The limits' own slice, so a single operation charges without
-			// allocating; Clip makes a later append copy rather than write
-			// into it.
-			c.Pools = slices.Clip(pools)
-			continue
-		}
-		c.Pools = append(c.Pools, pools...)
+		Pools:        (*u.limits.Load())[backendName].PoolsFor(op),
+		PoolN:        1,
 	}
 	u.backend.Charge(backendName, core.UsageBucket(time.Now()), c)
 	if t := audit.TallyOf(ctx); t != nil {
@@ -117,15 +90,12 @@ func (u *UsageTracker) record(ctx context.Context, backendName string, ops []s3o
 	}
 }
 
-// poolCharge counts how many times the operations charge the named pool. A
-// pool named by two of the operations is charged twice.
-func poolCharge(lim core.UsageLimits, ops []s3op.Operation, pool string) int64 {
+// poolCharge counts how many times op charges the named pool.
+func poolCharge(lim core.UsageLimits, op s3op.Operation, pool string) int64 {
 	var n int64
-	for _, op := range ops {
-		for _, p := range lim.PoolsFor(op) {
-			if p.Name == pool {
-				n++
-			}
+	for _, p := range lim.PoolsFor(op) {
+		if p.Name == pool {
+			n++
 		}
 	}
 	return n
@@ -135,11 +105,24 @@ func poolCharge(lim core.UsageLimits, ops []s3op.Operation, pool string) int64 {
 // LIMIT ENFORCEMENT
 // -------------------------------------------------------------------------
 
-// WithinLimits reports whether baseline + unflushed + proposed stays under every
-// non-zero monthly limit for the backend. It takes no lock, so concurrent
+// WithinLimits reports whether baseline + unflushed + one call of op stays under
+// every non-zero monthly limit for the backend. It takes no lock, so concurrent
 // requests can overshoot by up to one flush interval of traffic.
-func (u *UsageTracker) WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool {
-	return withinLimitsSnapshot(u.backend, u.snapshot(), backendName, ops, egress, ingress)
+func (u *UsageTracker) WithinLimits(backendName string, op s3op.Operation, egress, ingress int64) bool {
+	snap := u.snapshot()
+	lim, ok := snap.limits[backendName]
+	if !ok || lim.Unlimited() {
+		return true
+	}
+	return snap.withUsed(u.backend, backendName, func(base core.Usage, cur *core.Usage) bool {
+		if lim.EgressByteLimit > 0 && base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
+			return false
+		}
+		if lim.IngressByteLimit > 0 && base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
+			return false
+		}
+		return poolsFit(lim, op, base, cur)
+	})
 }
 
 // usageSnapshot is one consistent view of what admission is judged against:
@@ -184,50 +167,16 @@ func (s usageSnapshot) withUsed(backend Backend, name string, fn func(base core.
 	return fn(base, cur)
 }
 
-// withinLimitsSnapshot is the snapshot-aware core of WithinLimits. A pool
-// charged by two of the operations must fit both, which is why the proposed
-// charges are folded before they are compared.
-func withinLimitsSnapshot(backend Backend, snap usageSnapshot, name string, ops []s3op.Operation, egress, ingress int64) bool {
-	lim, ok := snap.limits[name]
-	if !ok || lim.Unlimited() {
-		return true
-	}
-	return snap.withUsed(backend, name, func(base core.Usage, cur *core.Usage) bool {
-		if lim.EgressByteLimit > 0 && base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
-			return false
-		}
-		if lim.IngressByteLimit > 0 && base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
-			return false
-		}
-		return poolsFit(lim, ops, base, cur)
-	})
-}
-
-// poolsFit reports whether every bounded pool the operations charge has room
-// for them. A pool with no limit is counted and never refused.
-func poolsFit(lim core.UsageLimits, ops []s3op.Operation, base core.Usage, cur *core.Usage) bool {
+// poolsFit reports whether every bounded pool op charges has room for it. A
+// pool with no limit is counted and never refused.
+func poolsFit(lim core.UsageLimits, op s3op.Operation, base core.Usage, cur *core.Usage) bool {
 	for _, pool := range lim.Pools() {
-		charge := poolCharge(lim, ops, pool.Name)
+		charge := poolCharge(lim, op, pool.Name)
 		if pool.Limit > 0 && charge > 0 && base.Pools[pool.Name]+cur.Pools[pool.Name]+charge > pool.Limit {
 			return false
 		}
 	}
 	return true
-}
-
-// BackendsWithinLimits returns the subset of the given order whose
-// backends are within their monthly usage limits for the proposed
-// operation dimensions. It loads the limits and baseline snapshots once so
-// every per-backend check sees a consistent view.
-func (u *UsageTracker) BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string {
-	snap := u.snapshot()
-	eligible := make([]string, 0, len(order))
-	for _, name := range order {
-		if withinLimitsSnapshot(u.backend, snap, name, ops, egress, ingress) {
-			eligible = append(eligible, name)
-		}
-	}
-	return eligible
 }
 
 // -------------------------------------------------------------------------
