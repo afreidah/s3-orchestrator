@@ -11,16 +11,31 @@
 
 package adminapi
 
-import "time"
+import (
+	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
+)
 
 // StatusResponse is a snapshot of instance and per-backend operational state.
 // UsagePeriod is the calendar month in UTC, kept for older clients; each
-// backend's own cycle is its BackendStatus.UsageCycle.
+// backend's own cycle is its BackendStatus.UsageCycle. Instance names the
+// instance that answered, since breaker state is that instance's own view.
 type StatusResponse struct {
 	DBHealthy   bool            `json:"db_healthy"`
 	UsagePeriod string          `json:"usage_period"`
 	Backends    []BackendStatus `json:"backends"`
 	Integrity   IntegrityStatus `json:"integrity"`
+	Instance    InstanceStatus  `json:"instance"`
+}
+
+// InstanceStatus identifies the instance that answered a status request: its
+// stable id, the build it runs, its run mode, and when it started.
+type InstanceStatus struct {
+	ID        string    `json:"id"`
+	Version   string    `json:"version"`
+	Mode      string    `json:"mode"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // IntegrityStatus reports how far behind content verification is. Distinct
@@ -54,6 +69,10 @@ type IntegrityStatus struct {
 //
 // UsageLimits measures the cycle's usage against each limit the backend
 // enforces, and UsageCycle is the cycle the usage figures are counted in.
+//
+// UnhashedCopies counts copies with no content hash yet, which backfill
+// hashes, and ActiveMultipartUploads the uploads in progress on the backend.
+// Profile is the backend as configured.
 type BackendStatus struct {
 	Name         string   `json:"name"`
 	Healthy      bool     `json:"healthy"`
@@ -67,10 +86,22 @@ type BackendStatus struct {
 	EgressBytes  int64    `json:"egress_bytes"`
 	IngressBytes int64    `json:"ingress_bytes"`
 
-	CompressionSavedBytes int64 `json:"compression_saved_bytes"`
+	CompressionSavedBytes  int64 `json:"compression_saved_bytes"`
+	UnhashedCopies         int64 `json:"unhashed_copies"`
+	ActiveMultipartUploads int64 `json:"active_multipart_uploads"`
 
-	UsageLimits []UsageMeter `json:"usage_limits"`
-	UsageCycle  UsageCycle   `json:"usage_cycle"`
+	UsageLimits []UsageMeter   `json:"usage_limits"`
+	UsageCycle  UsageCycle     `json:"usage_cycle"`
+	Profile     BackendProfile `json:"profile"`
+}
+
+// BackendProfile is a backend as configured: its endpoint, region and bucket,
+// and the largest object it accepts, zero when it takes any size.
+type BackendProfile struct {
+	Endpoint      string `json:"endpoint"`
+	Region        string `json:"region"`
+	Bucket        string `json:"bucket"`
+	MaxObjectSize int64  `json:"max_object_size"`
 }
 
 // UsageCycle is the usage cycle a backend is in: when it began, when it next
@@ -83,13 +114,16 @@ type UsageCycle struct {
 
 // UsageMeter is one usage limit a backend enforces and what the current period
 // has used of it. Kind is egress or ingress, counted in bytes, or requests,
-// counted in calls against the request budget Budget names. A backend lists
-// only the limits it has, so an unlimited backend lists none.
+// counted in calls against the request budget Budget names. Operations lists
+// the calls a request budget charges, which the backend refuses once the
+// budget is spent. A backend lists only the limits it has, so an unlimited
+// backend lists none.
 type UsageMeter struct {
-	Kind   string `json:"kind"`
-	Budget string `json:"budget,omitzero"`
-	Used   int64  `json:"used"`
-	Limit  int64  `json:"limit"`
+	Kind       string           `json:"kind"`
+	Budget     string           `json:"budget,omitzero"`
+	Used       int64            `json:"used"`
+	Limit      int64            `json:"limit"`
+	Operations []s3op.Operation `json:"operations,omitzero"`
 }
 
 // UsageReconcileResponse reports the per-backend byte corrections a reconcile

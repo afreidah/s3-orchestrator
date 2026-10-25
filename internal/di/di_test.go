@@ -700,6 +700,30 @@ func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
 	}
 }
 
+// TestProvideBackends_RecordsProfiles verifies each backend's profile carries
+// the configured endpoint, region, bucket and size cap, which write placement
+// and the status surfaces both read.
+func TestProvideBackends_RecordsProfiles(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	cfg.Backends[0].MaxObjectSize = 5 << 30
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := do.New()
+	do.ProvideValue(inj, cfg)
+
+	br, err := ProvideBackends(inj)
+	if err != nil {
+		t.Fatalf("ProvideBackends: %v", err)
+	}
+	b := &cfg.Backends[0]
+	want := core.BackendProfile{Endpoint: b.Endpoint, Region: b.Region, Bucket: b.Bucket, MaxObjectSize: 5 << 30}
+	if got := br.Profiles[b.Name]; got != want {
+		t.Errorf("profile = %+v, want %+v", got, want)
+	}
+}
+
 // TestProvideReconciler_PartialDeps asserts a missing dependency fails the
 // provider rather than building a reconciler with a nil collaborator.
 func TestProvideReconciler_PartialDeps(t *testing.T) {

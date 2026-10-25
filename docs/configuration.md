@@ -1010,7 +1010,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
 | `server.tls` | No | The certificate and key files are re-read on SIGHUP; changing the paths or other `tls` fields requires a restart |
 | `server.max_object_size`, `spill_dir`, `backend_timeout` | No | Requires restart; no warning is logged |
-| `backends[].max_object_size`, `backends[].credential_source` | No | Requires restart; no warning is logged |
+| `backends[].credential_source` | No | Requires restart; no warning is logged |
 | `cleanup_queue`, `write_path`, `notifications`, `debug` | No | Requires restart; no warning is logged |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
@@ -1023,7 +1023,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `redis` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
 | `reconcile` | No | Requires restart |
-| `backends` (structural: endpoint, credentials, count) | No | Requires restart |
+| `backends` (structural: endpoint, credentials, `max_object_size`, count) | No | Requires restart |
 
 A reload logs its start and its outcome:
 

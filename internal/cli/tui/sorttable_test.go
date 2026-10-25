@@ -59,8 +59,8 @@ func TestSortTable_StepsThroughColumnsAndBack(t *testing.T) {
 	for range len(backendColumns) - 1 {
 		list.update(key("s"))
 	}
-	if list.sort.column != "SAVED" {
-		t.Errorf("after every column, sort = %q, want SAVED", list.sort.column)
+	if list.sort.column != "OBJECTS" {
+		t.Errorf("after every column, sort = %q, want OBJECTS", list.sort.column)
 	}
 	list.update(key("s"))
 	if list.sort.column != "" || backendOrder(&list) != "b,c,a" {

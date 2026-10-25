@@ -9,12 +9,16 @@
 // growing ones. Horizontally, every table declares its columns with a minimum
 // width, a maximum width, and a priority, and the same fitting pass sizes all
 // of them: when the minimums do not fit, the lowest-priority column is dropped,
-// and the width left over widens the columns that can grow.
+// and the width left over widens the columns that can grow. Text panes align
+// their label/value lines through one shared block.
 // -------------------------------------------------------------------------------
 
 package tui
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
@@ -159,6 +163,22 @@ type pane struct {
 // summary, a notice, or a loading or error line.
 func textPane(s string) pane {
 	return pane{height: lipgloss.Height(s), render: func(int) string { return s }}
+}
+
+// field is one line of a label/value block.
+type field struct {
+	label string
+	value string
+}
+
+// fieldBlock renders fields as aligned lines, each label padded to width so
+// the values start in one column. The summary panes build their text with it.
+func fieldBlock(width int, fields ...field) string {
+	lines := make([]string, len(fields))
+	for i, f := range fields {
+		lines[i] = fmt.Sprintf("%-*s %s", width, f.label, f.value)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // tablePane is a growing block over a table. The table is sized when it is

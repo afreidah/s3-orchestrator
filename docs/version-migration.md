@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.170.x (current)
+### v0.172.x (current)
+
+**Backend detail in the TUI and a fuller status response ([#1419](https://github.com/afreidah/s3-orchestrator/issues/1419), [#1414](https://github.com/afreidah/s3-orchestrator/issues/1414), v0.172.0)**
+
+`/admin/api/status` gives each backend a `profile` (`endpoint`, `region`, `bucket`, `max_object_size`), `unhashed_copies` and `active_multipart_uploads`, and each request budget in `usage_limits` lists the `operations` it charges. A top-level `instance` names the instance that answered: `id`, `version`, `mode` and `started_at`. All of it is additive. `/ui/api/dashboard` gains `Profiles`. The TUI Backends table drops its REFUSED, API, INGRESS, EGRESS and SAVED columns; those figures, with every usage limit against its ceiling, move to a detail block under the table that follows the cursor. `admin status` prints an `Instance:` line under `DB healthy:`. A reload that changes a backend's `max_object_size` now logs that the change needs a restart, as it always did, instead of skipping it silently. No migration and no config change.
+
+### v0.170.x
 
 **Each backend's usage cycle on every surface ([#1772](https://github.com/afreidah/s3-orchestrator/issues/1772), v0.170.0)**
 

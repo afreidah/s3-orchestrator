@@ -72,8 +72,9 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
-// handleStatus returns each backend's quota, usage, state flags and refused
-// calls, plus database health and integrity figures, from the fleet snapshot.
+// handleStatus returns each backend's quota, usage, state flags, refused calls
+// and profile, plus database health, integrity figures and the identity of the
+// instance answering, from the fleet snapshot.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.dashboardOps.GetStatus(r.Context())
 	if err != nil {
@@ -91,42 +92,45 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 			DeferredCopies:          data.DeferredCopies,
 			PlaintextCopies:         data.PlaintextCopies,
 		},
+		Instance: h.instance,
 	})
 }
 
 // backendStatuses maps a dashboard snapshot onto the shared status wire type,
-// one entry per backend in display order. A backend absent from RefusedCalls
-// serves every call, and one absent from BackendFlags carries no flags.
+// one entry per backend in display order. A backend absent from a per-backend
+// map reads as its zero value: no refused calls, no flags, nothing counted.
 func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 	backends := make([]adminapi.BackendStatus, 0, len(data.BackendOrder))
 	for _, name := range data.BackendOrder {
 		refused := data.RefusedCalls[name]
+		quota := data.QuotaStats[name]
+		us := data.UsageStats[name]
+		cycle := data.UsageCycles[name]
+		meters := data.UsageLimits[name].Meters(us)
 		bs := adminapi.BackendStatus{
 			Name:         name,
 			Healthy:      refused == 0,
 			RefusedCalls: refused.Names(),
 			Draining:     data.DrainingBackends[name].Active,
 			Flags:        data.BackendFlags[name].Names(),
+			BytesUsed:    quota.BytesUsed,
+			BytesLimit:   quota.BytesLimit,
+			ObjectCount:  data.ObjectCounts[name],
+			APIRequests:  us.APIRequests,
+			EgressBytes:  us.EgressBytes,
+			IngressBytes: us.IngressBytes,
+
+			CompressionSavedBytes:  data.CompressionSaved(name),
+			UnhashedCopies:         data.UnverifiedObjectCounts[name],
+			ActiveMultipartUploads: data.ActiveMultipartCounts[name],
+
+			UsageLimits: make([]adminapi.UsageMeter, len(meters)),
+			UsageCycle:  adminapi.UsageCycle{Start: cycle.Start, NextReset: cycle.Next, Timezone: cycle.Zone()},
+			Profile:     adminapi.BackendProfile(data.Profiles[name]),
 		}
-		if qs, ok := data.QuotaStats[name]; ok {
-			bs.BytesUsed = qs.BytesUsed
-			bs.BytesLimit = qs.BytesLimit
-		}
-		if oc, ok := data.ObjectCounts[name]; ok {
-			bs.ObjectCount = oc
-		}
-		us := data.UsageStats[name]
-		bs.APIRequests = us.APIRequests
-		bs.EgressBytes = us.EgressBytes
-		bs.IngressBytes = us.IngressBytes
-		meters := data.UsageLimits[name].Meters(us)
-		bs.UsageLimits = make([]adminapi.UsageMeter, len(meters))
 		for i, m := range meters {
 			bs.UsageLimits[i] = adminapi.UsageMeter(m)
 		}
-		cycle := data.UsageCycles[name]
-		bs.UsageCycle = adminapi.UsageCycle{Start: cycle.Start, NextReset: cycle.Next, Timezone: cycle.Zone()}
-		bs.CompressionSavedBytes = data.CompressionSaved(name)
 		backends = append(backends, bs)
 	}
 	return backends

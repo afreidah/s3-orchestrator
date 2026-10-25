@@ -131,22 +131,10 @@ func TestReplicationStats_Disabled(t *testing.T) {
 	}
 }
 
-// TestHumanDuration covers the second/minute/hour rounding boundaries.
-func TestHumanDuration(t *testing.T) {
+// TestReplicationAge_ZeroTimeIsUnknown covers a snapshot with no computed
+// time, which has no age to report.
+func TestReplicationAge_ZeroTimeIsUnknown(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		in   time.Duration
-		want string
-	}{
-		{5 * time.Second, "5s"},
-		{90 * time.Second, "1m"},
-		{3 * time.Hour, "3h"},
-	}
-	for _, c := range cases {
-		if got := humanDuration(c.in); got != c.want {
-			t.Errorf("humanDuration(%s) = %q, want %q", c.in, got, c.want)
-		}
-	}
 	if got := replicationAge(time.Time{}); got != "unknown" {
 		t.Errorf("zero-time age = %q, want unknown", got)
 	}

@@ -93,10 +93,10 @@ func TestUsagePolicy_EligibleForWrite_PreservesOrder(t *testing.T) {
 	t.Parallel()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
 	p := &BackendRuntime{
-		backends:       map[string]backend.ObjectBackend{"b1": &stubBackend{}, "b2": &stubBackend{}, "b3": &stubBackend{}},
-		order:          []string{"b1", "b2", "b3"},
-		usage:          tracker,
-		maxObjectSizes: map[string]int64{"b2": 100},
+		backends: map[string]backend.ObjectBackend{"b1": &stubBackend{}, "b2": &stubBackend{}, "b3": &stubBackend{}},
+		order:    []string{"b1", "b2", "b3"},
+		usage:    tracker,
+		profiles: map[string]core.BackendProfile{"b2": {MaxObjectSize: 100}},
 	}
 
 	got := p.EligibleForWrite(s3op.PutObject, 0, 500)

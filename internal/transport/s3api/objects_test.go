@@ -401,8 +401,8 @@ func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 	}
 }
 
-// newCapacityHintTestServer builds a Server whose single backend has
-// MaxObjectSizes=1, so any upload of more than one byte fails the
+// newCapacityHintTestServer builds a Server whose single backend has a
+// one-byte size cap, so any upload of more than one byte fails the
 // eligibleForWrite check and exercises the capacity-hint code path
 // in handlePut.
 func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataStore) *httptest.Server {
@@ -412,7 +412,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 			Order:           []string{"b1"},
-			MaxObjectSizes:  map[string]int64{"b1": 1},
+			Profiles:        map[string]core.BackendProfile{"b1": {MaxObjectSize: 1}},
 			RoutingStrategy: config.RoutingPack,
 			Metrics:         mockStore,
 		}),

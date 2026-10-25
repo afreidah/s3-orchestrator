@@ -45,11 +45,10 @@ const fleetTimeout = 30 * time.Second
 // Order defaults to the backend map's keys in unspecified order, which is fine
 // for a test that names one backend.
 type fleetOpts struct {
-	Order          []string                    // fixes the fleet order
-	Routing        config.RoutingStrategy      // defaults to pack
-	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
-	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
-	Draining       []string                    // backends the runtime should report as draining
+	Order       []string                    // fixes the fleet order
+	Routing     config.RoutingStrategy      // defaults to pack
+	UsageLimits map[string]core.UsageLimits // per-backend API and bandwidth caps
+	Draining    []string                    // backends the runtime should report as draining
 
 	QuotaBaselines map[string]core.QuotaStat // seeds the byte counter; nil leaves every backend unlimited, non-nil is the whole world
 }
@@ -100,7 +99,6 @@ func newFleet(
 		Usage:           usage,
 		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: routing,
-		MaxObjectSizes:  opts.MaxObjectSizes,
 	})
 	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
 		Store: store, Usage: usage,

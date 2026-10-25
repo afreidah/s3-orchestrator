@@ -6,7 +6,8 @@
 // Reports per-backend health, quota usage, usage limits, and circuit-breaker
 // state from the running instance. Text mode renders the backends as a table
 // led by the backend name, then a table of usage limits when any backend has
-// one; JSON mode returns the raw payload.
+// one, then DB health and the instance that answered; JSON mode returns the raw
+// payload.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -30,8 +31,9 @@ func cmdStatus(_ []string, c *client) int {
 }
 
 // renderStatus renders the status payload as a backends table led by the
-// backend name, followed by the usage limits and DB health. Returning an error
-// (e.g. an unexpected shape) makes the client fall back to raw JSON.
+// backend name, followed by the usage limits, DB health and the answering
+// instance. Returning an error (e.g. an unexpected shape) makes the client
+// fall back to raw JSON.
 func renderStatus(w io.Writer, body []byte) error {
 	var s adminapi.StatusResponse
 	if err := json.Unmarshal(body, &s); err != nil {
@@ -47,12 +49,12 @@ func renderStatus(w io.Writer, body []byte) error {
 			core.CallsNamed(b.RefusedCalls).Health(),
 			output.NameList(b.RefusedCalls),
 			output.NameList(b.Flags),
-			output.FormatBytes(b.BytesUsed),
-			output.FormatBytes(b.BytesLimit),
+			humanize.Bytes(b.BytesUsed),
+			humanize.Bytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
 			strconv.FormatInt(b.APIRequests, 10),
-			output.FormatBytes(b.IngressBytes),
-			output.FormatBytes(b.EgressBytes),
+			humanize.Bytes(b.IngressBytes),
+			humanize.Bytes(b.EgressBytes),
 		}
 	}
 	if err := output.Table(w, headers, rows); err != nil {
@@ -61,7 +63,10 @@ func renderStatus(w io.Writer, body []byte) error {
 	if err := renderUsageLimits(w, s.Backends); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\n", s.DBHealthy)
+	if _, err := fmt.Fprintf(w, "\nDB healthy:    %t\n", s.DBHealthy); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "Instance:      %s\n", output.Instance(s.Instance))
 	return err
 }
 

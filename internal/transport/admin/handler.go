@@ -63,6 +63,7 @@ type Handler struct {
 	registry     func() *auth.BucketRegistry
 	backendNames func() []string
 	logLevel     *slog.LevelVar
+	instance     adminapi.InstanceStatus
 	confirmKey   []byte
 	reloadStatus func() *adminapi.ReloadStatusResponse    // nil before the first reload
 	liveConfig   func() (*adminapi.ConfigResponse, error) // nil until the runtime wires it
@@ -96,6 +97,7 @@ type Deps struct {
 	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
 	BackendNames func() []string             // typically *infra.BackendRuntime.BackendOrder
 	LogLevel     *slog.LevelVar
+	Instance     adminapi.InstanceStatus // this instance's identity, reported on every status response
 }
 
 // -------------------------------------------------------------------------
@@ -144,6 +146,7 @@ func New(d *Deps) *Handler {
 		registry:     d.Registry,
 		backendNames: d.BackendNames,
 		logLevel:     d.LogLevel,
+		instance:     d.Instance,
 		confirmKey:   mustConfirmKey(),
 	}
 }

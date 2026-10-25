@@ -458,7 +458,7 @@ func backendStructuralChanges(old, next []BackendConfig) []string {
 			o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
 			boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
 			o.DisableChecksum != n.DisableChecksum ||
-			o.StripSDKHeaders != n.StripSDKHeaders ||
+			o.StripSDKHeaders != n.StripSDKHeaders || o.MaxObjectSize != n.MaxObjectSize ||
 			httpTransportChanged(o.HTTP, n.HTTP) {
 			changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
 		}

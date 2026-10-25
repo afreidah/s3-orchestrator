@@ -38,8 +38,9 @@ const (
 	dashBarMax  = 40
 )
 
-// dashLabelWidth aligns the labels of the summary block.
-const dashLabelWidth = 14
+// summaryLabelWidth aligns the labels of the label/value blocks the dashboard,
+// the cache pane and the backend detail draw.
+const summaryLabelWidth = 14
 
 // dashFleetLabel names the capacity row that totals every backend.
 const dashFleetLabel = "fleet"
@@ -137,17 +138,19 @@ type meterRow struct {
 // drain state.
 func (m *model) dashboardCapacity() string {
 	rows := make([]meterRow, 0, len(m.backends.list.received)+1)
-	var used, limit int64
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		used += b.BytesUsed
-		if b.BytesLimit > 0 {
-			limit += b.BytesLimit
-		}
-		rows = append(rows, meterRow{name: b.Name, used: b.BytesUsed, limit: b.BytesLimit, format: humanize.Bytes, markers: backendMarkers(b)})
+		rows = append(rows, storageRow(b.Name, b, backendMarkers(b)))
 	}
+	used, limit := m.fleetStorage()
 	rows = append(rows, meterRow{name: dashFleetLabel, used: used, limit: limit, format: humanize.Bytes})
 	return m.meterBlock("capacity", rows)
+}
+
+// storageRow is the row of a usage block that draws a backend's stored bytes
+// against its quota.
+func storageRow(name string, b *adminapi.BackendStatus, markers string) meterRow {
+	return meterRow{name: name, used: b.BytesUsed, limit: b.BytesLimit, format: humanize.Bytes, markers: markers}
 }
 
 // dashboardUsageLimits renders one bar per usage limit a backend enforces,
@@ -157,15 +160,26 @@ func (m *model) dashboardUsageLimits() string {
 	var rows []meterRow
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		cycle := pathStyle.Render(humanize.Cycle(b.UsageCycle.Start, b.UsageCycle.NextReset, b.UsageCycle.Timezone))
+		cycle := pathStyle.Render(cycleText(b.UsageCycle))
 		for _, u := range b.UsageLimits {
-			rows = append(rows, meterRow{name: b.Name + " " + output.MeterLabel(u.Kind, u.Budget), used: u.Used, limit: u.Limit, format: output.MeterFormat(u.Kind), markers: cycle})
+			rows = append(rows, usageMeterRow(b.Name+" "+output.MeterLabel(u.Kind, u.Budget), u, cycle))
 		}
 	}
 	if len(rows) == 0 {
 		return ""
 	}
 	return m.meterBlock("usage limits", rows)
+}
+
+// usageMeterRow is the row of a usage block that draws one limit a backend
+// enforces, in the units its kind counts.
+func usageMeterRow(name string, u adminapi.UsageMeter, markers string) meterRow {
+	return meterRow{name: name, used: u.Used, limit: u.Limit, format: output.MeterFormat(u.Kind), markers: markers}
+}
+
+// cycleText names the usage cycle a backend's figures are counted in.
+func cycleText(c adminapi.UsageCycle) string {
+	return humanize.Cycle(c.Start, c.NextReset, c.Timezone)
 }
 
 // meterBlock renders rows under a heading, each as a bar followed by its
@@ -224,9 +238,8 @@ func meterLine(r meterRow, cols meterColumns) string {
 func meterFigures(r meterRow, cols meterColumns) string {
 	figures := fmt.Sprintf("%*s", cols.used, r.format(r.used))
 	if r.limit > 0 {
-		pct := humanize.Percent(r.used, r.limit)
 		figures += fmt.Sprintf(" / %-*s  ", cols.limit, r.format(r.limit)) +
-			usageStyle(pct).Render(fmt.Sprintf("%4s", fmt.Sprintf("%d%%", pct)))
+			percentText(humanize.Percent(r.used, r.limit), 4)
 	} else if cols.limit > 0 {
 		figures += strings.Repeat(" ", 3+cols.limit+2+4)
 	}
@@ -265,20 +278,16 @@ func backendMarkers(b *adminapi.BackendStatus) string {
 // dashboardSummary renders the fleet's backlogs and coverage as an aligned
 // label/value block.
 func (m *model) dashboardSummary() string {
-	line := func(label, value string) string {
-		return fmt.Sprintf("%-*s %s", dashLabelWidth, label, value)
-	}
 	iv := m.backends.integrity
-	lines := []string{
-		line("database", m.dashboardDB()),
-		line("replication", m.dashboardReplication()),
-		line("verified", integrityHeadline(iv)+deferredSuffix(iv.DeferredCopies)),
-		line("encryption", dashboardEncryption(iv.PlaintextCopies)),
-		line("compression", m.dashboardCompression()),
-		line("usage", m.dashboardUsage()),
-		line("cleanup", m.dashboardCleanup()),
-	}
-	return strings.Join(lines, "\n")
+	return fieldBlock(summaryLabelWidth,
+		field{"database", m.dashboardDB()},
+		field{"replication", m.dashboardReplication()},
+		field{"verified", integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)},
+		field{"encryption", dashboardEncryption(iv.PlaintextCopies)},
+		field{"compression", m.dashboardCompression()},
+		field{"usage", m.dashboardUsage()},
+		field{"cleanup", m.dashboardCleanup()},
+	)
 }
 
 // dashboardDB renders the metadata database's health.
@@ -300,8 +309,8 @@ func (m *model) dashboardReplication() string {
 		return pathStyle.Render("disabled")
 	}
 	return fmt.Sprintf("factor %d   %s under   %s over", s.Factor,
-		replCountStyle(s.UnderReplicated).Render(humanize.Comma(s.UnderReplicated)),
-		replCountStyle(s.OverReplicated).Render(humanize.Comma(s.OverReplicated)))
+		backlogStyle(s.UnderReplicated).Render(humanize.Comma(s.UnderReplicated)),
+		backlogStyle(s.OverReplicated).Render(humanize.Comma(s.OverReplicated)))
 }
 
 // dashboardEncryption renders how many copies are still stored in plaintext.
@@ -314,10 +323,7 @@ func dashboardEncryption(plaintext int64) string {
 
 // dashboardCompression renders what compression is saving across the fleet.
 func (m *model) dashboardCompression() string {
-	var saved int64
-	for i := range m.backends.list.received {
-		saved += m.backends.list.received[i].CompressionSavedBytes
-	}
+	saved := m.fleetCompressionSaved()
 	if saved <= 0 {
 		return pathStyle.Render("nothing stored compressed")
 	}

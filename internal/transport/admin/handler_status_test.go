@@ -5,18 +5,20 @@
 //
 // Unit tests for backendStatuses, the pure dashboard-to-wire mapping behind
 // /admin/api/status: health inversion, drain-by-presence, per-backend counters,
-// usage limits, and display ordering.
+// profiles, usage limits, and display ordering.
 // -------------------------------------------------------------------------------
 
 package admin
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
@@ -71,6 +73,27 @@ func TestBackendStatuses_Mapping(t *testing.T) {
 	}
 }
 
+// TestBackendStatuses_ProfileAndHoldings verifies each backend carries its
+// configured profile, its unhashed copies and its uploads in progress, and a
+// backend absent from those maps reads as zero.
+func TestBackendStatuses_ProfileAndHoldings(t *testing.T) {
+	t.Parallel()
+	profile := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "data", MaxObjectSize: 5 << 30}
+	got := backendStatuses(&dashboard.Data{
+		BackendOrder:           []string{"b1", "b2"},
+		UnverifiedObjectCounts: map[string]int64{"b1": 2},
+		ActiveMultipartCounts:  map[string]int64{"b1": 1},
+		Profiles:               map[string]core.BackendProfile{"b1": profile},
+	})
+
+	if b1 := got[0]; b1.UnhashedCopies != 2 || b1.ActiveMultipartUploads != 1 || b1.Profile != adminapi.BackendProfile(profile) {
+		t.Errorf("b1 = %+v, want 2 unhashed, 1 upload and profile %+v", b1, profile)
+	}
+	if b2 := got[1]; b2.UnhashedCopies != 0 || b2.ActiveMultipartUploads != 0 || b2.Profile != (adminapi.BackendProfile{}) {
+		t.Errorf("b2 = %+v, want zero holdings and the zero profile", b2)
+	}
+}
+
 // TestBackendStatuses_UsageLimits verifies each backend carries a meter per
 // limit it enforces, measured against its usage, and an unlimited backend an
 // empty list rather than none.
@@ -91,9 +114,9 @@ func TestBackendStatuses_UsageLimits(t *testing.T) {
 	want := []adminapi.UsageMeter{
 		{Kind: core.MeterEgress, Used: 20, Limit: 1000},
 		{Kind: core.MeterIngress, Used: 40, Limit: 500},
-		{Kind: core.MeterRequests, Budget: core.PoolAll, Used: 3, Limit: 100},
+		{Kind: core.MeterRequests, Budget: core.PoolAll, Used: 3, Limit: 100, Operations: s3op.All()},
 	}
-	if !slices.Equal(got[0].UsageLimits, want) {
+	if !reflect.DeepEqual(got[0].UsageLimits, want) {
 		t.Errorf("b1 usage limits = %+v, want %+v", got[0].UsageLimits, want)
 	}
 	if got[1].UsageLimits == nil || len(got[1].UsageLimits) != 0 {

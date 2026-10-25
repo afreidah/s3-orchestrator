@@ -220,7 +220,7 @@ func TestBackendsPane_NarrowTerminal(t *testing.T) {
 			t.Errorf("narrow view dropped %q:\n%s", want, view)
 		}
 	}
-	for _, gone := range []string{"SAVED", "API"} {
+	for _, gone := range []string{"LIMIT"} {
 		if strings.Contains(view, gone) {
 			t.Errorf("narrow view kept low-priority column %q:\n%s", gone, view)
 		}

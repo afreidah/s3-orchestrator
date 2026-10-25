@@ -60,7 +60,8 @@ func newCoverageHandler(t *testing.T) *Handler {
 
 // TestHandleStatus_PopulatedDashboard drives the inner branches of
 // handleStatus that the empty-backends test never enters: QuotaStats,
-// ObjectCounts, and UsageStats lookups all succeeding for the same key.
+// ObjectCounts, and UsageStats lookups all succeeding for the same key, and
+// the answering instance's identity carried alongside them.
 func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
@@ -71,6 +72,7 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 		UsageStats:   map[string]core.Usage{"b1": {UsageStat: core.UsageStat{APIRequests: 3, IngressBytes: 50, EgressBytes: 25}}},
 		UsagePeriod:  "2026-05",
 	}, nil)
+	h.instance = adminapi.InstanceStatus{ID: "host-1a2b3c4d", Version: "v1.2.3", Mode: "all"}
 
 	w := httptest.NewRecorder()
 	h.handleStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil))
@@ -78,17 +80,18 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
+	var resp adminapi.StatusResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	backends, ok := resp["backends"].([]any)
-	if !ok || len(backends) != 1 {
-		t.Fatalf("backends = %v, want length 1", resp["backends"])
+	if len(resp.Backends) != 1 {
+		t.Fatalf("backends = %v, want length 1", resp.Backends)
 	}
-	row := backends[0].(map[string]any)
-	if row["bytes_used"].(float64) != 100 || row["object_count"].(float64) != 5 || row["api_requests"].(float64) != 3 {
-		t.Errorf("backend row not fully populated: %v", row)
+	if b := resp.Backends[0]; b.BytesUsed != 100 || b.ObjectCount != 5 || b.APIRequests != 3 {
+		t.Errorf("backend row not fully populated: %+v", b)
+	}
+	if resp.Instance != h.instance {
+		t.Errorf("instance = %+v, want %+v", resp.Instance, h.instance)
 	}
 }
 

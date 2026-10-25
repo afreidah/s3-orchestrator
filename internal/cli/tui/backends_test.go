@@ -4,20 +4,23 @@
 // Author: Alex Freidah
 //
 // Deterministic tests for the backends status pane: the status-to-row mapping,
-// the health/drain formatters, body rendering per state, key handling (back,
-// reload), and the load error path.
+// the health/drain formatters, body rendering per state, the detail under the
+// table, key handling (back, reload), and the load error path.
 // -------------------------------------------------------------------------------
 
 package tui
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -55,12 +58,12 @@ func TestRowsFromBackends(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	// b1: healthy, nothing refused, human sizes, real limit, use% = 2048/4096 = 50%.
-	if r := rows[0]; r[0] != "b1" || r[1] != "healthy" || r[2] != "-" || r[3] != "-" || r[4] != "2.0 KiB" || r[5] != "4.0 KiB" || r[6] != "50%" {
+	// b1: healthy, no flags, human sizes, real limit, use% = 2048/4096 = 50%.
+	if r := rows[0]; !slices.Equal(r, table.Row{"b1", "healthy", "-", "2.0 KiB", "4.0 KiB", "50%", "3"}) {
 		t.Errorf("b1 row = %v", r)
 	}
-	// b2: degraded refusing GET, draining, and a zero limit renders limit and use% as a dash.
-	if r := rows[1]; r[1] != "degraded" || r[2] != "GetObject" || r[3] != "draining" || r[5] != "-" || r[6] != "-" {
+	// b2: degraded, draining, and a zero limit renders limit and use% as a dash.
+	if r := rows[1]; !slices.Equal(r, table.Row{"b2", "degraded", "draining", "0 B", "-", "-", "0"}) {
 		t.Errorf("b2 row = %v", r)
 	}
 }
@@ -133,6 +136,105 @@ func TestBackendsBody_States(t *testing.T) {
 	m.backends = newBackendsView()
 	if got := bodyText(m.backendsBody()); !strings.Contains(got, "no backends") {
 		t.Errorf("empty body = %q", got)
+	}
+}
+
+// TestBackendsBody_DetailFollowsTheCursor verifies the detail under the table
+// describes whichever backend is highlighted, with no key to open it.
+func TestBackendsBody_DetailFollowsTheCursor(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 160, 40
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
+		{Name: "b1", Profile: adminapi.BackendProfile{Endpoint: "https://one.example.com", Bucket: "one"}},
+		{Name: "b2", Profile: adminapi.BackendProfile{Endpoint: "https://two.example.com", Bucket: "two"}},
+	}})
+
+	if got := bodyText(m.backendsBody()); !strings.Contains(got, "https://one.example.com") {
+		t.Errorf("detail before moving does not describe b1:\n%s", got)
+	}
+	m.handleBackendsKey(key("j"))
+	got := bodyText(m.backendsBody())
+	if !strings.Contains(got, "https://two.example.com") || strings.Contains(got, "https://one.example.com") {
+		t.Errorf("detail after moving does not describe b2 alone:\n%s", got)
+	}
+}
+
+// TestBackendDetail_Contents verifies the detail carries the backend's
+// configuration, what it holds, a bar per limit with the calls a budget
+// charges, and the instance whose view it is.
+func TestBackendDetail_Contents(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width = 160
+	m.backends.instance = adminapi.InstanceStatus{ID: "host-1a2b3c4d", Version: "v1.2.3", Mode: "all"}
+	b := &adminapi.BackendStatus{
+		Name:                   "b1",
+		BytesUsed:              512,
+		BytesLimit:             1024,
+		ObjectCount:            1200,
+		UnhashedCopies:         4,
+		ActiveMultipartUploads: 2,
+		Profile:                adminapi.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "data", MaxObjectSize: 5 << 30},
+		UsageLimits: []adminapi.UsageMeter{
+			{Kind: "egress", Used: 10, Limit: 100},
+			{Kind: "requests", Budget: "writes", Used: 5, Limit: 5, Operations: []s3op.Operation{s3op.PutObject, s3op.CopyObject}},
+		},
+	}
+
+	got := m.backendDetail(b)
+	for _, want := range []string{
+		"https://s3.example.com", "region us-east-1", "bucket data", "max object 5.0 GiB",
+		"1,200 objects", "4 unhashed", "2 uploads in progress",
+		"storage", "512 B / 1.0 KiB", "egress", "requests:writes", "PutObject, CopyObject",
+		"host-1a2b3c4d  v1.2.3  mode all",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "saved") {
+		t.Errorf("detail reports a saving on a backend that compresses nothing:\n%s", got)
+	}
+}
+
+// TestProfileText_LeavesOutWhatIsUnset verifies a backend with no region and
+// no size cap names only its endpoint and bucket.
+func TestProfileText_LeavesOutWhatIsUnset(t *testing.T) {
+	t.Parallel()
+	got := profileText(adminapi.BackendProfile{Endpoint: "https://s3.example.com", Bucket: "data"})
+	if got != "https://s3.example.com   bucket data" {
+		t.Errorf("profileText = %q", got)
+	}
+}
+
+// TestHoldingsText_ReportsSavings verifies a backend where compression saves
+// anything reports how much, and one saving nothing says nothing about it.
+func TestHoldingsText_ReportsSavings(t *testing.T) {
+	t.Parallel()
+	if got := holdingsText(&adminapi.BackendStatus{CompressionSavedBytes: 750}); !strings.Contains(got, "750 B saved") {
+		t.Errorf("holdings = %q, want the 750 saved bytes", got)
+	}
+	if got := holdingsText(&adminapi.BackendStatus{}); strings.Contains(got, "saved") {
+		t.Errorf("holdings with nothing compressed = %q, want no saving", got)
+	}
+}
+
+// TestChargedCalls verifies a budget names its calls, counts those past the
+// shown few, and a byte limit names none.
+func TestChargedCalls(t *testing.T) {
+	t.Parallel()
+	if got := chargedCalls(adminapi.UsageMeter{Kind: "egress", Used: 1, Limit: 2}); got != "" {
+		t.Errorf("byte limit = %q, want nothing", got)
+	}
+	two := adminapi.UsageMeter{Kind: "requests", Limit: 10, Operations: []s3op.Operation{s3op.PutObject, s3op.CopyObject}}
+	if got := chargedCalls(two); !strings.Contains(got, "PutObject, CopyObject") || strings.Contains(got, "more") {
+		t.Errorf("two calls = %q, want both named", got)
+	}
+	every := adminapi.UsageMeter{Kind: "requests", Limit: 10, Operations: s3op.All()}
+	want := fmt.Sprintf("+%d more", len(s3op.All())-chargedCallsShown)
+	if got := chargedCalls(every); !strings.Contains(got, want) {
+		t.Errorf("every call = %q, want %q", got, want)
 	}
 }
 

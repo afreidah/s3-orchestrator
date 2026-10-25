@@ -64,7 +64,7 @@ func newTestCore(t *testing.T) *BackendRuntime {
 		BackendTimeout:  100 * time.Millisecond,
 		Usage:           tracker,
 		RoutingStrategy: config.RoutingPack,
-		MaxObjectSizes:  map[string]int64{"b2": 1024},
+		Profiles:        map[string]core.BackendProfile{"b2": {MaxObjectSize: 1024}},
 		AdmissionSem:    make(chan struct{}, 2),
 		Log:             slog.Default(),
 	})
@@ -197,6 +197,19 @@ func TestCore_UsageForwarders(t *testing.T) {
 	c := newTestCore(t)
 	if c.Usage() == nil {
 		t.Error("Usage() returned nil")
+	}
+}
+
+// TestCore_Profile verifies a backend's configured profile is returned, and a
+// backend with none configured reads as the zero profile.
+func TestCore_Profile(t *testing.T) {
+	t.Parallel()
+	c := newTestCore(t)
+	if got := c.Profile("b2").MaxObjectSize; got != 1024 {
+		t.Errorf("b2 max object size = %d, want 1024", got)
+	}
+	if got := c.Profile("b1"); got != (core.BackendProfile{}) {
+		t.Errorf("b1 profile = %+v, want the zero profile", got)
 	}
 }
 

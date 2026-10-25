@@ -21,7 +21,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // replicationView holds the state of the replication status pane.
@@ -126,26 +125,16 @@ func (m *model) replicationBody() []pane {
 func (m *model) replicationStats() string {
 	s := m.replication.snap
 	const labelW = 18
-	line := func(label, value string) string {
-		return fmt.Sprintf("%-*s %s", labelW, label, value)
-	}
-	factor := line("factor", fmt.Sprintf("%d", s.Factor))
+	factor := field{"factor", fmt.Sprintf("%d", s.Factor)}
 	if s.Factor <= 1 {
-		return factor + "\n" + pathStyle.Render("(replication disabled)")
+		return fieldBlock(labelW, factor) + "\n" + pathStyle.Render("(replication disabled)")
 	}
-	under := line("under-replicated", replCountStyle(s.UnderReplicated).Render(fmt.Sprintf("%d objects", s.UnderReplicated)))
-	over := line("over-replicated", replCountStyle(s.OverReplicated).Render(fmt.Sprintf("%d objects", s.OverReplicated)))
-	age := line("snapshot age", pathStyle.Render(replicationAge(s.ComputedAt)))
-	return factor + "\n" + under + "\n" + over + "\n" + age
-}
-
-// replCountStyle colours a pending count: green at zero (nothing to do), amber
-// when there is a backlog.
-func replCountStyle(n int64) lipgloss.Style {
-	if n == 0 {
-		return statusOKStyle
-	}
-	return logLevelWarn
+	return fieldBlock(labelW,
+		factor,
+		field{"under-replicated", backlogStyle(s.UnderReplicated).Render(fmt.Sprintf("%d objects", s.UnderReplicated))},
+		field{"over-replicated", backlogStyle(s.OverReplicated).Render(fmt.Sprintf("%d objects", s.OverReplicated))},
+		field{"snapshot age", pathStyle.Render(replicationAge(s.ComputedAt))},
+	)
 }
 
 // replicationAge renders how stale the snapshot is, next to the wall-clock time
@@ -156,11 +145,5 @@ func replicationAge(computed time.Time) string {
 		return "unknown"
 	}
 	d := max(time.Since(computed), 0)
-	return fmt.Sprintf("%s ago (%s)", humanDuration(d), computed.Format("15:04:05"))
-}
-
-// humanDuration renders a short, coarse age: seconds under a minute, then
-// minutes, then hours.
-func humanDuration(d time.Duration) string {
-	return humanize.Duration(d)
+	return fmt.Sprintf("%s ago (%s)", humanize.Duration(d), computed.Format("15:04:05"))
 }

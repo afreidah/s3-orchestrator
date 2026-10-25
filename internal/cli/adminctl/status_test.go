@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Covers the bespoke status text renderer: a backends table led by the name,
-// humanized byte sizes, the usage limits table, the trailing health/period
-// block, and the JSON fallback when the body is not the expected shape.
+// humanized byte sizes, the usage limits table, the trailing health and
+// instance lines, and the JSON fallback when the body is not the expected
+// shape.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -29,7 +30,8 @@ const statusBody = `{
     {"name":"minio-3","healthy":false,"refused_calls":["PutObject","GetObject","HeadObject","DeleteObject","DeleteObjects","CopyObject","ListObjects"],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":0,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0}
   ],
   "db_healthy": true,
-  "usage_period": "2026-06"
+  "usage_period": "2026-06",
+  "instance": {"id":"host-1a2b3c4d","version":"v1.2.3","mode":"all","started_at":"2026-06-01T00:00:00Z"}
 }`
 
 func statusServer(t *testing.T) *httptest.Server {
@@ -58,6 +60,7 @@ func TestStatus_TextTable(t *testing.T) {
 		"minio-1", "minio-2", "10.0 GiB", "1.0 MiB",
 		"Health", "Refused", "State", "healthy", "degraded", "down", "GetObject", "cordoned,draining",
 		"DB healthy:    true",
+		"Instance:      host-1a2b3c4d  v1.2.3  mode all",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)

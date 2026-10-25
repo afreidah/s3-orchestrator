@@ -13,6 +13,7 @@
 package core
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -154,7 +155,8 @@ func TestUsageLimits_Unlimited(t *testing.T) {
 
 // TestUsageLimits_Meters pins the one list every usage surface reads: egress,
 // ingress, then each limited budget in configured order, each paired with its
-// usage, and nothing for a dimension with no limit.
+// usage and the operations it charges, and nothing for a dimension with no
+// limit.
 func TestUsageLimits_Meters(t *testing.T) {
 	t.Parallel()
 	lim, err := NewUsageLimits(1000, 0, []PoolSpec{
@@ -169,10 +171,10 @@ func TestUsageLimits_Meters(t *testing.T) {
 
 	want := []UsageMeter{
 		{Kind: MeterEgress, Used: 400, Limit: 1000},
-		{Kind: MeterRequests, Budget: "writes", Used: 50, Limit: 50},
-		{Kind: MeterRequests, Budget: PoolAll, Used: 60, Limit: 100},
+		{Kind: MeterRequests, Budget: "writes", Used: 50, Limit: 50, Operations: []s3op.Operation{s3op.PutObject}},
+		{Kind: MeterRequests, Budget: PoolAll, Used: 60, Limit: 100, Operations: s3op.All()},
 	}
-	if got := lim.Meters(used); !slices.Equal(got, want) {
+	if got := lim.Meters(used); !reflect.DeepEqual(got, want) {
 		t.Errorf("Meters = %+v, want %+v", got, want)
 	}
 

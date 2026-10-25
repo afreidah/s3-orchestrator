@@ -59,7 +59,7 @@ type RuntimeOptions struct {
 	BackendTimeout  time.Duration
 	UsageLimits     map[string]core.UsageLimits
 	RoutingStrategy config.RoutingStrategy
-	MaxObjectSizes  map[string]int64
+	Profiles        map[string]core.BackendProfile
 	AdmissionSem    chan struct{}
 	Backend         counter.Backend
 	QuotaBaselines  map[string]core.QuotaStat
@@ -129,7 +129,7 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		Usage:           tracker,
 		Quota:           NewQuotaTracker(names, opts.QuotaBaselines),
 		RoutingStrategy: opts.RoutingStrategy,
-		MaxObjectSizes:  opts.MaxObjectSizes,
+		Profiles:        opts.Profiles,
 		AdmissionSem:    opts.AdmissionSem,
 		Log:             slog.Default().With(logfmt.Component("proxytest")),
 	})

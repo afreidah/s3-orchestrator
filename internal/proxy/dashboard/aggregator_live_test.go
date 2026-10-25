@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Covers the fields the aggregator fills from the running fleet rather than
-// the store: which backends are draining and how far along, and which are
-// refusing any call. Both are best-effort, so the interesting
-// cases are the ones where a dependency is absent or errors.
+// the store: each backend's profile, which backends are draining and how far
+// along, and which are refusing any call. Drain progress is best-effort, so
+// the interesting cases are the ones where a dependency is absent or errors.
 //
 // These exercise the aggregator directly against the DashboardStore and
 // FleetView mocks instead of standing up a full proxy stack.
@@ -65,6 +65,17 @@ func newStubFleet(ctrl *gomock.Controller, snap *metrics.FleetSnapshot) *MockFle
 	return fleet
 }
 
+// newLiveFleet returns a FleetView serving an empty snapshot over the named
+// backends, each with an empty profile. Each test states the flags and served
+// calls it is about.
+func newLiveFleet(ctrl *gomock.Controller, order ...string) *MockFleetView {
+	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
+	fleet.EXPECT().BackendOrder().Return(order).AnyTimes()
+	fleet.EXPECT().Profile(gomock.Any()).Return(core.BackendProfile{}).AnyTimes()
+	return fleet
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
@@ -88,9 +99,7 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
-	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
 
@@ -111,9 +120,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
-	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
 
@@ -134,9 +141,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
-	fleet.EXPECT().BackendOrder().Return([]string{"draining", "idle"}).AnyTimes()
+	fleet := newLiveFleet(ctrl, "draining", "idle")
 	fleet.EXPECT().BackendFlags("draining").Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().BackendFlags("idle").Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
@@ -170,9 +175,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
-	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
@@ -196,9 +199,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	fleet := NewMockFleetView(ctrl)
-	expectSnapshot(fleet, emptySnapshot())
-	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
 
@@ -209,5 +210,30 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	}
 	if data.DrainingBackends == nil || data.RefusedCalls == nil {
 		t.Error("live-state maps must be initialised even with no drain manager")
+	}
+}
+
+// TestDecorateLiveState_RecordsProfiles asserts every backend's configured
+// profile is carried, including a healthy backend with no flags, which the
+// flag and drain maps leave out.
+func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+
+	fleet := NewMockFleetView(ctrl)
+	expectSnapshot(fleet, emptySnapshot())
+	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
+	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	want := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "b", MaxObjectSize: 5 << 30}
+	fleet.EXPECT().Profile("b1").Return(want).AnyTimes()
+
+	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
+	data, err := agg.GetStatus(t.Context())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if got := data.Profiles["b1"]; got != want {
+		t.Errorf("profile = %+v, want %+v", got, want)
 	}
 }

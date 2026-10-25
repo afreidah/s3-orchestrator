@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
 // cmdCleanupDLQ implements `s3-orchestrator admin cleanup-dlq [list|requeue]`.
@@ -67,7 +68,7 @@ func renderCleanupDLQList(w io.Writer, body []byte) error {
 			it.Backend,
 			it.ObjectKey,
 			it.Reason,
-			output.FormatBytes(it.SizeBytes),
+			humanize.Bytes(it.SizeBytes),
 			strconv.FormatInt(int64(it.Attempts), 10),
 			it.MovedAt.Format("2006-01-02 15:04"),
 			it.LastError,

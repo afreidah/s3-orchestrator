@@ -48,7 +48,7 @@ var errIncompleteSnapshot = errors.New("fleet snapshot is missing figures; the s
 // CompressionStats holds only backends that hold an encoded copy, so a missing
 // entry means nothing there is compressed rather than compressed to nothing.
 // RefusedCalls holds only backends refusing at least one call, so a missing
-// entry means the backend serves every call.
+// entry means the backend serves every call. Profiles holds every backend.
 type Data struct {
 	BackendOrder           []string
 	QuotaStats             map[string]core.QuotaStat
@@ -68,18 +68,20 @@ type Data struct {
 	DrainingBackends       map[string]backendstate.DrainProgress
 	BackendFlags           map[string]core.BackendFlags
 	RefusedCalls           map[string]core.BackendCalls
+	Profiles               map[string]core.BackendProfile
 }
 
 //go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader,ScrubReachReader
 
 // FleetView is the backend-fleet surface the aggregator reads: the fleet
-// snapshot the ledger figures come from, and the live state it decorates them
-// with. *infra.BackendRuntime satisfies it.
+// snapshot the ledger figures come from, and the live state and configured
+// profiles it decorates them with. *infra.BackendRuntime satisfies it.
 type FleetView interface {
 	FleetSnapshot(ctx context.Context) (*metrics.FleetSnapshot, error)
 	BackendOrder() []string
 	BackendFlags(name string) core.BackendFlags
 	ServedCalls(name string) core.BackendCalls
+	Profile(name string) core.BackendProfile
 }
 
 // UsageReader is the usage surface the aggregator reads: each backend's usage
@@ -155,16 +157,18 @@ func splitCycleUsage(in map[string]core.CycleUsage) (map[string]core.Usage, map[
 }
 
 // decorateLiveState fills in the fields that come from the running fleet
-// rather than the store: each backend's state flags, which backends are
-// draining and how far along, and which calls each is refusing. Drain progress
-// is best-effort - a backend whose progress cannot be read is simply omitted
-// rather than failing the whole dashboard.
+// rather than the store: each backend's profile and state flags, which
+// backends are draining and how far along, and which calls each is refusing.
+// Drain progress is best-effort - a backend whose progress cannot be read is
+// simply omitted rather than failing the whole dashboard.
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.DrainingBackends = make(map[string]backendstate.DrainProgress)
 	data.BackendFlags = make(map[string]core.BackendFlags)
 	data.RefusedCalls = make(map[string]core.BackendCalls)
+	data.Profiles = make(map[string]core.BackendProfile)
 
 	for _, name := range da.fleet.BackendOrder() {
+		data.Profiles[name] = da.fleet.Profile(name)
 		if refused := core.AllCalls &^ da.fleet.ServedCalls(name); refused != 0 {
 			data.RefusedCalls[name] = refused
 		}

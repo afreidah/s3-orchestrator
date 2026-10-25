@@ -38,13 +38,14 @@ type PoolSpec struct {
 	Limit      int64
 }
 
-// RequestPool is a compiled budget: the name it is counted under and the
-// ceiling it enforces. A limit of 0 means unlimited, matching the convention
-// the byte limits already use - the pool is still counted, it just never
-// refuses.
+// RequestPool is a compiled budget: the name it is counted under, the ceiling
+// it enforces, and the operations it charges with the unmetered ones removed.
+// A limit of 0 means unlimited, matching the convention the byte limits
+// already use - the pool is still counted, it just never refuses.
 type RequestPool struct {
-	Name  string
-	Limit int64
+	Name       string
+	Limit      int64
+	Operations []s3op.Operation
 }
 
 // -------------------------------------------------------------------------
@@ -94,11 +95,11 @@ func NewUsageLimits(egressLimit, ingressLimit int64, specs []PoolSpec, unmetered
 	lim.pools = make([]RequestPool, 0, len(specs))
 	lim.byOperation = make(map[s3op.Operation][]RequestPool, len(s3op.All()))
 	for _, spec := range specs {
-		pool := RequestPool{Name: spec.Name, Limit: spec.Limit}
 		ops, err := expand(spec, free)
 		if err != nil {
 			return UsageLimits{}, err
 		}
+		pool := RequestPool{Name: spec.Name, Limit: spec.Limit, Operations: ops}
 		lim.pools = append(lim.pools, pool)
 		for _, op := range ops {
 			lim.byOperation[op] = append(lim.byOperation[op], pool)
@@ -172,13 +173,15 @@ const (
 )
 
 // UsageMeter is one limited dimension of a backend's usage: what it has used
-// this period against its limit. Budget names the request budget of a requests
-// meter and is empty for the byte meters.
+// this period against its limit. Budget and Operations name the request budget
+// of a requests meter and the operations it charges, and are empty for the
+// byte meters. A meter at its limit refuses those operations on the backend.
 type UsageMeter struct {
-	Kind   string
-	Budget string
-	Used   int64
-	Limit  int64
+	Kind       string
+	Budget     string
+	Used       int64
+	Limit      int64
+	Operations []s3op.Operation
 }
 
 // Meters pairs a backend's usage with every limit it enforces: egress, ingress,
@@ -194,7 +197,7 @@ func (u UsageLimits) Meters(used Usage) []UsageMeter {
 	}
 	for _, p := range u.pools {
 		if p.Limit > 0 {
-			out = append(out, UsageMeter{Kind: MeterRequests, Budget: p.Name, Used: used.Pools[p.Name], Limit: p.Limit})
+			out = append(out, UsageMeter{Kind: MeterRequests, Budget: p.Name, Used: used.Pools[p.Name], Limit: p.Limit, Operations: p.Operations})
 		}
 	}
 	return out

@@ -86,6 +86,20 @@ func (mr *MockFleetViewMockRecorder) FleetSnapshot(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FleetSnapshot", reflect.TypeOf((*MockFleetView)(nil).FleetSnapshot), ctx)
 }
 
+// Profile mocks base method.
+func (m *MockFleetView) Profile(name string) core.BackendProfile {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Profile", name)
+	ret0, _ := ret[0].(core.BackendProfile)
+	return ret0
+}
+
+// Profile indicates an expected call of Profile.
+func (mr *MockFleetViewMockRecorder) Profile(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Profile", reflect.TypeOf((*MockFleetView)(nil).Profile), name)
+}
+
 // ServedCalls mocks base method.
 func (m *MockFleetView) ServedCalls(name string) core.BackendCalls {
 	m.ctrl.T.Helper()

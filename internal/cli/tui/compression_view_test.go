@@ -124,29 +124,6 @@ func TestOpsActions_CompressionStreams(t *testing.T) {
 	}
 }
 
-// TestRowsFromBackends_ShowsSavings checks the backends pane reports what
-// compression saved, and renders a backend saving nothing as a dash. On a fleet
-// with compression off that is every row, and a column of zeroes there reads as
-// a broken figure rather than an absent one.
-func TestRowsFromBackends_ShowsSavings(t *testing.T) {
-	t.Parallel()
-	rows := rowsFromBackends([]adminapi.BackendStatus{
-		{Name: "b1", CompressionSavedBytes: 750},
-		{Name: "b2"},
-	})
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2", len(rows))
-	}
-
-	savedCol := len(rows[0]) - 1
-	if got := rows[0][savedCol]; !strings.Contains(got, "750") {
-		t.Errorf("SAVED = %q, want the 750 saved bytes", got)
-	}
-	if got := rows[1][savedCol]; got != "-" {
-		t.Errorf("SAVED with nothing compressed = %q, want a dash", got)
-	}
-}
-
 // TestCompressionCoverage_ReportsFleetSaving checks the backends stats line
 // reports what compression is saving, and says nothing when nothing is stored
 // encoded. It keys off the saving rather than the setting: a fleet that has

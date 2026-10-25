@@ -3,10 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// Read-only status pane over the configured backends. Fetches the admin status
-// snapshot and renders one row per backend: quota usage, object count,
-// circuit-breaker health, drain state, and per-period API/egress/ingress
-// counters. Reached with "b" from the browser; "esc" returns to the listing.
+// Status pane over the configured backends. Fetches the admin status snapshot
+// and renders one row per backend - health, state flags, storage and object
+// count - above a detail block for the highlighted backend: its configuration,
+// every usage limit against its ceiling, and the instance whose view it is.
+// The detail follows the cursor. Reached with "b"; "esc" returns focus to the
+// nav.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -16,13 +18,13 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +35,7 @@ type backendsView struct {
 	list      sortTable[adminapi.BackendStatus] // one row per configured backend, in server order until sorted
 	dbHealthy bool                              // metadata database health
 	integrity adminapi.IntegrityStatus          // how far behind content verification is
+	instance  adminapi.InstanceStatus           // the instance that answered the last status fetch
 	loading   bool                              // a status fetch is in flight
 	err       error                             // last fetch error, if any
 	drain     drainWatch                        // the drain this pane is following, if any
@@ -179,6 +182,7 @@ func (m *model) applyStatus(resp *adminapi.StatusResponse) {
 	m.backends.list.setItems(resp.Backends)
 	m.backends.dbHealthy = resp.DBHealthy
 	m.backends.integrity = resp.Integrity
+	m.backends.instance = resp.Instance
 	healthy := resp.DBHealthy
 	m.dbHealthy = &healthy // surface globally for the sidebar indicator
 	m.backends.loading = false
@@ -361,21 +365,16 @@ func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) (ok bool,
 
 // backendColumns declares the backends table's columns. The name is capped so
 // short backend names don't sprawl on a wide terminal. A narrow terminal keeps
-// whether each backend is up, how full it is, and which state flags it carries,
-// and drops the period counters and the refused-call names first.
+// whether each backend is up, how full it is, and which state flags it carries.
+// The usage figures and refused calls live in the detail below the table.
 var backendColumns = []columnSpec{
-	{title: "BACKEND", min: 8, max: 24, priority: 11},
-	{title: "HEALTH", min: 9, max: 9, priority: 10},
-	{title: "REFUSED", min: 9, max: 30, priority: 1},
-	{title: "STATE", min: 8, max: 21, priority: 8},
-	{title: "USED", min: 12, max: 12, priority: 7},
-	{title: "LIMIT", min: 12, max: 12, priority: 5},
-	{title: "USE%", min: 6, max: 6, priority: 9},
-	{title: "OBJECTS", min: 10, max: 10, priority: 6},
-	{title: "API", min: 10, max: 10, priority: 2},
-	{title: "INGRESS", min: 12, max: 12, priority: 3},
-	{title: "EGRESS", min: 12, max: 12, priority: 4},
-	{title: "SAVED", min: 12, max: 12, priority: 1},
+	{title: "BACKEND", min: 8, max: 24, priority: 7},
+	{title: "HEALTH", min: 9, max: 9, priority: 6},
+	{title: "STATE", min: 8, max: 21, priority: 4},
+	{title: "USED", min: 12, max: 12, priority: 3},
+	{title: "LIMIT", min: 12, max: 12, priority: 1},
+	{title: "USE%", min: 6, max: 6, priority: 5},
+	{title: "OBJECTS", min: 10, max: 10, priority: 2},
 }
 
 // backendSorts orders the backends table by every column. A backend with no
@@ -384,16 +383,11 @@ var backendColumns = []columnSpec{
 var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"BACKEND": by(func(b *adminapi.BackendStatus) string { return b.Name }),
 	"HEALTH":  by(func(b *adminapi.BackendStatus) int { return healthRank(b.RefusedCalls) }),
-	"REFUSED": by(func(b *adminapi.BackendStatus) string { return output.NameList(b.RefusedCalls) }),
 	"STATE":   by(func(b *adminapi.BackendStatus) string { return output.NameList(b.Flags) }),
 	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
 	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
 	"USE%":    by(func(b *adminapi.BackendStatus) int { return humanize.Percent(b.BytesUsed, b.BytesLimit) }),
 	"OBJECTS": by(func(b *adminapi.BackendStatus) int64 { return b.ObjectCount }),
-	"API":     by(func(b *adminapi.BackendStatus) int64 { return b.APIRequests }),
-	"INGRESS": by(func(b *adminapi.BackendStatus) int64 { return b.IngressBytes }),
-	"EGRESS":  by(func(b *adminapi.BackendStatus) int64 { return b.EgressBytes }),
-	"SAVED":   by(func(b *adminapi.BackendStatus) int64 { return b.CompressionSavedBytes }),
 }
 
 // rowsFromBackends builds table rows from the status snapshot, in the same
@@ -410,29 +404,14 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		rows = append(rows, table.Row{
 			b.Name,
 			core.CallsNamed(b.RefusedCalls).Health(),
-			output.NameList(b.RefusedCalls),
 			output.NameList(b.Flags),
 			humanize.Bytes(b.BytesUsed),
 			limit,
 			usePct,
 			strconv.FormatInt(b.ObjectCount, 10),
-			strconv.FormatInt(b.APIRequests, 10),
-			humanize.Bytes(b.IngressBytes),
-			humanize.Bytes(b.EgressBytes),
-			savedBytes(b.CompressionSavedBytes),
 		})
 	}
 	return rows
-}
-
-// savedBytes renders what compression saved on a backend. A dash rather than
-// "0 B" for nothing, since on a fleet with compression off that is every row
-// and a column of zeroes reads as a broken figure.
-func savedBytes(saved int64) string {
-	if saved <= 0 {
-		return "-"
-	}
-	return humanize.Bytes(saved)
 }
 
 // healthRank orders backends by health for sorting: down first, then
@@ -494,21 +473,34 @@ func (m *model) backendsStatsLine() string {
 		db = statusErrStyle.Render("UNAVAILABLE")
 	}
 
-	var used, limit int64
-	for i := range m.backends.list.received {
-		used += m.backends.list.received[i].BytesUsed
-		if m.backends.list.received[i].BytesLimit > 0 {
-			limit += m.backends.list.received[i].BytesLimit
-		}
-	}
+	used, limit := m.fleetStorage()
 	total := "total: " + humanize.Bytes(used)
 	if limit > 0 {
-		pct := humanize.Percent(used, limit)
 		total = fmt.Sprintf("total: %s / %s (%s)",
-			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
+			humanize.Bytes(used), humanize.Bytes(limit), percentText(humanize.Percent(used, limit), 0))
 	}
 	return fmt.Sprintf("db: %s   %s   %s%s%s",
 		db, total, m.integrityCoverage(), m.encryptionCoverage(), m.compressionCoverage())
+}
+
+// fleetStorage sums the bytes every backend holds and the quotas of those that
+// have one. A backend with no quota adds nothing to the limit.
+func (m *model) fleetStorage() (used, limit int64) {
+	for i := range m.backends.list.received {
+		b := &m.backends.list.received[i]
+		used += b.BytesUsed
+		limit += max(b.BytesLimit, 0)
+	}
+	return used, limit
+}
+
+// fleetCompressionSaved sums what compression saves on every backend.
+func (m *model) fleetCompressionSaved() int64 {
+	var saved int64
+	for i := range m.backends.list.received {
+		saved += m.backends.list.received[i].CompressionSavedBytes
+	}
+	return saved
 }
 
 // compressionCoverage renders what compression is saving across the fleet, and
@@ -517,10 +509,7 @@ func (m *model) backendsStatsLine() string {
 // report yet, and one that has just disabled it still holds everything it
 // compressed.
 func (m *model) compressionCoverage() string {
-	var saved int64
-	for i := range m.backends.list.received {
-		saved += m.backends.list.received[i].CompressionSavedBytes
-	}
+	saved := m.fleetCompressionSaved()
 	if saved <= 0 {
 		return ""
 	}
@@ -568,12 +557,93 @@ func deferredSuffix(deferred int64) string {
 }
 
 // backendsBody renders the current content: an error, the loading indicator,
-// an empty notice, or the backends table.
+// an empty notice, or the backends table with the highlighted backend's detail
+// below it. The detail is drawn from the cursor on every render, so it follows
+// the selection without a key of its own.
 func (m *model) backendsBody() []pane {
 	return m.paneBody(m.backends.err, "", m.backends.loading, func() []pane {
-		if len(m.backends.list.received) == 0 {
+		b, ok := m.backends.list.selected()
+		if !ok {
 			return []pane{textPane(pathStyle.Render("(no backends)"))}
 		}
-		return []pane{m.backends.list.pane(m)}
+		return []pane{m.backends.list.pane(m), textPane(""), textPane(m.backendDetail(b))}
 	})
+}
+
+// -------------------------------------------------------------------------
+// DETAIL
+// -------------------------------------------------------------------------
+
+// backendDetail renders one backend in full: its health and flags, where it
+// is, what it holds, each of its limits as a bar against its ceiling, and the
+// instance whose view of the breakers this is.
+func (m *model) backendDetail(b *adminapi.BackendStatus) string {
+	rows := []meterRow{storageRow("storage", b, "")}
+	for _, u := range b.UsageLimits {
+		rows = append(rows, usageMeterRow(output.MeterLabel(u.Kind, u.Budget), u, chargedCalls(u)))
+	}
+	return strings.Join([]string{
+		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
+		fieldBlock(summaryLabelWidth,
+			field{"endpoint", profileText(b.Profile)},
+			field{"holds", holdingsText(b)},
+			field{"instance", output.Instance(m.backends.instance)},
+		),
+		m.meterBlock("usage   "+cycleText(b.UsageCycle), rows),
+	}, "\n")
+}
+
+// profileText renders where a backend is and the largest object it takes,
+// leaving out what its configuration does not set.
+func profileText(p adminapi.BackendProfile) string {
+	parts := []string{p.Endpoint}
+	if p.Region != "" {
+		parts = append(parts, "region "+p.Region)
+	}
+	parts = append(parts, "bucket "+p.Bucket)
+	if p.MaxObjectSize > 0 {
+		parts = append(parts, "max object "+humanize.Bytes(p.MaxObjectSize))
+	}
+	return strings.Join(parts, "   ")
+}
+
+// holdingsText renders what a backend holds: its objects, the copies backfill
+// has yet to hash, the uploads in progress and, when compression saves
+// anything there, how much.
+func holdingsText(b *adminapi.BackendStatus) string {
+	text := fmt.Sprintf("%s objects   %s unhashed   %s uploads in progress",
+		humanize.Comma(b.ObjectCount),
+		backlogStyle(b.UnhashedCopies).Render(humanize.Comma(b.UnhashedCopies)),
+		humanize.Comma(b.ActiveMultipartUploads))
+	if b.CompressionSavedBytes > 0 {
+		text += "   " + statusOKStyle.Render(humanize.Bytes(b.CompressionSavedBytes)) + " saved"
+	}
+	return text
+}
+
+// chargedCallsShown is how many of a budget's calls the detail names before
+// counting the rest, so a budget over every call stays on one line.
+const chargedCallsShown = 3
+
+// chargedCalls names the calls a request budget charges, in red once the
+// budget is spent, since the backend then refuses them. A byte limit charges
+// no named calls and renders nothing.
+func chargedCalls(u adminapi.UsageMeter) string {
+	if len(u.Operations) == 0 {
+		return ""
+	}
+	shown := u.Operations[:min(len(u.Operations), chargedCallsShown)]
+	names := make([]string, len(shown))
+	for i, op := range shown {
+		names[i] = string(op)
+	}
+	text := strings.Join(names, ", ")
+	if rest := len(u.Operations) - len(shown); rest > 0 {
+		text += fmt.Sprintf(" +%d more", rest)
+	}
+	style := pathStyle
+	if u.Used >= u.Limit {
+		style = statusErrStyle
+	}
+	return style.Render(text)
 }

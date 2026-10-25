@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -100,6 +101,21 @@ func usageStyle(pct int) lipgloss.Style {
 	default:
 		return statusOKStyle
 	}
+}
+
+// backlogStyle colours a count of work waiting: green at zero (nothing to
+// do), amber when there is a backlog.
+func backlogStyle(n int64) lipgloss.Style {
+	if n == 0 {
+		return statusOKStyle
+	}
+	return logLevelWarn
+}
+
+// percentText renders pct as a percentage coloured by usageStyle, padded on
+// the left to width so a column of them lines up.
+func percentText(pct, width int) string {
+	return usageStyle(pct).Render(fmt.Sprintf("%*s", width, fmt.Sprintf("%d%%", pct)))
 }
 
 // levelStyle normalizes a log-level string and returns its display style.

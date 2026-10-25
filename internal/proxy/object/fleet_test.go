@@ -65,7 +65,6 @@ type fleetOpts struct {
 	Order          []string                    // fixes fleet order, which decides placement under pack routing
 	Routing        config.RoutingStrategy      // defaults to pack
 	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
-	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
 	BackendTimeout time.Duration               // overrides the per-call bound
 	AdmissionSem   chan struct{}               // bounds concurrent backend writes
 	Encryptor      *encryption.Encryptor       // turns on at-rest encryption
@@ -138,7 +137,6 @@ func newFleet(
 		Usage:           usage,
 		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: cmp.Or(opts.Routing, config.RoutingPack),
-		MaxObjectSizes:  opts.MaxObjectSizes,
 		AdmissionSem:    opts.AdmissionSem,
 	})
 	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{

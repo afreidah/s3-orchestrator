@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
+	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -253,8 +254,13 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	opsSvc := r.Resolve[*ops.Services]()
 	aggregator := r.Resolve[*dashboard.Aggregator]()
 	runtime := r.Resolve[*infra.BackendRuntime]()
+	id := r.ResolveNamed[instanceid.ID]("InstanceID")
 	if r.err != nil {
 		return nil, r.err
+	}
+	mode, err := do.InvokeNamed[config.Mode](i, "mode")
+	if err != nil {
+		return nil, err
 	}
 	recRes := Optional[*worker.Reconciler](i)
 	if recRes.Failed() {
@@ -298,6 +304,12 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Registry:     adminBucketRegistry(i),
 		BackendNames: runtime.BackendOrder,
 		LogLevel:     logLevel,
+		Instance: adminapi.InstanceStatus{
+			ID:        id.String(),
+			Version:   telemetry.Version,
+			Mode:      string(mode),
+			StartedAt: time.Now().UTC(),
+		},
 	}
 	// Set the log buffer only when a real one resolves; assigning a nil
 	// *telemetry.LogBuffer to the interface field would make the /logs

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1186,47 +1187,32 @@ func TestNonReloadableFieldsChanged_Database(t *testing.T) {
 	}
 }
 
-// TestNonReloadableFieldsChanged_BackendStructuralFields verifies the non reloadable fields changed backend structural fields contract.
-// Asserts that expected backend structural fields change, got.
+// TestNonReloadableFieldsChanged_BackendStructuralFields verifies that a change
+// to a backend field fixed when the backend is built is reported as needing a
+// restart rather than silently ignored by the reload.
 func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
 	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Backends[0].Endpoint = "https://new-endpoint.example.com"
-	_ = b.SetDefaultsAndValidate()
+	for _, tc := range []struct {
+		name   string
+		change func(*BackendConfig)
+	}{
+		{"endpoint", func(b *BackendConfig) { b.Endpoint = "https://new-endpoint.example.com" }},
+		{"credentials", func(b *BackendConfig) { b.SecretAccessKey = "new-secret" }},
+		{"max object size", func(b *BackendConfig) { b.MaxObjectSize = 1 << 20 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := validBaseConfig()
+			b := validBaseConfig()
+			_ = a.SetDefaultsAndValidate()
+			tc.change(&b.Backends[0])
+			_ = b.SetDefaultsAndValidate()
 
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "structural fields") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend structural fields change, got %v", changed)
-	}
-}
-
-// TestNonReloadableFieldsChanged_BackendCredentials verifies the non reloadable fields changed backend credentials contract.
-// Asserts that expected backend structural fields change for credentials, got.
-func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
-	t.Parallel()
-	a := validBaseConfig()
-	b := validBaseConfig()
-	_ = a.SetDefaultsAndValidate()
-	b.Backends[0].SecretAccessKey = "new-secret"
-	_ = b.SetDefaultsAndValidate()
-
-	changed := NonReloadableFieldsChanged(&a, &b)
-	found := false
-	for _, c := range changed {
-		if strings.Contains(c, "structural fields") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected backend structural fields change for credentials, got %v", changed)
+			changed := NonReloadableFieldsChanged(&a, &b)
+			if !slices.ContainsFunc(changed, func(c string) bool { return strings.Contains(c, "structural fields") }) {
+				t.Errorf("expected backend structural fields change, got %v", changed)
+			}
+		})
 	}
 }
 

@@ -57,11 +57,11 @@ import (
 // Breakers is carried here so the watchdog registry receives the instances
 // directly, rather than rediscovering them by type assertion at runtime.
 type BackendsResult struct {
-	Backends       map[string]backend.ObjectBackend
-	Order          []string
-	UsageLimits    map[string]core.UsageLimits
-	MaxObjectSizes map[string]int64
-	Breakers       []*backend.CircuitBreakerBackend // empty when per-backend breakers are disabled
+	Backends    map[string]backend.ObjectBackend
+	Order       []string
+	UsageLimits map[string]core.UsageLimits
+	Profiles    map[string]core.BackendProfile
+	Breakers    []*backend.CircuitBreakerBackend // empty when per-backend breakers are disabled
 }
 
 // UsageLimitsFor compiles one backend's configured budgets and usage cycle into
@@ -103,7 +103,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 	backends := make(map[string]backend.ObjectBackend, len(cfg.Backends))
 	order := make([]string, 0, len(cfg.Backends))
 	limits := make(map[string]core.UsageLimits, len(cfg.Backends))
-	maxSizes := make(map[string]int64, len(cfg.Backends))
+	profiles := make(map[string]core.BackendProfile, len(cfg.Backends))
 	breakers := make([]*backend.CircuitBreakerBackend, 0, len(cfg.Backends))
 
 	for idx := range cfg.Backends {
@@ -129,8 +129,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 			return nil, err
 		}
 		limits[bcfg.Name] = lim
-		if bcfg.MaxObjectSize > 0 {
-			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
+		profiles[bcfg.Name] = core.BackendProfile{
+			Endpoint:      bcfg.Endpoint,
+			Region:        bcfg.Region,
+			Bucket:        bcfg.Bucket,
+			MaxObjectSize: bcfg.MaxObjectSize,
 		}
 		//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 		slog.Info("backend initialized",
@@ -142,11 +145,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 	}
 
 	return &BackendsResult{
-		Backends:       backends,
-		Order:          order,
-		UsageLimits:    limits,
-		MaxObjectSizes: maxSizes,
-		Breakers:       breakers,
+		Backends:    backends,
+		Order:       order,
+		UsageLimits: limits,
+		Profiles:    profiles,
+		Breakers:    breakers,
 	}, nil
 }
 
@@ -428,7 +431,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Usage:           usage,
 		Quota:           quota,
 		RoutingStrategy: cfg.RoutingStrategy,
-		MaxObjectSizes:  br.MaxObjectSizes,
+		Profiles:        br.Profiles,
 		AdmissionSem:    admissionSemFor(&cfg.Server),
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})

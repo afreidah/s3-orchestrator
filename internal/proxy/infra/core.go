@@ -44,7 +44,7 @@ type Config struct {
 	Usage            *counter.UsageTracker
 	Quota            *counter.QuotaTracker
 	RoutingStrategy  config.RoutingStrategy
-	MaxObjectSizes   map[string]int64
+	Profiles         map[string]core.BackendProfile
 	MetricsCollector *metrics.Collector
 	AdmissionSem     chan struct{}
 	Log              *slog.Logger
@@ -62,7 +62,7 @@ type BackendRuntime struct {
 	order            []string
 	states           StateChecker
 	usage            *counter.UsageTracker
-	maxObjectSizes   map[string]int64
+	profiles         map[string]core.BackendProfile
 	quota            *counter.QuotaTracker
 	backendTimeout   time.Duration
 	admissionSem     chan struct{}
@@ -81,7 +81,7 @@ func New(cfg *Config) *BackendRuntime {
 		backends:         cfg.Backends,
 		order:            cfg.Order,
 		usage:            cfg.Usage,
-		maxObjectSizes:   cfg.MaxObjectSizes,
+		profiles:         cfg.Profiles,
 		quota:            cfg.Quota,
 		backendTimeout:   cfg.BackendTimeout,
 		admissionSem:     cfg.AdmissionSem,

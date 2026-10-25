@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
-
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -177,7 +177,7 @@ func tickAge(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	return humanDuration(max(time.Since(t), 0)) + " ago"
+	return humanize.Duration(max(time.Since(t), 0)) + " ago"
 }
 
 // workersPaneView composes the pane's full-screen layout.

@@ -13,7 +13,7 @@ A persistent left navigation bar switches between sections; the content area to 
 
 - **Dashboard** - where the TUI opens: a usage bar per backend with its health and state flags, the fleet total, the replication and verification backlogs, how many copies are still plaintext, what compression saves, a bar per usage limit marked with its backend's cycle, request and transfer totals over each backend's current cycle, and the cleanup and dead-letter depths. Every figure on it is fleet-wide, so it reads the same whichever instance answers.
 - **Files** - a hierarchical listing of the object namespace, one prefix at a time (directories collapse into common prefixes, just like `aws s3 ls`). Large prefixes page in as you scroll. Opening an object swaps the content area for the **Inspector**, which lists every backend copy of that object with its size, age, encryption status, key id, and content-hash prefix - the replica-placement view that makes multi-backend storage legible.
-- **Backends** - one row per configured backend with its circuit-breaker health (healthy, degraded or down) and the calls it is refusing, state flags (cordoned, draining), quota usage, object count, and request and transfer counters for its current usage cycle.
+- **Backends** - one row per configured backend with its circuit-breaker health (healthy, degraded or down), state flags (cordoned, draining), quota usage and object count, and below the table the highlighted backend in full: the calls it is refusing, its endpoint and bucket, and every usage limit against its ceiling for its current usage cycle.
 - **Buckets** - every virtual bucket the deployment declares, whether the config file or the store declares it (config-declared buckets are read-only to the provisioning API), its multipart upload cap, and which identities reach it with what permissions.
 - **Replication** - the configured replication factor and the current under- and over-replicated object counts, refreshing on its own while the section is active.
 - **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
@@ -25,7 +25,7 @@ A persistent left navigation bar switches between sections; the content area to 
 
 The pane that currently has keyboard focus renders with a bright title bar while the other is muted, so it is always clear whether keys drive the sidebar or the content.
 
-Every table fits the terminal's width. In a narrow terminal the less important columns are dropped first (on Backends, `SAVED` and the period counters) and come back when the window widens.
+Every table fits the terminal's width. In a narrow terminal the less important columns are dropped first (on Backends, `LIMIT` and `OBJECTS`) and come back when the window widens.
 
 Browsing issues only `GET` requests to the admin API and never changes state. The actions that do change state - upload and delete in Files, the Backends actions, the inspector's scrub, the Cleanup pane's requeue and the Ops menu - each ask before they act.
 
@@ -137,15 +137,24 @@ The inspector shows encryption *metadata* only. The wrapped data-encryption key 
 
 ## Step 4: Check backend status
 
-Press `b` (or select **Backends** in the sidebar) to switch to the status view. Each row is one configured backend:
+Press `b` (or select **Backends** in the sidebar) to switch to the status view. Each row is one configured backend, and the highlighted one is shown in full below the table:
 
 ```
 backends   3 configured
 db: healthy   total: 11.3 GiB / 20.0 GiB (56%)   verified: oldest 9h   compression saved: 3.4 GiB
-BACKEND    HEALTH     REFUSED    STATE     USED      LIMIT      USE%   OBJECTS   API    INGRESS   EGRESS    SAVED
-minio-a    healthy    -          -         2.4 GiB   10.0 GiB   24%    1284      9021   4.7 GiB   2.8 GiB   612.0 MiB
-minio-b    degraded   GetObject  draining  8.9 GiB   10.0 GiB   89%    4102      512    1.0 GiB   3.1 GiB   2.8 GiB
-minio-c    down       PutObje... cordoned  0 B       -          -      0         0      0 B       0 B       0 B
+BACKEND    HEALTH     STATE      USED      LIMIT      USE%   OBJECTS
+minio-a    healthy    -          2.4 GiB   10.0 GiB   24%    1284
+minio-b    degraded   draining   8.9 GiB   10.0 GiB   89%    4102
+minio-c    down       cordoned   0 B       -          -      0
+
+minio-b  DEGRADED GetObject  draining
+endpoint       http://minio-b:9000   region us-east-1   bucket data   max object 5.0 GiB
+holds          4,102 objects   12 unhashed   1 uploads in progress   2.8 GiB saved
+instance       s3o-1-7f3a1b2c  v0.172.0  mode all  up 5h
+usage   Oct 1 - Nov 1 UTC
+storage         [###################-]  8.9 GiB / 10.0 GiB   89%
+egress          [###############-----]  3.1 GiB / 4.0 GiB    77%
+requests:reads  [####################]    5,000 / 5,000     100%  GetObject, HeadObject
 ```
 
 The second line carries fleet-wide state. `verified:` is how far behind
@@ -157,12 +166,17 @@ or a count of never-checked copies while the first sweep is still running.
 Reading the columns:
 
 - **HEALTH** - the backend's circuit-breaker state: `healthy` while it serves every call, `degraded` while an open breaker refuses some calls, and `down` while it refuses every call. Sorting by it puts down backends first, then degraded.
-- **REFUSED** - the calls an open breaker is refusing, such as `GetObject` while a provider's download quota is exhausted; `-` when none. A degraded backend keeps serving the rest, though one refusing downloads takes no new writes, since nothing written there could be read back. The column is the first to drop on a narrow terminal.
 - **STATE** - the backend's state flags: `cordoned` when no new copies may land on it, and `draining` while a drain is evacuating it, `drained` once that has finished, or `drain-failed` when it stopped on an error. A cordon and a drain can show together. `-` means normal service; a backend carrying any flag takes no new writes.
 - **USED** / **LIMIT** / **USE%** - quota bytes used against the configured limit (`-` when no limit is set), and the fill percentage that follows from them.
 - **OBJECTS** - object copies the backend holds.
-- **API** / **INGRESS** / **EGRESS** - request count and bytes transferred in the backend's current usage cycle, which starts on its `usage_reset_day` in its `usage_reset_timezone`. The dashboard's usage-limit bars name each cycle.
-- **SAVED** - bytes compression kept off this backend, summed across its copies.
+
+Reading the detail:
+
+- The first line repeats the health, naming the calls an open breaker is refusing, such as `GetObject` while a provider's download quota is exhausted. A degraded backend keeps serving the rest, though one refusing downloads takes no new writes, since nothing written there could be read back.
+- **endpoint** - where the backend is, its bucket, and its `max_object_size` when one is set.
+- **holds** - object copies, copies backfill has yet to hash, multipart uploads in progress, and the bytes compression kept off the backend.
+- **instance** - the instance that answered. Breaker state is each instance's own view, so behind a load balancer it can differ from one refresh to the next.
+- **usage** - storage and every usage limit as a bar against its ceiling, counted over the backend's own cycle, which starts on its `usage_reset_day` in its `usage_reset_timezone`. A request budget names the calls it charges, and those names turn red once the budget is used up, because the backend refuses them until the cycle resets.
 
 The pane polls every 10 seconds; press `r` to poll now. Quota and object counts can be up to one `telemetry.metrics.fleet_interval` old, while the usage counters are current. This is the interactive equivalent of `s3-orchestrator admin status`.
 

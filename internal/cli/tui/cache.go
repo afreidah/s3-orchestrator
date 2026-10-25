@@ -115,28 +115,24 @@ func (m *model) cacheBody() []pane {
 // first, then effectiveness.
 func (m *model) cacheStats() string {
 	s := m.cache.snap
-	const labelW = 14
-	line := func(label, value string) string {
-		return fmt.Sprintf("%-*s %s", labelW, label, value)
-	}
-
-	used := line("entries", fmt.Sprintf("%d", s.Entries))
-	size := line("size", humanize.Bytes(s.SizeBytes))
+	size := humanize.Bytes(s.SizeBytes)
 	if s.MaxBytes > 0 {
-		pct := humanize.Percent(s.SizeBytes, s.MaxBytes)
-		size = line("size", fmt.Sprintf("%s / %s (%s)",
-			humanize.Bytes(s.SizeBytes), humanize.Bytes(s.MaxBytes), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct))))
+		size = fmt.Sprintf("%s / %s (%s)", humanize.Bytes(s.SizeBytes), humanize.Bytes(s.MaxBytes),
+			percentText(humanize.Percent(s.SizeBytes, s.MaxBytes), 0))
 	}
 
-	lookups := s.Hits + s.Misses
-	rate := line("hit rate", pathStyle.Render("no lookups yet"))
-	if lookups > 0 {
+	rate := pathStyle.Render("no lookups yet")
+	if lookups := s.Hits + s.Misses; lookups > 0 {
 		pct := humanize.Percent(s.Hits, lookups)
-		rate = line("hit rate", hitRateStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
+		rate = hitRateStyle(pct).Render(fmt.Sprintf("%d%%", pct))
 	}
-	served := line("lookups", fmt.Sprintf("%d hits / %d misses", s.Hits, s.Misses))
 
-	return used + "\n" + size + "\n" + rate + "\n" + served
+	return fieldBlock(summaryLabelWidth,
+		field{"entries", fmt.Sprintf("%d", s.Entries)},
+		field{"size", size},
+		field{"hit rate", rate},
+		field{"lookups", fmt.Sprintf("%d hits / %d misses", s.Hits, s.Misses)},
+	)
 }
 
 // hitRateStyle colours a hit rate: a cache serving most reads is doing its job,

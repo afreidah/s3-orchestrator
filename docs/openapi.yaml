@@ -1312,8 +1312,28 @@ components:
                 - status
                 - backend
             type: object
+        BackendProfile:
+            properties:
+                bucket:
+                    type: string
+                endpoint:
+                    type: string
+                max_object_size:
+                    format: int64
+                    type: integer
+                region:
+                    type: string
+            required:
+                - endpoint
+                - region
+                - bucket
+                - max_object_size
+            type: object
         BackendStatus:
             properties:
+                active_multipart_uploads:
+                    format: int64
+                    type: integer
                 api_requests:
                     format: int64
                     type: integer
@@ -1345,10 +1365,15 @@ components:
                 object_count:
                     format: int64
                     type: integer
+                profile:
+                    $ref: '#/components/schemas/BackendProfile'
                 refused_calls:
                     items:
                         type: string
                     type: array
+                unhashed_copies:
+                    format: int64
+                    type: integer
                 usage_cycle:
                     $ref: '#/components/schemas/UsageCycle'
                 usage_limits:
@@ -1368,8 +1393,11 @@ components:
                 - egress_bytes
                 - ingress_bytes
                 - compression_saved_bytes
+                - unhashed_copies
+                - active_multipart_uploads
                 - usage_limits
                 - usage_cycle
+                - profile
             type: object
         BackfillChecksumsResponse:
             properties:
@@ -1851,6 +1879,23 @@ components:
             required:
                 - kind
                 - permissions
+            type: object
+        InstanceStatus:
+            properties:
+                id:
+                    type: string
+                mode:
+                    type: string
+                started_at:
+                    format: date-time
+                    type: string
+                version:
+                    type: string
+            required:
+                - id
+                - version
+                - mode
+                - started_at
             type: object
         IntegrityStatus:
             properties:
@@ -2360,6 +2405,8 @@ components:
                     type: array
                 db_healthy:
                     type: boolean
+                instance:
+                    $ref: '#/components/schemas/InstanceStatus'
                 integrity:
                     $ref: '#/components/schemas/IntegrityStatus'
                 usage_period:
@@ -2369,6 +2416,7 @@ components:
                 - usage_period
                 - backends
                 - integrity
+                - instance
             type: object
         UnreadableCopy:
             properties:
@@ -2458,6 +2506,10 @@ components:
                 limit:
                     format: int64
                     type: integer
+                operations:
+                    items:
+                        type: string
+                    type: array
                 used:
                     format: int64
                     type: integer
@@ -2466,6 +2518,7 @@ components:
                 - budget
                 - used
                 - limit
+                - operations
             type: object
         UsageReconcileResponse:
             properties:
