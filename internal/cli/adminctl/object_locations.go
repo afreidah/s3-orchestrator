@@ -13,6 +13,8 @@ import (
 	"flag"
 	"fmt"
 	"net/url"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdObjectLocations implements `s3-orchestrator admin object-locations
@@ -28,5 +30,5 @@ func cmdObjectLocations(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -key is required")
 		return 1
 	}
-	return c.get("/admin/api/object-locations?key="+url.QueryEscape(*key), nil)
+	return c.get(withQuery(adminapi.PathObjectLocations, url.Values{"key": {*key}}), nil)
 }

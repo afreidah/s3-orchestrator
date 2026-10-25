@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"sort"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -85,37 +84,16 @@ func taggingDocumentFrom(tags []core.Tag) *taggingDocument {
 // INLINE TAGGING HEADER
 // -------------------------------------------------------------------------
 
-// errMalformedTaggingHeader is returned for an x-amz-tagging value that is not
-// a decodable query string. Transport-local because the encoding is a property
-// of the header, not of a tag set.
-var errMalformedTaggingHeader = errors.New("malformed x-amz-tagging header")
-
 // parseTaggingHeader decodes the x-amz-tagging header carried by PutObject and
 // CreateMultipartUpload. The header is query-string encoded (k1=v1&k2=v2), not
 // the XML document the tagging endpoints exchange. The set is validated here
 // so an unusable one is refused before the body is read or anything reaches a
 // backend. Tags are returned sorted by key.
 func parseTaggingHeader(raw string) ([]core.Tag, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	values, err := url.ParseQuery(raw)
+	tags, err := core.DecodeTags(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errMalformedTaggingHeader, err)
+		return nil, err
 	}
-
-	tags := make([]core.Tag, 0, len(values))
-	for key, vals := range values {
-		// A repeated key survives ParseQuery as extra slice entries rather
-		// than an error, so the duplicate is caught here instead of silently
-		// keeping whichever one happened to be first.
-		if len(vals) > 1 {
-			return nil, fmt.Errorf("%w: %q", core.ErrDuplicateTagKey, key)
-		}
-		tags = append(tags, core.Tag{Key: key, Value: vals[0]})
-	}
-	sort.Slice(tags, func(i, j int) bool { return tags[i].Key < tags[j].Key })
-
 	if err := core.ValidateTags(tags); err != nil {
 		return nil, err
 	}
@@ -171,11 +149,7 @@ func writeTaggingError(w http.ResponseWriter, err error) int {
 	case errors.Is(err, errInvalidTaggingDirective):
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
 		return http.StatusBadRequest
-	case errors.Is(err, core.ErrEmptyTagKey),
-		errors.Is(err, core.ErrTagKeyTooLong),
-		errors.Is(err, core.ErrTagValueTooLong),
-		errors.Is(err, core.ErrDuplicateTagKey),
-		errors.Is(err, errMalformedTaggingHeader):
+	case core.IsTagValidationError(err):
 		writeS3Error(w, http.StatusBadRequest, "InvalidTag", err.Error())
 		return http.StatusBadRequest
 	}

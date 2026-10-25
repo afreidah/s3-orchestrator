@@ -223,13 +223,10 @@ func TestDeleteObject_ConfirmsByKey(t *testing.T) {
 	if m.confirm == nil || !strings.Contains(m.confirm.text, "bucket/readme.txt") {
 		t.Fatalf("confirm = %+v, want it to name the key", m.confirm)
 	}
-	_, cmd := m.handleConfirmKey(key("y"))
-	msg := cmd().(objectDeletedMsg)
-	if msg.err != nil || f.deletedKey != "bucket/readme.txt" {
-		t.Errorf("deleted %q (err %v), want the highlighted key", f.deletedKey, msg.err)
+	status, reload := finish(t, m, accept(t, m))
+	if !status.ok || f.deletedKey != "bucket/readme.txt" {
+		t.Errorf("deleted %q (status %+v), want the highlighted key", f.deletedKey, status)
 	}
-
-	_, reload := m.applyObjectDeleted(msg)
 	if reload == nil {
 		t.Error("a delete should reload the listing it removed a row from")
 	}
@@ -261,14 +258,12 @@ func TestDeletePrefix_CountsBeforeConfirming(t *testing.T) {
 		t.Fatalf("confirm = %+v, want the count in the question", m.confirm)
 	}
 
-	_, run := m.handleConfirmKey(key("y"))
-	deleted := run().(prefixDeletedMsg)
+	status, _ := finish(t, m, accept(t, m))
 	if f.deletedPrefix != "bucket/photos/" {
 		t.Errorf("deleted prefix %q, want bucket/photos/", f.deletedPrefix)
 	}
-	m.applyPrefixDeleted(deleted)
-	if m.status == nil || !m.status.ok {
-		t.Errorf("status = %+v, want the removal reported", m.status)
+	if !status.ok {
+		t.Errorf("status = %+v, want the removal reported", status)
 	}
 }
 
@@ -406,14 +401,9 @@ func TestFileActions_DispatchThroughUpdate(t *testing.T) {
 			want: func() bool { return m.confirm != nil },
 		},
 		{
-			name: "object deleted",
-			msg:  objectDeletedMsg{key: "bucket/readme.txt"},
+			name: "action done",
+			msg:  m.deleteObject("bucket/readme.txt")(),
 			want: func() bool { return m.status != nil && m.status.ok },
-		},
-		{
-			name: "prefix deleted",
-			msg:  prefixDeletedMsg{prefix: "bucket/photos/", deleted: 2},
-			want: func() bool { return m.status != nil && strings.Contains(m.status.text, "2 objects") },
 		},
 		{
 			name: "transfer done",
@@ -432,27 +422,6 @@ func TestFileActions_DispatchThroughUpdate(t *testing.T) {
 		if _, _ = m.Update(tc.msg); !tc.want() {
 			t.Errorf("%s: the model did not route the message", tc.name)
 		}
-	}
-}
-
-// TestFileActions_ReportFailures asserts each failed action explains itself
-// rather than reporting a silent no-op.
-func TestFileActions_ReportFailures(t *testing.T) {
-	t.Parallel()
-	m := filesModel(t, &fakeLister{})
-
-	if _, cmd := m.applyObjectDeleted(objectDeletedMsg{key: "bucket/readme.txt", err: errors.New("backend refused")}); cmd != nil {
-		t.Error("a failed delete should not reload the listing")
-	}
-	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "backend refused") {
-		t.Errorf("status = %+v, want the failure surfaced", m.status)
-	}
-
-	if _, cmd := m.applyPrefixDeleted(prefixDeletedMsg{prefix: "bucket/photos/", err: errors.New("half removed")}); cmd != nil {
-		t.Error("a failed prefix delete should not reload the listing")
-	}
-	if m.status == nil || m.status.ok {
-		t.Errorf("status = %+v, want the failure surfaced", m.status)
 	}
 }
 

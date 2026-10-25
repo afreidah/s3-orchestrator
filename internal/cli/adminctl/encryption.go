@@ -24,14 +24,14 @@ import (
 // [-max=N]`. Encrypts every unencrypted object, or the first N of them;
 // requires encryption enabled.
 func cmdEncryptExisting(args []string, c *client) int {
-	return runBulkRewrite(args, c, "encrypt-existing", "/admin/api/encrypt-existing")
+	return runBulkRewrite(args, c, "encrypt-existing", adminapi.PathEncryptExisting)
 }
 
 // cmdDecryptExisting implements `s3-orchestrator admin decrypt-existing
 // [-max=N]`. Decrypts every encrypted object back to plaintext, or the first N
 // of them; requires encryption enabled for key access.
 func cmdDecryptExisting(args []string, c *client) int {
-	return runBulkRewrite(args, c, "decrypt-existing", "/admin/api/decrypt-existing")
+	return runBulkRewrite(args, c, "decrypt-existing", adminapi.PathDecryptExisting)
 }
 
 // cmdRotateEncryptionKey implements `s3-orchestrator admin
@@ -51,6 +51,6 @@ func cmdRotateEncryptionKey(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: exactly one of -old-key-id or -all-stale is required")
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, "/admin/api/rotate-encryption-key",
+	return c.sendJSON(http.MethodPost, adminapi.PathRotateKey,
 		adminapi.RotateEncryptionKeyRequest{OldKeyID: *oldKeyID, AllStale: *allStale}, nil)
 }

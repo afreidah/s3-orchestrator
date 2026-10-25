@@ -48,6 +48,14 @@ func (errLister) GetObjectTags(_ context.Context, _ string) (*adminapi.ObjectTag
 	return nil, errors.New("nope")
 }
 
+func (errLister) SetObjectTags(_ context.Context, _ string, _ []adminapi.ObjectTag) (*adminapi.ObjectTagsResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) DeleteObjectTags(_ context.Context, _ string) (*adminapi.ObjectTagsResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) ScrubKey(_ context.Context, _ string) (*adminapi.ScrubKeyResponse, error) {
 	return nil, errors.New("nope")
 }

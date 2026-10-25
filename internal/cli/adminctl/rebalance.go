@@ -11,10 +11,14 @@
 
 package adminctl
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+)
 
 // cmdRebalance implements `s3-orchestrator admin rebalance`. Streams a line per
 // move, then the total.
 func cmdRebalance(_ []string, c *client) int {
-	return c.stream(http.MethodPost, "/admin/api/rebalance")
+	return c.stream(http.MethodPost, adminapi.PathRebalance)
 }

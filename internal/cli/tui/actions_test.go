@@ -11,6 +11,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,6 +90,26 @@ func TestFooter_ConfirmStatusHints(t *testing.T) {
 	m.confirm = &confirmPrompt{text: "Sure?"}
 	if got := m.footer("move"); !strings.Contains(got, "Sure?") || !strings.Contains(got, "y/N") {
 		t.Errorf("confirm footer = %q", got)
+	}
+}
+
+// TestRunAction_FailureSkipsTheSuccessPath verifies a failed action names
+// itself and the error in the footer, and that neither its success line nor
+// its refresh runs.
+func TestRunAction_FailureSkipsTheSuccessPath(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	ran := false
+	cmd := runAction("cordon b1",
+		func(context.Context) (int, error) { return 0, errors.New("refused") },
+		func(*model, int) (string, tea.Cmd) { ran = true; return "cordoned b1", func() tea.Msg { return nil } })
+
+	status, refresh := finish(t, m, cmd())
+	if status.ok || status.text != "cordon b1: refused" {
+		t.Errorf("status = %+v, want the failure named", status)
+	}
+	if ran || refresh != nil {
+		t.Errorf("success path ran=%v refresh=%v, want neither", ran, refresh != nil)
 	}
 }
 

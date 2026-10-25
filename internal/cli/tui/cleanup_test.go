@@ -201,45 +201,29 @@ func TestArmRequeue_EmptyDLQ(t *testing.T) {
 	}
 }
 
-func TestApplyCleanupRequeued(t *testing.T) {
+// TestRequeueDLQ_ReportsAndReloads verifies a requeue reports the rows it moved
+// and refetches the listings, since their depths just changed.
+func TestRequeueDLQ_ReportsAndReloads(t *testing.T) {
 	t.Parallel()
 	m := cleanupModel(t)
+	m.client = &fakeLister{requeued: &adminapi.CleanupDLQRequeueResponse{Backend: "b2", Requeued: 4}}
 
-	_, cmd := m.applyCleanupRequeued(cleanupRequeuedMsg{
-		resp: &adminapi.CleanupDLQRequeueResponse{Backend: "b2", Requeued: 4},
-	})
-	if m.status == nil || !m.status.ok {
-		t.Fatalf("status = %+v, want an ok result", m.status)
+	status, cmd := finish(t, m, m.requeueDLQ("b2")())
+	if !status.ok || status.text != "requeued 4 rows from b2" {
+		t.Fatalf("status = %+v, want 4 rows from b2", status)
 	}
-	for _, want := range []string{"4 rows", "b2"} {
-		if !strings.Contains(m.status.text, want) {
-			t.Errorf("status %q missing %q", m.status.text, want)
-		}
-	}
-	// The depths just changed, so the pane must refetch rather than show stale ones.
 	if cmd == nil || !m.poll.inFlight[pollCleanup] {
 		t.Errorf("requeue did not trigger a reload: cmd=%v in-flight=%v", cmd, m.poll.inFlight[pollCleanup])
 	}
 }
 
-func TestApplyCleanupRequeued_AllBackends(t *testing.T) {
+// TestRequeueDLQ_AllBackends verifies an unscoped requeue says it covered every
+// backend.
+func TestRequeueDLQ_AllBackends(t *testing.T) {
 	t.Parallel()
 	m := cleanupModel(t)
-	m.applyCleanupRequeued(cleanupRequeuedMsg{resp: &adminapi.CleanupDLQRequeueResponse{Requeued: 1}})
-	if m.status == nil || !strings.Contains(m.status.text, "all backends") {
-		t.Errorf("status = %+v, want the unscoped wording", m.status)
-	}
-}
-
-func TestApplyCleanupRequeued_Error(t *testing.T) {
-	t.Parallel()
-	m := cleanupModel(t)
-	m.applyCleanupRequeued(cleanupRequeuedMsg{err: errors.New("boom")})
-	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "boom") {
-		t.Errorf("status = %+v, want a failure", m.status)
-	}
-	if m.cleanup.loading {
-		t.Error("a failed requeue should not trigger a reload")
+	if status, _ := finish(t, m, m.requeueDLQ("")()); !strings.Contains(status.text, "all backends") {
+		t.Errorf("status = %+v, want the unscoped wording", status)
 	}
 }
 

@@ -98,7 +98,9 @@ func (m *model) paneKeys() []keyHint {
 func (m *model) filesKeys() []keyHint {
 	if m.mode == modeInspect {
 		return []keyHint{hintMove, {key: "esc", desc: "back to the listing", label: "back"},
-			{key: "S", desc: "verify every copy now", label: "scrub"}, hintReload}
+			{key: "S", desc: "verify every copy now", label: "scrub"},
+			{key: "t", desc: "edit the object's tags", label: "tags"},
+			{key: "T", desc: "clear the object's tags"}, hintReload}
 	}
 	return []keyHint{
 		hintMove,

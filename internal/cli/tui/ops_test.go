@@ -256,13 +256,13 @@ func runPrompted(t *testing.T, label, typed string) opsRequest {
 	return f.opRequest
 }
 
-// TestOpsPrompt_CacheKeyCarriesTypedKey asserts the typed key becomes the path
-// segment the invalidate endpoint reads, slashes included.
+// TestOpsPrompt_CacheKeyCarriesTypedKey asserts the typed key becomes the
+// escaped path segment the invalidate endpoint decodes, slashes included.
 func TestOpsPrompt_CacheKeyCarriesTypedKey(t *testing.T) {
 	t.Parallel()
 	req := runPrompted(t, "Invalidate one cached key", "bucket/photos/cat.jpg")
 
-	if want := "/admin/api/cache/keys/bucket/photos/cat.jpg"; req.path != want {
+	if want := "/admin/api/cache/keys/bucket%2Fphotos%2Fcat.jpg"; req.path != want {
 		t.Errorf("path = %q, want %q", req.path, want)
 	}
 	if len(req.body) != 0 {
@@ -336,7 +336,7 @@ func TestOps_RotateAllStaleSendsFixedBody(t *testing.T) {
 	}
 	cmd()
 
-	if f.opRequest.path != pathRotateKey {
+	if f.opRequest.path != adminapi.PathRotateKey {
 		t.Errorf("path = %q, want the rotation endpoint", f.opRequest.path)
 	}
 	if got := string(f.opRequest.body); got != `{"all_stale":true}` {

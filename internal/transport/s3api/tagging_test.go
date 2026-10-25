@@ -169,7 +169,7 @@ func TestParseTaggingHeader(t *testing.T) {
 		{"percent-encoded value", "path=a%2Fb", []core.Tag{{Key: "path", Value: "a/b"}}, nil},
 		{"empty value is allowed", "a=", []core.Tag{{Key: "a", Value: ""}}, nil},
 		{"repeated key", "a=1&a=2", nil, core.ErrDuplicateTagKey},
-		{"malformed encoding", "a=%zz", nil, errMalformedTaggingHeader},
+		{"malformed encoding", "a=%zz", nil, core.ErrMalformedTagSet},
 		{"over the tag limit", "a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9&j=10&k=11", nil, core.ErrTooManyTags},
 	}
 

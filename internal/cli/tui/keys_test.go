@@ -115,8 +115,8 @@ func TestGlobalKeys_NameEverySection(t *testing.T) {
 // after the next keypress clears it from the footer.
 func TestReport_KeepsEveryResult(t *testing.T) {
 	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
-	m.applyBackendReconciled(backendReconciledMsg{backend: "minio-a", resp: &adminapi.ReconcileResponse{Imported: 2}})
+	m := backendsModel(t, &fakeLister{reconcileResp: &adminapi.ReconcileResponse{Imported: 2}})
+	finish(t, m, m.reconcileBackend("minio-a")())
 	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	if m.status != nil {
 		t.Error("the footer result survived a keypress")

@@ -47,7 +47,7 @@ func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ObjectTagsResponse{Tags: apiTagsFrom(tags)})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ObjectTagsResponse{Tags: adminapi.ObjectTagsFrom(tags)})
 }
 
 // handlePutObjectTags replaces one object's whole tag set. An empty list
@@ -63,7 +63,7 @@ func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.objects.SetTags(r.Context(), key, coreTagsFrom(req.Tags)); err != nil {
+	if err := h.objects.SetTags(r.Context(), key, adminapi.CoreTags(req.Tags)); err != nil {
 		h.writeObjectTagError(w, r, err, key)
 		return
 	}
@@ -94,23 +94,4 @@ func (h *Handler) writeObjectTagError(w http.ResponseWriter, r *http.Request, er
 		return
 	}
 	h.writeObjectError(w, r, err, "failed to write object tags", key)
-}
-
-// apiTagsFrom converts stored tags to the wire shape, always returning a
-// non-nil slice so an untagged object serialises as [] rather than null.
-func apiTagsFrom(tags []core.Tag) []adminapi.ObjectTag {
-	out := make([]adminapi.ObjectTag, len(tags))
-	for i, t := range tags {
-		out[i] = adminapi.ObjectTag{Key: t.Key, Value: t.Value}
-	}
-	return out
-}
-
-// coreTagsFrom converts the wire shape to stored tags.
-func coreTagsFrom(tags []adminapi.ObjectTag) []core.Tag {
-	out := make([]core.Tag, len(tags))
-	for i, t := range tags {
-		out[i] = core.Tag{Key: t.Key, Value: t.Value}
-	}
-	return out
 }

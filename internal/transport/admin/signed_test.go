@@ -84,17 +84,11 @@ func signedServer(t *testing.T, admin map[core.Resource]core.PermissionSet) stri
 func statusOf(t *testing.T, addr, accessKey, secret, method, path string, body string) int {
 	t.Helper()
 	c := adminclient.NewSigned(addr, accessKey, secret)
-	var reader *strings.Reader
+	var payload []byte
 	if body != "" {
-		reader = strings.NewReader(body)
+		payload = []byte(body)
 	}
-	var resp *http.Response
-	var err error
-	if reader == nil {
-		resp, err = c.Do(context.Background(), method, path, nil, nil)
-	} else {
-		resp, err = c.Do(context.Background(), method, path, nil, reader)
-	}
+	resp, err := c.Do(context.Background(), method, path, nil, payload)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}

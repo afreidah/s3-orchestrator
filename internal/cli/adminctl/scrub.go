@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdScrub implements `s3-orchestrator admin scrub [-batch-size=N] [-key=KEY]`.
@@ -31,7 +33,7 @@ func cmdScrub(args []string, c *client) int {
 	}
 
 	if *key != "" {
-		return c.post(withQuery("/admin/api/object-scrub", url.Values{"key": {*key}}), nil)
+		return c.post(withQuery(adminapi.PathObjectScrub, url.Values{"key": {*key}}), nil)
 	}
 
 	q := url.Values{}
@@ -41,5 +43,5 @@ func cmdScrub(args []string, c *client) int {
 	if *backend != "" {
 		q.Set(queryBackend, *backend)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/scrub", q))
+	return c.stream(http.MethodPost, withQuery(adminapi.PathScrub, q))
 }

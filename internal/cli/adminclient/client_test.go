@@ -139,7 +139,7 @@ func TestDo_EncodesQueryAndBody(t *testing.T) {
 
 	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
 	resp, err := c.Do(t.Context(), http.MethodPost, "/admin/api/x",
-		url.Values{"backend": {"b1"}}, strings.NewReader(`{"k":"v"}`))
+		url.Values{"backend": {"b1"}}, []byte(`{"k":"v"}`))
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -249,6 +249,40 @@ func TestPost_UsesPOST(t *testing.T) {
 	}
 	if got.rawQuery != "backend=b1" || out.Requeued != 4 {
 		t.Errorf("query=%q requeued=%d", got.rawQuery, out.Requeued)
+	}
+	if got.body != "" || got.contentType != "" {
+		t.Errorf("body=%q content-type=%q, want no body for a nil request", got.body, got.contentType)
+	}
+}
+
+// TestPut_SendsTheRequestAsJSON asserts Put encodes its request value as the
+// JSON body, declared as such, and decodes the response.
+func TestPut_SendsTheRequestAsJSON(t *testing.T) {
+	t.Parallel()
+	srv, got := newCaptureServer(t, http.StatusOK, `{"ok":true}`)
+
+	type body struct {
+		Key string `json:"key"`
+	}
+	out, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Put[struct {
+		OK bool `json:"ok"`
+	}](t.Context(), "/admin/api/x", nil, body{Key: "v"})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if got.method != http.MethodPut || got.body != `{"key":"v"}` || got.contentType != "application/json" || !out.OK {
+		t.Errorf("method=%s body=%q content-type=%q ok=%v", got.method, got.body, got.contentType, out.OK)
+	}
+}
+
+// TestPut_RefusesAnUnencodableRequest asserts a request value JSON cannot
+// encode fails before anything is sent.
+func TestPut_RefusesAnUnencodableRequest(t *testing.T) {
+	t.Parallel()
+	srv, got := newCaptureServer(t, http.StatusOK, `{}`)
+	_, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Put[struct{}](t.Context(), "/admin/api/x", nil, func() {})
+	if err == nil || got.method != "" {
+		t.Errorf("err=%v method=%q, want an encode error and no request", err, got.method)
 	}
 }
 

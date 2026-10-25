@@ -236,12 +236,20 @@ func TestEncodeDecodeTags_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestDecodeTags_CorruptColumn verifies a column that will not parse surfaces
-// as an error rather than reading as an upload that carried no tags.
-func TestDecodeTags_CorruptColumn(t *testing.T) {
+// TestDecodeTags_Refusals verifies text that will not parse, or that repeats a
+// key, surfaces as its sentinel rather than reading as a set with no tags or
+// keeping whichever value came first, and that both count as tag-shape
+// refusals rather than storage failures.
+func TestDecodeTags_Refusals(t *testing.T) {
 	t.Parallel()
-	if _, err := DecodeTags("a=%zz"); err == nil {
-		t.Error("expected an error decoding a malformed stored tag set")
+	for raw, want := range map[string]error{"a=%zz": ErrMalformedTagSet, "a=1&a=2": ErrDuplicateTagKey} {
+		_, err := DecodeTags(raw)
+		if !errors.Is(err, want) || !IsTagValidationError(err) {
+			t.Errorf("DecodeTags(%q) = %v, want %v reported as a validation error", raw, err, want)
+		}
+	}
+	if IsTagValidationError(ErrObjectNotFound) {
+		t.Error("a missing object counted as a tag validation error")
 	}
 }
 

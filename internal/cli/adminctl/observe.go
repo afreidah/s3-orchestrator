@@ -31,19 +31,19 @@ const defaultTraceFile = "trace.bin"
 // cmdWorkers implements `s3-orchestrator admin workers`. Reports each
 // background worker's last-tick health; returns 503 in proxy-only mode.
 func cmdWorkers(_ []string, c *client) int {
-	return c.get("/admin/api/workers", nil)
+	return c.get(adminapi.PathWorkers, nil)
 }
 
 // cmdReloadStatus implements `s3-orchestrator admin reload-status`. Reports
 // the outcome of the most recent SIGHUP config reload.
 func cmdReloadStatus(_ []string, c *client) int {
-	return c.get("/admin/api/reload-status", nil)
+	return c.get(adminapi.PathReloadStatus, nil)
 }
 
 // cmdConfig implements `s3-orchestrator admin config`. Prints the running
 // configuration, with secrets redacted.
 func cmdConfig(_ []string, c *client) int {
-	return c.get("/admin/api/config", renderConfig)
+	return c.get(adminapi.PathConfig, renderConfig)
 }
 
 // renderConfig prints the log level and any fields waiting on a restart, then
@@ -72,7 +72,7 @@ func cmdTraceSnapshot(args []string, c *client) int {
 		return 1
 	}
 
-	data, status, code := c.request(http.MethodPost, "/admin/api/trace/snapshot", "")
+	data, status, code := c.request(http.MethodPost, adminapi.PathTraceSnap, nil)
 	if code != 0 {
 		return code
 	}

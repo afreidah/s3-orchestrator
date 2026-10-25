@@ -609,7 +609,7 @@ func TestReplicationEndpoints_WorkerFailureIs500(t *testing.T) {
 			overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleanErr: errors.New("boom")})
 
 		w := httptest.NewRecorder()
-		h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, pathOverReplication, nil))
+		h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, adminapi.PathOverReplication, nil))
 
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -647,7 +647,7 @@ func TestReplicationStreams_ReportFailure(t *testing.T) {
 			overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleanErr: errors.New("boom")})
 
 		w := httptest.NewRecorder()
-		h.handleOverReplicationClean(w, streamReq(pathOverReplication))
+		h.handleOverReplicationClean(w, streamReq(adminapi.PathOverReplication))
 
 		events := decodeEvents(t, w.Body.Bytes())
 		last := events[len(events)-1]

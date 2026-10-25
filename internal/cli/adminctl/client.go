@@ -52,15 +52,15 @@ type renderFunc func(w io.Writer, body []byte) error
 // base address) and render the response per the client's format. A request
 // with a JSON body goes through sendJSON.
 func (c *client) get(path string, render renderFunc) int {
-	return c.do(http.MethodGet, path, "", render)
+	return c.do(http.MethodGet, path, nil, render)
 }
 
 func (c *client) post(path string, render renderFunc) int {
-	return c.do(http.MethodPost, path, "", render)
+	return c.do(http.MethodPost, path, nil, render)
 }
 
 func (c *client) delete(path string) int {
-	return c.do(http.MethodDelete, path, "", nil)
+	return c.do(http.MethodDelete, path, nil, nil)
 }
 
 // sendJSON encodes req as the request body and issues method against path,
@@ -72,13 +72,13 @@ func (c *client) sendJSON(method, path string, req any, render renderFunc) int {
 		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
 		return 1
 	}
-	return c.do(method, path, string(body), render)
+	return c.do(method, path, body, render)
 }
 
 // do performs one admin request and renders the outcome. Transport and read
 // errors are reported to stderr and return exit code 1; an HTTP status >= 400
 // renders the error and returns 1; otherwise the body renders per format.
-func (c *client) do(method, path, body string, render renderFunc) int {
+func (c *client) do(method, path string, body []byte, render renderFunc) int {
 	data, status, code := c.request(method, path, body)
 	if code != 0 {
 		return code
@@ -96,8 +96,8 @@ func (c *client) do(method, path, body string, render renderFunc) int {
 // was already reported to stderr). Signs the request, sets the
 // Content-Type header when a body is present, and a fixed client timeout so a
 // hung server cannot stall the CLI indefinitely.
-func (c *client) request(method, path, body string) ([]byte, int, int) {
-	resp, err := c.api.Do(context.Background(), method, path, nil, bodyReader(body))
+func (c *client) request(method, path string, body []byte) ([]byte, int, int) {
+	resp, err := c.api.Do(context.Background(), method, path, nil, body)
 	if err != nil {
 		fmt.Fprintf(c.stderr, fmtError, err)
 		return nil, 0, 1
@@ -120,21 +120,6 @@ func withQuery(path string, q url.Values) string {
 		return path + "?" + enc
 	}
 	return path
-}
-
-// backendPath addresses one backend by name. The name is escaped because
-// config does not restrict which characters a backend name may contain.
-func backendPath(name string) string {
-	return adminBackendsPath + url.PathEscape(name)
-}
-
-// bodyReader returns nil for an empty body so the shared client can tell "no
-// body" from "empty body" and omit the Content-Type header accordingly.
-func bodyReader(body string) io.Reader {
-	if body == "" {
-		return nil
-	}
-	return strings.NewReader(body)
 }
 
 // renderSuccess writes a successful response body. JSON mode pretty-prints the

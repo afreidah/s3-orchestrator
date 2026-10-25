@@ -1,17 +1,19 @@
 // -------------------------------------------------------------------------------
-// TUI Inspector - Tag Display Tests
+// TUI Inspector - Tag Tests
 //
 // Author: Alex Freidah
 //
-// Tags are context beside the copy ledger rather than part of it, so what these
-// cover is that they render under the table and that a failed tag read leaves
-// the ledger - the thing the pane exists for - intact.
+// Tags are context beside the copy ledger rather than part of it, so these
+// cover that they render under the table, that a failed tag read leaves the
+// ledger - the thing the pane exists for - intact, and that editing and
+// clearing a set reach the server and the pane.
 // -------------------------------------------------------------------------------
 
 package tui
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -112,6 +114,96 @@ func TestLoadTags_ReportsTheError(t *testing.T) {
 	}
 	if msg.err == nil {
 		t.Error("expected the client error to be carried")
+	}
+}
+
+// tagsModel opens the inspector on bucket/k carrying tags, for the edit and
+// clear tests.
+func tagsModel(t *testing.T, f *fakeLister, tags []adminapi.ObjectTag) *model {
+	t.Helper()
+	m := modelWith(nil, "", f)
+	m.mode = modeInspect
+	m.insp = inspector{key: "bucket/k", tags: tags, table: newTable(inspectorColumns)}
+	return m
+}
+
+// TestEditTags_PrefillsAndReplaces verifies t opens the prompt on the current
+// set in its query-string form, and that submitting replaces the whole set
+// and shows what the server stored.
+func TestEditTags_PrefillsAndReplaces(t *testing.T) {
+	t.Parallel()
+	f := &fakeLister{}
+	m := tagsModel(t, f, []adminapi.ObjectTag{{Key: "a", Value: "1"}, {Key: "b", Value: "x y"}})
+
+	m.handleInspectKey(key("t"))
+	if got := m.prompt.input.Value(); got != "a=1&b=x+y" {
+		t.Fatalf("prefill = %q, want the current set encoded", got)
+	}
+
+	_, cmd := submit(t, m, "team=data+eng&env=prod")
+	status, _ := finish(t, m, cmd())
+	if !status.ok || status.text != "tags saved on bucket/k" {
+		t.Errorf("status = %+v, want the save reported", status)
+	}
+	want := []adminapi.ObjectTag{{Key: "env", Value: "prod"}, {Key: "team", Value: "data eng"}}
+	if !slices.Equal(f.tagsSent, want) || !slices.Equal(m.insp.tags, want) {
+		t.Errorf("sent %+v, shown %+v, want %+v", f.tagsSent, m.insp.tags, want)
+	}
+}
+
+// TestEditTags_MalformedTextNeverReachesTheServer verifies a set that does not
+// decode is reported as a failure without a write.
+func TestEditTags_MalformedTextNeverReachesTheServer(t *testing.T) {
+	t.Parallel()
+	f := &fakeLister{}
+	m := tagsModel(t, f, nil)
+
+	m.handleInspectKey(key("t"))
+	_, cmd := submit(t, m, "a=1&a=2")
+	status, _ := finish(t, m, cmd())
+	if status.ok || !strings.Contains(status.text, "duplicate tag key") {
+		t.Errorf("status = %+v, want the duplicate refused", status)
+	}
+	if len(f.tagWrites) != 0 {
+		t.Errorf("writes = %v, want none", f.tagWrites)
+	}
+}
+
+// TestClearTags_ConfirmsAndClears verifies T asks first, clears the set, and
+// does nothing on an object with no tags to clear.
+func TestClearTags_ConfirmsAndClears(t *testing.T) {
+	t.Parallel()
+	f := &fakeLister{}
+	m := tagsModel(t, f, []adminapi.ObjectTag{{Key: "a", Value: "1"}})
+
+	m.handleInspectKey(key("T"))
+	if m.confirm == nil || !strings.Contains(m.confirm.text, "bucket/k") {
+		t.Fatalf("confirm = %+v, want it to name the key", m.confirm)
+	}
+	if status, _ := finish(t, m, accept(t, m)); status.text != "tags cleared on bucket/k" || len(m.insp.tags) != 0 {
+		t.Errorf("status = %+v tags = %+v, want the set cleared", status, m.insp.tags)
+	}
+
+	m.handleInspectKey(key("T"))
+	if m.confirm != nil {
+		t.Error("clear armed on an object with no tags")
+	}
+	if !slices.Equal(f.tagWrites, []string{"clear bucket/k"}) {
+		t.Errorf("writes = %v, want one clear", f.tagWrites)
+	}
+}
+
+// TestTagsSaved_LeavesAnotherObjectAlone verifies a save that lands after the
+// inspector moved to another key does not paint its set onto that key.
+func TestTagsSaved_LeavesAnotherObjectAlone(t *testing.T) {
+	t.Parallel()
+	m := tagsModel(t, &fakeLister{}, nil)
+	msg := m.saveTags("bucket/k", "a=1")()
+	m.insp.key = "bucket/other"
+
+	finish(t, m, msg)
+	if len(m.insp.tags) != 0 {
+		t.Errorf("tags = %+v, want the other object's set untouched", m.insp.tags)
 	}
 }
 

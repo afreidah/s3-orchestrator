@@ -25,7 +25,7 @@ func cmdLogLevel(args []string, c *client) int {
 		return 1
 	}
 	if *set != "" {
-		return c.sendJSON(http.MethodPut, "/admin/api/log-level", adminapi.SetLogLevelRequest{Level: *set}, nil)
+		return c.sendJSON(http.MethodPut, adminapi.PathLogLevel, adminapi.SetLogLevelRequest{Level: *set}, nil)
 	}
-	return c.get("/admin/api/log-level", nil)
+	return c.get(adminapi.PathLogLevel, nil)
 }

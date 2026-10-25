@@ -10,9 +10,13 @@
 
 package adminctl
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+)
 
 // cmdReplicate implements `s3-orchestrator admin replicate`.
 func cmdReplicate(_ []string, c *client) int {
-	return c.stream(http.MethodPost, "/admin/api/replicate")
+	return c.stream(http.MethodPost, adminapi.PathReplicate)
 }

@@ -21,6 +21,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
@@ -47,19 +48,6 @@ type prefixCountedMsg struct {
 // the chosen local file should be stored under.
 type uploadKeyPromptMsg struct{ local string }
 
-// objectDeletedMsg reports one object removed.
-type objectDeletedMsg struct {
-	key string
-	err error
-}
-
-// prefixDeletedMsg reports a prefix removed and how many objects went with it.
-type prefixDeletedMsg struct {
-	prefix  string
-	deleted int
-	err     error
-}
-
 // countPrefix returns a command that counts the keys under prefix, so the
 // confirmation can state the scale of what is about to be removed.
 func (m *model) countPrefix(prefix string) tea.Cmd {
@@ -81,25 +69,30 @@ func countKeysUnder(client adminClient, prefix string) (count int, atLeast bool,
 	return len(page.Objects), page.Truncated, nil
 }
 
-// deleteObject returns a command that removes one object.
+// deleteObject returns a command that removes one object and reloads the
+// listing it came from.
 func (m *model) deleteObject(key string) tea.Cmd {
 	client := m.client
-	return func() tea.Msg {
-		_, err := client.DeleteObject(context.Background(), key)
-		return objectDeletedMsg{key: key, err: err}
-	}
+	return runAction("delete "+key,
+		func(ctx context.Context) (*adminapi.ObjectDeleteResponse, error) {
+			return client.DeleteObject(ctx, key)
+		},
+		func(m *model, _ *adminapi.ObjectDeleteResponse) (string, tea.Cmd) {
+			return "deleted " + key, m.reloadListing()
+		})
 }
 
-// deletePrefix returns a command that removes everything under prefix.
+// deletePrefix returns a command that removes everything under prefix and
+// reports how many objects went with it.
 func (m *model) deletePrefix(prefix string) tea.Cmd {
 	client := m.client
-	return func() tea.Msg {
-		resp, err := client.DeletePrefix(context.Background(), prefix)
-		if err != nil {
-			return prefixDeletedMsg{prefix: prefix, err: err}
-		}
-		return prefixDeletedMsg{prefix: prefix, deleted: resp.Deleted}
-	}
+	return runAction("delete "+prefix,
+		func(ctx context.Context) (*adminapi.ObjectDeleteResponse, error) {
+			return client.DeletePrefix(ctx, prefix)
+		},
+		func(m *model, resp *adminapi.ObjectDeleteResponse) (string, tea.Cmd) {
+			return fmt.Sprintf("deleted %s under %s", countOf(resp.Deleted, "object", "objects"), prefix), m.reloadListing()
+		})
 }
 
 // -------------------------------------------------------------------------
@@ -230,12 +223,6 @@ func (m *model) updateFileActions(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case uploadKeyPromptMsg:
 		model, cmd := m.askUploadKey(msg.local)
 		return model, cmd, true
-	case objectDeletedMsg:
-		model, cmd := m.applyObjectDeleted(msg)
-		return model, cmd, true
-	case prefixDeletedMsg:
-		model, cmd := m.applyPrefixDeleted(msg)
-		return model, cmd, true
 	case transferTickMsg:
 		model, cmd := m.onTransferTick()
 		return model, cmd, true
@@ -267,28 +254,6 @@ func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 		confirm: fmt.Sprintf("Delete %s objects under %s?", scale, msg.prefix),
 		run:     m.deletePrefix(msg.prefix),
 	})
-}
-
-// applyObjectDeleted reports one removal and reloads the listing it came from.
-func (m *model) applyObjectDeleted(msg objectDeletedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "delete "+msg.key+": "+msg.err.Error())
-		return m, nil
-	}
-	m.report(true, "deleted "+msg.key)
-	reload := m.reloadListing()
-	return m, reload
-}
-
-// applyPrefixDeleted reports how many objects a prefix delete removed.
-func (m *model) applyPrefixDeleted(msg prefixDeletedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "delete "+msg.prefix+": "+msg.err.Error())
-		return m, nil
-	}
-	m.report(true, fmt.Sprintf("deleted %s under %s", countOf(msg.deleted, "object", "objects"), msg.prefix))
-	reload := m.reloadListing()
-	return m, reload
 }
 
 // reloadListing refetches the current prefix, so a listing cannot keep showing

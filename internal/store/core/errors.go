@@ -119,11 +119,13 @@ func PlacementDeclined(err error) bool {
 // Tag-set validation failures. They are plain sentinels so the transport maps
 // them onto InvalidTag or BadRequest with the AWS message, while core wraps
 // them with the offending measurement. Duplicate detection is case sensitive,
-// and lengths are measured in UTF-16 code units, as AWS measures them.
+// and lengths are measured in UTF-16 code units, as AWS measures them. A tag
+// set written as a query string that will not decode is ErrMalformedTagSet.
 var (
 	ErrTooManyTags     = errors.New("too many tags for one object")
 	ErrEmptyTagKey     = errors.New("tag key must not be empty")
 	ErrTagKeyTooLong   = errors.New("tag key too long")
 	ErrTagValueTooLong = errors.New("tag value too long")
 	ErrDuplicateTagKey = errors.New("duplicate tag key")
+	ErrMalformedTagSet = errors.New("malformed tag set")
 )

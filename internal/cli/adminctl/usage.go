@@ -11,15 +11,17 @@
 
 package adminctl
 
+import "github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+
 // cmdUsageFlush implements `s3-orchestrator admin usage-flush`. Triggers an
 // out-of-band flush of the usage counters to backend_usage.
 func cmdUsageFlush(_ []string, c *client) int {
-	return c.post("/admin/api/usage-flush", nil)
+	return c.post(adminapi.PathUsageFlush, nil)
 }
 
 // cmdUsageReconcile implements `s3-orchestrator admin usage-reconcile`.
 // Recomputes each backend's bytes_used from the object ledger and prints the
 // per-backend corrections applied.
 func cmdUsageReconcile(_ []string, c *client) int {
-	return c.post("/admin/api/usage-reconcile", nil)
+	return c.post(adminapi.PathUsageReconcile, nil)
 }

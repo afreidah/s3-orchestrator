@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Wire types shared by the admin objects handler and its clients (the TUI
-// browser). Kept in a leaf package so both the server and out-of-process
-// clients depend on one definition and the JSON shape cannot drift.
+// browser). Kept in a package both the server and out-of-process clients
+// import, so they depend on one definition and the JSON shape cannot drift.
 // -------------------------------------------------------------------------------
 
 package adminapi
@@ -29,26 +29,6 @@ type ObjectEntry struct {
 // ObjectUploadResponse reports the ETag a stored object was recorded under.
 type ObjectUploadResponse struct {
 	ETag string `json:"etag"`
-}
-
-// ObjectTag is one key/value label on an object. Both are case sensitive.
-type ObjectTag struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// ObjectTagsResponse is one object's whole tag set, ordered by key. An object
-// carrying none reports an empty list rather than null, so a caller can render
-// the result without a nil check.
-type ObjectTagsResponse struct {
-	Tags []ObjectTag `json:"tags"`
-}
-
-// ObjectTagsRequest replaces an object's whole tag set. An empty list leaves
-// the object untagged, matching what the S3 endpoint does with an empty
-// TagSet.
-type ObjectTagsRequest struct {
-	Tags []ObjectTag `json:"tags"`
 }
 
 // ObjectDeleteResponse reports how many objects a delete removed. A single-key

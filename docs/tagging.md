@@ -127,7 +127,7 @@ s3-orchestrator admin object-tags -key photos/report.pdf -clear
 
 `-tag` replaces the whole set, matching `PutObjectTagging`. It is repeatable, and `-clear` and `-tag` are mutually exclusive because they describe different outcomes for the same call.
 
-In the TUI, the object inspector prints the set on a `tags:` line above the per-backend copy table, where it sits outside the table because it describes the object rather than any row in it.
+In the TUI, the object inspector prints the set on a `tags:` line above the per-backend copy table, where it sits outside the table because it describes the object rather than any row in it. `t` edits the set in the `x-amz-tagging` query-string form and `T` clears it; see [the TUI](cli.md#tui) for the keys.
 
 ## How they are stored
 

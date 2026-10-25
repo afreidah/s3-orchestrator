@@ -13,6 +13,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strconv"
@@ -71,12 +72,6 @@ type cleanupLoadedMsg struct {
 // cleanupErrMsg carries a failed cleanup fetch.
 type cleanupErrMsg struct{ err error }
 
-// cleanupRequeuedMsg carries the outcome of a dead-letter requeue.
-type cleanupRequeuedMsg struct {
-	resp *adminapi.CleanupDLQRequeueResponse
-	err  error
-}
-
 // loadCleanup returns a command that fetches both listings off the main loop.
 // They are fetched sequentially rather than concurrently because the pane
 // cannot render a half-loaded state anyway, and either failure fails the load.
@@ -96,14 +91,19 @@ func (m *model) loadCleanup() tea.Cmd {
 	}
 }
 
-// requeueDLQ returns a command that moves one backend's dead-lettered rows back
-// into the cleanup queue.
+// requeueDLQ returns a command that moves dead-lettered rows back into the
+// cleanup queue, scoped to one backend when backend is non-empty, and reloads
+// the cleanup listings so the row counts reflect the move.
 func (m *model) requeueDLQ(backend string) tea.Cmd {
 	client := m.client
-	return func() tea.Msg {
-		resp, err := client.RequeueCleanupDLQ(context.Background(), backend)
-		return cleanupRequeuedMsg{resp: resp, err: err}
-	}
+	return runAction("requeue",
+		func(ctx context.Context) (*adminapi.CleanupDLQRequeueResponse, error) {
+			return client.RequeueCleanupDLQ(ctx, backend)
+		},
+		func(m *model, resp *adminapi.CleanupDLQRequeueResponse) (string, tea.Cmd) {
+			scope := cmp.Or(resp.Backend, "all backends")
+			return fmt.Sprintf("requeued %s from %s", countOf(int(resp.Requeued), "row", "rows"), scope), m.fetch(pollCleanup)
+		})
 }
 
 // -------------------------------------------------------------------------
@@ -120,22 +120,6 @@ func (m *model) applyCleanup(msg cleanupLoadedMsg) {
 	m.cleanup.loaded = true
 	m.cleanup.loading = false
 	m.cleanup.err = nil
-}
-
-// applyCleanupRequeued reports the requeue outcome in the footer and reloads,
-// so the row counts reflect the move.
-func (m *model) applyCleanupRequeued(msg cleanupRequeuedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "requeue failed: "+msg.err.Error())
-		return m, nil
-	}
-	scope := "all backends"
-	if msg.resp.Backend != "" {
-		scope = msg.resp.Backend
-	}
-	m.report(true, fmt.Sprintf("requeued %s from %s", countOf(int(msg.resp.Requeued), "row", "rows"), scope))
-	cmd := m.fetch(pollCleanup)
-	return m, cmd
 }
 
 // handleCleanupKey applies pane keys (back, reload, tab switch, requeue) and

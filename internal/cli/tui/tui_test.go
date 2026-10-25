@@ -49,6 +49,8 @@ type fakeLister struct {
 	requeued  *adminapi.CleanupDLQRequeueResponse
 	tags      map[string][]adminapi.ObjectTag // per-key tag sets
 	tagsErr   error                           // when set, GetObjectTags fails
+	tagsSent  []adminapi.ObjectTag            // the set SetObjectTags received
+	tagWrites []string                        // "set k" or "clear k", in call order
 	scrubbed  *adminapi.ScrubKeyResponse
 	scrubErr  error               // when set, ScrubKey fails
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
@@ -103,6 +105,19 @@ func (f *fakeLister) GetObjectTags(_ context.Context, key string) (*adminapi.Obj
 		return nil, f.tagsErr
 	}
 	return &adminapi.ObjectTagsResponse{Tags: f.tags[key]}, nil
+}
+
+// SetObjectTags records the set it was sent and echoes it, as the server does.
+func (f *fakeLister) SetObjectTags(_ context.Context, key string, tags []adminapi.ObjectTag) (*adminapi.ObjectTagsResponse, error) {
+	f.tagWrites = append(f.tagWrites, "set "+key)
+	f.tagsSent = tags
+	return &adminapi.ObjectTagsResponse{Tags: tags}, nil
+}
+
+// DeleteObjectTags records the clear and reports an empty set.
+func (f *fakeLister) DeleteObjectTags(_ context.Context, key string) (*adminapi.ObjectTagsResponse, error) {
+	f.tagWrites = append(f.tagWrites, "clear "+key)
+	return &adminapi.ObjectTagsResponse{Tags: []adminapi.ObjectTag{}}, nil
 }
 
 func (f *fakeLister) ScrubKey(_ context.Context, key string) (*adminapi.ScrubKeyResponse, error) {

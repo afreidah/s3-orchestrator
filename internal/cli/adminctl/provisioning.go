@@ -35,14 +35,8 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// The provisioning routes and the flag names and messages the verbs share.
+// The flag names and messages the provisioning verbs share.
 const (
-	pathProvisioning = "/admin/api/provisioning"
-	pathProvBuckets  = pathProvisioning + "/buckets"
-	pathProvUsers    = pathProvisioning + "/users"
-	pathProvCreds    = pathProvisioning + "/credentials"
-	pathProvGrants   = pathProvisioning + "/grants"
-
 	flagUser   = "user"
 	flagBucket = "bucket"
 	flagKind   = "kind"
@@ -106,7 +100,7 @@ var (
 
 // bucketList renders every virtual bucket either source declares.
 func bucketList(_ []string, c *client) int {
-	return c.get(pathProvisioning, renderBuckets)
+	return c.get(adminapi.PathProvisioning, renderBuckets)
 }
 
 // bucketCreate declares a virtual bucket in the store.
@@ -122,7 +116,7 @@ func bucketCreate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, pathProvBuckets, adminapi.CreateBucketRequest{
+	return c.sendJSON(http.MethodPost, adminapi.PathProvBuckets, adminapi.CreateBucketRequest{
 		Name:                *name,
 		MaxMultipartUploads: *maxMultipart,
 	}, nil)
@@ -140,7 +134,7 @@ func bucketDelete(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	return c.delete(pathProvBuckets + "/" + url.PathEscape(*name))
+	return c.delete(adminapi.Path(adminapi.PathProvBuckets, *name))
 }
 
 // -------------------------------------------------------------------------
@@ -149,7 +143,7 @@ func bucketDelete(args []string, c *client) int {
 
 // userList renders every identity and the buckets it reaches.
 func userList(_ []string, c *client) int {
-	return c.get(pathProvisioning, renderUsers)
+	return c.get(adminapi.PathProvisioning, renderUsers)
 }
 
 // userCreate declares an identity. The server generates the id, so the
@@ -166,7 +160,7 @@ func userCreate(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, pathProvUsers, adminapi.CreateUserRequest{Name: *name}, nil)
+	return c.sendJSON(http.MethodPost, adminapi.PathProvUsers, adminapi.CreateUserRequest{Name: *name}, nil)
 }
 
 // userRename changes the name an identity is read by.
@@ -190,7 +184,7 @@ func userRename(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errNameRequired)
 		return 1
 	}
-	return c.sendJSON(http.MethodPatch, pathProvUsers+"/"+url.PathEscape(*id), adminapi.RenameUserRequest{Name: *name}, nil)
+	return c.sendJSON(http.MethodPatch, adminapi.Path(adminapi.PathProvUsers, *id), adminapi.RenameUserRequest{Name: *name}, nil)
 }
 
 // userDelete removes an identity.
@@ -205,7 +199,7 @@ func userDelete(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -id is required")
 		return 1
 	}
-	return c.delete(pathProvUsers + "/" + url.PathEscape(*id))
+	return c.delete(adminapi.Path(adminapi.PathProvUsers, *id))
 }
 
 // -------------------------------------------------------------------------
@@ -215,7 +209,7 @@ func userDelete(args []string, c *client) int {
 // credentialList renders every keypair. The server does not return secrets, so
 // there is nothing here to withhold.
 func credentialList(_ []string, c *client) int {
-	return c.get(pathProvisioning, renderCredentials)
+	return c.get(adminapi.PathProvisioning, renderCredentials)
 }
 
 // credentialIssue records a keypair against a user and prints it. A minted
@@ -240,7 +234,7 @@ func credentialIssue(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errKeypairIncomplete)
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, pathProvCreds, adminapi.CreateCredentialRequest{
+	return c.sendJSON(http.MethodPost, adminapi.PathProvCreds, adminapi.CreateCredentialRequest{
 		UserID:          *user,
 		Label:           *label,
 		AccessKeyID:     *accessKey,
@@ -260,7 +254,7 @@ func credentialRevoke(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, "error: -access-key is required")
 		return 1
 	}
-	return c.delete(pathProvCreds + "/" + url.PathEscape(*accessKey))
+	return c.delete(adminapi.Path(adminapi.PathProvCreds, *accessKey))
 }
 
 // -------------------------------------------------------------------------
@@ -317,8 +311,7 @@ func resolveGrant(
 // grantPath addresses one grant. The orchestrator resource has no name, so its
 // path carries a placeholder segment the server ignores.
 func grantPath(user string, r core.Resource) string {
-	path := pathProvGrants + "/" + url.PathEscape(user) + "/" +
-		url.PathEscape(cmp.Or(r.Name, string(core.ResourceOrchestrator)))
+	path := adminapi.Path(adminapi.PathProvGrants, user, cmp.Or(r.Name, string(core.ResourceOrchestrator)))
 	return withQuery(path, url.Values{flagKind: {string(r.Kind)}})
 }
 
@@ -331,7 +324,7 @@ func grantAdd(args []string, c *client) int {
 	if !ok {
 		return 1
 	}
-	return c.sendJSON(http.MethodPost, pathProvGrants, adminapi.CreateGrantRequest{
+	return c.sendJSON(http.MethodPost, adminapi.PathProvGrants, adminapi.CreateGrantRequest{
 		UserID:      user,
 		Kind:        string(resource.Kind),
 		Name:        resource.Name,

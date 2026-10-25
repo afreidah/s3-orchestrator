@@ -11,15 +11,17 @@
 
 package adminctl
 
+import "github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+
 // cmdCompressExisting implements `admin compress-existing [-max=N]`, encoding
 // every object stored verbatim, or the first N.
 func cmdCompressExisting(args []string, c *client) int {
-	return runBulkRewrite(args, c, "compress-existing", "/admin/api/compress-existing")
+	return runBulkRewrite(args, c, "compress-existing", adminapi.PathCompressExisting)
 }
 
 // cmdDecompressExisting implements `s3-orchestrator admin decompress-existing
 // [-max=N]`. Rewrites every encoded object back to the bytes the client wrote,
 // or the first N of them.
 func cmdDecompressExisting(args []string, c *client) int {
-	return runBulkRewrite(args, c, "decompress-existing", "/admin/api/decompress-existing")
+	return runBulkRewrite(args, c, "decompress-existing", adminapi.PathDecompressExisting)
 }

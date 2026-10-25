@@ -14,7 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -69,7 +68,7 @@ func cmdObjectTags(args []string, c *client) int {
 		return 1
 	}
 
-	path := "/admin/api/objects/tags/" + url.PathEscape(*key)
+	path := adminapi.Path(adminapi.PathObjectTags, *key)
 	switch {
 	case *clearTags:
 		return c.delete(path)

@@ -22,20 +22,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// pathCompressExisting and pathDecompressExisting are the admin endpoints the
-// whole-fleet and bounded compression entries both post to.
-const (
-	pathCompressExisting   = "/admin/api/compress-existing"
-	pathDecompressExisting = "/admin/api/decompress-existing"
-	pathEncryptExisting    = "/admin/api/encrypt-existing"
-	pathDecryptExisting    = "/admin/api/decrypt-existing"
-	pathScrub              = "/admin/api/scrub"
-	pathBackfillChecksums  = "/admin/api/backfill-checksums"
-	pathReconcile          = "/admin/api/reconcile"
-	pathCleanupDLQRequeue  = "/admin/api/cleanup-dlq/requeue"
-	pathRotateKey          = "/admin/api/rotate-encryption-key"
-)
-
 // queryBackend restricts a pass to one backend's copies. The backends pane sets
 // it for every action it opens; the ops pane leaves it unset, which is what the
 // server reads as the whole fleet.
@@ -87,21 +73,21 @@ func opsActions() []opsAction {
 // it owns a polling watch above the backends table and stays a hotkey.
 func backendActions() []opsAction {
 	return []opsAction{
-		post("Scrub (verify integrity)", pathScrub,
+		post("Scrub (verify integrity)", adminapi.PathScrub,
 			"Scrub every copy on this backend to verify integrity?", nil),
-		post("Backfill checksums", pathBackfillChecksums,
+		post("Backfill checksums", adminapi.PathBackfillChecksums,
 			"Backfill missing checksums for this backend's copies?", nil),
-		post("Reconcile metadata", pathReconcile,
+		post("Reconcile metadata", adminapi.PathReconcile,
 			"Reconcile metadata against this backend's storage?", nil),
-		post("Requeue dead-lettered cleanups", pathCleanupDLQRequeue,
+		post("Requeue dead-lettered cleanups", adminapi.PathCleanupDLQRequeue,
 			"Requeue this backend's dead-lettered cleanup rows?", nil),
-		post("Encrypt existing objects", pathEncryptExisting,
+		post("Encrypt existing objects", adminapi.PathEncryptExisting,
 			"Read and rewrite every plaintext copy on this backend as ciphertext?", nil),
-		post("Decrypt existing objects", pathDecryptExisting,
+		post("Decrypt existing objects", adminapi.PathDecryptExisting,
 			"Read and rewrite every encrypted copy on this backend as plaintext?", nil),
-		post("Compress existing objects", pathCompressExisting,
+		post("Compress existing objects", adminapi.PathCompressExisting,
 			"Read and rewrite every uncompressed copy on this backend as chunked zstd?", nil),
-		post("Decompress existing objects", pathDecompressExisting,
+		post("Decompress existing objects", adminapi.PathDecompressExisting,
 			"Read and rewrite every compressed copy on this backend back to its stored bytes?", nil),
 	}
 }
@@ -152,25 +138,25 @@ func deletes() opsOption {
 // integrity where the configuration says they should be.
 func maintenanceActions() []opsAction {
 	return []opsAction{
-		post("Rebalance backends", "/admin/api/rebalance",
+		post("Rebalance backends", adminapi.PathRebalance,
 			"Rebalance objects across backends?", nil),
-		post("Replicate under-replicated objects", "/admin/api/replicate",
+		post("Replicate under-replicated objects", adminapi.PathReplicate,
 			"Create the missing copies of under-replicated objects?", nil),
-		post("Clean over-replicated copies", "/admin/api/over-replication",
+		post("Clean over-replicated copies", adminapi.PathOverReplication,
 			"Remove over-replicated object copies?", nil),
-		post("Scrub (verify integrity)", "/admin/api/scrub",
+		post("Scrub (verify integrity)", adminapi.PathScrub,
 			"Scrub every object to verify integrity?", nil),
-		post("Backfill checksums", "/admin/api/backfill-checksums",
+		post("Backfill checksums", adminapi.PathBackfillChecksums,
 			"Backfill missing object checksums?", nil),
-		post("Purge unreadable copies", "/admin/api/unreadable",
+		post("Purge unreadable copies", adminapi.PathUnreadable,
 			"Delete every copy that is encrypted with no key? Nothing can decrypt them.", nil),
-		post("Reconcile metadata", "/admin/api/reconcile",
+		post("Reconcile metadata", adminapi.PathReconcile,
 			"Reconcile metadata against backends?", nil),
-		post("Expire objects (lifecycle rules)", "/admin/api/lifecycle",
+		post("Expire objects (lifecycle rules)", adminapi.PathLifecycle,
 			"Apply every lifecycle rule now instead of waiting for the hourly sweep?", nil),
-		post("Reconcile usage counters", "/admin/api/usage-reconcile",
+		post("Reconcile usage counters", adminapi.PathUsageReconcile,
 			"Reconcile usage counters across all backends?", decodeOneShot[usageReconcileResult]),
-		post("Flush usage counters to the database", "/admin/api/usage-flush",
+		post("Flush usage counters to the database", adminapi.PathUsageFlush,
 			"Flush buffered usage counters to the database?", decodeOneShot[usageFlushResult]),
 	}
 }
@@ -180,19 +166,19 @@ func maintenanceActions() []opsAction {
 // value the operator typed is the statement of intent.
 func cacheActions() []opsAction {
 	return []opsAction{
-		post("Flush object cache", "/admin/api/cache/flush",
+		post("Flush object cache", adminapi.PathCacheFlush,
 			"Flush the in-memory object cache?", decodeOneShot[cacheFlushResult]),
-		post("Invalidate one cached key", "/admin/api/cache/keys",
+		post("Invalidate one cached key", adminapi.PathCacheKeys,
 			"", decodeOneShot[cacheInvalidateKeyResult],
 			deletes(),
 			asks("Invalidate which key?", "bucket/path/object", func(value string) opsRequest {
-				return opsRequest{path: "/admin/api/cache/keys/" + value}
+				return opsRequest{path: adminapi.Path(adminapi.PathCacheKeys, value)}
 			})),
-		post("Invalidate a cached prefix", "/admin/api/cache/prefix",
+		post("Invalidate a cached prefix", adminapi.PathCachePrefix,
 			"", decodeOneShot[cacheFlushResult],
 			deletes(),
 			asks("Invalidate which prefix?", "bucket/path/", func(value string) opsRequest {
-				return opsRequest{path: "/admin/api/cache/prefix", query: url.Values{"prefix": {value}}}
+				return opsRequest{path: adminapi.PathCachePrefix, query: url.Values{"prefix": {value}}}
 			})),
 	}
 }
@@ -202,23 +188,23 @@ func cacheActions() []opsAction {
 // bounded runs are separate entries because a prompt refuses an empty answer.
 func encryptionActions() []opsAction {
 	return []opsAction{
-		post("Encrypt existing objects", pathEncryptExisting,
+		post("Encrypt existing objects", adminapi.PathEncryptExisting,
 			"Read and rewrite every plaintext copy as ciphertext?", nil),
-		post("Encrypt existing objects (batch)", pathEncryptExisting,
+		post("Encrypt existing objects (batch)", adminapi.PathEncryptExisting,
 			"Read and rewrite that many plaintext copies as ciphertext?", nil,
-			asks("Encrypt how many objects?", "1000", boundedRewrite(pathEncryptExisting))),
-		post("Decrypt existing objects", pathDecryptExisting,
+			asks("Encrypt how many objects?", "1000", boundedRewrite(adminapi.PathEncryptExisting))),
+		post("Decrypt existing objects", adminapi.PathDecryptExisting,
 			"Read and rewrite every encrypted copy as plaintext?", nil),
-		post("Decrypt existing objects (batch)", pathDecryptExisting,
+		post("Decrypt existing objects (batch)", adminapi.PathDecryptExisting,
 			"Read and rewrite that many encrypted copies as plaintext?", nil,
-			asks("Decrypt how many objects?", "1000", boundedRewrite(pathDecryptExisting))),
-		post("Rotate encryption key", pathRotateKey,
+			asks("Decrypt how many objects?", "1000", boundedRewrite(adminapi.PathDecryptExisting))),
+		post("Rotate encryption key", adminapi.PathRotateKey,
 			"Re-wrap every object key sealed with that key id?", decodeOneShot[rotateKeyResult],
 			asks("Rotate away from which key id?", "old key id", func(value string) opsRequest {
 				body, _ := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: value})
-				return opsRequest{path: pathRotateKey, body: body}
+				return opsRequest{path: adminapi.PathRotateKey, body: body}
 			})),
-		post("Rotate every stale encryption key", pathRotateKey,
+		post("Rotate every stale encryption key", adminapi.PathRotateKey,
 			"Re-wrap every object key not sealed with the current key?", decodeOneShot[rotateKeyResult],
 			sends(adminapi.RotateEncryptionKeyRequest{AllStale: true})),
 	}
@@ -230,16 +216,16 @@ func encryptionActions() []opsAction {
 // because a prompt refuses an empty answer, which would block a whole-fleet run.
 func compressionActions() []opsAction {
 	return []opsAction{
-		post("Compress existing objects", pathCompressExisting,
+		post("Compress existing objects", adminapi.PathCompressExisting,
 			"Read and rewrite every uncompressed copy as chunked zstd?", nil),
-		post("Compress existing objects (batch)", pathCompressExisting,
+		post("Compress existing objects (batch)", adminapi.PathCompressExisting,
 			"Read and rewrite that many uncompressed copies as chunked zstd?", nil,
-			asks("Compress how many objects?", "1000", boundedRewrite(pathCompressExisting))),
-		post("Decompress existing objects", pathDecompressExisting,
+			asks("Compress how many objects?", "1000", boundedRewrite(adminapi.PathCompressExisting))),
+		post("Decompress existing objects", adminapi.PathDecompressExisting,
 			"Read and rewrite every compressed copy back to its stored bytes?", nil),
-		post("Decompress existing objects (batch)", pathDecompressExisting,
+		post("Decompress existing objects (batch)", adminapi.PathDecompressExisting,
 			"Read and rewrite that many compressed copies back to their stored bytes?", nil,
-			asks("Decompress how many objects?", "1000", boundedRewrite(pathDecompressExisting))),
+			asks("Decompress how many objects?", "1000", boundedRewrite(adminapi.PathDecompressExisting))),
 	}
 }
 

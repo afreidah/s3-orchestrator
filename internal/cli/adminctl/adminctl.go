@@ -30,11 +30,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// The admin API route and header, plus the flag names, query formats and
-// message literals the subcommands share.
+// The flag names, query formats and message literals the subcommands share.
 const (
-	adminBackendsPath = "/admin/api/backends/"
-
 	flagBatchSize = "batch-size"
 	queryBatch    = "batch_size"
 	flagMax       = "max"
@@ -44,8 +41,6 @@ const (
 	fmtError      = "error: %v\n"
 
 	errBackendNameRequired = "error: backend name is required"
-	drainSubpath           = "/drain"
-	cordonSubpath          = "/cordon"
 )
 
 // Run is the CLI entry point for `s3-orchestrator admin`. It parses the

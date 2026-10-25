@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdOverReplication implements `s3-orchestrator admin over-replication
@@ -32,7 +34,7 @@ func cmdOverReplication(args []string, c *client) int {
 		if *batchSize > 0 {
 			q.Set(queryBatch, strconv.Itoa(*batchSize))
 		}
-		return c.stream(http.MethodPost, withQuery("/admin/api/over-replication", q))
+		return c.stream(http.MethodPost, withQuery(adminapi.PathOverReplication, q))
 	}
-	return c.get("/admin/api/over-replication", nil)
+	return c.get(adminapi.PathOverReplication, nil)
 }

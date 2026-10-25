@@ -29,23 +29,19 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// Paths served by more than one entry, named so the table cannot drift
-// between the methods that share a route.
+// The route patterns that carry a path wildcard, built on the bases clients
+// pass to adminapi.Path so a route and the path a client sends cannot drift.
 const (
-	pathBackendDrain    = "/admin/api/backends/{name}/drain"
-	pathBackendCordon   = "/admin/api/backends/{name}/cordon"
-	pathOverReplication = "/admin/api/over-replication"
-	pathUnreadable      = "/admin/api/unreadable"
-	pathLogLevel        = "/admin/api/log-level"
-	pathObjects         = "/admin/api/objects"
-	pathObject          = pathObjects + "/" + objectKeyPattern
-	pathObjectTags      = pathObjects + "/tags/" + objectKeyPattern
-
-	pathProvisioning = "/admin/api/provisioning"
-	pathProvBuckets  = pathProvisioning + "/buckets"
-	pathProvUsers    = pathProvisioning + "/users"
-	pathProvCreds    = pathProvisioning + "/credentials"
-	pathProvGrants   = pathProvisioning + "/grants"
+	pathObject        = adminapi.PathObjects + "/" + objectKeyPattern
+	pathObjectTags    = adminapi.PathObjectTags + "/" + objectKeyPattern
+	pathCacheKey      = adminapi.PathCacheKeys + "/" + objectKeyPattern
+	pathBackend       = adminapi.PathBackends + "/{name}"
+	pathBackendDrain  = pathBackend + adminapi.SubpathDrain
+	pathBackendCordon = pathBackend + adminapi.SubpathCordon
+	pathProvBucket    = adminapi.PathProvBuckets + "/{name}"
+	pathProvUser      = adminapi.PathProvUsers + "/{id}"
+	pathProvCred      = adminapi.PathProvCreds + "/{id}"
+	pathProvGrant     = adminapi.PathProvGrants + "/{id}/{name}"
 )
 
 // param is one query or path parameter a handler reads. Declaring them on the
@@ -156,31 +152,31 @@ func (rt *route) kind() core.ResourceKind {
 func (h *Handler) routes() []route {
 	return []route{
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/status", Handler: h.handleStatus,
+			Method: http.MethodGet, Pattern: adminapi.PathStatus, Handler: h.handleStatus,
 			Summary:  "Instance and per-backend operational state",
 			Response: adminapi.StatusResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/reload-status", Handler: h.handleReloadStatus,
+			Method: http.MethodGet, Pattern: adminapi.PathReloadStatus, Handler: h.handleReloadStatus,
 			Summary:  "Outcome of the most recent config reload",
 			Response: adminapi.ReloadStatusResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/config", Handler: h.handleConfig,
+			Method: http.MethodGet, Pattern: adminapi.PathConfig, Handler: h.handleConfig,
 			Summary:  "Running configuration, with secrets redacted",
 			Response: adminapi.ConfigResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/workers", Handler: h.handleWorkers,
+			Method: http.MethodGet, Pattern: adminapi.PathWorkers, Handler: h.handleWorkers,
 			Summary:  "Last-tick health of every background service",
 			Response: adminapi.WorkersResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/logs", Handler: LogsHandler(h.logs),
+			Method: http.MethodGet, Pattern: adminapi.PathLogs, Handler: LogsHandler(h.logs),
 			Summary:  "Recent records from the in-memory log buffer",
 			Response: adminapi.LogsResponse{},
 			Params: []param{
@@ -193,7 +189,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminLogs,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/object-locations", Handler: h.handleObjectLocations,
+			Method: http.MethodGet, Pattern: adminapi.PathObjectLocations, Handler: h.handleObjectLocations,
 			Summary:  "Backend placement for one object key",
 			Response: adminapi.ObjectLocationsResponse{},
 			Params: []param{
@@ -202,7 +198,7 @@ func (h *Handler) routes() []route {
 			Perm: core.PermRead, Resource: paramKey,
 		},
 		{
-			Method: http.MethodGet, Pattern: pathObjects, Handler: h.handleListObjects,
+			Method: http.MethodGet, Pattern: adminapi.PathObjects, Handler: h.handleListObjects,
 			Summary:  "Page of stored objects",
 			Response: adminapi.ObjectListResponse{},
 			Params: []param{
@@ -269,7 +265,7 @@ func (h *Handler) routes() []route {
 			Perm: core.PermDelete, Resource: paramKey,
 		},
 		{
-			Method: http.MethodDelete, Pattern: pathObjects, Handler: h.handleDeletePrefix,
+			Method: http.MethodDelete, Pattern: adminapi.PathObjects, Handler: h.handleDeletePrefix,
 			Summary:  "Delete every object under a prefix",
 			Response: adminapi.ObjectDeleteResponse{},
 			Params: []param{
@@ -278,13 +274,13 @@ func (h *Handler) routes() []route {
 			Perm: core.PermDelete, Resource: paramPrefix,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/cleanup-queue", Handler: h.handleCleanupQueue,
+			Method: http.MethodGet, Pattern: adminapi.PathCleanupQueue, Handler: h.handleCleanupQueue,
 			Summary:  "Pending cleanup depth and a page of rows",
 			Response: adminapi.CleanupQueueResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/cleanup-dlq", Handler: h.handleCleanupDLQ,
+			Method: http.MethodGet, Pattern: adminapi.PathCleanupDLQ, Handler: h.handleCleanupDLQ,
 			Summary:  "Dead-lettered cleanup depth and a page of rows",
 			Response: adminapi.CleanupDLQResponse{},
 			Params: []param{
@@ -294,7 +290,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/cleanup-dlq/requeue", Handler: h.handleCleanupDLQRequeue,
+			Method: http.MethodPost, Pattern: adminapi.PathCleanupDLQRequeue, Handler: h.handleCleanupDLQRequeue,
 			Summary:  "Move dead-lettered cleanups back into the queue",
 			Response: adminapi.CleanupDLQRequeueResponse{},
 			Params: []param{
@@ -303,52 +299,52 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/usage-flush", Handler: h.handleUsageFlush,
+			Method: http.MethodPost, Pattern: adminapi.PathUsageFlush, Handler: h.handleUsageFlush,
 			Summary:  "Force a flush of usage counters to the database",
 			Response: adminapi.UsageFlushResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/usage-reconcile", Handler: h.handleReconcileUsage,
+			Method: http.MethodPost, Pattern: adminapi.PathUsageReconcile, Handler: h.handleReconcileUsage,
 			Summary:  "Recompute per-backend bytes_used from the object ledger",
 			Response: adminapi.UsageReconcileResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/replicate", Handler: h.handleReplicate,
+			Method: http.MethodPost, Pattern: adminapi.PathReplicate, Handler: h.handleReplicate,
 			Summary:  "Run one replication cycle",
 			Response: adminapi.ReplicateResponse{},
 			Stream:   adminstream.Event{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/rebalance", Handler: h.handleRebalance,
+			Method: http.MethodPost, Pattern: adminapi.PathRebalance, Handler: h.handleRebalance,
 			Summary:  "Run one rebalance cycle",
 			Response: adminapi.RebalanceResponse{},
 			Stream:   adminstream.Event{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/lifecycle", Handler: h.handleLifecycle,
+			Method: http.MethodPost, Pattern: adminapi.PathLifecycle, Handler: h.handleLifecycle,
 			Summary:  "Run one lifecycle expiration sweep",
 			Response: adminapi.LifecycleResponse{},
 			Stream:   adminstream.Event{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/replication", Handler: h.handleReplicationStatus,
+			Method: http.MethodGet, Pattern: adminapi.PathReplication, Handler: h.handleReplicationStatus,
 			Summary:  "Replication backlog snapshot",
 			Response: adminapi.ReplicationStatusResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: pathOverReplication, Handler: h.handleOverReplicationStatus,
+			Method: http.MethodGet, Pattern: adminapi.PathOverReplication, Handler: h.handleOverReplicationStatus,
 			Summary:  "Count of objects holding surplus copies",
 			Response: adminapi.OverReplicationStatusResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathOverReplication, Handler: h.handleOverReplicationClean,
+			Method: http.MethodPost, Pattern: adminapi.PathOverReplication, Handler: h.handleOverReplicationClean,
 			Summary:  "Run one over-replication cleanup pass",
 			Response: adminapi.OverReplicationCleanResponse{},
 			Params: []param{
@@ -358,13 +354,13 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodGet, Pattern: pathLogLevel, Handler: h.handleLogLevel,
+			Method: http.MethodGet, Pattern: adminapi.PathLogLevel, Handler: h.handleLogLevel,
 			Summary:  "Current runtime log level",
 			Response: adminapi.LogLevelResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodPut, Pattern: pathLogLevel, Handler: h.handleLogLevel,
+			Method: http.MethodPut, Pattern: adminapi.PathLogLevel, Handler: h.handleLogLevel,
 			Summary:  "Set the runtime log level",
 			Request:  adminapi.SetLogLevelRequest{},
 			Response: adminapi.LogLevelResponse{},
@@ -416,7 +412,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceBackend, Perm: core.PermAdminCordon, Resource: paramName,
 		},
 		{
-			Method: http.MethodDelete, Pattern: "/admin/api/backends/{name}", Handler: h.handleRemoveBackend,
+			Method: http.MethodDelete, Pattern: pathBackend, Handler: h.handleRemoveBackend,
 			Summary:  "Remove a backend, optionally purging its objects",
 			Response: adminapi.BackendOperationResponse{},
 			Params: []param{
@@ -429,22 +425,22 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceBackend, Perm: core.PermAdminDecommission, Resource: paramName,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/rotate-encryption-key", Handler: h.handleRotateEncryptionKey,
+			Method: http.MethodPost, Pattern: adminapi.PathRotateKey, Handler: h.handleRotateEncryptionKey,
 			Summary:  "Re-wrap sealed DEKs under the current primary key",
 			Request:  adminapi.RotateEncryptionKeyRequest{},
 			Response: adminapi.RotateEncryptionKeyResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminKeys,
 		},
-		bulkRewriteRoute("/admin/api/encrypt-existing", h.handleEncryptExisting,
+		bulkRewriteRoute(adminapi.PathEncryptExisting, h.handleEncryptExisting,
 			"Encrypt every plaintext object on its own backend", adminapi.EncryptExistingResponse{}),
-		bulkRewriteRoute("/admin/api/decrypt-existing", h.handleDecryptExisting,
+		bulkRewriteRoute(adminapi.PathDecryptExisting, h.handleDecryptExisting,
 			"Rewrite every encrypted object back to plaintext", adminapi.DecryptExistingResponse{}),
-		bulkRewriteRoute("/admin/api/compress-existing", h.handleCompressExisting,
+		bulkRewriteRoute(adminapi.PathCompressExisting, h.handleCompressExisting,
 			"Store every uncompressed object as chunked zstd", adminapi.CompressExistingResponse{}),
-		bulkRewriteRoute("/admin/api/decompress-existing", h.handleDecompressExisting,
+		bulkRewriteRoute(adminapi.PathDecompressExisting, h.handleDecompressExisting,
 			"Rewrite every compressed object back to its stored bytes", adminapi.DecompressExistingResponse{}),
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,
+			Method: http.MethodPost, Pattern: adminapi.PathScrub, Handler: h.handleScrub,
 			Summary:  "Verify stored content hashes against backend data",
 			Response: adminapi.ScrubResponse{},
 			Params: []param{
@@ -455,7 +451,7 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/object-scrub", Handler: h.handleScrubKey,
+			Method: http.MethodPost, Pattern: adminapi.PathObjectScrub, Handler: h.handleScrubKey,
 			Summary:  "Verify every copy of one object now",
 			Response: adminapi.ScrubKeyResponse{},
 			Params: []param{
@@ -464,7 +460,7 @@ func (h *Handler) routes() []route {
 			Perm: core.PermRead, Resource: paramKey,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/backfill-checksums", Handler: h.handleBackfillChecksums,
+			Method: http.MethodPost, Pattern: adminapi.PathBackfillChecksums, Handler: h.handleBackfillChecksums,
 			Summary:  "Compute content hashes for objects missing one",
 			Response: adminapi.BackfillChecksumsResponse{},
 			Params: []param{
@@ -477,7 +473,7 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
 		},
 		{
-			Method: http.MethodGet, Pattern: pathUnreadable, Handler: h.handleListUnreadable,
+			Method: http.MethodGet, Pattern: adminapi.PathUnreadable, Handler: h.handleListUnreadable,
 			Summary:  "List copies that are encrypted with no key",
 			Response: adminapi.UnreadableListResponse{},
 			Params: []param{
@@ -486,7 +482,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathUnreadable, Handler: h.handlePurgeUnreadable,
+			Method: http.MethodPost, Pattern: adminapi.PathUnreadable, Handler: h.handlePurgeUnreadable,
 			Summary:  "Delete every copy that is encrypted with no key",
 			Response: adminapi.UnreadablePurgeResponse{},
 			Params: []param{
@@ -496,7 +492,7 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceOrchestrator, Perm: core.PermAdminMaintain,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/reconcile", Handler: h.handleReconcile,
+			Method: http.MethodPost, Pattern: adminapi.PathReconcile, Handler: h.handleReconcile,
 			Summary:  "Reconcile backend storage against the object ledger",
 			Response: adminapi.ReconcileResponse{},
 			Params: []param{
@@ -506,19 +502,19 @@ func (h *Handler) routes() []route {
 			Kind:   core.ResourceBackend, Perm: core.PermAdminMaintain, Resource: paramBackend,
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/cache", Handler: h.handleCacheStats,
+			Method: http.MethodGet, Pattern: adminapi.PathCache, Handler: h.handleCacheStats,
 			Summary:  "Object data cache utilization",
 			Response: adminapi.CacheStatsResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/cache/flush", Handler: h.handleCacheFlush,
+			Method: http.MethodPost, Pattern: adminapi.PathCacheFlush, Handler: h.handleCacheFlush,
 			Summary:  "Drop every entry from the object data cache",
 			Response: adminapi.CacheInvalidateResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminCache,
 		},
 		{
-			Method: http.MethodDelete, Pattern: "/admin/api/cache/keys/{key...}", Handler: h.handleCacheInvalidateKey,
+			Method: http.MethodDelete, Pattern: pathCacheKey, Handler: h.handleCacheInvalidateKey,
 			Summary:  "Drop one key from the object data cache",
 			Response: adminapi.CacheInvalidateKeyResponse{},
 			Params: []param{
@@ -527,7 +523,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminCache,
 		},
 		{
-			Method: http.MethodDelete, Pattern: "/admin/api/cache/prefix", Handler: h.handleCacheInvalidatePrefix,
+			Method: http.MethodDelete, Pattern: adminapi.PathCachePrefix, Handler: h.handleCacheInvalidatePrefix,
 			Summary:  "Drop every cache entry under a key prefix",
 			Response: adminapi.CacheInvalidateResponse{},
 			Params: []param{
@@ -536,26 +532,26 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminCache,
 		},
 		{
-			Method: http.MethodPost, Pattern: "/admin/api/trace/snapshot", Handler: h.handleTraceSnapshot,
+			Method: http.MethodPost, Pattern: adminapi.PathTraceSnap, Handler: h.handleTraceSnapshot,
 			Summary:      "Download a flight-recorder trace snapshot",
 			ResponseType: mediaOctetStream,
 			Kind:         core.ResourceOrchestrator, Perm: core.PermAdminLogs,
 		},
 		{
-			Method: http.MethodGet, Pattern: pathProvisioning, Handler: h.handleProvisioning,
+			Method: http.MethodGet, Pattern: adminapi.PathProvisioning, Handler: h.handleProvisioning,
 			Summary:  "Buckets, users and credentials from both the config file and the store",
 			Response: adminapi.ProvisioningResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathProvBuckets, Handler: h.handleCreateBucket,
+			Method: http.MethodPost, Pattern: adminapi.PathProvBuckets, Handler: h.handleCreateBucket,
 			Summary:  "Declare a virtual bucket",
 			Request:  adminapi.CreateBucketRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPatch, Pattern: pathProvBuckets + "/{name}", Handler: h.handleUpdateBucket,
+			Method: http.MethodPatch, Pattern: pathProvBucket, Handler: h.handleUpdateBucket,
 			Summary:  "Replace what a virtual bucket carries",
 			Request:  adminapi.UpdateBucketRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
@@ -565,7 +561,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodDelete, Pattern: pathProvBuckets + "/{name}", Handler: h.handleDeleteBucket,
+			Method: http.MethodDelete, Pattern: pathProvBucket, Handler: h.handleDeleteBucket,
 			Summary:  "Remove a virtual bucket that holds no objects and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
@@ -574,14 +570,14 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathProvUsers, Handler: h.handleCreateUser,
+			Method: http.MethodPost, Pattern: adminapi.PathProvUsers, Handler: h.handleCreateUser,
 			Summary:  "Declare an identity credentials can be issued against",
 			Request:  adminapi.CreateUserRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPatch, Pattern: pathProvUsers + "/{id}", Handler: h.handleRenameUser,
+			Method: http.MethodPatch, Pattern: pathProvUser, Handler: h.handleRenameUser,
 			Summary:  "Rename an identity, leaving the ID its credentials and grants reference",
 			Request:  adminapi.RenameUserRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
@@ -591,7 +587,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodDelete, Pattern: pathProvUsers + "/{id}", Handler: h.handleDeleteUser,
+			Method: http.MethodDelete, Pattern: pathProvUser, Handler: h.handleDeleteUser,
 			Summary:  "Remove an identity that holds no credentials and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
@@ -600,14 +596,14 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathProvCreds, Handler: h.handleCreateCredential,
+			Method: http.MethodPost, Pattern: adminapi.PathProvCreds, Handler: h.handleCreateCredential,
 			Summary:  "Register a keypair for a user, minting one when none is supplied",
 			Request:  adminapi.CreateCredentialRequest{},
 			Response: adminapi.CreateCredentialResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodDelete, Pattern: pathProvCreds + "/{id}", Handler: h.handleDeleteCredential,
+			Method: http.MethodDelete, Pattern: pathProvCred, Handler: h.handleDeleteCredential,
 			Summary:  "Revoke one keypair, leaving its siblings working",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{
@@ -616,14 +612,14 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPost, Pattern: pathProvGrants, Handler: h.handleCreateGrant,
+			Method: http.MethodPost, Pattern: adminapi.PathProvGrants, Handler: h.handleCreateGrant,
 			Summary:  "Let a user reach a resource",
 			Request:  adminapi.CreateGrantRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodPut, Pattern: pathProvGrants + "/{id}/{name}", Handler: h.handleSetGrant,
+			Method: http.MethodPut, Pattern: pathProvGrant, Handler: h.handleSetGrant,
 			Summary:  "Declare exactly what one user reaches on one resource",
 			Request:  adminapi.SetGrantRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
@@ -635,7 +631,7 @@ func (h *Handler) routes() []route {
 			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
-			Method: http.MethodDelete, Pattern: pathProvGrants + "/{id}/{name}", Handler: h.handleDeleteGrant,
+			Method: http.MethodDelete, Pattern: pathProvGrant, Handler: h.handleDeleteGrant,
 			Summary:  "Withdraw one user's access to one resource",
 			Response: adminapi.ProvisioningOperationResponse{},
 			Params: []param{

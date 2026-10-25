@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -31,12 +33,12 @@ import (
 func TestScopeToBackend_NamesTheBackend(t *testing.T) {
 	t.Parallel()
 
-	scoped := scopeToBackend(opsRequest{path: pathCompressExisting}, "minio-a")
+	scoped := scopeToBackend(opsRequest{path: adminapi.PathCompressExisting}, "minio-a")
 	if got := scoped.query.Get(queryBackend); got != "minio-a" {
 		t.Errorf("backend = %q, want minio-a", got)
 	}
 
-	fleet := scopeToBackend(opsRequest{path: pathCompressExisting}, "")
+	fleet := scopeToBackend(opsRequest{path: adminapi.PathCompressExisting}, "")
 	if fleet.query != nil {
 		t.Errorf("query = %v, want none for a fleet-wide request", fleet.query)
 	}
@@ -48,7 +50,7 @@ func TestScopeToBackend_NamesTheBackend(t *testing.T) {
 func TestScopeToBackend_KeepsTheRequestsOwnQuery(t *testing.T) {
 	t.Parallel()
 
-	req := opsRequest{path: pathCompressExisting, query: url.Values{"max": {"1000"}}}
+	req := opsRequest{path: adminapi.PathCompressExisting, query: url.Values{"max": {"1000"}}}
 	got := scopeToBackend(req, "minio-a")
 
 	if got.query.Get("max") != "1000" {
@@ -158,7 +160,7 @@ func TestOpsMenu_EncryptionEntriesStream(t *testing.T) {
 	t.Parallel()
 
 	for _, a := range encryptionActions() {
-		if a.path == pathEncryptExisting || a.path == pathDecryptExisting {
+		if a.path == adminapi.PathEncryptExisting || a.path == adminapi.PathDecryptExisting {
 			if a.result != nil {
 				t.Errorf("%s decodes a one-shot summary, want a stream", a.label)
 			}

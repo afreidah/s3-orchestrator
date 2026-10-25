@@ -78,34 +78,6 @@ type drainProgressMsg struct {
 	err      error
 }
 
-// drainCancelledMsg reports the outcome of cancelling a drain.
-type drainCancelledMsg struct {
-	backend string
-	err     error
-}
-
-// backendCordonMsg reports the outcome of cordoning or uncordoning a backend.
-type backendCordonMsg struct {
-	backend  string
-	cordoned bool
-	err      error
-}
-
-// backendReconciledMsg carries the outcome of reconciling one backend.
-type backendReconciledMsg struct {
-	backend string
-	resp    *adminapi.ReconcileResponse
-	err     error
-}
-
-// backendRequeuedMsg carries the outcome of requeueing one backend's
-// dead-lettered cleanups.
-type backendRequeuedMsg struct {
-	backend string
-	resp    *adminapi.CleanupDLQRequeueResponse
-	err     error
-}
-
 // loadStatus returns a command that fetches the status snapshot off the main
 // loop, delivering the result back as a statusLoadedMsg or statusErrMsg.
 func (m *model) loadStatus() tea.Cmd {
@@ -152,42 +124,48 @@ func (m *model) pollDrain(backend string) tea.Cmd {
 		})
 }
 
-// cancelDrain returns a command that aborts the drain on one backend.
+// cancelDrain returns a command that aborts the drain on one backend, ends the
+// pane's watch of it, and refreshes the status snapshot to clear its flag.
 func (m *model) cancelDrain(backend string) tea.Cmd {
-	return backendCmd(backend, m.client.CancelDrain,
-		func(_ *adminapi.BackendOperationResponse, err error) tea.Msg {
-			return drainCancelledMsg{backend: backend, err: err}
+	client := m.client
+	return runAction("cancel drain "+backend,
+		func(ctx context.Context) (*adminapi.BackendOperationResponse, error) {
+			return client.CancelDrain(ctx, backend)
+		},
+		func(m *model, _ *adminapi.BackendOperationResponse) (string, tea.Cmd) {
+			m.backends.drain = drainWatch{}
+			return "drain cancelled on " + backend, m.fetch(pollStatus)
 		})
 }
 
 // setCordon returns a command that cordons one backend when cordoned is true
-// and uncordons it when false.
+// and uncordons it when false, then refreshes the status snapshot.
 func (m *model) setCordon(backend string, cordoned bool) tea.Cmd {
 	client := m.client
-	return backendCmd(backend,
-		func(ctx context.Context, name string) (*adminapi.BackendOperationResponse, error) {
-			return client.SetCordon(ctx, name, cordoned)
+	verb := "uncordon"
+	if cordoned {
+		verb = "cordon"
+	}
+	return runAction(verb+" "+backend,
+		func(ctx context.Context) (*adminapi.BackendOperationResponse, error) {
+			return client.SetCordon(ctx, backend, cordoned)
 		},
-		func(_ *adminapi.BackendOperationResponse, err error) tea.Msg {
-			return backendCordonMsg{backend: backend, cordoned: cordoned, err: err}
+		func(m *model, _ *adminapi.BackendOperationResponse) (string, tea.Cmd) {
+			return verb + "ed " + backend, m.fetch(pollStatus)
 		})
 }
 
 // reconcileBackend returns a command that reconciles metadata against one
-// backend's storage.
+// backend's storage and reports what it changed.
 func (m *model) reconcileBackend(backend string) tea.Cmd {
-	return backendCmd(backend, m.client.ReconcileBackend,
-		func(resp *adminapi.ReconcileResponse, err error) tea.Msg {
-			return backendReconciledMsg{backend: backend, resp: resp, err: err}
-		})
-}
-
-// requeueBackendDLQ returns a command that requeues one backend's
-// dead-lettered cleanup rows.
-func (m *model) requeueBackendDLQ(backend string) tea.Cmd {
-	return backendCmd(backend, m.client.RequeueCleanupDLQ,
-		func(resp *adminapi.CleanupDLQRequeueResponse, err error) tea.Msg {
-			return backendRequeuedMsg{backend: backend, resp: resp, err: err}
+	client := m.client
+	return runAction("reconcile "+backend,
+		func(ctx context.Context) (*adminapi.ReconcileResponse, error) {
+			return client.ReconcileBackend(ctx, backend)
+		},
+		func(m *model, resp *adminapi.ReconcileResponse) (string, tea.Cmd) {
+			return fmt.Sprintf("reconciled %s: imported %d, removed %d", backend, resp.Imported, resp.Removed),
+				m.fetch(pollStatus)
 		})
 }
 
@@ -265,7 +243,7 @@ func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
 	case "Q":
 		return m.startAction(adminAction{
 			confirm: "Requeue dead-lettered cleanups for " + name + "?",
-			run:     m.requeueBackendDLQ(name),
+			run:     m.requeueDLQ(name),
 		})
 	case "x":
 		if m.backends.drain.backend != name {
@@ -319,18 +297,6 @@ func (m *model) updateBackends(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return model, cmd, true
 	case drainProgressMsg:
 		model, cmd := m.applyDrainProgress(msg)
-		return model, cmd, true
-	case drainCancelledMsg:
-		model, cmd := m.applyDrainCancelled(msg)
-		return model, cmd, true
-	case backendCordonMsg:
-		model, cmd := m.applyBackendCordon(msg)
-		return model, cmd, true
-	case backendReconciledMsg:
-		model, cmd := m.applyBackendReconciled(msg)
-		return model, cmd, true
-	case backendRequeuedMsg:
-		model, cmd := m.applyBackendRequeued(msg)
 		return model, cmd, true
 	}
 	return m, nil, false
@@ -387,58 +353,6 @@ func drainEndStatus(backend string, p *adminapi.DrainProgressResponse) (ok bool,
 		return false, "drain failed on " + backend + ": " + p.Error
 	}
 	return true, "drain finished on " + backend
-}
-
-// applyDrainCancelled ends the watch and refreshes the snapshot, so the row
-// stops reporting itself as draining.
-func (m *model) applyDrainCancelled(msg drainCancelledMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "cancel drain "+msg.backend+": "+msg.err.Error())
-		return m, nil
-	}
-	m.backends.drain = drainWatch{}
-	m.report(true, "drain cancelled on "+msg.backend)
-	refresh := m.fetch(pollStatus)
-	return m, refresh
-}
-
-// applyBackendReconciled reports what reconciling one backend changed.
-func (m *model) applyBackendReconciled(msg backendReconciledMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "reconcile "+msg.backend+": "+msg.err.Error())
-		return m, nil
-	}
-	m.report(true, fmt.Sprintf("reconciled %s: imported %d, removed %d",
-		msg.backend, msg.resp.Imported, msg.resp.Removed))
-	refresh := m.fetch(pollStatus)
-	return m, refresh
-}
-
-// applyBackendCordon reports a cordon or uncordon and refreshes the status, so
-// the backend's STATE column shows the change.
-func (m *model) applyBackendCordon(msg backendCordonMsg) (tea.Model, tea.Cmd) {
-	verb := "uncordon"
-	if msg.cordoned {
-		verb = "cordon"
-	}
-	if msg.err != nil {
-		m.report(false, verb+" "+msg.backend+": "+msg.err.Error())
-		return m, nil
-	}
-	m.report(true, verb+"ed "+msg.backend)
-	refresh := m.fetch(pollStatus)
-	return m, refresh
-}
-
-// applyBackendRequeued reports how many dead-lettered cleanups went back on
-// the queue for one backend.
-func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.report(false, "requeue "+msg.backend+": "+msg.err.Error())
-		return m, nil
-	}
-	m.report(true, fmt.Sprintf("requeued %d for %s", msg.resp.Requeued, msg.backend))
-	return m, nil
 }
 
 // -------------------------------------------------------------------------

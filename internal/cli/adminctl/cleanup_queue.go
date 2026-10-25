@@ -9,7 +9,9 @@
 
 package adminctl
 
+import "github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+
 // cmdCleanupQueue implements `s3-orchestrator admin cleanup-queue`.
 func cmdCleanupQueue(_ []string, c *client) int {
-	return c.get("/admin/api/cleanup-queue", nil)
+	return c.get(adminapi.PathCleanupQueue, nil)
 }

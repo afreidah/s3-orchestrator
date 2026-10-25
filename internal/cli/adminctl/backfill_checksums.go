@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdBackfillChecksums implements `s3-orchestrator admin backfill-checksums
@@ -43,5 +45,5 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	if *backend != "" {
 		q.Set(queryBackend, *backend)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/backfill-checksums", q))
+	return c.stream(http.MethodPost, withQuery(adminapi.PathBackfillChecksums, q))
 }

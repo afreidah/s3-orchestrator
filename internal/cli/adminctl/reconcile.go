@@ -13,6 +13,8 @@ import (
 	"flag"
 	"net/http"
 	"net/url"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdReconcile implements `s3-orchestrator admin reconcile [-backend=NAME]`.
@@ -27,5 +29,5 @@ func cmdReconcile(args []string, c *client) int {
 	if *backendName != "" {
 		q.Set(queryBackend, *backendName)
 	}
-	return c.stream(http.MethodPost, withQuery("/admin/api/reconcile", q))
+	return c.stream(http.MethodPost, withQuery(adminapi.PathReconcile, q))
 }

@@ -610,6 +610,36 @@ func TestAPIClient_Deletes(t *testing.T) {
 	}
 }
 
+// TestAPIClient_TagWrites asserts a set goes out as a PUT carrying the JSON
+// tag list and a clear as a DELETE, both on the key's escaped tags path.
+func TestAPIClient_TagWrites(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotRawPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotMethod, gotRawPath, gotBody = r.Method, r.URL.EscapedPath(), string(b)
+		_, _ = w.Write([]byte(`{"tags":[{"key":"a","value":"1"}]}`))
+	}))
+	defer srv.Close()
+	client := newAPIClient(testTarget(srv.URL))
+
+	resp, err := client.SetObjectTags(context.Background(), "bucket/k", []adminapi.ObjectTag{{Key: "a", Value: "1"}})
+	if err != nil {
+		t.Fatalf("SetObjectTags: %v", err)
+	}
+	if gotMethod != http.MethodPut || gotRawPath != "/admin/api/objects/tags/bucket%2Fk" ||
+		gotBody != `{"tags":[{"key":"a","value":"1"}]}` || len(resp.Tags) != 1 {
+		t.Errorf("request = %s %s %s, resp %+v", gotMethod, gotRawPath, gotBody, resp)
+	}
+
+	if _, err := client.DeleteObjectTags(context.Background(), "bucket/k"); err != nil {
+		t.Fatalf("DeleteObjectTags: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotRawPath != "/admin/api/objects/tags/bucket%2Fk" || gotBody != "" {
+		t.Errorf("request = %s %s %q, want a bodiless DELETE on the key", gotMethod, gotRawPath, gotBody)
+	}
+}
+
 // TestAPIClient_DeleteErrorStatus asserts a refused delete surfaces its status
 // rather than a zero count that reads as a no-op.
 func TestAPIClient_DeleteErrorStatus(t *testing.T) {

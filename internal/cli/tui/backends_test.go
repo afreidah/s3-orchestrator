@@ -294,6 +294,18 @@ func accept(t *testing.T, m *model) tea.Msg {
 	return cmd()
 }
 
+// finish applies a finished action's message and returns the footer it left
+// and the refresh it asked for, failing unless msg is an action result.
+func finish(t *testing.T, m *model, msg tea.Msg) (*actionStatus, tea.Cmd) {
+	t.Helper()
+	done, ok := msg.(actionDoneMsg)
+	if !ok {
+		t.Fatalf("msg = %#v, want actionDoneMsg", msg)
+	}
+	_, cmd := m.applyActionDone(done)
+	return m.status, cmd
+}
+
 // TestBackendActions_ConfirmNamesTheRow asserts each action confirms against
 // the highlighted backend, so a keystroke on the wrong row is visible before
 // it acts.
@@ -331,10 +343,7 @@ func TestBackendActions_ActOnTheSecondRow(t *testing.T) {
 	if !strings.Contains(m.confirm.text, "minio-b") {
 		t.Fatalf("confirm = %q, want it to name minio-b", m.confirm.text)
 	}
-	msg := accept(t, m)
-	if _, ok := msg.(backendReconciledMsg); !ok {
-		t.Fatalf("msg = %#v, want backendReconciledMsg", msg)
-	}
+	finish(t, m, accept(t, m))
 	if f.reconciled != "minio-b" {
 		t.Errorf("reconciled %q, want minio-b", f.reconciled)
 	}
@@ -355,8 +364,8 @@ func TestCordon_TogglesWithTheSelectedBackend(t *testing.T) {
 	if m.confirm == nil || !strings.HasPrefix(m.confirm.text, "Cordon minio-a?") {
 		t.Fatalf("confirm = %+v, want a cordon of minio-a", m.confirm)
 	}
-	if msg, ok := accept(t, m).(backendCordonMsg); !ok || !msg.cordoned || msg.backend != "minio-a" {
-		t.Fatalf("msg = %#v, want a cordon of minio-a", msg)
+	if status, refresh := finish(t, m, accept(t, m)); status.text != "cordoned minio-a" || refresh == nil {
+		t.Fatalf("status = %+v, want minio-a cordoned and the status refreshed", status)
 	}
 
 	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
@@ -370,26 +379,12 @@ func TestCordon_TogglesWithTheSelectedBackend(t *testing.T) {
 	if m.confirm == nil || !strings.HasPrefix(m.confirm.text, "Uncordon minio-a?") {
 		t.Fatalf("confirm = %+v, want an uncordon of minio-a", m.confirm)
 	}
-	if msg, ok := accept(t, m).(backendCordonMsg); !ok || msg.cordoned {
-		t.Fatalf("msg = %#v, want an uncordon", msg)
+	if status, _ := finish(t, m, accept(t, m)); status.text != "uncordoned minio-a" {
+		t.Fatalf("status = %+v, want minio-a uncordoned", status)
 	}
 
 	if !slices.Equal(f.cordonCalls, []string{"cordon minio-a", "uncordon minio-a"}) {
 		t.Errorf("client calls = %v", f.cordonCalls)
-	}
-}
-
-// TestApplyBackendCordon_ReportsAndRefreshes verifies a cordon that went
-// through refreshes the status, so the STATE column shows it, and one that
-// failed reports why without a refresh.
-func TestApplyBackendCordon_ReportsAndRefreshes(t *testing.T) {
-	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
-	if _, cmd := m.applyBackendCordon(backendCordonMsg{backend: "minio-a", cordoned: true}); cmd == nil {
-		t.Error("a cordon that went through should refresh the status")
-	}
-	if _, cmd := m.applyBackendCordon(backendCordonMsg{backend: "minio-a", err: errors.New("refused")}); cmd != nil {
-		t.Error("a failed uncordon should not refresh the status")
 	}
 }
 
@@ -507,31 +502,21 @@ func TestDrain_CancelOnlyWhileFollowing(t *testing.T) {
 	}
 }
 
-// TestBackendActions_ReportOutcomes pins what each one-shot action says when it
-// succeeds and when it fails.
+// TestBackendActions_ReportOutcomes pins what the reconcile and requeue
+// actions say when they succeed.
 func TestBackendActions_ReportOutcomes(t *testing.T) {
 	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
-
-	m.applyBackendReconciled(backendReconciledMsg{
-		backend: "minio-a",
-		resp:    &adminapi.ReconcileResponse{Imported: 3, Removed: 1},
-	})
-	if m.status == nil || !strings.Contains(m.status.text, "imported 3") {
-		t.Errorf("status = %+v, want the reconcile counts", m.status)
+	f := &fakeLister{
+		reconcileResp: &adminapi.ReconcileResponse{Imported: 3, Removed: 1},
+		requeued:      &adminapi.CleanupDLQRequeueResponse{Backend: "minio-a", Requeued: 7},
 	}
+	m := backendsModel(t, f)
 
-	m.applyBackendRequeued(backendRequeuedMsg{
-		backend: "minio-a",
-		resp:    &adminapi.CleanupDLQRequeueResponse{Requeued: 7},
-	})
-	if m.status == nil || !strings.Contains(m.status.text, "7") {
-		t.Errorf("status = %+v, want the requeued count", m.status)
+	if status, _ := finish(t, m, m.reconcileBackend("minio-a")()); !strings.Contains(status.text, "imported 3") {
+		t.Errorf("status = %+v, want the reconcile counts", status)
 	}
-
-	m.applyBackendRequeued(backendRequeuedMsg{backend: "minio-a", err: errors.New("db down")})
-	if m.status == nil || m.status.ok {
-		t.Errorf("status = %+v, want a failure line", m.status)
+	if status, _ := finish(t, m, m.requeueDLQ("minio-a")()); status.text != "requeued 7 rows from minio-a" {
+		t.Errorf("status = %+v, want the requeued count", status)
 	}
 }
 
@@ -555,21 +540,23 @@ func TestBackendsFooter_OffersCancelWhileDraining(t *testing.T) {
 // the operator can try again.
 func TestDrain_CancelOutcomes(t *testing.T) {
 	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
+	f := &fakeLister{drainErr: errors.New("no drain in progress")}
+	m := backendsModel(t, f)
 	m.backends.drain = drainWatch{backend: "minio-a"}
 
-	_, cmd := m.applyDrainCancelled(drainCancelledMsg{backend: "minio-a", err: errors.New("no drain in progress")})
+	status, cmd := finish(t, m, m.cancelDrain("minio-a")())
 	if m.backends.drain.backend == "" {
 		t.Error("a refused cancel should leave the watch in place")
 	}
 	if cmd != nil {
 		t.Error("a refused cancel should not refresh the snapshot")
 	}
-	if m.status == nil || m.status.ok {
-		t.Errorf("status = %+v, want a failure line", m.status)
+	if status.ok {
+		t.Errorf("status = %+v, want a failure line", status)
 	}
 
-	_, cmd = m.applyDrainCancelled(drainCancelledMsg{backend: "minio-a"})
+	f.drainErr = nil
+	_, cmd = finish(t, m, m.cancelDrain("minio-a")())
 	if m.backends.drain.backend != "" {
 		t.Error("a successful cancel should end the watch")
 	}
@@ -634,15 +621,14 @@ func TestDrainProgress_PollErrorKeepsWatching(t *testing.T) {
 // reporting counts it never got.
 func TestBackendActions_ReportFailures(t *testing.T) {
 	t.Parallel()
-	m := backendsModel(t, &fakeLister{})
+	m := backendsModel(t, &fakeLister{reconcileErr: errors.New("backend unreachable")})
 
-	if _, cmd := m.applyBackendReconciled(backendReconciledMsg{
-		backend: "minio-a", err: errors.New("backend unreachable"),
-	}); cmd != nil {
+	status, cmd := finish(t, m, m.reconcileBackend("minio-a")())
+	if cmd != nil {
 		t.Error("a failed reconcile should not refresh the snapshot")
 	}
-	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "unreachable") {
-		t.Errorf("status = %+v, want the failure surfaced", m.status)
+	if status.ok || status.text != "reconcile minio-a: backend unreachable" {
+		t.Errorf("status = %+v, want the failure surfaced", status)
 	}
 }
 
@@ -650,16 +636,10 @@ func TestBackendActions_ReportFailures(t *testing.T) {
 // highlighted backend through to the client.
 func TestRequeueBackendDLQ_ScopesToRow(t *testing.T) {
 	t.Parallel()
-	f := &fakeLister{requeued: &adminapi.CleanupDLQRequeueResponse{Backend: "minio-a", Requeued: 2}}
-	m := backendsModel(t, f)
+	m := backendsModel(t, &fakeLister{})
 
 	m.handleBackendsKey(key("Q"))
-	msg := accept(t, m)
-	requeued, ok := msg.(backendRequeuedMsg)
-	if !ok {
-		t.Fatalf("msg = %#v, want backendRequeuedMsg", msg)
-	}
-	if requeued.backend != "minio-a" || requeued.resp.Requeued != 2 {
-		t.Errorf("msg = %+v, want minio-a with 2 requeued", requeued)
+	if status, _ := finish(t, m, accept(t, m)); status.text != "requeued 0 rows from minio-a" {
+		t.Errorf("status = %+v, want the requeue scoped to minio-a", status)
 	}
 }

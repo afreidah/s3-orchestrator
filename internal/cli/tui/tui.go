@@ -48,6 +48,8 @@ type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 	GetObjectTags(ctx context.Context, key string) (*adminapi.ObjectTagsResponse, error)
+	SetObjectTags(ctx context.Context, key string, tags []adminapi.ObjectTag) (*adminapi.ObjectTagsResponse, error)
+	DeleteObjectTags(ctx context.Context, key string) (*adminapi.ObjectTagsResponse, error)
 	ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
@@ -281,8 +283,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cleanup.loading = false
 		m.cleanup.err = msg.err
 		return m, nil
-	case cleanupRequeuedMsg:
-		return m.applyCleanupRequeued(msg)
+	case actionDoneMsg:
+		return m.applyActionDone(msg)
 	case cacheLoadedMsg:
 		m.applyCache(msg.resp)
 		return m, nil

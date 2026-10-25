@@ -114,15 +114,17 @@ func hashOf(body []byte) string {
 }
 
 // Do issues an authenticated request and returns the raw response, which the
-// caller owns and must close. Non-2xx statuses come back as a live response,
-// not an error: callers that want the typed form use JSON or Stream.
-func (c *Client) Do(ctx context.Context, method, path string, q url.Values, body io.Reader) (*http.Response, error) {
+// caller owns and must close. body is a JSON document, or nil for none.
+// Non-2xx statuses come back as a live response, not an error: callers that
+// want the typed form use Get, Post, Put, Delete or Stream.
+func (c *Client) Do(ctx context.Context, method, path string, q url.Values, body []byte) (*http.Response, error) {
 	return c.send(ctx, c.http, method, path, q, body, "")
 }
 
 // Stream issues a request that opts into the server's NDJSON progress stream
-// and returns the events in order. A non-2xx status becomes an *Error.
-func (c *Client) Stream(ctx context.Context, method, path string, q url.Values, body io.Reader) (EventStream, error) {
+// and returns the events in order. body is a JSON document, or nil for none. A
+// non-2xx status becomes an *Error.
+func (c *Client) Stream(ctx context.Context, method, path string, q url.Values, body []byte) (EventStream, error) {
 	resp, err := c.send(ctx, c.stream, method, path, q, body, adminstream.ContentType)
 	if err != nil {
 		return nil, err
@@ -164,24 +166,19 @@ func (c *Client) Upload(
 }
 
 // send builds and dispatches one request. accept, when non-empty, sets the
-// Accept header; a non-nil body is sent as JSON.
+// Accept header; a non-nil payload is sent as JSON. The payload is held whole
+// so the signature can cover it: these carry names and small JSON documents,
+// never object data, which Upload streams instead.
 func (c *Client) send(
 	ctx context.Context,
 	httpClient *http.Client,
 	method, path string,
 	q url.Values,
-	body io.Reader,
+	payload []byte,
 	accept string,
 ) (*http.Response, error) {
-	// Read the body up front so the signature can cover it. These carry names
-	// and small JSON documents, never object data, so holding one is cheap and
-	// it is what lets the request be retried or signed at all.
-	var payload []byte
-	if body != nil {
-		var err error
-		if payload, err = io.ReadAll(body); err != nil {
-			return nil, fmt.Errorf("read request body: %w", err)
-		}
+	var body io.Reader
+	if payload != nil {
 		body = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+queryOf(q), body)

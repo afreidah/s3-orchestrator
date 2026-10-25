@@ -100,12 +100,12 @@ func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // workerOpsPaths names the Ops action that does each worker's job, by the
 // path the action posts to. A worker missing here has no Ops action.
 var workerOpsPaths = map[string]string{
-	"rebalance":                "/admin/api/rebalance",
-	"replication":              "/admin/api/replicate",
-	"over_replication_cleanup": "/admin/api/over-replication",
-	"scrubber":                 pathScrub,
-	"reconcile":                pathReconcile,
-	"lifecycle":                "/admin/api/lifecycle",
+	"rebalance":                adminapi.PathRebalance,
+	"replication":              adminapi.PathReplicate,
+	"over_replication_cleanup": adminapi.PathOverReplication,
+	"scrubber":                 adminapi.PathScrub,
+	"reconcile":                adminapi.PathReconcile,
+	"lifecycle":                adminapi.PathLifecycle,
 }
 
 // runWorkerOpsAction runs the Ops action that does the highlighted worker's

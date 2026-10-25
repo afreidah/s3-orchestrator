@@ -14,6 +14,7 @@
 package tui
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
@@ -61,6 +62,15 @@ type loggedAction struct {
 // actionLogLimit is how many results the session log keeps; older ones are
 // dropped.
 const actionLogLimit = 200
+
+// actionDoneMsg reports a write action's outcome. On failure the footer shows
+// failed and the error; on success done applies the result and returns the
+// line to report and any refresh to run.
+type actionDoneMsg struct {
+	failed string
+	err    error
+	done   func(*model) (string, tea.Cmd)
+}
 
 // inputPrompt collects the one value an action needs before it can be armed:
 // the key to invalidate, the prefix to sweep, the key id to rotate away from.
@@ -150,6 +160,28 @@ func (m *model) handleConfirmKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirm = nil
 		return m, nil
 	}
+}
+
+// runAction returns a command that runs call off the main loop and reports the
+// outcome as an actionDoneMsg. done runs back on the main loop, and only when
+// call succeeded; call must not touch the model.
+func runAction[T any](failed string, call func(context.Context) (T, error), done func(*model, T) (string, tea.Cmd)) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := call(context.Background())
+		return actionDoneMsg{failed: failed, err: err, done: func(m *model) (string, tea.Cmd) { return done(m, resp) }}
+	}
+}
+
+// applyActionDone reports a finished action in the footer and runs whatever
+// refresh its success asks for.
+func (m *model) applyActionDone(msg actionDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.report(false, msg.failed+": "+msg.err.Error())
+		return m, nil
+	}
+	text, cmd := msg.done(m)
+	m.report(true, text)
+	return m, cmd
 }
 
 // report shows an action's result in the footer and records it in the

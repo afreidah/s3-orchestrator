@@ -26,7 +26,7 @@ import (
 // cmdStatus implements `s3-orchestrator admin status`, fetching the status
 // payload and rendering it as a table.
 func cmdStatus(_ []string, c *client) int {
-	return c.get("/admin/api/status", renderStatus)
+	return c.get(adminapi.PathStatus, renderStatus)
 }
 
 // renderStatus renders the status payload as a backends table led by the

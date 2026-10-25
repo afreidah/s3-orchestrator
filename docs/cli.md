@@ -513,6 +513,8 @@ export S3O_TUI_THEME="dark,accent:#ff9e64,ok:114"
 | `X` | In Files, delete the selected object, or everything under the selected directory (asks to confirm) |
 | `R` | In Workers, run the Ops action that does the selected worker's job, as if chosen from the Ops menu |
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
+| `t` | In the inspector, edit the object's tag set in a prompt pre-filled with the current one |
+| `T` | In the inspector, clear the object's tag set (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` | Open: a sidebar section, a prefix, or the inspector on an object; in Backends, the selected backend's action menu |
@@ -534,6 +536,8 @@ The listing pages lazily: scrolling past the bottom of a truncated prefix pulls 
 The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, a content-hash prefix, and how long ago that hash was last checked against the stored bytes - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
 
 Above the table, a `tags:` line shows the object's [tag set](tagging.md), or `(none)`. It sits outside the table because a tag set belongs to the object rather than to any one copy, so repeating it down every row would suggest the copies could differ. A failed tag read leaves the line empty rather than replacing the copy ledger with an error, since that ledger is what the pane is for.
+
+Press `t` to edit the set. The prompt opens on the current set written the way the `x-amz-tagging` header writes it, `k1=v1&k2=v2`, with spaces as `+` and `&`, `=` or `%` inside a value percent-encoded, and submitting replaces the whole set. A repeated key or a value that does not decode is refused in the footer before anything is sent. The prompt will not submit an empty value, so `T` clears the set instead, after a confirmation.
 
 A copy reading `never` under `VERIFIED` has a recorded hash that nothing has ever read back, which is not the same as a copy known to be intact. Press `S` to verify every copy of the object immediately rather than waiting for the scrub queue to reach it; the footer reports how many passed and names any that did not. A copy whose bytes do not match its hash is discarded and rebuilt from a healthy one, exactly as a scrub pass would, so the confirmation says so.
 

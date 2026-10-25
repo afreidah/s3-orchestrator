@@ -49,8 +49,8 @@ func TestRunWorkerOpsAction_StreamsInTheWorkersPane(t *testing.T) {
 		t.Fatalf("section=%d confirm=%+v, want the Scrub confirmation in Workers", m.section, m.confirm)
 	}
 	msg := accept(t, m)
-	if f.opRequest.path != pathScrub {
-		t.Errorf("request path = %q, want %q", f.opRequest.path, pathScrub)
+	if f.opRequest.path != adminapi.PathScrub {
+		t.Errorf("request path = %q, want %q", f.opRequest.path, adminapi.PathScrub)
 	}
 	_, cmd := m.Update(msg)
 	for cmd != nil {

@@ -6,7 +6,8 @@
 // Detail pane for a single object key. Fetches every backend copy from the
 // admin object-locations endpoint and renders the per-copy ledger (backend,
 // size, age, encryption, content hash) so an operator can see exactly where an
-// object lives and how its replicas compare. Read-only, like the browser.
+// object lives and how its replicas compare. The object's tag set sits above
+// the ledger, where it can be edited or cleared.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -18,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
-
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -154,6 +155,10 @@ func (m *model) handleInspectKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "S":
 		return m.armScrubKey()
+	case "t":
+		return m.armEditTags()
+	case "T":
+		return m.armClearTags()
 	}
 
 	var cmd tea.Cmd
@@ -174,6 +179,64 @@ func (m *model) armScrubKey() (tea.Model, tea.Cmd) {
 		before:  func(m *model) { m.insp.scrubbing = true },
 		run:     m.scrubKey(m.insp.key),
 	})
+}
+
+// armEditTags opens the prompt on the inspected object's tag set, written as
+// the query string x-amz-tagging uses so a value may hold spaces, & or =.
+// Submitting replaces the whole set.
+func (m *model) armEditTags() (tea.Model, tea.Cmd) {
+	if m.insp.key == "" {
+		return m, nil
+	}
+	key := m.insp.key
+	current := core.EncodeTags(adminapi.CoreTags(m.insp.tags))
+	return m.askForValue("Tags for "+key+" (k1=v1&k2=v2)?", current, func(text string) adminAction {
+		return adminAction{run: m.saveTags(key, text)}
+	})
+}
+
+// saveTags returns a command that replaces key's tag set with the one written
+// in text. Text that does not parse is reported without reaching the server.
+func (m *model) saveTags(key, text string) tea.Cmd {
+	client := m.client
+	return runAction("tag "+key,
+		func(ctx context.Context) (*adminapi.ObjectTagsResponse, error) {
+			tags, err := core.DecodeTags(text)
+			if err != nil {
+				return nil, err
+			}
+			return client.SetObjectTags(ctx, key, adminapi.ObjectTagsFrom(tags))
+		},
+		tagsSaved(key, "tags saved on "+key))
+}
+
+// armClearTags confirms removing every tag from the inspected object. Clearing
+// has its own key because the prompt refuses an empty value.
+func (m *model) armClearTags() (tea.Model, tea.Cmd) {
+	if m.insp.key == "" || len(m.insp.tags) == 0 {
+		return m, nil
+	}
+	key := m.insp.key
+	client := m.client
+	return m.startAction(adminAction{
+		confirm: "Clear every tag on " + key + "?",
+		run: runAction("clear tags on "+key,
+			func(ctx context.Context) (*adminapi.ObjectTagsResponse, error) {
+				return client.DeleteObjectTags(ctx, key)
+			},
+			tagsSaved(key, "tags cleared on "+key)),
+	})
+}
+
+// tagsSaved shows the set the server stored for key, provided the inspector is
+// still on that key, and reports done.
+func tagsSaved(key, done string) func(*model, *adminapi.ObjectTagsResponse) (string, tea.Cmd) {
+	return func(m *model, resp *adminapi.ObjectTagsResponse) (string, tea.Cmd) {
+		if m.insp.key == key {
+			m.insp.tags = resp.Tags
+		}
+		return done, nil
+	}
 }
 
 // applyScrubKey reports the per-copy verdict and reloads the ledger, since a

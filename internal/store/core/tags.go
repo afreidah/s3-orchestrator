@@ -88,7 +88,8 @@ func IsTagValidationError(err error) bool {
 		errors.Is(err, ErrEmptyTagKey) ||
 		errors.Is(err, ErrTagKeyTooLong) ||
 		errors.Is(err, ErrTagValueTooLong) ||
-		errors.Is(err, ErrDuplicateTagKey)
+		errors.Is(err, ErrDuplicateTagKey) ||
+		errors.Is(err, ErrMalformedTagSet)
 }
 
 // utf16Length counts s in UTF-16 code units. Runes outside the basic
@@ -108,11 +109,12 @@ func utf16Length(s string) int {
 }
 
 // -------------------------------------------------------------------------
-// STORAGE ENCODING
+// TEXT ENCODING
 // -------------------------------------------------------------------------
 
 // EncodeTags renders a tag set as an x-amz-tagging query string, sorted by key
-// so the stored form is stable. A multipart upload row holds its tags this way.
+// so the text is stable. A multipart upload row stores its tags this way, and
+// an operator edits a set in it.
 func EncodeTags(tags []Tag) string {
 	if len(tags) == 0 {
 		return ""
@@ -124,21 +126,24 @@ func EncodeTags(tags []Tag) string {
 	return values.Encode()
 }
 
-// DecodeTags parses what EncodeTags wrote. An empty string is a set of no
-// tags rather than an error, which is what a row that carried none holds.
-//
-// The set was validated before it was stored, so a decode failure here means
-// the column was corrupted rather than the caller supplying something bad.
+// DecodeTags parses a tag set written in the form EncodeTags produces, sorted
+// by key. An empty string is a set of no tags rather than an error, which is
+// what a row or header that carried none holds. A repeated key is refused
+// rather than keeping whichever value came first. The set is not validated
+// against the limits; ValidateTags does that.
 func DecodeTags(encoded string) ([]Tag, error) {
 	if encoded == "" {
 		return nil, nil
 	}
 	values, err := url.ParseQuery(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("decode stored tag set: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrMalformedTagSet, err)
 	}
 	tags := make([]Tag, 0, len(values))
 	for key, vals := range values {
+		if len(vals) > 1 {
+			return nil, fmt.Errorf("%w: %q", ErrDuplicateTagKey, key)
+		}
 		tags = append(tags, Tag{Key: key, Value: vals[0]})
 	}
 	sort.Slice(tags, func(i, j int) bool { return tags[i].Key < tags[j].Key })
