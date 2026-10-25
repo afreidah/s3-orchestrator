@@ -346,23 +346,13 @@ func (mp *Manager) ListParts(ctx context.Context, bucket, key, uploadID string, 
 	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return nil, false, err
 	}
-	if maxParts == 0 {
-		// A zero-size page still reports whether any parts lie past the marker.
-		rest, err := mp.stores.ListParts(ctx, uploadID, partNumberMarker, 1)
-		if err != nil {
-			return nil, false, err
-		}
-		return nil, len(rest) > 0, nil
-	}
-	// One extra row says whether the page is the last without a count query.
+	// One extra row says whether the page is the last without a count query,
+	// so a zero-size page still reports whether any parts lie past the marker.
 	parts, err := mp.stores.ListParts(ctx, uploadID, partNumberMarker, maxParts+1)
 	if err != nil {
 		return nil, false, err
 	}
-	truncated := len(parts) > maxParts
-	if truncated {
-		parts = parts[:maxParts]
-	}
+	parts, truncated := core.TrimPage(parts, maxParts)
 	for i := range parts {
 		presentToClient(&parts[i])
 	}

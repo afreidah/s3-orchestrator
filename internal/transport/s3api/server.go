@@ -62,7 +62,7 @@ type ObjectOps interface {
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
 	CopyObject(ctx context.Context, req *object.CopyObjectRequest) (string, error)
-	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error)
+	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error)
 	ObjectExists(ctx context.Context, key string) (bool, error)
 	CanAcceptWrite(size int64) bool
 	BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat

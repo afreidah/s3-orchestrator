@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// SQLite ListObjectsDelimited - Tests
+// SQLite Delimited ListObjects - Tests
 //
 // Author: Alex Freidah
 //
@@ -22,12 +22,12 @@ import (
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// cpList runs ListObjectsDelimited and returns CommonPrefixes + leaf keys.
+// leafKeys runs a delimited ListObjects and returns CommonPrefixes + leaf keys.
 func leafKeys(t *testing.T, s *Store, prefix, delim, after string, maxKeys int) (cps, leaves []string) {
 	t.Helper()
-	res, err := s.ListObjectsDelimited(context.Background(), prefix, delim, after, maxKeys)
+	res, err := s.ListObjects(context.Background(), prefix, delim, after, maxKeys)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects: %v", err)
 	}
 	cps = res.CommonPrefixes
 	for i := range res.Objects {
@@ -48,9 +48,9 @@ func TestListObjectsDelimited_GroupsAndLeaves(t *testing.T) {
 		mustRecordObject(t, s, k, "backend-a", 10)
 	}
 
-	res, err := s.ListObjectsDelimited(context.Background(), "p/", "/", "", 1000)
+	res, err := s.ListObjects(context.Background(), "p/", "/", "", 1000)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects: %v", err)
 	}
 	if got, want := res.CommonPrefixes, []string{"p/a/", "p/b/"}; !slices.Equal(got, want) {
 		t.Errorf("CommonPrefixes = %v, want %v", got, want)
@@ -113,9 +113,9 @@ func TestListObjectsDelimited_PaginationNoDuplicate(t *testing.T) {
 	seen := map[string]int{}
 	after := ""
 	for range 11 {
-		res, err := s.ListObjectsDelimited(context.Background(), "p/", "/", after, 2)
+		res, err := s.ListObjects(context.Background(), "p/", "/", after, 2)
 		if err != nil {
-			t.Fatalf("ListObjectsDelimited: %v", err)
+			t.Fatalf("ListObjects: %v", err)
 		}
 		for _, cp := range res.CommonPrefixes {
 			seen[cp]++

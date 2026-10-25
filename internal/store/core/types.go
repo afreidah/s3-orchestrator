@@ -11,7 +11,10 @@
 
 package core
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // -------------------------------------------------------------------------
 // OBJECT METADATA
@@ -567,35 +570,61 @@ type CopyPatch struct {
 // LISTING RESULTS
 // -------------------------------------------------------------------------
 
-// ListObjectsResult holds the result of a list-objects query.
+// ListObjectsResult holds one page of an object listing. With a delimiter, keys
+// whose remainder after the prefix contains it are collapsed into
+// CommonPrefixes and the rest are returned as leaf Objects; without one every
+// key is a leaf. Truncation and the continuation token reflect the merged,
+// key-ordered stream of both.
 type ListObjectsResult struct {
-	Objects               []ObjectLocation
-	IsTruncated           bool
-	NextContinuationToken string
-}
-
-// ListDelimitedResult holds one page of a delimiter-grouped list. Keys whose
-// remainder after the prefix contains the delimiter are collapsed into
-// CommonPrefixes; the rest are returned as leaf Objects. Truncation and the
-// continuation token reflect the merged, key-ordered stream of both.
-type ListDelimitedResult struct {
 	Objects               []ObjectLocation
 	CommonPrefixes        []string
 	IsTruncated           bool
 	NextContinuationToken string
 }
 
+// KeyCount is how many entries the page returned, a common prefix counting as
+// one, which is what S3 reports as KeyCount.
+func (r *ListObjectsResult) KeyCount() int {
+	return len(r.Objects) + len(r.CommonPrefixes)
+}
+
+// TrimPage cuts rows fetched one past limit back to limit and reports whether
+// the extra row was there, which is how a listing learns it was truncated
+// without a count query.
+func TrimPage[T any](rows []T, limit int) ([]T, bool) {
+	if len(rows) > limit {
+		return rows[:limit], true
+	}
+	return rows, false
+}
+
+// ListPage answers one listing page with the engine's delimited query when a
+// delimiter is set and its flat query otherwise. A maxKeys of zero or less is
+// an empty, untruncated page without a query, as S3 answers max-keys=0.
+func ListPage(
+	ctx context.Context, prefix, delimiter, startAfter string, maxKeys int,
+	flat func(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error),
+	delimited func(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsResult, error),
+) (*ListObjectsResult, error) {
+	switch {
+	case maxKeys <= 0:
+		return &ListObjectsResult{}, nil
+	case delimiter != "":
+		return delimited(ctx, prefix, delimiter, startAfter, maxKeys)
+	default:
+		return flat(ctx, prefix, startAfter, maxKeys)
+	}
+}
+
 // BuildListPage caps a flat prefix listing at maxKeys and sets the continuation
 // token to the last kept key when more objects follow. Shared by both engines so
-// the flat ListObjects truncation contract stays identical.
+// the flat listing's truncation contract stays identical. maxKeys must be
+// positive; ListPage answers a zero page before querying.
 func BuildListPage(objects []ObjectLocation, maxKeys int) *ListObjectsResult {
-	result := &ListObjectsResult{}
-	if len(objects) > maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
-		result.Objects = objects[:maxKeys]
-	} else {
-		result.Objects = objects
+	page, truncated := TrimPage(objects, maxKeys)
+	result := &ListObjectsResult{Objects: page, IsTruncated: truncated}
+	if truncated {
+		result.NextContinuationToken = page[len(page)-1].ObjectKey
 	}
 	return result
 }
@@ -615,13 +644,12 @@ type DelimitedEntry struct {
 // BuildDelimitedPage splits the ordered entries into CommonPrefixes and leaf
 // objects, caps the page at maxKeys, and sets the continuation token to the last
 // kept entry's skip bound when more entries follow. Shared by both engines so
-// truncation and token semantics stay identical.
-func BuildDelimitedPage(entries []DelimitedEntry, maxKeys int) *ListDelimitedResult {
-	result := &ListDelimitedResult{}
-	if len(entries) > maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = entries[maxKeys-1].SkipBound
-		entries = entries[:maxKeys]
+// truncation and token semantics stay identical. maxKeys must be positive.
+func BuildDelimitedPage(entries []DelimitedEntry, maxKeys int) *ListObjectsResult {
+	entries, truncated := TrimPage(entries, maxKeys)
+	result := &ListObjectsResult{IsTruncated: truncated}
+	if truncated {
+		result.NextContinuationToken = entries[len(entries)-1].SkipBound
 	}
 	for i := range entries {
 		if entries[i].IsPrefix {
@@ -661,9 +689,8 @@ const dirTimeFormat = "2006-01-02 15:04"
 // the client uploaded, rather than the replica sum.
 func BuildDirectoryListing(prefix string, stats []DirStat, files []DirFile, maxKeys int) *DirectoryListResult {
 	result := &DirectoryListResult{Entries: make([]DirEntry, 0, len(stats))}
-	if len(files) > maxKeys {
-		files = files[:maxKeys]
-		result.HasMore = true
+	files, result.HasMore = TrimPage(files, maxKeys)
+	if result.HasMore {
 		result.NextCursor = files[len(files)-1].ObjectKey
 	}
 	byName := make(map[string]*DirFile, len(files))

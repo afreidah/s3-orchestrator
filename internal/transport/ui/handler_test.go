@@ -847,7 +847,7 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
 			Objects: []core.ObjectLocation{
 				{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 				{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
@@ -884,7 +884,7 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{}, nil).AnyTimes()
 	})
 
@@ -917,7 +917,7 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
 	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
@@ -936,7 +936,7 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
 			Objects: []core.ObjectLocation{
 				{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 			},

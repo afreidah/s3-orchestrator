@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Postgres ListObjectsDelimited - Integration Tests
+// Postgres Delimited ListObjects - Integration Tests
 //
 // Author: Alex Freidah
 //
@@ -46,9 +46,9 @@ func TestStoreInt_ListObjectsDelimited_GroupsAndLeaves(t *testing.T) {
 		t.Cleanup(func() { _, _ = s.DeleteObject(ctx, k) })
 	}
 
-	res, err := s.ListObjectsDelimited(ctx, prefix, "/", "", 1000)
+	res, err := s.ListObjects(ctx, prefix, "/", "", 1000)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects: %v", err)
 	}
 
 	wantCP := []string{prefix + "a/", prefix + "b/"}
@@ -114,9 +114,9 @@ func collectPGCommonPrefixes(t *testing.T, s *Store, prefix, delim string, maxKe
 	seen := map[string]int{}
 	after := ""
 	for range 11 {
-		res, err := s.ListObjectsDelimited(ctx, prefix, delim, after, maxKeys)
+		res, err := s.ListObjects(ctx, prefix, delim, after, maxKeys)
 		if err != nil {
-			t.Fatalf("ListObjectsDelimited: %v", err)
+			t.Fatalf("ListObjects: %v", err)
 		}
 		for _, cp := range res.CommonPrefixes {
 			seen[cp]++

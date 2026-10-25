@@ -175,10 +175,10 @@ func (mr *MockObjectOpsMockRecorder) HeadObject(ctx, key any) *gomock.Call {
 }
 
 // ListObjects mocks base method.
-func (m *MockObjectOps) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error) {
+func (m *MockObjectOps) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListObjects", ctx, prefix, delimiter, startAfter, maxKeys)
-	ret0, _ := ret[0].(*object.ListObjectsV2Result)
+	ret0, _ := ret[0].(*core.ListObjectsResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

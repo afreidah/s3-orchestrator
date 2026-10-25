@@ -13,6 +13,7 @@
 package s3api
 
 import (
+	"cmp"
 	"context"
 	"encoding/xml"
 	"net/http"
@@ -76,8 +77,23 @@ type xmlListResultV2 struct {
 	IsTruncated           bool              `xml:"IsTruncated"`
 	ContinuationToken     string            `xml:"ContinuationToken,omitempty"`
 	NextContinuationToken string            `xml:"NextContinuationToken,omitempty"`
+	StartAfter            string            `xml:"StartAfter,omitempty"`
 	Contents              []xmlContent      `xml:"Contents"`
 	CommonPrefixes        []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
+}
+
+// listPage is one ListObjects page in the client's key space: the bucket
+// prefix is stripped from every key, common prefix, and continuation token,
+// so each handler only arranges it into its own response shape.
+type listPage struct {
+	prefix         string
+	delimiter      string
+	maxKeys        int
+	keyCount       int
+	isTruncated    bool
+	nextToken      string
+	contents       []xmlContent
+	commonPrefixes []xmlCommonPrefix
 }
 
 // -------------------------------------------------------------------------
@@ -115,106 +131,93 @@ func buildListContents(objects []core.ObjectLocation, prefixes []string, prefixL
 	return contents, commonPrefixes
 }
 
-// handleListObjectsV1 processes GET requests at the bucket level without
-// list-type=2, returning an S3-compatible ListBucketResult XML response using
-// marker-based pagination. Internally prefixes queries with the bucket name and
-// strips the prefix from results before returning to clients.
-func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	bucketPrefix := internalkey.Prefix(bucket)
-
-	userPrefix := r.URL.Query().Get("prefix")
-	delimiter := r.URL.Query().Get("delimiter")
-	marker := r.URL.Query().Get("marker")
-	maxKeys := parseQueryInt(r, "max-keys", 1000, 1000)
-
-	internalPrefix := bucketPrefix + userPrefix
-
-	startAfter := ""
-	if marker != "" {
-		startAfter = bucketPrefix + marker
-	}
-
-	result, err := s.Objects.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
+// listBucket reads the prefix, delimiter, and max-keys a listing shares and
+// returns the page after the client's startAfter key. A failure has already
+// been written to w, and the returned status is what the handler reports.
+func (s *Server) listBucket(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, startAfter string) (*listPage, int, error) {
+	maxKeys, err := parseListingCount(r, "max-keys", listingPageLimit, listingPageLimit)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to list objects"), err
+		status, err := invalidArgument(w, err)
+		return nil, status, err
 	}
 
-	prefixLen := len(bucketPrefix)
-	nextMarker := ""
-	if result.NextContinuationToken != "" {
-		nextMarker = result.NextContinuationToken[prefixLen:]
-	}
-
-	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
-
-	xmlResult := xmlListResultV1{
-		Xmlns:          s3XMLNS,
-		Name:           bucket,
-		Prefix:         userPrefix,
-		Marker:         marker,
-		NextMarker:     nextMarker,
-		Delimiter:      delimiter,
-		MaxKeys:        maxKeys,
-		IsTruncated:    result.IsTruncated,
-		Contents:       contents,
-		CommonPrefixes: commonPrefixes,
-	}
-
-	return respondXML(w, xmlResult)
-}
-
-// handleListObjectsV2 processes GET requests at the bucket level, returning an
-// S3-compatible ListObjectsV2 XML response. Internally prefixes queries with
-// the bucket name and strips the prefix from results before returning to clients.
-func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
 	bucketPrefix := internalkey.Prefix(bucket)
-
-	userPrefix := r.URL.Query().Get("prefix")
-	delimiter := r.URL.Query().Get("delimiter")
-	continuationToken := r.URL.Query().Get("continuation-token")
-	maxKeys := parseQueryInt(r, "max-keys", 1000, 1000)
-
-	// Prepend bucket prefix to internal query parameters
-	internalPrefix := bucketPrefix + userPrefix
-
-	startAfter := r.URL.Query().Get("start-after")
-	if continuationToken != "" {
-		startAfter = continuationToken
+	page := &listPage{
+		prefix:    r.URL.Query().Get("prefix"),
+		delimiter: r.URL.Query().Get("delimiter"),
+		maxKeys:   maxKeys,
 	}
 	if startAfter != "" {
 		startAfter = bucketPrefix + startAfter
 	}
 
-	result, err := s.Objects.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
+	result, err := s.Objects.ListObjects(ctx, bucketPrefix+page.prefix, page.delimiter, startAfter, maxKeys)
 	if err != nil {
-		return writeStorageError(w, err, "Failed to list objects"), err
+		return nil, writeStorageError(w, err, "Failed to list objects"), err
 	}
 
-	// Strip bucket prefix from NextContinuationToken
 	prefixLen := len(bucketPrefix)
-	nextToken := result.NextContinuationToken
-	if nextToken != "" {
-		nextToken = result.NextContinuationToken[prefixLen:]
+	page.keyCount = result.KeyCount()
+	page.isTruncated = result.IsTruncated
+	if result.NextContinuationToken != "" {
+		page.nextToken = result.NextContinuationToken[prefixLen:]
+	}
+	page.contents, page.commonPrefixes = buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
+	return page, http.StatusOK, nil
+}
+
+// handleListObjectsV1 processes GET requests at the bucket level without
+// list-type=2, returning an S3-compatible ListBucketResult XML response using
+// marker-based pagination. Marker is echoed as sent; NextMarker is returned
+// only with a delimiter, as S3 does, since a client otherwise resumes from the
+// last Key.
+func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
+	marker := r.URL.Query().Get("marker")
+	page, status, err := s.listBucket(ctx, w, r, bucket, marker)
+	if err != nil {
+		return status, err
 	}
 
-	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
+	xmlResult := xmlListResultV1{
+		Xmlns:          s3XMLNS,
+		Name:           bucket,
+		Prefix:         page.prefix,
+		Marker:         marker,
+		Delimiter:      page.delimiter,
+		MaxKeys:        page.maxKeys,
+		IsTruncated:    page.isTruncated,
+		Contents:       page.contents,
+		CommonPrefixes: page.commonPrefixes,
+	}
+	if page.delimiter != "" {
+		xmlResult.NextMarker = page.nextToken
+	}
+	return respondXML(w, xmlResult)
+}
 
-	xmlResult := xmlListResultV2{
+// handleListObjectsV2 processes GET requests at the bucket level, returning an
+// S3-compatible ListObjectsV2 XML response. A continuation token takes
+// precedence over start-after, and both are echoed as sent.
+func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
+	continuationToken := r.URL.Query().Get("continuation-token")
+	startAfter := r.URL.Query().Get("start-after")
+	page, status, err := s.listBucket(ctx, w, r, bucket, cmp.Or(continuationToken, startAfter))
+	if err != nil {
+		return status, err
+	}
+
+	return respondXML(w, xmlListResultV2{
 		Xmlns:                 s3XMLNS,
 		Name:                  bucket,
-		Prefix:                userPrefix,
-		Delimiter:             delimiter,
-		MaxKeys:               maxKeys,
-		KeyCount:              result.KeyCount,
-		IsTruncated:           result.IsTruncated,
-		NextContinuationToken: nextToken,
-		Contents:              contents,
-		CommonPrefixes:        commonPrefixes,
-	}
-
-	if continuationToken != "" {
-		xmlResult.ContinuationToken = continuationToken
-	}
-
-	return respondXML(w, xmlResult)
+		Prefix:                page.prefix,
+		Delimiter:             page.delimiter,
+		MaxKeys:               page.maxKeys,
+		KeyCount:              page.keyCount,
+		IsTruncated:           page.isTruncated,
+		ContinuationToken:     continuationToken,
+		NextContinuationToken: page.nextToken,
+		StartAfter:            startAfter,
+		Contents:              page.contents,
+		CommonPrefixes:        page.commonPrefixes,
+	})
 }

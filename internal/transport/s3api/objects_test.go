@@ -1290,7 +1290,7 @@ func TestUnsupportedMethod(t *testing.T) {
 func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/file.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: time.Now()},

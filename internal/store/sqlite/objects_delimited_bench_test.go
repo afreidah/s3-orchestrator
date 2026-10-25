@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// SQLite ListObjectsDelimited - Benchmark
+// SQLite Delimited ListObjects - Benchmark
 //
 // Author: Alex Freidah
 //
@@ -49,9 +49,9 @@ func BenchmarkListObjectsDelimited(b *testing.B) {
 
 			b.ResetTimer()
 			for b.Loop() {
-				res, err := s.ListObjectsDelimited(ctx, "logs/", "/", "", 1000)
+				res, err := s.ListObjects(ctx, "logs/", "/", "", 1000)
 				if err != nil {
-					b.Fatalf("ListObjectsDelimited: %v", err)
+					b.Fatalf("ListObjects: %v", err)
 				}
 				if len(res.CommonPrefixes) != dirs {
 					b.Fatalf("got %d prefixes, want %d", len(res.CommonPrefixes), dirs)

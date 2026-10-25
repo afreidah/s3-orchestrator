@@ -28,8 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
-// listingPageLimit is the most parts or uploads one S3 listing response
-// returns, and the page size when the client names none.
+// listingPageLimit is the most objects, parts or uploads one S3 listing
+// response returns, and the page size when the client names none.
 const listingPageLimit = 1000
 
 // -------------------------------------------------------------------------
@@ -411,8 +411,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 
 	maxUploads, err := parseListingCount(r, "max-uploads", listingPageLimit, listingPageLimit)
 	if err != nil {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
-		return http.StatusBadRequest, err
+		return invalidArgument(w, err)
 	}
 
 	// Fetch one extra to detect truncation
@@ -420,11 +419,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list multipart uploads"), err
 	}
-
-	truncated := len(uploads) > maxUploads
-	if truncated {
-		uploads = uploads[:maxUploads]
-	}
+	uploads, truncated := core.TrimPage(uploads, maxUploads)
 
 	result := xmlListMultipartUploadsResult{
 		Xmlns:       s3XMLNS,
@@ -455,13 +450,11 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *
 
 	maxParts, err := parseListingCount(r, "max-parts", listingPageLimit, listingPageLimit)
 	if err != nil {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
-		return http.StatusBadRequest, err
+		return invalidArgument(w, err)
 	}
 	marker, err := parseListingCount(r, "part-number-marker", 0, math.MaxInt32)
 	if err != nil {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
-		return http.StatusBadRequest, err
+		return invalidArgument(w, err)
 	}
 
 	parts, truncated, err := s.Multipart.ListParts(ctx, bucket, key, uploadID, marker, maxParts)

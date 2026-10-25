@@ -523,7 +523,7 @@ func TestListObjects(t *testing.T) {
 	mustRecordObject(t, s, "bucket/c", "backend-a", 300)
 	mustRecordObject(t, s, "other/x", "backend-a", 400)
 
-	result, err := s.ListObjects(ctx, "bucket/", "", 10)
+	result, err := s.ListObjects(ctx, "bucket/", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -579,15 +579,15 @@ func TestListObjects_ReportsLogicalSizes(t *testing.T) {
 		}
 	}
 
-	flat, err := s.ListObjects(ctx, "bucket/", "", 10)
+	flat, err := s.ListObjects(ctx, "bucket/", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
 	assertSizes(t, flat.Objects)
 
-	delimited, err := s.ListObjectsDelimited(ctx, "bucket/", "/", "", 10)
+	delimited, err := s.ListObjects(ctx, "bucket/", "/", "", 10)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects delimited: %v", err)
 	}
 	assertSizes(t, delimited.Objects)
 }
@@ -602,7 +602,7 @@ func TestListObjects_Pagination(t *testing.T) {
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 	mustRecordObject(t, s, "bucket/c", "backend-a", 300)
 
-	result, err := s.ListObjects(ctx, "bucket/", "", 2)
+	result, err := s.ListObjects(ctx, "bucket/", "", "", 2)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -614,12 +614,32 @@ func TestListObjects_Pagination(t *testing.T) {
 	}
 
 	// Second page
-	result2, err := s.ListObjects(ctx, "bucket/", result.NextContinuationToken, 2)
+	result2, err := s.ListObjects(ctx, "bucket/", "", result.NextContinuationToken, 2)
 	if err != nil {
 		t.Fatalf("ListObjects page 2: %v", err)
 	}
 	if len(result2.Objects) != 1 {
 		t.Errorf("expected 1 object on page 2, got %d", len(result2.Objects))
+	}
+}
+
+// TestListObjects_ZeroMaxKeysIsAnEmptyPage verifies a zero page size returns
+// nothing and reports no truncation in both listing shapes, as S3 answers
+// max-keys=0, even with keys under the prefix.
+func TestListObjects_ZeroMaxKeysIsAnEmptyPage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/dir/b", "backend-a", 100)
+
+	for _, delimiter := range []string{"", "/"} {
+		res, err := s.ListObjects(t.Context(), "bucket/", delimiter, "", 0)
+		if err != nil {
+			t.Fatalf("ListObjects(delimiter=%q): %v", delimiter, err)
+		}
+		if res.KeyCount() != 0 || res.IsTruncated || res.NextContinuationToken != "" {
+			t.Errorf("ListObjects(delimiter=%q, 0) = %+v, want an empty untruncated page", delimiter, res)
+		}
 	}
 }
 
@@ -2872,7 +2892,7 @@ func TestCorruptTimestamp_ListObjects(t *testing.T) {
 		t.Fatalf("corrupt timestamp: %v", err)
 	}
 
-	_, err = s.ListObjects(ctx, "bucket/", "", 100)
+	_, err = s.ListObjects(ctx, "bucket/", "", "", 100)
 	if err == nil {
 		t.Fatal("expected error from corrupt timestamp, got nil")
 	}
@@ -3858,19 +3878,19 @@ func assertUnreadableOnly(t *testing.T, s *Store, key string, size int64) {
 func assertListsOnly(t *testing.T, s *Store, key string) {
 	t.Helper()
 	ctx := context.Background()
-	flat, err := s.ListObjects(ctx, "bucket/", "", 10)
+	flat, err := s.ListObjects(ctx, "bucket/", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
 	if len(flat.Objects) != 1 || flat.Objects[0].ObjectKey != key {
 		t.Errorf("ListObjects = %+v, want only %s", flat.Objects, key)
 	}
-	delimited, err := s.ListObjectsDelimited(ctx, "bucket/", "/", "", 10)
+	delimited, err := s.ListObjects(ctx, "bucket/", "/", "", 10)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects delimited: %v", err)
 	}
 	if len(delimited.Objects) != 1 || delimited.Objects[0].ObjectKey != key {
-		t.Errorf("ListObjectsDelimited = %+v, want only %s", delimited.Objects, key)
+		t.Errorf("ListObjects delimited = %+v, want only %s", delimited.Objects, key)
 	}
 }
 
@@ -4727,7 +4747,7 @@ func TestListObjects_ByteOrder(t *testing.T) {
 	var got []string
 	cursor := ""
 	for {
-		res, err := s.ListObjects(ctx, "", cursor, 3)
+		res, err := s.ListObjects(ctx, "", "", cursor, 3)
 		if err != nil {
 			t.Fatalf("ListObjects(startAfter=%q): %v", cursor, err)
 		}
@@ -4764,7 +4784,7 @@ func TestListObjects_PaginationCoversEveryKeyOnce(t *testing.T) {
 	seen := map[string]int{}
 	cursor := ""
 	for {
-		res, err := s.ListObjects(ctx, "", cursor, 2)
+		res, err := s.ListObjects(ctx, "", "", cursor, 2)
 		if err != nil {
 			t.Fatalf("ListObjects(startAfter=%q): %v", cursor, err)
 		}

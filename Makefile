@@ -338,7 +338,7 @@ fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
 	go test -fuzz=FuzzPatternMatches -fuzztime=$(FUZZ_TIME) ./internal/transport/cors/
 	go test -fuzz=FuzzParseHeaderList -fuzztime=$(FUZZ_TIME) ./internal/transport/cors/
 	go test -fuzz=FuzzParse -fuzztime=$(FUZZ_TIME) ./internal/util/byterange/
-	go test -fuzz=FuzzParseQueryInt -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
+	go test -fuzz=FuzzParseListingCount -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzParseHeader -fuzztime=$(FUZZ_TIME) ./internal/encryption/
 	go test -fuzz=FuzzCiphertextRange -fuzztime=$(FUZZ_TIME) ./internal/encryption/
 	go test -fuzz=FuzzUnpackKeyData -fuzztime=$(FUZZ_TIME) ./internal/encryption/

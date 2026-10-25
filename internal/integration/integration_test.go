@@ -2997,7 +2997,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 		}
 	}
 
-	result, err := testStore.ListObjects(ctx, prefix, "", 1000)
+	result, err := testStore.ListObjects(ctx, prefix, "", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -3006,7 +3006,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 	}
 
 	underscorePrefix := prefix + "has_"
-	result, err = testStore.ListObjects(ctx, underscorePrefix, "", 1000)
+	result, err = testStore.ListObjects(ctx, underscorePrefix, "", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects underscore: %v", err)
 	}
@@ -3014,7 +3014,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 		t.Errorf("underscore prefix got %d objects, want 1", len(result.Objects))
 	}
 
-	result, err = testStore.ListObjects(ctx, prefix, "", 2)
+	result, err = testStore.ListObjects(ctx, prefix, "", "", 2)
 	if err != nil {
 		t.Fatalf("ListObjects page1: %v", err)
 	}
@@ -3025,7 +3025,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 		t.Errorf("page 1 got %d objects, want 2", len(result.Objects))
 	}
 
-	result2, err := testStore.ListObjects(ctx, prefix, result.NextContinuationToken, 2)
+	result2, err := testStore.ListObjects(ctx, prefix, "", result.NextContinuationToken, 2)
 	if err != nil {
 		t.Fatalf("ListObjects page2: %v", err)
 	}

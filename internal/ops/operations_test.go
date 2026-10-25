@@ -1171,8 +1171,8 @@ func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockObjectStore(gomock.NewController(t))
 	store.EXPECT().
-		ListObjectsDelimited(gomock.Any(), "", "/", "", defaultListMaxKeys).
-		Return(&core.ListDelimitedResult{CommonPrefixes: []string{testBucket + "/"}}, nil).
+		ListObjects(gomock.Any(), "", "/", "", defaultListMaxKeys).
+		Return(&core.ListObjectsResult{CommonPrefixes: []string{testBucket + "/"}}, nil).
 		Times(1)
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
@@ -1196,7 +1196,7 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockObjectStore(gomock.NewController(t))
 	store.EXPECT().
-		ListObjects(gomock.Any(), testBucket+"/dir/", "", defaultListMaxKeys).
+		ListObjects(gomock.Any(), testBucket+"/dir/", "", "", defaultListMaxKeys).
 		Return(&core.ListObjectsResult{
 			Objects:     []core.ObjectLocation{{ObjectKey: testBucket + "/dir/a"}, {ObjectKey: testBucket + "/dir/b"}},
 			IsTruncated: true,
@@ -1618,7 +1618,7 @@ func TestDeletePrefix_CountsAndReports(t *testing.T) {
 
 	api.EXPECT().
 		ListObjects(gomock.Any(), prefix, "", "", deletePrefixPageSize).
-		Return(&object.ListObjectsV2Result{Objects: []core.ObjectLocation{
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
 			{ObjectKey: keys[0]}, {ObjectKey: keys[1]}, {ObjectKey: keys[2]},
 		}}, nil).
 		Times(1)

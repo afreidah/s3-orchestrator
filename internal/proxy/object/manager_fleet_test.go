@@ -210,20 +210,7 @@ func listObjectsStore(t *testing.T, resp *core.ListObjectsResult, err error) *st
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
-	store.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(resp, err).AnyTimes()
-	storetest.Permissive(store)
-	return store
-}
-
-// listObjectsDelimitedStore wires a single ListObjectsDelimited response for the
-// delimiter path, which the store now serves as one grouped page.
-func listObjectsDelimitedStore(t *testing.T, resp *core.ListDelimitedResult, err error) *storetest.MockMetadataStore {
-	t.Helper()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	objectsStubs(store)
-	store.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(resp, err).AnyTimes()
 	storetest.Permissive(store)
 	return store
@@ -1919,8 +1906,8 @@ func TestListObjects_Success(t *testing.T) {
 	if len(result.Objects) != 2 {
 		t.Errorf("got %d objects, want 2", len(result.Objects))
 	}
-	if result.KeyCount != 2 {
-		t.Errorf("KeyCount = %d, want 2", result.KeyCount)
+	if result.KeyCount() != 2 {
+		t.Errorf("KeyCount = %d, want 2", result.KeyCount())
 	}
 }
 
@@ -1929,7 +1916,7 @@ func TestListObjects_Success(t *testing.T) {
 // itself is exercised at the store layer (see the sqlite/integration tests).
 func TestListObjects_WithDelimiter(t *testing.T) {
 	t.Parallel()
-	store := listObjectsDelimitedStore(t, &core.ListDelimitedResult{
+	store := listObjectsStore(t, &core.ListObjectsResult{
 		CommonPrefixes: []string{"photos/2024/", "photos/2025/"},
 		Objects:        []core.ObjectLocation{{ObjectKey: "photos/top.jpg", BackendName: "b1"}},
 	}, nil)
@@ -1945,8 +1932,8 @@ func TestListObjects_WithDelimiter(t *testing.T) {
 	if len(result.CommonPrefixes) != 2 {
 		t.Errorf("got %d common prefixes, want 2", len(result.CommonPrefixes))
 	}
-	if result.KeyCount != 3 {
-		t.Errorf("KeyCount = %d, want 3", result.KeyCount)
+	if result.KeyCount() != 3 {
+		t.Errorf("KeyCount = %d, want 3", result.KeyCount())
 	}
 }
 
@@ -1968,8 +1955,8 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
-	if result.KeyCount != 3 {
-		t.Errorf("KeyCount = %d, want 3", result.KeyCount)
+	if result.KeyCount() != 3 {
+		t.Errorf("KeyCount = %d, want 3", result.KeyCount())
 	}
 	if !result.IsTruncated {
 		t.Error("expected IsTruncated=true when store has more data")

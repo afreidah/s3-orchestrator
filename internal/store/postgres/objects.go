@@ -64,14 +64,16 @@ func (s *Store) ListedPathStates(ctx context.Context, backend string, paths []st
 	return s.direct().ListedPathStates(ctx, backend, paths)
 }
 
-// ListObjects returns objects matching the given prefix, sorted by key.
-// Supports pagination via startAfter and maxKeys. Returns one extra row to
-// detect truncation.
-func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 1000
-	}
+// ListObjects returns one page of the keys under prefix after startAfter. A
+// delimiter rolls the keys below it into CommonPrefixes; an empty one lists
+// every key flat.
+func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
+	return core.ListPage(ctx, prefix, delimiter, startAfter, maxKeys, s.listFlat, s.listDelimited)
+}
 
+// listFlat returns the keys under prefix sorted by key, fetching one extra row
+// to detect truncation.
+func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Fetch one extra to detect truncation
@@ -112,15 +114,11 @@ func listedIdentity(etag *string) *core.ObjectIdentity {
 	return &core.ObjectIdentity{ETag: *etag}
 }
 
-// ListObjectsDelimited groups a delimiter listing in Postgres with a
-// recursive-CTE loose index scan (sqlc/queries/objects.sql). Comparisons run
-// under COLLATE "C", backed by idx_object_locations_key_collate_c, so groups
-// come back in the byte order SQLite and S3 use. The delimiter must be
-// non-empty; callers route empty-delimiter lists to ListObjects.
-func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 1000
-	}
+// listDelimited groups a delimiter listing in Postgres with a recursive-CTE
+// loose index scan (sqlc/queries/objects.sql). Comparisons run under
+// COLLATE "C", backed by idx_object_locations_key_collate_c, so groups come
+// back in the byte order SQLite and S3 use.
+func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	rows, err := s.queries.ListObjectsDelimited(ctx, db.ListObjectsDelimitedParams{

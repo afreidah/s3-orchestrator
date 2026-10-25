@@ -1,13 +1,12 @@
 // -------------------------------------------------------------------------------
-// ListObjects Tests - Store Routing and Response Mapping
+// ListObjects Tests - Store Pass-Through
 //
 // Author: Alex Freidah
 //
-// Verifies Manager.ListObjects routes to the right store query (the
-// delimiter-grouped query when a delimiter is set, the flat prefix listing
-// otherwise) and maps the returned page into the S3 response shape. The
-// grouping and pagination logic itself lives in and is tested at the store
-// layer (sqlite unit tests + the Postgres integration parity test).
+// Verifies Manager.ListObjects hands the store the request as given and
+// returns its page. The grouping and pagination logic itself lives in and is
+// tested at the store layer (sqlite unit tests + the Postgres integration
+// parity test).
 // -------------------------------------------------------------------------------
 
 package object
@@ -50,59 +49,28 @@ type listTestRuntime struct {
 
 func (r listTestRuntime) Acct() *accounting.Recorder { return r.acct }
 
-// TestListObjects_DelimiterRoutesToStore verifies a delimiter list calls the
-// store's grouped query and maps CommonPrefixes, leaf objects, truncation,
-// token, and KeyCount into the response.
-func TestListObjects_DelimiterRoutesToStore(t *testing.T) {
+// TestListObjects_PassesThePageThrough verifies the manager hands the store
+// the request as given and returns its page untouched, with KeyCount counting
+// each common prefix as one entry.
+func TestListObjects_PassesThePageThrough(t *testing.T) {
+	page := &core.ListObjectsResult{
+		CommonPrefixes:        []string{"p/a/", "p/b/"},
+		Objects:               []core.ObjectLocation{{ObjectKey: "p/file.txt", BackendName: "b1"}},
+		IsTruncated:           true,
+		NextContinuationToken: "p/b0",
+	}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	// Times(1)/Times(0) is the routing assertion: a delimiter list must reach
-	// the grouped query and never the flat one.
-	store.EXPECT().ListObjectsDelimited(gomock.Any(), "p/", "/", "", 1000).
-		Return(&core.ListDelimitedResult{
-			CommonPrefixes:        []string{"p/a/", "p/b/"},
-			Objects:               []core.ObjectLocation{{ObjectKey: "p/file.txt", BackendName: "b1"}},
-			IsTruncated:           true,
-			NextContinuationToken: "p/b0",
-		}, nil).Times(1)
-	store.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	store.EXPECT().ListObjects(gomock.Any(), "p/", "/", "p/0", 3).Return(page, nil).Times(1)
 	m := newListTestManager(store)
 
-	res, err := m.ListObjects(context.Background(), "p/", "/", "", 1000)
+	res, err := m.ListObjects(context.Background(), "p/", "/", "p/0", 3)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
-	if len(res.CommonPrefixes) != 2 || len(res.Objects) != 1 {
-		t.Errorf("got %d prefixes / %d objects, want 2 / 1", len(res.CommonPrefixes), len(res.Objects))
+	if res != page {
+		t.Errorf("ListObjects = %+v, want the store's page", res)
 	}
-	if res.KeyCount != 3 {
-		t.Errorf("KeyCount = %d, want 3", res.KeyCount)
-	}
-	if !res.IsTruncated || res.NextContinuationToken != "p/b0" {
-		t.Errorf("truncation = %v token = %q, want true / p/b0", res.IsTruncated, res.NextContinuationToken)
-	}
-}
-
-// TestListObjects_NoDelimiterRoutesToFlatStore verifies a non-delimiter list
-// calls the flat store query and maps its objects, truncation, and token.
-func TestListObjects_NoDelimiterRoutesToFlatStore(t *testing.T) {
-	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().ListObjects(gomock.Any(), "p/", "", 1000).
-		Return(&core.ListObjectsResult{
-			Objects:               []core.ObjectLocation{{ObjectKey: "p/1"}, {ObjectKey: "p/2"}},
-			IsTruncated:           true,
-			NextContinuationToken: "p/2",
-		}, nil).Times(1)
-	store.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	m := newListTestManager(store)
-
-	res, err := m.ListObjects(context.Background(), "p/", "", "", 1000)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if len(res.CommonPrefixes) != 0 {
-		t.Errorf("CommonPrefixes = %v, want none", res.CommonPrefixes)
-	}
-	if res.KeyCount != 2 || res.NextContinuationToken != "p/2" || !res.IsTruncated {
-		t.Errorf("got KeyCount=%d token=%q trunc=%v, want 2 / p/2 / true", res.KeyCount, res.NextContinuationToken, res.IsTruncated)
+	if res.KeyCount() != 3 {
+		t.Errorf("KeyCount = %d, want 3", res.KeyCount())
 	}
 }

@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/mock/gomock"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -89,14 +87,6 @@ func bodyReader(body string) io.Reader {
 	return strings.NewReader(body)
 }
 
-// seedEmptyListing gives the store a real empty page to answer a listing with.
-// The permissive default returns a nil result, which the handler dereferences,
-// so an authorized list needs this to reach a status at all.
-func seedEmptyListing(m *storetest.MockMetadataStore) {
-	m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.ListObjectsResult{}, nil).AnyTimes()
-}
-
 // readOnly is the grant a client that may look but not touch holds.
 var readOnly = core.PermListBuckets | core.PermList | core.PermRead | core.PermTags
 
@@ -147,7 +137,7 @@ func TestPermissions_ReadOnlyGrantServesReads(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if serveWithGrant(t, readOnly, tc.method, tc.target, "", seedEmptyListing) == http.StatusForbidden {
+			if serveWithGrant(t, readOnly, tc.method, tc.target, "") == http.StatusForbidden {
 				t.Errorf("status = 403, want the request to be authorized")
 			}
 		})
@@ -189,7 +179,7 @@ func TestPermissions_FullGrantIsUnchanged(t *testing.T) {
 	} {
 		t.Run(tc.method, func(t *testing.T) {
 			t.Parallel()
-			if serveWithGrant(t, core.PermAll, tc.method, tc.target, tc.body, seedEmptyListing) == http.StatusForbidden {
+			if serveWithGrant(t, core.PermAll, tc.method, tc.target, tc.body) == http.StatusForbidden {
 				t.Errorf("%s %s = 403 under a full grant", tc.method, tc.target)
 			}
 		})

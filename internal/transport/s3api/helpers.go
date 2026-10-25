@@ -214,20 +214,6 @@ func parsePath(path string) (bucket string, key string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// parseQueryInt parses an integer query parameter, clamping it to [1, maxVal].
-// Returns defaultVal when the parameter is absent or invalid.
-func parseQueryInt(r *http.Request, param string, defaultVal, maxVal int) int {
-	s := r.URL.Query().Get(param)
-	if s == "" {
-		return defaultVal
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil || v < 1 || v > maxVal {
-		return defaultVal
-	}
-	return v
-}
-
 // parseListingCount reads a paging parameter the way S3 does: absent or empty
 // means defaultVal, a value above ceiling is capped to it, and anything that
 // is not an integer between 0 and 2147483647 is refused. The error is the
@@ -242,6 +228,13 @@ func parseListingCount(r *http.Request, param string, defaultVal, ceiling int) (
 		return 0, fmt.Errorf("Argument %s must be an integer between 0 and 2147483647", param) //nolint:staticcheck // ST1005: S3's own message, capitalised as S3 returns it
 	}
 	return min(int(v), ceiling), nil
+}
+
+// invalidArgument refuses a request whose query parameter S3 would reject,
+// carrying err's message as the InvalidArgument response body.
+func invalidArgument(w http.ResponseWriter, err error) (int, error) {
+	writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+	return http.StatusBadRequest, err
 }
 
 // Query keys an object request may carry. S3 selects the operation from the

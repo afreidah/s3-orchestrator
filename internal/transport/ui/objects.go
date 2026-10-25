@@ -48,12 +48,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startAfter := r.URL.Query().Get("startAfter")
-	maxKeys := 200
-	if mk := r.URL.Query().Get("maxKeys"); mk != "" {
-		if parsed, err := strconv.Atoi(mk); err == nil && parsed > 0 && parsed <= 200 {
-			maxKeys = parsed
-		}
-	}
+	maxKeys := httputil.QueryLimit(r.URL.Query().Get("maxKeys"), 200, 200)
 
 	result, err := h.dashboardOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {

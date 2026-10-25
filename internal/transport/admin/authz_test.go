@@ -389,8 +389,8 @@ func TestAuthz_RootCredentialReachesEverything(t *testing.T) {
 	t.Parallel()
 
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
-	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.ListDelimitedResult{}, nil).Times(1)
+	mock.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.ListObjectsResult{}, nil).Times(1)
 
 	w := httptest.NewRecorder()
 	authzMux(t, mock, core.PermAll, nil).ServeHTTP(w, doRoot(t, http.MethodGet, "/admin/api/objects?prefix=", ""))
@@ -406,8 +406,8 @@ func TestAuthz_GrantedOperationReachesTheStore(t *testing.T) {
 	t.Parallel()
 
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
-	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.ListDelimitedResult{}, nil).Times(1)
+	mock.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.ListObjectsResult{}, nil).Times(1)
 
 	w := httptest.NewRecorder()
 	authzMux(t, mock, core.PermList, nil).ServeHTTP(w, asGranted(t, http.MethodGet, "/admin/api/objects?prefix=photos/"))

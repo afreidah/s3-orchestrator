@@ -35,7 +35,7 @@ type ObjectAPI interface {
 	PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error)
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
-	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error)
+	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error)
 	GetObjectTags(ctx context.Context, key string) ([]core.Tag, error)
 	PutObjectTags(ctx context.Context, key string, tags []core.Tag) error
 	DeleteObjectTags(ctx context.Context, key string) error

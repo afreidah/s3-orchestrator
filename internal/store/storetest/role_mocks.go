@@ -148,18 +148,18 @@ func (mr *MockObjectStoreMockRecorder) ImportObject(ctx, req any) *gomock.Call {
 }
 
 // ListObjects mocks base method.
-func (m *MockObjectStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
+func (m *MockObjectStore) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjects", ctx, prefix, startAfter, maxKeys)
+	ret := m.ctrl.Call(m, "ListObjects", ctx, prefix, delimiter, startAfter, maxKeys)
 	ret0, _ := ret[0].(*core.ListObjectsResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjects indicates an expected call of ListObjects.
-func (mr *MockObjectStoreMockRecorder) ListObjects(ctx, prefix, startAfter, maxKeys any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) ListObjects(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockObjectStore)(nil).ListObjects), ctx, prefix, startAfter, maxKeys)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockObjectStore)(nil).ListObjects), ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
 // ListObjectsByBackend mocks base method.
@@ -190,21 +190,6 @@ func (m *MockObjectStore) ListObjectsByBackendKeyAsc(ctx context.Context, backen
 func (mr *MockObjectStoreMockRecorder) ListObjectsByBackendKeyAsc(ctx, backendName, afterKey, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackendKeyAsc", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsByBackendKeyAsc), ctx, backendName, afterKey, limit)
-}
-
-// ListObjectsDelimited mocks base method.
-func (m *MockObjectStore) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjectsDelimited", ctx, prefix, delimiter, startAfter, maxKeys)
-	ret0, _ := ret[0].(*core.ListDelimitedResult)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListObjectsDelimited indicates an expected call of ListObjectsDelimited.
-func (mr *MockObjectStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockObjectStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
 // ListedPathStates mocks base method.

@@ -65,8 +65,8 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 func TestHandleListObjects_Happy(t *testing.T) {
 	t.Parallel()
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
-	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&core.ListDelimitedResult{
+	mock.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.ListObjectsResult{
 			CommonPrefixes:        []string{"photos/", "docs/"},
 			Objects:               []core.ObjectLocation{{ObjectKey: "readme.txt", SizeBytes: 42}},
 			IsTruncated:           true,
@@ -103,11 +103,11 @@ func TestHandleListObjects_DelimiterDefaultAndFlat(t *testing.T) {
 	t.Parallel()
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
 	mock.EXPECT().
-		ListObjectsDelimited(gomock.Any(), gomock.Any(), "/", gomock.Any(), gomock.Any()).
-		Return(&core.ListDelimitedResult{CommonPrefixes: []string{"photos/"}}, nil).
+		ListObjects(gomock.Any(), gomock.Any(), "/", gomock.Any(), gomock.Any()).
+		Return(&core.ListObjectsResult{CommonPrefixes: []string{"photos/"}}, nil).
 		Times(1)
 	mock.EXPECT().
-		ListObjects(gomock.Any(), "bucket/dir/", gomock.Any(), gomock.Any()).
+		ListObjects(gomock.Any(), "bucket/dir/", "", gomock.Any(), gomock.Any()).
 		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
 			{ObjectKey: "bucket/dir/a"}, {ObjectKey: "bucket/dir/b"},
 		}}, nil).
@@ -143,7 +143,7 @@ func TestHandleListObjects_DelimiterDefaultAndFlat(t *testing.T) {
 func TestHandleListObjects_StoreError(t *testing.T) {
 	t.Parallel()
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
-	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	mock.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("boom")).Times(1)
 	mux := http.NewServeMux()
 	newObjectsHandler(t, mock).Register(mux)
@@ -397,7 +397,7 @@ func TestHandleDeletePrefix_ReportsCount(t *testing.T) {
 	_, api, mux := objectsAPIHandler(t)
 	keys := []string{"bucket/dir/a", "bucket/dir/b"}
 	api.EXPECT().ListObjects(gomock.Any(), "bucket/dir/", "", "", gomock.Any()).
-		Return(&object.ListObjectsV2Result{Objects: []core.ObjectLocation{
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
 			{ObjectKey: keys[0]}, {ObjectKey: keys[1]},
 		}}, nil).Times(1)
 	api.EXPECT().DeleteObjects(gomock.Any(), keys).
@@ -439,7 +439,7 @@ func TestHandleDeletePrefix_PartialFailureIsReported(t *testing.T) {
 	_, api, mux := objectsAPIHandler(t)
 	keys := []string{"bucket/dir/a", "bucket/dir/b"}
 	api.EXPECT().ListObjects(gomock.Any(), "bucket/dir/", "", "", gomock.Any()).
-		Return(&object.ListObjectsV2Result{Objects: []core.ObjectLocation{
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
 			{ObjectKey: keys[0]}, {ObjectKey: keys[1]},
 		}}, nil).Times(1)
 	api.EXPECT().DeleteObjects(gomock.Any(), keys).

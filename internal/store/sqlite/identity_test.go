@@ -168,7 +168,7 @@ func TestListObjects_CarriesTheStoredETag(t *testing.T) {
 	}
 	mustRecordObject(t, s, "bucket/without-etag", "backend-a", 20)
 
-	page, err := s.ListObjects(ctx, "bucket/", "", 10)
+	page, err := s.ListObjects(ctx, "bucket/", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -198,9 +198,9 @@ func TestListObjectsDelimited_CarriesTheStoredETag(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	page, err := s.ListObjectsDelimited(ctx, "bucket/", "/", "", 10)
+	page, err := s.ListObjects(ctx, "bucket/", "/", "", 10)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects delimited: %v", err)
 	}
 	for _, o := range page.Objects {
 		if o.ObjectKey != "bucket/leaf.txt" {

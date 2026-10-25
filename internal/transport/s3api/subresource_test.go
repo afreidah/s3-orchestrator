@@ -26,11 +26,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-
-	"go.uber.org/mock/gomock"
 )
 
 // -------------------------------------------------------------------------
@@ -292,14 +287,9 @@ func TestBucketSubresource_AllowsWhatClientsActuallySend(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			// The listings have to reach the store for the guard to be what
-			// the status reports, so both listing shapes answer empty.
-			ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-				m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(&core.ListObjectsResult{}, nil).AnyTimes()
-				m.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(&core.ListDelimitedResult{}, nil).AnyTimes()
-			})
+			// The listings reach the permissive store, which answers an empty
+			// page, so the guard is what the status reports.
+			ts, _, _ := newTestServer(t)
 
 			url := ts.URL + "/mybucket"
 			if tc.query != "" {

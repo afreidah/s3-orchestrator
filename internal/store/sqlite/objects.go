@@ -99,16 +99,18 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 // LISTING
 // -------------------------------------------------------------------------
 
-// ListObjects returns objects matching the given prefix, sorted by key.
-// Supports pagination via startAfter and maxKeys. Returns one extra row to
-// detect truncation. Uses a subquery with GROUP BY to deduplicate replicated
-// objects (equivalent to DISTINCT ON in PostgreSQL). Unmanaged rows are left
-// out because clients cannot read them.
-func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 1000
-	}
+// ListObjects returns one page of the keys under prefix after startAfter. A
+// delimiter rolls the keys below it into CommonPrefixes; an empty one lists
+// every key flat. Unmanaged rows are left out because clients cannot read
+// them.
+func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
+	return core.ListPage(ctx, prefix, delimiter, startAfter, maxKeys, s.listFlat, s.listDelimited)
+}
 
+// listFlat returns the keys under prefix sorted by key, fetching one extra row
+// to detect truncation. A subquery with GROUP BY deduplicates replicated
+// objects (equivalent to DISTINCT ON in PostgreSQL).
+func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
@@ -152,15 +154,11 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 	return n, nil
 }
 
-// ListObjectsDelimited groups a delimiter listing inside SQLite with a recursive
-// CTE that seeks past each group instead of scanning through it: the skip bound
-// is the CommonPrefix with its last byte incremented, or the leaf key. Ordering
-// is BINARY collation (byte order). The delimiter must be non-empty. Unmanaged
-// rows are left out, as in ListObjects.
-func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 1000
-	}
+// listDelimited groups a delimiter listing inside SQLite with a recursive CTE
+// that seeks past each group instead of scanning through it: the skip bound is
+// the CommonPrefix with its last byte incremented, or the leaf key. Ordering is
+// BINARY collation (byte order).
+func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// dpos    = position of the first delimiter after the prefix (0 = none -> leaf)

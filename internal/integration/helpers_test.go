@@ -1076,11 +1076,11 @@ func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.Cl
 
 // ListObjects is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
+func (f *FailableStore) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
+	return f.inner.ListObjects(ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
 // CreateMultipartUpload is an integration-test fixture helper; see file header for

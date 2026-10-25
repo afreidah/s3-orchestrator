@@ -33,7 +33,7 @@ func TestListObjectsV2_Success(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
@@ -74,8 +74,8 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(&core.ListDelimitedResult{
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
 				CommonPrefixes: []string{"mybucket/photos/"},
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/readme.txt", BackendName: "b1", SizeBytes: 50, CreatedAt: now},
@@ -111,7 +111,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 	now := time.Now()
 	marker := "mybucket/b.txt"
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
@@ -158,7 +158,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 func TestListObjectsV2_Empty(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{},
 			}, nil).AnyTimes()
@@ -200,7 +200,7 @@ func TestListObjectsV1_Success(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
@@ -243,7 +243,7 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
@@ -273,7 +273,7 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 func TestListObjectsV1_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, &core.S3Error{
 				StatusCode: 500,
 				Code:       "InternalError",
@@ -289,14 +289,15 @@ func TestListObjectsV1_StoreError(t *testing.T) {
 	}
 }
 
-// TestListObjectsV1_Pagination verifies the list objects v1 pagination contract.
-// Asserts that status = , want 200.
+// TestListObjectsV1_Pagination verifies a truncated V1 page reports NextMarker,
+// stripped of the bucket prefix, only when the request named a delimiter, as
+// S3 does; without one the client resumes from the last Key.
 func TestListObjectsV1_Pagination(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	marker := "mybucket/b.txt"
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
@@ -306,33 +307,135 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 				NextContinuationToken: marker,
 			}, nil).AnyTimes()
 	})
-	// The store truncates to maxKeys=2 and reports the continuation marker,
-	// which the V1 handler maps to NextMarker.
-	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)
+
+	cases := []struct {
+		query, wantNextMarker string
+	}{
+		{"?max-keys=2", ""},
+		{"?max-keys=2&delimiter=/", "b.txt"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			result := fetchListPage(t, ts, ts.URL+"/mybucket/"+tc.query, http.StatusOK)
+			if !result.IsTruncated {
+				t.Error("expected IsTruncated=true")
+			}
+			if result.NextMarker != tc.wantNextMarker {
+				t.Errorf("NextMarker = %q, want %q", result.NextMarker, tc.wantNextMarker)
+			}
+		})
+	}
+}
+
+// listPageFields is the subset of a ListBucketResult, or of the Error a refused
+// listing returns, that the paging tests inspect across both list versions.
+type listPageFields struct {
+	Code                  string   `xml:"Code"`
+	MaxKeys               int      `xml:"MaxKeys"`
+	KeyCount              int      `xml:"KeyCount"`
+	IsTruncated           bool     `xml:"IsTruncated"`
+	NextMarker            string   `xml:"NextMarker"`
+	ContinuationToken     string   `xml:"ContinuationToken"`
+	NextContinuationToken string   `xml:"NextContinuationToken"`
+	StartAfter            string   `xml:"StartAfter"`
+	Keys                  []string `xml:"Contents>Key"`
+}
+
+// fetchListPage issues a listing request, asserts its status, and decodes the
+// paging fields of whichever document came back.
+func fetchListPage(t *testing.T, ts *httptest.Server, url string, wantStatus int) listPageFields {
+	t.Helper()
+	resp := doReq(t, ts, http.MethodGet, url, nil)
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-
 	body, _ := io.ReadAll(resp.Body)
-
-	type listResult struct {
-		XMLName     xml.Name `xml:"ListBucketResult"`
-		IsTruncated bool     `xml:"IsTruncated"`
-		NextMarker  string   `xml:"NextMarker"`
-		MaxKeys     int      `xml:"MaxKeys"`
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("status = %d, want %d: %s", resp.StatusCode, wantStatus, body)
 	}
-	var result listResult
+	var result listPageFields
 	if err := xml.Unmarshal(body, &result); err != nil {
-		t.Fatalf("failed to parse XML: %v", err)
+		t.Fatalf("parse xml: %v", err)
 	}
-	if !result.IsTruncated {
-		t.Error("expected IsTruncated=true")
+	return result
+}
+
+// listVersions are the query strings that select each ListObjects version.
+var listVersions = []string{"/mybucket/?list-type=2&", "/mybucket/?"}
+
+// TestListObjects_InvalidMaxKeysRefused verifies that a max-keys that is not an
+// integer between 0 and 2147483647 is refused with InvalidArgument in both list
+// versions, rather than silently listing a default-sized page.
+func TestListObjects_InvalidMaxKeysRefused(t *testing.T) {
+	t.Parallel()
+	ts, _, _ := newTestServer(t)
+	for _, version := range listVersions {
+		for _, value := range []string{"blah", "-1", "2147483648"} {
+			t.Run(version+value, func(t *testing.T) {
+				result := fetchListPage(t, ts, ts.URL+version+"max-keys="+value, http.StatusBadRequest)
+				if result.Code != "InvalidArgument" {
+					t.Errorf("Code = %q, want InvalidArgument", result.Code)
+				}
+			})
+		}
 	}
-	// NextMarker should have bucket prefix stripped
-	if strings.HasPrefix(result.NextMarker, "mybucket/") {
-		t.Error("NextMarker should have bucket prefix stripped")
+}
+
+// TestListObjects_MaxKeysReachesTheStore verifies the page size each max-keys
+// asks the store for: the default when absent, the value itself when in range,
+// and the 1000 cap when above it, with MaxKeys echoing what was applied.
+func TestListObjects_MaxKeysReachesTheStore(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"", listingPageLimit},
+		{"max-keys=0", 0},
+		{"max-keys=7", 7},
+		{"max-keys=5000", listingPageLimit},
+	}
+	for _, version := range listVersions {
+		for _, tc := range cases {
+			t.Run(version+tc.query, func(t *testing.T) {
+				t.Parallel()
+				ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+					m.EXPECT().ListObjects(gomock.Any(), "mybucket/", "", "", tc.want).
+						Return(&core.ListObjectsResult{}, nil).Times(1)
+				})
+				result := fetchListPage(t, ts, ts.URL+version+tc.query, http.StatusOK)
+				if result.MaxKeys != tc.want {
+					t.Errorf("MaxKeys = %d, want %d", result.MaxKeys, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// TestListObjectsV2_EchoesStartAfterAndToken verifies V2 echoes StartAfter and
+// ContinuationToken as sent, resumes from the token when both are present,
+// and resumes from start-after alone otherwise.
+func TestListObjectsV2_EchoesStartAfterAndToken(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, query, wantStartAfter, wantToken, wantStoreAfter string
+	}{
+		{"start-after", "start-after=b.txt", "b.txt", "", "mybucket/b.txt"},
+		{"token wins", "start-after=b.txt&continuation-token=d.txt", "b.txt", "d.txt", "mybucket/d.txt"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+				m.EXPECT().ListObjects(gomock.Any(), "mybucket/", "", tc.wantStoreAfter, listingPageLimit).
+					Return(&core.ListObjectsResult{}, nil).Times(1)
+			})
+			result := fetchListPage(t, ts, ts.URL+"/mybucket/?list-type=2&"+tc.query, http.StatusOK)
+			if result.StartAfter != tc.wantStartAfter {
+				t.Errorf("StartAfter = %q, want %q", result.StartAfter, tc.wantStartAfter)
+			}
+			if result.ContinuationToken != tc.wantToken {
+				t.Errorf("ContinuationToken = %q, want %q", result.ContinuationToken, tc.wantToken)
+			}
+		})
 	}
 }
 
@@ -402,7 +505,7 @@ func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
 					{

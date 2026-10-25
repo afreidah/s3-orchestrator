@@ -65,7 +65,7 @@ func pageAllObjects(t *testing.T, s *Store, prefix string, pageSize int) []strin
 	var got []string
 	cursor := ""
 	for {
-		res, err := s.ListObjects(ctx, prefix, cursor, pageSize)
+		res, err := s.ListObjects(ctx, prefix, "", cursor, pageSize)
 		if err != nil {
 			t.Fatalf("ListObjects(startAfter=%q): %v", cursor, err)
 		}
@@ -187,9 +187,9 @@ func TestStoreInt_ListObjects_AgreesWithDelimitedOrder(t *testing.T) {
 
 	// A delimiter no key contains makes the delimited listing return the same
 	// leaves as the flat one, so only the ordering can differ.
-	res, err := s.ListObjectsDelimited(ctx, prefix, "|", "", 1000)
+	res, err := s.ListObjects(ctx, prefix, "|", "", 1000)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects delimited: %v", err)
 	}
 	delimited := make([]string, 0, len(res.Objects))
 	for i := range res.Objects {

@@ -777,11 +777,7 @@ func TestPgAdapter_DeleteMultipartUpload_ReturnsParts(t *testing.T) {
 	ctx := context.Background()
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		for n, path := range map[int]string{1: "p1", 2: ""} {
-			if _, err := a.UpsertPart(ctx, partParams(uploadID, n, path, "e", int64(n*10))); err != nil {
-				t.Fatalf("UpsertPart(%d): %v", n, err)
-			}
-		}
+		upsertSizedParts(t, a, uploadID)
 		backend, heartbeat, err := a.LockMultipartUpload(ctx, uploadID)
 		if err != nil || backend != "backend-a" || !heartbeat.IsZero() {
 			t.Fatalf("LockMultipartUpload = %q, %v, %v; want backend-a with no mark", backend, heartbeat, err)
@@ -798,6 +794,17 @@ func TestPgAdapter_DeleteMultipartUpload_ReturnsParts(t *testing.T) {
 			t.Errorf("second delete = %+v, %v; want nothing", left, err)
 		}
 	})
+}
+
+// upsertSizedParts records part 1 at p1 and part 2 at its fixed path, each
+// sized ten bytes per part number, which is what assertRemovedParts expects.
+func upsertSizedParts(t *testing.T, a *pgTxAdapter, uploadID string) {
+	t.Helper()
+	for n, path := range map[int]string{1: "p1", 2: ""} {
+		if _, err := a.UpsertPart(context.Background(), partParams(uploadID, n, path, "e", int64(n*10))); err != nil {
+			t.Fatalf("UpsertPart(%d): %v", n, err)
+		}
+	}
 }
 
 // assertRemovedParts checks the removed parts are part 1 at p1 and part 2 at
@@ -1054,19 +1061,19 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 func assertUnreadableHidden(t *testing.T, s *Store, key string) {
 	t.Helper()
 	ctx := context.Background()
-	flat, err := s.ListObjects(ctx, key, "", 10)
+	flat, err := s.ListObjects(ctx, key, "", "", 10)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
 	if len(flat.Objects) != 0 {
 		t.Errorf("ListObjects = %+v, want the unreadable row left out", flat.Objects)
 	}
-	delimited, err := s.ListObjectsDelimited(ctx, key, "/", "", 10)
+	delimited, err := s.ListObjects(ctx, key, "/", "", 10)
 	if err != nil {
-		t.Fatalf("ListObjectsDelimited: %v", err)
+		t.Fatalf("ListObjects delimited: %v", err)
 	}
 	if len(delimited.Objects) != 0 || len(delimited.CommonPrefixes) != 0 {
-		t.Errorf("ListObjectsDelimited = %+v, want the unreadable row left out", delimited)
+		t.Errorf("ListObjects delimited = %+v, want the unreadable row left out", delimited)
 	}
 
 	unreadable, err := s.ListCopiesByForm(ctx, &unreadableCopies, 10000, core.Cursor{})
