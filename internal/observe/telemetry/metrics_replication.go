@@ -104,24 +104,6 @@ var (
 		},
 	)
 
-	// ReplicationDuration tracks replication worker cycle time.
-	ReplicationDuration = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "s3o_replication_duration_seconds",
-			Help:    "Replication worker cycle time in seconds",
-			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
-		},
-	)
-
-	// ReplicationRunsTotal counts replication worker executions.
-	ReplicationRunsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_replication_runs_total",
-			Help: "Total number of replication worker runs",
-		},
-		[]string{"status"},
-	)
-
 	// ReplicationHealthCopiesTotal counts copies created to replace copies on
 	// circuit-broken backends.
 	ReplicationHealthCopiesTotal = promauto.NewCounter(
@@ -163,24 +145,6 @@ var (
 		prometheus.CounterOpts{
 			Name: "s3o_over_replication_errors_total",
 			Help: "Total number of over-replication cleanup errors",
-		},
-	)
-
-	// OverReplicationRunsTotal counts over-replication cleanup worker executions.
-	OverReplicationRunsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_over_replication_runs_total",
-			Help: "Total number of over-replication cleanup worker runs",
-		},
-		[]string{"status"},
-	)
-
-	// OverReplicationDuration tracks over-replication cleanup worker cycle time.
-	OverReplicationDuration = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "s3o_over_replication_duration_seconds",
-			Help:    "Over-replication cleanup worker cycle time in seconds",
-			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
 	)
 )

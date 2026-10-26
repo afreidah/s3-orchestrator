@@ -286,7 +286,7 @@ func BuildWorkers(s *Stack, m storetest.MetadataStore) *Workers {
 func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features WorkerFeatures) *Workers {
 	rt, coord := s.Runtime, s.Coord
 	return &Workers{
-		Rebalancer: worker.NewRebalancer(rt, coord, m),
+		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: m}),
 		Replicator: worker.NewReplicator(worker.ReplicatorDeps{
 			Ops:       rt,
 			Placement: coord,
@@ -294,7 +294,7 @@ func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features Work
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(rt, coord, m),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: m}),
 		CleanupWorker: worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 			Ops: rt, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,

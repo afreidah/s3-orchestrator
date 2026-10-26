@@ -25,6 +25,12 @@ import (
 // maxBatchDeleteKeys is the most keys one S3 DeleteObjects request accepts.
 const maxBatchDeleteKeys = 1000
 
+// BatchDeleteRequests is how many DeleteObjects requests a batch of n keys is
+// sent as, so a caller charging for them counts what was actually sent.
+func BatchDeleteRequests(n int) int {
+	return (n + maxBatchDeleteKeys - 1) / maxBatchDeleteKeys
+}
+
 // BatchDeleter is the optional capability for backends that delete many keys
 // per request. DeleteObjects reports the keys it could not delete, keyed by
 // key; a key absent from the map was deleted or already absent. A non-nil

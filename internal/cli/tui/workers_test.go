@@ -70,7 +70,7 @@ func TestApplyWorkers(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.workers.loading, m.workers.unavailable = true, "stale"
-	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "scrubber"}}})
+	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "scrub"}}})
 
 	if m.workers.loading || m.workers.unavailable != "" || m.workers.err != nil {
 		t.Errorf("state = %+v", m.workers)

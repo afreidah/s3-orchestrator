@@ -87,3 +87,18 @@ func TestAtomicConfig_ConcurrentAccess(t *testing.T) {
 		t.Error("Load after concurrent writes should not be nil")
 	}
 }
+
+// TestReloadable_EmbeddedAccessors verifies a struct embedding Reloadable
+// reports no config until one is set, then the one set most recently.
+func TestReloadable_EmbeddedAccessors(t *testing.T) {
+	t.Parallel()
+	var component struct{ Reloadable[string] }
+	if got := component.Config(); got != nil {
+		t.Fatalf("Config before SetConfig = %v, want nil", *got)
+	}
+	component.SetConfig(new("alpha"))
+	component.SetConfig(new("beta"))
+	if got := component.Config(); got == nil || *got != "beta" {
+		t.Errorf("Config = %v, want pointer to beta", got)
+	}
+}

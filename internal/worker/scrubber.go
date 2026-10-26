@@ -31,7 +31,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -61,12 +60,12 @@ type ScrubberStore interface {
 // stored content hash. Also supports backfilling hashes for objects that
 // were written before integrity was enabled.
 type Scrubber struct {
+	syncutil.Reloadable[config.IntegrityConfig]
 	log       *slog.Logger
 	deps      Ops
 	placement Placement
 	store     ScrubberStore
 	hasher    *storedHasher
-	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 	telemetry.SharedGauges
 }
 
@@ -91,19 +90,9 @@ func NewScrubber(deps ScrubberDeps) *Scrubber {
 		deps:      deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,
-		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec, "scrubber"),
-		log:       slog.Default().With(logfmt.Component("scrubber")),
+		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec),
+		log:       workerLogger(audit.WorkloadScrub),
 	}
-}
-
-// SetConfig atomically stores the integrity configuration.
-func (s *Scrubber) SetConfig(cfg *config.IntegrityConfig) {
-	s.cfg.Store(cfg)
-}
-
-// Config returns the current integrity configuration.
-func (s *Scrubber) Config() *config.IntegrityConfig {
-	return s.cfg.Load()
 }
 
 // -------------------------------------------------------------------------
@@ -154,7 +143,7 @@ func (o CopyOutcome) String() string {
 // A mismatch is handled as the sweep handles one: the bytes are discarded and
 // the ledger row dropped, so the replicator rebuilds from a healthy copy.
 func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
-	return runOpsCycle(ctx, "ScrubKey", "scrub_key", audit.WorkloadScrub, func(ctx context.Context) ([]CopyVerification, error) {
+	return runOps(ctx, audit.WorkloadScrub, "scrub_key", func(ctx context.Context) ([]CopyVerification, error) {
 		locations, err := s.store.GetAllObjectLocations(ctx, key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
@@ -195,7 +184,7 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 // number of objects checked and the number of hash mismatches found.
 func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) batch.Summary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return runTickCycle(ctx, "Scrub", "scrub", audit.WorkloadScrub, func(ctx context.Context) batch.Summary {
+	return runTickCycle(ctx, audit.WorkloadScrub, func(ctx context.Context) batch.Summary {
 		return s.scrub(ctx, batchSize, backend, observer)
 	})
 }
@@ -226,7 +215,6 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
 	// object body, so a wider window can hammer the backends.
 	runner := batch.Runner[core.ObjectLocation]{
-		Name:        "scrub",
 		Log:         s.log,
 		Concurrency: 1,
 		Observer:    observer,
@@ -462,7 +450,6 @@ func (s *Scrubber) PurgeUnreadable(ctx context.Context, batchSize int, observer 
 		},
 	}
 	runner := batch.Runner[core.ObjectLocation]{
-		Name:        "purge-unreadable",
 		Log:         s.log,
 		Concurrency: 1,
 		Observer:    observer,
@@ -499,7 +486,6 @@ func (s *Scrubber) HashCopies(ctx context.Context, locs []core.ObjectLocation, o
 	// Sequential (Concurrency 1) like Scrub: each item reads and hashes a full
 	// object body.
 	runner := batch.Runner[core.ObjectLocation]{
-		Name:        "backfill",
 		Log:         s.log,
 		Concurrency: 1,
 		Observer:    observer,

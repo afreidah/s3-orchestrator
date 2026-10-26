@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -28,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -51,14 +49,16 @@ type ReplicatorStore interface {
 	core.ReplicationStore
 }
 
-// Replicator creates additional copies of under-replicated objects across backends.
+// Replicator creates additional copies of under-replicated objects across
+// backends. Its replication config is reloadable through the embedded
+// SetConfig and Config.
 type Replicator struct {
+	syncutil.Reloadable[config.ReplicationConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
 	store     ReplicatorStore
 	hasher    *storedHasher
-	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
 	integrity syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
@@ -83,19 +83,9 @@ func NewReplicator(deps ReplicatorDeps) *Replicator {
 		ops:       deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,
-		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec, "replicator"),
-		log:       slog.Default().With(logfmt.Component("replicator")),
+		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec),
+		log:       workerLogger(audit.WorkloadReplication),
 	}
-}
-
-// SetConfig atomically stores the replication configuration.
-func (r *Replicator) SetConfig(cfg *config.ReplicationConfig) {
-	r.cfg.Store(cfg)
-}
-
-// Config returns the current replication configuration.
-func (r *Replicator) Config() *config.ReplicationConfig {
-	return r.cfg.Load()
 }
 
 // SetIntegrityConfig atomically stores the integrity configuration, which
@@ -127,14 +117,18 @@ type ReplicationSummary struct {
 // reach the target replication factor. observer, when non-nil, receives a
 // start and end step per object replicated.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	return runOpsCycle(ctx, "Replicate", "replicate", audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
+	return runOpsCycle(ctx, audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
 }
 
+// AuditAttrs adds the copies created to the tally's attributes.
+func (s ReplicationSummary) AuditAttrs() []slog.Attr {
+	return append(s.Summary.AuditAttrs(), slog.Int("copies_created", s.CopiesCreated))
+}
+
 // replicate is the body of Replicate after observe.Run sets up the span.
 func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	start := time.Now()
 	if cfg.Factor <= 1 {
 		return ReplicationSummary{}, nil
 	}
@@ -147,82 +141,27 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	excluded := r.UnhealthyBackends(cfg.UnhealthyThreshold)
 	locations, err := r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	if err != nil {
-		telemetry.ReplicationRunsTotal.WithLabelValues(batch.OutcomeError).Inc()
 		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
-
-	if len(locations) == 0 {
-		telemetry.ReplicationRunsTotal.WithLabelValues(batch.Summary{}.Outcome()).Inc()
-		telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
+	sets := planCopySets(locations, shortBy(cfg.Factor))
+	if len(sets) == 0 {
 		return ReplicationSummary{}, nil
 	}
 
-	tasks := planUnderReplicated(locations, cfg.Factor)
-
 	// The pending gauge comes from the fleet snapshot's ledger count, not this
 	// batch, so every instance serves the same figure.
-	var created atomic.Int64
-	runner := batch.Runner[replicaTask]{
-		Name:        "replication",
-		Log:         r.log,
-		Concurrency: cfg.Concurrency,
-		Observer:    observer,
-		Key:         func(t replicaTask) string { return t.key },
-	}
-	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) batch.ItemResult {
-		return WithAdmission(ctx, r.ops, WorkerNameReplicator, func() batch.ItemResult {
-			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
-			r.reportObjectOutcome(ctx, &outcome)
-			created.Add(int64(outcome.Created))
-			return replicaOutcomeResult(&outcome)
-		})
+	pass := copySetPass{log: r.log, concurrency: cfg.Concurrency, observer: observer}
+	sum, created := pass.run(ctx, r.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+		outcome := r.ReplicateObject(ctx, set.key, set.copies, set.off)
+		r.reportObjectOutcome(ctx, &outcome)
+		return outcome.Created, replicaOutcomeResult(&outcome)
 	})
 
-	summary := ReplicationSummary{Summary: sum, CopiesCreated: int(created.Load())}
-	telemetry.ReplicationCopiesCreatedTotal.Add(float64(summary.CopiesCreated))
-	if len(excluded) > 0 && summary.CopiesCreated > 0 {
-		telemetry.ReplicationHealthCopiesTotal.Add(float64(summary.CopiesCreated))
+	telemetry.ReplicationCopiesCreatedTotal.Add(float64(created))
+	if len(excluded) > 0 && created > 0 {
+		telemetry.ReplicationHealthCopiesTotal.Add(float64(created))
 	}
-	telemetry.ReplicationRunsTotal.WithLabelValues(sum.Outcome()).Inc()
-	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
-
-	audit.Log(ctx, "replication.complete",
-		slog.Int("copies_created", summary.CopiesCreated),
-		slog.Int("objects_checked", len(tasks)),
-		slog.Int("objects_failed", sum.Failed),
-		slog.Duration("duration", time.Since(start)),
-		sum.Usage.Attr(),
-	)
-
-	return summary, nil
-}
-
-// -------------------------------------------------------------------------
-// PLANNER
-// -------------------------------------------------------------------------
-
-// replicaTask is the unit of work the replicator's fan-out processes:
-// one object key that needs `needed` additional copies, with the
-// existing copies the executor will read from.
-type replicaTask struct {
-	key    string
-	copies []core.ObjectLocation
-	needed int
-}
-
-// planUnderReplicated turns object_locations rows (one per backend per key)
-// into per-key replication tasks targeting factor total copies. Keys already
-// at or above the factor are dropped; the result order is not stable.
-func planUnderReplicated(locations []core.ObjectLocation, factor int) []replicaTask {
-	grouped := core.GroupByKey(locations)
-	tasks := make([]replicaTask, 0, len(grouped))
-	for key, copies := range grouped {
-		needed := factor - len(copies)
-		if needed > 0 {
-			tasks = append(tasks, replicaTask{key: key, copies: copies, needed: needed})
-		}
-	}
-	return tasks
+	return ReplicationSummary{Summary: sum, CopiesCreated: created}, nil
 }
 
 // -------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -26,13 +27,12 @@ const DefaultCleanupQueueTick = 1 * time.Minute
 
 // NewCleanupQueueService constructs the cleanup-queue background service.
 func NewCleanupQueueService(cleanup *CleanupWorker, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
-	const slug = "cleanup_queue"
-	log := tickrunner.ComponentLogger(slug)
+	log := workerLogger(audit.WorkloadCleanup)
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: DefaultCleanupQueueTick,
 		LockID:   core.LockCleanupQueue,
-		Name:     slug,
+		Name:     string(audit.WorkloadCleanup),
 		Log:      log,
 		Work: tickrunner.QueueWork(log, "queue processed", func(ctx context.Context) (int, int) {
 			sum := cleanup.ProcessCleanupQueue(ctx)

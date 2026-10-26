@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -97,7 +98,7 @@ func TestHashStored_EncryptedWithoutEncryptor(t *testing.T) {
 	stored, loc := sealedForHash(t)
 	serveStored(t, ops, stored)
 
-	_, err := newStoredHasher(ops, nil, nil, "storedhash-test").hashStored(context.Background(), &loc)
+	_, err := newStoredHasher(ops, nil, nil).hashStored(context.Background(), &loc)
 	if !errors.Is(err, storedform.ErrNoEncryptor) {
 		t.Fatalf("err = %v, want ErrNoEncryptor", err)
 	}
@@ -105,7 +106,7 @@ func TestHashStored_EncryptedWithoutEncryptor(t *testing.T) {
 
 // TestHashStored_FlagMismatchCountsTheSource verifies bytes that contradict the
 // row's encryption flag surface as ErrEncryptionFlagMismatch and increment the
-// mismatch counter under the hasher's source label, in both directions.
+// mismatch counter under the workload hashing them, in both directions.
 func TestHashStored_FlagMismatchCountsTheSource(t *testing.T) {
 	t.Parallel()
 	envelope, sealedRow := sealedForHash(t)
@@ -124,11 +125,12 @@ func TestHashStored_FlagMismatchCountsTheSource(t *testing.T) {
 			t.Parallel()
 			ops := newMockOps(gomock.NewController(t))
 			serveStored(t, ops, tc.stored)
-			source := fmt.Sprintf("storedhash-mismatch-%d", i)
-			counter := telemetry.EncryptionFlagMismatchTotal.WithLabelValues(source)
+			source := audit.Workload(fmt.Sprintf("storedhash-mismatch-%d", i))
+			counter := telemetry.EncryptionFlagMismatchTotal.WithLabelValues(string(source))
 			before := promtest.ToFloat64(counter)
 
-			_, err := newStoredHasher(ops, nil, nil, source).hashStored(context.Background(), &tc.loc)
+			ctx := audit.WithWorkload(context.Background(), source)
+			_, err := newStoredHasher(ops, nil, nil).hashStored(ctx, &tc.loc)
 			if !errors.Is(err, core.ErrEncryptionFlagMismatch) {
 				t.Fatalf("err = %v, want ErrEncryptionFlagMismatch", err)
 			}

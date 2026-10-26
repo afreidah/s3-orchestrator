@@ -1668,7 +1668,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_replication_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_worker_cycle_duration_seconds_bucket{service=\"replication\"}[5m])))",
           "legendFormat": "p95"
         }
       ],
@@ -1708,8 +1708,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (status) (increase(s3o_replication_runs_total[5m]))",
-          "legendFormat": "{{status}}"
+          "expr": "sum by (outcome) (increase(s3o_worker_cycles_total{service=\"replication\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
       ],
       "options": {
@@ -2716,8 +2716,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (strategy, status) (increase(s3o_rebalance_runs_total[5m]))",
-          "legendFormat": "{{strategy}} ({{status}})"
+          "expr": "sum by (outcome) (increase(s3o_worker_cycles_total{service=\"rebalance\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
       ],
       "options": {
@@ -2821,8 +2821,8 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(s3o_rebalance_duration_seconds_bucket[5m])))",
-          "legendFormat": "{{strategy}}"
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_worker_cycle_duration_seconds_bucket{service=\"rebalance\"}[5m])))",
+          "legendFormat": "p95"
         }
       ],
       "options": {
@@ -4388,7 +4388,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_over_replication_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_worker_cycle_duration_seconds_bucket{service=\"over_replication\"}[$__rate_interval])))",
           "legendFormat": "p95",
           "refId": "A"
         }
@@ -5073,8 +5073,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (status) (rate(s3o_over_replication_runs_total[5m]))",
-          "legendFormat": "{{status}}"
+          "expr": "sum by (outcome) (rate(s3o_worker_cycles_total{service=\"over_replication\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
       ]
     },

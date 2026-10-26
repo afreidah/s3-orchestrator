@@ -3,8 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Wraps *OverReplicationCleaner in a lifecycle.Runner backed by the
-// shared advisory-locked ticker primitive.
+// Wraps *OverReplicationCleaner in the shared pass service.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -13,8 +12,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -22,31 +23,20 @@ import (
 // per-tick cadence when the config does not specify one.
 const DefaultOverReplicationTick = 5 * time.Minute
 
-// NewOverReplicationService constructs the over-replication cleanup service.
+// NewOverReplicationService constructs the over-replication cleanup service,
+// which runs while the replication factor is above one.
 func NewOverReplicationService(manager tickrunner.QuotaMetricsRefresher, overRep *OverReplicationCleaner, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
-	interval := DefaultOverReplicationTick
-	if rcfg := overRep.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
-		interval = rcfg.WorkerInterval
-	}
-	const slug = "over_replication_cleanup"
-	log := tickrunner.ComponentLogger(slug)
-	return tickrunner.New(tickrunner.Config{
-		Locker:   locker,
-		Interval: interval,
-		LockID:   core.LockOverReplication,
-		Name:     slug,
-		Log:      log,
-		ShouldRun: func() bool {
-			rcfg := overRep.Config()
-			return rcfg != nil && rcfg.Factor > 1
+	return passService(&passSpec[config.ReplicationConfig]{
+		Workload:   audit.WorkloadOverReplication,
+		Lock:       core.LockOverReplication,
+		Config:     overRep.Config,
+		Interval:   DefaultOverReplicationTick,
+		Configured: func(cfg *config.ReplicationConfig) time.Duration { return cfg.WorkerInterval },
+		Enabled:    func(cfg *config.ReplicationConfig) bool { return cfg.Factor > 1 },
+		Pass: func(ctx context.Context, cfg *config.ReplicationConfig) (int, error) {
+			sum, err := overRep.Clean(ctx, *cfg, nil)
+			return sum.CopiesRemoved, err
 		},
-		Work: func(ctx context.Context) error {
-			rcfg := overRep.Config()
-			if rcfg == nil {
-				return nil
-			}
-			sum, err := overRep.Clean(ctx, *rcfg, nil)
-			return tickrunner.HandlePassResult(ctx, log, manager, sum.CopiesRemoved, err, "copies_removed")
-		},
-	})
+		CountKey: "copies_removed",
+	}, manager, locker)
 }

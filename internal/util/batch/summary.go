@@ -5,13 +5,14 @@
 //
 // The vocabulary every batch reports in. A per-item function returns an
 // ItemResult, the runner tallies those into a Summary, and Summary.Outcome
-// turns the tally into the label the runs-total metrics carry, so an alert can
-// tell a cycle that did its work from one where every item failed.
+// turns the tally into the label the worker cycle metric carries, so an alert
+// can tell a cycle that did its work from one where every item failed.
 // -------------------------------------------------------------------------------
 
 package batch
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -99,7 +100,20 @@ func (s Summary) Plus(o Summary) Summary {
 	}
 }
 
-// Outcome classifies the cycle for its runs-total metric: success (work done,
+// AuditAttrs renders the tally as log attributes: the item counts and the usage
+// charged to each backend.
+func (s Summary) AuditAttrs() []slog.Attr {
+	return []slog.Attr{
+		slog.Int("planned", s.Planned),
+		slog.Int("succeeded", s.Succeeded),
+		slog.Int("failed", s.Failed),
+		slog.Int("skipped", s.Skipped),
+		slog.Int("deferred", s.Deferred),
+		s.Usage.Attr(),
+	}
+}
+
+// Outcome classifies the cycle for its cycle metric: success (work done,
 // no failures), partial (some succeeded, some failed), failed (only failures),
 // or empty (nothing succeeded or failed).
 func (s Summary) Outcome() string {

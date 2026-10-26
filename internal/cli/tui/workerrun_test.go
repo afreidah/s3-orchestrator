@@ -27,7 +27,7 @@ func workersWithScrubber(f *fakeLister) *model {
 	m := initialModel(f)
 	m.width, m.height = 120, 20
 	m.section = sectionWorkers
-	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "cleanup_queue"}, {Name: "scrubber"}}})
+	m.applyWorkers(&adminapi.WorkersResponse{Workers: []adminapi.WorkerHealth{{Name: "cleanup"}, {Name: "scrub"}}})
 	m.workers.list.table.SetCursor(1)
 	return m
 }
@@ -92,6 +92,6 @@ func TestRunWorkerOpsAction_NoMatchingAction(t *testing.T) {
 
 	m.handleKey(key("R"))
 	if m.confirm != nil {
-		t.Errorf("confirm = %+v, want nothing armed for cleanup_queue", m.confirm)
+		t.Errorf("confirm = %+v, want nothing armed for cleanup", m.confirm)
 	}
 }

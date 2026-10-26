@@ -20,12 +20,9 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sync/atomic"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -52,32 +49,36 @@ type OverReplicationCleanerStore interface {
 const reasonOverReplication = "over_replication"
 
 // OverReplicationCleaner removes excess copies of objects that exceed the
-// configured replication factor.
+// configured replication factor. Its replication config is reloadable through
+// the embedded SetConfig and Config.
 type OverReplicationCleaner struct {
+	syncutil.Reloadable[config.ReplicationConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
 	store     OverReplicationCleanerStore
-	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewOverReplicationCleaner creates a cleaner with fleet operations, write-path
-// placement, and a metadata store.
-func NewOverReplicationCleaner(ops Ops, placement Placement, store OverReplicationCleanerStore) *OverReplicationCleaner {
-	must.NotNil("ops", ops)
-	must.NotNil("placement", placement)
-	must.NotNil("store", store)
-	return &OverReplicationCleaner{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}
+// OverReplicationCleanerDeps groups the cleaner's constructor dependencies:
+// fleet operations, write-path placement, and the metadata store.
+type OverReplicationCleanerDeps struct {
+	Ops       Ops
+	Placement Placement
+	Store     OverReplicationCleanerStore
 }
 
-// SetConfig atomically stores the replication configuration.
-func (c *OverReplicationCleaner) SetConfig(cfg *config.ReplicationConfig) {
-	c.cfg.Store(cfg)
-}
-
-// Config returns the current replication configuration.
-func (c *OverReplicationCleaner) Config() *config.ReplicationConfig {
-	return c.cfg.Load()
+// NewOverReplicationCleaner creates a cleaner from its dependencies, all of
+// which are required.
+func NewOverReplicationCleaner(deps OverReplicationCleanerDeps) *OverReplicationCleaner {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Placement", deps.Placement)
+	must.NotNil("Store", deps.Store)
+	return &OverReplicationCleaner{
+		ops:       deps.Ops,
+		placement: deps.Placement,
+		store:     deps.Store,
+		log:       workerLogger(audit.WorkloadOverReplication),
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -88,7 +89,7 @@ func (c *OverReplicationCleaner) Config() *config.ReplicationConfig {
 // target replication factor. Returns the number of copies removed. observer,
 // when non-nil, receives a start and end step per object cleaned.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
-	return runOpsCycle(ctx, "OverReplicationClean", "over_replication_clean", audit.WorkloadOverReplication, func(ctx context.Context) (OverReplicationSummary, error) {
+	return runOpsCycle(ctx, audit.WorkloadOverReplication, func(ctx context.Context) (OverReplicationSummary, error) {
 		return c.clean(ctx, cfg, observer)
 	})
 }
@@ -102,25 +103,16 @@ type OverReplicationSummary struct {
 	CopiesRemoved int
 }
 
-// cleanOutcome captures everything the post-cycle reporter needs so the
-// body of clean stays focused on the cleanup work itself.
-type cleanOutcome struct {
-	summary        OverReplicationSummary
-	objectsChecked int
-	err            error
+// AuditAttrs adds the copies removed to the tally's attributes.
+func (s OverReplicationSummary) AuditAttrs() []slog.Attr {
+	return append(s.Summary.AuditAttrs(), slog.Int("copies_removed", s.CopiesRemoved))
 }
 
-// clean is the body of Clean after observe.Run sets up the span. All
-// per-cycle telemetry and audit emission lives in reportCleanCycle so
-// the work below reads as straight business logic.
+// clean is the body of Clean after observe.Run sets up the span.
 func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (OverReplicationSummary, error) {
 	if cfg.Factor <= 1 {
 		return OverReplicationSummary{}, nil
 	}
-
-	start := time.Now()
-	var out cleanOutcome
-	defer func() { c.reportCleanCycle(ctx, start, &out) }()
 
 	audit.Log(ctx, "over_replication.start",
 		slog.Int("factor", cfg.Factor),
@@ -129,10 +121,10 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 
 	locations, err := c.store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	if err != nil {
-		out.err = fmt.Errorf("failed to query over-replicated objects: %w", err)
-		return OverReplicationSummary{}, out.err
+		return OverReplicationSummary{}, fmt.Errorf("failed to query over-replicated objects: %w", err)
 	}
-	if len(locations) == 0 {
+	sets := planCopySets(locations, overBy(cfg.Factor))
+	if len(sets) == 0 {
 		return OverReplicationSummary{}, nil
 	}
 
@@ -143,42 +135,16 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 			"error", qErr)
 	}
 
-	grouped := core.GroupByKey(locations)
-	out.objectsChecked = len(grouped)
-
-	type cleanupTask struct {
-		key    string
-		copies []core.ObjectLocation
-		excess int
-	}
-	var tasks []cleanupTask
-	for key, copies := range grouped {
-		excess := len(copies) - cfg.Factor
-		if excess > 0 {
-			tasks = append(tasks, cleanupTask{key: key, copies: copies, excess: excess})
-		}
-	}
-
 	// The pending gauge is the fleet snapshot's ledger count, which every
-	// instance serves; this pass's task list is one batch of it.
-	var removed atomic.Int64
-	runner := batch.Runner[cleanupTask]{
-		Name:        "over_replication",
-		Log:         c.log,
-		Concurrency: cfg.Concurrency,
-		Observer:    observer,
-		Key:         func(t cleanupTask) string { return t.key },
-	}
-	sum := runner.Run(ctx, tasks, func(ctx context.Context, task cleanupTask) batch.ItemResult {
-		return WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() batch.ItemResult {
-			n, failures := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
-			removed.Add(int64(n))
-			return cleanupItemResult(n, failures)
-		})
+	// instance serves; this pass's sets are one batch of it.
+	pass := copySetPass{log: c.log, concurrency: cfg.Concurrency, observer: observer}
+	sum, removed := pass.run(ctx, c.ops, sets, func(ctx context.Context, set *copySet) (int, batch.ItemResult) {
+		n, failures := c.cleanObject(ctx, set.key, set.copies, set.off, cfg.Factor, quotaStats)
+		return n, cleanupItemResult(n, failures)
 	})
 
-	out.summary = OverReplicationSummary{Summary: sum, CopiesRemoved: int(removed.Load())}
-	return out.summary, nil
+	telemetry.OverReplicationRemovedTotal.Add(float64(removed))
+	return OverReplicationSummary{Summary: sum, CopiesRemoved: removed}, nil
 }
 
 // cleanupItemResult folds one object's surplus-copy removals into the batch
@@ -194,31 +160,6 @@ func cleanupItemResult(removed, failures int) batch.ItemResult {
 	default:
 		return batch.ItemResult{Outcome: batch.ItemSkipped, Status: progress.StatusOK}
 	}
-}
-
-// reportCleanCycle emits every per-cycle metric and the completion
-// audit log in one place: error counter or the tallied outcome + duration
-// histogram, the remove-total counter, and the complete-audit line.
-// Called via defer from clean so every exit path reports consistently.
-func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start time.Time, out *cleanOutcome) {
-	duration := time.Since(start)
-	if out.err != nil {
-		telemetry.OverReplicationRunsTotal.WithLabelValues(batch.OutcomeError).Inc()
-		return
-	}
-	telemetry.OverReplicationRunsTotal.WithLabelValues(out.summary.Outcome()).Inc()
-	telemetry.OverReplicationDuration.Observe(duration.Seconds())
-	if out.objectsChecked == 0 {
-		return
-	}
-	telemetry.OverReplicationRemovedTotal.Add(float64(out.summary.CopiesRemoved))
-	audit.Log(ctx, "over_replication.complete",
-		slog.Int("copies_removed", out.summary.CopiesRemoved),
-		slog.Int("objects_checked", out.objectsChecked),
-		slog.Int("objects_failed", out.summary.Failed),
-		slog.Duration("duration", duration),
-		out.summary.Usage.Attr(),
-	)
 }
 
 // CountPending returns the number of objects exceeding the replication factor.

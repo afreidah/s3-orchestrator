@@ -15,18 +15,18 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // NewReconcileService constructs the reconcile background service.
 func NewReconcileService(reconciler *Reconciler, locker tickrunner.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
-	const slug = "reconcile"
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: interval,
 		LockID:   core.LockReconcile,
-		Name:     slug,
-		Log:      tickrunner.ComponentLogger(slug),
+		Name:     string(audit.WorkloadReconcile),
+		Log:      workerLogger(audit.WorkloadReconcile),
 		Work: func(ctx context.Context) error {
 			reconciler.Run(ctx)
 			return nil

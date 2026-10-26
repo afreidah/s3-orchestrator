@@ -17,12 +17,10 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -46,32 +44,37 @@ type RebalancerStore interface {
 }
 
 // Rebalancer moves objects between backends to optimize space distribution.
+// Its rebalance config is reloadable through the embedded SetConfig and
+// Config.
 type Rebalancer struct {
+	syncutil.Reloadable[config.RebalanceConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
 	store     RebalancerStore
-	cfg       syncutil.AtomicConfig[config.RebalanceConfig]
 	telemetry.SharedGauges
 }
 
-// NewRebalancer creates a Rebalancer with fleet operations, write-path
-// placement, and a metadata store.
-func NewRebalancer(ops Ops, placement Placement, store RebalancerStore) *Rebalancer {
-	must.NotNil("ops", ops)
-	must.NotNil("placement", placement)
-	must.NotNil("store", store)
-	return &Rebalancer{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
+// RebalancerDeps groups the rebalancer's constructor dependencies: fleet
+// operations, write-path placement, and the metadata store.
+type RebalancerDeps struct {
+	Ops       Ops
+	Placement Placement
+	Store     RebalancerStore
 }
 
-// SetConfig atomically stores the rebalance configuration.
-func (r *Rebalancer) SetConfig(cfg *config.RebalanceConfig) {
-	r.cfg.Store(cfg)
-}
-
-// Config returns the current rebalance configuration.
-func (r *Rebalancer) Config() *config.RebalanceConfig {
-	return r.cfg.Load()
+// NewRebalancer creates a Rebalancer from its dependencies, all of which are
+// required.
+func NewRebalancer(deps RebalancerDeps) *Rebalancer {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Placement", deps.Placement)
+	must.NotNil("Store", deps.Store)
+	return &Rebalancer{
+		ops:       deps.Ops,
+		placement: deps.Placement,
+		store:     deps.Store,
+		log:       workerLogger(audit.WorkloadRebalance),
+	}
 }
 
 // RebalanceMove describes a single object move from one backend to another.
@@ -113,8 +116,7 @@ type RebalanceSummary struct {
 // observer, when non-nil, receives a step per planned move so a streaming
 // caller can report progress as the cycle runs.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
-	return runOpsCycle(ctx, "Rebalance", "rebalance", audit.WorkloadRebalance, func(ctx context.Context) (RebalanceSummary, error) {
-		start := time.Now()
+	return runOpsCycle(ctx, audit.WorkloadRebalance, func(ctx context.Context) (RebalanceSummary, error) {
 		audit.Log(ctx, "rebalance.start",
 			slog.String("strategy", cfg.Strategy),
 			slog.Int("batch_size", cfg.BatchSize),
@@ -123,7 +125,6 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		stats, err := r.store.GetQuotaStats(ctx)
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, batch.OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
 		}
 
@@ -144,7 +145,6 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			return RebalanceSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
 		}
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, batch.OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
 		}
 
@@ -158,17 +158,6 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency, observer)
 		r.publishPending(ctx, 0)
-
-		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, sum.Outcome()).Inc()
-		telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
-
-		audit.Log(ctx, "rebalance.complete",
-			slog.String("strategy", cfg.Strategy),
-			slog.Int("objects_moved", sum.Succeeded),
-			slog.Int("planned", len(plan)),
-			slog.Duration("duration", time.Since(start)),
-			sum.Usage.Attr(),
-		)
 		return RebalanceSummary{Summary: sum}, nil
 	})
 }
@@ -536,14 +525,13 @@ func findSpreadDestination(
 // move labelled with the object and the backends it travels between.
 func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int, observer progress.Observer) batch.Summary {
 	runner := batch.Runner[RebalanceMove]{
-		Name:        "rebalance",
 		Log:         r.log,
 		Concurrency: concurrency,
 		Observer:    observer,
 		Key:         RebalanceMove.progressLabel,
 	}
 	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) batch.ItemResult {
-		return WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() batch.ItemResult {
+		return WithAdmission(ctx, r.ops, func() batch.ItemResult {
 			if r.ExecuteOneMove(ctx, mv, strategy) {
 				return batch.Succeeded()
 			}

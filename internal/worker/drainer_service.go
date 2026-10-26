@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -24,13 +25,12 @@ const DefaultDrainTick = 10 * time.Second
 
 // NewDrainerService constructs the drain background service.
 func NewDrainerService(manager tickrunner.QuotaMetricsRefresher, drainer *Drainer, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
-	const slug = "drain"
-	log := tickrunner.ComponentLogger(slug)
+	log := workerLogger(audit.WorkloadDrain)
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: DefaultDrainTick,
 		LockID:   core.LockDrain,
-		Name:     slug,
+		Name:     string(audit.WorkloadDrain),
 		Log:      log,
 		Work: func(ctx context.Context) error {
 			sum, err := drainer.Drain(ctx, nil)

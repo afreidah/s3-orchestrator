@@ -152,17 +152,17 @@ func assertModeRegistrations(t *testing.T, mode config.Mode, names, mustContain,
 func TestLifecycleManager_ModeMatrix(t *testing.T) {
 	t.Parallel()
 
-	proxyAlwaysOn := []string{"usage-flush", "cb-watchdog"}
+	proxyAlwaysOn := []string{"usage_flush", "cb_watchdog"}
 	workerExtras := []string{
-		"multipart-cleanup",
-		"cleanup-queue",
-		"pending-reaper",
-		"rebalancer",
-		"replicator",
-		"over-replication",
+		"multipart_cleanup",
+		"cleanup",
+		"pending_reaper",
+		"rebalance",
+		"replication",
+		"over_replication",
 		"drain",
 		"lifecycle",
-		"scrubber",
+		"scrub",
 	}
 	allModes := append(append([]string{}, proxyAlwaysOn...), workerExtras...)
 
@@ -180,7 +180,7 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
 			mgr := lifecycleManagerForMode(t, tc.mode)
-			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, append(tc.mustNotHave, "provisioning-watch"))
+			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, append(tc.mustNotHave, "provisioning_watch"))
 		})
 	}
 }
@@ -206,7 +206,7 @@ func TestLifecycleManager_ProvisioningWatchWithRedis(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolve LifecycleManager: %v", err)
 			}
-			assertModeRegistrations(t, mode, mgr.Names(), []string{"provisioning-watch"}, nil)
+			assertModeRegistrations(t, mode, mgr.Names(), []string{"provisioning_watch"}, nil)
 		})
 	}
 }

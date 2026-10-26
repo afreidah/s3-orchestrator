@@ -141,13 +141,13 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 
 	rt := st.Runtime
 	coord := writepath.New(rt, mock)
-	rb := worker.NewRebalancer(rt, coord, mock)
+	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: mock})
 	rb.SetConfig(&config.RebalanceConfig{})
 
 	rp := worker.NewReplicator(worker.ReplicatorDeps{Ops: rt, Placement: coord, Store: mock})
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	or := worker.NewOverReplicationCleaner(rt, coord, mock)
+	or := worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: mock})
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 
 	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: mock, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})

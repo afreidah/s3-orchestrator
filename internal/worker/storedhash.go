@@ -25,6 +25,7 @@ import (
 	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -40,18 +41,18 @@ import (
 // hashes it. Encryptor and Codec are optional and are what the stored form has
 // to be undone through; a copy recorded as encrypted or compressed cannot be
 // hashed without the matching one, and surfaces as unreadable rather than
-// corrupt.
+// corrupt. The encryption-flag-mismatch counter names the caller by the
+// workload it hashes under.
 type storedHasher struct {
 	ops       Ops
 	encryptor *encryption.Encryptor
 	codec     storedform.Decompressor
-	source    string
 }
 
-// newStoredHasher builds a hasher that attributes its metrics to source, which
-// names the caller in the encryption-flag-mismatch counter.
-func newStoredHasher(ops Ops, enc *encryption.Encryptor, codec storedform.Decompressor, source string) *storedHasher {
-	return &storedHasher{ops: ops, encryptor: enc, codec: codec, source: source}
+// newStoredHasher builds a hasher over the fleet operations and whichever of
+// the encryptor and codec the deployment has.
+func newStoredHasher(ops Ops, enc *encryption.Encryptor, codec storedform.Decompressor) *storedHasher {
+	return &storedHasher{ops: ops, encryptor: enc, codec: codec}
 }
 
 // storedDigests are the two digests one read of a stored copy produces: the
@@ -75,7 +76,7 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 	// meaningful plaintext hash, so it is rejected before a backend read is
 	// spent on it.
 	if err := core.ValidateEncryptionMetadata(loc); err != nil {
-		telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
+		countFlagMismatch(ctx)
 		return storedDigests{}, err
 	}
 
@@ -103,7 +104,7 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 	reader, closeDecoded, err := storedform.Open(ctx, h.encryptor, h.codec, result.Body, &loc.StoredForm)
 	if err != nil {
 		if errors.Is(err, core.ErrEncryptionFlagMismatch) {
-			telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
+			countFlagMismatch(ctx)
 		}
 		return storedDigests{}, err
 	}
@@ -115,4 +116,10 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 		return storedDigests{}, fmt.Errorf("read body: %w", err)
 	}
 	return storedDigests{SHA256: hex.EncodeToString(hasher.Sum(nil)), MD5: etag.Hex(etagHasher)}, nil
+}
+
+// countFlagMismatch counts a copy whose row contradicts its bytes about
+// encryption, under the workload that found it.
+func countFlagMismatch(ctx context.Context) {
+	telemetry.EncryptionFlagMismatchTotal.WithLabelValues(string(audit.WorkloadOf(ctx))).Inc()
 }

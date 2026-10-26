@@ -116,6 +116,9 @@ func TestDeleteObjects_ChunksAndReportsPerKeyFailures(t *testing.T) {
 	if len(srv.requests) != 2 || srv.requests[0] != maxBatchDeleteKeys || srv.requests[1] != 1 {
 		t.Errorf("request sizes = %v, want [%d 1]", srv.requests, maxBatchDeleteKeys)
 	}
+	if got := BatchDeleteRequests(maxBatchDeleteKeys + 1); got != len(srv.requests) {
+		t.Errorf("BatchDeleteRequests = %d, want the %d requests sent", got, len(srv.requests))
+	}
 	if len(failed) != 2 {
 		t.Fatalf("failed = %v, want two keys", failed)
 	}

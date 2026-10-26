@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -29,13 +30,12 @@ func NewScrubberService(scrubber *Scrubber, locker tickrunner.AdvisoryLocker) li
 	if icfg := scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval
 	}
-	const slug = "scrubber"
-	log := tickrunner.ComponentLogger(slug)
+	log := workerLogger(audit.WorkloadScrub)
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: interval,
 		LockID:   core.LockScrubber,
-		Name:     slug,
+		Name:     string(audit.WorkloadScrub),
 		Log:      log,
 		ShouldRun: func() bool {
 			icfg := scrubber.Config()

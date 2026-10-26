@@ -656,7 +656,7 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	move := planMove("key", "src", "dest", 4)
 	if !w.ExecuteOneMove(context.Background(), move, "spread") {
@@ -696,7 +696,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	store := newPermissiveStore(t)
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
@@ -715,7 +715,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	store := newPermissiveStore(t)
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
@@ -740,7 +740,7 @@ func TestExecuteOneMove_PlaceCopyError_LeavesCopyForReaper(t *testing.T) {
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	move := planMove("key", "src", "dest", 4)
 	if w.ExecuteOneMove(context.Background(), move, "spread") {
@@ -775,7 +775,7 @@ func TestExecuteOneMove_RefusalSettleFails_RetriesTheRow(t *testing.T) {
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 		t.Error("expected false")
@@ -807,7 +807,7 @@ func TestExecuteOneMove_PlacementDeclined_CleansUpOrphan(t *testing.T) {
 			storetest.Permissive(store)
 			rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 				&fleetOpts{Order: []string{"src", "dest"}})
-			w := NewRebalancer(rt, coord, store)
+			w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 			if w.ExecuteOneMove(context.Background(), planMove("key", "src", "dest", 4), "spread") {
 				t.Error("expected false when the placement is declined")
@@ -842,7 +842,7 @@ func TestExecuteOneMove_SourceDeleteFails_RetriesTheRow(t *testing.T) {
 
 	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
 		&fleetOpts{Order: []string{"src", "dest"}})
-	w := NewRebalancer(rt, coord, store)
+	w := NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
 
 	move := planMove("key", "src", "dest", 4)
 	if !w.ExecuteOneMove(context.Background(), move, "spread") {

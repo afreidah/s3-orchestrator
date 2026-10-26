@@ -78,7 +78,7 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 		deps:        deps.Ops,
 		placement:   deps.Placement,
 		store:       deps.Store,
-		log:         slog.Default().With(logfmt.Component("pending_reaper")),
+		log:         workerLogger(audit.WorkloadPendingReaper),
 		concurrency: concurrency,
 		minAge:      minAge,
 		batchSize:   batchSize,
@@ -94,7 +94,7 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 // reports. Returns the number of intents that completed (committed or
 // dropped) and the number that failed (left for the next tick).
 func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) batch.Summary {
-	return runTickCycle(ctx, "ProcessPendingQueue", "pending_queue", audit.WorkloadPendingReaper, r.processPendingQueue)
+	return runTickCycle(ctx, audit.WorkloadPendingReaper, r.processPendingQueue)
 }
 
 // processPendingQueue is the body of ProcessPendingQueue after the span is open.
@@ -111,7 +111,7 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 	// is emitted per skipped backend at the end of the tick instead of
 	// per-intent WARN spam from the probe path.
 	var skipped sync.Map
-	runner := batch.Runner[core.PendingObject]{Name: "pending-reaper", Log: r.log, Concurrency: r.concurrency}
+	runner := batch.Runner[core.PendingObject]{Log: r.log, Concurrency: r.concurrency}
 	sum := runner.Run(ctx, intents, func(ctx context.Context, p core.PendingObject) batch.ItemResult {
 		return r.resolveOneIntent(ctx, &p, &skipped)
 	})
@@ -136,7 +136,7 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) batch.Summary {
 // stays queued, and is tallied in skipped so the caller logs once per
 // backend instead of once per intent.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, skipped *sync.Map) batch.ItemResult {
-	return WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() batch.ItemResult {
+	return WithAdmission(ctx, r.deps, func() batch.ItemResult {
 		be, err := r.deps.GetBackend(p.BackendName)
 		if err != nil {
 			return batch.ItemResult{Outcome: r.dropIntent(ctx, p, "backend_removed")}

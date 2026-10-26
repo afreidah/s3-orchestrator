@@ -3,10 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Wraps *Replicator in a lifecycle.Runner backed by the shared
-// advisory-locked ticker primitive. Replication is the one service
-// that registers a Startup hook so the first pass fires immediately on
-// boot rather than waiting one tick.
+// Wraps *Replicator in the shared pass service. Replication is the one service
+// that also runs a pass at startup, so the first pass fires immediately on boot
+// rather than waiting one tick.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -15,8 +14,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -24,34 +25,21 @@ import (
 // config does not specify one.
 const DefaultReplicatorTick = 5 * time.Minute
 
-// NewReplicatorService constructs the replication background service.
+// NewReplicatorService constructs the replication background service, which
+// runs while the replication factor is above one.
 func NewReplicatorService(manager tickrunner.QuotaMetricsRefresher, replicator *Replicator, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
-	const slug = "replication"
-	log := tickrunner.ComponentLogger(slug)
-	replicateWork := func(ctx context.Context) error {
-		rcfg := replicator.Config()
-		if rcfg == nil {
-			return nil
-		}
-		sum, err := replicator.Replicate(ctx, *rcfg, nil)
-		return tickrunner.HandlePassResult(ctx, log, manager, sum.CopiesCreated, err, "copies_created")
-	}
-
-	interval := DefaultReplicatorTick
-	if rcfg := replicator.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
-		interval = rcfg.WorkerInterval
-	}
-	return tickrunner.New(tickrunner.Config{
-		Locker:   locker,
-		Interval: interval,
-		LockID:   core.LockReplicator,
-		Name:     slug,
-		Log:      log,
-		ShouldRun: func() bool {
-			rcfg := replicator.Config()
-			return rcfg != nil && rcfg.Factor > 1
+	return passService(&passSpec[config.ReplicationConfig]{
+		Workload:   audit.WorkloadReplication,
+		Lock:       core.LockReplicator,
+		Config:     replicator.Config,
+		Interval:   DefaultReplicatorTick,
+		Configured: func(cfg *config.ReplicationConfig) time.Duration { return cfg.WorkerInterval },
+		Enabled:    func(cfg *config.ReplicationConfig) bool { return cfg.Factor > 1 },
+		Pass: func(ctx context.Context, cfg *config.ReplicationConfig) (int, error) {
+			sum, err := replicator.Replicate(ctx, *cfg, nil)
+			return sum.CopiesCreated, err
 		},
-		Startup: replicateWork,
-		Work:    replicateWork,
-	})
+		CountKey:     "copies_created",
+		RunAtStartup: true,
+	}, manager, locker)
 }

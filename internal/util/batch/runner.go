@@ -12,6 +12,7 @@
 package batch
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"sync/atomic"
@@ -26,7 +27,8 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// Runner drives one batch. Concurrency is passed through to workerpool.Run
+// Runner drives one batch. Name labels its cycle log line and defaults to the
+// context's workload. Concurrency is passed through to workerpool.Run
 // (1 = sequential); Key, when set, supplies each item's progress label;
 // Observer, when set, receives the per-item progress steps.
 type Runner[T any] struct {
@@ -80,7 +82,7 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 		Usage:     usage.Usage(),
 	}
 	sum.Attempted = sum.Succeeded + sum.Failed
-	LogCycle(ctx, r.Log, r.Name, sum)
+	LogCycle(ctx, r.Log, cmp.Or(r.Name, string(audit.WorkloadOf(ctx))), sum)
 	return sum
 }
 
@@ -108,13 +110,6 @@ func LogCycle(ctx context.Context, log *slog.Logger, name string, sum Summary) {
 	if log == nil {
 		return
 	}
-	log.InfoContext(ctx, name+" cycle complete",
-		"planned", sum.Planned,
-		"succeeded", sum.Succeeded,
-		"failed", sum.Failed,
-		"skipped", sum.Skipped,
-		"outcome", sum.Outcome(),
-		"duration", sum.Duration,
-		sum.Usage.Attr(),
-	)
+	log.LogAttrs(ctx, slog.LevelInfo, name+" cycle complete",
+		append(sum.AuditAttrs(), slog.String("outcome", sum.Outcome()), slog.Duration("duration", sum.Duration))...)
 }

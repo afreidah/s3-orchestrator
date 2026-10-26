@@ -271,8 +271,6 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_active_multipart_uploads` | Gauge | backend | In-progress uploads |
 | `s3o_rebalance_objects_moved_total` | Counter | strategy, status | Objects moved by rebalancer |
 | `s3o_rebalance_bytes_moved_total` | Counter | strategy | Bytes moved by rebalancer |
-| `s3o_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions, by cycle outcome (see below) |
-| `s3o_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
 | `s3o_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
 | `s3o_rebalance_pending` | Gauge | - | Objects planned for rebalance |
 | `s3o_replication_pending` | Gauge | - | Objects below replication factor, counting in-flight writes as copies (exact, refreshed every `fleet_interval`) |
@@ -282,15 +280,11 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_detached_uploads_depth` | Gauge | - | Writes whose further copies are still uploading after the response |
 | `s3o_replication_write_fanout_skipped_total` | Counter | - | Writes that fell back to a single copy because no detached-upload slot was free |
 | `s3o_replication_errors_total` | Counter | - | Replication errors |
-| `s3o_replication_duration_seconds` | Histogram | - | Replication cycle time |
-| `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |
 | `s3o_replication_health_copies_total` | Counter | - | Copies created to replace copies on backends refusing reads |
 | `s3o_over_replication_pending` | Gauge | - | Objects exceeding the replication factor (exact, refreshed every `fleet_interval`) |
 | `s3o_over_replication_removed_total` | Counter | - | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | - | Over-replication cleanup errors |
 | `s3o_over_replication_key_preserved_total` | Counter | - | Copies kept because they held the only usable encryption key for the object |
-| `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions, by cycle outcome (see below) |
-| `s3o_over_replication_duration_seconds` | Histogram | - | Over-replication cleanup cycle time |
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3o_backend_call_refused` | Gauge | backend, call | 1 while the backend's circuit breakers refuse the call, 0 while it is served |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
@@ -328,13 +322,15 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_cors_preflight_total` | Counter | result | Browser CORS preflights by outcome (allowed, rejected). A preflight is answered before the S3 handler, so it appears in no other request metric |
 | `s3o_admission_rejections_total` | Counter | - | Requests rejected by server-level admission control |
 | `s3o_admission_client_canceled_total` | Counter | - | Admission waits abandoned because the client cancelled first |
-| `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated |
+| `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated, by the worker's name |
 | `s3o_lifecycle_deleted_total` | Counter | - | Objects deleted by lifecycle expiration |
 | `s3o_lifecycle_failed_total` | Counter | - | Objects that failed lifecycle deletion |
 | `s3o_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
 | `s3o_worker_ticks_total` | Counter | service, result | Locked-ticker service ticks by service and outcome |
 | `s3o_worker_last_success_timestamp_seconds` | Gauge | service | Unix time of the most recent successful tick per service |
 | `s3o_worker_consecutive_failures` | Gauge | service | Consecutive failed ticks per service since the last success |
+| `s3o_worker_cycles_total` | Counter | service, outcome | Worker passes by how their items ended (see below) |
+| `s3o_worker_cycle_duration_seconds` | Histogram | service | Worker pass duration |
 | `s3o_audit_events_total` | Counter | event | Audit log entries emitted |
 | `s3o_drain_active` | Gauge | - | Number of backends with a drain in progress |
 | `s3o_drain_objects_moved_total` | Counter | - | Objects migrated during drain |
@@ -392,7 +388,9 @@ The fleet-wide gauges - quota bytes, object, multipart, plaintext and unreadable
 
 #### Worker cycle outcomes
 
-The `*_runs_total` counters for the rebalance, replication and over-replication workers carry a `status` label describing how the cycle finished, taken from the per-item tally rather than from the fact that the cycle returned:
+Each worker goes by one name everywhere: its service in `/admin/api/workers` and the TUI, the `service` label on the worker metrics, the `worker` label on admission rejections, its log `component`, and its usage `workload`. The names are `replication`, `over_replication`, `rebalance`, `drain`, `scrub`, `cleanup`, `pending_reaper` and `reconcile`.
+
+`s3o_worker_cycles_total` counts every pass of those workers under an `outcome` label describing how it finished, taken from the per-item tally rather than from the fact that the pass returned. `s3o_worker_ticks_total` says whether a tick ran; this says what the pass did:
 
 | Value | Meaning |
 |---|---|
@@ -403,6 +401,8 @@ The `*_runs_total` counters for the rebalance, replication and over-replication 
 | `error` | The cycle could not start: the query that selects the batch failed |
 
 Alert on `partial` and `failed` to catch a worker that is running on schedule but not achieving anything - a backend that rejects every write, for instance, produces `failed` cycles indefinitely while the process stays healthy. `empty` is the normal steady state for a fleet that is already in shape.
+
+Every pass that did something also writes a `<name>.complete` audit entry with its tally: `planned`, `succeeded`, `failed`, `skipped`, `deferred`, `outcome`, `duration` and `usage`, plus the worker's own count (`copies_created` for replication, `copies_removed` for over-replication, `drains_completed` for drain, `imported` and `skipped` for reconcile).
 
 ### OpenTelemetry tracing
 
@@ -423,14 +423,15 @@ Key audit events:
 | `s3.PutObject`, `s3.GetObject`, `s3.DeleteObjects`, etc. | HTTP layer | S3 API request with method, path, bucket, status, duration |
 | `storage.PutObject`, `storage.GetObject`, `storage.DeleteObjects`, etc. | Storage layer | Backend operation with key, backend name, size |
 | `backend.PutObject`, `backend.GetObject`, `backend.HeadObject`, `backend.DeleteObject`, `backend.DeleteObjects`, `backend.CopyObject`, `backend.ListObjectsV2`, `backend.HeadBucket` | Backend client | One per request sent to a backend, whatever made it: `backend`, `key` (the prefix for a list page, `keys` with the count for a batch delete), `bytes` moved (sent for a PUT, received for a GET), `workload`, and `error` when the request failed |
-| `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
-| `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
+| `<worker>.complete` | Workers | A worker pass that did something, with its tally (see [worker cycle outcomes](#worker-cycle-outcomes)) |
+| `rebalance.start`, `rebalance.move` | Rebalancer | Object redistribution runs |
+| `replication.start`, `replication.copy` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Queued bytes deleted and the row retired, on the request path or by the worker |
 | `cleanup_queue.already_absent` | Cleanup queue | Backend DELETE returned 404 - the object is already gone. Row dropped as idempotent success instead of retrying nine more times |
 | `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a worker tick (typical after a process died before settling the rows it queued) |
 | `cleanup_queue.exhausted_to_dlq` | Cleanup queue | Row graduated to `cleanup_dlq` after exhausting retries |
-| `over_replication.start`, `over_replication.complete`, `over_replication.remove` | Over-replication cleaner | Surplus replica removal cycle; `.remove` carries the per-copy decision |
+| `over_replication.start`, `over_replication.remove` | Over-replication cleaner | Surplus replica removal cycle; `.remove` carries the per-copy decision |
 | `pending_reaper.promoted` | Pending reaper | The reaper HEADed the backend, found the object, and promoted the pending intent into a committed `object_locations` row |
 | `pending_reaper.dropped` | Pending reaper | The reaper HEADed the backend and got 404. No orphan exists; the intent row is dropped |
 | `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it. The intent's bytes are queued for deletion |
@@ -442,7 +443,7 @@ Each S3 API request produces correlated audit entries sharing the same `request_
 
 The `workload` field on a `backend.*` entry is the same tag usage accounting charges under, so summing `bytes` by workload and backend from the audit log matches `s3o_usage_workload_bytes`. Backend spans carry the same two values as `s3o.workload` and `s3o.bytes_moved`.
 
-Batch cycle summaries (the `<name> cycle complete` log lines, `scrub completed`, and the `replication.complete`, `rebalance.complete` and `over_replication.complete` audit entries) carry a `usage` group with the requests, egress bytes and ingress bytes the cycle was charged on each backend:
+Batch cycle summaries (the `<name> cycle complete` log lines, `scrub completed`, and the `<worker>.complete` audit entries) carry a `usage` group with the requests, egress bytes and ingress bytes the cycle was charged on each backend:
 
 ```json
 {"msg":"scrub cycle complete","planned":50,"succeeded":50,"usage":{"r2":{"api_requests":50,"egress_bytes":52428800,"ingress_bytes":0}}}

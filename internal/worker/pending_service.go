@@ -17,6 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -36,13 +37,12 @@ func NewPendingReaperService(reaper *PendingReaper, locker tickrunner.AdvisoryLo
 	if tick <= 0 {
 		tick = DefaultPendingReaperTick
 	}
-	const slug = "pending_reaper"
-	log := tickrunner.ComponentLogger(slug)
+	log := workerLogger(audit.WorkloadPendingReaper)
 	return tickrunner.New(tickrunner.Config{
 		Locker:   locker,
 		Interval: tick,
 		LockID:   core.LockPendingReaper,
-		Name:     slug,
+		Name:     string(audit.WorkloadPendingReaper),
 		Log:      log,
 		Work: tickrunner.QueueWork(log, "pending queue processed", func(ctx context.Context) (int, int) {
 			sum := reaper.ProcessPendingQueue(ctx)

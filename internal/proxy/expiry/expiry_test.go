@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Covers rule application end to end: which objects get deleted, how batches
-// page by key, and that a page of failed deletes is passed over rather than
-// re-listed, so a backend outage cannot loop a rule.
+// page by key and go out as one delete per page, and that a page of failed
+// deletes is passed over rather than re-listed, so a backend outage cannot loop
+// a rule.
 //
 // Exercises the manager against a 1-method ExpiredObjectsLister mock and a
 // 1-method ObjectDeleter mock rather than standing up a full proxy stack.
@@ -18,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -87,6 +90,21 @@ func pages(batches ...[]core.ObjectLocation) func(context.Context, core.ExpiredO
 	}
 }
 
+// deleteResults returns a DeleteObjects stub that reports every key deleted
+// except those in failing, which fail as a backend outage would.
+func deleteResults(failing ...string) func(context.Context, []string) []object.DeleteObjectResult {
+	return func(_ context.Context, keys []string) []object.DeleteObjectResult {
+		out := make([]object.DeleteObjectResult, len(keys))
+		for i, k := range keys {
+			out[i].Key = k
+			if slices.Contains(failing, k) {
+				out[i].Err = errors.New("backend down")
+			}
+		}
+		return out
+	}
+}
+
 // objectsNamed builds a batch of expired locations from keys.
 func objectsNamed(keys ...string) []core.ObjectLocation {
 	out := make([]core.ObjectLocation, 0, len(keys))
@@ -119,7 +137,7 @@ func TestProcessRules_DeletesExpiredObjects(t *testing.T) {
 
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("tmp/")).
 		DoAndReturn(pages(objectsNamed("tmp/old-file"))).AnyTimes()
-	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/old-file").Return(nil).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"tmp/old-file"}).DoAndReturn(deleteResults()).Times(1)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
@@ -147,7 +165,7 @@ func TestProcessRules_PassesTagFilter(t *testing.T) {
 
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), matchTags).
 		DoAndReturn(pages(objectsNamed("logs/a"))).AnyTimes()
-	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/a").Return(nil).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"logs/a"}).DoAndReturn(deleteResults()).Times(1)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "logs/", Tags: tags, ExpirationDays: 1},
@@ -167,7 +185,7 @@ func TestProcessRules_NoExpiredObjects(t *testing.T) {
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
 	// Any delete at all would be a bug.
-	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).Times(0)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 7},
@@ -187,8 +205,8 @@ func TestProcessRules_MultipleRules(t *testing.T) {
 		DoAndReturn(pages(objectsNamed("tmp/a"))).AnyTimes()
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("logs/")).
 		DoAndReturn(pages(objectsNamed("logs/b"))).AnyTimes()
-	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/a").Return(nil).Times(1)
-	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/b").Return(nil).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"tmp/a"}).DoAndReturn(deleteResults()).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"logs/b"}).DoAndReturn(deleteResults()).Times(1)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
@@ -200,7 +218,8 @@ func TestProcessRules_MultipleRules(t *testing.T) {
 }
 
 // TestProcessRules_BatchPagination asserts a full batch triggers another query
-// and a short one ends the rule.
+// and a short one ends the rule, and that each page is deleted in one call
+// rather than one call per object.
 func TestProcessRules_BatchPagination(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -210,7 +229,10 @@ func TestProcessRules_BatchPagination(t *testing.T) {
 	// A full batch of 2, then a short batch of 1, which ends the rule.
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryLimit(2)).
 		DoAndReturn(pages(objectsNamed("a", "b"), objectsNamed("c"))).Times(2)
-	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil).Times(3)
+	gomock.InOrder(
+		deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"a", "b"}).DoAndReturn(deleteResults()),
+		deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"c"}).DoAndReturn(deleteResults()),
+	)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
 	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 3 || failed != 0 {
@@ -218,8 +240,8 @@ func TestProcessRules_BatchPagination(t *testing.T) {
 	}
 }
 
-// TestProcessRules_DeleteFailureContinues asserts one failed delete does not
-// abandon the rest of the batch.
+// TestProcessRules_DeleteFailureContinues asserts one failed delete is counted
+// on its own and does not fail the rest of the batch.
 func TestProcessRules_DeleteFailureContinues(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -227,8 +249,7 @@ func TestProcessRules_DeleteFailureContinues(t *testing.T) {
 
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		DoAndReturn(pages(objectsNamed("good", "bad"))).AnyTimes()
-	deleter.EXPECT().DeleteObject(gomock.Any(), "good").Return(nil).Times(1)
-	deleter.EXPECT().DeleteObject(gomock.Any(), "bad").Return(errors.New("backend down")).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"good", "bad"}).DoAndReturn(deleteResults("bad")).Times(1)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
 	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 1 || failed != 1 {
@@ -245,7 +266,7 @@ func TestProcessRules_ListError(t *testing.T) {
 
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db down")).Times(1)
-	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).Times(0)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
 	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 0 || failed != 1 {
@@ -273,8 +294,8 @@ func TestProcessRules_FailedObjectsArePassedOver(t *testing.T) {
 		lister.EXPECT().ListExpiredObjects(gomock.Any(), queryAfter("")).Return(objectsNamed("a", "b"), nil),
 		lister.EXPECT().ListExpiredObjects(gomock.Any(), queryAfter("b")).Return(nil, nil),
 	)
-	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-		Return(errors.New("backend down")).Times(2)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"a", "b"}).
+		DoAndReturn(deleteResults("a", "b")).Times(1)
 
 	sum := m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}}, nil)
 	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 0 || failed != 2 {
@@ -288,16 +309,16 @@ func TestProcessRules_EmptyRules(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).Times(0)
-	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).Times(0)
 
 	if sum := m.ProcessRules(t.Context(), nil, nil); sum.Succeeded != 0 || sum.Failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 0/0", sum.Succeeded, sum.Failed)
 	}
 }
 
-// TestProcessRules_ReportsProgress covers the observer path: every object is
-// bracketed with its own start and end step, and the end carries the outcome
-// so a watching caller can tell a deleted object from a failed one.
+// TestProcessRules_ReportsProgress covers the observer path: every object in a
+// page starts before the batch goes out, and each ends with its own outcome so
+// a watching caller can tell a deleted object from a failed one.
 func TestProcessRules_ReportsProgress(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -305,8 +326,7 @@ func TestProcessRules_ReportsProgress(t *testing.T) {
 
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		DoAndReturn(pages(objectsNamed("good", "bad"))).AnyTimes()
-	deleter.EXPECT().DeleteObject(gomock.Any(), "good").Return(nil).Times(1)
-	deleter.EXPECT().DeleteObject(gomock.Any(), "bad").Return(errors.New("backend down")).Times(1)
+	deleter.EXPECT().DeleteObjects(gomock.Any(), []string{"good", "bad"}).DoAndReturn(deleteResults("bad")).Times(1)
 
 	var steps []progress.Step
 	m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "", ExpirationDays: 1}},
@@ -314,8 +334,8 @@ func TestProcessRules_ReportsProgress(t *testing.T) {
 
 	want := []progress.Step{
 		{Label: "good", Phase: progress.PhaseStart},
-		{Label: "good", Phase: progress.PhaseEnd, Status: progress.StatusOK},
 		{Label: "bad", Phase: progress.PhaseStart},
+		{Label: "good", Phase: progress.PhaseEnd, Status: progress.StatusOK},
 		{Label: "bad", Phase: progress.PhaseEnd, Status: progress.StatusFailed},
 	}
 	if len(steps) != len(want) {

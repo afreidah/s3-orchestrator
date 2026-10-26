@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Wraps sync/atomic.Pointer[T] to provide a reusable, type-safe container for
-// hot-reloadable configuration values. Eliminates the repeated Store/Load
-// accessor boilerplate across workers, managers, and server types.
+// hot-reloadable configuration values, and Reloadable, which a component
+// embeds for its SetConfig/Config pair instead of writing the accessors itself.
 // -------------------------------------------------------------------------------
 
 package syncutil
@@ -32,4 +32,21 @@ func (a *AtomicConfig[T]) Load() *T {
 		return nil
 	}
 	return a.p.Load()
+}
+
+// Reloadable is the reloadable config a component embeds to gain SetConfig
+// and Config, the pair the reload hooks and services call, without writing
+// them by hand.
+type Reloadable[T any] struct {
+	cfg AtomicConfig[T]
+}
+
+// SetConfig atomically replaces the configuration.
+func (r *Reloadable[T]) SetConfig(cfg *T) {
+	r.cfg.Store(cfg)
+}
+
+// Config returns the current configuration, or nil when none was set.
+func (r *Reloadable[T]) Config() *T {
+	return r.cfg.Load()
 }

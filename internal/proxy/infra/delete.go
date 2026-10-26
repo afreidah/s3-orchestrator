@@ -27,10 +27,6 @@ import (
 // against one backend when it cannot batch them.
 const singleDeleteConcurrency = 16
 
-// batchDeleteRequestKeys is the most keys one batch request carries, which
-// sets how many requests a batch is charged as.
-const batchDeleteRequestKeys = 1000
-
 // Delete removes the bytes at storageKey on the named backend under the
 // configured backend timeout, and charges the DELETE whether or not it
 // succeeds. storageKey is the path the bytes occupy, which for a per-write copy
@@ -76,7 +72,7 @@ func (c *BackendRuntime) deleteBatch(ctx context.Context, name string, be backen
 		c.Log().InfoContext(ctx, "backend declined batch delete, deleting keys singly", "backend", name, logfmt.Err(err))
 		return nil, false
 	}
-	for range (len(storageKeys) + batchDeleteRequestKeys - 1) / batchDeleteRequestKeys {
+	for range backend.BatchDeleteRequests(len(storageKeys)) {
 		c.Acct().APICall(ctx, s3op.DeleteObjects, name)
 	}
 	if err != nil {

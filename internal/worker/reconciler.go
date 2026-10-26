@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -98,7 +99,7 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 	must.NotNil("d.Usage", d.Usage)
 	must.NotNil("d.Buckets", d.Buckets)
 	return &Reconciler{
-		log:     slog.Default().With(logfmt.Component("reconciler")),
+		log:     workerLogger(audit.WorkloadReconcile),
 		syncer:  d.Syncer,
 		fleet:   d.Fleet,
 		usage:   d.Usage,
@@ -109,45 +110,58 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 // Run performs a full reconciliation pass: for each backend, list all objects
 // and import any that are not tracked in the metadata database.
 func (r *Reconciler) Run(ctx context.Context) {
-	runTickCycle(ctx, "Reconcile", "reconcile", audit.WorkloadReconcile, func(ctx context.Context) struct{} {
-		r.run(ctx)
-		return struct{}{}
-	})
+	runTickCycle(ctx, audit.WorkloadReconcile, r.run)
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// run is the body of Run after the span is open.
-func (r *Reconciler) run(ctx context.Context) {
+// reconcileSummary is one scheduled reconcile pass: each backend scanned is an
+// item in the tally, and the objects the scans imported and skipped are added.
+type reconcileSummary struct {
+	batch.Summary
+	imported int
+	skipped  int
+}
+
+// AuditAttrs adds the objects imported and skipped to the tally's attributes.
+func (s *reconcileSummary) AuditAttrs() []slog.Attr {
+	return append(s.Summary.AuditAttrs(), slog.Int("imported", s.imported), slog.Int("skipped", s.skipped))
+}
+
+// run is the body of Run after the span is open. A backend whose scan fails is
+// counted failed and the pass moves on to the next.
+func (r *Reconciler) run(ctx context.Context) *reconcileSummary {
 	start := time.Now()
+	sum := &reconcileSummary{}
 
 	bucketNames := r.buckets.Names()
 	if len(bucketNames) == 0 {
 		r.log.ErrorContext(ctx, "no buckets declared, skipping")
-		return
+		return sum
 	}
 
-	var totalImported, totalSkipped int
-
 	for _, backendName := range r.scannable() {
+		sum.Planned++
 		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucketNames)
 		if err != nil {
 			r.log.ErrorContext(ctx, "backend scan failed",
 				"backend", backendName, "error", err)
+			sum.Failed++
 			continue
 		}
-		totalImported += imported
-		totalSkipped += skipped
+		sum.Succeeded++
+		sum.imported += imported
+		sum.skipped += skipped
 	}
+	sum.Attempted = sum.Succeeded + sum.Failed
+	sum.Duration = time.Since(start)
 
-	duration := time.Since(start)
-
-	if totalImported > 0 {
+	if sum.imported > 0 {
 		r.log.InfoContext(ctx, "reconcile complete",
-			"imported", totalImported, "skipped", totalSkipped,
-			"duration", duration.Round(time.Millisecond))
+			"imported", sum.imported, "skipped", sum.skipped,
+			"duration", sum.Duration.Round(time.Millisecond))
 
 		if err := r.fleet.UpdateQuotaMetrics(ctx); err != nil {
 			r.log.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
@@ -155,12 +169,7 @@ func (r *Reconciler) run(ctx context.Context) {
 	}
 
 	r.reconcileUsage(ctx)
-
-	audit.Log(ctx, "storage.ReconcileComplete",
-		slog.Int("imported", totalImported),
-		slog.Int("skipped", totalSkipped),
-		slog.String("duration", duration.Round(time.Millisecond).String()),
-	)
+	return sum
 }
 
 // reconcileUsage recomputes bytes_used from the object ledger so the
@@ -211,8 +220,13 @@ func (r *Reconciler) backendsFor(backendName string) ([]string, error) {
 // observer, when non-nil, receives a step per backend so a streaming caller can
 // report incremental progress.
 func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
+	return runOps(ctx, audit.WorkloadReconcile, string(audit.WorkloadReconcile), func(ctx context.Context) (*ReconcileResult, error) {
+		return r.reconcile(ctx, backendName, observer)
+	})
+}
 
+// reconcile is the body of Reconcile after the span is open.
+func (r *Reconciler) reconcile(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
 	bucketNames := r.buckets.Names()
 	if len(bucketNames) == 0 {
 		return nil, fmt.Errorf("no buckets declared")
@@ -249,7 +263,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string, observer
 		}
 	}
 
-	audit.Log(ctx, "storage.ReconcileComplete",
+	audit.Log(ctx, string(audit.WorkloadReconcile)+".complete",
 		slog.Int("imported", total.Imported),
 		slog.Int("removed", total.Removed),
 		slog.Int("suppressed_pending_cleanup", total.SuppressedPendingCleanup),

@@ -27,6 +27,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -43,11 +44,15 @@ type recordingDeleter struct {
 	keys []string
 }
 
-func (d *recordingDeleter) DeleteObject(_ context.Context, key string) error {
+func (d *recordingDeleter) DeleteObjects(_ context.Context, keys []string) []object.DeleteObjectResult {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.keys = append(d.keys, key)
-	return nil
+	d.keys = append(d.keys, keys...)
+	out := make([]object.DeleteObjectResult, len(keys))
+	for i, k := range keys {
+		out[i].Key = k
+	}
+	return out
 }
 
 // -------------------------------------------------------------------------

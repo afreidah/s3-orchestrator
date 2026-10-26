@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	object "github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -40,16 +41,16 @@ func (m *MockObjectDeleter) EXPECT() *MockObjectDeleterMockRecorder {
 	return m.recorder
 }
 
-// DeleteObject mocks base method.
-func (m *MockObjectDeleter) DeleteObject(ctx context.Context, key string) error {
+// DeleteObjects mocks base method.
+func (m *MockObjectDeleter) DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
-	ret0, _ := ret[0].(error)
+	ret := m.ctrl.Call(m, "DeleteObjects", ctx, keys)
+	ret0, _ := ret[0].([]object.DeleteObjectResult)
 	return ret0
 }
 
-// DeleteObject indicates an expected call of DeleteObject.
-func (mr *MockObjectDeleterMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
+// DeleteObjects indicates an expected call of DeleteObjects.
+func (mr *MockObjectDeleterMockRecorder) DeleteObjects(ctx, keys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockObjectDeleter)(nil).DeleteObject), ctx, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjects", reflect.TypeOf((*MockObjectDeleter)(nil).DeleteObjects), ctx, keys)
 }

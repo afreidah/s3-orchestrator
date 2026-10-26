@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Every worker reports how its cycle ended on a runs-total counter, taken from
-// the per-item tally rather than from the fact that the cycle returned. These
+// Every worker reports how its cycle ended on the shared cycle counter, taken
+// from the per-item tally rather than from the fact that the cycle returned. These
 // tests pin that label for each outcome a cycle can reach, because the failure
 // they guard against is silent: a cycle that reports "success" regardless looks
 // identical on a dashboard to one that actually succeeded, and a test that only
@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -60,11 +61,13 @@ func wantOutcomeLabel(t *testing.T, counterFor func(string) prometheus.Counter, 
 	}
 }
 
-// wantCycleLabel is wantOutcomeLabel for the workers whose runs-total carries
-// the outcome as its only label.
-func wantCycleLabel(t *testing.T, vec *prometheus.CounterVec, want string, fn func()) {
+// wantCycleLabel is wantOutcomeLabel over the shared cycle counter for one
+// worker's workload.
+func wantCycleLabel(t *testing.T, wl audit.Workload, want string, fn func()) {
 	t.Helper()
-	wantOutcomeLabel(t, func(l string) prometheus.Counter { return vec.WithLabelValues(l) }, want, fn)
+	wantOutcomeLabel(t, func(l string) prometheus.Counter {
+		return telemetry.WorkerCyclesTotal.WithLabelValues(string(wl), l)
+	}, want, fn)
 }
 
 // -------------------------------------------------------------------------
@@ -187,7 +190,7 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 			}
 			f.copySucceeds()
 
-			wantCycleLabel(t, telemetry.ReplicationRunsTotal, tc.want, func() {
+			wantCycleLabel(t, audit.WorkloadReplication, tc.want, func() {
 				if _, err := f.replicator().Replicate(context.Background(), replicationConfig(2), nil); err != nil {
 					t.Fatalf("Replicate: %v", err)
 				}
@@ -201,7 +204,7 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
 	f := newReplicaFleet(t, &mockMetadataStore{}, "b1", "b2")
 
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeEmpty, func() {
+	wantCycleLabel(t, audit.WorkloadReplication, batch.OutcomeEmpty, func() {
 		sum, err := f.replicator().Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Replicate: %v", err)
@@ -217,7 +220,7 @@ func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
 func TestReplicate_QueryFailureReportsError(t *testing.T) {
 	f := newReplicaFleet(t, &mockMetadataStore{underReplicatedErr: errors.New("ledger unavailable")}, "b1", "b2")
 
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeError, func() {
+	wantCycleLabel(t, audit.WorkloadReplication, batch.OutcomeError, func() {
 		if _, err := f.replicator().Replicate(context.Background(), replicationConfig(2), nil); err == nil {
 			t.Fatal("Replicate returned nil error despite the query failing")
 		}
@@ -236,7 +239,7 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
 	r := newTestReplicator(ops, NewMockPlacement(ctrl), store)
-	wantCycleLabel(t, telemetry.ReplicationRunsTotal, batch.OutcomeEmpty, func() {
+	wantCycleLabel(t, audit.WorkloadReplication, batch.OutcomeEmpty, func() {
 		sum, err := r.Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Replicate: %v", err)
@@ -338,7 +341,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 
 // cleaner builds the worker under test from the fleet.
 func (f *cleanerFleet) cleaner() *OverReplicationCleaner {
-	return NewOverReplicationCleaner(f.ops, f.pl, f.store)
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: f.ops, Placement: f.pl, Store: f.store})
 }
 
 // overReplicatedOn returns one key's copies, one row per backend.
@@ -370,7 +373,7 @@ func TestClean_ReportsCycleOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCleanerFleet(t, &mockMetadataStore{overReplicated: tc.rows, removeExcessFailKey: "keyB"})
-			wantCycleLabel(t, telemetry.OverReplicationRunsTotal, tc.want, func() {
+			wantCycleLabel(t, audit.WorkloadOverReplication, tc.want, func() {
 				if _, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil); err != nil {
 					t.Fatalf("Clean: %v", err)
 				}
@@ -388,7 +391,7 @@ func TestClean_MetadataRefusalIsAFailure(t *testing.T) {
 		removeExcessErr: errors.New("deadlock detected"),
 	})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeFailed, func() {
+	wantCycleLabel(t, audit.WorkloadOverReplication, batch.OutcomeFailed, func() {
 		sum, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Clean: %v", err)
@@ -408,7 +411,7 @@ func TestClean_BenignRaceIsNotAFailure(t *testing.T) {
 		removeExcessNoOp: true,
 	})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeEmpty, func() {
+	wantCycleLabel(t, audit.WorkloadOverReplication, batch.OutcomeEmpty, func() {
 		sum, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil)
 		if err != nil {
 			t.Fatalf("Clean: %v", err)
@@ -424,7 +427,7 @@ func TestClean_BenignRaceIsNotAFailure(t *testing.T) {
 func TestClean_QueryFailureReportsError(t *testing.T) {
 	f := newCleanerFleet(t, &mockMetadataStore{overReplicatedErr: errors.New("ledger unavailable")})
 
-	wantCycleLabel(t, telemetry.OverReplicationRunsTotal, batch.OutcomeError, func() {
+	wantCycleLabel(t, audit.WorkloadOverReplication, batch.OutcomeError, func() {
 		if _, err := f.cleaner().Clean(context.Background(), replicationConfig(2), nil); err == nil {
 			t.Fatal("Clean returned nil error despite the query failing")
 		}
@@ -479,15 +482,6 @@ func TestCleanupItemResult_ClassifiesAnObject(t *testing.T) {
 // spreadConfig is an imbalanced-fleet cycle that always clears the threshold.
 var spreadConfig = config.RebalanceConfig{Strategy: "spread", BatchSize: 10, Concurrency: 1, Threshold: 0.1}
 
-// wantRebalanceLabel is wantOutcomeLabel for the rebalancer, whose runs-total
-// carries the strategy alongside the outcome.
-func wantRebalanceLabel(t *testing.T, want string, fn func()) {
-	t.Helper()
-	wantOutcomeLabel(t, func(l string) prometheus.Counter {
-		return telemetry.RebalanceRunsTotal.WithLabelValues(spreadConfig.Strategy, l)
-	}, want, fn)
-}
-
 // newRebalanceFleet wires a two-backend fleet skewed enough to plan one move,
 // whose single move returns moveErr.
 func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
@@ -513,7 +507,7 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	ops.EXPECT().ReleaseAdmission().AnyTimes()
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), moveErr).AnyTimes()
-	return NewRebalancer(ops, pl, store)
+	return NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: store})
 }
 
 // TestRebalance_ReportsCycleOutcome asserts a rebalance cycle labels its
@@ -532,7 +526,7 @@ func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRebalanceFleet(t, tc.moveErr)
-			wantRebalanceLabel(t, tc.want, func() {
+			wantCycleLabel(t, audit.WorkloadRebalance, tc.want, func() {
 				if _, err := r.Rebalance(context.Background(), spreadConfig, nil); err != nil {
 					t.Fatalf("Rebalance: %v", err)
 				}
@@ -545,10 +539,13 @@ func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 // read the fleet's utilization is labelled error rather than skipped.
 func TestRebalance_QuotaQueryFailureReportsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	r := NewRebalancer(newMockOps(ctrl), NewMockPlacement(ctrl),
-		&mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")})
+	r := NewRebalancer(RebalancerDeps{
+		Ops:       newMockOps(ctrl),
+		Placement: NewMockPlacement(ctrl),
+		Store:     &mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")},
+	})
 
-	wantRebalanceLabel(t, batch.OutcomeError, func() {
+	wantCycleLabel(t, audit.WorkloadRebalance, batch.OutcomeError, func() {
 		if _, err := r.Rebalance(context.Background(), spreadConfig, nil); err == nil {
 			t.Fatal("Rebalance returned nil error despite the quota query failing")
 		}

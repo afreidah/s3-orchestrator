@@ -83,17 +83,17 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 // (multipart cleanup, cleanup queue, pending reaper, rebalancer,
 // replicator, over-replication, drain, lifecycle, scrubber) on sm.
 func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *infra.BackendRuntime, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
-	sm.Register("multipart-cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
-	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
+	sm.Register("multipart_cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
+	sm.Register("cleanup", worker.NewCleanupQueueService(ws.cleanup, locker))
 	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
-		sm.Register("pending-reaper", svc)
+		sm.Register("pending_reaper", svc)
 	}
-	sm.Register("rebalancer", worker.NewRebalancerService(rt, ws.rebalancer, locker))
-	sm.Register("replicator", worker.NewReplicatorService(rt, ws.replicator, locker))
-	sm.Register("over-replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
+	sm.Register("rebalance", worker.NewRebalancerService(rt, ws.rebalancer, locker))
+	sm.Register("replication", worker.NewReplicatorService(rt, ws.replicator, locker))
+	sm.Register("over_replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
 	sm.Register("drain", worker.NewDrainerService(rt, ws.drainer, locker))
 	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
-	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
+	sm.Register("scrub", worker.NewScrubberService(ws.scrubber, locker))
 }
 
 // -------------------------------------------------------------------------
@@ -121,16 +121,16 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	}
 
 	sm := lifecycle.NewManager()
-	sm.Register("usage-flush", NewUsageFlushService(&UsageFlushDeps{
+	sm.Register("usage_flush", NewUsageFlushService(&UsageFlushDeps{
 		Flusher: usageSvc,
 		Tracker: rt.Usage(),
 		Fleet:   rt,
 		States:  states,
 	}))
-	sm.Register("fleet-snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
-	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
+	sm.Register("fleet_snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
+	sm.Register("cb_watchdog", breaker.NewWatchdog(registry))
 	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
-		sm.Register("flight-recorder", fr)
+		sm.Register("flight_recorder", fr)
 	}
 	// Every mode holds a provisioning view: API instances authenticate
 	// against it, workers read its declared buckets.
@@ -139,7 +139,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		if err != nil {
 			return nil, err
 		}
-		sm.Register("provisioning-watch", newProvisioningWatcher(channel, func(ctx context.Context) error {
+		sm.Register("provisioning_watch", newProvisioningWatcher(channel, func(ctx context.Context) error {
 			return applyProvisioning(ctx, i)
 		}))
 	}
@@ -166,7 +166,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		sm.Register("reconcile", worker.NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
 	}
 	if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
-		sm.Register("notifications", notifier)
+		sm.Register("notifier", notifier)
 	}
 
 	return sm, nil

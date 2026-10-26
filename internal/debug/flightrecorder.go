@@ -36,7 +36,7 @@ func NewFlightRecorderService(minAge time.Duration) *FlightRecorderService {
 	return &FlightRecorderService{
 		fr:     trace.NewFlightRecorder(trace.FlightRecorderConfig{MinAge: minAge}),
 		minAge: minAge,
-		log:    slog.Default().With(logfmt.Component("flight-recorder")),
+		log:    slog.Default().With(logfmt.Component("flight_recorder")),
 	}
 }
 

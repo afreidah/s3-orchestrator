@@ -212,8 +212,6 @@ Both the rebalancer and replicator use separate advisory locks (1001 and 1002), 
 | `s3o_replication_pending` | Gauge | Objects currently below the target replication factor. Alert if this stays elevated. |
 | `s3o_replication_copies_created_total` | Counter | Total replica copies created across all scans. |
 | `s3o_replication_errors_total` | Counter | Total replication errors (individual object copy failures). Alert on sustained increase. |
-| `s3o_replication_duration_seconds` | Histogram | Time taken for each replication scan cycle. |
-| `s3o_replication_runs_total` | Counter | Total scan runs, labeled by `status` (`success`, `partial`, `failed`, `empty`, `error`). Alert on repeated errors. |
 | `s3o_replication_health_copies_total` | Counter | Copies created specifically to replace backends that exceeded the unhealthy threshold. |
 
 ### Write-placed copy metrics
@@ -234,8 +232,6 @@ Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwis
 | `s3o_over_replication_pending` | Gauge | Objects currently above the target replication factor. |
 | `s3o_over_replication_removed_total` | Counter | Total excess copies removed. |
 | `s3o_over_replication_errors_total` | Counter | Total cleanup errors. Alert on sustained increase. |
-| `s3o_over_replication_runs_total` | Counter | Total cleanup runs, labeled by `status` (`success`, `partial`, `failed`, `empty`, `error`). |
-| `s3o_over_replication_duration_seconds` | Histogram | Time taken for each cleanup cycle. |
 
 ### Rebalancer metrics
 
@@ -243,15 +239,22 @@ Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwis
 |---|---|---|
 | `s3o_rebalance_pending` | Gauge | Objects planned for rebalance in the current cycle. |
 | `s3o_rebalance_objects_moved_total` | Counter | Total objects moved, labeled by `strategy` and `status`. |
-| `s3o_rebalance_runs_total` | Counter | Total rebalancer runs, labeled by `strategy` and `status`. |
-| `s3o_rebalance_duration_seconds` | Histogram | Rebalancer execution time. |
 | `s3o_rebalance_skipped_total` | Counter | Runs skipped, labeled by `reason` (threshold, empty_plan). |
+
+### Cycle metrics
+
+Each worker's passes are counted on the shared worker metrics, under the worker's name: `replication`, `over_replication` or `rebalance`.
+
+| Metric | Type | Description |
+|---|---|---|
+| `s3o_worker_cycles_total` | Counter | Passes labeled by `service` and `outcome` (`success`, `partial`, `failed`, `empty`, `error`). Alert on repeated errors. |
+| `s3o_worker_cycle_duration_seconds` | Histogram | Time taken for each pass, labeled by `service`. |
 
 ### What to alert on
 
 - **`s3o_replication_pending > 0` for extended periods** — objects are stuck under-replicated. Check backend health, available quota, and circuit breaker state.
 - **`s3o_replication_errors_total` increasing steadily** — the replicator is failing to copy objects. Check logs for backend connectivity issues or permission errors.
-- **`s3o_replication_runs_total{status="error"}` increasing** - entire scan cycles are failing. This usually indicates a database connectivity issue; a tick skipped because another instance holds the lock is not counted as an error.
+- **`s3o_worker_cycles_total{service="replication",outcome="error"}` increasing** - entire scan cycles are failing. This usually indicates a database connectivity issue; a tick skipped because another instance holds the lock is not counted as an error.
 - **`s3o_over_replication_pending > 0` for extended periods** — excess copies are not being cleaned up. Check that the cleanup worker is running and backends are reachable for deletions.
 - **Backend utilization skew** — compare `s3o_quota_bytes_used` across backends. Large disparities may indicate the first-fit selection is concentrating replicas unevenly.
 

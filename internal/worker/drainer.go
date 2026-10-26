@@ -86,7 +86,7 @@ func NewDrainer(deps DrainerDeps) *Drainer {
 		store:        deps.Store,
 		abortUploads: deps.AbortUploads,
 		onRecords:    deps.OnRecords,
-		log:          slog.Default().With(logfmt.Component("drainer")),
+		log:          workerLogger(audit.WorkloadDrain),
 	}
 }
 
@@ -101,11 +101,16 @@ type DrainSummary struct {
 	Completed int
 }
 
+// AuditAttrs adds the drains finished to the tally's attributes.
+func (s DrainSummary) AuditAttrs() []slog.Attr {
+	return append(s.Summary.AuditAttrs(), slog.Int("drains_completed", s.Completed))
+}
+
 // Drain walks every drain in progress once, moving what it can and finishing
 // the drains whose backend ends up empty. observer, when non-nil, receives a
 // start and end step per object.
 func (d *Drainer) Drain(ctx context.Context, observer progress.Observer) (DrainSummary, error) {
-	return runOpsCycle(ctx, "Drain", "drain", audit.WorkloadDrain, func(ctx context.Context) (DrainSummary, error) {
+	return runOpsCycle(ctx, audit.WorkloadDrain, func(ctx context.Context) (DrainSummary, error) {
 		records, err := d.store.ListBackendStates(ctx)
 		if err != nil {
 			return DrainSummary{}, fmt.Errorf("list backend states: %w", err)
@@ -218,13 +223,12 @@ func (d *Drainer) movePage(ctx context.Context, srcName string, page []core.Obje
 		return batch.Summary{}, fmt.Errorf("look up copies: %w", err)
 	}
 	runner := batch.Runner[core.ObjectLocation]{
-		Name:        "drain",
 		Concurrency: 1,
 		Observer:    observer,
 		Key:         func(obj core.ObjectLocation) string { return obj.ObjectKey },
 	}
 	return runner.Run(ctx, page, func(ctx context.Context, obj core.ObjectLocation) batch.ItemResult {
-		return WithAdmission(ctx, d.ops, WorkerNameDrainer, func() batch.ItemResult {
+		return WithAdmission(ctx, d.ops, func() batch.ItemResult {
 			if !d.drainOne(ctx, srcName, &obj, copies[obj.ObjectKey]) {
 				return batch.Failed()
 			}

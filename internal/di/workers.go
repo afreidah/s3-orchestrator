@@ -92,7 +92,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rb := worker.NewRebalancer(c.Runtime, c.Coord, c.Stores)
+	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores})
 	rb.SetGaugePublisher(c.Runtime)
 	return rb, nil
 }
@@ -142,7 +142,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(c.Runtime, c.Coord, c.Stores), nil
+	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores}), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves

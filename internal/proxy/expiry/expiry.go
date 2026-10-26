@@ -4,9 +4,10 @@
 // Author: Alex Freidah
 //
 // Evaluates lifecycle rules and deletes objects whose created_at is older than
-// the configured expiration period. Deletion goes through the normal object
-// delete path so quota decrement, cache invalidation, and the cleanup queue all
-// behave exactly as they do for a client-issued delete.
+// the configured expiration period. Each page of expired objects goes through
+// the multi-object delete path, so quota decrement, cache invalidation, and the
+// cleanup queue behave as they do for a client's DeleteObjects, and the
+// backends are sent one batch per page rather than one request per copy.
 //
 // Owns the reloadable lifecycle config rather than reading it from a facade:
 // the rules and the code that applies them belong together, and the reload
@@ -26,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -44,10 +46,10 @@ const defaultBatchSize = 100
 // TYPES
 // -------------------------------------------------------------------------
 
-// ObjectDeleter removes one object through the full delete path.
-// *object.Manager satisfies it.
+// ObjectDeleter removes objects through the full delete path and reports each
+// key's outcome. *object.Manager satisfies it.
 type ObjectDeleter interface {
-	DeleteObject(ctx context.Context, key string) error
+	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
 }
 
 // Manager applies lifecycle rules on demand. Safe for concurrent use; the
@@ -116,10 +118,10 @@ func batchSizeFor(cfg *config.LifecycleConfig) int {
 	return defaultBatchSize
 }
 
-// applyRule walks one rule's expired objects by key and deletes each. An object
-// whose delete fails is passed over, so a backend outage costs each object one
-// attempt per sweep rather than one per page. A listing failure counts as one
-// failure and ends the rule.
+// applyRule walks one rule's expired objects by key and deletes each page in
+// one batch. An object whose delete fails is passed over, so a backend outage
+// costs each object one attempt per sweep rather than one per page. A listing
+// failure counts as one failure and ends the rule.
 func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int, obs progress.Observer) batch.Summary {
 	cutoff := time.Now().Add(-time.Duration(rule.ExpirationDays) * 24 * time.Hour)
 	pager := batch.Pager[core.ObjectLocation, string]{
@@ -135,17 +137,11 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 		},
 		CursorOf: func(o core.ObjectLocation) string { return o.ObjectKey },
 	}
-	runner := batch.Runner[core.ObjectLocation]{
-		Name:        "lifecycle",
-		Concurrency: 1,
-		Observer:    obs,
-		Key:         func(o core.ObjectLocation) string { return o.ObjectKey },
-	}
-	total, stop, err := pager.RunPages(ctx, runner, func(ctx context.Context, o core.ObjectLocation) batch.ItemResult {
-		if err := m.deleteExpired(ctx, rule, o.ObjectKey); err != nil {
-			return batch.Failed()
-		}
-		return batch.Succeeded()
+	var total batch.Summary
+	stop, err := pager.Walk(ctx, func(ctx context.Context, page []core.ObjectLocation) (batch.Step, error) {
+		sum := m.expirePage(ctx, rule, page, obs)
+		total = total.Plus(sum)
+		return batch.Step{Progress: sum.Succeeded}, nil
 	})
 	if stop == batch.Errored {
 		m.logger().ErrorContext(ctx, "failed to list expired objects",
@@ -155,14 +151,45 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 	return total
 }
 
-// deleteExpired removes one expired object and records the outcome, so the
-// runner's per-item bracketing reports a status rather than carrying the work.
-func (m *Manager) deleteExpired(ctx context.Context, rule config.LifecycleRule, key string) error {
-	if err := m.objects.DeleteObject(ctx, key); err != nil {
+// expirePage deletes one page of expired objects in a single batch and records
+// each key's outcome. obs, when set, sees every key start before the batch and
+// end with its own outcome.
+func (m *Manager) expirePage(ctx context.Context, rule config.LifecycleRule, page []core.ObjectLocation, obs progress.Observer) batch.Summary {
+	keys := make([]string, len(page))
+	for i := range page {
+		keys[i] = page[i].ObjectKey
+		report(obs, keys[i], progress.PhaseStart, "")
+	}
+	sum := batch.Summary{Planned: len(keys), Attempted: len(keys)}
+	for _, res := range m.objects.DeleteObjects(ctx, keys) {
+		if !m.recordExpired(ctx, rule, res) {
+			sum.Failed++
+			report(obs, res.Key, progress.PhaseEnd, progress.StatusFailed)
+			continue
+		}
+		sum.Succeeded++
+		report(obs, res.Key, progress.PhaseEnd, progress.StatusOK)
+	}
+	return sum
+}
+
+// report sends one progress step when an observer is watching.
+func report(obs progress.Observer, key string, phase progress.Phase, status string) {
+	if obs != nil {
+		obs(progress.Step{Label: key, Phase: phase, Status: status})
+	}
+}
+
+// recordExpired records one key's delete outcome: a warning and the failure
+// counter when it failed, or the audit line, event and deleted counter when it
+// went. Reports whether the object was deleted.
+func (m *Manager) recordExpired(ctx context.Context, rule config.LifecycleRule, res object.DeleteObjectResult) bool {
+	key := res.Key
+	if res.Err != nil {
 		m.logger().WarnContext(ctx, "failed to delete expired object",
-			slog.String("key", key), "error", err)
+			slog.String("key", key), "error", res.Err)
 		telemetry.LifecycleFailedTotal.Inc()
-		return err
+		return false
 	}
 	audit.Log(ctx, "lifecycle.delete",
 		slog.String("key", key),
@@ -177,5 +204,5 @@ func (m *Manager) deleteExpired(ctx context.Context, rule config.LifecycleRule, 
 		"expiration_days": rule.ExpirationDays,
 	})
 	telemetry.LifecycleDeletedTotal.Inc()
-	return nil
+	return true
 }

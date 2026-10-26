@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -57,13 +58,13 @@ func (m copyReq) String() string {
 }
 
 // -------------------------------------------------------------------------
-// planUnderReplicated (planner)
+// planCopySets (planner)
 // -------------------------------------------------------------------------
 
-// TestPlanUnderReplicated_TablePinsPlacementDecisions checks that keys at or
-// above the factor are dropped and each task's needed count equals factor
-// minus its existing copies.
-func TestPlanUnderReplicated_TablePinsPlacementDecisions(t *testing.T) {
+// TestPlanCopySets_ShortByPinsPlacementDecisions checks that keys at or above
+// the factor are dropped and each set's count equals factor minus its existing
+// copies.
+func TestPlanCopySets_ShortByPinsPlacementDecisions(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name      string
@@ -130,40 +131,56 @@ func TestPlanUnderReplicated_TablePinsPlacementDecisions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tasks := planUnderReplicated(tc.locations, tc.factor)
-			if len(tasks) != len(tc.wantTasks) {
-				t.Fatalf("tasks = %d, want %d (%+v)", len(tasks), len(tc.wantTasks), tasks)
-			}
-			for _, task := range tasks {
-				want, ok := tc.wantTasks[task.key]
-				if !ok {
-					t.Errorf("unexpected task for key %q", task.key)
-					continue
-				}
-				if task.needed != want {
-					t.Errorf("task %q needed = %d, want %d", task.key, task.needed, want)
-				}
-			}
+			wantCopySets(t, planCopySets(tc.locations, shortBy(tc.factor)), tc.wantTasks)
 		})
 	}
 }
 
-// TestPlanUnderReplicated_PreservesCopyMembership confirms that the
-// per-key copy slice handed to the executor includes every backend the
-// flat locations slice listed for that key. The executor relies on this
-// to populate the exclusion map without re-querying the store.
-func TestPlanUnderReplicated_PreservesCopyMembership(t *testing.T) {
+// TestPlanCopySets_OverByKeepsOnlySurplus checks the cleaner's side of the
+// planner: a key over the factor carries its surplus, and keys at or under the
+// factor are dropped.
+func TestPlanCopySets_OverByKeepsOnlySurplus(t *testing.T) {
+	t.Parallel()
+	locations := []core.ObjectLocation{
+		{ObjectKey: "over2", BackendName: "b1"},
+		{ObjectKey: "over2", BackendName: "b2"},
+		{ObjectKey: "over2", BackendName: "b3"},
+		{ObjectKey: "at", BackendName: "b1"},
+		{ObjectKey: "under", BackendName: "b1"},
+	}
+	wantCopySets(t, planCopySets(locations, overBy(1)), map[string]int{"over2": 2, "at": 0})
+}
+
+// wantCopySets asserts the planned sets are exactly the keys want gives a
+// positive count, each off the factor by that count.
+func wantCopySets(t *testing.T, sets []copySet, want map[string]int) {
+	t.Helper()
+	got := make(map[string]int, len(sets))
+	for _, s := range sets {
+		got[s.key] = s.off
+	}
+	maps.DeleteFunc(want, func(_ string, off int) bool { return off <= 0 })
+	if !maps.Equal(got, want) {
+		t.Errorf("planned sets = %v, want %v", got, want)
+	}
+}
+
+// TestPlanCopySets_PreservesCopyMembership confirms that the per-key copy
+// slice handed to the executor includes every backend the flat locations slice
+// listed for that key. The executor relies on this to populate the exclusion
+// map without re-querying the store.
+func TestPlanCopySets_PreservesCopyMembership(t *testing.T) {
 	t.Parallel()
 	locations := []core.ObjectLocation{
 		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "k1", BackendName: "b2", SizeBytes: 100},
 	}
-	tasks := planUnderReplicated(locations, 3)
-	if len(tasks) != 1 {
-		t.Fatalf("tasks = %d, want 1", len(tasks))
+	sets := planCopySets(locations, shortBy(3))
+	if len(sets) != 1 {
+		t.Fatalf("sets = %d, want 1", len(sets))
 	}
 	got := make(map[string]bool)
-	for _, c := range tasks[0].copies {
+	for _, c := range sets[0].copies {
 		got[c.BackendName] = true
 	}
 	if !got["b1"] || !got["b2"] {

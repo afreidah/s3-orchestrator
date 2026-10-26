@@ -19,7 +19,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cleanup"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -64,9 +63,9 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 			Deleter:     deps.Ops,
 			Store:       deps.Store,
 			Concurrency: deps.Concurrency,
-			Name:        "cleanup",
+			Name:        string(audit.WorkloadCleanup),
 			Admit: func(ctx context.Context, fn func()) {
-				WithAdmission(ctx, deps.Ops, WorkerNameCleanup, func() struct{} {
+				WithAdmission(ctx, deps.Ops, func() struct{} {
 					fn()
 					return struct{}{}
 				})
@@ -74,7 +73,7 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 		}),
 		instanceID:       deps.InstanceID,
 		claimGracePeriod: deps.ClaimGracePeriod,
-		log:              slog.Default().With(logfmt.Component("cleanup_worker")),
+		log:              workerLogger(audit.WorkloadCleanup),
 	}
 }
 
@@ -95,7 +94,7 @@ const cleanupMaxBatchesPerTick = 20
 
 // ProcessCleanupQueue claims pending cleanup rows and settles them.
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) batch.Summary {
-	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", audit.WorkloadCleanup, w.processCleanupQueue)
+	return runTickCycle(ctx, audit.WorkloadCleanup, w.processCleanupQueue)
 }
 
 // -------------------------------------------------------------------------

@@ -52,4 +52,25 @@ var (
 		},
 		[]string{"service"},
 	)
+
+	// WorkerCyclesTotal counts each worker pass by how its items ended:
+	// success, partial, failed, empty, or error when the pass failed before it
+	// had a tally. A tick reports whether the pass ran; this reports what it did.
+	WorkerCyclesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_worker_cycles_total",
+			Help: "Worker passes by service and outcome of their items",
+		},
+		[]string{"service", "outcome"},
+	)
+
+	// WorkerCycleDurationSeconds times each worker pass, whatever its outcome.
+	WorkerCycleDurationSeconds = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "s3o_worker_cycle_duration_seconds",
+			Help:    "Worker pass duration by service",
+			Buckets: prometheus.ExponentialBuckets(0.1, 2, 14),
+		},
+		[]string{"service"},
+	)
 )

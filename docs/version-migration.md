@@ -62,7 +62,19 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.172.x (current)
+### v0.173.x (current)
+
+**One name per worker, shared cycle metrics, and batched lifecycle deletes ([#1428](https://github.com/afreidah/s3-orchestrator/issues/1428), v0.173.0)**
+
+Each background worker now goes by its workload's name everywhere: its service in `/admin/api/workers` and the TUI Workers pane, the `service` label on the `s3o_worker_*` metrics, the `worker` label on `s3o_worker_admission_rejections_total`, its log `component`, and the `component` label on `s3o_encryption_flag_mismatch_total`, where a hash pass now reports `scrub`, `backfill` or `replication` instead of `scrubber` or `replicator`. The renamed services are `over_replication_cleanup` to `over_replication`, `cleanup_queue` to `cleanup` and `scrubber` to `scrub`; the renamed log components are `replicator` to `replication`, `rebalancer` to `rebalance`, `drainer` to `drain`, `cleanup_worker` to `cleanup`, `scrubber` to `scrub`, `reconciler` to `reconcile` and `flight-recorder` to `flight_recorder`; the admission labels `replicator`, `rebalancer` and `drainer` become `replication`, `rebalance` and `drain`. The supervisor's `service` attribute on start, stop and restart log lines uses the same names, with underscores: `usage_flush`, `fleet_snapshot`, `cb_watchdog`, `flight_recorder`, `provisioning_watch`, `multipart_cleanup` and `notifier` among them. Update alerts, dashboards and log queries that match the old names.
+
+`s3o_replication_runs_total`, `s3o_replication_duration_seconds`, `s3o_over_replication_runs_total`, `s3o_over_replication_duration_seconds`, `s3o_rebalance_runs_total` and `s3o_rebalance_duration_seconds` are removed. Every worker pass is now counted on `s3o_worker_cycles_total{service, outcome}` and timed on `s3o_worker_cycle_duration_seconds{service}`, which also cover drain, scrub, cleanup, the pending reaper and reconcile. `s3o_replication_runs_total{status="error"}` becomes `s3o_worker_cycles_total{service="replication", outcome="error"}`; the rebalance metrics lose their `strategy` label. The bundled Grafana dashboard is updated.
+
+A pass that did something writes one `<name>.complete` audit entry carrying `planned`, `succeeded`, `failed`, `skipped`, `deferred`, `outcome`, `duration`, `usage` and the worker's own count. `replication.complete`, `over_replication.complete` and `rebalance.complete` keep their names with this shape (`objects_checked` and `objects_failed` become `planned` and `failed`; `objects_moved` becomes `succeeded`), drain, scrub, cleanup and the pending reaper gain one, and the reconcile entry `storage.ReconcileComplete` becomes `reconcile.complete`. A manual reconcile now runs under the `reconcile` workload, so its backend requests are no longer charged as `unknown`.
+
+Lifecycle expiry deletes each page of expired objects with one multi-object delete, so the backends receive one batch request per page instead of one DELETE per copy. No migration and no config change.
+
+### v0.172.x
 
 **Backend detail in the TUI and a fuller status response ([#1419](https://github.com/afreidah/s3-orchestrator/issues/1419), [#1414](https://github.com/afreidah/s3-orchestrator/issues/1414), v0.172.0)**
 

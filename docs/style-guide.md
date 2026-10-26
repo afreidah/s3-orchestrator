@@ -523,7 +523,7 @@ When the cleanup truly must be a callback (e.g., interface contract), wrap it in
 
 ### Concurrency Patterns
 
-- **`syncutil.AtomicConfig[T]`** for hot-reloadable config (wraps `atomic.Pointer[T]` with `Store`/`Load`)
+- **`syncutil.AtomicConfig[T]`** for hot-reloadable config (wraps `atomic.Pointer[T]` with `Store`/`Load`); embed **`syncutil.Reloadable[T]`** for a component's `SetConfig`/`Config` pair instead of writing it by hand
 - **`syncutil.TTLCache[K,V]`** for generic TTL-based caches with background eviction
 - **Atomic counters** for usage tracking, flushed periodically to the database
 - **Context-scoped timeouts** via helper methods (`m.WithTimeout(ctx)`) for backend calls

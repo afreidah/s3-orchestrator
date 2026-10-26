@@ -34,25 +34,6 @@ var (
 		[]string{"strategy"},
 	)
 
-	// RebalanceRunsTotal counts rebalancer executions.
-	RebalanceRunsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_rebalance_runs_total",
-			Help: "Total number of rebalancer runs",
-		},
-		[]string{"strategy", "status"},
-	)
-
-	// RebalanceDuration tracks rebalancer execution time.
-	RebalanceDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3o_rebalance_duration_seconds",
-			Help:    "Rebalancer execution time in seconds",
-			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
-		},
-		[]string{"strategy"},
-	)
-
 	// RebalanceSkipped counts rebalancer runs that were skipped.
 	RebalanceSkipped = promauto.NewCounterVec(
 		prometheus.CounterOpts{
