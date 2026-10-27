@@ -17,9 +17,12 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -96,8 +99,8 @@ func (p *s3oProvider) Schema(
 	_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse,
 ) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages the identities, keypairs and grants a running " +
-			"s3-orchestrator authorizes requests against.\n\n" +
+		MarkdownDescription: "Manages the virtual buckets a running s3-orchestrator " +
+			"serves, and the identities, keypairs and grants it authorizes requests against.\n\n" +
 			"See [s3-orchestrator.munchbox.cc](https://s3-orchestrator.munchbox.cc) for " +
 			"the project documentation, and the [Provisioning with Terraform]" +
 			"(https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) guide for " +
@@ -203,6 +206,34 @@ func (p *s3oProvider) DataSources(_ context.Context) []func() datasource.DataSou
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// clientFrom takes the API client the provider built out of the data the
+// framework hands a resource or data source. Terraform configures them during
+// validation too, before the provider is, so no data is an ordinary state.
+func clientFrom(data any, diags *diag.Diagnostics) *client.Client {
+	if data == nil {
+		return nil
+	}
+	api, ok := data.(*client.Client)
+	if !ok {
+		diags.AddError(
+			"Unexpected provider data",
+			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", data),
+		)
+	}
+	return api
+}
+
+// addConfigDeclared reports an entry the orchestrator's config file declares,
+// which the admin API will not change, so the refusal names the file rather
+// than reading as a credential problem.
+func addConfigDeclared(diags *diag.Diagnostics, kind, id string) {
+	diags.AddError(
+		strings.ToUpper(kind[:1])+kind[1:]+" is declared in the orchestrator's configuration file",
+		fmt.Sprintf("The %s %q comes from config.yaml, which the admin API will not change. "+
+			"Manage it by editing that file and sending SIGHUP, or remove it from Terraform state.", kind, id),
+	)
+}
 
 // valueOr resolves a configured value, falling back to an environment variable
 // when the configuration left it out.

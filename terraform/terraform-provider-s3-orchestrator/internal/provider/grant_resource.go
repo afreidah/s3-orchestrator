@@ -203,18 +203,7 @@ func (r *grantResource) Schema(
 func (r *grantResource) Configure(
 	_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
 ) {
-	if req.ProviderData == nil {
-		return
-	}
-	api, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", req.ProviderData),
-		)
-		return
-	}
-	r.api = api
+	r.api = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
 // Create declares the grant.

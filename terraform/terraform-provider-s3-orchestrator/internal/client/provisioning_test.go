@@ -94,93 +94,66 @@ func TestProvisioningFetchesEverything(t *testing.T) {
 	}
 }
 
-func TestBucketLookup(t *testing.T) {
+// TestLookups covers finding a bucket, a user and a keypair in the listing,
+// and that a missing one is absent rather than an error. Each lookup reports
+// one field of what it found, so a match on the wrong entry shows.
+func TestLookups(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name       string
-		bucket     string
-		wantFound  bool
-		wantSource string
-	}{
-		{"an existing bucket is found", "photos", true, "config"},
-		{"a missing bucket is absent rather than an error", "gone", false, ""},
+	bucket := func(key string) func(*Client) (string, bool, error) {
+		return func(c *Client) (string, bool, error) {
+			b, found, err := c.Bucket(context.Background(), key)
+			return b.Source, found, err
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			c, _ := recorder(t)
-
-			b, found, err := c.Bucket(context.Background(), tc.bucket)
-			if err != nil {
-				t.Fatalf("Bucket: %v", err)
-			}
-			if found != tc.wantFound {
-				t.Fatalf("found = %v, want %v", found, tc.wantFound)
-			}
-			if b.Source != tc.wantSource {
-				t.Errorf("source = %q, want %q", b.Source, tc.wantSource)
-			}
-		})
+	user := func(key string) func(*Client) (string, bool, error) {
+		return func(c *Client) (string, bool, error) {
+			u, found, err := c.User(context.Background(), key)
+			return u.Name, found, err
+		}
 	}
-}
-
-func TestUserLookup(t *testing.T) {
-	t.Parallel()
+	credential := func(key string) func(*Client) (string, bool, error) {
+		return func(c *Client) (string, bool, error) {
+			cr, found, err := c.Credential(context.Background(), key)
+			return cr.UserID, found, err
+		}
+	}
 	cases := []struct {
 		name      string
-		id        string
+		lookup    func(*Client) (string, bool, error)
 		wantFound bool
-		wantName  string
+		want      string
 	}{
-		{"an existing user is found", "user-backup", true, "temporal-backup-job"},
-		{"a missing user is absent rather than an error", "user-gone", false, ""},
+		{"an existing bucket is found", bucket("photos"), true, "config"},
+		{"a missing bucket is absent", bucket("gone"), false, ""},
+		{"an existing user is found", user("user-backup"), true, "temporal-backup-job"},
+		{"a missing user is absent", user("user-gone"), false, ""},
+		{"an existing keypair is found", credential("AKIABACKUP0000000000"), true, "user-backup"},
+		{"a revoked keypair is absent", credential("AKIAGONE00000000000"), false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c, _ := recorder(t)
-
-			u, found, err := c.User(context.Background(), tc.id)
+			got, found, err := tc.lookup(c)
 			if err != nil {
-				t.Fatalf("User: %v", err)
+				t.Fatalf("lookup: %v", err)
 			}
-			if found != tc.wantFound {
-				t.Fatalf("found = %v, want %v", found, tc.wantFound)
-			}
-			if u.Name != tc.wantName {
-				t.Errorf("name = %q, want %q", u.Name, tc.wantName)
+			if found != tc.wantFound || got != tc.want {
+				t.Errorf("lookup = %q, %v; want %q, %v", got, found, tc.want, tc.wantFound)
 			}
 		})
 	}
 }
 
-func TestCredentialLookup(t *testing.T) {
+// TestLookupReportsFailure covers a listing that cannot be fetched surfacing
+// as an error rather than as an absent entry.
+func TestLookupReportsFailure(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name       string
-		accessKey  string
-		wantFound  bool
-		wantUserID string
-	}{
-		{"an existing keypair is found", "AKIABACKUP0000000000", true, "user-backup"},
-		{"a revoked keypair is absent rather than an error", "AKIAGONE00000000000", false, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			c, _ := recorder(t)
-
-			cred, found, err := c.Credential(context.Background(), tc.accessKey)
-			if err != nil {
-				t.Fatalf("Credential: %v", err)
-			}
-			if found != tc.wantFound {
-				t.Fatalf("found = %v, want %v", found, tc.wantFound)
-			}
-			if cred.UserID != tc.wantUserID {
-				t.Errorf("user = %q, want %q", cred.UserID, tc.wantUserID)
-			}
-		})
+	c := stub(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	if _, _, err := c.User(context.Background(), "user-backup"); err == nil {
+		t.Error("User = nil error, want the failure reported")
 	}
 }
 

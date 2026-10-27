@@ -17,7 +17,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -125,18 +124,7 @@ func (r *credentialResource) Schema(
 func (r *credentialResource) Configure(
 	_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
 ) {
-	if req.ProviderData == nil {
-		return
-	}
-	api, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", req.ProviderData),
-		)
-		return
-	}
-	r.api = api
+	r.api = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
 // ValidateConfig refuses half a keypair before an apply is attempted.
@@ -217,12 +205,7 @@ func (r *credentialResource) Read(
 		return
 	}
 	if cred.Source == client.SourceConfig {
-		resp.Diagnostics.AddError(
-			"Credential is declared in the orchestrator's configuration file",
-			fmt.Sprintf("The keypair %q comes from config.yaml, which the admin API will not "+
-				"change. Manage it by editing that file and sending SIGHUP, or remove it from "+
-				"Terraform state.", state.ID.ValueString()),
-		)
+		addConfigDeclared(&resp.Diagnostics, "credential", state.ID.ValueString())
 		return
 	}
 

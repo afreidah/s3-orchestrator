@@ -28,14 +28,14 @@ func TestAccUser(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckUserDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_user", testAccUserFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccUserConfig("acc-user"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("s3orchestrator_user.test", "name", "acc-user"),
 					resource.TestCheckResourceAttrSet("s3orchestrator_user.test", "id"),
-					testAccCheckUserExists("s3orchestrator_user.test"),
+					testAccCheckExists("s3orchestrator_user.test", testAccUserFound),
 				),
 			},
 			{
@@ -81,40 +81,9 @@ resource "s3orchestrator_user" "test" {
 // CHECKS
 // -------------------------------------------------------------------------
 
-// testAccCheckUserExists asks the orchestrator rather than the state file, so
-// a provider that wrote state without writing the user is caught.
-func testAccCheckUserExists(addr string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[addr]
-		if !ok {
-			return fmt.Errorf("%s not in state", addr)
-		}
-		_, found, err := testAccClient().User(context.Background(), rs.Primary.ID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("user %q in state but not in the orchestrator", rs.Primary.ID)
-		}
-		return nil
-	}
-}
-
-// testAccCheckUserDestroy confirms the delete reached the orchestrator, which
-// is the half of the lifecycle state alone cannot vouch for.
-func testAccCheckUserDestroy(s *terraform.State) error {
-	api := testAccClient()
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "s3orchestrator_user" {
-			continue
-		}
-		_, found, err := api.User(context.Background(), rs.Primary.ID)
-		if err != nil {
-			return err
-		}
-		if found {
-			return fmt.Errorf("user %q survived destroy", rs.Primary.ID)
-		}
-	}
-	return nil
+// testAccUserFound looks a user up by its id, so a provider that wrote state
+// without writing the user is caught.
+func testAccUserFound(is *terraform.InstanceState) (bool, error) {
+	_, found, err := testAccClient().User(context.Background(), is.ID)
+	return found, err
 }

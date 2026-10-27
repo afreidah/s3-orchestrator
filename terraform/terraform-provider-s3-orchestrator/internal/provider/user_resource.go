@@ -17,7 +17,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -95,24 +94,10 @@ func (r *userResource) Schema(
 }
 
 // Configure takes the API client the provider built.
-//
-// Terraform calls this during validation too, before the provider is
-// configured, so no provider data is an ordinary state rather than a fault.
 func (r *userResource) Configure(
 	_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
 ) {
-	if req.ProviderData == nil {
-		return
-	}
-	api, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", req.ProviderData),
-		)
-		return
-	}
-	r.api = api
+	r.api = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
 // Create declares the identity and records the id the orchestrator generated.
@@ -159,12 +144,7 @@ func (r *userResource) Read(
 		return
 	}
 	if user.Source == client.SourceConfig {
-		resp.Diagnostics.AddError(
-			"User is declared in the orchestrator's configuration file",
-			fmt.Sprintf("The identity %q comes from config.yaml, which the admin API will not "+
-				"change. Manage it by editing that file and sending SIGHUP, or remove it from "+
-				"Terraform state.", state.ID.ValueString()),
-		)
+		addConfigDeclared(&resp.Diagnostics, "user", state.ID.ValueString())
 		return
 	}
 

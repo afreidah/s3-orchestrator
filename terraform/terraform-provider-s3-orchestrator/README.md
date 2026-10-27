@@ -1,8 +1,10 @@
 # Terraform Provider for S3 Orchestrator
 
-Declares the identities a running orchestrator authorizes requests against: users, the keypairs that prove them, and the grants that say what they reach.
+Declares the virtual buckets a running orchestrator serves and the identities it authorizes requests against: users, the keypairs that prove them, and the grants that say what they reach.
 
-Buckets are not managed here. The ones a deployment serves are declared in its configuration file, which the admin API refuses to change, so a resource for them would refuse most of the buckets an operator actually has.
+Published as `afreidah/s3-orchestrator` to the [Terraform Registry](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) and the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest).
+
+Buckets, users and keypairs declared in the orchestrator's configuration file stay read-only to the admin API, so the provider cannot manage them. The `s3orchestrator_bucket` data source reads a config-declared bucket so a grant can name it.
 
 ## Quick Start
 
@@ -20,6 +22,10 @@ provider "s3orchestrator" {
   address = "http://localhost:9000"
 }
 
+resource "s3orchestrator_bucket" "photos" {
+  name = "photos"
+}
+
 resource "s3orchestrator_user" "backup" {
   name = "temporal-backup-job"
 }
@@ -31,7 +37,7 @@ resource "s3orchestrator_credential" "backup" {
 
 resource "s3orchestrator_grant" "backup" {
   user_id     = s3orchestrator_user.backup.id
-  name        = "photos"
+  name        = s3orchestrator_bucket.photos.name
   permissions = ["list", "read", "write"]
 }
 ```
@@ -54,11 +60,16 @@ Requests are signed with SigV4, so the credential needs the admin permissions fo
 
 | Resource | Manages | Import identifier |
 |----------|---------|-------------------|
+| `s3orchestrator_bucket` | A virtual bucket, its CORS rules and its multipart upload limit | The bucket name |
 | `s3orchestrator_user` | An identity credentials prove and grants empower | The generated user id |
 | `s3orchestrator_credential` | One keypair proving one user | The access key |
 | `s3orchestrator_grant` | What one user reaches on one resource | `user_id/kind/name` |
 
+The `s3orchestrator_bucket` data source reads an existing bucket from either source, and reports which one declared it as `config` or `store`.
+
 These resources behave as follows when a configuration changes.
+
+A **bucket** declares a namespace on the orchestrator; it creates nothing on any backend. Renaming it replaces it, and everything else updates in place. Dropping a `cors_rule` block removes that rule. The orchestrator refuses to delete a bucket while it holds an object or a grant names it. A bucket also declared in the configuration file is served from there, and the one created here takes over once that entry is removed and the configuration reloaded, so a bucket moves into the store with no gap.
 
 A **user rename** is an update rather than a replacement. The id does not move, so the credentials and grants referencing it keep working.
 
@@ -107,10 +118,10 @@ Nothing starts unless `TF_ACC` is set, so a plain `go test ./...` in this direct
 
 ## Publishing
 
-The Terraform Registry requires a repository named `terraform-provider-s3-orchestrator`, which this directory is not. Development happens here; publishing will mean pushing this subtree to a mirror repository of that name, which `git subtree` does without a second checkout:
+The registries require a repository named `terraform-provider-s3-orchestrator`, which this directory is not. Development happens here, and [afreidah/terraform-provider-s3-orchestrator](https://github.com/afreidah/terraform-provider-s3-orchestrator) mirrors it. From the repository root:
 
 ```bash
-git subtree push --prefix=terraform/terraform-provider-s3-orchestrator mirror main
+make provider-publish
 ```
 
-The mirror holds no history of its own, so it never has to be merged back.
+That regenerates the registry docs and stops if they changed, pushes this subtree to the mirror's `main` with `git subtree`, and tags the mirror with the version in `.version`. The mirror's release workflow builds and signs that tag, and both registries pick up the release. The mirror holds no history of its own, so it never has to be merged back.

@@ -41,7 +41,7 @@ func TestAccCredentialMinted(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckCredentialDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_credential", testAccCredentialFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCredentialMintedConfig,
@@ -57,7 +57,7 @@ func TestAccCredentialMinted(t *testing.T) {
 					resource.TestCheckResourceAttrPair(
 						"s3orchestrator_credential.test", "id",
 						"s3orchestrator_credential.test", "access_key_id"),
-					testAccCheckCredentialExists("s3orchestrator_credential.test"),
+					testAccCheckExists("s3orchestrator_credential.test", testAccCredentialFound),
 				),
 			},
 			{
@@ -77,7 +77,7 @@ func TestAccCredentialSupplied(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckCredentialDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_credential", testAccCredentialFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCredentialSuppliedConfig,
@@ -86,7 +86,7 @@ func TestAccCredentialSupplied(t *testing.T) {
 						"access_key_id", testAccSuppliedKey),
 					resource.TestCheckResourceAttr("s3orchestrator_credential.test",
 						"secret_access_key", testAccSuppliedSecret),
-					testAccCheckCredentialExists("s3orchestrator_credential.test"),
+					testAccCheckExists("s3orchestrator_credential.test", testAccCredentialFound),
 				),
 			},
 		},
@@ -160,44 +160,13 @@ resource "s3orchestrator_credential" "test" {
 // CHECKS
 // -------------------------------------------------------------------------
 
-// testAccCheckCredentialExists asks the orchestrator whether the keypair it was
-// told about is really there.
-func testAccCheckCredentialExists(addr string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[addr]
-		if !ok {
-			return fmt.Errorf("%s not in state", addr)
-		}
-		cred, found, err := testAccClient().Credential(context.Background(), rs.Primary.ID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("credential %q in state but not in the orchestrator", rs.Primary.ID)
-		}
-		if cred.UserID != rs.Primary.Attributes["user_id"] {
-			return fmt.Errorf("credential %q proves user %q, state says %q",
-				rs.Primary.ID, cred.UserID, rs.Primary.Attributes["user_id"])
-		}
-		return nil
+// testAccCredentialFound looks a keypair up by its access key, and fails one
+// that proves a different user than state says.
+func testAccCredentialFound(is *terraform.InstanceState) (bool, error) {
+	cred, found, err := testAccClient().Credential(context.Background(), is.ID)
+	if found && cred.UserID != is.Attributes["user_id"] {
+		return true, fmt.Errorf("credential %q proves user %q, state says %q",
+			is.ID, cred.UserID, is.Attributes["user_id"])
 	}
-}
-
-// testAccCheckCredentialDestroy confirms the revocation reached the
-// orchestrator.
-func testAccCheckCredentialDestroy(s *terraform.State) error {
-	api := testAccClient()
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "s3orchestrator_credential" {
-			continue
-		}
-		_, found, err := api.Credential(context.Background(), rs.Primary.ID)
-		if err != nil {
-			return err
-		}
-		if found {
-			return fmt.Errorf("credential %q survived destroy", rs.Primary.ID)
-		}
-	}
-	return nil
+	return found, err
 }
