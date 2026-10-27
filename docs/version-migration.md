@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.174.x (current)
+### v0.175.x (current)
+
+**The limit nearest full on the TUI dashboard and in `admin status` ([#1596](https://github.com/afreidah/s3-orchestrator/issues/1596), v0.175.0)**
+
+The TUI Dashboard's summary opens with a `nearest limit` line naming the backend and the limit that is closest to full across every storage quota and usage limit, how full it is, its used and limit figures and, for a usage limit, how long until that backend's cycle resets. A storage quota never resets, so it shows no reset. `admin status` prints the same as a `Nearest limit:` line above `DB healthy:`. A fleet with no limits reads `no limits set`. The TUI Backends table's `USE%` column now sorts by the exact share used, so the fuller of two backends at the same whole percentage sorts after the other. No migration and no config change.
+
+### v0.174.x
 
 **The database circuit breaker counts only availability failures and recovers by ping ([#1559](https://github.com/afreidah/s3-orchestrator/issues/1559), v0.174.0)**
 

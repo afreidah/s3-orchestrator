@@ -161,6 +161,7 @@ func TestDashboard_Summary(t *testing.T) {
 	t.Parallel()
 	got := dashboardModel(t).dashboardSummary()
 	assertContains(t, got,
+		"nearest limit", "minio-a egress", "100%", "5.0 GiB / 5.0 GiB", "resets in",
 		"database", "healthy",
 		"factor 2", "12 under", "0 over",
 		"oldest 1h", "3 unreachable",
@@ -168,6 +169,32 @@ func TestDashboard_Summary(t *testing.T) {
 		"2.0 GiB saved",
 		"1,234 requests", "1.0 GiB in", "3.0 GiB out", "current cycles",
 		"4 pending", "2 dead-lettered")
+}
+
+// TestDashboard_NearestLimit verifies the tile names the fullest limit across
+// storage quotas and usage limits, how long until a usage limit resets, no
+// reset for a storage quota, and says so when no backend has a limit.
+func TestDashboard_NearestLimit(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	next := time.Now().Add(4*24*time.Hour + time.Hour)
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{
+		{Name: "c2", BytesUsed: 1, BytesLimit: 10,
+			UsageLimits: []adminapi.UsageMeter{{Kind: "egress", Used: 87, Limit: 100}},
+			UsageCycle:  adminapi.UsageCycle{NextReset: next}},
+		{Name: "r2", BytesUsed: 5, BytesLimit: 10},
+	}})
+	assertContains(t, m.dashboardNearestLimit(), "c2 egress", "87%", "87 B / 100 B", "resets in 4d")
+
+	m.backends.list.received[1].BytesUsed = 9
+	got := m.dashboardNearestLimit()
+	assertContains(t, got, "r2 storage", "90%")
+	if strings.Contains(got, "resets") {
+		t.Errorf("a storage quota shows a reset: %q", got)
+	}
+
+	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{{Name: "b1", BytesUsed: 1}}})
+	assertContains(t, m.dashboardNearestLimit(), "no limits set")
 }
 
 // TestDashboard_FiguresNotYetLoaded verifies replication and cleanup read as a
