@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Probes every breaker registered in the breaker.Registry on a short tick.
-// Each breaker decides what a probe means for it: resetting a stale half-open
-// probe, or health-checking its dependency while open. Membership in the
+// Each registered RecoveryProber health-checks its breaker's dependency while
+// the breaker is open and recovers it once the check passes. Membership in the
 // registry is decided once at DI construction time, so the watchdog itself
 // contains no type-assertion or backend-discovery logic.
 // -------------------------------------------------------------------------------

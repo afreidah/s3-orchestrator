@@ -75,8 +75,9 @@ to this page.
 
 - **Per-method circuit-breaker decorators**: the breaker lives at the
   SQL driver chokepoint, so adding a method needs no decorator update.
-  See `internal/store/circuitbreaker.go` and the `isDBError` filter for
-  the application-vs-DB error classification.
+  See `internal/store/circuitbreaker.go` for which errors count as the
+  database being unavailable, and each driver's `RequestError` for the
+  errors it answers about one request.
 - **Per-role compile-time assertions**: `openStore` returning each
   engine as `metadataStore` covers every role. Adding
   `var _ core.ObjectStore = (*Store)(nil)` would be redundant.

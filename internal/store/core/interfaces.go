@@ -283,6 +283,13 @@ type AdvisoryLocker interface {
 	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
 }
 
+// Pinger checks the database answers without going through the circuit
+// breaker, which is how the breaker's recovery learns the database is back
+// while it refuses every query.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 // DashboardStore defines the methods used by the web UI dashboard
 // aggregator.
 type DashboardStore interface {

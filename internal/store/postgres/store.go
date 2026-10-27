@@ -120,6 +120,13 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
+// Ping checks the database answers, outside the circuit breaker, so the
+// breaker's recovery can find out the database is back while it refuses
+// every query.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
 // RunMigrations applies the embedded goose migrations. Instances starting
 // together take turns under an advisory lock: the first applies the
 // migrations, and the rest wait, then find nothing left to apply.

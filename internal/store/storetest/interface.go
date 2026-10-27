@@ -45,4 +45,5 @@ type MetadataStore interface {
 	core.NotificationOutbox
 	core.TagStore
 	core.ProvisioningStore
+	core.Pinger
 }

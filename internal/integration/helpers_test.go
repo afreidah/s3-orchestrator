@@ -302,7 +302,7 @@ func TestMain(m *testing.M) {
 
 	testDBConfig = cfg.Database
 
-	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
+	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker, postgres.RequestError)
 	testDatabaseCB = dbCB
 
 	db, err := postgres.NewStore(ctx, &cfg.Database, dbCB, testInstanceID)
@@ -1265,28 +1265,20 @@ func tripCircuitBreaker(t *testing.T) {
 	}
 }
 
-// waitForRecovery waits for the circuit to probe and close after the open timeout.
-// Polls until the circuit is healthy or the timeout expires.
+// waitForRecovery drives the database breaker's recovery prober as the
+// watchdog would, pinging the real database once it is due, until the circuit
+// closes or the timeout expires. The first check waits for the watchdog
+// interval, which is longer than the test's open timeout.
 func waitForRecovery(t *testing.T) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
-	for {
+	prober := breaker.NewRecoveryProber(testDatabaseCB, store.DatabaseRecovery(testStore.Ping))
+	deadline := time.After(3 * breaker.DefaultWatchdogInterval)
+	for !testDatabaseCB.IsHealthy() {
 		select {
 		case <-deadline:
-			t.Fatal("circuit breaker did not recover within 5s")
-			return
-		default:
-			// Wait at least the open timeout (500ms) before probing
-			time.Sleep(600 * time.Millisecond)
-			// Make a request to trigger the half-open probe
-			client := newS3Client(t)
-			client.HeadObject(context.Background(), &s3.HeadObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String("probe-recovery"),
-			})
-			if testDatabaseCB.IsHealthy() {
-				return
-			}
+			t.Fatalf("circuit breaker did not recover within %v", 3*breaker.DefaultWatchdogInterval)
+		case <-time.After(250 * time.Millisecond):
+			prober.Probe(context.Background())
 		}
 	}
 }

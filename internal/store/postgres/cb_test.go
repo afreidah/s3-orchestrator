@@ -64,8 +64,8 @@ func newCB(threshold int) *breaker.CircuitBreaker {
 }
 
 // isDBErrorForTest treats any non-sentinel error as a DB error. The
-// production isDBError lives in package store; redeclared here so the
-// postgres package's tests don't import store.
+// production filter lives in package store; a simpler one is declared here so
+// the postgres package's tests don't import store.
 func isDBErrorForTest(err error) bool {
 	if err == nil {
 		return false

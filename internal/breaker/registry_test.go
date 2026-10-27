@@ -74,11 +74,11 @@ func TestRegistry_EmptyProbeIsNoOp(t *testing.T) {
 	}
 }
 
-// TestRegistry_RealCircuitBreakerSatisfiesInterface verifies that a real
-// *CircuitBreaker can be registered without type assertions.
-func TestRegistry_RealCircuitBreakerSatisfiesInterface(t *testing.T) {
+// TestRegistry_RecoveryProberSatisfiesInterface verifies that a real
+// *RecoveryProber can be registered without type assertions.
+func TestRegistry_RecoveryProberSatisfiesInterface(t *testing.T) {
 	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: 0, IsError: func(error) bool { return true }, Sentinel: ErrBackendUnavailable})
-	r := NewRegistry(cb)
+	r := NewRegistry(NewRecoveryProber(cb, Recovery{Check: func(context.Context) error { return nil }}))
 	if r.Len() != 1 {
 		t.Fatalf("Len = %d, want 1", r.Len())
 	}

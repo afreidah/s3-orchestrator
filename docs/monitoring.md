@@ -193,7 +193,7 @@ Key metrics to alert on:
 | `s3o_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
 | `s3o_quota_claims_declined_total{backend="..."}` | Sustained non-zero means that backend is full and refusing writes; when every candidate refuses, the request fails with 507 |
 | `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
-| `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open, 2=half-open) |
+| `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 - database is unreachable (1=open) |
 | `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 - backend is unreachable, its credentials are rejected, or it is refusing at least one call |
 | `s3o_backend_call_refused{backend="<backend>"}` | Which calls are refused: 1 for each, so `s3o_backend_call_refused{call="GetObject"} == 1` alone points at a download quota rather than an outage. A backend refusing GetObject takes no new writes until it recovers. `min by (backend) (...) == 1` means down (every call refused); `max by (backend) (...) == 1` with a `min` of 0 means degraded |
 | `s3o_replication_pending` | Alert when consistently > 0 - replicas are falling behind |
@@ -285,7 +285,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_over_replication_removed_total` | Counter | - | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | - | Over-replication cleanup errors |
 | `s3o_over_replication_key_preserved_total` | Counter | - | Copies kept because they held the only usable encryption key for the object |
-| `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
+| `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open (name: "database" or backend name) |
 | `s3o_backend_call_refused` | Gauge | backend, call | 1 while the backend's circuit breakers refuse the call, 0 while it is served |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
 | `s3o_circuit_breaker_internal_errors_total` | Counter | name, operation | Errors returned by breaker post-check or state transitions |

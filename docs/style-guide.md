@@ -116,9 +116,8 @@ A comment line above a single entry inside a `struct`, `interface`, `const` or `
 
 ```go
 const (
-	StateClosed   State = iota // healthy  -  all calls pass through
-	StateOpen                  // down  -  return sentinel error
-	StateHalfOpen              // probing  -  one call allowed through
+	StateClosed State = iota // healthy  -  all calls pass through
+	StateOpen                // down  -  return sentinel error
 )
 ```
 

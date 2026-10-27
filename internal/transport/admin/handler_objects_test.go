@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"go.uber.org/mock/gomock"
@@ -46,7 +47,7 @@ import (
 // mock store.
 func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 	t.Helper()
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	return &Handler{
 		log:       slog.Default().With(logfmt.Component("admin")),

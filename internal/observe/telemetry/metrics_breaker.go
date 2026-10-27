@@ -17,11 +17,11 @@ import (
 // Circuit breaker state and transition metrics.
 var (
 	// CircuitBreakerState tracks the current circuit breaker state per component.
-	// 0=closed (healthy), 1=open (down), 2=half-open (probing).
+	// 0=closed (healthy), 1=open (down).
 	CircuitBreakerState = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3o_circuit_breaker_state",
-			Help: "Current circuit breaker state: 0=closed, 1=open, 2=half-open",
+			Help: "Current circuit breaker state: 0=closed, 1=open",
 		},
 		[]string{"name"},
 	)
@@ -94,7 +94,7 @@ var (
 		[]string{"operation", "failed_backend", "success_backend"},
 	)
 
-	// DegradedModeActive is 1 when the DB breaker is open or half-open.
+	// DegradedModeActive is 1 when the DB breaker is open.
 	DegradedModeActive = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_degraded_mode_active",

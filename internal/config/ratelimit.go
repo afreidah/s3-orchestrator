@@ -43,7 +43,7 @@ type RateLimitConfig struct {
 // as a rolling window.
 type CircuitBreakerConfig struct {
 	FailureThreshold  int           `yaml:"failure_threshold"`  // consecutive failures before opening (default 3)
-	OpenTimeout       time.Duration `yaml:"open_timeout"`       // delay before probing recovery (default 15s)
+	OpenTimeout       time.Duration `yaml:"open_timeout"`       // interval between recovery pings while open (default 15s)
 	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for the key->backend cache during degraded reads (default 60s)
 	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // fan degraded reads out to all backends at once (default false)
 

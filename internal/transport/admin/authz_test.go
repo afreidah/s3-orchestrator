@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
@@ -86,7 +87,7 @@ func registryGranting(t *testing.T, perms core.PermissionSet, admin map[core.Res
 // and whose registry holds the granted credential, mounted on its own mux.
 func authzMux(t *testing.T, mock core.ObjectStore, perms core.PermissionSet, admin map[core.Resource]core.PermissionSet) *http.ServeMux {
 	t.Helper()
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	registry := registryGranting(t, perms, admin)
 	h := &Handler{

@@ -16,9 +16,8 @@ import (
 )
 
 // Prober is implemented by anything the watchdog drives toward recovery on
-// each tick. *CircuitBreaker resets a stale half-open probe;
-// backend.CircuitBreakerBackend health-checks its backend while open and
-// recovers it once the check passes.
+// each tick. *RecoveryProber health-checks its breaker's dependency while the
+// breaker is open and recovers it once the check passes.
 type Prober interface {
 	Probe(ctx context.Context)
 }
