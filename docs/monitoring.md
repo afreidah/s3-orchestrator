@@ -260,6 +260,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_backend_requests_total` | Counter | operation, backend, status | Backend S3 API calls |
 | `s3o_backend_duration_seconds` | Histogram | operation, backend | Backend latency |
 | `s3o_backend_range_ignored_total` | Counter | backend | Ranged GETs the backend answered with the whole object; the orchestrator cut the range itself |
+| `s3o_backend_unsupported` | Gauge | backend, feature | 1 for each optional feature (`range`, `batch-delete`, `native-copy`) the backend has refused since the instance started; it takes the fallback from then on |
 | `s3o_manager_requests_total` | Counter | operation, backend, status | Manager-level operations |
 | `s3o_manager_duration_seconds` | Histogram | operation, backend | Manager latency |
 | `s3o_quota_bytes_used` | Gauge | backend | Current bytes used |

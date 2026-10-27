@@ -1374,6 +1374,10 @@ components:
                 unhashed_copies:
                     format: int64
                     type: integer
+                unsupported:
+                    items:
+                        type: string
+                    type: array
                 usage_cycle:
                     $ref: '#/components/schemas/UsageCycle'
                 usage_limits:
@@ -1386,6 +1390,7 @@ components:
                 - refused_calls
                 - draining
                 - flags
+                - unsupported
                 - bytes_used
                 - bytes_limit
                 - object_count

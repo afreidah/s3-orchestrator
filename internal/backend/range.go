@@ -15,11 +15,10 @@ package backend
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
@@ -67,17 +66,15 @@ func applyRange(res *GetObjectResult, header string) error {
 }
 
 // emulateRange applies the range when a ranged GET came back without
-// Content-Range. It counts every occurrence and warns once per backend, so an
-// operator learns which backend ignores Range without a log line per read.
+// Content-Range. It counts every occurrence, since each one downloads from the
+// start of the object, and records Range as unsupported, which warns once.
+// Range is still asked for afterwards: the request costs nothing extra, and
+// cutting the reply is the same either way.
 func (b *S3Backend) emulateRange(ctx context.Context, res *GetObjectResult, header string) error {
 	if header == "" || res.ContentRange != "" {
 		return nil
 	}
 	telemetry.BackendRangeIgnoredTotal.WithLabelValues(b.name).Inc()
-	b.rangeIgnored.Do(func() {
-		slog.Default().With(logfmt.Component("backend")).WarnContext(ctx,
-			"backend ignored Range and returned the whole object; ranged reads will download from the start of the object",
-			"backend", b.name)
-	})
+	b.markUnsupported(ctx, core.FeatureRange, nil)
 	return applyRange(res, header)
 }

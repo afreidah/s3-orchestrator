@@ -161,15 +161,15 @@ func newBreaker(cfg CircuitBreakerConfig, name string, scope failureScope) *brea
 // call, which a provider can do to one call alone, as a download quota does to
 // GET. Any other status is about one request, and counting it would let a
 // single bad object trip a healthy backend. Context cancellation and deadline
-// are caller-side and never count, and neither does a provider declining batch
-// delete, which is a missing capability rather than a fault, nor a refusal
-// from one of this wrapper's own breakers.
+// are caller-side and never count, and neither does a provider declining an
+// optional feature, which is a missing capability rather than a fault, nor a
+// refusal from one of this wrapper's own breakers.
 func classifyFailure(err error) failureScope {
 	if err == nil {
 		return scopeNone
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrBatchDeleteNotSupported) || errors.Is(err, breaker.ErrBackendUnavailable) {
+		errors.Is(err, ErrUnsupported) || errors.Is(err, breaker.ErrBackendUnavailable) {
 		return scopeNone
 	}
 	respErr, ok := errors.AsType[httpStatusError](err)
@@ -192,6 +192,11 @@ func classifyFailure(err error) failureScope {
 
 // Name returns the backend's name.
 func (cb *CircuitBreakerBackend) Name() string { return cb.name }
+
+// Unsupported returns the features the wrapped backend has found unsupported.
+func (cb *CircuitBreakerBackend) Unsupported() core.BackendFeatures {
+	return Unsupported(cb.inner)
+}
 
 // Served returns the calls the backend is serving: every call whose breaker is
 // closed, or none while the backend breaker is open.

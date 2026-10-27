@@ -162,7 +162,8 @@ func TestBackendsBody_DetailFollowsTheCursor(t *testing.T) {
 
 // TestBackendDetail_Contents verifies the detail carries the backend's
 // configuration, what it holds, a bar per limit with the calls a budget
-// charges, and the instance whose view it is.
+// charges, and the instance whose view it is, and lists unsupported features
+// only for a backend that refused some.
 func TestBackendDetail_Contents(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
@@ -195,6 +196,14 @@ func TestBackendDetail_Contents(t *testing.T) {
 	}
 	if strings.Contains(got, "saved") {
 		t.Errorf("detail reports a saving on a backend that compresses nothing:\n%s", got)
+	}
+	if strings.Contains(got, "unsupported") {
+		t.Errorf("detail lists unsupported features for a backend that refused none:\n%s", got)
+	}
+
+	b.Unsupported = []string{"range", "batch-delete"}
+	if got := m.backendDetail(b); !strings.Contains(got, "unsupported") || !strings.Contains(got, "range,batch-delete") {
+		t.Errorf("detail missing the unsupported features:\n%s", got)
 	}
 }
 

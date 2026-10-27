@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/aws/smithy-go"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -134,16 +136,24 @@ func TestDeleteObjects_ChunksAndReportsPerKeyFailures(t *testing.T) {
 // refuses the batch request itself - no multi-object delete, the method not
 // allowed, or a header it requires missing - is reported as
 // ErrBatchDeleteNotSupported, so the caller deletes singly instead of treating
-// every key as failed.
+// every key as failed, and that the backend remembers it and is not asked
+// again.
 func TestDeleteObjects_RejectedRequestIsUnsupported(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusNotImplemented, http.StatusMethodNotAllowed, http.StatusBadRequest} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
-			be := newTestBackend(t, (&batchDeleteServer{status: status}).handle)
+			srv := &batchDeleteServer{status: status}
+			be := newTestBackend(t, srv.handle)
 
-			if _, err := be.DeleteObjects(t.Context(), keys(3)); !errors.Is(err, ErrBatchDeleteNotSupported) {
-				t.Errorf("err = %v, want ErrBatchDeleteNotSupported", err)
+			for range 2 {
+				if _, err := be.DeleteObjects(t.Context(), keys(3)); !errors.Is(err, ErrBatchDeleteNotSupported) {
+					t.Errorf("err = %v, want ErrBatchDeleteNotSupported", err)
+				}
+			}
+			if len(srv.requests) != 1 || !be.Unsupported().Has(core.FeatureBatchDelete) {
+				t.Errorf("requests = %v, unsupported = %s; want one request and batch-delete recorded",
+					srv.requests, be.Unsupported())
 			}
 		})
 	}

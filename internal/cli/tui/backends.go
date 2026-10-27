@@ -576,8 +576,9 @@ func (m *model) backendsBody() []pane {
 // -------------------------------------------------------------------------
 
 // backendDetail renders one backend in full: its health and flags, where it
-// is, what it holds, each of its limits as a bar against its ceiling, and the
-// instance whose view of the breakers this is.
+// is, what it holds, the optional features it has refused when there are any,
+// each of its limits as a bar against its ceiling, and the instance whose view
+// of the breakers and features this is.
 func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 	storage := output.StorageCeiling(b)
 	rows := []meterRow{{Ceiling: storage, name: storage.Label}}
@@ -585,13 +586,17 @@ func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 		c := output.UsageCeiling(u)
 		rows = append(rows, meterRow{Ceiling: c, name: c.Label, markers: chargedCalls(u)})
 	}
+	fields := []field{
+		{"endpoint", profileText(b.Profile)},
+		{"holds", holdingsText(b)},
+	}
+	if len(b.Unsupported) > 0 {
+		fields = append(fields, field{"unsupported", logLevelWarn.Render(output.NameList(b.Unsupported))})
+	}
+	fields = append(fields, field{"instance", output.Instance(m.backends.instance)})
 	return strings.Join([]string{
 		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
-		fieldBlock(summaryLabelWidth,
-			field{"endpoint", profileText(b.Profile)},
-			field{"holds", holdingsText(b)},
-			field{"instance", output.Instance(m.backends.instance)},
-		),
+		fieldBlock(summaryLabelWidth, fields...),
 		m.meterBlock("usage   "+output.Cycle(b.UsageCycle), rows),
 	}, "\n")
 }

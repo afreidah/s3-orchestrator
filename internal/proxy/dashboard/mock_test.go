@@ -114,6 +114,20 @@ func (mr *MockFleetViewMockRecorder) ServedCalls(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ServedCalls", reflect.TypeOf((*MockFleetView)(nil).ServedCalls), name)
 }
 
+// Unsupported mocks base method.
+func (m *MockFleetView) Unsupported(name string) core.BackendFeatures {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Unsupported", name)
+	ret0, _ := ret[0].(core.BackendFeatures)
+	return ret0
+}
+
+// Unsupported indicates an expected call of Unsupported.
+func (mr *MockFleetViewMockRecorder) Unsupported(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unsupported", reflect.TypeOf((*MockFleetView)(nil).Unsupported), name)
+}
+
 // MockDrainProgressReader is a mock of DrainProgressReader interface.
 type MockDrainProgressReader struct {
 	ctrl     *gomock.Controller

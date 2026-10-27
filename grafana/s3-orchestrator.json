@@ -1456,7 +1456,7 @@
       "gridPos": {
         "x": 12,
         "y": 70,
-        "w": 12,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -1466,6 +1466,55 @@
       "targets": [
         {
           "expr": "max by (backend, call) (s3o_backend_call_refused) == 1",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "backend",
+            "desc": false
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "None"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 159,
+      "title": "Unsupported Features",
+      "description": "Optional features (range, batch-delete, native-copy) a backend has refused on any instance. The instance takes the fallback until it restarts.",
+      "gridPos": {
+        "x": 18,
+        "y": 70,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (backend, feature) (s3o_backend_unsupported) == 1",
           "format": "table",
           "instant": true
         }

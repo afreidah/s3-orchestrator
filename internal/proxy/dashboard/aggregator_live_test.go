@@ -94,7 +94,8 @@ func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 // -------------------------------------------------------------------------
 
 // TestDecorateLiveState_RecordsRefusedCalls asserts a backend refusing only GET
-// is recorded with exactly that call refused.
+// is recorded with exactly that call refused, and one that refused Range with
+// exactly that feature unsupported.
 func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -102,6 +103,7 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls &^ core.CallGetObject).AnyTimes()
+	fleet.EXPECT().Unsupported("b1").Return(core.FeatureRange).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
 
@@ -112,10 +114,14 @@ func TestDecorateLiveState_RecordsRefusedCalls(t *testing.T) {
 	if got := data.RefusedCalls["b1"]; got != core.CallGetObject {
 		t.Errorf("b1 refused calls = %s, want GetObject", got)
 	}
+	if got := data.Unsupported["b1"]; got != core.FeatureRange {
+		t.Errorf("b1 unsupported = %s, want range", got)
+	}
 }
 
 // TestDecorateLiveState_HealthyBackendAbsent asserts a healthy backend does not
-// appear in the map at all, rather than appearing with a false value.
+// appear in the refused or unsupported maps at all, rather than appearing with
+// an empty value.
 func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -123,6 +129,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls("b1").Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported("b1").Return(core.BackendFeatures(0)).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, []string{"b1"}, fleet, nil)
 
@@ -132,6 +139,9 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	}
 	if _, present := data.RefusedCalls["b1"]; present {
 		t.Error("a backend serving every call should be absent from RefusedCalls, not present-and-empty")
+	}
+	if _, present := data.Unsupported["b1"]; present {
+		t.Error("a backend that refused no feature should be absent from Unsupported")
 	}
 }
 
@@ -145,6 +155,7 @@ func TestDecorateLiveState_ReportsDrainProgress(t *testing.T) {
 	fleet.EXPECT().BackendFlags("draining").Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().BackendFlags("idle").Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
 	// Only the draining backend is asked; querying the idle one would be a bug.
@@ -178,6 +189,7 @@ func TestDecorateLiveState_DrainProgressErrorIsSkipped(t *testing.T) {
 	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
 	drainReader := NewMockDrainProgressReader(ctrl)
 	drainReader.EXPECT().GetDrainProgress(gomock.Any(), gomock.Any()).
@@ -202,6 +214,7 @@ func TestDecorateLiveState_NoDrainManager(t *testing.T) {
 	fleet := newLiveFleet(ctrl, "b1")
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.FlagDraining).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 
 	agg := New(newStubStore(ctrl), stubUsage(ctrl), nil, nil, fleet, nil)
 	data, err := agg.GetData(t.Context())
@@ -225,6 +238,7 @@ func TestDecorateLiveState_RecordsProfiles(t *testing.T) {
 	fleet.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	fleet.EXPECT().BackendFlags(gomock.Any()).Return(core.BackendFlags(0)).AnyTimes()
 	fleet.EXPECT().ServedCalls(gomock.Any()).Return(core.AllCalls).AnyTimes()
+	fleet.EXPECT().Unsupported(gomock.Any()).Return(core.BackendFeatures(0)).AnyTimes()
 	want := core.BackendProfile{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "b", MaxObjectSize: 5 << 30}
 	fleet.EXPECT().Profile("b1").Return(want).AnyTimes()
 

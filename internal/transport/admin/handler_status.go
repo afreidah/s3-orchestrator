@@ -113,6 +113,7 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 			RefusedCalls: refused.Names(),
 			Draining:     data.DrainingBackends[name].Active,
 			Flags:        data.BackendFlags[name].Names(),
+			Unsupported:  data.Unsupported[name].Names(),
 			BytesUsed:    quota.BytesUsed,
 			BytesLimit:   quota.BytesLimit,
 			ObjectCount:  data.ObjectCounts[name],

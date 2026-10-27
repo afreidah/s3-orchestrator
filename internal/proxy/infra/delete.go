@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -52,15 +51,13 @@ func (c *BackendRuntime) DeleteMany(ctx context.Context, name string, be backend
 }
 
 // deleteBatch deletes storageKeys in batch requests, reporting false when the
-// backend cannot batch so the caller deletes them singly. Each request is
-// charged as one DeleteObjects call. A request that fails as a whole leaves
-// every key failed.
+// backend cannot batch so the caller deletes them singly. A backend that has
+// refused a batch before says so without a request. Each request is charged
+// as one DeleteObjects call. A request that fails as a whole leaves every key
+// failed.
 func (c *BackendRuntime) deleteBatch(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) (map[string]error, bool) {
 	deleter, ok := be.(backend.BatchDeleter)
 	if !ok {
-		return nil, false
-	}
-	if _, declined := c.batchDeclined.Load(name); declined {
 		return nil, false
 	}
 
@@ -68,8 +65,6 @@ func (c *BackendRuntime) deleteBatch(ctx context.Context, name string, be backen
 	defer dcancel()
 	failed, err := deleter.DeleteObjects(dctx, storageKeys)
 	if errors.Is(err, backend.ErrBatchDeleteNotSupported) {
-		c.batchDeclined.Store(name, struct{}{})
-		c.Log().InfoContext(ctx, "backend declined batch delete, deleting keys singly", "backend", name, logfmt.Err(err))
 		return nil, false
 	}
 	for range backend.BatchDeleteRequests(len(storageKeys)) {

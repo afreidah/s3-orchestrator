@@ -3,9 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Covers DeleteMany's choice between a batch and single deletes, the per-backend
-// memory of a declined batch, how a failed batch is reported, and how many API
-// calls each path charges.
+// Covers DeleteMany's choice between a batch and single deletes, how a failed
+// batch is reported, and how many API calls each path charges.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -59,24 +58,20 @@ func TestDeleteMany_BatchesWhereSupported(t *testing.T) {
 	}
 }
 
-// TestDeleteMany_FallsBackAndRemembers verifies a backend that declines batches
-// gets single deletes, each charged, and is not asked to batch again.
-func TestDeleteMany_FallsBackAndRemembers(t *testing.T) {
+// TestDeleteMany_FallsBack verifies a backend that declines batches gets single
+// deletes, each charged. Remembering the refusal is the backend's own.
+func TestDeleteMany_FallsBack(t *testing.T) {
 	t.Parallel()
 	mem := backendtest.NewInMemory()
-	rt, counters := newDeleteRuntime(t, mem, "a", "b", "c", "d")
+	rt, counters := newDeleteRuntime(t, mem, "a", "b")
 
 	if failed := rt.DeleteMany(t.Context(), "b1", mem, []string{"a", "b"}); len(failed) != 0 {
-		t.Fatalf("first call failed = %v, want none", failed)
-	}
-	mem.BatchDeleteEnabled = true // a batch would now succeed, but the runtime remembers the refusal
-	if failed := rt.DeleteMany(t.Context(), "b1", mem, []string{"c", "d"}); len(failed) != 0 {
-		t.Fatalf("second call failed = %v, want none", failed)
+		t.Fatalf("failed = %v, want none", failed)
 	}
 	if mem.BatchDeleteCalls != 0 || len(mem.Objects) != 0 {
 		t.Errorf("batch calls = %d, objects left = %d; want 0 and 0", mem.BatchDeleteCalls, len(mem.Objects))
 	}
-	if got := loadUsage(counters, "b1").calls; got != 4 {
+	if got := loadUsage(counters, "b1").calls; got != 2 {
 		t.Errorf("API calls charged = %d, want one per single delete", got)
 	}
 }

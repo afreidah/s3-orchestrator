@@ -70,7 +70,7 @@ Pools are additive: an operation charges every pool that contains it and is admi
 
 Unmetered operations are still recorded against the backend's request total -- not billing an operation is not a reason to stop reporting it -- they are simply charged to no budget. Deletes are never refused on any budget regardless, since refusing one would leave an operator unable to get back under a limit.
 
-When the orchestrator removes several of its own copies from one backend - multipart part cleanup, a client batch delete, the cleanup queue, a backend purge - it sends one `DeleteObjects` request per 1,000 keys and charges each as one `DeleteObjects` call. A provider that does not implement multi-object delete answers `NotImplemented`; the orchestrator then deletes that backend's keys one `DeleteObject` at a time until it restarts.
+When the orchestrator removes several of its own copies from one backend - multipart part cleanup, a client batch delete, the cleanup queue, a backend purge - it sends one `DeleteObjects` request per 1,000 keys and charges each as one `DeleteObjects` call. A provider that does not implement multi-object delete has its keys deleted one `DeleteObject` at a time instead; see [features a backend does not support](#backend-configuration).
 
 `api_request_limit` remains valid and desugars to a single pool named `all` over `["*"]`, so existing configs are unchanged. Setting both it and `request_limits` on one backend is rejected.
 
@@ -145,7 +145,13 @@ Use `default_chain` when:
 
 Note: the config loader already expands `${ENV_VAR}` references at load time, so `access_key_id: ${AWS_ACCESS_KEY_ID}` covers the env-var case under `credential_source: static`. Use `default_chain` for credential sources the loader cannot reach (IMDS, SSO, STS) and for cases where refresh matters.
 
-**Backends without Range support:** some S3 gateways answer a ranged GET with the whole object. The orchestrator detects the missing `Content-Range`, discards the bytes before the range, and stops reading at its end, so clients still receive the bytes they asked for. Each such read still downloads the object from its first byte to the end of the range, and that transfer is what counts against `egress_byte_limit`. Encrypted and compressed objects are read in many small ranges, so they cost the most on such a backend. The orchestrator logs a warning the first time a backend does this and counts every occurrence in `s3o_backend_range_ignored_total`.
+**Features a backend does not support:** not every S3-compatible provider implements Range, multi-object delete or server-side copy. Each has a fallback, and the orchestrator learns which ones a backend lacks from its first refusal:
+
+- **Range** (`range`): a ranged GET answered with the whole object and no `Content-Range`. The orchestrator discards the bytes before the range and stops reading at its end, so clients still receive the bytes they asked for. Each such read still downloads the object from its first byte to the end of the range, and that transfer is what counts against `egress_byte_limit`. Encrypted and compressed objects are read in many small ranges, so they cost the most on such a backend. Every occurrence is counted in `s3o_backend_range_ignored_total`.
+- **Multi-object delete** (`batch-delete`): a `DeleteObjects` request answered with `NotImplemented`, `MethodNotAllowed` or `400`. The backend's keys are deleted one `DeleteObject` at a time.
+- **Server-side copy** (`native-copy`): a `CopyObject` answered with `NotImplemented` or `MethodNotAllowed`. A copy within the backend reads the source through the orchestrator and writes the destination.
+
+The first refusal of each feature logs one warning and sets `s3o_backend_unsupported{backend, feature}` to 1. From then on the backend takes the fallback without asking again, and the refusal never counts toward a circuit breaker. What a backend lacks is held in memory by each instance until it restarts, so a provider that adds a feature is picked up on the next restart. `/admin/api/status` lists it per backend as `unsupported`, and the TUI shows it in the backend detail.
 
 
 ## Routing strategy

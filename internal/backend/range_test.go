@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // rangePayload is the object every test in this file serves.
@@ -63,6 +64,9 @@ func TestGetObject_CutsRangeFromWholeObject(t *testing.T) {
 			assertRangeResult(t, res, tt.body, tt.contentRange, tt.wire)
 			if after := testutil.ToFloat64(telemetry.BackendRangeIgnoredTotal.WithLabelValues(be.name)); after <= before {
 				t.Errorf("range-ignored counter did not move: before %v, after %v", before, after)
+			}
+			if !be.Unsupported().Has(core.FeatureRange) {
+				t.Errorf("unsupported = %s, want range recorded", be.Unsupported())
 			}
 		})
 	}
@@ -137,6 +141,9 @@ func TestGetObject_HonouredRangeUntouched(t *testing.T) {
 		t.Fatalf("GetObject: %v", err)
 	}
 	assertRangeResult(t, res, "56789", "bytes 5-9/20", 5)
+	if be.Unsupported() != 0 {
+		t.Errorf("unsupported = %s after an honoured range, want none", be.Unsupported())
+	}
 }
 
 // TestFetchEnvelopeHeader_IgnoredRange reads the header prefix of an object
