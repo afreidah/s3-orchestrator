@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// CLI Output - Backend Name Lists and Usage Limits
+// CLI Output - Backend Name Lists
 //
 // Author: Alex Freidah
 //
-// Renders a backend's name lists (refused calls, state flags), its usage limits
-// and the instance reporting it the same way in admin status and the TUI, so
-// both surfaces describe a backend in the same words. The health word itself
-// comes from core.BackendCalls.Health, which the web dashboard shares.
+// Renders a backend's name lists (refused calls, state flags) and the instance
+// reporting it the same way in admin status and the TUI, so both surfaces
+// describe a backend in the same words. The health word itself comes from
+// core.BackendCalls.Health, which the web dashboard shares.
 // -------------------------------------------------------------------------------
 
 package output
@@ -16,28 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
-
-// MeterLabel names a usage limit: its kind, and for a request budget the
-// budget it counts against, as "requests:<budget>".
-func MeterLabel(kind, budget string) string {
-	if budget != "" {
-		return kind + ":" + budget
-	}
-	return kind
-}
-
-// MeterFormat returns how a usage limit's figures render: bytes for egress and
-// ingress, a call count for a request budget.
-func MeterFormat(kind string) func(int64) string {
-	if kind == core.MeterRequests {
-		return humanize.Comma
-	}
-	return humanize.Bytes
-}
 
 // Instance names the instance that answered a status request: its id, the
 // build it runs, its mode and how long it has been up. A server too old to

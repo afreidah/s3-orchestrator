@@ -6,8 +6,8 @@
 // Reports per-backend health, quota usage, usage limits, and circuit-breaker
 // state from the running instance. Text mode renders the backends as a table
 // led by the backend name, then a table of usage limits when any backend has
-// one, then DB health and the instance that answered; JSON mode returns the raw
-// payload.
+// one, then the limit nearest full, DB health and the instance that answered;
+// JSON mode returns the raw payload.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -31,8 +31,8 @@ func cmdStatus(_ []string, c *client) int {
 }
 
 // renderStatus renders the status payload as a backends table led by the
-// backend name, followed by the usage limits, DB health and the answering
-// instance. Returning an error (e.g. an unexpected shape) makes the client
+// backend name, followed by the usage limits, the limit nearest full, DB
+// health and the answering instance. Returning an error (e.g. an unexpected shape) makes the client
 // fall back to raw JSON.
 func renderStatus(w io.Writer, body []byte) error {
 	var s adminapi.StatusResponse
@@ -63,10 +63,8 @@ func renderStatus(w io.Writer, body []byte) error {
 	if err := renderUsageLimits(w, s.Backends); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "\nDB healthy:    %t\n", s.DBHealthy); err != nil {
-		return err
-	}
-	_, err := fmt.Fprintf(w, "Instance:      %s\n", output.Instance(s.Instance))
+	_, err := fmt.Fprintf(w, "\nNearest limit: %s\nDB healthy:    %t\nInstance:      %s\n",
+		nearestLimitText(s.Backends), s.DBHealthy, output.Instance(s.Instance))
 	return err
 }
 
@@ -76,17 +74,11 @@ func renderStatus(w io.Writer, body []byte) error {
 func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 	var rows [][]string
 	for i := range backends {
-		c := backends[i].UsageCycle
-		for _, u := range backends[i].UsageLimits {
-			format := output.MeterFormat(u.Kind)
-			rows = append(rows, []string{
-				backends[i].Name,
-				humanize.Cycle(c.Start, c.NextReset, c.Timezone),
-				output.MeterLabel(u.Kind, u.Budget),
-				format(u.Used),
-				format(u.Limit),
-				fmt.Sprintf("%d%%", humanize.Percent(u.Used, u.Limit)),
-			})
+		b := &backends[i]
+		cycle := output.Cycle(b.UsageCycle)
+		for _, u := range b.UsageLimits {
+			c := output.UsageCeiling(u)
+			rows = append(rows, []string{b.Name, cycle, c.Label, c.Format(c.Used), c.Format(c.Limit), c.PercentText()})
 		}
 	}
 	if len(rows) == 0 {
@@ -96,4 +88,18 @@ func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 		return err
 	}
 	return output.Table(w, []string{"Backend", "Cycle", "Usage limit", "Used", "Limit", "Use%"}, rows)
+}
+
+// nearestLimitText names the limit across the fleet that is nearest full, with
+// its share, its figures and, for a usage limit, how long until it resets.
+func nearestLimitText(backends []adminapi.BackendStatus) string {
+	n, ok := output.NearestLimit(backends)
+	if !ok {
+		return output.NoLimits
+	}
+	text := fmt.Sprintf("%s %s  %s  %s", n.Backend, n.Label, n.PercentText(), n.Figures())
+	if reset := n.ResetText(); reset != "" {
+		text += "  " + reset
+	}
+	return text
 }

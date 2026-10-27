@@ -386,7 +386,7 @@ var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 	"STATE":   by(func(b *adminapi.BackendStatus) string { return output.NameList(b.Flags) }),
 	"USED":    by(func(b *adminapi.BackendStatus) int64 { return b.BytesUsed }),
 	"LIMIT":   by(func(b *adminapi.BackendStatus) int64 { return b.BytesLimit }),
-	"USE%":    by(func(b *adminapi.BackendStatus) int { return humanize.Percent(b.BytesUsed, b.BytesLimit) }),
+	"USE%":    by(func(b *adminapi.BackendStatus) float64 { return output.StorageCeiling(b).Share() }),
 	"OBJECTS": by(func(b *adminapi.BackendStatus) int64 { return b.ObjectCount }),
 }
 
@@ -395,19 +395,19 @@ var backendSorts = map[string]func(a, b *adminapi.BackendStatus) int{
 func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 	rows := make([]table.Row, 0, len(backends))
 	for i := range backends {
-		b := backends[i]
-		limit, usePct := "-", "-"
-		if b.BytesLimit > 0 {
-			limit = humanize.Bytes(b.BytesLimit)
-			usePct = fmt.Sprintf("%d%%", humanize.Percent(b.BytesUsed, b.BytesLimit))
+		b := &backends[i]
+		storage := output.StorageCeiling(b)
+		limit := "-"
+		if storage.Limit > 0 {
+			limit = storage.Format(storage.Limit)
 		}
 		rows = append(rows, table.Row{
 			b.Name,
 			core.CallsNamed(b.RefusedCalls).Health(),
 			output.NameList(b.Flags),
-			humanize.Bytes(b.BytesUsed),
+			storage.Format(storage.Used),
 			limit,
-			usePct,
+			storage.PercentText(),
 			strconv.FormatInt(b.ObjectCount, 10),
 		})
 	}
@@ -473,25 +473,26 @@ func (m *model) backendsStatsLine() string {
 		db = statusErrStyle.Render("UNAVAILABLE")
 	}
 
-	used, limit := m.fleetStorage()
-	total := "total: " + humanize.Bytes(used)
-	if limit > 0 {
-		total = fmt.Sprintf("total: %s / %s (%s)",
-			humanize.Bytes(used), humanize.Bytes(limit), percentText(humanize.Percent(used, limit), 0))
+	fleet := m.fleetStorage()
+	total := "total: " + humanize.Bytes(fleet.Used)
+	if fleet.Limit > 0 {
+		total = fmt.Sprintf("total: %s (%s)", fleet.Figures(), percentText(fleet.Percent(), 0))
 	}
 	return fmt.Sprintf("db: %s   %s   %s%s%s",
 		db, total, m.integrityCoverage(), m.encryptionCoverage(), m.compressionCoverage())
 }
 
-// fleetStorage sums the bytes every backend holds and the quotas of those that
-// have one. A backend with no quota adds nothing to the limit.
-func (m *model) fleetStorage() (used, limit int64) {
+// fleetStorage is the fleet's storage ceiling: the bytes every backend holds
+// against the quotas of those that have one. A backend with no quota adds
+// nothing to the limit.
+func (m *model) fleetStorage() output.Ceiling {
+	fleet := output.Ceiling{Label: output.StorageLabel, Format: humanize.Bytes}
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		used += b.BytesUsed
-		limit += max(b.BytesLimit, 0)
+		fleet.Used += b.BytesUsed
+		fleet.Limit += max(b.BytesLimit, 0)
 	}
-	return used, limit
+	return fleet
 }
 
 // fleetCompressionSaved sums what compression saves on every backend.
@@ -578,9 +579,11 @@ func (m *model) backendsBody() []pane {
 // is, what it holds, each of its limits as a bar against its ceiling, and the
 // instance whose view of the breakers this is.
 func (m *model) backendDetail(b *adminapi.BackendStatus) string {
-	rows := []meterRow{storageRow("storage", b, "")}
+	storage := output.StorageCeiling(b)
+	rows := []meterRow{{Ceiling: storage, name: storage.Label}}
 	for _, u := range b.UsageLimits {
-		rows = append(rows, usageMeterRow(output.MeterLabel(u.Kind, u.Budget), u, chargedCalls(u)))
+		c := output.UsageCeiling(u)
+		rows = append(rows, meterRow{Ceiling: c, name: c.Label, markers: chargedCalls(u)})
 	}
 	return strings.Join([]string{
 		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
@@ -589,7 +592,7 @@ func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 			field{"holds", holdingsText(b)},
 			field{"instance", output.Instance(m.backends.instance)},
 		),
-		m.meterBlock("usage   "+cycleText(b.UsageCycle), rows),
+		m.meterBlock("usage   "+output.Cycle(b.UsageCycle), rows),
 	}, "\n")
 }
 

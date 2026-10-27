@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Covers the bespoke status text renderer: a backends table led by the name,
-// humanized byte sizes, the usage limits table, the trailing health and
-// instance lines, and the JSON fallback when the body is not the expected
-// shape.
+// humanized byte sizes, the usage limits table, the trailing nearest-limit,
+// health and instance lines, and the JSON fallback when the body is not the
+// expected shape.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -59,6 +59,7 @@ func TestStatus_TextTable(t *testing.T) {
 	for _, want := range []string{
 		"minio-1", "minio-2", "10.0 GiB", "1.0 MiB",
 		"Health", "Refused", "State", "healthy", "degraded", "down", "GetObject", "cordoned,draining",
+		"Nearest limit: minio-2 egress  50%  512 B / 1.0 KiB  resets in",
 		"DB healthy:    true",
 		"Instance:      host-1a2b3c4d  v1.2.3  mode all",
 	} {
@@ -96,7 +97,7 @@ func TestStatus_UsageLimitsTable(t *testing.T) {
 }
 
 // TestStatus_NoUsageLimits verifies a fleet with no limits prints no usage
-// limits table.
+// limits table and says it has no nearest limit.
 func TestStatus_NoUsageLimits(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -105,6 +106,22 @@ func TestStatus_NoUsageLimits(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "Usage limit") {
 		t.Errorf("printed a usage limits table for a fleet with none:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "Nearest limit: "+output.NoLimits) {
+		t.Errorf("nearest limit line missing for a fleet with none:\n%s", buf.String())
+	}
+}
+
+// TestStatus_NearestStorageLimit verifies a storage quota can be the nearest
+// limit and, since it never resets, prints no reset.
+func TestStatus_NearestStorageLimit(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := renderStatus(&buf, []byte(`{"backends":[{"name":"b1","bytes_used":9,"bytes_limit":10}]}`)); err != nil {
+		t.Fatalf("renderStatus: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Nearest limit: b1 storage  90%  9 B / 10 B\n") {
+		t.Errorf("nearest limit is not the storage quota:\n%s", buf.String())
 	}
 }
 

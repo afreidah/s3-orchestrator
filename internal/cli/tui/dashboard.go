@@ -6,8 +6,9 @@
 // The section the TUI opens on: a summary of the fleet, so an operator can see
 // whether anything is wrong without visiting every pane. It shows capacity per
 // backend and in total, each backend's usage against its egress, ingress and
-// request limits, the replication and verification backlogs, encryption and
-// compression coverage, usage for the period, and the cleanup queues.
+// request limits, the limit nearest full, the replication and verification
+// backlogs, encryption and compression coverage, usage for the period, and the
+// cleanup queues.
 //
 // Every figure here is fleet-wide, so the dashboard reads the same whichever
 // instance answers. All of it comes from the status, replication and cleanup
@@ -122,14 +123,11 @@ func (m *model) actionLogPane() pane {
 	}}
 }
 
-// meterRow is one line of a usage block: what something has used against its
-// limit, in the units format renders. The fleet total and the usage-limit rows
-// have no markers.
+// meterRow is one line of a usage block: a ceiling drawn under the row's name,
+// followed by its markers. The fleet total has no markers.
 type meterRow struct {
+	output.Ceiling
 	name    string
-	used    int64
-	limit   int64
-	format  func(int64) string
 	markers string
 }
 
@@ -140,17 +138,10 @@ func (m *model) dashboardCapacity() string {
 	rows := make([]meterRow, 0, len(m.backends.list.received)+1)
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		rows = append(rows, storageRow(b.Name, b, backendMarkers(b)))
+		rows = append(rows, meterRow{Ceiling: output.StorageCeiling(b), name: b.Name, markers: backendMarkers(b)})
 	}
-	used, limit := m.fleetStorage()
-	rows = append(rows, meterRow{name: dashFleetLabel, used: used, limit: limit, format: humanize.Bytes})
+	rows = append(rows, meterRow{Ceiling: m.fleetStorage(), name: dashFleetLabel})
 	return m.meterBlock("capacity", rows)
-}
-
-// storageRow is the row of a usage block that draws a backend's stored bytes
-// against its quota.
-func storageRow(name string, b *adminapi.BackendStatus, markers string) meterRow {
-	return meterRow{name: name, used: b.BytesUsed, limit: b.BytesLimit, format: humanize.Bytes, markers: markers}
 }
 
 // dashboardUsageLimits renders one bar per usage limit a backend enforces,
@@ -160,26 +151,16 @@ func (m *model) dashboardUsageLimits() string {
 	var rows []meterRow
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		cycle := pathStyle.Render(cycleText(b.UsageCycle))
+		cycle := pathStyle.Render(output.Cycle(b.UsageCycle))
 		for _, u := range b.UsageLimits {
-			rows = append(rows, usageMeterRow(b.Name+" "+output.MeterLabel(u.Kind, u.Budget), u, cycle))
+			c := output.UsageCeiling(u)
+			rows = append(rows, meterRow{Ceiling: c, name: b.Name + " " + c.Label, markers: cycle})
 		}
 	}
 	if len(rows) == 0 {
 		return ""
 	}
 	return m.meterBlock("usage limits", rows)
-}
-
-// usageMeterRow is the row of a usage block that draws one limit a backend
-// enforces, in the units its kind counts.
-func usageMeterRow(name string, u adminapi.UsageMeter, markers string) meterRow {
-	return meterRow{name: name, used: u.Used, limit: u.Limit, format: output.MeterFormat(u.Kind), markers: markers}
-}
-
-// cycleText names the usage cycle a backend's figures are counted in.
-func cycleText(c adminapi.UsageCycle) string {
-	return humanize.Cycle(c.Start, c.NextReset, c.Timezone)
 }
 
 // meterBlock renders rows under a heading, each as a bar followed by its
@@ -190,9 +171,9 @@ func (m *model) meterBlock(heading string, rows []meterRow) string {
 	var cols meterColumns
 	for _, r := range rows {
 		cols.name = max(cols.name, len(r.name))
-		cols.used = max(cols.used, len(r.format(r.used)))
-		if r.limit > 0 {
-			cols.limit = max(cols.limit, len(r.format(r.limit)))
+		cols.used = max(cols.used, len(r.Format(r.Used)))
+		if r.Limit > 0 {
+			cols.limit = max(cols.limit, len(r.Format(r.Limit)))
 		}
 	}
 	cols.name = min(cols.name, dashNameMax)
@@ -226,8 +207,8 @@ type meterColumns struct {
 // says it is unlimited.
 func meterLine(r meterRow, cols meterColumns) string {
 	bar := pathStyle.Render(fmt.Sprintf("%-*s", cols.bar+2, "no limit"))
-	if r.limit > 0 {
-		bar = usageBar(humanize.Percent(r.used, r.limit), cols.bar)
+	if r.Limit > 0 {
+		bar = usageBar(r.Percent(), cols.bar)
 	}
 	return fmt.Sprintf("%-*s ", cols.name, truncate(r.name, cols.name)) + bar + "  " + meterFigures(r, cols)
 }
@@ -236,10 +217,9 @@ func meterLine(r meterRow, cols meterColumns) string {
 // Each figure is padded to its column, so the percentages and markers line up
 // down the block; a row with no limit leaves those columns blank.
 func meterFigures(r meterRow, cols meterColumns) string {
-	figures := fmt.Sprintf("%*s", cols.used, r.format(r.used))
-	if r.limit > 0 {
-		figures += fmt.Sprintf(" / %-*s  ", cols.limit, r.format(r.limit)) +
-			percentText(humanize.Percent(r.used, r.limit), 4)
+	figures := fmt.Sprintf("%*s", cols.used, r.Format(r.Used))
+	if r.Limit > 0 {
+		figures += fmt.Sprintf(" / %-*s  ", cols.limit, r.Format(r.Limit)) + percentText(r.Percent(), 4)
 	} else if cols.limit > 0 {
 		figures += strings.Repeat(" ", 3+cols.limit+2+4)
 	}
@@ -280,6 +260,7 @@ func backendMarkers(b *adminapi.BackendStatus) string {
 func (m *model) dashboardSummary() string {
 	iv := m.backends.integrity
 	return fieldBlock(summaryLabelWidth,
+		field{"nearest limit", m.dashboardNearestLimit()},
 		field{"database", m.dashboardDB()},
 		field{"replication", m.dashboardReplication()},
 		field{"verified", integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)},
@@ -288,6 +269,21 @@ func (m *model) dashboardSummary() string {
 		field{"usage", m.dashboardUsage()},
 		field{"cleanup", m.dashboardCleanup()},
 	)
+}
+
+// dashboardNearestLimit renders the limit across the fleet that is nearest
+// full: its backend and name, how full it is, its figures and, for a usage
+// limit, how long until its cycle resets.
+func (m *model) dashboardNearestLimit() string {
+	n, ok := output.NearestLimit(m.backends.list.received)
+	if !ok {
+		return pathStyle.Render(output.NoLimits)
+	}
+	text := fmt.Sprintf("%s %s   %s   %s", n.Backend, n.Label, percentText(n.Percent(), 0), n.Figures())
+	if reset := n.ResetText(); reset != "" {
+		text += "   " + pathStyle.Render(reset)
+	}
+	return text
 }
 
 // dashboardDB renders the metadata database's health.
