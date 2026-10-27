@@ -22,6 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
+	"github.com/afreidah/s3-orchestrator/terraform/terraform-provider-s3-orchestrator/internal/client"
 )
 
 // TestAccGrantBucket covers a bucket grant through narrowing and import.
@@ -29,7 +31,7 @@ func TestAccGrantBucket(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckGrantDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_grant", testAccGrantFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccGrantConfig(`["list", "read", "write"]`),
@@ -80,7 +82,7 @@ func TestAccGrantOrchestrator(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckGrantDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_grant", testAccGrantFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccGrantOrchestratorConfig,
@@ -157,7 +159,7 @@ func TestAccGrantWildcardName(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckGrantDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_grant", testAccGrantFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccGrantWildcardConfig,
@@ -239,49 +241,26 @@ resource "s3orchestrator_grant" "test" {
 // testAccCheckGrantPermissions asks the orchestrator what the grant carries,
 // which is the only way to tell a written permission set from one Terraform
 // merely recorded.
-func testAccCheckGrantPermissions(addr string, want ...string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[addr]
-		if !ok {
-			return fmt.Errorf("%s not in state", addr)
+func testAccCheckGrantPermissions(addr string, want ...string) func(*terraform.State) error {
+	return testAccCheckExists(addr, func(is *terraform.InstanceState) (bool, error) {
+		grant, found, err := testAccGrant(is)
+		if found && !sameSet(grant.Permissions, want) {
+			return true, fmt.Errorf("grant %q carries %v, want %v", is.ID, grant.Permissions, want)
 		}
-		grant, found, err := testAccClient().Grant(context.Background(),
-			rs.Primary.Attributes["user_id"],
-			rs.Primary.Attributes["kind"],
-			rs.Primary.Attributes["name"])
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("grant %q in state but not in the orchestrator", rs.Primary.ID)
-		}
-		if !sameSet(grant.Permissions, want) {
-			return fmt.Errorf("grant %q carries %v, want %v", rs.Primary.ID, grant.Permissions, want)
-		}
-		return nil
-	}
+		return found, err
+	})
 }
 
-// testAccCheckGrantDestroy confirms the withdrawal reached the orchestrator.
-//
-// A grant is nested under its user, so one whose user is already gone reads as
-// absent, which is the answer this wants either way.
-func testAccCheckGrantDestroy(s *terraform.State) error {
-	api := testAccClient()
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "s3orchestrator_grant" {
-			continue
-		}
-		_, found, err := api.Grant(context.Background(),
-			rs.Primary.Attributes["user_id"],
-			rs.Primary.Attributes["kind"],
-			rs.Primary.Attributes["name"])
-		if err != nil {
-			return err
-		}
-		if found {
-			return fmt.Errorf("grant %q survived destroy", rs.Primary.ID)
-		}
-	}
-	return nil
+// testAccGrantFound reports whether the grant survives. A grant is nested under
+// its user, so one whose user is already gone reads as absent, which is the
+// answer a destroy check wants either way.
+func testAccGrantFound(is *terraform.InstanceState) (bool, error) {
+	_, found, err := testAccGrant(is)
+	return found, err
+}
+
+// testAccGrant looks a grant up by the user, kind and name state holds.
+func testAccGrant(is *terraform.InstanceState) (client.Grant, bool, error) {
+	return testAccClient().Grant(context.Background(),
+		is.Attributes["user_id"], is.Attributes["kind"], is.Attributes["name"])
 }

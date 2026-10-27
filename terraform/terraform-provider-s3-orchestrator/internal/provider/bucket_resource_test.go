@@ -35,7 +35,7 @@ func TestAccBucket(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_bucket", testAccBucketFound),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccBucketConfig(2, `
@@ -107,7 +107,7 @@ func TestAccBucketRenameReplaces(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy,
+		CheckDestroy:             testAccCheckDestroyed("s3orchestrator_bucket", testAccBucketFound),
 		Steps: []resource.TestStep{
 			{Config: testAccNamedBucketConfig("acc-first")},
 			{
@@ -203,21 +203,8 @@ resource "s3orchestrator_bucket" "test" {
 }`, name)
 }
 
-// testAccCheckBucketDestroy verifies every bucket the case declared is gone.
-func testAccCheckBucketDestroy(s *terraform.State) error {
-	api := testAccClient()
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "s3orchestrator_bucket" {
-			continue
-		}
-		name := rs.Primary.Attributes["name"]
-		_, found, err := api.Bucket(context.Background(), name)
-		if err != nil {
-			return err
-		}
-		if found {
-			return fmt.Errorf("bucket %q survived destroy", name)
-		}
-	}
-	return nil
+// testAccBucketFound looks a bucket up by its name.
+func testAccBucketFound(is *terraform.InstanceState) (bool, error) {
+	_, found, err := testAccClient().Bucket(context.Background(), is.Attributes["name"])
+	return found, err
 }

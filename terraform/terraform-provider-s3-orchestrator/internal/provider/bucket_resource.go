@@ -20,7 +20,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -148,24 +147,10 @@ func (r *bucketResource) Schema(
 }
 
 // Configure takes the API client the provider built.
-//
-// Terraform calls this during validation too, before the provider is
-// configured, so no provider data is an ordinary state rather than a fault.
 func (r *bucketResource) Configure(
 	_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
 ) {
-	if req.ProviderData == nil {
-		return
-	}
-	api, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", req.ProviderData),
-		)
-		return
-	}
-	r.api = api
+	r.api = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
 // Create declares the bucket.
@@ -177,24 +162,14 @@ func (r *bucketResource) Create(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	rules, diags := corsRulesToAPI(ctx, plan.CORSRules)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	_, err := r.api.CreateBucket(ctx, client.CreateBucketRequest{
-		Name:                plan.Name.ValueString(),
-		MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
-		CORS:                rules,
+	r.write(ctx, &plan, &resp.Diagnostics, "Could not create bucket", func(rules []client.CORSRule) error {
+		_, err := r.api.CreateBucket(ctx, client.CreateBucketRequest{
+			Name:                plan.Name.ValueString(),
+			MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
+			CORS:                rules,
+		})
+		return err
 	})
-	if err != nil {
-		resp.Diagnostics.AddError("Could not create bucket", err.Error())
-		return
-	}
-
-	resp.Diagnostics.Append(resolveCORSState(ctx, rules, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -225,12 +200,7 @@ func (r *bucketResource) Read(
 		return
 	}
 	if bucket.Source == client.SourceConfig {
-		resp.Diagnostics.AddError(
-			"Bucket is declared in the orchestrator's configuration file",
-			fmt.Sprintf("The bucket %q comes from config.yaml, which the admin API will not "+
-				"change. Manage it by editing that file and sending SIGHUP, or remove it from "+
-				"Terraform state.", state.Name.ValueString()),
-		)
+		addConfigDeclared(&resp.Diagnostics, "bucket", state.Name.ValueString())
 		return
 	}
 
@@ -255,23 +225,12 @@ func (r *bucketResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	rules, diags := corsRulesToAPI(ctx, plan.CORSRules)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	err := r.api.UpdateBucket(ctx, plan.Name.ValueString(), client.UpdateBucketRequest{
-		MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
-		CORS:                rules,
+	r.write(ctx, &plan, &resp.Diagnostics, "Could not update bucket", func(rules []client.CORSRule) error {
+		return r.api.UpdateBucket(ctx, plan.Name.ValueString(), client.UpdateBucketRequest{
+			MaxMultipartUploads: int(plan.MaxMultipartUploads.ValueInt64()),
+			CORS:                rules,
+		})
 	})
-	if err != nil {
-		resp.Diagnostics.AddError("Could not update bucket", err.Error())
-		return
-	}
-
-	resp.Diagnostics.Append(resolveCORSState(ctx, rules, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -304,6 +263,25 @@ func (r *bucketResource) ImportState(
 // -------------------------------------------------------------------------
 // INTERNAL
 // -------------------------------------------------------------------------
+
+// write sends the planned bucket through send, which Create and Update fill
+// with their own call, then writes the rules sent back over the plan. A
+// refusal is reported under summary.
+func (r *bucketResource) write(
+	ctx context.Context, plan *bucketModel, diags *diag.Diagnostics, summary string,
+	send func([]client.CORSRule) error,
+) {
+	rules, d := corsRulesToAPI(ctx, plan.CORSRules)
+	diags.Append(d...)
+	if diags.HasError() {
+		return
+	}
+	if err := send(rules); err != nil {
+		diags.AddError(summary, err.Error())
+		return
+	}
+	diags.Append(resolveCORSState(ctx, rules, plan)...)
+}
 
 // resolveCORSState writes the rules that were sent back over the model, so
 // every computed field holds a known value. An omitted max_age plans as

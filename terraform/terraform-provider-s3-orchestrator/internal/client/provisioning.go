@@ -166,49 +166,43 @@ func (c *Client) Provisioning(ctx context.Context) (*Provisioning, error) {
 	return &out, nil
 }
 
-// Bucket finds one virtual bucket by name. The second result reports whether it
-// exists, which is what tells a Read to drop the resource rather than fail.
+// Bucket finds one virtual bucket by name.
 func (c *Client) Bucket(ctx context.Context, name string) (Bucket, bool, error) {
-	p, err := c.Provisioning(ctx)
-	if err != nil {
-		return Bucket{}, false, err
-	}
-	for i := range p.Buckets {
-		if p.Buckets[i].Name == name {
-			return p.Buckets[i], true, nil
-		}
-	}
-	return Bucket{}, false, nil
+	return find(ctx, c, func(p *Provisioning) []Bucket { return p.Buckets },
+		func(b *Bucket) bool { return b.Name == name })
 }
 
-// User finds one identity by id. The second result reports whether it exists,
-// which is what tells a Read to drop the resource rather than fail the run.
+// User finds one identity by id.
 func (c *Client) User(ctx context.Context, id string) (User, bool, error) {
-	p, err := c.Provisioning(ctx)
-	if err != nil {
-		return User{}, false, err
-	}
-	for i := range p.Users {
-		if p.Users[i].ID == id {
-			return p.Users[i], true, nil
-		}
-	}
-	return User{}, false, nil
+	return find(ctx, c, func(p *Provisioning) []User { return p.Users },
+		func(u *User) bool { return u.ID == id })
 }
 
 // Credential finds one keypair by access key. The secret is never part of the
 // answer: nothing reads it back out of the orchestrator.
 func (c *Client) Credential(ctx context.Context, accessKeyID string) (Credential, bool, error) {
+	return find(ctx, c, func(p *Provisioning) []Credential { return p.Credentials },
+		func(cr *Credential) bool { return cr.AccessKeyID == accessKeyID })
+}
+
+// find fetches the listing and returns the first entry in the part of it pick
+// selects that match accepts. The second result reports whether one did, which
+// is what tells a Read to drop the resource rather than fail the run.
+func find[T any](
+	ctx context.Context, c *Client, pick func(*Provisioning) []T, match func(*T) bool,
+) (T, bool, error) {
+	var zero T
 	p, err := c.Provisioning(ctx)
 	if err != nil {
-		return Credential{}, false, err
+		return zero, false, err
 	}
-	for i := range p.Credentials {
-		if p.Credentials[i].AccessKeyID == accessKeyID {
-			return p.Credentials[i], true, nil
+	items := pick(p)
+	for i := range items {
+		if match(&items[i]) {
+			return items[i], true, nil
 		}
 	}
-	return Credential{}, false, nil
+	return zero, false, nil
 }
 
 // Grant finds one user's grant on one resource.

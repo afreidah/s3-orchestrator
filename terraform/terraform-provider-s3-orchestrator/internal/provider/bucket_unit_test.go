@@ -504,25 +504,6 @@ func TestBucketDataSourceReadMissing(t *testing.T) {
 	}
 }
 
-// TestBucketDataSourceConfigure covers the two states the framework hands a
-// data source: nothing yet, and the wrong thing.
-func TestBucketDataSourceConfigure(t *testing.T) {
-	t.Parallel()
-
-	var absent datasource.ConfigureResponse
-	(&bucketDataSource{}).Configure(context.Background(), datasource.ConfigureRequest{}, &absent)
-	if absent.Diagnostics.HasError() {
-		t.Errorf("diagnostics = %v, want none", absent.Diagnostics)
-	}
-
-	var wrong datasource.ConfigureResponse
-	(&bucketDataSource{}).Configure(context.Background(),
-		datasource.ConfigureRequest{ProviderData: "not a client"}, &wrong)
-	if !wrong.Diagnostics.HasError() {
-		t.Fatal("diagnostics = none, want an error")
-	}
-}
-
 // -------------------------------------------------------------------------
 // CORS CONVERSION
 // -------------------------------------------------------------------------

@@ -17,6 +17,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -172,6 +174,55 @@ func sameSet(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// testAccFound reports whether the orchestrator holds what one state instance
+// describes, asking it directly rather than trusting state.
+type testAccFound func(*terraform.InstanceState) (bool, error)
+
+// testAccCheckExists confirms addr is in state and the orchestrator holds it.
+func testAccCheckExists(addr string, found testAccFound) func(*terraform.State) error {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[addr]
+		if !ok {
+			return fmt.Errorf("%s not in state", addr)
+		}
+		held, err := found(rs.Primary)
+		if err != nil {
+			return err
+		}
+		if !held {
+			return fmt.Errorf("%s %q in state but not in the orchestrator", addr, instanceName(rs.Primary))
+		}
+		return nil
+	}
+}
+
+// testAccCheckDestroyed confirms every resourceType instance is gone from the
+// orchestrator after destroy, which is the half of the lifecycle state alone
+// cannot vouch for.
+func testAccCheckDestroyed(resourceType string, found testAccFound) func(*terraform.State) error {
+	return func(s *terraform.State) error {
+		for _, rs := range s.RootModule().Resources {
+			if rs.Type != resourceType {
+				continue
+			}
+			held, err := found(rs.Primary)
+			if err != nil {
+				return err
+			}
+			if held {
+				return fmt.Errorf("%s %q survived destroy", resourceType, instanceName(rs.Primary))
+			}
+		}
+		return nil
+	}
+}
+
+// instanceName names an instance in a failure: its id, or its name for a
+// bucket, which carries no id.
+func instanceName(is *terraform.InstanceState) string {
+	return cmp.Or(is.ID, is.Attributes["name"])
 }
 
 // -------------------------------------------------------------------------

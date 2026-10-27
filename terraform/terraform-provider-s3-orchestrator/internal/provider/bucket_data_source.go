@@ -90,18 +90,7 @@ func (d *bucketDataSource) Schema(
 func (d *bucketDataSource) Configure(
 	_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse,
 ) {
-	if req.ProviderData == nil {
-		return
-	}
-	api, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("Expected *client.Client, got %T. This is a bug in the provider.", req.ProviderData),
-		)
-		return
-	}
-	d.api = api
+	d.api = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
 // Read looks the bucket up by name.

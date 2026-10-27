@@ -16,8 +16,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/afreidah/s3-orchestrator/terraform/terraform-provider-s3-orchestrator/internal/client"
 )
 
 // -------------------------------------------------------------------------
@@ -52,40 +56,69 @@ func TestValueOr(t *testing.T) {
 // RESOURCE WIRING
 // -------------------------------------------------------------------------
 
-// TestConfigureIgnoresAbsentProviderData covers the framework calling Configure
-// during validation, before the provider has been configured. No data is an
-// ordinary state there rather than a fault.
-func TestConfigureIgnoresAbsentProviderData(t *testing.T) {
+// TestClientFrom covers the three things the framework hands a resource or
+// data source: nothing yet during validation, which is no fault; the wrong
+// type, which only a provider bug produces and which beats a nil dereference
+// on the first apply; and the client itself.
+func TestClientFrom(t *testing.T) {
 	t.Parallel()
+	var none diag.Diagnostics
+	if api := clientFrom(nil, &none); api != nil || none.HasError() {
+		t.Errorf("clientFrom(nil) = %v, %v; want nil and no error", api, none)
+	}
+
+	var wrong diag.Diagnostics
+	if clientFrom("not a client", &wrong); !wrong.HasError() {
+		t.Fatal("diagnostics = none, want an error")
+	}
+	if summary := wrong.Errors()[0].Summary(); summary != "Unexpected provider data" {
+		t.Errorf("summary = %q, want %q", summary, "Unexpected provider data")
+	}
+
+	want := client.New("localhost:9000", "AKIATESTTESTTESTTEST", "secret")
+	var ok diag.Diagnostics
+	if api := clientFrom(want, &ok); api != want || ok.HasError() {
+		t.Errorf("clientFrom(client) = %v, %v; want the client", api, ok)
+	}
+}
+
+// TestConfigureTakesTheClient covers every resource and the data source
+// accepting the client the provider built.
+func TestConfigureTakesTheClient(t *testing.T) {
+	t.Parallel()
+	api := client.New("localhost:9000", "AKIATESTTESTTESTTEST", "secret")
 	for name, r := range configurableResources() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			var resp resource.ConfigureResponse
-			configure(t, r, resource.ConfigureRequest{}, &resp)
+			configure(t, r, resource.ConfigureRequest{ProviderData: api}, &resp)
 			if resp.Diagnostics.HasError() {
 				t.Errorf("diagnostics = %v, want none", resp.Diagnostics)
 			}
 		})
 	}
+
+	var resp datasource.ConfigureResponse
+	d := &bucketDataSource{}
+	d.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: api}, &resp)
+	if resp.Diagnostics.HasError() || d.api != api {
+		t.Errorf("data source Configure = %v, %v; want the client", d.api, resp.Diagnostics)
+	}
 }
 
-// TestConfigureRejectsUnexpectedProviderData covers the type assertion. It can
-// only fail through a provider bug, and saying so beats a nil dereference on
-// the first apply.
-func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
+// TestAddConfigDeclared covers the refusal naming the entry and the file it
+// comes from.
+func TestAddConfigDeclared(t *testing.T) {
 	t.Parallel()
-	for name, r := range configurableResources() {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			var resp resource.ConfigureResponse
-			configure(t, r, resource.ConfigureRequest{ProviderData: "not a client"}, &resp)
-			if !resp.Diagnostics.HasError() {
-				t.Fatal("diagnostics = none, want an error")
-			}
-			if summary := resp.Diagnostics.Errors()[0].Summary(); summary != "Unexpected provider data" {
-				t.Errorf("summary = %q, want %q", summary, "Unexpected provider data")
-			}
-		})
+	var diags diag.Diagnostics
+	addConfigDeclared(&diags, "user", "user-abc")
+	if !diags.HasError() {
+		t.Fatal("diagnostics = none, want an error")
+	}
+	e := diags.Errors()[0]
+	if e.Summary() != "User is declared in the orchestrator's configuration file" ||
+		!strings.Contains(e.Detail(), `The user "user-abc" comes from config.yaml`) {
+		t.Errorf("error = %q / %q", e.Summary(), e.Detail())
 	}
 }
 
