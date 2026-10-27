@@ -13,8 +13,8 @@
 //     telemetry.metrics.fleet_interval cadence through the runtime.
 //   - lifecycleService: a small tickrunner wrapper that needs the
 //     manager-side lifecycleOps surface to read rules and process them.
-//   - provisioningWatcher: rebuilds the provisioning view when another
-//     instance announces a change over Redis.
+//   - topicWatcher: applies what another instance announces over Redis,
+//     a provisioning change or a cache invalidation, to this instance.
 //
 // All other background-service factories live next to their owning
 // worker (internal/worker, internal/proxy/multipart, internal/breaker)
@@ -29,11 +29,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -251,37 +254,51 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 }
 
 // -------------------------------------------------------------------------
-// PROVISIONING WATCH
+// SHARED-STATE WATCHERS
 // -------------------------------------------------------------------------
 
-// provisioningWatcher rebuilds this instance's provisioning view when another
-// instance announces a change, and each time its subscription is established,
-// since it may have missed an announcement while it was not subscribed.
-type provisioningWatcher struct {
-	channel sharedChannelWatcher
-	apply   func(ctx context.Context) error
-	log     *slog.Logger
+// topicWatcher applies what other instances announce on one topic, and
+// resyncs whenever this instance may have missed an announcement: as its
+// subscription is established, and for a message it cannot read.
+type topicWatcher[T any] struct {
+	topic  sharedstate.Topic[T]
+	apply  func(context.Context, T)
+	resync func(context.Context)
 }
 
-// newProvisioningWatcher constructs the provisioning watch service. apply
-// rebuilds this instance's view without announcing, so rebuilds do not echo
-// between instances.
-func newProvisioningWatcher(channel sharedChannelWatcher, apply func(ctx context.Context) error) lifecycle.Runner {
-	must.NotNil("channel", channel)
+// newTopicWatcher constructs the watch service for one topic.
+func newTopicWatcher[T any](topic sharedstate.Topic[T], apply func(context.Context, T), resync func(context.Context)) lifecycle.Runner {
 	must.NotNil("apply", apply)
-	return &provisioningWatcher{
-		channel: channel,
-		apply:   apply,
-		log:     tickrunner.ComponentLogger("provisioning_watch"),
-	}
+	must.NotNil("resync", resync)
+	return &topicWatcher[T]{topic: topic, apply: apply, resync: resync}
 }
 
-// Run watches the provisioning channel until ctx is done.
-func (w *provisioningWatcher) Run(ctx context.Context) error {
-	w.channel.WatchShared(ctx, provisioningChannel, func(ctx context.Context) {
-		if err := w.apply(ctx); err != nil {
-			w.log.ErrorContext(ctx, "provisioning rebuild failed", "error", err)
-		}
-	})
+// Run watches the topic until ctx is done.
+func (w *topicWatcher[T]) Run(ctx context.Context) error {
+	w.topic.Watch(ctx, w.apply, w.resync)
 	return nil
+}
+
+// newProvisioningWatcher rebuilds this instance's provisioning view whenever
+// another instance announces a change, and on every resync. apply rebuilds
+// without announcing, since the change came from another instance.
+func newProvisioningWatcher(shared *sharedstate.Shared, apply func(ctx context.Context) error) lifecycle.Runner {
+	must.NotNil("apply", apply)
+	log := tickrunner.ComponentLogger("provisioning_watch")
+	rebuild := func(ctx context.Context) {
+		if err := apply(ctx); err != nil {
+			log.ErrorContext(ctx, "provisioning rebuild failed", logfmt.Err(err))
+		}
+	}
+	return newTopicWatcher(provisioningTopic(shared), func(ctx context.Context, _ struct{}) { rebuild(ctx) }, rebuild)
+}
+
+// newCacheWatcher applies the cache flushes and invalidations other instances
+// announce to this instance's cache, and empties it on every resync, since an
+// invalidation it missed would otherwise leave it serving dropped entries.
+func newCacheWatcher(shared *sharedstate.Shared, c cache.ObjectCache) lifecycle.Runner {
+	must.NotNil("c", c)
+	return newTopicWatcher(cache.InvalidationTopic(shared),
+		func(_ context.Context, inv cache.Invalidation) { inv.Apply(c) },
+		func(context.Context) { c.Clear() })
 }

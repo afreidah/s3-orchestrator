@@ -7,7 +7,8 @@
 // when enabled), the breaker registry the watchdog consumes, and each proxy
 // collaborator every transport and worker depends on. Also hosts the optional
 // providers whose values feed them: encryption engine + key provider,
-// Redis-backed shared counters, and the object data cache.
+// Redis-backed shared counters and the shared state riding them, and the
+// object data cache.
 // -------------------------------------------------------------------------------
 
 package di
@@ -30,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -42,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -249,6 +252,26 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 	return rb, nil
 }
 
+// ProvideSharedState builds this instance's handle on the state the instances
+// share. With Redis configured it rides the Redis counter backend, whatever
+// state Redis is in; without Redis the instance runs alone.
+func ProvideSharedState(i do.Injector) (*sharedstate.Shared, error) {
+	r := newResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	if r.err != nil {
+		return nil, r.err
+	}
+	if cfg.Redis == nil {
+		return sharedstate.New(nil, id), nil
+	}
+	rb, err := do.Invoke[*counter.RedisCounterBackend](i)
+	if err != nil {
+		return nil, err
+	}
+	return sharedstate.New(rb, id), nil
+}
+
 // ProvideObjectCache creates the in-memory LRU object data cache.
 func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 	cfg, err := do.Invoke[*config.Config](i)
@@ -409,18 +432,9 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	br := r.Resolve[*BackendsResult]()
 	metricsDeps := r.Resolve[metrics.Deps]()
 	usage := r.Resolve[*counter.UsageTracker]()
+	shared := r.Resolve[*sharedstate.Shared]()
 	if r.err != nil {
 		return nil, r.err
-	}
-	// With Redis configured, the fleet snapshot is shared through it, the
-	// same way the usage counters are.
-	var shared metrics.SharedState
-	if cfg.Redis != nil {
-		rb, err := do.Invoke[*counter.RedisCounterBackend](i)
-		if err != nil {
-			return nil, err
-		}
-		shared = rb
 	}
 
 	// Baselines are empty until the quota flush service primes them from

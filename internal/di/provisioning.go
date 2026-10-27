@@ -18,18 +18,24 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
-// provisioningChannel is the Redis channel provisioning changes are announced
-// on.
+// provisioningChannel is the shared-state channel provisioning changes are
+// announced on.
 const provisioningChannel = "provisioning"
+
+// provisioningTopic is the topic a provisioning change is announced on. The
+// message carries nothing: a receiver rebuilds its whole view from the store.
+func provisioningTopic(s *sharedstate.Shared) sharedstate.Topic[struct{}] {
+	return sharedstate.NewTopic[struct{}](s, provisioningChannel)
+}
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -98,15 +104,11 @@ func (p *RegistryPublisher) Republish(ctx context.Context) error {
 }
 
 // announce publishes a provisioning change to the other instances. A no-op on
-// a single instance, which has no Redis and no one to tell.
+// a single instance, which has no one to tell.
 func (p *RegistryPublisher) announce(ctx context.Context) {
-	cfg, err := do.Invoke[*config.Config](p.inj)
-	if err != nil || cfg.Redis == nil {
-		return
-	}
-	channel, err := do.Invoke[*counter.RedisCounterBackend](p.inj)
+	shared, err := do.Invoke[*sharedstate.Shared](p.inj)
 	if err == nil {
-		err = channel.NotifyShared(ctx, provisioningChannel)
+		err = provisioningTopic(shared).Publish(ctx, struct{}{})
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "provisioning change not announced to other instances",

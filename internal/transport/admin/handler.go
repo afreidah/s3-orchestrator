@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -64,6 +65,8 @@ type Handler struct {
 	backendNames func() []string
 	logLevel     *slog.LevelVar
 	instance     adminapi.InstanceStatus
+	cacheTopic   sharedstate.Topic[cache.Invalidation]
+	instances    *sharedstate.Roster[adminapi.InstanceReport]
 	confirmKey   []byte
 	reloadStatus func() *adminapi.ReloadStatusResponse    // nil before the first reload
 	liveConfig   func() (*adminapi.ConfigResponse, error) // nil until the runtime wires it
@@ -98,6 +101,7 @@ type Deps struct {
 	BackendNames func() []string             // typically *infra.BackendRuntime.BackendOrder
 	LogLevel     *slog.LevelVar
 	Instance     adminapi.InstanceStatus // this instance's identity, reported on every status response
+	Shared       *sharedstate.Shared     // state shared with the other instances; nil on a single instance
 }
 
 // -------------------------------------------------------------------------
@@ -121,7 +125,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.LogLevel", d.LogLevel)
 	must.NotNil("d.Registry", d.Registry)
 	must.NotNil("d.BackendNames", d.BackendNames)
-	return &Handler{
+	h := &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
 		dashboardOps: d.Dashboard,
@@ -147,8 +151,17 @@ func New(d *Deps) *Handler {
 		backendNames: d.BackendNames,
 		logLevel:     d.LogLevel,
 		instance:     d.Instance,
+		cacheTopic:   cache.InvalidationTopic(d.Shared),
 		confirmKey:   mustConfirmKey(),
 	}
+	h.instances = h.instanceRoster(d.Shared)
+	return h
+}
+
+// InstanceReporter is the service that publishes this instance's report for
+// the others to list, run by the lifecycle manager wherever there is Redis.
+func (h *Handler) InstanceReporter() *sharedstate.Roster[adminapi.InstanceReport] {
+	return h.instances
 }
 
 // mustConfirmKey mints a random per-process key for purge confirmation tokens,
@@ -188,7 +201,7 @@ const (
 // internalError logs err with any extra attrs and writes msg as a 500 JSON
 // response, so the underlying error never reaches the caller.
 func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg string, err error, attrs ...any) {
-	args := append([]any{"error", err}, attrs...)
+	args := append([]any{logfmt.Err(err)}, attrs...)
 	h.log.ErrorContext(ctx, msg, args...)
 	httputil.WriteJSONError(w, http.StatusInternalServerError, msg)
 }

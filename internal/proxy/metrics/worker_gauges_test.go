@@ -26,7 +26,7 @@ import (
 // TestWorkerGauges_LoaderServesWhatTheHolderPublished publishes a cleanup
 // depth from one collector and loads it into another whose own value is stale.
 func TestWorkerGauges_LoaderServesWhatTheHolderPublished(t *testing.T) {
-	shared := newMemoryShared()
+	shared, _ := newShared()
 	holder := &Collector{shared: shared, log: slog.Default()}
 	other := &Collector{shared: shared, log: slog.Default()}
 
@@ -53,7 +53,7 @@ func TestWorkerGauges_LoaderServesWhatTheHolderPublished(t *testing.T) {
 // TestWorkerGauges_UnownedGaugesUntouched verifies a load leaves a gauge alone
 // when the published value does not carry it.
 func TestWorkerGauges_UnownedGaugesUntouched(t *testing.T) {
-	shared := newMemoryShared()
+	shared, _ := newShared()
 	mc := &Collector{shared: shared, log: slog.Default()}
 	pending := int64(3)
 	mc.PublishWorkerGauges(context.Background(), telemetry.GaugeSourcePendingReaper,
@@ -89,19 +89,20 @@ func TestWorkerGauges_WithoutSharedState(t *testing.T) {
 // load while still applying the sources that read cleanly, and logs a failed
 // publish without losing the local value.
 func TestWorkerGauges_Errors(t *testing.T) {
-	shared := newMemoryShared()
-	shared.data[workerGaugesKey(telemetry.GaugeSourceScrubber)] = []byte("not json")
+	shared, mem := newShared()
+	if err := mem.PutShared(context.Background(), "worker_gauges:"+telemetry.GaugeSourceScrubber, []byte("not json"), 0); err != nil {
+		t.Fatal(err)
+	}
 	mc := &Collector{shared: shared, log: slog.Default()}
 	if err := mc.LoadWorkerGauges(context.Background()); err == nil {
 		t.Error("LoadWorkerGauges accepted an undecodable value")
 	}
 
-	shared.getErr = errors.New("redis down")
+	mem.Fail(errors.New("redis down"))
 	if err := mc.LoadWorkerGauges(context.Background()); err == nil {
 		t.Error("LoadWorkerGauges hid a shared-state error")
 	}
 
-	shared.putErr = errors.New("redis down")
 	n := int64(9)
 	mc.PublishWorkerGauges(context.Background(), telemetry.GaugeSourceRebalancer,
 		telemetry.WorkerGauges{RebalancePending: &n})

@@ -15,13 +15,12 @@ package metrics
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -45,13 +44,6 @@ const capacityWarningUtilization = 0.8
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
-
-// SharedState is where one instance publishes a fleet-wide result for the
-// others to read. *counter.RedisCounterBackend satisfies it.
-type SharedState interface {
-	PutShared(ctx context.Context, name string, value []byte, ttl time.Duration) error
-	GetShared(ctx context.Context, name string) ([]byte, error)
-}
 
 // FleetSnapshot is one computation of the fleet-wide gauges. Ledger carries
 // every per-backend ledger figure from one pass, so the gauges and the admin
@@ -112,18 +104,12 @@ func (mc *Collector) RefreshFleetIfStale(ctx context.Context) error {
 // loadPublished reads the published snapshot. It returns nil without shared
 // state or before any snapshot has been published.
 func (mc *Collector) loadPublished(ctx context.Context) (*FleetSnapshot, error) {
-	if mc.shared == nil {
-		return nil, nil
-	}
-	data, err := mc.shared.GetShared(ctx, fleetSnapshotKey)
-	if err != nil || data == nil {
-		return nil, err
-	}
-	var snap FleetSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, fmt.Errorf("decode fleet snapshot: %w", err)
-	}
-	return &snap, nil
+	return mc.fleetValue().Get(ctx)
+}
+
+// fleetValue names the published snapshot in shared state.
+func (mc *Collector) fleetValue() sharedstate.Value[FleetSnapshot] {
+	return sharedstate.NewValue[FleetSnapshot](mc.shared, fleetSnapshotKey, fleetSnapshotTTLIntervals*mc.fleetInterval)
 }
 
 // ReplicationSnapshot returns the newest replication state. With shared
@@ -176,15 +162,7 @@ func (mc *Collector) refreshFleet(ctx context.Context, stats map[string]core.Quo
 // the snapshot still stands on this instance; the others keep the last one
 // that reached them.
 func (mc *Collector) publishFleet(ctx context.Context, snap *FleetSnapshot) {
-	if mc.shared == nil {
-		return
-	}
-	data, err := json.Marshal(snap)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to encode fleet snapshot", logfmt.Err(err))
-		return
-	}
-	if err := mc.shared.PutShared(ctx, fleetSnapshotKey, data, fleetSnapshotTTLIntervals*mc.fleetInterval); err != nil {
+	if err := mc.fleetValue().Put(ctx, snap); err != nil {
 		mc.log.WarnContext(ctx, "failed to publish fleet snapshot", logfmt.Err(err))
 	}
 }

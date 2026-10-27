@@ -20,10 +20,10 @@
 //
 // Keys receive a 35-day TTL, which a rename keeps, so abandoned keys expire.
 //
-// Also carries shared state: a value one instance computes for the whole fleet
-// and the others read, under {prefix}:shared:{name}, and change notifications
-// on pub/sub channels of the same name. It rides the same client and circuit
-// breaker, so a Redis outage is one condition, not two.
+// Also carries shared state: values the instances write for each other under
+// {prefix}:shared:{name}, and messages on pub/sub channels of the same name.
+// It rides the same client and circuit breaker, so a Redis outage is one
+// condition, not two.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -589,24 +589,57 @@ func (r *RedisCounterBackend) GetShared(ctx context.Context, name string) ([]byt
 	return val, nil
 }
 
-// NotifyShared tells every instance watching channel that the state it
-// covers has changed. The message carries nothing; a watcher rereads the
-// state itself.
-func (r *RedisCounterBackend) NotifyShared(ctx context.Context, channel string) error {
+// ListShared returns every value stored under a name starting with prefix,
+// keyed by its full name. A value that expires between the scan and the read
+// is left out.
+func (r *RedisCounterBackend) ListShared(ctx context.Context, prefix string) (map[string][]byte, error) {
+	if r.inFallback() {
+		return nil, ErrSharedStateUnavailable
+	}
+	match := globEscaper.Replace(r.sharedKey(prefix)) + "*"
+	out := make(map[string][]byte)
+	var cursor uint64
+	for {
+		octx, cancel := context.WithTimeout(ctx, opTimeout)
+		keys, next, err := r.client.Scan(octx, cursor, match, scanCount).Result()
+		cancel()
+		if err := r.observe("scan_shared", err); err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			name := strings.TrimPrefix(key, r.sharedKey(""))
+			val, err := r.GetShared(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				out[name] = val
+			}
+		}
+		if next == 0 {
+			return out, nil
+		}
+		cursor = next
+	}
+}
+
+// PublishShared sends payload to every instance watching channel. An instance
+// that is not subscribed at that moment never receives it.
+func (r *RedisCounterBackend) PublishShared(ctx context.Context, channel string, payload []byte) error {
 	if r.inFallback() {
 		return ErrSharedStateUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-	return r.observe("publish", r.client.Publish(ctx, r.sharedKey(channel), "changed").Err())
+	return r.observe("publish", r.client.Publish(ctx, r.sharedKey(channel), payload).Err())
 }
 
-// WatchShared calls onChange for every notification on channel, and once
-// each time the subscription is established: at start and after every
-// reconnect. Pub/sub keeps nothing for a subscriber that was away, so the
-// watcher assumes it missed a change whenever it (re)joins. Blocks until ctx
-// is done.
-func (r *RedisCounterBackend) WatchShared(ctx context.Context, channel string, onChange func(context.Context)) {
+// WatchShared calls onMessage with the payload of every message on channel,
+// and with a nil payload each time the subscription is established: at start
+// and after every reconnect. Pub/sub keeps nothing for a subscriber that was
+// away, so a nil payload tells the watcher it may have missed messages.
+// Blocks until ctx is done.
+func (r *RedisCounterBackend) WatchShared(ctx context.Context, channel string, onMessage func(ctx context.Context, payload []byte)) {
 	sub := r.subscribe(ctx, r.sharedKey(channel))
 	defer func() { _ = sub.Close() }()
 
@@ -621,13 +654,18 @@ func (r *RedisCounterBackend) WatchShared(ctx context.Context, channel string, o
 			continue
 		}
 
-		change, subscribed := classifySharedMessage(msg)
-		if subscribed && interrupted {
-			r.logger().InfoContext(ctx, "shared state subscription restored", "channel", channel)
-			interrupted = false
-		}
-		if change {
-			onChange(ctx)
+		switch m := msg.(type) {
+		case *redis.Subscription:
+			if m.Kind != "subscribe" {
+				continue
+			}
+			if interrupted {
+				r.logger().InfoContext(ctx, "shared state subscription restored", "channel", channel)
+				interrupted = false
+			}
+			onMessage(ctx, nil)
+		case *redis.Message:
+			onMessage(ctx, []byte(m.Payload))
 		}
 	}
 }
@@ -648,21 +686,6 @@ func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel stri
 		return false
 	case <-time.After(watchRetryDelay):
 		return true
-	}
-}
-
-// classifySharedMessage reports whether a received pub/sub message means the
-// shared state may have changed, and whether it confirms a subscription. A
-// subscription counts as a change because anything published while the
-// subscriber was away is gone.
-func classifySharedMessage(msg any) (change, subscribed bool) {
-	switch m := msg.(type) {
-	case *redis.Subscription:
-		return m.Kind == "subscribe", m.Kind == "subscribe"
-	case *redis.Message:
-		return true, false
-	default:
-		return false, false
 	}
 }
 

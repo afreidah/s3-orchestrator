@@ -74,11 +74,13 @@ func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLe
 // registerInfrastructure wires the always-on persistence,
 // observability, and identity primitives every other provider builds
 // on (metadata store, lifecycle admin view, notification outbox, database
-// circuit breaker, instance id, metric deps).
+// circuit breaker, instance id, the state shared with other instances,
+// metric deps).
 func registerInfrastructure(inj do.Injector) {
 	do.Provide(inj, provideMetadataStore)
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideInstanceID)
+	do.Provide(inj, ProvideSharedState)
 
 	// Narrow role views of the wide metadata store: do.MustAs aliases the
 	// concrete under each consumer interface, and verifies the cast at

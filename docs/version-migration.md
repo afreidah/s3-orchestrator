@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.176.x (current)
+### v0.177.x (current)
+
+**Admin state shared across instances ([#1572](https://github.com/afreidah/s3-orchestrator/issues/1572), v0.177.0)**
+
+With Redis configured, an admin cache flush or invalidation now reaches every instance's cache, not only the one that answered, and each instance empties its cache when its Redis subscription connects or reconnects. Every instance publishes a report of its id, mode, version, log level, last config reload and worker health every 15 seconds, listed by the new `GET /admin/api/instances` and `admin instances`. `GET /admin/api/workers` now shows each worker's latest tick across the running instances, with a new `instance` field naming the instance that ran it. Every admin response carries an `X-S3o-Instance` header naming the instance that answered. Provisioning change announcements now carry a JSON payload; an instance still on an older version treats one as a change, and a newer instance treats an older one's message as a resync, so a rolling upgrade needs no ordering. No migration and no config change.
+
+### v0.176.x
 
 **Backends remember the optional features they refuse ([#1793](https://github.com/afreidah/s3-orchestrator/issues/1793), v0.176.0)**
 

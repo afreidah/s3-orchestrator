@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -48,8 +49,8 @@ type Deps interface {
 type Collector struct {
 	store             Deps
 	usage             *counter.UsageTracker
-	replicationFactor func() int  // returns 0 when replication is disabled
-	shared            SharedState // nil on a single instance
+	replicationFactor func() int // returns 0 when replication is disabled
+	shared            *sharedstate.Shared
 	fleetInterval     time.Duration
 	log               *slog.Logger
 
@@ -60,14 +61,14 @@ type Collector struct {
 
 // CollectorDeps groups the metrics collector's constructor parameters.
 // ReplicationFactor returns 0 when replication is disabled. Shared is where
-// the fleet snapshot is published and read, and is nil on a single instance.
-// FleetInterval is the snapshot recompute cadence; zero means
-// config.DefaultFleetInterval.
+// the fleet snapshot and worker gauges are published and read; nil, or one
+// without a store, is a single instance. FleetInterval is the snapshot
+// recompute cadence; zero means config.DefaultFleetInterval.
 type CollectorDeps struct {
 	Store             Deps
 	Usage             *counter.UsageTracker
 	ReplicationFactor func() int
-	Shared            SharedState
+	Shared            *sharedstate.Shared
 	FleetInterval     time.Duration
 }
 

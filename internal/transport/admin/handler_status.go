@@ -4,10 +4,9 @@
 // Author: Alex Freidah
 //
 // Endpoints that surface state without changing it (status, reload-status,
-// object-locations, cleanup-queue, workers) plus the small admin
-// "control knob" endpoints (usage-flush, log-level) that fit naturally
-// alongside them. Worker health is here because it is the snapshot read
-// path for the lifecycle supervisor.
+// object-locations, cleanup-queue) plus the small admin "control knob"
+// endpoints (usage-flush, log-level) that fit naturally alongside them. The
+// per-instance views gathered from every instance are in handler_instances.go.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -39,21 +38,28 @@ const reloadNotYetStatus = "no_reload_yet"
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// handleReloadStatus returns the most recent reload result captured by
-// the reload coordinator. Returns a "no_reload_yet" placeholder when
-// SIGHUP has not fired since startup or when the runtime has not
-// wired the provider.
+// handleReloadStatus returns the most recent reload result captured by the
+// reload coordinator on the instance that answers.
 func (h *Handler) handleReloadStatus(w http.ResponseWriter, _ *http.Request) {
+	httputil.WriteJSON(w, http.StatusOK, h.reloadState())
+}
+
+// reloadState is this instance's most recent reload result, or a
+// "no_reload_yet" placeholder when SIGHUP has not fired since startup or the
+// runtime has not wired the provider.
+func (h *Handler) reloadState() adminapi.ReloadStatusResponse {
 	if h.reloadStatus == nil {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.ReloadStatusResponse{Status: reloadNotYetStatus})
-		return
+		return adminapi.ReloadStatusResponse{Status: reloadNotYetStatus}
 	}
-	result := h.reloadStatus()
-	if result == nil {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.ReloadStatusResponse{Status: reloadNotYetStatus})
-		return
+	if result := h.reloadStatus(); result != nil {
+		return *result
 	}
-	httputil.WriteJSON(w, http.StatusOK, result)
+	return adminapi.ReloadStatusResponse{Status: reloadNotYetStatus}
+}
+
+// levelName is the log level this instance runs at, as the API reports it.
+func (h *Handler) levelName() string {
+	return strings.ToLower(h.logLevel.Level().String())
 }
 
 // handleConfig returns the running configuration and the log level in effect.
@@ -68,7 +74,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		h.internalError(r.Context(), w, "failed to render configuration", err)
 		return
 	}
-	resp.LogLevel = strings.ToLower(h.logLevel.Level().String())
+	resp.LogLevel = h.levelName()
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -253,9 +259,7 @@ func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
 // request body otherwise, answering with the level now in effect.
 func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{
-			Level: strings.ToLower(h.logLevel.Level().String()),
-		})
+		httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: h.levelName()})
 		return
 	}
 
@@ -266,15 +270,5 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
 	h.log.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
-	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: strings.ToLower(parsed.String())})
-}
-
-// handleWorkers returns each background service's last-tick health, or 503
-// when no lifecycle manager is wired.
-func (h *Handler) handleWorkers(w http.ResponseWriter, _ *http.Request) {
-	if h.workerHealth == nil {
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "worker health not available")
-		return
-	}
-	httputil.WriteJSON(w, http.StatusOK, adminapi.WorkersResponse{Workers: h.workerHealth()})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: h.levelName()})
 }

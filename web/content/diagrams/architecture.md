@@ -7,7 +7,7 @@ weight: -1
 
 High-level architecture of the S3 Orchestrator showing the request path, storage layer, background services, and observability. **Hover over any component** for implementation details.
 
-The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush, the fleet snapshot and the circuit breaker watchdog, which run in every mode, plus the flight recorder and provisioning watch when enabled.
+The gray background workers run only when the process starts in `worker` or `all` mode (`--mode`). The exceptions are the usage tracker's flush, the fleet snapshot and the circuit breaker watchdog, which run in every mode, plus the flight recorder when enabled and, with Redis, the provisioning watch, the cache watch and the instance report.
 
 {{< diagram >}}
 
@@ -111,7 +111,7 @@ window.s3oDiagram = {
     ADMIN: {
       title: 'Admin API',
       badge: 'handler', badgeText: 'handler',
-      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Takes the same SigV4-signed credential the S3 surface does, and each route declares the permission a caller\'s grant has to carry.</p><p><b>Triggers:</b> usage-flush, usage-reconcile, replicate, rebalance, lifecycle, over-replication, scrub, reconcile, backfill-checksums, encrypt-existing, decrypt-existing, compress-existing, decompress-existing, rotate-encryption-key, cache flush.<br><b>Status:</b> status, reload-status, workers, cleanup-queue, cleanup-dlq, replication, cache, log-level.<br><b>Backends:</b> cordon and uncordon (stop new copies, keep serving reads); drain start, progress and cancel (moves all objects to other backends); backend removal.<br><b>Provisioning:</b> buckets, users, credentials and grants.</p><p>Health checks are <code>/health</code> and <code>/health/ready</code> on the main mux, not admin routes.</p>'
+      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Takes the same SigV4-signed credential the S3 surface does, and each route declares the permission a caller\'s grant has to carry.</p><p><b>Triggers:</b> usage-flush, usage-reconcile, replicate, rebalance, lifecycle, over-replication, scrub, reconcile, backfill-checksums, encrypt-existing, decrypt-existing, compress-existing, decompress-existing, rotate-encryption-key, cache flush.<br><b>Status:</b> status, reload-status, workers, instances, cleanup-queue, cleanup-dlq, replication, cache, log-level.<br><b>Backends:</b> cordon and uncordon (stop new copies, keep serving reads); drain start, progress and cancel (moves all objects to other backends); backend removal.<br><b>Provisioning:</b> buckets, users, credentials and grants.</p><p>Health checks are <code>/health</code> and <code>/health/ready</code> on the main mux, not admin routes.</p>'
     },
     WEBUI: {
       title: 'Web Dashboard',
@@ -121,7 +121,7 @@ window.s3oDiagram = {
     DCACHE: {
       title: 'Object Data Cache',
       badge: 'storage', badgeText: 'optional',
-      body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>Entries are keyed by the storage path of the copy they came from. A GET looks up the key\'s location rows first and checks the cache for the paths they name.</p><p>On <b>cache hit</b>: returns the cached body &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response under the serving copy\'s path. Range requests always bypass the cache.</p><p>Every write stores its bytes under a new path, so no write invalidates anything and an overwritten object\'s entry is never reached again, on any instance.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
+      body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>Entries are keyed by the storage path of the copy they came from. A GET looks up the key\'s location rows first and checks the cache for the paths they name.</p><p>On <b>cache hit</b>: returns the cached body &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response under the serving copy\'s path. Range requests always bypass the cache.</p><p>Every write stores its bytes under a new path, so no write invalidates anything and an overwritten object\'s entry is never reached again, on any instance.</p><p>With Redis, an admin flush or invalidation is announced to every instance, and an instance empties its cache whenever its subscription connects or reconnects.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
     },
     COMP: {
       title: 'Compression Layer',

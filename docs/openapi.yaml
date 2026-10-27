@@ -441,6 +441,19 @@ paths:
                                 $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid SigV4 credentials
+    /admin/api/instances:
+        get:
+            summary: Every running instance's identity, log level, last reload and worker health
+            operationId: getInstances
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InstancesResponse'
+                "401":
+                    description: Missing or invalid SigV4 credentials
     /admin/api/lifecycle:
         post:
             summary: Run one lifecycle expiration sweep
@@ -1289,7 +1302,7 @@ paths:
                     description: Missing or invalid SigV4 credentials
     /admin/api/workers:
         get:
-            summary: Last-tick health of every background service
+            summary: Last-tick health of every background service across the running instances
             operationId: getWorkers
             responses:
                 "200":
@@ -1885,6 +1898,28 @@ components:
                 - kind
                 - permissions
             type: object
+        InstanceReport:
+            properties:
+                instance:
+                    $ref: '#/components/schemas/InstanceStatus'
+                log_level:
+                    type: string
+                reload:
+                    $ref: '#/components/schemas/ReloadStatusResponse'
+                reported_at:
+                    format: date-time
+                    type: string
+                workers:
+                    items:
+                        $ref: '#/components/schemas/WorkerHealth'
+                    type: array
+            required:
+                - instance
+                - reported_at
+                - log_level
+                - reload
+                - workers
+            type: object
         InstanceStatus:
             properties:
                 id:
@@ -1901,6 +1936,15 @@ components:
                 - version
                 - mode
                 - started_at
+            type: object
+        InstancesResponse:
+            properties:
+                instances:
+                    items:
+                        $ref: '#/components/schemas/InstanceReport'
+                    type: array
+            required:
+                - instances
             type: object
         IntegrityStatus:
             properties:
@@ -2566,6 +2610,8 @@ components:
                 consecutive_failures:
                     format: int64
                     type: integer
+                instance:
+                    type: string
                 last_error:
                     type: string
                 last_failure:

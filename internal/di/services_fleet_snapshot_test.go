@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -170,6 +171,8 @@ func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
 	do.ProvideValue(inj, &BackendsResult{Backends: map[string]backend.ObjectBackend{}, Order: names})
 	do.ProvideValue[metrics.Deps](inj, store)
 	do.ProvideValue(inj, rb)
+	do.ProvideValue(inj, instanceid.ID(t.Name()))
+	do.Provide(inj, ProvideSharedState)
 	do.Provide(inj, ProvideUsageTracker)
 
 	rt, err := ProvideBackendRuntime(inj)

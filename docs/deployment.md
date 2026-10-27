@@ -177,6 +177,17 @@ A circuit breaker monitors Redis health. If Redis becomes unavailable, charges g
 
 Users, credentials, grants and buckets created or changed through the admin API are stored in the database and applied on the instance that served the call. That instance then announces the change on a Redis pub/sub channel, and every other instance rebuilds its credential registry, bucket list and CORS rules from the database. Pub/sub keeps no messages for a subscriber that is disconnected, so an instance also rebuilds each time its subscription connects or reconnects. A change made while Redis is down reaches the other instances when they reconnect.
 
+### Admin Requests Behind a Load Balancer
+
+Each admin request reaches one instance. With Redis configured, the admin state that would otherwise depend on which one is shared:
+
+- **Object cache.** A flush or invalidation applies on the instance that served the call and is announced the same way provisioning changes are, so every instance drops the same entries. An instance empties its whole cache each time its subscription connects or reconnects, since it may have missed an invalidation. The counts in the response are the answering instance's.
+- **Instance reports.** Every instance publishes its id, mode, version, log level, last config reload and worker health every 15 seconds, and a report expires 45 seconds after its instance stops. `GET /admin/api/instances` lists them all.
+- **Worker health.** `GET /admin/api/workers` shows, for each worker, the latest tick on any running instance and the instance that ran it.
+- **Instance header.** Every admin response carries `X-S3o-Instance`, the id of the instance that answered.
+
+A log-level change, a config reload and the web dashboard's operation status remain per instance. Without Redis there is a single instance and every view is its own.
+
 ```yaml
 redis:
   address: "redis.example.com:6379"

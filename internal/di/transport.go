@@ -41,6 +41,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -255,6 +256,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	aggregator := r.Resolve[*dashboard.Aggregator]()
 	runtime := r.Resolve[*infra.BackendRuntime]()
 	id := r.ResolveNamed[instanceid.ID]("InstanceID")
+	shared := r.Resolve[*sharedstate.Shared]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -310,6 +312,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 			Mode:      string(mode),
 			StartedAt: time.Now().UTC(),
 		},
+		Shared: shared,
 	}
 	// Set the log buffer only when a real one resolves; assigning a nil
 	// *telemetry.LogBuffer to the interface field would make the /logs
