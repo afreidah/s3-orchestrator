@@ -8,8 +8,9 @@
 // without it is unaffected and its keys are deleted one at a time. Not every
 // S3-compatible provider accepts multi-object delete: some answer
 // NotImplemented, some refuse the method, and some require a checksum the SDK
-// does not send. Any of those is reported as ErrBatchDeleteNotSupported and the
-// caller falls back the same way.
+// does not send. Any of those is reported as ErrBatchDeleteNotSupported, the
+// backend records batch delete as unsupported, and the caller falls back the
+// same way.
 // -------------------------------------------------------------------------------
 
 package backend
@@ -17,9 +18,8 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
-
-	"github.com/aws/smithy-go"
 )
 
 // maxBatchDeleteKeys is the most keys one S3 DeleteObjects request accepts.
@@ -46,7 +46,7 @@ var (
 
 // ErrBatchDeleteNotSupported signals that a backend, or a decorator wrapping
 // one, cannot delete keys in batches. Callers delete the keys one at a time.
-var ErrBatchDeleteNotSupported = errors.New("backend does not support batch delete")
+var ErrBatchDeleteNotSupported = fmt.Errorf("batch delete: %w", ErrUnsupported)
 
 // batchKeyError is one key a batch delete could not remove, as the backend
 // reported it. It carries a 404 for NoSuchKey so IsNotFound treats an already
@@ -70,23 +70,13 @@ func (e *batchKeyError) HTTPStatusCode() int {
 }
 
 // isBatchRejected reports whether err is a provider refusing the batch request
-// itself rather than failing to carry it out: not implemented, method not
-// allowed, or a malformed request. Sending the same request again would be
-// refused the same way, while single deletes can still succeed.
+// itself: any refusal isUnsupported recognises, or a malformed request, which
+// is how a provider that wants a checksum the SDK does not send answers.
+// Single deletes can still succeed.
 func isBatchRejected(err error) bool {
-	if respErr, ok := errors.AsType[httpStatusError](err); ok {
-		switch respErr.HTTPStatusCode() {
-		case http.StatusNotImplemented, http.StatusMethodNotAllowed, http.StatusBadRequest:
-			return true
-		}
-	}
-	apiErr, ok := errors.AsType[smithy.APIError](err)
-	if !ok {
-		return false
-	}
-	switch apiErr.ErrorCode() {
-	case "NotImplemented", "MethodNotAllowed":
+	if isUnsupported(err) {
 		return true
 	}
-	return false
+	respErr, ok := errors.AsType[httpStatusError](err)
+	return ok && respErr.HTTPStatusCode() == http.StatusBadRequest
 }

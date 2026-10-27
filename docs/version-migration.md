@@ -62,7 +62,13 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.175.x (current)
+### v0.176.x (current)
+
+**Backends remember the optional features they refuse ([#1793](https://github.com/afreidah/s3-orchestrator/issues/1793), v0.176.0)**
+
+Range, multi-object delete and server-side copy are now learned the same way: the first refusal of each logs one warning, sets the new `s3o_backend_unsupported{backend, feature}` gauge to 1, and the backend takes the fallback without asking again until the instance restarts. A server-side copy refused with `NotImplemented` or `MethodNotAllowed` used to be retried natively on every copy, with a HEAD and a warning each time, and counted toward the `CopyObject` circuit breaker; it is now refused once and never counts. The `backend declined batch delete` info log is replaced by the shared warning. `/admin/api/status` lists each backend's refused features as `unsupported` (`range`, `batch-delete`, `native-copy`), and the TUI shows them in the backend detail. The bundled Grafana dashboard gains an Unsupported Features table. No migration and no config change.
+
+### v0.175.x
 
 **The limit nearest full on the TUI dashboard and in `admin status` ([#1596](https://github.com/afreidah/s3-orchestrator/issues/1596), v0.175.0)**
 

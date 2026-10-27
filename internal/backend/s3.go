@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -41,6 +41,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
 
@@ -115,15 +116,15 @@ type CheckedBackend interface {
 // S3 BACKEND IMPLEMENTATION
 // -------------------------------------------------------------------------
 
-// S3Backend implements ObjectBackend using AWS SDK v2. rangeIgnored guards the
-// one-time warning for a backend that ignores Range.
+// S3Backend implements ObjectBackend using AWS SDK v2. unsupported holds the
+// optional features the backend has refused, as core.BackendFeatures bits.
 type S3Backend struct {
 	client          *s3.Client
 	bucket          string
 	name            string
 	endpoint        string
 	unsignedPayload bool
-	rangeIgnored    sync.Once
+	unsupported     atomic.Uint64
 }
 
 // newBackendTransport creates an HTTP transport for a single S3 backend, so
@@ -478,6 +479,9 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 // fails as a whole, every key in it is reported failed, because none of it can
 // be assumed deleted.
 func (b *S3Backend) DeleteObjects(ctx context.Context, keys []string) (map[string]error, error) {
+	if b.lacks(core.FeatureBatchDelete) {
+		return nil, ErrBatchDeleteNotSupported
+	}
 	failed := make(map[string]error)
 	for start := 0; start < len(keys); start += maxBatchDeleteKeys {
 		chunk := keys[start:min(start+maxBatchDeleteKeys, len(keys))]
@@ -508,6 +512,7 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 			})
 			if err != nil {
 				if isBatchRejected(err) {
+					b.markUnsupported(ctx, core.FeatureBatchDelete, err)
 					return fmt.Errorf("%w: %w", ErrBatchDeleteNotSupported, err)
 				}
 				return fmt.Errorf("delete objects failed: %w", err)
@@ -522,8 +527,12 @@ func (b *S3Backend) deleteChunk(ctx context.Context, keys []string, failed map[s
 // CopyObject performs a server-side copy from srcKey to dstKey within the
 // same backend bucket. When contentType or metadata is provided it sends
 // MetadataDirective=REPLACE; otherwise S3 preserves the source's content type
-// and user metadata.
+// and user metadata. A provider that refuses server-side copy is answered
+// with ErrCopyNotSupported from then on, without a request.
 func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
+	if b.lacks(core.FeatureNativeCopy) {
+		return "", ErrCopyNotSupported
+	}
 	return run(ctx, b, backendCall{op: "CopyObject", key: dstKey}, nil,
 		func(ctx context.Context) (string, error) {
 			input := &s3.CopyObjectInput{
@@ -541,6 +550,10 @@ func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType 
 			}
 			result, err := b.client.CopyObject(ctx, input)
 			if err != nil {
+				if isUnsupported(err) {
+					b.markUnsupported(ctx, core.FeatureNativeCopy, err)
+					return "", fmt.Errorf("%w: %w", ErrCopyNotSupported, err)
+				}
 				return "", fmt.Errorf("copy object failed: %w", err)
 			}
 			etag := ""

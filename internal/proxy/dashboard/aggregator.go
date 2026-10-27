@@ -48,7 +48,8 @@ var errIncompleteSnapshot = errors.New("fleet snapshot is missing figures; the s
 // CompressionStats holds only backends that hold an encoded copy, so a missing
 // entry means nothing there is compressed rather than compressed to nothing.
 // RefusedCalls holds only backends refusing at least one call, so a missing
-// entry means the backend serves every call. Profiles holds every backend.
+// entry means the backend serves every call. Unsupported likewise holds only
+// backends that have refused an optional feature. Profiles holds every backend.
 type Data struct {
 	BackendOrder           []string
 	QuotaStats             map[string]core.QuotaStat
@@ -68,6 +69,7 @@ type Data struct {
 	DrainingBackends       map[string]backendstate.DrainProgress
 	BackendFlags           map[string]core.BackendFlags
 	RefusedCalls           map[string]core.BackendCalls
+	Unsupported            map[string]core.BackendFeatures
 	Profiles               map[string]core.BackendProfile
 }
 
@@ -81,6 +83,7 @@ type FleetView interface {
 	BackendOrder() []string
 	BackendFlags(name string) core.BackendFlags
 	ServedCalls(name string) core.BackendCalls
+	Unsupported(name string) core.BackendFeatures
 	Profile(name string) core.BackendProfile
 }
 
@@ -158,19 +161,24 @@ func splitCycleUsage(in map[string]core.CycleUsage) (map[string]core.Usage, map[
 
 // decorateLiveState fills in the fields that come from the running fleet
 // rather than the store: each backend's profile and state flags, which
-// backends are draining and how far along, and which calls each is refusing.
-// Drain progress is best-effort - a backend whose progress cannot be read is
-// simply omitted rather than failing the whole dashboard.
+// backends are draining and how far along, which calls each is refusing, and
+// which optional features each has refused. Drain progress is best-effort - a
+// backend whose progress cannot be read is simply omitted rather than failing
+// the whole dashboard.
 func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 	data.DrainingBackends = make(map[string]backendstate.DrainProgress)
 	data.BackendFlags = make(map[string]core.BackendFlags)
 	data.RefusedCalls = make(map[string]core.BackendCalls)
+	data.Unsupported = make(map[string]core.BackendFeatures)
 	data.Profiles = make(map[string]core.BackendProfile)
 
 	for _, name := range da.fleet.BackendOrder() {
 		data.Profiles[name] = da.fleet.Profile(name)
 		if refused := core.AllCalls &^ da.fleet.ServedCalls(name); refused != 0 {
 			data.RefusedCalls[name] = refused
+		}
+		if unsupported := da.fleet.Unsupported(name); unsupported != 0 {
+			data.Unsupported[name] = unsupported
 		}
 		flags := da.fleet.BackendFlags(name)
 		if flags == 0 {

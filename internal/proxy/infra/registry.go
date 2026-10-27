@@ -71,6 +71,15 @@ func (c *BackendRuntime) ServedCalls(name string) core.BackendCalls {
 	return backend.ServedCalls(b)
 }
 
+// Unsupported returns the optional features the named backend has refused.
+func (c *BackendRuntime) Unsupported(name string) core.BackendFeatures {
+	b, ok := c.backends[name]
+	if !ok {
+		return 0
+	}
+	return backend.Unsupported(b)
+}
+
 // RefusedFor returns how long the named backend has refused any call in
 // required, or zero while it serves them all or has no circuit breaker.
 func (c *BackendRuntime) RefusedFor(name string, required core.BackendCalls) time.Duration {

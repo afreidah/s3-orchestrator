@@ -93,6 +93,16 @@ var (
 		[]string{"backend"},
 	)
 
+	// BackendUnsupported is 1 for each optional feature a backend has been found
+	// not to support since the process started. Supported features have no series.
+	BackendUnsupported = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_backend_unsupported",
+			Help: "Optional features a backend refused, 1 per feature",
+		},
+		[]string{"backend", "feature"},
+	)
+
 	// ManagerRequestsTotal counts manager-level operations.
 	ManagerRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

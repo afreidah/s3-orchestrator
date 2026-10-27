@@ -64,6 +64,10 @@ type IntegrityStatus struct {
 // such as GetObject while a provider's download quota is exhausted, and is
 // empty while every call is served. Healthy is true exactly when it is empty.
 //
+// Unsupported names the optional features (range, batch-delete, native-copy)
+// the backend has refused since this instance started. Each has a fallback the
+// instance uses instead, and the list is empty for a backend that refused none.
+//
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
 //
@@ -79,6 +83,7 @@ type BackendStatus struct {
 	RefusedCalls []string `json:"refused_calls"`
 	Draining     bool     `json:"draining"`
 	Flags        []string `json:"flags"`
+	Unsupported  []string `json:"unsupported"`
 	BytesUsed    int64    `json:"bytes_used"`
 	BytesLimit   int64    `json:"bytes_limit"`
 	ObjectCount  int64    `json:"object_count"`

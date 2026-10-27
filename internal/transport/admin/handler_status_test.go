@@ -148,19 +148,27 @@ func TestBackendStatuses_UsageCycle(t *testing.T) {
 	}
 }
 
-// TestBackendStatuses_RefusedCalls covers the refused-call names: listed in
-// call order for a backend refusing some, and an empty list for one serving all.
+// TestBackendStatuses_RefusedCalls covers the refused-call and unsupported
+// feature names: listed in order for a backend with some, and an empty list
+// for one with none.
 func TestBackendStatuses_RefusedCalls(t *testing.T) {
 	t.Parallel()
 	got := backendStatuses(&dashboard.Data{
 		BackendOrder: []string{"b1", "b2"},
 		RefusedCalls: map[string]core.BackendCalls{"b2": core.CallGetObject | core.CallHeadObject},
+		Unsupported:  map[string]core.BackendFeatures{"b2": core.FeatureRange | core.FeatureNativeCopy},
 	})
 
 	if got[0].RefusedCalls == nil || len(got[0].RefusedCalls) != 0 {
 		t.Errorf("b1 refused calls = %#v, want an empty non-nil list", got[0].RefusedCalls)
 	}
+	if got[0].Unsupported == nil || len(got[0].Unsupported) != 0 {
+		t.Errorf("b1 unsupported = %#v, want an empty non-nil list", got[0].Unsupported)
+	}
 	if want := []string{"GetObject", "HeadObject"}; !slices.Equal(got[1].RefusedCalls, want) {
 		t.Errorf("b2 refused calls = %v, want %v", got[1].RefusedCalls, want)
+	}
+	if want := []string{"range", "native-copy"}; !slices.Equal(got[1].Unsupported, want) {
+		t.Errorf("b2 unsupported = %v, want %v", got[1].Unsupported, want)
 	}
 }

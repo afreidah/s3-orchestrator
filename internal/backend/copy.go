@@ -18,7 +18,7 @@ package backend
 
 import (
 	"context"
-	"errors"
+	"fmt"
 )
 
 // Copier is the optional capability for backends that support a server-side
@@ -32,6 +32,7 @@ type Copier interface {
 
 // ErrCopyNotSupported signals that a backend (or a decorator wrapping
 // one) cannot perform a server-side copy. Callers should fall back to
-// materialized copy. Returned by decorators like CircuitBreakerBackend
-// when their wrapped backend does not implement Copier.
-var ErrCopyNotSupported = errors.New("backend does not support native copy")
+// materialized copy. Returned by a backend whose provider refused one, and
+// by decorators like CircuitBreakerBackend when their wrapped backend does
+// not implement Copier.
+var ErrCopyNotSupported = fmt.Errorf("native copy: %w", ErrUnsupported)
