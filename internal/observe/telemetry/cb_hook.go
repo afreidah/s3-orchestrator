@@ -65,29 +65,21 @@ func NewDatabaseBreakerHook(name string) func(breaker.StateChangeInfo) {
 	}
 }
 
-// emitCircuitEvent sends the corresponding BackendCircuit{Opened,Closed}
-// event, about subject and carrying extra, for the closed->open and
-// *->closed transitions. Other transitions are state-machine internals and
-// not user-visible.
+// emitCircuitEvent sends the BackendCircuitOpened or BackendCircuitClosed
+// event for a transition, about subject and carrying extra.
 func emitCircuitEvent(info breaker.StateChangeInfo, subject string, extra map[string]any) {
-	var typ string
-	var data map[string]any
-	switch {
-	case info.To == breaker.StateOpen && info.From == breaker.StateClosed:
+	typ := event.BackendCircuitClosed
+	data := map[string]any{
+		"backend":           subject,
+		"degraded_duration": info.OpenDuration.Round(time.Millisecond).String(),
+	}
+	if info.To == breaker.StateOpen {
 		typ = event.BackendCircuitOpened
 		data = map[string]any{
 			"backend":   subject,
 			"failures":  info.Failures,
 			"threshold": info.Threshold,
 		}
-	case info.To == breaker.StateClosed:
-		typ = event.BackendCircuitClosed
-		data = map[string]any{
-			"backend":           subject,
-			"degraded_duration": info.OpenDuration.Round(time.Millisecond).String(),
-		}
-	default:
-		return
 	}
 	maps.Copy(data, extra)
 	event.Publish(typ, subject, data)

@@ -201,7 +201,7 @@ window.s3oDiagram = {
     PROM: {
       title: 'Prometheus Metrics',
       badge: 'observability', badgeText: 'observability',
-      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. The fleet-wide gauges are set by the fleet snapshot every <code>fleet_interval</code>. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open, 2=half-open).</p>'
+      body: '<p>Exposed at <code>/metrics</code>. Counters: requests, failovers, rejections, replication ops, cleanup ops, encryption ops. Gauges: quota (used/limit/free per backend), object counts, queue depth, build info. The fleet-wide gauges are set by the fleet snapshot every <code>fleet_interval</code>. Histograms: request duration, request/response sizes, backend latency.</p><p>Per-backend metrics with <code>backend</code> label. Circuit breaker state as gauge (0=closed, 1=open).</p>'
     },
     TEMPO: {
       title: 'OpenTelemetry Tracing',

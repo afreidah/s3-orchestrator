@@ -6,6 +6,7 @@
 //	mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 //
 
+// Package storetest is a generated GoMock package.
 package storetest
 
 import (
@@ -1132,6 +1133,20 @@ func (m *MockMetadataStore) PendingDepth(ctx context.Context) (int64, error) {
 func (mr *MockMetadataStoreMockRecorder) PendingDepth(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendingDepth", reflect.TypeOf((*MockMetadataStore)(nil).PendingDepth), ctx)
+}
+
+// Ping mocks base method.
+func (m *MockMetadataStore) Ping(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Ping", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Ping indicates an expected call of Ping.
+func (mr *MockMetadataStoreMockRecorder) Ping(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ping", reflect.TypeOf((*MockMetadataStore)(nil).Ping), ctx)
 }
 
 // PlaceCopy mocks base method.

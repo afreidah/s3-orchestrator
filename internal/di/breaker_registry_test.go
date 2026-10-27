@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // ProvideBreakerRegistry is where every breaker the watchdog probes is
-// enrolled: the database breaker, and a recovery prober for each of every
-// backend's breakers, charging its checks through the shared usage tracker.
+// enrolled: a recovery prober pinging the database for its breaker, and one
+// for each of every backend's breakers, charging its checks through the shared
+// usage tracker.
 // -------------------------------------------------------------------------------
 
 package di
@@ -16,11 +17,13 @@ import (
 	"time"
 
 	"github.com/samber/do/v2"
+	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // TestProvideBreakerRegistry_EnrollsEveryBreaker verifies the registry holds
@@ -34,9 +37,13 @@ func TestProvideBreakerRegistry_EnrollsEveryBreaker(t *testing.T) {
 		IsError: func(err error) bool { return err != nil }, Sentinel: errors.New("db down"),
 	})
 
+	stores := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(stores)
+
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{})
 	do.ProvideValue(inj, dbCB)
+	do.ProvideValue[metadataStore](inj, stores)
 	do.ProvideValue(inj, &BackendsResult{
 		Backends: map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Order:    []string{"b1", "b2"},

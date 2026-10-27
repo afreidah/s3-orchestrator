@@ -62,7 +62,15 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.173.x (current)
+### v0.174.x (current)
+
+**The database circuit breaker counts only availability failures and recovers by ping ([#1559](https://github.com/afreidah/s3-orchestrator/issues/1559), v0.174.0)**
+
+The database breaker now counts only failures that say the database cannot serve: a broken or refused connection, and the PostgreSQL SQLSTATEs or SQLite result codes for a server that is unreachable, refuses the credentials, has run out of resources, is shutting down, or cannot read or write its files. A duplicate key, a serialization conflict, a constraint violation, a cancelled statement, a busy SQLite database or a client hanging up mid-request no longer counts toward `circuit_breaker.failure_threshold`, so a healthy database answering those can no longer take an instance into degraded mode.
+
+While open, the breaker refuses every query; no client request is let through as a probe any more. The breaker watchdog pings the database every `circuit_breaker.open_timeout` and closes the circuit as soon as a ping succeeds, so recovery no longer waits for client traffic. Every circuit breaker now has two states, so `s3o_circuit_breaker_state` is 0 (closed) or 1 (open) and never 2, and no transition to or from `half-open` is counted or logged. An alert on `s3o_circuit_breaker_state == 2` will no longer fire; use `> 0`. No migration and no config change.
+
+### v0.173.x
 
 **One name per worker, shared cycle metrics, and batched lifecycle deletes ([#1428](https://github.com/afreidah/s3-orchestrator/issues/1428), v0.173.0)**
 

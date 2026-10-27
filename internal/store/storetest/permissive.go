@@ -126,6 +126,7 @@ func Permissive(m *MockMetadataStore) {
 	r.SyncQuotaLimits(a, a).Return(nil).AnyTimes()
 	r.UpdateCopyMetadata(a, a, a).Return(nil).AnyTimes()
 	r.VerifySchemaVersion(a).Return(nil).AnyTimes()
+	r.Ping(a).Return(nil).AnyTimes()
 	r.WithAdvisoryLock(a, a, a).DoAndReturn(
 		func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
 			if err := fn(ctx); err != nil {

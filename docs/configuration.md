@@ -399,7 +399,7 @@ The circuit breaker is always active. These settings tune its sensitivity.
 ```yaml
 circuit_breaker:
   failure_threshold: 3           # consecutive DB failures before opening (default: 3)
-  open_timeout: "15s"            # delay before probing recovery (default: 15s)
+  open_timeout: "15s"            # interval between recovery pings while open (default: 15s)
   cache_ttl: "60s"               # key->backend cache TTL during degraded reads (default: 60s)
   degraded_reads_enabled: true   # serve reads from backends while the DB is down (default: true)
   parallel_broadcast: false      # fan-out reads to all backends in parallel (default: false)
@@ -408,7 +408,9 @@ circuit_breaker:
 
 Set `degraded_reads_enabled: false` to fail reads with `503` during a database outage instead of broadcasting to the backends. That trades availability for cost and blast radius: a broadcast spends one API call per backend per read, so a long outage under read load can burn a metered backend's monthly allowance before anyone notices.
 
-When the database is unreachable, the orchestrator enters degraded mode: reads broadcast to all backends (with caching), writes return `503`. The circuit automatically recovers when the database comes back.
+Only failures that say the database cannot serve count toward `failure_threshold`: a broken or refused connection, and the PostgreSQL errors or SQLite result codes for an unreachable server, refused credentials, exhausted resources, shutdown, or a file that cannot be read or written. An error about one request - a duplicate key, a serialization conflict, a constraint violation, a cancelled statement - does not, and neither does a client hanging up mid-request.
+
+When the database is unreachable, the orchestrator enters degraded mode: reads broadcast to all backends (with caching), writes return `503`. While the circuit is open, every query is refused without reaching the database, and the breaker watchdog pings the database every `open_timeout`; the circuit closes as soon as a ping succeeds, without waiting for client traffic.
 
 Each write stores its bytes at `<key>!<id>`, and only the database records the id. A degraded read therefore lists each backend it tries, starting at the object key, and reads the most recently modified of the bare key and its `!<id>` copies. It then reads that copy's first bytes, and for a compressed copy its tail, to learn how it is stored, the same way import does: a compressed copy is decoded and an encrypted one returns `503`. That is one extra list call and one small ranged read per backend per read, plus one more for a compressed copy, counted against usage limits like any other.
 

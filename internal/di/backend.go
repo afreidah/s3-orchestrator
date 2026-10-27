@@ -42,6 +42,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -153,22 +154,24 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 	}, nil
 }
 
-// ProvideBreakerRegistry assembles the watchdog's breaker registry from the
-// database circuit breaker and a recovery prober for each breaker of every
-// backend produced during backend initialization: the backend breaker and one
-// per call. The probers charge their checks through the usage tracker.
+// ProvideBreakerRegistry assembles the watchdog's breaker registry: a recovery
+// prober that pings the database for the database circuit breaker, and one for
+// each breaker of every backend produced during backend initialization, the
+// backend breaker and one per call. The backend probers charge their checks
+// through the usage tracker.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
+	stores := r.Resolve[metadataStore]()
 	br := r.Resolve[*BackendsResult]()
 	usage := r.Resolve[*counter.UsageTracker]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	reg := breaker.NewRegistry(dbCB)
+	reg := breaker.NewRegistry(breaker.NewRecoveryProber(dbCB, store.DatabaseRecovery(stores.Ping)))
 	for _, b := range br.Breakers {
 		for _, p := range b.Probes() {
-			reg.Register(backend.NewRecoveryProber(b.Name(), p, usage))
+			reg.Register(breaker.NewRecoveryProber(p.Breaker, p.Recovery(b.Name(), usage)))
 		}
 	}
 	return reg, nil

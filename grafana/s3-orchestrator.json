@@ -1264,15 +1264,6 @@
                         "color": "red"
                       }
                     }
-                  },
-                  {
-                    "type": "value",
-                    "options": {
-                      "2": {
-                        "text": "Half-Open",
-                        "color": "yellow"
-                      }
-                    }
                   }
                 ]
               },
@@ -5094,7 +5085,7 @@
       "type": "stat",
       "id": 110,
       "title": "Degraded mode active",
-      "description": "1 when any instance's DB circuit breaker is open or half-open; that instance broadcasts reads across backends.",
+      "description": "1 when any instance's DB circuit breaker is open; that instance broadcasts reads across backends.",
       "gridPos": {
         "x": 0,
         "y": 312,
@@ -5844,15 +5835,6 @@
                       "1": {
                         "text": "Open",
                         "color": "red"
-                      }
-                    }
-                  },
-                  {
-                    "type": "value",
-                    "options": {
-                      "2": {
-                        "text": "Half-Open",
-                        "color": "yellow"
                       }
                     }
                   }

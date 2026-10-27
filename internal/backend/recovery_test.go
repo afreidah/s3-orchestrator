@@ -1,28 +1,27 @@
 // -------------------------------------------------------------------------------
-// RecoveryProber Tests
+// Backend Recovery Tests
 //
 // Author: Alex Freidah
 //
-// Drives the prober with a fake clock: no check while closed, the first check
-// after the open timeout, doubling backoff up to the cap while the backend
-// stays down, recovery on success, and usage admission and charging.
+// Covers what a backend adds to a breaker's recovery: each check is admitted
+// only while the usage budget has room and is charged as the operation it
+// makes, and a call breaker's check retries that call. The backoff schedule is
+// the breaker package's and is tested there.
 // -------------------------------------------------------------------------------
 
 package backend
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// fakeUsage admits health checks unless refuse is set and counts charges.
+// fakeUsage admits health checks unless refuse is set and records charges.
 type fakeUsage struct {
 	mu      sync.Mutex
 	refuse  bool
@@ -43,202 +42,52 @@ func (f *fakeUsage) Record(_ context.Context, _ string, op s3op.Operation, _, _ 
 	f.charged = append(f.charged, op)
 }
 
-// charges returns how many health checks were charged.
-func (f *fakeUsage) charges() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.charged)
-}
-
-// proberFixture is an open breaker over a backend whose health check fails,
-// with a prober on a fake clock starting at t0.
-type proberFixture struct {
-	mock    *mockBackend
-	cb      *CircuitBreakerBackend
-	breaker *breaker.CircuitBreaker
-	usage   *fakeUsage
-	prober  *RecoveryProber
-	now     time.Time
-}
-
-// newProberFixture opens the backend breaker with the given open timeout and
-// builds its prober.
-func newProberFixture(t *testing.T, timeout time.Duration) *proberFixture {
-	t.Helper()
-	mock := newMockBackend()
-	mock.getErr = errors.New("connection refused")
-	mock.bucketErr = errors.New("connection refused")
-	cb := newTestCBBackend(mock, 1, timeout)
-	_, _ = cb.GetObject(context.Background(), "key", "")
-	probe := probeFor(t, cb, s3op.HeadBucket)
-	if probe.Breaker.State() != breaker.StateOpen {
-		t.Fatalf("fixture breaker state = %v, want open", probe.Breaker.State())
-	}
-	f := &proberFixture{mock: mock, cb: cb, breaker: probe.Breaker, usage: &fakeUsage{}, now: time.Unix(0, 0)}
-	f.prober = NewRecoveryProber(cb.Name(), probe, f.usage)
-	f.prober.now = func() time.Time { return f.now }
-	return f
-}
-
-// probeAt advances the fake clock by d and probes once.
-func (f *proberFixture) probeAt(d time.Duration) {
-	f.now = f.now.Add(d)
-	f.prober.Probe(context.Background())
-}
-
-// setHealthy makes the backend's health check pass.
-func (f *proberFixture) setHealthy() {
-	f.mock.mu.Lock()
-	f.mock.bucketErr = nil
-	f.mock.mu.Unlock()
-}
-
-// TestRecoveryProber_ClosedDoesNothing verifies no health check runs while
-// the circuit is closed.
-func TestRecoveryProber_ClosedDoesNothing(t *testing.T) {
+// TestProbeRecovery_AdmitsAndCharges verifies a check is admitted and charged
+// as the probe's operation while the budget has room, and refused without a
+// charge once it does not.
+func TestProbeRecovery_AdmitsAndCharges(t *testing.T) {
 	t.Parallel()
+	cb := newTestCBBackend(newMockBackend(), 1, time.Minute)
 	usage := &fakeUsage{}
-	cb := newTestCBBackend(newMockBackend(), 3, time.Minute)
-	p := NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.HeadBucket), usage)
-	for range 5 {
-		p.Probe(context.Background())
+	r := probeFor(t, cb, s3op.HeadBucket).Recovery(cb.Name(), usage)
+
+	if !r.Admit(t.Context()) {
+		t.Fatal("check refused while the budget has room")
 	}
-	if usage.charges() != 0 {
-		t.Errorf("charged %d health checks on a closed circuit, want 0", usage.charges())
+	usage.refuse = true
+	if r.Admit(t.Context()) {
+		t.Error("check admitted over the budget")
+	}
+	if len(usage.charged) != 1 || usage.charged[0] != s3op.HeadBucket {
+		t.Errorf("charged %v, want one HeadBucket", usage.charged)
+	}
+	if r.MaxBackoff != maxRecoveryBackoff {
+		t.Errorf("MaxBackoff = %v, want %v", r.MaxBackoff, maxRecoveryBackoff)
 	}
 }
 
-// TestRecoveryProber_CallProbe verifies a call breaker's prober runs that
-// call's check, charges it as that call, and recovers only that call.
-func TestRecoveryProber_CallProbe(t *testing.T) {
+// TestProbeRecovery_CallProbe verifies a call breaker's check retries that
+// call, and that recovering its breaker restores only that call.
+func TestProbeRecovery_CallProbe(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
 	mock.getErr = &httpError{code: 403}
 	cb := newTestCBBackend(mock, 1, time.Minute)
 	_, _ = cb.GetObject(context.Background(), "key", "")
+	probe := probeFor(t, cb, s3op.GetObject)
+	r := probe.Recovery(cb.Name(), &fakeUsage{})
 
-	usage := &fakeUsage{}
-	now := time.Unix(0, 0)
-	p := NewRecoveryProber(cb.Name(), probeFor(t, cb, s3op.GetObject), usage)
-	p.now = func() time.Time { return now }
-	p.Probe(context.Background())
+	if err := r.Check(t.Context()); err == nil {
+		t.Fatal("GET check passed while the backend refuses GET")
+	}
 	mock.mu.Lock()
 	mock.getErr = &httpError{code: 404}
 	mock.mu.Unlock()
-	now = now.Add(time.Minute)
-	p.Probe(context.Background())
-
+	if err := r.Check(t.Context()); err != nil {
+		t.Fatalf("GET check = %v once the backend answers it", err)
+	}
+	probe.Breaker.Recover()
 	if cb.Served() != core.AllCalls {
 		t.Errorf("Served = %s, want every call once GET recovers", cb.Served())
-	}
-	if usage.charges() != 1 || usage.charged[0] != s3op.GetObject {
-		t.Errorf("charged %v, want one GetObject", usage.charged)
-	}
-}
-
-// TestRecoveryProber_RecoversAfterOpenTimeout verifies the first check waits
-// out the open timeout and a passing check closes the circuit.
-func TestRecoveryProber_RecoversAfterOpenTimeout(t *testing.T) {
-	t.Parallel()
-	f := newProberFixture(t, time.Minute)
-	f.setHealthy()
-
-	f.probeAt(0)
-	f.probeAt(59 * time.Second)
-	if f.usage.charges() != 0 {
-		t.Fatalf("checked %d times before the open timeout, want 0", f.usage.charges())
-	}
-
-	f.probeAt(time.Second)
-	if f.breaker.State() != breaker.StateClosed {
-		t.Fatalf("state after a passing check = %v, want closed", f.breaker.State())
-	}
-	if f.usage.charges() != 1 || f.usage.charged[0] != s3op.HeadBucket {
-		t.Errorf("charged %v, want one HeadBucket", f.usage.charged)
-	}
-}
-
-// TestRecoveryProber_BacksOffToCap verifies failed checks double the interval
-// until it reaches maxRecoveryBackoff.
-func TestRecoveryProber_BacksOffToCap(t *testing.T) {
-	t.Parallel()
-	f := newProberFixture(t, time.Minute)
-	f.probeAt(0)
-
-	for i, wait := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
-		f.probeAt(wait - time.Second)
-		if f.usage.charges() != i {
-			t.Fatalf("check %d ran %v early", i+1, time.Second)
-		}
-		f.probeAt(time.Second)
-		if f.usage.charges() != i+1 {
-			t.Fatalf("check %d did not run after %v", i+1, wait)
-		}
-	}
-	if f.breaker.State() != breaker.StateOpen {
-		t.Errorf("state while the backend is down = %v, want open", f.breaker.State())
-	}
-}
-
-// TestRecoveryProber_LongOpenTimeoutIsTheCap verifies an open timeout longer
-// than maxRecoveryBackoff is not shortened by the backoff.
-func TestRecoveryProber_LongOpenTimeoutIsTheCap(t *testing.T) {
-	t.Parallel()
-	f := newProberFixture(t, 10*time.Minute)
-	f.probeAt(0)
-	f.probeAt(10 * time.Minute)
-	f.probeAt(10*time.Minute - time.Second)
-	if f.usage.charges() != 1 {
-		t.Fatalf("checks = %d, want 1 before the second full open timeout", f.usage.charges())
-	}
-	f.probeAt(time.Second)
-	if f.usage.charges() != 2 {
-		t.Fatalf("checks = %d, want 2", f.usage.charges())
-	}
-}
-
-// TestRecoveryProber_OverLimitSkips verifies a check the usage budget would
-// refuse is neither run nor charged, and runs as soon as the budget allows.
-func TestRecoveryProber_OverLimitSkips(t *testing.T) {
-	t.Parallel()
-	f := newProberFixture(t, time.Minute)
-	f.setHealthy()
-	f.usage.refuse = true
-
-	f.probeAt(0)
-	f.probeAt(time.Hour)
-	if f.usage.charges() != 0 || f.breaker.State() != breaker.StateOpen {
-		t.Fatalf("over limit: charges = %d, state = %v; want 0 and open", f.usage.charges(), f.breaker.State())
-	}
-
-	f.usage.mu.Lock()
-	f.usage.refuse = false
-	f.usage.mu.Unlock()
-	f.probeAt(breaker.DefaultWatchdogInterval)
-	if f.breaker.State() != breaker.StateClosed {
-		t.Errorf("state once the budget allows = %v, want closed", f.breaker.State())
-	}
-}
-
-// TestRecoveryProber_ScheduleResetsAfterRecovery verifies a breaker that
-// reopens after recovering starts again from the open timeout, not from the
-// backoff it had reached.
-func TestRecoveryProber_ScheduleResetsAfterRecovery(t *testing.T) {
-	t.Parallel()
-	f := newProberFixture(t, time.Minute)
-	f.probeAt(0)
-	f.probeAt(time.Minute)
-	f.probeAt(2 * time.Minute)
-	f.setHealthy()
-	f.probeAt(4 * time.Minute)
-	if f.breaker.State() != breaker.StateClosed {
-		t.Fatalf("state = %v, want closed", f.breaker.State())
-	}
-
-	_, _ = f.cb.GetObject(context.Background(), "key", "")
-	f.probeAt(0)
-	f.probeAt(time.Minute)
-	if f.breaker.State() != breaker.StateClosed {
-		t.Errorf("state one open timeout after reopening = %v, want closed", f.breaker.State())
 	}
 }

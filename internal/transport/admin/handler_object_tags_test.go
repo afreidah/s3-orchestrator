@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -42,7 +43,7 @@ import (
 func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handler) {
 	t.Helper()
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	h := &Handler{
 		log:       slog.Default().With(logfmt.Component("admin")),

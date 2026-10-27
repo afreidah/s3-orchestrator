@@ -15,7 +15,7 @@
 // core.BackendCalls.
 //
 // While open, every call is refused; each breaker recovers out of band through
-// its own check (see RecoveryProber and Probes), never with a client request.
+// its own check (see Probes and Probe.Recovery), never with a client request.
 // -------------------------------------------------------------------------------
 
 package backend
@@ -104,7 +104,7 @@ const (
 
 // NewCircuitBreakerBackend wraps a backend with a backend breaker and one
 // breaker per guarded call, each recovered only through Recover by the
-// RecoveryProber running its Probe. Transitions of the served set surface on
+// breaker.RecoveryProber running its Probe. Transitions of the served set surface on
 // the standard CircuitBreaker* metrics, where the backend counts as open while
 // any call is not served, and on BackendCallRefused per call. Each breaker
 // publishes its own BackendCircuit* event, naming its call.
@@ -147,12 +147,11 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 // given scope.
 func newBreaker(cfg CircuitBreakerConfig, name string, scope failureScope) *breaker.CircuitBreaker {
 	return breaker.NewCircuitBreaker(breaker.Config{
-		Name:             name,
-		Threshold:        cfg.Threshold,
-		Timeout:          cfg.Timeout,
-		IsError:          func(err error) bool { return classifyFailure(err) == scope },
-		Sentinel:         breaker.ErrBackendUnavailable,
-		ExternalRecovery: true,
+		Name:      name,
+		Threshold: cfg.Threshold,
+		Timeout:   cfg.Timeout,
+		IsError:   func(err error) bool { return classifyFailure(err) == scope },
+		Sentinel:  breaker.ErrBackendUnavailable,
 	})
 }
 

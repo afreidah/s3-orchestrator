@@ -97,6 +97,13 @@ func (s *Store) Close() {
 	s.db.Close()
 }
 
+// Ping checks the database answers, outside the circuit breaker, so the
+// breaker's recovery can find out the database is back while it refuses
+// every statement.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.rawDB.PingContext(ctx)
+}
+
 // withTx executes fn inside a transaction. Commits on success, rolls
 // back on error. Tx lifecycle and breaker pre/post-checks live in
 // cbWithTx; this method just hands fn through.

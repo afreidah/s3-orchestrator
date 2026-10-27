@@ -1,5 +1,5 @@
-// Package store builds the database circuit breaker and the error filter the
-// driver-level wrappers apply.
+// Package store builds the database circuit breaker, the error filter the
+// driver-level wrappers apply, and the ping-driven recovery that closes it.
 //
 // The breaker is a first-class DI-registered value; consumers needing its
 // lifecycle controls invoke *breaker.CircuitBreaker directly. The metadata

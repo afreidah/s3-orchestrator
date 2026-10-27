@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
@@ -56,7 +57,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	storetest.Permissive(mock)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
-	})
+	}, postgres.RequestError)
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends:        map[string]backend.ObjectBackend{},
@@ -263,7 +264,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 		KeyID:         "kid-1",
 		EncryptionKey: []byte("super-secret-raw-key"),
 	}}, nil).Times(1)
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()
@@ -656,7 +657,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	t.Parallel()
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()

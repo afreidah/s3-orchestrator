@@ -55,6 +55,7 @@ type metadataStore interface {
 	core.NotificationOutbox
 	core.TagStore
 	core.ProvisioningStore
+	core.Pinger
 }
 
 // -------------------------------------------------------------------------
@@ -97,13 +98,18 @@ func provideMetadataStore(i do.Injector) (metadataStore, error) {
 }
 
 // ProvideDatabaseBreaker constructs the shared *breaker.CircuitBreaker every
-// driver-level SQL statement forwards calls through.
+// driver-level SQL statement forwards calls through, reading errors the way
+// the configured driver reports them.
 func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
 	}
-	return store.NewDatabaseBreaker(cfg.CircuitBreaker), nil
+	requestError := postgres.RequestError
+	if cfg.Database.Driver == "sqlite" {
+		requestError = sqlitestore.RequestError
+	}
+	return store.NewDatabaseBreaker(cfg.CircuitBreaker, requestError), nil
 }
 
 // openStore dispatches store construction to the configured driver. The

@@ -462,8 +462,7 @@ func (r *RedisCounterBackend) tryRecover() {
 		return
 	}
 
-	// Recover, not PostCheck(nil): the hot path bypasses PreCheck, so the
-	// breaker never reaches HalfOpen and PostCheck(nil) would leave it open.
+	// Recover, not PostCheck(nil): only Recover closes an open breaker.
 	r.setFallback(false)
 	r.cb.Recover()
 	r.logger().InfoContext(ctx, "Redis counter backend recovered")

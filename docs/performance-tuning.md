@@ -361,7 +361,7 @@ Per-backend circuit breakers stop sending traffic after `failure_threshold` cons
 
 ### Monitoring
 
-- `s3o_circuit_breaker_state{name="<backend>"}` - 0=closed, 1=open, 2=half-open
+- `s3o_circuit_breaker_state{name="<backend>"}` - 0=closed, 1=open
 - `s3o_circuit_breaker_transitions_total{name="<backend>"}` - state change counter
 
 A sustained `state=1` for a backend means it's been unreachable. Check the backend's credentials and connectivity.

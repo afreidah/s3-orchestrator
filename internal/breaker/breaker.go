@@ -1,18 +1,17 @@
 // -------------------------------------------------------------------------------
-// CircuitBreaker - Generic Three-State Circuit Breaker
+// CircuitBreaker - Generic Two-State Circuit Breaker
 //
 // Author: Alex Freidah
 //
 // Reusable circuit breaker state machine shared by the database driver
-// chokepoint (store.NewDatabaseBreaker) and the backend wrapper
-// (CircuitBreakerBackend). Callers
-// provide a pluggable error filter so only domain-relevant failures trip the
-// breaker.
+// chokepoint (store.NewDatabaseBreaker), the backend wrapper
+// (CircuitBreakerBackend) and the Redis counter backend. Callers provide a
+// pluggable error filter so only domain-relevant failures trip the breaker.
 //
-// States: closed (healthy) -> open (down) -> half-open (probing) -> closed.
-// A breaker configured for external recovery skips half-open: it refuses every
-// call while open and closes only when its owner, having checked the dependency
-// itself, calls Recover.
+// States: closed (healthy) -> open (down) -> closed. An open breaker refuses
+// every call, so no ordinary call is spent finding out whether the dependency
+// is back. Its owner checks the dependency itself, usually through a
+// RecoveryProber, and calls Recover once the check passes.
 // -------------------------------------------------------------------------------
 
 package breaker
@@ -22,9 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -37,11 +34,10 @@ import (
 // State represents the current circuit breaker state.
 type State int
 
-// The three circuit states, in the order the breaker cycles through them.
+// The two circuit states.
 const (
-	StateClosed   State = iota // healthy  -  all calls pass through
-	StateOpen                  // down  -  return sentinel error
-	StateHalfOpen              // probing  -  one call allowed through
+	StateClosed State = iota // healthy  -  all calls pass through
+	StateOpen                // down  -  return sentinel error
 )
 
 // String returns the human-readable name of the circuit state.
@@ -51,8 +47,6 @@ func (s State) String() string {
 		return "closed"
 	case StateOpen:
 		return "open"
-	case StateHalfOpen:
-		return "half-open"
 	default:
 		return "unknown"
 	}
@@ -79,10 +73,10 @@ type StateChangeInfo struct {
 	To           State
 	Failures     int
 	Threshold    int
-	OpenDuration time.Duration // time spent open or half-open before reaching this state; zero when From was Closed
+	OpenDuration time.Duration // time spent open before reaching this state; zero when From was Closed
 }
 
-// CircuitBreaker implements a three-state circuit breaker with a pluggable
+// CircuitBreaker implements a two-state circuit breaker with a pluggable
 // error filter. It is safe for concurrent use. Observability hooks live
 // behind the optional OnStateChange callback  -  the breaker package itself
 // imports nothing from observe/.
@@ -90,35 +84,26 @@ type CircuitBreaker struct {
 	mu            sync.RWMutex
 	state         State
 	failures      int
-	lastFailure   time.Time
 	openedAt      time.Time
 	failThreshold int
 	openTimeout   time.Duration
-	probeJitter   time.Duration // randomized delay added to openTimeout; recomputed each time the circuit opens
-	probeInFlight atomic.Bool
-	probeStarted  atomic.Int64     // UnixNano timestamp of the probe dispatch; zero when no probe is active
 	name          string           // for logging and metrics labels
 	log           *slog.Logger     // scoped to logfmt.Component("circuit_breaker") with breaker_name attr
 	isError       func(error) bool // returns true if the error should trip the breaker
 	sentinel      error            // error returned when circuit is open
-	external      bool             // recovery comes only from Recover; no call is let through as a probe
 	lastErr       error            // the failure that last counted against the breaker, for its logs
 	onStateChange func(StateChangeInfo)
 }
 
 // Config configures a CircuitBreaker. Use SetOnStateChange after
-// construction to install metric / event hooks.
-//
-// ExternalRecovery makes the owner responsible for recovery: while open, every
-// call is refused and only Recover closes the circuit, so no ordinary call is
-// spent as a probe.
+// construction to install metric / event hooks. Timeout is how long an open
+// breaker waits before its owner first checks whether the dependency is back.
 type Config struct {
-	Name             string           // identifier for logging and labels (e.g. "database", "oci-backend")
-	Threshold        int              // consecutive failures before opening
-	Timeout          time.Duration    // delay before probing recovery
-	IsError          func(error) bool // returns true for errors that should count as failures
-	Sentinel         error            // error returned when the circuit is open (e.g. ErrDBUnavailable)
-	ExternalRecovery bool             // closed only by Recover; see the type comment
+	Name      string           // identifier for logging and labels (e.g. "database", "oci-backend")
+	Threshold int              // consecutive failures before opening
+	Timeout   time.Duration    // delay before the first recovery check
+	IsError   func(error) bool // returns true for errors that should count as failures
+	Sentinel  error            // error returned when the circuit is open (e.g. ErrDBUnavailable)
 }
 
 // NewCircuitBreaker creates a new circuit breaker from cfg.
@@ -134,14 +119,13 @@ func NewCircuitBreaker(cfg Config) *CircuitBreaker {
 		),
 		isError:  cfg.IsError,
 		sentinel: cfg.Sentinel,
-		external: cfg.ExternalRecovery,
 	}
 }
 
-// SetOnStateChange installs a callback invoked on every closed/open/
-// half-open transition. The callback runs synchronously while the breaker
-// holds its lock, so implementations must be cheap and non-blocking.
-// Passing nil clears any previously installed callback.
+// SetOnStateChange installs a callback invoked on every closed/open
+// transition. The callback runs synchronously while the breaker holds its
+// lock, so implementations must be cheap and non-blocking. Passing nil clears
+// any previously installed callback.
 func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo)) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -183,7 +167,7 @@ func (cb *CircuitBreaker) State() State {
 	return cb.state
 }
 
-// OpenDuration returns how long the circuit has been open or half-open.
+// OpenDuration returns how long the circuit has been open.
 // Returns 0 when the circuit is closed (healthy).
 func (cb *CircuitBreaker) OpenDuration() time.Duration {
 	cb.mu.RLock()
@@ -204,58 +188,21 @@ func (cb *CircuitBreaker) RecoveryDelay() time.Duration {
 // STATE MACHINE
 // -------------------------------------------------------------------------
 
-// probeTimeout is the maximum duration a probe request can be in flight
-// before it is considered stale. If PostCheck is never called (e.g. due
-// to a panic in the call chain), the probe flag auto-resets after this
-// duration so the circuit is not permanently stuck in half-open.
-const probeTimeout = 2 * time.Minute
-
-// PreCheck returns the sentinel error when the circuit is open. Transitions
-// open -> half-open when the timeout has elapsed, allowing one probe request.
-// If a previous probe has been in flight longer than probeTimeout, it is
-// considered abandoned and a new probe is allowed.
+// PreCheck returns the sentinel error while the circuit is open, and nil while
+// it is closed.
 func (cb *CircuitBreaker) PreCheck() error {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	switch cb.state {
-	case StateClosed:
-		return nil
-	case StateOpen:
-		if cb.external {
-			return cb.sentinel
-		}
-		if time.Since(cb.lastFailure) >= cb.openTimeout+cb.probeJitter {
-			if !cb.probeInFlight.CompareAndSwap(false, true) {
-				return cb.sentinel // another probe already in flight
-			}
-			cb.probeStarted.Store(time.Now().UnixNano())
-			cb.transition(StateHalfOpen)
-			return nil // allow this request as the probe
-		}
-		return cb.sentinel
-	case StateHalfOpen:
-		// Recover from a stale probe whose PostCheck was never called.
-		if started := cb.probeStarted.Load(); started > 0 {
-			elapsed := time.Since(time.Unix(0, started))
-			if elapsed >= probeTimeout {
-				cb.log.WarnContext(context.Background(), "stale probe detected, resetting to open",
-					"name", cb.name, "probe_age", elapsed.Round(time.Second))
-				cb.probeInFlight.Store(false)
-				cb.probeStarted.Store(0)
-				cb.transition(StateOpen)
-				return cb.sentinel
-			}
-		}
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	if cb.state == StateOpen {
 		return cb.sentinel
 	}
 	return nil
 }
 
-// PostCheck records the result of a real call and transitions state.
-// While the circuit is not closed after a failure, the error returned wraps
-// the sentinel around the original, so callers match the canonical error with
-// errors.Is and logs still show what actually failed.
+// PostCheck records the result of a real call. While the circuit is open after
+// a failure, the error returned wraps the sentinel around the original, so
+// callers match the canonical error with errors.Is and logs still show what
+// actually failed.
 func (cb *CircuitBreaker) PostCheck(err error) error {
 	if !cb.isError(err) {
 		cb.onSuccess()
@@ -268,87 +215,37 @@ func (cb *CircuitBreaker) PostCheck(err error) error {
 	return err
 }
 
-// Recover closes the breaker from any state and zeroes the failure count, for
-// an out-of-band probe that has confirmed the dependency is reachable.
-// PostCheck(nil) cannot do this: it only moves HalfOpen to Closed.
+// Recover closes the breaker and zeroes the failure count, for an
+// out-of-band check that has confirmed the dependency is reachable.
 func (cb *CircuitBreaker) Recover() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	cb.probeInFlight.Store(false)
-	cb.probeStarted.Store(0)
 	cb.failures = 0
 	if cb.state != StateClosed {
 		cb.transition(StateClosed)
 	}
 }
 
-// onSuccess resets failures and transitions half-open -> closed.
+// onSuccess resets the consecutive failure count. It does not close an open
+// breaker: a call that succeeds while the circuit is open did not go through
+// PreCheck, and only Recover closes the circuit.
 func (cb *CircuitBreaker) onSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-
-	if cb.state == StateHalfOpen {
-		cb.probeInFlight.Store(false)
-		cb.probeStarted.Store(0)
-		cb.transition(StateClosed)
-	}
 	cb.failures = 0
 }
 
-// onFailure increments the failure counter and transitions to open if the
+// onFailure increments the failure counter and opens the circuit once the
 // threshold is reached.
 func (cb *CircuitBreaker) onFailure(err error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	cb.failures++
-	cb.lastFailure = time.Now()
 	cb.lastErr = err
-
-	switch cb.state {
-	case StateHalfOpen:
-		cb.probeInFlight.Store(false)
-		cb.probeStarted.Store(0)
+	if cb.state == StateClosed && cb.failures >= cb.failThreshold {
 		cb.transition(StateOpen)
-	case StateClosed:
-		if cb.failures >= cb.failThreshold {
-			cb.transition(StateOpen)
-		}
 	}
-}
-
-// ResetStaleProbe checks whether a half-open probe has exceeded probeTimeout
-// and resets the circuit to open if so. Called by the background watchdog
-// service to ensure stale probes are detected even when no new requests
-// arrive. Returns true if a stale probe was reset.
-func (cb *CircuitBreaker) ResetStaleProbe() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	if cb.state != StateHalfOpen {
-		return false
-	}
-	started := cb.probeStarted.Load()
-	if started == 0 {
-		return false
-	}
-	elapsed := time.Since(time.Unix(0, started))
-	if elapsed < probeTimeout {
-		return false
-	}
-
-	cb.log.WarnContext(context.Background(), "stale probe reset by watchdog",
-		"name", cb.name, "probe_age", elapsed.Round(time.Second))
-	cb.probeInFlight.Store(false)
-	cb.probeStarted.Store(0)
-	cb.transition(StateOpen)
-	return true
-}
-
-// Probe implements Prober by resetting a stale half-open probe, so the next
-// request can attempt recovery again.
-func (cb *CircuitBreaker) Probe(context.Context) {
-	cb.ResetStaleProbe()
 }
 
 // transition changes the circuit state, emits structured logs, and notifies
@@ -362,10 +259,9 @@ func (cb *CircuitBreaker) transition(to State) {
 		openFor = time.Since(cb.openedAt)
 	}
 
-	switch {
-	case to == StateOpen && from == StateClosed:
+	switch to {
+	case StateOpen:
 		cb.openedAt = time.Now()
-		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
 		cb.log.WarnContext(context.Background(), "opened: failure threshold reached",
 			"name", cb.name,
 			"from", from.String(),
@@ -374,23 +270,7 @@ func (cb *CircuitBreaker) transition(to State) {
 			"threshold", cb.failThreshold,
 			logfmt.Err(cb.lastErr))
 
-	case to == StateOpen && from == StateHalfOpen:
-		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
-		cb.log.WarnContext(context.Background(), "reopened: probe failed",
-			"name", cb.name,
-			"from", from.String(),
-			"to", to.String(),
-			"failures", cb.failures,
-			logfmt.Err(cb.lastErr))
-
-	case to == StateHalfOpen:
-		cb.log.InfoContext(context.Background(), "half-open: probing",
-			"name", cb.name,
-			"from", from.String(),
-			"to", to.String(),
-			"open_duration", openFor.Round(time.Millisecond).String())
-
-	case to == StateClosed:
+	case StateClosed:
 		cb.log.InfoContext(context.Background(), "closed: recovered",
 			"name", cb.name,
 			"from", from.String(),
