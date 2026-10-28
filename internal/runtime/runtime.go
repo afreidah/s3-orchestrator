@@ -158,6 +158,12 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	}
 	r.lifecyc = lifecyc
 
+	// Registered here rather than with the other services because the admin
+	// handler that builds the report resolves the lifecycle manager itself.
+	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil && cfg.Redis != nil {
+		lifecyc.Register("instance_report", adminHandler.InstanceReporter())
+	}
+
 	return r, nil
 }
 

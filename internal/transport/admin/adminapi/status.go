@@ -29,6 +29,11 @@ type StatusResponse struct {
 	Instance    InstanceStatus  `json:"instance"`
 }
 
+// HeaderInstance is the response header every admin response carries: the id
+// of the instance that answered, so a client polling through a load balancer
+// can tell when consecutive answers came from different instances.
+const HeaderInstance = "X-S3o-Instance"
+
 // InstanceStatus identifies the instance that answered a status request: its
 // stable id, the build it runs, its run mode, and when it started.
 type InstanceStatus struct {
@@ -36,6 +41,24 @@ type InstanceStatus struct {
 	Version   string    `json:"version"`
 	Mode      string    `json:"mode"`
 	StartedAt time.Time `json:"started_at"`
+}
+
+// InstanceReport is one instance's own state: who it is, the log level it runs
+// at, the outcome of its last config reload, and the last tick of each
+// background service it runs. ReportedAt is when the instance built the report;
+// another instance's is up to one report interval old.
+type InstanceReport struct {
+	Instance   InstanceStatus       `json:"instance"`
+	ReportedAt time.Time            `json:"reported_at"`
+	LogLevel   string               `json:"log_level"`
+	Reload     ReloadStatusResponse `json:"reload"`
+	Workers    []WorkerHealth       `json:"workers"`
+}
+
+// InstancesResponse lists the report of every running instance, the answering
+// instance's first.
+type InstancesResponse struct {
+	Instances []InstanceReport `json:"instances"`
 }
 
 // IntegrityStatus reports how far behind content verification is. Distinct
@@ -140,8 +163,8 @@ type UsageReconcileResponse struct {
 	Adjustments map[string]int64 `json:"adjustments"`
 }
 
-// WorkersResponse is a snapshot of every registered background service's
-// last-tick health.
+// WorkersResponse is the last-tick health of every background service across
+// the running instances.
 type WorkersResponse struct {
 	Workers []WorkerHealth `json:"workers"`
 }
@@ -150,8 +173,14 @@ type WorkersResponse struct {
 // lifecycle.WorkerHealth, kept separate so the admin wire contract does not
 // import the lifecycle package; the conversion between them is the single
 // place field drift would surface.
+//
+// Instance names the instance whose tick this is, set in the fleet-wide view
+// and empty for a service that has not ticked anywhere. A lock-gated service
+// ticks on whichever instance holds its lock, so ConsecutiveFailures counts
+// the failures on that instance.
 type WorkerHealth struct {
 	Name                string    `json:"name"`
+	Instance            string    `json:"instance,omitempty"`
 	LastSuccess         time.Time `json:"last_success"`
 	LastFailure         time.Time `json:"last_failure"`
 	LastError           string    `json:"last_error,omitempty"`

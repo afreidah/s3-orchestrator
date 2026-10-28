@@ -171,8 +171,14 @@ func (h *Handler) routes() []route {
 		},
 		{
 			Method: http.MethodGet, Pattern: adminapi.PathWorkers, Handler: h.handleWorkers,
-			Summary:  "Last-tick health of every background service",
+			Summary:  "Last-tick health of every background service across the running instances",
 			Response: adminapi.WorkersResponse{},
+			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
+		},
+		{
+			Method: http.MethodGet, Pattern: adminapi.PathInstances, Handler: h.handleInstances,
+			Summary:  "Every running instance's identity, log level, last reload and worker health",
+			Response: adminapi.InstancesResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{

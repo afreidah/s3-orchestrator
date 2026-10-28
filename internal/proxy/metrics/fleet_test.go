@@ -14,47 +14,25 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate/sharedstatetest"
 )
 
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
 
-// memoryShared is a SharedState over one map, standing in for the Redis the
-// instances share. putErr and getErr fail every call when set.
-type memoryShared struct {
-	mu     sync.Mutex
-	data   map[string][]byte
-	putErr error
-	getErr error
-}
-
-func newMemoryShared() *memoryShared { return &memoryShared{data: map[string][]byte{}} }
-
-func (m *memoryShared) PutShared(_ context.Context, name string, value []byte, _ time.Duration) error {
-	if m.putErr != nil {
-		return m.putErr
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.data[name] = value
-	return nil
-}
-
-func (m *memoryShared) GetShared(_ context.Context, name string) ([]byte, error) {
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.data[name], nil
+// newShared returns shared state over an in-memory store, standing in for the
+// Redis the instances share, and the store so a test can seed or fail it.
+func newShared() (*sharedstate.Shared, *sharedstatetest.Memory) {
+	mem := sharedstatetest.NewMemory()
+	return sharedstate.New(mem, "test"), mem
 }
 
 // panicDeps is a Deps whose every read fails the test: an instance that loads
@@ -68,7 +46,7 @@ type panicDeps struct{ Deps }
 // TestFleetSnapshot_LoaderServesComputedSnapshot publishes a snapshot from
 // one collector and loads it into another that never reads the store.
 func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
-	shared := newMemoryShared()
+	shared, _ := newShared()
 	computing := &Collector{
 		store:             fakeReplicationDeps{under: 2, over: 1, plaintext: 4},
 		replicationFactor: func() int { return 2 },
@@ -100,7 +78,8 @@ func TestFleetSnapshot_LoaderServesComputedSnapshot(t *testing.T) {
 // when no instance has published yet.
 func TestFleetSnapshot_LoadWithNothingPublished(t *testing.T) {
 	t.Parallel()
-	mc := &Collector{store: panicDeps{}, shared: newMemoryShared(), log: slog.Default()}
+	shared, _ := newShared()
+	mc := &Collector{store: panicDeps{}, shared: shared, log: slog.Default()}
 	if err := mc.LoadFleetMetrics(context.Background()); err != nil {
 		t.Fatalf("LoadFleetMetrics: %v", err)
 	}
@@ -115,7 +94,7 @@ func TestFleetSnapshot_LoadWithNothingPublished(t *testing.T) {
 // shared read fails, the collector answers from its own copy.
 func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
 	t.Parallel()
-	shared := newMemoryShared()
+	shared, mem := newShared()
 	computing := &Collector{
 		store:             fakeReplicationDeps{under: 1},
 		replicationFactor: func() int { return 2 },
@@ -131,7 +110,7 @@ func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
 		t.Errorf("idle instance serves %+v, want the published snapshot", got)
 	}
 
-	shared.getErr = errors.New("redis down")
+	mem.Fail(errors.New("redis down"))
 	if got := idle.ReplicationSnapshot(context.Background()); got.Ready {
 		t.Errorf("with shared state failing, idle instance serves %+v, want its own empty copy", got)
 	}
@@ -142,15 +121,17 @@ func TestFleetSnapshot_ReplicationReadsSharedOnEveryCall(t *testing.T) {
 func TestFleetSnapshot_LoadErrors(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("redis down")
-	failing := newMemoryShared()
-	failing.getErr = boom
+	failing, failingMem := newShared()
+	failingMem.Fail(boom)
 	mc := &Collector{store: panicDeps{}, shared: failing, log: slog.Default()}
 	if err := mc.LoadFleetMetrics(context.Background()); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
 
-	garbled := newMemoryShared()
-	garbled.data[fleetSnapshotKey] = []byte("{not json")
+	garbled, garbledMem := newShared()
+	if err := garbledMem.PutShared(context.Background(), fleetSnapshotKey, []byte("{not json"), 0); err != nil {
+		t.Fatal(err)
+	}
 	mc = &Collector{store: panicDeps{}, shared: garbled, log: slog.Default()}
 	if err := mc.LoadFleetMetrics(context.Background()); err == nil {
 		t.Error("undecodable snapshot loaded without error")
@@ -161,8 +142,8 @@ func TestFleetSnapshot_LoadErrors(t *testing.T) {
 // on the computing instance when shared state refuses the write.
 func TestFleetSnapshot_PublishFailureKeepsLocalResult(t *testing.T) {
 	t.Parallel()
-	shared := newMemoryShared()
-	shared.putErr = errors.New("redis down")
+	shared, mem := newShared()
+	mem.Fail(errors.New("redis down"))
 	mc := &Collector{
 		store:             fakeReplicationDeps{},
 		replicationFactor: func() int { return 1 },
@@ -181,9 +162,11 @@ func TestFleetSnapshot_PublishFailureKeepsLocalResult(t *testing.T) {
 // snapshot older than half the interval with a fresh computation.
 func TestRefreshFleetIfStale_RecomputesAStaleSnapshot(t *testing.T) {
 	t.Parallel()
-	shared := newMemoryShared()
+	shared, mem := newShared()
 	old := time.Now().Add(-time.Minute)
-	shared.data[fleetSnapshotKey] = []byte(`{"computed_at":"` + old.Format(time.RFC3339Nano) + `"}`)
+	if err := mem.PutShared(context.Background(), fleetSnapshotKey, []byte(`{"computed_at":"`+old.Format(time.RFC3339Nano)+`"}`), 0); err != nil {
+		t.Fatal(err)
+	}
 	mc := &Collector{
 		store:             fakeReplicationDeps{under: 3},
 		replicationFactor: func() int { return 2 },
@@ -203,8 +186,8 @@ func TestRefreshFleetIfStale_RecomputesAStaleSnapshot(t *testing.T) {
 // published one cannot be read, rather than leaving the gauges unrefreshed.
 func TestRefreshFleetIfStale_LoadFailureRecomputes(t *testing.T) {
 	t.Parallel()
-	shared := newMemoryShared()
-	shared.getErr = errors.New("redis down")
+	shared, mem := newShared()
+	mem.Fail(errors.New("redis down"))
 	mc := &Collector{
 		store:             fakeReplicationDeps{under: 2},
 		replicationFactor: func() int { return 2 },
@@ -215,7 +198,7 @@ func TestRefreshFleetIfStale_LoadFailureRecomputes(t *testing.T) {
 	if err := mc.RefreshFleetIfStale(context.Background()); err != nil {
 		t.Fatalf("RefreshFleetIfStale: %v", err)
 	}
-	shared.getErr = nil
+	mem.Fail(nil)
 	if got := mc.ReplicationSnapshot(context.Background()); got.UnderReplicated != 2 {
 		t.Errorf("snapshot = %+v, want the recomputed one", got)
 	}
@@ -242,7 +225,7 @@ func TestRefreshFleetIfStale_SingleInstanceAlwaysComputes(t *testing.T) {
 func TestFleetSnapshot_LookupOrder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	shared := newMemoryShared()
+	shared, mem := newShared()
 	publisher := &Collector{
 		store:             fakeReplicationDeps{under: 1},
 		replicationFactor: func() int { return 2 },
@@ -264,7 +247,7 @@ func TestFleetSnapshot_LookupOrder(t *testing.T) {
 	if err := reader.LoadFleetMetrics(ctx); err != nil {
 		t.Fatalf("LoadFleetMetrics: %v", err)
 	}
-	shared.getErr = errors.New("redis down")
+	mem.Fail(errors.New("redis down"))
 	snap, err = reader.FleetSnapshot(ctx)
 	if err != nil || snap.Replication.UnderReplicated != 1 {
 		t.Errorf("local lookup = %+v, %v; want the loaded copy", snap, err)

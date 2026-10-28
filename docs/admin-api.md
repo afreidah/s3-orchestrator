@@ -50,7 +50,7 @@ Every other endpoint declares a permission over a **backend** or over the **inst
 
 | Permission | What it reaches |
 | --- | --- |
-| `admin-read` | Status, workers, reload outcome, replication and over-replication counts, unreadable copies, cleanup depths, cache utilization, the current log level, drain progress |
+| `admin-read` | Status, workers, instances, reload outcome, replication and over-replication counts, unreadable copies, cleanup depths, cache utilization, the current log level, drain progress |
 | `admin-logs` | The in-memory log buffer and flight-recorder trace snapshots |
 | `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, unreadable purge, usage flush and reconcile, cleanup DLQ requeue |
 | `admin-convert` | `encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing` |

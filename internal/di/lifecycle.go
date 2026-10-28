@@ -17,8 +17,8 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
+	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -96,6 +97,28 @@ func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *in
 	sm.Register("scrub", worker.NewScrubberService(ws.scrubber, locker))
 }
 
+// registerSharedStateWatchers registers the services that apply what other
+// instances announce. Every mode holds a provisioning view: API instances
+// authenticate against it, workers read its declared buckets. The cache
+// watcher runs wherever an object cache is configured.
+func registerSharedStateWatchers(sm *lifecycle.Manager, i do.Injector) error {
+	shared, err := do.Invoke[*sharedstate.Shared](i)
+	if err != nil {
+		return err
+	}
+	sm.Register("provisioning_watch", newProvisioningWatcher(shared, func(ctx context.Context) error {
+		return applyProvisioning(ctx, i)
+	}))
+	objectCache := Optional[objcache.ObjectCache](i)
+	if objectCache.Failed() {
+		return objectCache.Err
+	}
+	if objectCache.Value != nil {
+		sm.Register("cache_watch", newCacheWatcher(shared, objectCache.Value))
+	}
+	return nil
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
@@ -132,16 +155,10 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
 		sm.Register("flight_recorder", fr)
 	}
-	// Every mode holds a provisioning view: API instances authenticate
-	// against it, workers read its declared buckets.
 	if cfg.Redis != nil {
-		channel, err := do.Invoke[*counter.RedisCounterBackend](i)
-		if err != nil {
+		if err := registerSharedStateWatchers(sm, i); err != nil {
 			return nil, err
 		}
-		sm.Register("provisioning_watch", newProvisioningWatcher(channel, func(ctx context.Context) error {
-			return applyProvisioning(ctx, i)
-		}))
 	}
 
 	if !mode.IsWorker() {

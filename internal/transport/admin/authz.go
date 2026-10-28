@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -72,9 +73,11 @@ func (h *Handler) authenticate(r *http.Request) (*auth.User, bool) {
 // -------------------------------------------------------------------------
 
 // guard wraps one route with the authentication and authorization its table
-// entry declares, and is the only path a request reaches a handler by.
+// entry declares, and is the only path a request reaches a handler by. Every
+// response, a refusal included, names the instance that answered.
 func (h *Handler) guard(rt *route) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(adminapi.HeaderInstance, h.instance.ID)
 		who, ok := h.authenticate(r)
 		if !ok {
 			h.log.WarnContext(r.Context(), "unauthorized request",

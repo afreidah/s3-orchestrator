@@ -893,7 +893,7 @@ The reserve and `scrubber_min_age` together set what a backend costs to scrub. W
 
 ### cache
 
-Optional in-memory LRU cache for full GET responses. Reduces backend API calls and egress by serving repeated reads from memory. Per-instance only - not shared across instances.
+Optional in-memory LRU cache for full GET responses. Reduces backend API calls and egress by serving repeated reads from memory. Per-instance only - not shared across instances. With Redis configured, an admin flush or invalidation reaches every instance's cache.
 
 ```yaml
 cache:

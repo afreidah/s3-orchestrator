@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// RedisCounterBackend Change Notification Tests
+// RedisCounterBackend Shared Messages and Listing Tests
 //
 // Author: Alex Freidah
 //
-// Covers NotifyShared and WatchShared: publishing a change, and a watcher that
-// reacts to every message and to every (re)subscription, since pub/sub keeps
-// nothing for a subscriber that was away.
+// Covers the shared-state calls beyond a single value: publishing a message, a
+// watcher that hears every message and every (re)subscription, since pub/sub
+// keeps nothing for a subscriber that was away, and listing values by prefix.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -13,6 +13,7 @@ package counter
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,8 +61,8 @@ func (s *scriptedSubscription) Close() error {
 
 // TestWatchShared_ReactsToSubscribeMessagesAndReconnects drives a watcher
 // through its first subscription, a message, a dropped connection, and the
-// resubscription after it. Every subscription and every message is a change;
-// an unsubscribe confirmation and a pong are not.
+// resubscription after it. A subscription arrives as a nil payload and a
+// message as its own; an unsubscribe confirmation and a pong arrive as nothing.
 func TestWatchShared_ReactsToSubscribeMessagesAndReconnects(t *testing.T) {
 	sub := &scriptedSubscription{steps: []receiveStep{
 		{msg: &redis.Subscription{Kind: "subscribe", Channel: "p:shared:prov"}},
@@ -81,11 +82,16 @@ func TestWatchShared_ReactsToSubscribeMessagesAndReconnects(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	var changes atomic.Int32
+	var payloads []string
 	done := make(chan struct{})
 	go func() {
-		r.WatchShared(ctx, "prov", func(context.Context) {
-			if changes.Add(1) == 3 {
+		r.WatchShared(ctx, "prov", func(_ context.Context, payload []byte) {
+			if payload == nil {
+				payloads = append(payloads, "<nil>")
+			} else {
+				payloads = append(payloads, string(payload))
+			}
+			if len(payloads) == 3 {
 				cancel()
 			}
 		})
@@ -101,17 +107,18 @@ func TestWatchShared_ReactsToSubscribeMessagesAndReconnects(t *testing.T) {
 	if subscribedTo != "p:shared:prov" {
 		t.Errorf("subscribed to %q, want p:shared:prov", subscribedTo)
 	}
-	if got := changes.Load(); got != 3 {
-		t.Errorf("onChange ran %d times, want 3: subscribe, message, resubscribe", got)
+	if want := []string{"<nil>", "changed", "<nil>"}; !slices.Equal(payloads, want) {
+		t.Errorf("payloads = %q, want %q", payloads, want)
 	}
 	if !sub.closed.Load() {
 		t.Error("subscription not closed when the watcher returned")
 	}
 }
 
-// TestNotifyShared publishes on the shared channel, surfaces a Redis error,
-// and declines outright while the backend is in fallback.
-func TestNotifyShared(t *testing.T) {
+// TestPublishShared_SendsPayloadAndDeclinesInFallback publishes the payload on
+// the shared channel, surfaces a Redis error, and declines outright while the
+// backend is in fallback.
+func TestPublishShared_SendsPayloadAndDeclinesInFallback(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
 	newBackend := func() *RedisCounterBackend {
@@ -119,20 +126,58 @@ func TestNotifyShared(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	mock.EXPECT().Publish(gomock.Any(), "p:shared:prov", "changed").Return(redis.NewIntResult(2, nil))
-	if err := newBackend().NotifyShared(ctx, "prov"); err != nil {
-		t.Fatalf("NotifyShared: %v", err)
+	mock.EXPECT().Publish(gomock.Any(), "p:shared:prov", []byte("m")).Return(redis.NewIntResult(2, nil))
+	if err := newBackend().PublishShared(ctx, "prov", []byte("m")); err != nil {
+		t.Fatalf("PublishShared: %v", err)
 	}
 
 	boom := errors.New("redis down")
-	mock.EXPECT().Publish(gomock.Any(), "p:shared:prov", "changed").Return(redis.NewIntResult(0, boom))
-	if err := newBackend().NotifyShared(ctx, "prov"); !errors.Is(err, boom) {
+	mock.EXPECT().Publish(gomock.Any(), "p:shared:prov", []byte("m")).Return(redis.NewIntResult(0, boom))
+	if err := newBackend().PublishShared(ctx, "prov", []byte("m")); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
 
 	fallback := newBackend()
 	fallback.setFallback(true)
-	if err := fallback.NotifyShared(ctx, "prov"); !errors.Is(err, ErrSharedStateUnavailable) {
+	if err := fallback.PublishShared(ctx, "prov", []byte("m")); !errors.Is(err, ErrSharedStateUnavailable) {
+		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
+	}
+}
+
+// TestListShared_PagesScanAndSkipsExpired pages through the scan, reads each
+// value back under its name, leaves out one that expired between the two, and
+// escapes the prefix.
+func TestListShared_PagesScanAndSkipsExpired(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	r := &RedisCounterBackend{client: mock, prefix: "p*", cb: newTestCB()}
+	ctx := context.Background()
+
+	match := `p\*:shared:inst:*`
+	mock.EXPECT().Scan(gomock.Any(), uint64(0), match, int64(scanCount)).
+		Return(redis.NewScanCmdResult([]string{"p*:shared:inst:a", "p*:shared:inst:gone"}, 7, nil))
+	mock.EXPECT().Scan(gomock.Any(), uint64(7), match, int64(scanCount)).
+		Return(redis.NewScanCmdResult([]string{"p*:shared:inst:b"}, 0, nil))
+	mock.EXPECT().Get(gomock.Any(), "p*:shared:inst:a").Return(redis.NewStringResult("A", nil))
+	mock.EXPECT().Get(gomock.Any(), "p*:shared:inst:gone").Return(redis.NewStringResult("", redis.Nil))
+	mock.EXPECT().Get(gomock.Any(), "p*:shared:inst:b").Return(redis.NewStringResult("B", nil))
+
+	got, err := r.ListShared(ctx, "inst:")
+	if err != nil {
+		t.Fatalf("ListShared: %v", err)
+	}
+	if len(got) != 2 || string(got["inst:a"]) != "A" || string(got["inst:b"]) != "B" {
+		t.Errorf("ListShared = %q", got)
+	}
+
+	boom := errors.New("redis down")
+	mock.EXPECT().Scan(gomock.Any(), uint64(0), match, int64(scanCount)).Return(redis.NewScanCmdResult(nil, 0, boom))
+	if _, err := r.ListShared(ctx, "inst:"); !errors.Is(err, boom) {
+		t.Errorf("err = %v, want %v", err, boom)
+	}
+
+	r.setFallback(true)
+	if _, err := r.ListShared(ctx, "inst:"); !errors.Is(err, ErrSharedStateUnavailable) {
 		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
 	}
 }

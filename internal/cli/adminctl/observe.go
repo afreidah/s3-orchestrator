@@ -1,10 +1,11 @@
 // -------------------------------------------------------------------------------
-// Admin CLI - observability commands (workers, reload-status, config, trace-snapshot)
+// Admin CLI - observability commands (workers, instances, reload-status, config, trace-snapshot)
 //
 // Author: Alex Freidah
 //
 // Read-only operator introspection: workers reports each background worker's
-// last-tick health, reload-status reports the outcome of the last SIGHUP
+// last-tick health across the running instances, instances reports each
+// instance's own state, reload-status reports the outcome of the last SIGHUP
 // config reload, config prints the running configuration with secrets
 // redacted, and trace-snapshot downloads the flight-recorder ring buffer
 // to a file for `go tool trace`. workers/trace-snapshot return 503 when the
@@ -34,8 +35,15 @@ func cmdWorkers(_ []string, c *client) int {
 	return c.get(adminapi.PathWorkers, nil)
 }
 
+// cmdInstances implements `s3-orchestrator admin instances`. Reports every
+// running instance's identity, log level, last reload and worker health.
+func cmdInstances(_ []string, c *client) int {
+	return c.get(adminapi.PathInstances, nil)
+}
+
 // cmdReloadStatus implements `s3-orchestrator admin reload-status`. Reports
-// the outcome of the most recent SIGHUP config reload.
+// the outcome of the most recent SIGHUP config reload on the instance that
+// answers.
 func cmdReloadStatus(_ []string, c *client) int {
 	return c.get(adminapi.PathReloadStatus, nil)
 }

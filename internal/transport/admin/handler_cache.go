@@ -7,14 +7,19 @@
 // invalidate, and a stats snapshot. Every endpoint reports a 503 with a
 // uniform "disabled" body when the orchestrator was started without the
 // object data cache configured, so callers can distinguish "no cache" from
-// "cache empty."
+// "cache empty." Each instance holds its own cache, so a flush or invalidation
+// is applied here and announced to the others; the counts in a response, and
+// the stats, are the answering instance's.
 // -------------------------------------------------------------------------------
 
 package admin
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -32,6 +37,17 @@ const cacheDisabledReason = "object data cache is not enabled"
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// invalidateCache applies inv to this instance's cache and announces it to the
+// other instances, returning how many entries this instance dropped. A failed
+// announcement is logged; the change still stands here.
+func (h *Handler) invalidateCache(ctx context.Context, inv cache.Invalidation) int {
+	dropped := inv.Apply(h.objectCache)
+	if err := h.cacheTopic.Publish(ctx, inv); err != nil {
+		h.log.WarnContext(ctx, "cache change not announced to other instances", logfmt.Err(err))
+	}
+	return dropped
+}
 
 // writeCacheDisabled emits the standard 503 response used by every
 // /admin/api/cache/* handler when h.objectCache is nil. Centralised so
@@ -54,7 +70,7 @@ func (h *Handler) handleCacheFlush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cleared := h.objectCache.Clear()
+	cleared := h.invalidateCache(r.Context(), cache.Invalidation{All: true})
 	telemetry.CacheFlushTotal.Inc()
 	h.log.InfoContext(r.Context(), "admin cache flush", "entries_cleared", cleared)
 	httputil.WriteJSON(w, http.StatusOK, adminapi.CacheInvalidateResponse{
@@ -95,7 +111,7 @@ func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Reques
 		httputil.WriteJSONError(w, http.StatusBadRequest, "key is required")
 		return
 	}
-	h.objectCache.Invalidate(key)
+	h.invalidateCache(r.Context(), cache.Invalidation{Key: key})
 	telemetry.CacheAdminInvalidationsTotal.Inc()
 	h.log.InfoContext(r.Context(), "admin cache invalidate", "key", key)
 	httputil.WriteJSON(w, http.StatusOK, adminapi.CacheInvalidateKeyResponse{
@@ -120,7 +136,7 @@ func (h *Handler) handleCacheInvalidatePrefix(w http.ResponseWriter, r *http.Req
 			"prefix query parameter is required (use POST /admin/api/cache/flush to drop every entry)")
 		return
 	}
-	dropped := h.objectCache.InvalidatePrefix(prefix)
+	dropped := h.invalidateCache(r.Context(), cache.Invalidation{Prefix: prefix})
 	telemetry.CacheAdminInvalidationsTotal.Add(float64(dropped))
 	h.log.InfoContext(r.Context(), "admin cache invalidate prefix",
 		"prefix", prefix, "entries_dropped", dropped)

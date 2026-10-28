@@ -173,8 +173,8 @@ s3-orchestrator admin cleanup-queue
 # Force flush usage counters to the database
 s3-orchestrator admin usage-flush
 
-# Drop every entry from the in-memory object data cache
-# (returns 503 when caching is disabled in config)
+# Drop every entry from the in-memory object data cache, on every instance
+# when Redis is configured (returns 503 when caching is disabled in config)
 s3-orchestrator admin cache-flush
 
 # Inspect cache size and entry count
@@ -310,9 +310,13 @@ s3-orchestrator admin reconcile
 # Reconcile a single backend
 s3-orchestrator admin reconcile -backend backblaze
 
-# Show background worker last-tick health; an api-mode instance lists only the
-# services it runs
+# Show background worker last-tick health: for each worker, the latest tick on
+# any running instance and the instance that ran it
 s3-orchestrator admin workers
+
+# Show every running instance: its id, mode, version, log level, last config
+# reload and its own worker health
+s3-orchestrator admin instances
 
 # List dead-lettered cleanup rows, or one backend's; requeue retries them
 s3-orchestrator admin cleanup-dlq [-backend NAME]
@@ -556,7 +560,7 @@ The metadata database health is also shown persistently at the bottom of the sid
 
 The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It refreshes every 3 seconds whichever pane is showing (the counts drift constantly as workers reconcile), so the view is live the moment you open it. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads the fleet snapshot, recomputed every `telemetry.metrics.fleet_interval`, polling it is cheap. The counts are exact.
 
-The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. An `api`-mode instance lists only the services it runs: the usage flush, fleet snapshot and circuit breaker watchdog.
+The **Workers** section shows every registered background service's last-tick health, sourced from `GET /admin/api/workers` - last success, last failure, consecutive failure count, and the last error. A worker that is running but failing every tick looks identical to a healthy one in `/health`, so this is where that difference surfaces; the title bar reports how many services are currently failing. With Redis configured the list covers every running instance: each service shows the tick of whichever instance ran it last, so the answer does not depend on which instance the load balancer picked. Without Redis, an `api`-mode instance lists only the services it runs: the usage flush, fleet snapshot and circuit breaker watchdog.
 
 The **Cleanup** section shows the cleanup queue and its dead-letter table, sourced from `GET /admin/api/cleanup-queue` and `GET /admin/api/cleanup-dlq`. Both listings share the pane, toggled with `t`, and the title bar carries both depths so a backlog in the listing you are not looking at stays visible. The depth is the true total; the listing itself is one page of it. On the dead-letter listing, `R` requeues every dead-lettered row for the selected row's backend (`POST /admin/api/cleanup-dlq/requeue`) - a whole-backend operation, which is what the confirmation names, and the pane reloads afterwards so the depths stay honest.
 

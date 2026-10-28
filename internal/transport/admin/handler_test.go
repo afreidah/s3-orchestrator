@@ -426,6 +426,7 @@ func newTestHandler(t *testing.T) *Handler {
 		logLevel:   &lv,
 		confirmKey: mustConfirmKey(),
 	}
+	h.instances = h.instanceRoster(nil)
 	// Operations over stubs that do nothing, so a test only installs the one
 	// service whose branch it drives. The rebalancer is deliberately absent,
 	// mirroring a proxy-only deployment with no worker pool.

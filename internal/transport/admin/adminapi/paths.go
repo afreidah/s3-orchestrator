@@ -23,6 +23,7 @@ const (
 	PathLogs         = "/admin/api/logs"
 	PathLogLevel     = "/admin/api/log-level"
 	PathWorkers      = "/admin/api/workers"
+	PathInstances    = "/admin/api/instances"
 	PathReloadStatus = "/admin/api/reload-status"
 	PathConfig       = "/admin/api/config"
 	PathTraceSnap    = "/admin/api/trace/snapshot"
