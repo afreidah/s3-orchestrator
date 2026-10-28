@@ -49,7 +49,7 @@ job "demo-observability" {
       driver = "docker"
 
       config {
-        image        = "prom/prometheus:latest"
+        image        = "prom/prometheus:v3.15.1"
         network_mode = "host"
         args = [
           "--config.file=/etc/prometheus/prometheus.yml",
@@ -104,7 +104,7 @@ job "demo-observability" {
       # PROMETHEUS_REMOTE_WRITE_URL is left unset, so tempo.yml's default -
       # Prometheus on the host network - applies.
       config {
-        image        = "grafana/tempo:2.9.1"
+        image        = "grafana/tempo:2.10.10"
         network_mode = "host"
         args         = ["-config.file=/etc/tempo.yml", "-config.expand-env=true"]
         volumes = [
@@ -155,7 +155,7 @@ job "demo-observability" {
       user = "0"
 
       config {
-        image        = "grafana/loki:3.4.2"
+        image        = "grafana/loki:3.7.9"
         network_mode = "host"
         args         = ["-config.file=/etc/loki/config.yml"]
         volumes = [
@@ -200,7 +200,7 @@ job "demo-observability" {
       driver = "docker"
 
       config {
-        image       = "grafana/grafana:latest"
+        image       = "grafana/grafana:13.3.0"
         ports       = ["http"]
         extra_hosts = ["host.docker.internal:${var.host_ip}"]
         volumes = [
@@ -256,7 +256,7 @@ job "demo-observability" {
       driver = "docker"
 
       config {
-        image       = "grafana/alloy:latest"
+        image       = "grafana/alloy:v1.21.2"
         args        = ["run", "/etc/alloy/config.alloy"]
         extra_hosts = ["host.docker.internal:${var.host_ip}"]
         volumes = [

@@ -3,10 +3,9 @@
 #
 # Author: Alex Freidah
 #
-# Optional Ingress fronting the Service. Gated by .Values.ingress.enabled so
-# operators using a different LB (cloud LB, ServiceMesh gateway) can leave
-# this off. Annotations and TLS hosts come from .Values; the rule matches
-# .Values.ingress.host, or every host when it is empty.
+# Ingress in front of the Service for clusters that route with an Ingress
+# controller. An empty className uses the cluster's default IngressClass, and
+# an empty host matches every host. Clusters on Gateway API use httproute.yaml.
 # -------------------------------------------------------------------------------
 
 {{- if .Values.ingress.enabled }}
@@ -21,12 +20,16 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
-    - hosts:
-        - {{ .Values.ingress.host }}
-      secretName: {{ .Values.ingress.tls.secretName }}
+    - secretName: {{ .Values.ingress.tls.secretName }}
+      {{- with .Values.ingress.host }}
+      hosts:
+        - {{ . }}
+      {{- end }}
   {{- end }}
   rules:
     - http:

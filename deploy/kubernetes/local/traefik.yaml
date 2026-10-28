@@ -79,7 +79,7 @@ spec:
       serviceAccountName: traefik
       containers:
         - name: traefik
-          image: traefik:v3.5
+          image: traefik:v3.7
           args:
             - "--entrypoints.s3.address=:9000"
             # Traefik cuts request bodies off after 60s by default, which
@@ -94,13 +94,15 @@ spec:
               containerPort: 9000
             - name: dashboard
               containerPort: 8081
+          # The perf suite can hold thousands of connections open when an
+          # upstream slows, which runs Traefik past 512 MB.
           resources:
             requests:
               cpu: "1"
-              memory: 256Mi
+              memory: 2Gi
             limits:
               cpu: "1"
-              memory: 256Mi
+              memory: 2Gi
 ---
 apiVersion: v1
 kind: Service

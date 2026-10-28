@@ -155,16 +155,13 @@ For hosts running the orchestrator under high concurrency, tune these kernel par
 | `net.ipv4.tcp_tw_reuse` | `1` | Reuse TIME_WAIT sockets during connection churn |
 | `net.ipv4.tcp_fin_timeout` | `15` | Faster socket reclamation after close |
 
-### Go runtime: GOMEMLIMIT
+### Go runtime: GOMEMLIMIT and GOMAXPROCS
 
-Set `GOMEMLIMIT` to ~90% of the container's memory allocation so the Go garbage collector can make informed collection decisions. Without it, the runtime has no awareness of the container's memory ceiling, which can lead to excessive GC (wasted CPU) or insufficient GC (OOM kill).
+At startup the orchestrator sets the Go memory limit to 90% of the cgroup v2 memory limit it runs under, and logs `memory limit set from cgroup`. The garbage collector then works harder as the process nears the container's ceiling instead of letting it reach the OOM killer, and the remaining 10% covers memory outside the Go heap. This applies under Kubernetes, Nomad, Docker and a systemd unit with `MemoryMax`. An explicit `GOMEMLIMIT` environment variable replaces it, and a process with no cgroup memory limit gets none.
 
-```bash
-# Example for a 1024 MB container
-GOMEMLIMIT=922MiB
-```
+Go sets `GOMAXPROCS` from the cgroup CPU limit itself, so neither needs setting by hand. A Nomad task without `cpu_hard_limit` has no CPU limit in its cgroup, so there `GOMAXPROCS` is the host's core count.
 
-The default `GOGC=100` provides smooth GC behavior with `GOMEMLIMIT` set. Setting `GOGC=off` minimizes GC CPU overhead but risks latency spikes from large collections - only use it after profiling your workload.
+The default `GOGC=100` provides smooth GC behavior with the memory limit set. Setting `GOGC=off` minimizes GC CPU overhead but risks latency spikes from large collections - only use it after profiling your workload.
 
 ## Backend HTTP Transport
 
@@ -563,12 +560,7 @@ The cache consumes container memory proportional to `max_size`. Size it based on
 | 1 GB | 128-256 MB | Good for most workloads |
 | 2+ GB | 256-512 MB | Large working sets or many concurrent readers |
 
-When `GOMEMLIMIT` is set (recommended - see [Go runtime: GOMEMLIMIT](#go-runtime-gomemlimit)), include the cache's `max_size` in your calculation:
-
-```bash
-# Example: 1024 MB container, 256 MB cache
-GOMEMLIMIT=$(( (1024 - 256) * 90 / 100 ))MiB   # ~691 MiB for Go heap
-```
+The cache lives on the Go heap, inside the memory limit the process sets from its container (see [Go runtime: GOMEMLIMIT and GOMAXPROCS](#go-runtime-gomemlimit-and-gomaxprocs)). A full cache leaves the rest of the limit for request buffers and everything else, so keep `max_size` well under it, as the table above does.
 
 ### When Caching Helps Most
 

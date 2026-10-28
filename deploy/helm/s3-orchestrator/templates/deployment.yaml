@@ -3,12 +3,13 @@
 #
 # Author: Alex Freidah
 #
-# The orchestrator pod spec. Single-container Deployment that mounts the
-# rendered ConfigMap, the optional credentials Secret, and exposes the S3
-# port. Resource requests, replica count, and probe settings are sourced
-# from .Values so operators can tune per-environment without templating.
+# The orchestrator pod: one container on a read-only root filesystem with the
+# config mounted read-only, secrets as environment variables, and a writable
+# spill directory at /tmp for uploads too large to buffer in memory. Pods roll
+# when the config or the chart's Secret changes.
 # -------------------------------------------------------------------------------
 
+{{ include "s3-orchestrator.preflight" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,7 +17,9 @@ metadata:
   labels:
     {{- include "s3-orchestrator.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "s3-orchestrator.selectorLabels" . | nindent 6 }}
@@ -24,19 +27,33 @@ spec:
     metadata:
       labels:
         {{- include "s3-orchestrator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- if .Values.metrics.enabled }}
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ if .Values.metrics.dedicatedListener.enabled }}{{ .Values.metrics.dedicatedListener.port | quote }}{{ else }}{{ .Values.service.port | quote }}{{ end }}
         prometheus.io/path: {{ .Values.metrics.path | quote }}
         {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
-      serviceAccountName: {{ include "s3-orchestrator.fullname" . }}
+      serviceAccountName: {{ include "s3-orchestrator.serviceAccountName" . }}
       automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+        runAsGroup: 10001
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
@@ -44,9 +61,25 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "s3-orchestrator.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "-config"
@@ -62,19 +95,28 @@ spec:
               containerPort: {{ .Values.metrics.dedicatedListener.port }}
               protocol: TCP
             {{- end }}
-          env:
-            {{- range $key, $value := .Values.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
+          # --- Secrets the config references as ${NAME} ---
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | default (include "s3-orchestrator.fullname" .) }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # --- Startup covers first-boot migrations; liveness stays 200 through a database outage ---
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -82,7 +124,6 @@ spec:
             httpGet:
               path: /health/ready
               port: http
-            initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 2
           resources:
@@ -96,7 +137,22 @@ spec:
             - name: config
               mountPath: /etc/s3-orchestrator
               readOnly: true
+            - name: spill
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ include "s3-orchestrator.fullname" . }}
+        # --- The OS temp directory, where server.spill_dir defaults ---
+        - name: spill
+          emptyDir:
+            {{- with .Values.spill.medium }}
+            medium: {{ . }}
+            {{- end }}
+            sizeLimit: {{ .Values.spill.sizeLimit }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

@@ -50,20 +50,6 @@ DEMO_VOLUMES=(demo-minio-1-data demo-minio-2-data demo-minio-3-data demo-postgre
 # how teardown finds the ones still running.
 NOMAD_CONTAINER_LABEL="com.hashicorp.nomad.alloc_id"
 
-# render_job prints the orchestrator job with the rendered config inlined at
-# the __CONFIG__ line, indented to match it, and the instance count filled in.
-render_job() {
-    local config="$1"
-    awk -v cfg="$config" -v n="$INSTANCES" '
-        /^[ \t]*__CONFIG__[ \t]*$/ {
-            indent = substr($0, 1, index($0, "__CONFIG__") - 1)
-            while ((getline line < cfg) > 0) print (line == "" ? "" : indent line)
-            next
-        }
-        { gsub(/__INSTANCES__/, n); print }
-    ' "$SCRIPT_DIR/s3-orchestrator.nomad.hcl"
-}
-
 # healthy_allocations counts the job's allocations that are running and have
 # passed their checks.
 healthy_allocations() {
@@ -218,7 +204,7 @@ if [[ "${1:-}" == "down" ]]; then
     exit 0
 fi
 
-require_commands docker nomad jq curl
+require_commands docker nomad nomad-pack jq curl
 refuse_running_dev_deps
 
 # --- Start Nomad dev agent ---
@@ -267,7 +253,7 @@ run_minio_setup
 echo "Submitting Traefik job..."
 nomad job run -detach "$SCRIPT_DIR/traefik.nomad.hcl"
 
-echo "Submitting s3-orchestrator job ($INSTANCES instances)..."
+echo "Running the s3_orchestrator pack ($INSTANCES instances)..."
 RENDERED_CONFIG="$(mktemp)"
 trap 'rm -f "$RENDERED_CONFIG"' EXIT
 # The backing-service addresses are registry lookups the job's template
@@ -283,7 +269,13 @@ render_config "$RENDERED_CONFIG" \
     "MINIO_2_ADDR=$(lookup demo-minio-2 "$ADDR_PORT")" \
     "MINIO_3_ADDR=$(lookup demo-minio-3 "$ADDR_PORT")" \
     "OTLP_ADDR=$HOST_IP:4317"
-render_job "$RENDERED_CONFIG" | nomad job run -detach -
+# The production pack, as the Kubernetes demo installs the production chart.
+# --deploy-override takes over a job an older demo submitted without the pack.
+nomad-pack run "$REPO_ROOT/deploy/nomad/packs/s3_orchestrator" \
+    --detach --deploy-override \
+    -f "$SCRIPT_DIR/s3-orchestrator.vars.hcl" \
+    --var "count=$INSTANCES" \
+    --var "config_file=$RENDERED_CONFIG"
 
 # --- Wait for a healthy fleet ---
 # Every instance must pass its checks before traffic starts: the perf suite

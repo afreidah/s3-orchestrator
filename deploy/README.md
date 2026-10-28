@@ -1,44 +1,33 @@
-# Deployment Examples
+# Deployment
 
-Production-ready deployment manifests for container orchestration platforms. Both examples deploy the s3-orchestrator with three storage backends (OCI Object Storage, Backblaze B2, MinIO), replication factor 2, spread routing, and full observability -- demonstrating how the orchestrator distributes object copies across backends like a storage mesh.
-
-## Nomad
-
-Single-file job specification with Vault integration for secret injection.
-
-```bash
-# Deploy with a specific version
-nomad job run -var="version=v1.0.0" deploy/nomad/s3-orchestrator.nomad.hcl
-
-# Validate without deploying
-nomad job plan -var="version=v1.0.0" deploy/nomad/s3-orchestrator.nomad.hcl
-```
-
-**Prerequisites:** Vault KV v2 secret at `secret/data/s3-orchestrator` with all credential fields populated. See the inline comments in the job file for the full list of required keys.
+The Helm chart, the Nomad pack and the Nomad job that deploy s3-orchestrator, and local demos that run each platform end to end. All three read a `config.yaml` that references its secrets as `${NAME}`, and supply the secrets as environment variables. Each needs a PostgreSQL database and at least one S3-compatible backend, and Redis to run more than one instance.
 
 ## Kubernetes (Helm)
 
-A Helm chart in `deploy/helm/s3-orchestrator/` deploys the full stack: Deployment, Service, ConfigMap, Secret, ServiceAccount, NetworkPolicy, and optional Ingress.
+The chart in [`helm/s3-orchestrator`](helm/s3-orchestrator/README.md) is published to `oci://ghcr.io/afreidah/charts/s3-orchestrator` with each release and signed with cosign.
 
 ```bash
-# Install with default values
-helm install s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator --create-namespace
-
-# Install with custom values
-helm install s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator --create-namespace \
-  -f my-values.yaml
-
-# Upgrade after changing values
-helm upgrade s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator -f my-values.yaml
-
-# Generate raw manifests without Helm (for kubectl apply workflows)
-helm template s3-orchestrator deploy/helm/s3-orchestrator -f my-values.yaml > manifests.yaml
+helm install s3-orchestrator oci://ghcr.io/afreidah/charts/s3-orchestrator \
+  --version 0.178.0 -n s3-orchestrator --create-namespace -f my-values.yaml
 ```
 
-**Prerequisites:** A PostgreSQL instance accessible from the cluster. Configure backends, credentials, and database connection in your values file. See `deploy/helm/s3-orchestrator/values.yaml` for all available options.
+`make helm-check` lints the chart and validates what it renders for each file in `helm/s3-orchestrator/ci`.
+
+## Nomad
+
+The pack in [`nomad/packs/s3_orchestrator`](nomad/packs/s3_orchestrator/README.md) is attached to each GitHub Release, stamped with that release:
+
+```bash
+nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
+```
+
+[`nomad/s3-orchestrator.nomad.hcl`](nomad/s3-orchestrator.nomad.hcl) is the same job as a plain job file that takes variables. Production values, with Consul, Traefik and Vault, are in `nomad/s3-orchestrator.vars.hcl`:
+
+```bash
+nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.178.0 s3-orchestrator.nomad.hcl
+```
+
+`make pack-check` format-checks both and validates the jobs they produce.
 
 ## Local Demo Scripts
 
@@ -46,7 +35,7 @@ Both platforms include a `local/demo.sh` script that stands up a fully working e
 
 Each script runs PostgreSQL, Redis, three MinIO backends and the observability stack in the scheduler it targets, builds the image from source, and runs three orchestrator instances by default with three backends and replication factor 2. The instances share PostgreSQL and Redis and sit behind Traefik on port 9000; the Traefik dashboard is on port 8081. Set `INSTANCES` to change the count. Each script mints a root keypair and a `perf` identity per run, and prints connection details on success.
 
-These are demos, not deployment templates. The production examples are `deploy/nomad/s3-orchestrator.nomad.hcl` and the Helm chart in `deploy/helm/s3-orchestrator`.
+The Kubernetes demo installs the Helm chart and the Nomad demo runs the pack, each with the values a demo needs, so a demo run exercises what operators deploy.
 
 `docker-compose.test.yml` is only for `make run` and `make dev-deps` now. It publishes the same host ports the demos use, so stop it with `make dev-clean` before starting a demo; the scripts refuse to start while it is up.
 
@@ -70,9 +59,9 @@ INSTANCES=1 ./deploy/nomad/local/demo.sh   # one orchestrator instance
 ./deploy/nomad/local/demo.sh down          # tear it all down
 ```
 
-Requires: `docker`, `nomad`, `jq`, `curl`
+Requires: `docker`, `nomad`, `nomad-pack`, `jq`, `curl`
 
-PostgreSQL, Redis and MinIO run as the `demo-services` job (`services.nomad.hcl`), and the instances find them through Nomad's native service registry; `minio-setup.nomad.hcl` creates the buckets. Prometheus, Grafana, Tempo, Loki and Alloy run as the `demo-observability` job with the configs in `deploy/monitoring`. Traefik routes from the same registry. Each instance publishes its metrics listener on a dynamic port; Prometheus discovers them from the registry, and `demo.sh` prints their addresses. The script starts its own dev agent with `agent.hcl`, which enables Docker volumes (the observability job's bind mounts and the named volumes PostgreSQL and MinIO keep their data on) and memory oversubscription, so the backing services can burst past their reservations. `demo.sh down` removes the volumes along with the jobs, and `make clean` runs it.
+Runs the pack with `local/s3-orchestrator.vars.hcl` and the shared config passed as `config_file`. PostgreSQL, Redis and MinIO run as the `demo-services` job (`services.nomad.hcl`), and the instances find them through Nomad's native service registry; `minio-setup.nomad.hcl` creates the buckets. Prometheus, Grafana, Tempo, Loki and Alloy run as the `demo-observability` job with the configs in `deploy/monitoring`. Traefik routes from the same registry. Each instance publishes its metrics listener on a dynamic port; Prometheus discovers them from the registry, and `demo.sh` prints their addresses. The script starts its own dev agent with `agent.hcl`, which enables Docker volumes (the observability job's bind mounts and the named volumes PostgreSQL and MinIO keep their data on) and memory oversubscription, so the backing services can burst past their reservations. `demo.sh down` removes the volumes along with the jobs, and `make clean` runs it.
 
 ### Monitoring
 
@@ -89,17 +78,14 @@ make worker-deploy  # wrangler deploy
 
 See `deploy/cloudflare-worker/README.md` for the credential model and the matching backend entry.
 
-## Customization
+## Secrets and Files
 
-Both examples include commented-out sections for:
+Sensitive values in the config use `${VAR}` environment variable expansion. The orchestrator resolves them at startup, so secrets never appear in config files.
 
-- **TLS termination** at the application level (cert + key file paths)
-- **Mutual TLS (mTLS)** client certificate verification via `client_ca_file`
-- **Traefik/nginx Ingress** routing annotations
-- **Vault Agent Injector** integration (Kubernetes)
-- **Distributed tracing** via OTLP gRPC (Tempo, Jaeger)
-
-All sensitive values use `${VAR}` environment variable expansion -- the orchestrator resolves these at startup, so secrets never appear in config files on disk.
+| | Secrets as environment | Files the config points at (TLS, CA bundles) |
+|---|---|---|
+| Helm chart | `secrets`, `existingSecret`, `extraEnv`, `extraEnvFrom` | `extraVolumes` and `extraVolumeMounts` |
+| Nomad pack and job | `env_template`, from a Nomad Variable by default, or Vault or Consul KV | `templates`, rendered into `/secrets` |
 
 ## PostgreSQL
 

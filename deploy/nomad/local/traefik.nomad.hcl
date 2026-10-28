@@ -29,7 +29,7 @@ job "traefik" {
       driver = "docker"
 
       config {
-        image = "traefik:v3.5"
+        image = "traefik:v3.7"
         # Host networking, so Traefik reaches the Nomad API and the
         # instances at the 127.0.0.1 addresses the dev agent registers.
         network_mode = "host"

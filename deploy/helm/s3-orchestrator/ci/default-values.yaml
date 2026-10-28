@@ -1,0 +1,12 @@
+# -------------------------------------------------------------------------------
+# Helm Chart CI - Default Values
+#
+# Author: Alex Freidah
+#
+# The chart's defaults, with the image tag a chart from a checkout needs.
+# make helm-check renders every file in this directory and validates the
+# output against the Kubernetes schemas.
+# -------------------------------------------------------------------------------
+
+image:
+  tag: v0.0.0-ci

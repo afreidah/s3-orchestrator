@@ -58,7 +58,7 @@ spec:
       serviceAccountName: alloy
       containers:
         - name: alloy
-          image: grafana/alloy:v1.8.2
+          image: grafana/alloy:v1.21.2
           args: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
           env:
             - name: NODE_NAME
