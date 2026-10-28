@@ -1,5 +1,6 @@
 # -------------------------------------------------------------------------------
-# Build and push the container images on every merge to main.
+# Build and push the container images on every merge to main, record the
+# released version, and start the deployment that rolls it out.
 #
 # Author: Alex Freidah
 #
@@ -54,6 +55,36 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: us-east-1
         run: make artifacts-publish
+
+      # The deployment reads its version from this key, so it is written only
+      # once the images and artifacts above exist under that tag.
+      - name: Record the released version
+        env:
+          CONSUL_HTTP_ADDR: http://127.0.0.1:8500
+          CONSUL_HTTP_TOKEN: ${{ secrets.CONSUL_HTTP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          version=$(cat .version)
+          consul kv put deploy/versions/s3-orchestrator "$version"
+
+          # Read back, so a silently-accepted write cannot pass as a success.
+          got=$(consul kv get deploy/versions/s3-orchestrator)
+          [ "$got" = "$version" ] || {
+            echo "::error::readback mismatch: stored $got, expected $version"
+            exit 1
+          }
+          echo "recorded ${got}"
+
+      - name: Start the deployment
+        env:
+          RELEASE_DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+        run: |
+          curl -fsS --max-time 30 -X POST \
+            -H "Authorization: token ${RELEASE_DISPATCH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"main","inputs":{"app":"s3-orchestrator"}}' \
+            http://forgejo.service.consul:30028/api/v1/repos/alex/munchbox/actions/workflows/deploy-version.yml/dispatches
 
       # The GitHub release attaches the .deb to a release page, which the apt
       # repository cannot read: it is reachable from the cluster only. So the
