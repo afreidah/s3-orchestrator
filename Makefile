@@ -637,11 +637,63 @@ loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
 # DEPLOYMENT DEMOS
 # -------------------------------------------------------------------------
 
-kubernetes-demo: ## Run the s3-orchestrator in k3d (requires docker, k3d, kubectl)
+kubernetes-demo: ## Run the s3-orchestrator in k3d with the Helm chart (requires docker, k3d, kubectl, helm)
 	./deploy/kubernetes/local/demo.sh
 
-nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad)
+nomad-demo: ## Run the s3-orchestrator in Nomad dev mode with the pack (requires docker, nomad, nomad-pack)
 	./deploy/nomad/local/demo.sh
+
+##@ Deployment Packaging
+
+# -------------------------------------------------------------------------
+# DEPLOYMENT PACKAGING
+# -------------------------------------------------------------------------
+
+HELM_CHART       := deploy/helm/s3-orchestrator
+NOMAD_PACK       := deploy/nomad/packs/s3_orchestrator
+NOMAD_JOB        := deploy/nomad/s3-orchestrator.nomad.hcl
+NOMAD_JOB_VARS   := deploy/nomad/s3-orchestrator.vars.hcl
+CHART_VERSION    := $(patsubst v%,%,$(VERSION))
+KUBECONFORM      := go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+KUBECONFORM_CRDS := https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+
+# An address nothing listens on, so validating a job never reaches a cluster
+# the shell happens to be configured for.
+NOMAD_LOCAL := NOMAD_ADDR=http://127.0.0.1:1
+
+helm-check: ## Lint the Helm chart and schema-check what each ci/ values file renders
+	helm lint --strict $(HELM_CHART) -f $(HELM_CHART)/ci/default-values.yaml
+	@for f in $(HELM_CHART)/ci/*.yaml; do \
+		echo "--- $$f ---"; \
+		helm template s3-orchestrator $(HELM_CHART) -f $$f \
+			| $(KUBECONFORM) -strict -summary -schema-location default -schema-location '$(KUBECONFORM_CRDS)' || exit 1; \
+	done
+
+pack-check: ## Format-check the Nomad pack and job, and validate the jobs they produce
+	nomad-pack fmt -check -recursive $(NOMAD_PACK)
+	nomad fmt -check $(NOMAD_JOB) $(NOMAD_JOB_VARS)
+	@out=$$(mktemp -d); trap 'rm -rf "$$out"' EXIT; \
+	for case in "" "-f deploy/nomad/local/s3-orchestrator.vars.hcl --var count=3"; do \
+		echo "--- pack $${case:-defaults} ---"; \
+		nomad-pack render $(NOMAD_PACK) -o "$$out" -y $$case \
+			--var version=$(VERSION) --var config_file=deploy/local/config.yaml >/dev/null || exit 1; \
+		$(NOMAD_LOCAL) nomad job validate "$$out/s3_orchestrator/s3_orchestrator.nomad" || exit 1; \
+	done; \
+	echo "--- job with $(NOMAD_JOB_VARS) ---"; \
+	$(NOMAD_LOCAL) nomad job validate -var-file=$(NOMAD_JOB_VARS) -var=version=$(VERSION) \
+		-var=config_file=deploy/local/config.yaml $(NOMAD_JOB)
+
+chart-package: ## Package the Helm chart at the release version into dist/
+	helm package $(HELM_CHART) --version $(CHART_VERSION) --app-version $(VERSION) -d dist
+
+pack-package: ## Stamp the Nomad pack with the release and archive it into dist/
+	@rm -rf dist/pack && mkdir -p dist/pack && cp -r $(NOMAD_PACK) dist/pack/
+	sed -i 's/^  version     = "0.0.0-dev"$$/  version     = "$(CHART_VERSION)"/' dist/pack/s3_orchestrator/metadata.hcl
+	awk '/^variable "version"/ { inblock = 1 } inblock && /^  default / { sub(/""/, "\"$(VERSION)\""); inblock = 0 } { print }' \
+		$(NOMAD_PACK)/variables.hcl > dist/pack/s3_orchestrator/variables.hcl
+	grep -q '"$(CHART_VERSION)"' dist/pack/s3_orchestrator/metadata.hcl
+	grep -q '"$(VERSION)"' dist/pack/s3_orchestrator/variables.hcl
+	tar -czf dist/s3_orchestrator-pack-$(VERSION).tar.gz -C dist/pack s3_orchestrator
 
 ##@ Website
 

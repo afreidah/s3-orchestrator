@@ -10,17 +10,13 @@
 # Not for production use.
 # -------------------------------------------------------------------------------
 
+# --- The image demo.sh builds and imports into k3d ---
 image:
   repository: s3-orchestrator
   tag: "local"
   pullPolicy: Never
 
-# The same limits as the Nomad demo's tasks, with the Go memory limit at 90%
-# of the pod's memory.
-env:
-  GOMEMLIMIT: "920MiB"
-  GOMAXPROCS: "2"
-
+# --- The same limits as the Nomad demo; Go sets its limits from these ---
 resources:
   requests:
     cpu: "2"
@@ -32,8 +28,7 @@ resources:
 networkPolicy:
   enabled: false
 
-# Matches telemetry.metrics.listen and pprof in the shared config. Alloy scrapes
-# each pod's metrics port and remote-writes to the demo's Prometheus.
+# --- Matches telemetry.metrics.listen and pprof in the shared config; Alloy scrapes it ---
 metrics:
   enabled: true
   path: /metrics
@@ -42,15 +37,11 @@ metrics:
     port: 9001
   pprof: true
 
-# Routed by the demo's own Traefik, the same version and settings the Nomad
-# demo runs, on a catch-all host so localhost:9000 reaches it. The chart's
-# nginx annotations are removed rather than merged in.
+# --- The demo's Traefik, on a catch-all host so localhost:9000 reaches it ---
 ingress:
   enabled: true
   className: traefik
-  annotations: null
   host: ""
 
-# The shared config carries its dev credentials inline, so the chart's Secret
-# only has to exist for the pod's envFrom.
+# --- The shared config carries its dev credentials inline ---
 secrets: {}

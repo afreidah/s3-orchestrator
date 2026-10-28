@@ -1,0 +1,14 @@
+# -------------------------------------------------------------------------------
+# Helm Chart - Package Exclusions
+#
+# Author: Alex Freidah
+#
+# Files kept out of the packaged chart: the CI values make helm-check renders,
+# and editor leftovers.
+# -------------------------------------------------------------------------------
+
+ci/
+*.swp
+*.swo
+*~
+.DS_Store

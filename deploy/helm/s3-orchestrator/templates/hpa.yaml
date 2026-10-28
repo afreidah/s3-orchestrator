@@ -1,0 +1,32 @@
+# -------------------------------------------------------------------------------
+# Helm Template - HorizontalPodAutoscaler (optional)
+#
+# Author: Alex Freidah
+#
+# Scales the Deployment on CPU between minReplicas and maxReplicas, in place
+# of replicaCount. Every replica needs redis in the config, which the preflight
+# check enforces once autoscaling is on.
+# -------------------------------------------------------------------------------
+
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "s3-orchestrator.fullname" . }}
+  labels:
+    {{- include "s3-orchestrator.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "s3-orchestrator.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

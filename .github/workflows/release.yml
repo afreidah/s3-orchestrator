@@ -4,7 +4,8 @@
 # Author: Alex Freidah
 #
 # Triggers on version tag pushes (v*). Runs GoReleaser to produce GitHub Release
-# artifacts including binaries, Debian packages, and checksums.
+# artifacts including binaries, Debian packages, and checksums, then publishes
+# the Helm chart to ghcr.io and attaches the Nomad pack to the release.
 # -------------------------------------------------------------------------------
 
 name: Release
@@ -105,3 +106,69 @@ jobs:
           gh pr merge "$PR_URL" --auto --rebase
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+
+  # ---------------------------------------------------------------------------
+  # HELM CHART AND NOMAD PACK
+  # ---------------------------------------------------------------------------
+  # The chart goes to ghcr.io as an OCI artifact, signed like the images; the
+  # pack, stamped with the release, goes on the GitHub Release beside the rest.
+  deploy-packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [release]
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Images are built on merge to main, not on the tag, so a release cut
+      # from a commit that never built one would publish a chart for an image
+      # that does not exist.
+      - name: Check the release's image exists
+        run: docker buildx imagetools inspect "ghcr.io/afreidah/s3-orchestrator:${GITHUB_REF_NAME}" >/dev/null
+
+      - name: Package and push the chart
+        id: chart
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          make chart-package VERSION="$GITHUB_REF_NAME"
+          out=$(helm push "dist/s3-orchestrator-${GITHUB_REF_NAME#v}.tgz" oci://ghcr.io/afreidah/charts 2>&1)
+          echo "$out"
+          digest=$(echo "$out" | awk '/^Digest:/ { print $2 }')
+          [ -n "$digest" ] || { echo "::error::helm push printed no digest"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # A Rekor 409 means the signature is already in the transparency log
+      # (slow public instance + client retry), so treat that one case as success.
+      - name: Sign the chart with cosign
+        env:
+          DIGEST: ${{ steps.chart.outputs.digest }}
+        run: |
+          set +e
+          out=$(cosign sign --yes "ghcr.io/afreidah/charts/s3-orchestrator@${DIGEST}" 2>&1)
+          rc=$?
+          echo "$out"
+          if [ $rc -ne 0 ] && echo "$out" | grep -q "already exists in the transparency log"; then
+            echo "::warning::Rekor entry already present; treating as signed."
+            exit 0
+          fi
+          exit $rc
+
+      - name: Attach the Nomad pack to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make pack-package VERSION="$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" "dist/s3_orchestrator-pack-${GITHUB_REF_NAME}.tar.gz"

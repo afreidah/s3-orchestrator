@@ -3,14 +3,10 @@
 #
 # Author: Alex Freidah
 #
-# Optional NetworkPolicy that pins ingress to the configured podSelectors and
-# egress to the upstream backend CIDRs. Gated by .Values.networkPolicy.enabled
-# so clusters without a CNI that enforces NetworkPolicies can leave it off.
-#
-# When .Values.metrics.dedicatedListener.enabled is true, a second ingress
-# rule allows the configured scraperSelector (defaulting to "any pod in the
-# namespace") to reach the metrics port. Pprof rides on the same port, so
-# tightening scraperSelector matters more when .Values.metrics.pprof is on.
+# Admits traffic to the S3 port from any source, and to the dedicated metrics
+# port only from the pods scraperSelector matches. Egress stays open: the
+# backends, database and Redis are addresses the chart cannot know. Gated so a
+# cluster without a CNI that enforces NetworkPolicies can leave it off.
 # -------------------------------------------------------------------------------
 
 {{- if .Values.networkPolicy.enabled }}

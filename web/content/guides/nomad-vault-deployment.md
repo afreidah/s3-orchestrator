@@ -111,7 +111,7 @@ vault secrets enable transit
 vault write -f transit/keys/s3-orchestrator type=aes256-gcm96
 ```
 
-The orchestrator will use this key for envelope encryption — each object gets a unique data encryption key (DEK) that is wrapped by the Vault transit key. The encrypted DEK is stored alongside the object, so Vault is only called during encrypt/decrypt operations, not for every byte of data.
+The orchestrator will use this key for envelope encryption: each object gets a unique data encryption key (DEK) that is wrapped by the Vault transit key. The encrypted DEK is stored alongside the object, so Vault is only called during encrypt/decrypt operations, not for every byte of data.
 
 ## Step 4: Write the Nomad Job
 
@@ -154,7 +154,7 @@ job "s3-orchestrator" {
       port     = "http"
       provider = "consul"
 
-      # Liveness — always 200, keeps the allocation alive during DB outages.
+      # Liveness - always 200, keeps the allocation alive during DB outages.
       check {
         type     = "http"
         path     = "/health"
@@ -162,7 +162,7 @@ job "s3-orchestrator" {
         timeout  = "3s"
       }
 
-      # Readiness — returns 503 until startup completes and during shutdown
+      # Readiness - returns 503 until startup completes and during shutdown
       # drain. Gates rolling deploys so traffic only routes to ready instances.
       check {
         type      = "http"
@@ -203,7 +203,7 @@ job "s3-orchestrator" {
 {{ with secret "secret/data/s3-orchestrator" }}
 server:
   listen_addr: "0.0.0.0:9000"
-  max_object_size: 5368709120    # 5 GB — reject uploads larger than this
+  max_object_size: 5368709120    # 5 GB - reject uploads larger than this
   backend_timeout: "5m"
   shutdown_delay: "5s"
 
@@ -341,7 +341,7 @@ EOH
         memory = 512
       }
 
-      kill_timeout = "30s"
+      kill_timeout = "90s"
       kill_signal  = "SIGTERM"
     }
   }
@@ -351,13 +351,14 @@ EOH
 ### Key Points in the Job Spec
 
 - **`vault` stanza** tells Nomad to obtain a Vault token for this task using the `s3-orchestrator` role
-- **`identity` stanza** enables workload identity — Nomad presents a signed JWT to Vault's JWT auth method
+- **`identity` stanza** enables workload identity: Nomad presents a signed JWT to Vault's JWT auth method
 - **`template` stanza** with `{{ with secret "secret/data/s3-orchestrator" }}` fetches the KV secret at deploy time and interpolates values into `config.yaml`
-- **`perms = "0400"`** restricts the rendered config to read-only — secrets are only readable by the task process
+- **`perms = "0400"`** restricts the rendered config to read-only, so secrets are only readable by the task process
 - **`change_mode = "restart"`** means the task restarts automatically if the Vault secret is updated or the lease is renewed with new values
 - **`token_file`** in the encryption config points at the Vault token Nomad writes into the task's secrets directory; the orchestrator uses it for ongoing Transit API calls and re-reads it on every renewal tick
 - **Volumes** bind-mount the rendered secrets from Nomad's secrets directory into the container at `/secrets/`
-- **Two health checks** — `/health` (liveness) keeps the allocation alive during DB outages, `/health/ready` (readiness) with `on_update = "require_healthy"` gates rolling deploys
+- **`kill_timeout = "90s"`** covers the whole shutdown: the 5-second `shutdown_delay`, then up to 30 seconds draining HTTP requests, 30 seconds for uploads still writing, and 10 seconds for background services. A shorter timeout kills the task mid-drain
+- **Two health checks**: `/health` (liveness) keeps the allocation alive during DB outages, `/health/ready` (readiness) with `on_update = "require_healthy"` gates rolling deploys
 - **`trusted_proxies`** ensures rate limiting uses the real client IP when behind a load balancer, not the proxy's IP
 - **`backend_circuit_breaker`** isolates individual backend failures so a single provider outage doesn't degrade the entire service
 - **`replication.factor: 2`** ensures every object exists on at least two backends for redundancy
@@ -458,7 +459,7 @@ Redis carries the shared usage counters, so usage limits hold across instances b
 
 ## Important Notes
 
-- The `secrets/` directory in Nomad is tmpfs-backed and never written to disk — credentials exist only in memory
+- The `secrets/` directory in Nomad is tmpfs-backed and never written to disk, so credentials exist only in memory
 - The orchestrator re-reads the token file every `encryption.vault.renew_interval` (default 5m), so a token Nomad rotates is picked up without a restart
 - If Vault is temporarily unavailable, the existing rendered config remains in place and the orchestrator continues running, but Transit encryption operations will fail until Vault recovers
 - The `auto_revert` update strategy rolls back to the previous version if the new deployment fails health checks

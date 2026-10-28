@@ -7,37 +7,46 @@ linkTitle: "Deployment"
 
 ### Nomad and Kubernetes
 
-Production-ready manifests for both platforms are in [`deploy/`](../deploy/). Each includes a local demo script that stands up a complete environment in one command:
+Each release publishes a Helm chart for Kubernetes and a Nomad pack, both at the release's version; [`deploy/`](../deploy/) also has a plain Nomad job. Each platform has a local demo that stands up a complete environment in one command and deploys through the chart or the pack:
 
 ```bash
 make kubernetes-demo   # k3d cluster, backing services running in the cluster
 make nomad-demo        # Nomad dev agent, backing services running as Nomad jobs
 ```
 
-See [`deploy/README.md`](../deploy/README.md) for production deployment instructions, Vault integration, TLS/mTLS configuration, and Ingress setup.
+Both read the same `config.yaml` and keep secrets out of it: the config references them as `${NAME}`, and they reach the process as environment variables.
 
 ### Kubernetes (Helm)
 
-The chart in `deploy/helm/s3-orchestrator/` deploys the whole stack: Deployment, Service, ConfigMap, Secret, ServiceAccount, NetworkPolicy and an optional Ingress.
+The chart is published to GitHub Container Registry and signed with cosign:
 
 ```bash
-# Install with defaults
-helm install s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator --create-namespace
-
-# Install with your own values
-helm install s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator --create-namespace -f my-values.yaml
-
-# Upgrade after changing values
-helm upgrade s3-orchestrator deploy/helm/s3-orchestrator \
-  -n s3-orchestrator -f my-values.yaml
+helm install s3-orchestrator oci://ghcr.io/afreidah/charts/s3-orchestrator \
+  --version 0.178.0 -n s3-orchestrator --create-namespace -f my-values.yaml
 
 # Render manifests without Helm, for a kubectl apply workflow
-helm template s3-orchestrator deploy/helm/s3-orchestrator -f my-values.yaml > manifests.yaml
+helm template s3-orchestrator oci://ghcr.io/afreidah/charts/s3-orchestrator \
+  --version 0.178.0 -f my-values.yaml > manifests.yaml
 ```
 
-The chart needs a PostgreSQL instance reachable from the cluster; SQLite is single-instance only and will not survive a rescheduled pod. Backends, credentials and the database connection all come from your values file - `deploy/helm/s3-orchestrator/values.yaml` lists every option with its default.
+It deploys the orchestrator and needs a PostgreSQL database and at least one backend that already exist, and Redis for more than one replica. The [chart README](../deploy/helm/s3-orchestrator/README.md) covers signature verification, secrets, Gateway API and Ingress, replicas and the spill directory, and `values.yaml` documents every value.
+
+### Nomad (Pack and Job)
+
+The pack is attached to each GitHub Release as `s3_orchestrator-pack-<version>.tar.gz`, and lives in [`deploy/nomad/packs/s3_orchestrator`](../deploy/nomad/packs/s3_orchestrator/README.md):
+
+```bash
+nomad var put nomad/jobs/s3-orchestrator DB_PASSWORD=... UI_SESSION_SECRET=...
+nomad-pack run ./s3_orchestrator --var config_file=./config.yaml
+```
+
+By default the task's environment is every item of the job's Nomad Variable, so the pack runs on a cluster without Vault. Vault through workload identity, Consul KV and extra files such as TLS certificates are set through its variables.
+
+For a plain job file, [`deploy/nomad/s3-orchestrator.nomad.hcl`](../deploy/nomad/s3-orchestrator.nomad.hcl) takes the same settings as variables, with production values in `s3-orchestrator.vars.hcl`:
+
+```bash
+nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.178.0 s3-orchestrator.nomad.hcl
+```
 
 ### Multi-instance deployment
 

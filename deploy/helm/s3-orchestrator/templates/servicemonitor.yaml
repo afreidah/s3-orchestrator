@@ -1,0 +1,32 @@
+# -------------------------------------------------------------------------------
+# Helm Template - ServiceMonitor (optional)
+#
+# Author: Alex Freidah
+#
+# Prometheus Operator scrape target. It selects the metrics Service when the
+# dedicated listener is on, and the S3 Service otherwise. Needs the Operator's
+# CRDs, so it stays off by default.
+# -------------------------------------------------------------------------------
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "s3-orchestrator.fullname" . }}
+  labels:
+    {{- include "s3-orchestrator.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "s3-orchestrator.selectorLabels" . | nindent 6 }}
+      {{- if .Values.metrics.dedicatedListener.enabled }}
+      app.kubernetes.io/component: metrics
+      {{- end }}
+  endpoints:
+    - port: {{ if .Values.metrics.dedicatedListener.enabled }}metrics{{ else }}http{{ end }}
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}

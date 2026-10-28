@@ -1,0 +1,96 @@
+# -------------------------------------------------------------------------------
+# Helm Chart CI - Every Optional Resource
+#
+# Author: Alex Freidah
+#
+# Turns on every resource and value the defaults leave off, so make helm-check
+# validates each template the chart can render.
+# -------------------------------------------------------------------------------
+
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+serviceAccount:
+  create: false
+  name: s3-orchestrator
+
+autoscaling:
+  enabled: true
+
+podLabels:
+  team: storage
+podAnnotations:
+  example.com/owner: storage
+priorityClassName: high
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: storage
+    effect: NoSchedule
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: s3-orchestrator
+
+extraEnv:
+  - name: BACKEND1_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: backend-credentials
+        key: secret-key
+extraEnvFrom:
+  - secretRef:
+      name: backend-credentials
+extraVolumes:
+  - name: tls
+    secret:
+      secretName: s3-orchestrator-tls
+extraVolumeMounts:
+  - name: tls
+    mountPath: /etc/s3-orchestrator/tls
+    readOnly: true
+
+spill:
+  medium: Memory
+  sizeLimit: 2Gi
+
+ingress:
+  enabled: true
+  className: traefik
+  host: s3.example.com
+  tls:
+    enabled: true
+    secretName: s3-orchestrator-tls
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: public
+      namespace: gateway-system
+  hostnames:
+    - s3.example.com
+  timeouts:
+    request: 0s
+
+metrics:
+  dedicatedListener:
+    enabled: true
+    scraperSelector:
+      matchLabels:
+        app.kubernetes.io/name: prometheus
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+
+existingSecret: s3-orchestrator-credentials
+
+config:
+  redis:
+    address: "redis:6379"
+    password: "${REDIS_PASSWORD}"

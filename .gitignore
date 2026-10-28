@@ -13,6 +13,7 @@ packaging/changelog.gz
 loadtest/s3-loadtest
 loadtest/loadtest
 perf-results/
+benchmarks/
 
 # What Terraform leaves next to any configuration it is pointed at, and the
 # coverage profile the provider's own test job writes. The provider directory

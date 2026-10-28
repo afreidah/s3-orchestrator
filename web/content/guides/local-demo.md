@@ -18,6 +18,7 @@ Both demos require:
 **Nomad demo** additionally requires:
 
 - [Nomad](https://developer.hashicorp.com/nomad/install) - runs in `-dev` mode, no cluster setup needed
+- [Nomad Pack](https://developer.hashicorp.com/nomad/tools/nomad-pack) - the demo deploys the orchestrator with the project's pack
 - `curl`
 
 **Kubernetes demo** additionally requires:

@@ -1,134 +1,226 @@
 # -------------------------------------------------------------------------------
 # S3 Orchestrator - Helm Chart Values
 #
-# Production-ready defaults. Users override via --set or a custom values file.
-# Sensitive values use ${VAR} syntax and are injected from the Secret.
+# Author: Alex Freidah
+#
+# Defaults for one instance running against an existing PostgreSQL. Secrets
+# reach the pod as environment variables from a Secret, and the config refers
+# to them as ${NAME}. values.schema.json checks these values at install.
 # -------------------------------------------------------------------------------
 
-replicaCount: 1
-
-# Operating mode: "all" (default), "api", or "worker".
-# For multi-instance HA, deploy separate api and worker releases.
-mode: all
+# -------------------------------------------------------------------------------
+# Image and Mode
+# -------------------------------------------------------------------------------
 
 image:
   repository: ghcr.io/afreidah/s3-orchestrator
-  tag: ""  # defaults to Chart.appVersion
+  # --- Defaults to the chart's release; required for a chart from a checkout ---
+  tag: ""
+  # --- sha256:... pins the image and wins over tag ---
+  digest: ""
   pullPolicy: IfNotPresent
 
+# --- Secrets for pulling from a private registry: [{ name: regcred }] ---
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Go runtime tuning. GOMEMLIMIT should be ~90% of resources.limits.memory.
-env:
-  GOMEMLIMIT: "900MiB"
-  GOMAXPROCS: "2"
+# --- all, api or worker; split a fleet into one api and one worker release ---
+mode: all
 
+# -------------------------------------------------------------------------------
+# Replicas and Availability
+# -------------------------------------------------------------------------------
+
+# --- More than one replica, or autoscaling, requires redis in the config ---
+replicaCount: 1
+
+# --- HorizontalPodAutoscaler on CPU; replaces replicaCount when enabled ---
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# --- Keeps a node drain from taking every pod; rendered only above one replica ---
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# --- server.shutdown_delay, then up to 30s HTTP, 30s upload and 10s background drains ---
+terminationGracePeriodSeconds: 90
+
+# -------------------------------------------------------------------------------
+# Pod and Scheduling
+# -------------------------------------------------------------------------------
+
+serviceAccount:
+  # --- false uses an existing account, named below or the namespace default ---
+  create: true
+  name: ""
+  # --- For workload identity, such as eks.amazonaws.com/role-arn ---
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# --- Spread replicas across zones ---
+topologySpreadConstraints: []
+# - maxSkew: 1
+#   topologyKey: topology.kubernetes.io/zone
+#   whenUnsatisfiable: ScheduleAnyway
+#   labelSelector:
+#     matchLabels:
+#       app.kubernetes.io/name: s3-orchestrator
+
+# --- Extra environment, such as a key from another Secret ---
+extraEnv: []
+# - name: BACKEND1_SECRET_KEY
+#   valueFrom:
+#     secretKeyRef:
+#       name: backend-credentials
+#       key: secret-key
+
+# --- Whole Secrets or ConfigMaps as environment ---
+extraEnvFrom: []
+# - secretRef:
+#     name: backend-credentials
+
+# --- Files the config points at, such as server.tls.cert_file ---
+extraVolumes: []
+# - name: tls
+#   secret:
+#     secretName: s3-orchestrator-tls
+extraVolumeMounts: []
+# - name: tls
+#   mountPath: /etc/s3-orchestrator/tls
+#   readOnly: true
+
+# -------------------------------------------------------------------------------
+# Resources and Spill
+# -------------------------------------------------------------------------------
+
+# --- No CPU limit: requests place the pod, and a limit only adds throttling ---
+# --- The process sets its Go memory limit to 90% of limits.memory ---
 resources:
   requests:
     cpu: 500m
-    memory: 512Mi
-    ephemeral-storage: 100Mi
-  limits:
-    cpu: "2"
     memory: 1Gi
-    ephemeral-storage: 500Mi
+    ephemeral-storage: 256Mi
+  limits:
+    memory: 1Gi
+    # --- Keep above spill.sizeLimit while the spill is on disk ---
+    ephemeral-storage: 11Gi
 
-serviceAccount:
-  create: true
-  annotations: {}
+# --- Uploads over 32 MiB buffer here, one file per concurrent large write ---
+spill:
+  # --- "" for node disk, Memory for tmpfs, which counts against limits.memory ---
+  medium: ""
+  # --- Size for max_concurrent_writes times the largest expected object ---
+  sizeLimit: 10Gi
+
+# -------------------------------------------------------------------------------
+# Service and Exposure
+# -------------------------------------------------------------------------------
 
 service:
+  # --- ClusterIP, NodePort or LoadBalancer ---
   type: ClusterIP
   port: 9000
 
 ingress:
   enabled: false
-  className: nginx
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "5g"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
-  # Empty matches every host.
-  host: s3.example.com
+  # --- Empty uses the cluster's default IngressClass ---
+  className: ""
+  # --- Controller settings, such as a body size and timeouts that fit large uploads ---
+  annotations: {}
+  # --- Empty matches every host ---
+  host: ""
   tls:
     enabled: false
-    secretName: s3-orchestrator-tls
+    secretName: ""
 
+# --- Gateway API route to an existing Gateway ---
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+  # - name: public
+  #   namespace: gateway-system
+  hostnames: []
+  # - s3.example.com
+  # --- Large uploads need a long request timeout, or 0s for none ---
+  timeouts: {}
+  # request: 0s
+
+# --- Ingress on the S3 port from any source; egress unrestricted ---
 networkPolicy:
   enabled: true
 
+# -------------------------------------------------------------------------------
+# Metrics
+# -------------------------------------------------------------------------------
+
 metrics:
+  # --- prometheus.io scrape annotations on the pod ---
   enabled: true
   path: /metrics
 
-  # Dedicated metrics listener (parity with the Nomad deployment).
-  # When enabled, the orchestrator binds /metrics to a separate port
-  # instead of multiplexing on the main S3 listener. The chart creates
-  # a containerPort, a *-metrics ClusterIP Service, and (when the top-
-  # level networkPolicy is enabled) an ingress rule scoped to the
-  # configured scraper selector.
-  #
-  # Leave disabled for the simplest deployment shape (inline metrics
-  # on the S3 port, no pprof, no extra Service).
+  # --- /metrics on its own port, Service and NetworkPolicy rule ---
   dedicatedListener:
     enabled: false
     port: 9001
-    # podSelector for the NetworkPolicy ingress rule. Defaults to "any
-    # pod in the namespace"; tighten this to your Prometheus operator
-    # pods to keep the metrics surface internal.
+    # --- Pods allowed to scrape; empty allows any pod in the namespace ---
     scraperSelector: {}
-    # Example:
-    # scraperSelector:
-    #   matchLabels:
-    #     app.kubernetes.io/name: prometheus
+    # matchLabels:
+    #   app.kubernetes.io/name: prometheus
 
-  # Pprof endpoints (/debug/pprof/*) are mounted on the dedicated
-  # metrics listener when this is true. OFF by default - pprof exposes
-  # runtime internals (stack frames, command-line flags, on-demand CPU
-  # profiles that double as DoS amplifiers). Only opt in temporarily
-  # for active profiling investigations and keep the metrics Service
-  # selector pinned to cluster-internal scrapers.
-  #
-  # Has no effect unless metrics.dedicatedListener.enabled is also true
-  # (inline metrics never get pprof).
+  # --- /debug/pprof on the dedicated listener; exposes runtime internals, only while profiling ---
   pprof: false
 
-# Use an existing Secret instead of creating one from .secrets below.
-# The Secret must contain all env vars referenced by ${VAR} in the config.
+  # --- For Prometheus Operator, which ignores the prometheus.io annotations ---
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    # --- Labels the Prometheus resource selects ServiceMonitors by ---
+    labels: {}
+
+# -------------------------------------------------------------------------------
+# Secrets
+# -------------------------------------------------------------------------------
+
+# --- An existing Secret, from sealed-secrets or External Secrets, replaces secrets below ---
 existingSecret: ""
 
-# Inline secrets (only used when existingSecret is empty).
-# Values are base64-encoded automatically by the template.
+# --- One environment variable each, referenced from the config as ${NAME} ---
 secrets:
   DB_PASSWORD: ""
   BUCKET_ACCESS_KEY: ""
   BUCKET_SECRET_KEY: ""
   ROOT_ACCESS_KEY_ID: ""
   ROOT_SECRET_ACCESS_KEY: ""
-  # Add backend credentials as needed:
+  UI_SESSION_SECRET: ""
   # BACKEND1_ACCESS_KEY: ""
   # BACKEND1_SECRET_KEY: ""
-  # ENCRYPTION_KEY: ""  # generate with: openssl rand -base64 32
+  # ENCRYPTION_KEY: ""
 
 # -------------------------------------------------------------------------------
 # S3 Orchestrator Configuration
-#
-# Rendered as config.yaml in the ConfigMap. This is the same config format
-# documented in the project README - no Helm-specific syntax required.
-#
-# To use a complete config file you already have instead, pass it whole:
-#   helm install ... --set-file configFile=config.yaml
-# It is mounted as-is and replaces the config map below entirely; nothing from
-# the defaults is merged into it.
 # -------------------------------------------------------------------------------
+
+# --- A complete config.yaml that replaces config below: --set-file configFile=config.yaml ---
 configFile: ""
 
+# --- Rendered as config.yaml; the configuration reference documents every field ---
 config:
   server:
     listen_addr: "0.0.0.0:9000"
     backend_timeout: "30s"
+    # --- Lets the endpoint removal reach the load balancer before draining ---
     shutdown_delay: "5s"
 
   database:
@@ -148,9 +240,7 @@ config:
       credentials:
         - access_key_id: "${BUCKET_ACCESS_KEY}"
           secret_access_key: "${BUCKET_SECRET_KEY}"
-      # Browser origins allowed to reach this bucket cross-origin. Required
-      # for direct-from-browser uploads: the preflight arrives unsigned, so
-      # without a matching rule the presigned PUT is never sent.
+      # --- Browser origins allowed cross-origin; required for direct browser uploads ---
       # cors:
       #   - allowed_origins: ["https://app.example.com"]
       #     allowed_methods: ["GET", "PUT"]
@@ -158,27 +248,24 @@ config:
       #     expose_headers: ["ETag"]
       #     max_age: 3600
 
-  # Add your storage backends here. Each backend needs an S3-compatible
-  # endpoint, credentials, and a quota. Example:
+  # --- At least one backend is required ---
   backends: []
-  # - name: "oci"
-  #   endpoint: "https://namespace.compat.objectstorage.region.oraclecloud.com"
-  #   region: "us-phoenix-1"
+  # - name: "primary"
+  #   endpoint: "https://s3.example.com"
+  #   region: "us-east-1"
   #   bucket: "my-bucket"
   #   access_key_id: "${BACKEND1_ACCESS_KEY}"
   #   secret_access_key: "${BACKEND1_SECRET_KEY}"
   #   force_path_style: true
-  #   quota_bytes: 10737418240  # 10 GB
-  #   max_object_size: 0        # per-object size limit in bytes (0 = unlimited)
+  #   quota_bytes: 10737418240
 
+  # --- spread writes to the least-used backend, pack fills one at a time ---
   routing_strategy: "spread"
 
-  # Encryption requires a master key. Uncomment and add ENCRYPTION_KEY to
-  # your secrets to enable. Generate with: openssl rand -base64 32
+  # --- Envelope encryption; generate the key with openssl rand -base64 32 ---
   # encryption:
   #   enabled: true
   #   master_key: "${ENCRYPTION_KEY}"
-  #   chunk_size: 65536
 
   integrity:
     enabled: true
@@ -186,35 +273,42 @@ config:
     scrubber_interval: "6h"
     scrubber_batch_size: 100
 
-  # In-memory LRU cache for frequently read objects. Reduces backend API calls
-  # and egress by serving repeated reads from memory. Objects are cached after
-  # the first full GET and invalidated on write.
-  cache:
-    enabled: false
-    max_size: "256MB"
-    max_object_size: "10MB"
-    ttl: "5m"
+  # --- In-memory cache of objects read more than once; invalidated on write ---
+  # cache:
+  #   enabled: true
+  #   max_size: "256MB"
+  #   max_object_size: "10MB"
+  #   ttl: "5m"
 
   replication:
     factor: 2
     worker_interval: "5m"
     batch_size: 50
 
+  # --- Database outage: reads broadcast to every backend, writes answer 503 ---
   circuit_breaker:
     failure_threshold: 3
     open_timeout: "15s"
     cache_ttl: "60s"
 
+  # --- Stops routing to a backend that keeps failing until a probe succeeds ---
   backend_circuit_breaker:
     enabled: true
     failure_threshold: 5
     open_timeout: "5m"
 
+  # --- Per client IP ---
   rate_limit:
     enabled: true
     requests_per_sec: 100
     burst: 200
 
+  # --- Shared usage counters; required above one replica ---
+  # redis:
+  #   address: "redis:6379"
+  #   password: "${REDIS_PASSWORD}"
+
+  # --- The keypair that administers the deployment and reaches every bucket ---
   auth:
     root:
       access_key_id: "${ROOT_ACCESS_KEY_ID}"
@@ -229,6 +323,7 @@ config:
       enabled: true
       path: "/metrics"
 
+  # --- Shorter flushes as a backend nears a usage limit ---
   usage_flush:
     interval: "30s"
     adaptive_enabled: true

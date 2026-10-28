@@ -5,7 +5,7 @@
 #
 # Runs on push to main and pull requests. A path-detection job determines which
 # file categories changed (Go, web/docs, packaging) and downstream jobs use
-# those outputs to skip irrelevant work — e.g. a docs-only PR skips all Go
+# those outputs to skip irrelevant work - e.g. a docs-only PR skips all Go
 # testing. On push to main, Docker image builds run for the categories that
 # changed.
 # -------------------------------------------------------------------------------
@@ -36,6 +36,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       packaging: ${{ steps.filter.outputs.packaging }}
       worker: ${{ steps.filter.outputs.worker }}
+      deploy: ${{ steps.filter.outputs.deploy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
@@ -62,6 +63,11 @@ jobs:
               - '.goreleaser.yaml'
             worker:
               - 'deploy/cloudflare-worker/**'
+            deploy:
+              - 'deploy/helm/**'
+              - 'deploy/nomad/**'
+              - 'deploy/local/config.yaml'
+              - 'Makefile'
 
   # ---------------------------------------------------------------------------
   # GO CHECKS
@@ -93,7 +99,7 @@ jobs:
             echo "::error::.version must be incremented when Go or SQL files change (current: $PR_VERSION)"
             exit 1
           fi
-          echo "Version bumped: $BASE_VERSION → $PR_VERSION"
+          echo "Version bumped: $BASE_VERSION -> $PR_VERSION"
 
   # Catches go.mod drift between root and nested modules, including the
   # website's Hugo module file under web/.
@@ -379,6 +385,40 @@ jobs:
 
       - name: Test with coverage thresholds
         run: npm run coverage
+
+  # ---------------------------------------------------------------------------
+  # DEPLOYMENT PACKAGING
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: [changes]
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      # For kubeconform, which make helm-check runs with go run.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version-file: go.mod
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - uses: hashicorp/setup-nomad@ceba9087d4322dbdd7b35dafac5a87a8c459a157 # v1.0.0
+        with:
+          version: 2.0.7
+
+      - uses: hashicorp/setup-nomad-pack@36154659711632399739eb3b34d2e71dd54ed473 # 0.10.0
+        with:
+          version: 0.4.2
+
+      - name: Check the Helm chart
+        run: make helm-check
+
+      - name: Check the Nomad pack and job
+        run: make pack-check
 
   # ---------------------------------------------------------------------------
   # SONARQUBE ANALYSIS

@@ -1,0 +1,23 @@
+# -------------------------------------------------------------------------------
+# Helm Template - PodDisruptionBudget
+#
+# Author: Alex Freidah
+#
+# Keeps a voluntary disruption, such as a node drain, from evicting more than
+# maxUnavailable pods at once. Rendered only when more than one replica can
+# run, since a budget over a single pod would block every drain of its node.
+# -------------------------------------------------------------------------------
+
+{{- if and .Values.podDisruptionBudget.enabled (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "s3-orchestrator.fullname" . }}
+  labels:
+    {{- include "s3-orchestrator.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "s3-orchestrator.selectorLabels" . | nindent 6 }}
+{{- end }}

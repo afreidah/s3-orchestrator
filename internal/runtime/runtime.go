@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -100,6 +101,11 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// production handler chain (ErrAttrHandler wrapping the JSON
 	// handler) rather than the bare default.
 	r.log = slog.Default().With(logfmt.Component("runtime"))
+
+	if limit := containerMemoryLimit(cgroupMemoryMaxPath(procSelfCgroup, cgroupRoot)); limit > 0 {
+		debug.SetMemoryLimit(limit)
+		r.log.InfoContext(context.Background(), "memory limit set from cgroup", "memory_limit_bytes", limit)
+	}
 
 	// Applied here, before anything is wired that could serve a PUT. Config
 	// validation has already established the directory exists, so a failure

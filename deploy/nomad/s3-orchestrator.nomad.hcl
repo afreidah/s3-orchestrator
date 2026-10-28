@@ -1,65 +1,257 @@
 # -------------------------------------------------------------------------------
-# S3 Orchestrator - Nomad Job Specification
+# S3 Orchestrator - Nomad Job
 #
 # Author: Alex Freidah
 #
-# Production-ready Nomad job for the s3-orchestrator. Deploys the service with
-# three storage backends (OCI Object Storage, Backblaze B2, and MinIO) spanning
-# multiple providers. With replication factor 2 and spread routing, every object
-# is written to the least-utilized backend and asynchronously replicated to a
-# second backend -- distributing copies across the pool like a storage mesh.
-# Secrets are injected from HashiCorp Vault via Nomad template stanzas.
-#
-# Customize the variables block and Vault path, then deploy:
-#   nomad job run -var="version=v1.0.0" s3-orchestrator.nomad.hcl
+# Runs the orchestrator as a service job with its config read from a file when
+# the job is submitted. Secrets stay out of the file and reach the task as
+# environment variables, by default from the Nomad Variable at
+# nomad/jobs/s3-orchestrator. Production values are in s3-orchestrator.vars.hcl:
+#   nomad job run -var-file=s3-orchestrator.vars.hcl -var=version=v0.178.0 s3-orchestrator.nomad.hcl
 # -------------------------------------------------------------------------------
 
-variable "version" {
-  description = "Container image tag (use explicit versions, not 'latest')"
+# -------------------------------------------------------------------------------
+# Variables
+# -------------------------------------------------------------------------------
+
+# --- Job and placement ---
+variable "region" {
+  description = "Region to run in; empty uses the agent's region"
   type        = string
-  default     = "v1.0.0"
+  default     = ""
 }
 
-variable "datacenter" {
-  description = "Nomad datacenter"
+variable "namespace" {
+  description = "Namespace to run in; empty uses the default namespace"
   type        = string
-  default     = "dc1"
+  default     = ""
 }
+
+variable "datacenters" {
+  description = "Datacenters eligible for placement"
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "node_pool" {
+  description = "Node pool eligible for placement"
+  type        = string
+  default     = "default"
+}
+
+variable "count" {
+  description = "Number of instances; more than one requires redis in the config"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.count >= 1
+    error_message = "count must be at least 1."
+  }
+}
+
+variable "distinct_hosts" {
+  description = "Place each instance on a different client node"
+  type        = bool
+  default     = false
+}
+
+# --- Image and mode ---
+variable "image" {
+  description = "Container image repository"
+  type        = string
+  default     = "ghcr.io/afreidah/s3-orchestrator"
+}
+
+variable "version" {
+  description = "Container image tag, such as v0.178.0"
+  type        = string
+
+  validation {
+    condition     = var.version != "" && var.version != "latest"
+    error_message = "version must name a release, such as v0.178.0."
+  }
+}
+
+variable "mode" {
+  description = "Run mode: all, api or worker"
+  type        = string
+  default     = "all"
+
+  validation {
+    condition     = contains(["all", "api", "worker"], var.mode)
+    error_message = "mode must be all, api or worker."
+  }
+}
+
+# --- Networking and service ---
+variable "http_port" {
+  description = "Static host port for the S3 listener; 0 picks a dynamic port"
+  type        = number
+  default     = 0
+}
+
+variable "service_provider" {
+  description = "Service registration provider: nomad or consul"
+  type        = string
+  default     = "nomad"
+
+  validation {
+    condition     = contains(["nomad", "consul"], var.service_provider)
+    error_message = "service_provider must be nomad or consul."
+  }
+}
+
+variable "service_tags" {
+  description = "Tags on the S3 service, such as Traefik router rules"
+  type        = list(string)
+  default     = []
+}
+
+# --- Resources and shutdown ---
+variable "resources" {
+  description = "CPU in MHz and memory in MiB; memory_max above memory allows oversubscription, 0 leaves it off"
+  type = object({
+    cpu        = number
+    memory     = number
+    memory_max = number
+  })
+  default = {
+    cpu        = 1000
+    memory     = 1024
+    memory_max = 0
+  }
+}
+
+variable "shutdown_delay" {
+  description = "Time between deregistering the services and sending SIGTERM, so clients stop routing first"
+  type        = string
+  default     = "5s"
+}
+
+variable "kill_timeout" {
+  description = "SIGTERM to SIGKILL; covers up to 70s of HTTP, upload and background-service drains"
+  type        = string
+  default     = "90s"
+}
+
+# --- Configuration and secrets ---
+variable "config_file" {
+  description = "Path to the config.yaml to run, read when the job is submitted; reference secrets in it as $${NAME}"
+  type        = string
+}
+
+variable "env_template" {
+  description = "Nomad template rendered as the task's environment; the default exports every item of the job's Nomad Variable, and empty sets nothing"
+  type        = string
+  default     = <<EOH
+{{- with nomadVar (print "nomad/jobs/" (env "NOMAD_JOB_ID")) }}
+{{- range $k, $v := . }}
+{{ $k }}={{ $v }}
+{{- end }}
+{{- end }}
+EOH
+}
+
+variable "templates" {
+  description = "Extra files the config points at, such as TLS certificates, rendered into secrets/<destination>"
+  type = list(object({
+    data        = string
+    destination = string
+  }))
+  default = []
+}
+
+variable "vault_role" {
+  description = "Vault role the task logs in with through workload identity; empty leaves Vault out"
+  type        = string
+  default     = ""
+}
+
+# -------------------------------------------------------------------------------
+# Job
+# -------------------------------------------------------------------------------
 
 job "s3-orchestrator" {
-  datacenters = [var.datacenter]
+  region      = var.region == "" ? null : var.region
+  datacenters = var.datacenters
+  node_pool   = var.node_pool
   type        = "service"
+  namespace   = var.namespace == "" ? null : var.namespace
+
+  # ---------------------------------------------------------------------------
+  # Update Strategy
+  # ---------------------------------------------------------------------------
+
+  update {
+    max_parallel      = 1
+    canary            = var.http_port > 0 ? 0 : 1
+    auto_promote      = var.http_port == 0
+    health_check      = "checks"
+    min_healthy_time  = "30s"
+    healthy_deadline  = "5m"
+    progress_deadline = "10m"
+    auto_revert       = true
+  }
+
+  # ---------------------------------------------------------------------------
+  # Task Group: s3-orchestrator
+  # ---------------------------------------------------------------------------
 
   group "s3-orchestrator" {
-    count = 1
+    count          = var.count
+    shutdown_delay = var.shutdown_delay
 
-    network {
-      port "http" {
-        static = 9000
-      }
-      # Dedicated metrics+pprof listener. Pprof endpoints are mounted
-      # here, never on the public S3 port. Bind via the YAML
-      # template below to 127.0.0.1 or a private network interface.
-      port "metrics" {
-        static = 9001
+    # -------------------------------------------------------------------------
+    # Placement
+    # -------------------------------------------------------------------------
+
+    dynamic "constraint" {
+      for_each = var.distinct_hosts ? [true] : []
+      content {
+        operator = "distinct_hosts"
+        value    = "true"
       }
     }
 
-    service {
-      name = "s3-orchestrator"
-      port = "http"
+    # -------------------------------------------------------------------------
+    # Network: S3 listener and the dedicated metrics listener
+    # -------------------------------------------------------------------------
 
-      # Liveness — always 200, keeps the allocation alive during DB outages.
-      check {
-        type     = "http"
-        path     = "/health"
-        interval = "10s"
-        timeout  = "3s"
+    network {
+      dynamic "port" {
+        for_each = var.http_port > 0 ? [] : [true]
+        labels   = ["http"]
+        content {
+          to = 9000
+        }
       }
+      dynamic "port" {
+        for_each = var.http_port > 0 ? [var.http_port] : []
+        labels   = ["http"]
+        content {
+          static = port.value
+          to     = 9000
+        }
+      }
+      port "metrics" {
+        to = 9001
+      }
+    }
 
-      # Readiness — returns 503 until startup completes and during shutdown
-      # drain. Gates rolling deploys so traffic only routes to ready instances.
+    # -------------------------------------------------------------------------
+    # Services
+    # -------------------------------------------------------------------------
+
+    service {
+      name     = "s3-orchestrator"
+      port     = "http"
+      provider = var.service_provider
+      tags     = var.service_tags
+
+      # --- Readiness: 503 until started and while draining ---
       check {
+        name      = "ready"
         type      = "http"
         path      = "/health/ready"
         interval  = "5s"
@@ -67,294 +259,107 @@ job "s3-orchestrator" {
         on_update = "require_healthy"
       }
 
-      # Uncomment for Traefik integration:
-      # tags = [
-      #   "traefik.enable=true",
-      #   "traefik.http.routers.s3-orchestrator.rule=Host(`s3.example.com`)",
-      #   "traefik.http.routers.s3-orchestrator.tls=true",
-      # ]
+      # --- Liveness: stays 200 through a database outage ---
+      check {
+        name     = "alive"
+        type     = "http"
+        path     = "/health"
+        interval = "10s"
+        timeout  = "3s"
+
+        check_restart {
+          limit = 3
+          grace = "2m"
+        }
+      }
     }
+
+    # --- The config must set telemetry.metrics.listen to 0.0.0.0:9001 ---
+    service {
+      name     = "s3-orchestrator-metrics"
+      port     = "metrics"
+      provider = var.service_provider
+      tags     = ["metrics"]
+    }
+
+    # -------------------------------------------------------------------------
+    # Task: s3-orchestrator
+    # -------------------------------------------------------------------------
 
     task "s3-orchestrator" {
       driver = "docker"
 
+      # -----------------------------------------------------------------------
+      # Vault, only when vault_role is set
+      # -----------------------------------------------------------------------
+
+      dynamic "vault" {
+        for_each = var.vault_role == "" ? [] : [var.vault_role]
+        content {
+          role        = vault.value
+          change_mode = "noop"
+        }
+      }
+
+      # -----------------------------------------------------------------------
+      # Container
+      # -----------------------------------------------------------------------
+
       config {
-        image = "ghcr.io/afreidah/s3-orchestrator:${var.version}"
-        # `metrics` must be listed alongside `http` so Nomad's docker
-        # driver actually publishes the port from the container to the
-        # host. Declaring it only in the network block reserves the
-        # number but does not bind it.
+        image = "${var.image}:${var.version}"
+        args  = ["-config", "/secrets/config.yaml", "-mode", var.mode]
         ports = ["http", "metrics"]
-        # For multi-instance deployments, add -mode to split API and worker roles:
-        #   API group:    args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "api"]
-        #   Worker group: args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "worker"]
 
-        volumes = [
-          "secrets/config.yaml:/etc/s3-orchestrator/config.yaml",
-        ]
-
-        # --- File descriptor limits ---
-        # The orchestrator holds many concurrent connections (client requests +
-        # backend S3 calls + DB pool + background workers). Raise the default
-        # container limit to avoid fd exhaustion under load.
+        # --- Client, backend and database connections share one fd table ---
         ulimit {
           nofile = "65535:65535"
         }
       }
 
-      # --- Runtime tuning ---
-      # GOMEMLIMIT tells the Go GC the container's memory ceiling so it can
-      # make informed collection decisions. Set to ~90% of the memory limit
-      # to leave headroom for non-heap allocations (goroutine stacks, cgo).
-      # Recommended host-level sysctls for high-concurrency proxying:
-      #   net.core.somaxconn=65535        — pending connection queue size
-      #   net.ipv4.ip_local_port_range="10000 65535" — ephemeral port range
-      #   net.ipv4.tcp_tw_reuse=1         — reuse TIME_WAIT sockets
-      #   net.ipv4.tcp_fin_timeout=15     — faster socket reclamation
-      env {
-        GOMEMLIMIT = "922MiB"
-      }
+      # -----------------------------------------------------------------------
+      # Templates: config, environment and extra files
+      # -----------------------------------------------------------------------
 
-      # --- Vault integration for secret injection ---
-      vault {
-        policies = ["s3-orchestrator"]
-      }
-
-      # --- Configuration rendered from Vault secrets ---
-      # All sensitive values are pulled from Vault KV v2.
-      # Create the secret at: vault kv put secret/s3-orchestrator \
-      #   db_password=... bucket_access_key=... bucket_secret_key=... \
-      #   root_access_key_id=... root_secret_access_key=... ui_session_secret=... \
-      #   oci_endpoint=... oci_region=... oci_bucket=... \
-      #   oci_access_key=... oci_secret_key=... \
-      #   b2_endpoint=... b2_region=... b2_bucket=... \
-      #   b2_access_key=... b2_secret_key=... \
-      #   minio_endpoint=... minio_bucket=... \
-      #   minio_access_key=... minio_secret_key=...
+      # --- config.yaml from config_file, secrets left as ${NAME} ---
       template {
+        data        = file(var.config_file)
         destination = "secrets/config.yaml"
-        perms       = "0400"
-        data        = <<-YAML
-          {{ with secret "secret/data/s3-orchestrator" }}
-          # --- HTTP server ---
-          server:
-            listen_addr: "0.0.0.0:9000"
-            max_object_size: 5368709120      # 5 GB
-            # max_concurrent_requests: 1000   # default: 1000; set to 2-3x database.max_conns for production
-            backend_timeout: "2m"
-            shutdown_delay: "5s"             # wait for Consul deregistration before draining
-
-            # --- TLS termination (optional) ---
-            # Uncomment to enable TLS on the S3 endpoint. Provide PEM-encoded
-            # certificate and key files mounted into the container.
-            # tls:
-            #   cert_file: "/secrets/tls/tls.crt"
-            #   key_file: "/secrets/tls/tls.key"
-            #   min_version: "1.2"
-            #
-            #   # Mutual TLS (mTLS) -- require client certificates signed by a
-            #   # trusted CA. Clients must present a valid certificate to connect.
-            #   # Useful for service-to-service authentication without S3 SigV4.
-            #   # client_ca_file: "/secrets/tls/client-ca.crt"
-
-          # --- PostgreSQL metadata store ---
-          database:
-            driver: postgres
-            host: "postgres.service.consul"
-            port: 5432
-            database: "s3orchestrator"
-            user: "s3orchestrator"
-            password: "{{ .Data.data.db_password }}"
-            ssl_mode: "require"
-            max_conns: 50
-            min_conns: 5
-            max_conn_lifetime: "5m"
-
-          # --- Virtual buckets ---
-          # Each bucket is an isolated namespace with its own credentials.
-          # Multiple credential sets per bucket support reader/writer separation.
-          buckets:
-            - name: "app-data"
-              # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
-              credentials:
-                - access_key_id: "{{ .Data.data.bucket_access_key }}"
-                  secret_access_key: "{{ .Data.data.bucket_secret_key }}"
-
-          # --- Storage backends ---
-          # Three backends across different providers give 40 GB combined
-          # capacity. With replication factor 2, every object exists on two of
-          # the three backends -- the replicator picks the best target each
-          # cycle, spreading copies across the pool like a storage mesh.
-          backends:
-            - name: "oci"
-              endpoint: "{{ .Data.data.oci_endpoint }}"
-              region: "{{ .Data.data.oci_region }}"
-              bucket: "{{ .Data.data.oci_bucket }}"
-              access_key_id: "{{ .Data.data.oci_access_key }}"
-              secret_access_key: "{{ .Data.data.oci_secret_key }}"
-              force_path_style: true
-              quota_bytes: 21474836480       # 20 GB
-              api_request_limit: 50000       # monthly API call cap
-              egress_byte_limit: 10737418240 # 10 GB monthly egress
-
-            - name: "b2"
-              endpoint: "{{ .Data.data.b2_endpoint }}"
-              region: "{{ .Data.data.b2_region }}"
-              bucket: "{{ .Data.data.b2_bucket }}"
-              access_key_id: "{{ .Data.data.b2_access_key }}"
-              secret_access_key: "{{ .Data.data.b2_secret_key }}"
-              force_path_style: true
-              quota_bytes: 10737418240       # 10 GB
-              api_request_limit: 1000000
-
-            - name: "minio"
-              endpoint: "{{ .Data.data.minio_endpoint }}"
-              region: "us-east-1"
-              bucket: "{{ .Data.data.minio_bucket }}"
-              access_key_id: "{{ .Data.data.minio_access_key }}"
-              secret_access_key: "{{ .Data.data.minio_secret_key }}"
-              force_path_style: true
-              quota_bytes: 10737418240       # 10 GB
-
-          # --- Write routing ---
-          # "spread" distributes writes by lowest utilization ratio across backends.
-          # "pack" fills backends sequentially until quota is reached.
-          routing_strategy: "spread"
-
-          # --- Redis shared counters (multi-instance) ---
-          # When running multiple instances, Redis provides shared usage
-          # counters so all instances see the same deltas between PG flushes.
-          # redis:
-          #   address: "redis.service.consul:6379"
-          #   password: "{{ .Data.data.redis_password }}"
-          #   key_prefix: "s3orch"
-          #   failure_threshold: 3
-          #   open_timeout: "15s"
-
-          # --- Replication ---
-          # With 3 backends and factor 2, every object is written to one backend
-          # then asynchronously replicated to a second. The replicator selects a
-          # different backend each time, so copies spread across the pool rather
-          # than always landing on the same pair. Reads automatically fail over
-          # to the replica if the primary copy is unavailable.
-          replication:
-            factor: 2
-            worker_interval: "5m"
-            batch_size: 50
-            unhealthy_threshold: "10m"
-
-          # --- Rebalancer ---
-          # Periodically redistributes objects to equalize utilization across
-          # backends. Generates egress/ingress traffic on your backends.
-          rebalance:
-            enabled: true
-            strategy: "spread"
-            interval: "6h"
-            batch_size: 100
-            threshold: 0.1
-            concurrency: 5
-
-          # --- Database circuit breaker ---
-          # Detects database outages and enters degraded mode: reads broadcast
-          # to all backends, writes return 503 until the database recovers.
-          circuit_breaker:
-            failure_threshold: 3
-            open_timeout: "15s"
-            cache_ttl: "60s"
-
-          # --- Per-backend circuit breakers ---
-          # Detects individual backend failures (expired credentials, provider
-          # outage) and stops routing traffic to the unhealthy backend until a
-          # probe request succeeds. Requires restart to enable/disable.
-          # backend_circuit_breaker:
-          #   enabled: true
-          #   failure_threshold: 5    # consecutive failures before opening
-          #   open_timeout: "5m"      # delay before probing recovery
-
-          # --- Object data cache (disabled by default) ---
-          # In-memory LRU cache for frequently read objects. Reduces backend
-          # API calls and egress by serving repeated reads from memory. Objects
-          # are cached after the first full GET and invalidated on write.
-          # cache:
-          #   enabled: false
-          #   max_size: "256MB"            # total cache capacity (default: 256MB)
-          #   max_object_size: "10MB"      # skip caching objects larger than this (default: 10MB)
-          #   ttl: "5m"                    # cached entry lifetime (default: 5m)
-
-          # --- Per-IP rate limiting ---
-          rate_limit:
-            enabled: true
-            requests_per_sec: 100
-            burst: 200
-            # Trust X-Forwarded-For from internal load balancers
-            trusted_proxies:
-              - "10.0.0.0/8"
-              - "172.16.0.0/12"
-
-          # --- Root credential ---
-          # The keypair this deployment administers itself with: it signs admin
-          # API requests, logs into the dashboard, and reaches every bucket.
-          auth:
-            root:
-              access_key_id: "{{ .Data.data.root_access_key_id }}"
-              secret_access_key: "{{ .Data.data.root_secret_access_key }}"
-
-          # --- Web dashboard ---
-          ui:
-            enabled: true
-            session_secret: "{{ .Data.data.ui_session_secret }}"
-            force_secure_cookies: true
-
-          # --- Object lifecycle ---
-          # Auto-delete objects matching a prefix after the configured retention.
-          lifecycle:
-            rules:
-              - prefix: "tmp/"
-                expiration_days: 7
-
-          # --- Usage counter flush ---
-          # Adaptive flushing shortens the interval when any backend approaches
-          # a usage limit, improving enforcement accuracy.
-          usage_flush:
-            interval: "30s"
-            adaptive_enabled: true
-            adaptive_threshold: 0.8
-            fast_interval: "5s"
-
-          # --- Observability ---
-          telemetry:
-            metrics:
-              enabled: true
-              path: "/metrics"
-              # Dedicated listener for /metrics (and pprof when opted
-              # in below). Mounting pprof on the public S3 listener
-              # would leak runtime internals and offer a DoS amplifier
-              # (/debug/pprof/profile?seconds=300). Bind to an
-              # internal-only interface; the demo uses 0.0.0.0:9001
-              # so its Prometheus can scrape each instance's published
-              # port. Tighten this to 127.0.0.1:9001 or a private
-              # network address for non-local deployments.
-              listen: "127.0.0.1:9001"
-              # Pprof endpoints are opt-in and OFF by default. The
-              # debug surface (CPU profiles, stack traces, command
-              # line) is sensitive, so production should leave this
-              # commented out and only flip it on temporarily during
-              # an investigation while the listener is bound to a
-              # private interface.
-              # pprof: true
-            tracing:
-              enabled: true
-              endpoint: "tempo.service.consul:4317"
-              insecure: true
-              sample_rate: 0.1
-          {{ end }}
-        YAML
+        change_mode = "restart"
       }
+
+      # --- Environment the config's ${NAME} references expand from ---
+      dynamic "template" {
+        for_each = var.env_template == "" ? [] : [var.env_template]
+        content {
+          data        = template.value
+          destination = "secrets/env"
+          env         = true
+          change_mode = "restart"
+        }
+      }
+
+      # --- Extra files the config points at ---
+      dynamic "template" {
+        for_each = var.templates
+        content {
+          data        = template.value.data
+          destination = "secrets/${template.value.destination}"
+          change_mode = "restart"
+        }
+      }
+
+      # -----------------------------------------------------------------------
+      # Resources and Shutdown
+      # -----------------------------------------------------------------------
 
       resources {
-        cpu    = 1024
-        memory = 1024
+        cpu        = var.resources.cpu
+        memory     = var.resources.memory
+        memory_max = var.resources.memory_max > 0 ? var.resources.memory_max : null
       }
+
+      kill_signal  = "SIGTERM"
+      kill_timeout = var.kill_timeout
     }
   }
 }

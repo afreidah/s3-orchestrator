@@ -62,7 +62,25 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.177.x (current)
+### v0.178.x (current)
+
+**Helm chart and Nomad pack published with each release, memory limit from the container ([#1440](https://github.com/afreidah/s3-orchestrator/issues/1440), v0.178.0)**
+
+The Helm chart is published to `oci://ghcr.io/afreidah/charts/s3-orchestrator` at the release version and signed with cosign, and a Nomad pack, `s3_orchestrator`, is attached to the GitHub Release. Upgrading a release of the chart from the repository:
+
+- `env` is removed. Drop `GOMEMLIMIT` and `GOMAXPROCS`; anything else moves to `extraEnv` as a list of `name`/`value` entries.
+- The default resources no longer set a CPU limit, and request 1Gi of memory to match the limit. The default `ephemeral-storage` limit rises to 11Gi to cover the new 10Gi spill directory at `/tmp`, which uploads over 32 MiB need; size it with `spill.sizeLimit`.
+- `ingress.className` defaults to empty, the cluster's default IngressClass, and `ingress.annotations` to none. Set both to keep ingress-nginx.
+- `secrets` gains `UI_SESSION_SECRET`, which the default `config.ui` reads. Set it, or turn the UI off.
+- The chart refuses `database.driver: sqlite`, and more than one replica or autoscaling without `redis` in the config.
+- A chart installed from a checkout has no `appVersion` and needs `image.tag`.
+- `values.schema.json` rejects unknown keys, so a misspelled value fails the install instead of being ignored.
+
+The Nomad job in `deploy/nomad` now takes variables, with production values in `s3-orchestrator.vars.hcl`. It reads its config from a file, takes secrets as environment variables, uses Vault through workload identity, deregisters 5 seconds before SIGTERM, and allows 90 seconds for the drains.
+
+The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it runs under, unless `GOMEMLIMIT` is set. A deployment that sets `GOMEMLIMIT` or `GOMAXPROCS` only to follow the container's limits can drop them. No migration and no config change.
+
+### v0.177.x
 
 **Admin state shared across instances ([#1572](https://github.com/afreidah/s3-orchestrator/issues/1572), v0.177.0)**
 

@@ -129,7 +129,7 @@ services:
         mc mb --ignore-existing minio3/backend3
 
   tempo:
-    image: grafana/tempo:2.9.1
+    image: grafana/tempo:2.10.10
     network_mode: host
     volumes:
       - ./deploy/monitoring/tempo.yml:/etc/tempo.yml:ro
@@ -141,7 +141,7 @@ services:
       retries: 5
 
   loki:
-    image: grafana/loki:3.4.2
+    image: grafana/loki:3.7.9
     user: "0"
     network_mode: host
     volumes:
@@ -155,7 +155,7 @@ services:
       retries: 5
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.21.2
     volumes:
       - ./deploy/monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -167,7 +167,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.1
     network_mode: host
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -180,7 +180,7 @@ services:
         condition: service_completed_successfully
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.3.0
     ports:
       - "13000:3000"
     environment:

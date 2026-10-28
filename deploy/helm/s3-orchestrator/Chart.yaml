@@ -3,21 +3,31 @@
 #
 # Author: Alex Freidah
 #
-# Top-level Helm chart manifest. Pinned to chart API v2 (Helm 3+) and tracks
-# the binary's release version through appVersion. The chart packages every
-# orchestrator deployment object the templates/ directory contains:
-# Deployment, Service, ConfigMap, Secret, Ingress, NetworkPolicy, and
-# ServiceAccount.
+# Top-level chart manifest, pinned to chart API v2. The release workflow stamps
+# version and appVersion with the release it packages, so the published chart
+# and the image it runs move together; a chart installed from a checkout has
+# no appVersion and needs image.tag.
 # -------------------------------------------------------------------------------
 
 apiVersion: v2
 name: s3-orchestrator
-description: Unified S3-compatible storage across multiple backends
+description: Unified S3-compatible storage across multiple backends, with quotas, replication and usage limits
 type: application
-version: 0.3.0
-appVersion: "v0.58.1"
+version: 0.0.0-dev
+kubeVersion: ">=1.29.0-0"
 home: https://s3-orchestrator.munchbox.cc
 sources:
   - https://github.com/afreidah/s3-orchestrator
+keywords:
+  - s3
+  - object-storage
+  - storage
 maintainers:
   - name: Alex Freidah
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://s3-orchestrator.munchbox.cc
+    - name: Source
+      url: https://github.com/afreidah/s3-orchestrator

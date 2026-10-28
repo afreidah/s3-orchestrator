@@ -56,7 +56,7 @@ For quick iteration, use `make check`. CI runs `make test`.
 
 ### Integration tests
 
-Integration tests use [testcontainers-go](https://golang.testcontainers.org/) to spin up PostgreSQL, MinIO, and Redis containers automatically — no manual setup required:
+Integration tests use [testcontainers-go](https://golang.testcontainers.org/) to spin up PostgreSQL, MinIO, and Redis containers automatically, with no manual setup:
 
 ```bash
 make integration-test
@@ -86,7 +86,7 @@ Follow the conventions in [`docs/style-guide.md`](docs/style-guide.md). Key poin
 - ASCII-only characters (no Unicode dashes or special characters)
 - Streaming over buffering for object data (`io.Pipe`, never buffer full objects)
 - Context propagation through all function chains
-- `must.NotNil` is only for already-resolved internal wiring (a nil there is a programmer bug); anything from config, user input, the network, or an optional dependency returns an error instead — see Constructor Patterns in the style guide
+- `must.NotNil` is only for already-resolved internal wiring (a nil there is a programmer bug); anything from config, user input, the network, or an optional dependency returns an error instead. See Constructor Patterns in the style guide
 
 ## Working with sqlc
 
@@ -131,9 +131,9 @@ test: add coverage for edge case
 
 ## Pull Requests
 
-- **One issue per PR** — keep changes focused
-- **CI must pass** — linting, unit tests, integration tests, and package build
-- **Squash merge** — PRs are squash-merged to keep history clean
+- **One issue per PR**: keep changes focused
+- **CI must pass**: linting, unit tests, integration tests, and package build
+- **Squash merge**: PRs are squash-merged to keep history clean
 - Create a branch named `GH_ISSUE_<number>-<short-description>` when the work
   tracks an existing issue. If you found and fixed a bug without an issue,
   open the PR from a descriptive branch (`fix-<short-description>`) and link
@@ -196,7 +196,7 @@ Tag a version and push to trigger an automated GitHub Release via GoReleaser:
 make release
 ```
 
-This regenerates `CHANGELOG.md` via [git-cliff](https://git-cliff.org), tags the current `.version` value, and pushes the tag. The tag triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release.
+This regenerates `CHANGELOG.md` via [git-cliff](https://git-cliff.org), tags the current `.version` value, and pushes the tag. The tag triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums, all attached to the GitHub Release.
 
 To regenerate the changelog without releasing:
 
@@ -303,5 +303,4 @@ deploy/                      Nomad and Kubernetes manifests
 packaging/                   Debian package files
 web/                         Hugo project website source
 grafana/                     Ready-to-import Grafana dashboard JSON
-benchmarks/                  Nightly benchmark history (per-commit text files)
 ```
