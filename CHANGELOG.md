@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.178.1] - 2026-10-29
+
+### Improved
+- update CHANGELOG.md for v0.178.0
+
+### Dependencies
+- chore(deps): bump github.com/go-jose/go-jose/v4 from 4.1.4 to 4.1.6 (#1801)
+
+### Other
+- ci(release): publish the Nomad pack to its own repository (#1804)
+
 ## [0.178.0] - 2026-10-28
 
 ### Fixed
