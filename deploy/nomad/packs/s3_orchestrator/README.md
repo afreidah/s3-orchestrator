@@ -33,7 +33,7 @@ nomad-pack run s3_orchestrator --var version=v0.178.0 --var config_file=./config
 
 The file is read when the pack renders, on the machine running `nomad-pack`, and placed in the job as written. The task waits to start until the Nomad Variable exists.
 
-A pack taken from a release defaults `version` to that release. Run from a source checkout, it has no default and refuses to render without one.
+A pack taken from a release, or from a tag of [afreidah/nomad-pack-s3-orchestrator](https://github.com/afreidah/nomad-pack-s3-orchestrator), defaults `version` to that release. Run from a source checkout of s3-orchestrator, it has no default and refuses to render without one.
 
 Keep `server.listen_addr` on port 9000, and `telemetry.metrics.listen` on `0.0.0.0:9001` while `register_metrics_service` is on. Those are the container ports the pack maps.
 
