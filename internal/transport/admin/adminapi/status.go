@@ -94,8 +94,9 @@ type IntegrityStatus struct {
 // CompressionSavedBytes is the logical size of this backend's compressed
 // objects less what they occupy; zero when nothing there is stored encoded.
 //
-// UsageLimits measures the cycle's usage against each limit the backend
-// enforces, and UsageCycle is the cycle the usage figures are counted in.
+// UsageLimits measures the cycle's usage in every dimension against the
+// backend's limit there, and UsageCycle is the cycle the usage figures are
+// counted in.
 //
 // UnhashedCopies counts copies with no content hash yet, which backfill
 // hashes, and ActiveMultipartUploads the uploads in progress on the backend.
@@ -140,12 +141,12 @@ type UsageCycle struct {
 	Timezone  string    `json:"timezone"`
 }
 
-// UsageMeter is one usage limit a backend enforces and what the current period
+// UsageMeter is one dimension of a backend's usage and what the current period
 // has used of it. Kind is egress or ingress, counted in bytes, or requests,
-// counted in calls against the request budget Budget names. Operations lists
-// the calls a request budget charges, which the backend refuses once the
-// budget is spent. A backend lists only the limits it has, so an unlimited
-// backend lists none.
+// counted in calls against the request budget Budget names, or in all calls
+// when Budget is empty. Operations lists the calls a request budget charges,
+// which the backend refuses once the budget is spent. Limit is zero for a
+// dimension with no limit.
 type UsageMeter struct {
 	Kind       string           `json:"kind"`
 	Budget     string           `json:"budget,omitzero"`

@@ -95,8 +95,8 @@ func TestBackendStatuses_ProfileAndHoldings(t *testing.T) {
 }
 
 // TestBackendStatuses_UsageLimits verifies each backend carries a meter per
-// limit it enforces, measured against its usage, and an unlimited backend an
-// empty list rather than none.
+// dimension measured against its usage, and an unlimited backend its egress,
+// ingress and request total with no limits.
 func TestBackendStatuses_UsageLimits(t *testing.T) {
 	t.Parallel()
 	lim, err := core.NewUsageLimits(1000, 500, core.SingleRequestPool(100), nil)
@@ -108,6 +108,7 @@ func TestBackendStatuses_UsageLimits(t *testing.T) {
 		UsageLimits:  map[string]core.UsageLimits{"b1": lim},
 		UsageStats: map[string]core.Usage{
 			"b1": {UsageStat: core.UsageStat{EgressBytes: 20, IngressBytes: 40}, Pools: core.PoolUsage{core.PoolAll: 3}},
+			"b2": {UsageStat: core.UsageStat{APIRequests: 7, EgressBytes: 5}},
 		},
 	})
 
@@ -119,8 +120,13 @@ func TestBackendStatuses_UsageLimits(t *testing.T) {
 	if !reflect.DeepEqual(got[0].UsageLimits, want) {
 		t.Errorf("b1 usage limits = %+v, want %+v", got[0].UsageLimits, want)
 	}
-	if got[1].UsageLimits == nil || len(got[1].UsageLimits) != 0 {
-		t.Errorf("b2 usage limits = %#v, want an empty non-nil list", got[1].UsageLimits)
+	wantUnlimited := []adminapi.UsageMeter{
+		{Kind: core.MeterEgress, Used: 5},
+		{Kind: core.MeterIngress},
+		{Kind: core.MeterRequests, Used: 7},
+	}
+	if !reflect.DeepEqual(got[1].UsageLimits, wantUnlimited) {
+		t.Errorf("b2 usage limits = %+v, want %+v", got[1].UsageLimits, wantUnlimited)
 	}
 }
 

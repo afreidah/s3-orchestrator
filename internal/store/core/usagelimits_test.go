@@ -154,9 +154,9 @@ func TestUsageLimits_Unlimited(t *testing.T) {
 }
 
 // TestUsageLimits_Meters pins the one list every usage surface reads: egress,
-// ingress, then each limited budget in configured order, each paired with its
-// usage and the operations it charges, and nothing for a dimension with no
-// limit.
+// ingress, then each budget in configured order, each paired with its usage
+// and the operations it charges, with a limit of zero for a dimension that has
+// none, and the request total for a backend with no budgets.
 func TestUsageLimits_Meters(t *testing.T) {
 	t.Parallel()
 	lim, err := NewUsageLimits(1000, 0, []PoolSpec{
@@ -167,11 +167,13 @@ func TestUsageLimits_Meters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUsageLimits: %v", err)
 	}
-	used := Usage{UsageStat: UsageStat{EgressBytes: 400, IngressBytes: 9}, Pools: PoolUsage{"writes": 50, "counted": 7, PoolAll: 60}}
+	used := Usage{UsageStat: UsageStat{APIRequests: 120, EgressBytes: 400, IngressBytes: 9}, Pools: PoolUsage{"writes": 50, "counted": 7, PoolAll: 60}}
 
 	want := []UsageMeter{
 		{Kind: MeterEgress, Used: 400, Limit: 1000},
+		{Kind: MeterIngress, Used: 9},
 		{Kind: MeterRequests, Budget: "writes", Used: 50, Limit: 50, Operations: []s3op.Operation{s3op.PutObject}},
+		{Kind: MeterRequests, Budget: "counted", Used: 7, Operations: []s3op.Operation{s3op.GetObject}},
 		{Kind: MeterRequests, Budget: PoolAll, Used: 60, Limit: 100, Operations: s3op.All()},
 	}
 	if got := lim.Meters(used); !reflect.DeepEqual(got, want) {
@@ -179,8 +181,9 @@ func TestUsageLimits_Meters(t *testing.T) {
 	}
 
 	var none UsageLimits
-	if got := none.Meters(used); len(got) != 0 {
-		t.Errorf("unlimited backend Meters = %+v, want none", got)
+	wantNone := []UsageMeter{{Kind: MeterEgress, Used: 400}, {Kind: MeterIngress, Used: 9}, {Kind: MeterRequests, Used: 120}}
+	if got := none.Meters(used); !reflect.DeepEqual(got, wantNone) {
+		t.Errorf("unlimited backend Meters = %+v, want %+v", got, wantNone)
 	}
 }
 

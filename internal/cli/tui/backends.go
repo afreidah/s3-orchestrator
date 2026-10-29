@@ -597,7 +597,7 @@ func (m *model) backendDetail(b *adminapi.BackendStatus) string {
 	return strings.Join([]string{
 		colHeaderStyle.Render(b.Name) + "  " + backendMarkers(b),
 		fieldBlock(summaryLabelWidth, fields...),
-		m.meterBlock("usage   "+output.Cycle(b.UsageCycle), rows),
+		meterBlock("usage   "+output.Cycle(b.UsageCycle), m.meterColumns(rows), rows),
 	}, "\n")
 }
 

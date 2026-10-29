@@ -295,7 +295,7 @@ func nearLimit(base core.Usage, cur *core.Usage, lim core.UsageLimits, threshold
 	used.Add(base)
 	used.Add(*cur)
 	for _, m := range lim.Meters(used) {
-		if float64(m.Used)/float64(m.Limit) >= threshold {
+		if m.Limit > 0 && float64(m.Used)/float64(m.Limit) >= threshold {
 			return true
 		}
 	}

@@ -25,7 +25,7 @@ import (
 // dashboardModel returns a sized model on the dashboard with a status,
 // replication and cleanup snapshot applied: one backend near full, draining,
 // at its egress limit and part way through a request budget, one refusing GET
-// with no limit, and one refusing every call.
+// with no limits, and one refusing every call that reports no usage.
 func dashboardModel(t *testing.T) *model {
 	t.Helper()
 	m := initialModel(&fakeLister{})
@@ -37,10 +37,17 @@ func dashboardModel(t *testing.T) *model {
 				APIRequests: 1200, IngressBytes: 1 << 30, CompressionSavedBytes: 2 << 30,
 				UsageLimits: []adminapi.UsageMeter{
 					{Kind: "egress", Used: 5 << 30, Limit: 5 << 30},
+					{Kind: "ingress", Used: 1 << 30},
 					{Kind: "requests", Budget: "writes", Used: 1200, Limit: 4800},
 				},
 				UsageCycle: wireCycle(15, "America/Los_Angeles", -7)},
-			{Name: "minio-b", RefusedCalls: []string{"GetObject"}, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30},
+			{Name: "minio-b", RefusedCalls: []string{"GetObject"}, BytesUsed: 1 << 30, APIRequests: 34, EgressBytes: 3 << 30,
+				UsageLimits: []adminapi.UsageMeter{
+					{Kind: "egress", Used: 3 << 30},
+					{Kind: "ingress"},
+					{Kind: "requests", Used: 34},
+				},
+				UsageCycle: wireCycle(1, "UTC", 0)},
 			{Name: "minio-c", RefusedCalls: []string{"PutObject", "GetObject", "HeadObject", "DeleteObject", "DeleteObjects", "CopyObject", "ListObjects"}},
 		},
 		Integrity: adminapi.IntegrityStatus{OldestUnverifiedSeconds: 3600, DeferredCopies: 3, PlaintextCopies: 1500},
@@ -88,7 +95,7 @@ func TestDashboard_IsWhereTheTUIOpens(t *testing.T) {
 // the limits that exist.
 func TestDashboard_Capacity(t *testing.T) {
 	t.Parallel()
-	got := dashboardModel(t).dashboardCapacity()
+	got, _ := dashboardModel(t).dashboardMeters()
 	assertContains(t, got,
 		"minio-a", "9.0 GiB / 10.0 GiB", "90%", "draining",
 		"minio-b", "no limit", "DEGRADED GetObject",
@@ -97,30 +104,51 @@ func TestDashboard_Capacity(t *testing.T) {
 		"[", "#", "-]")
 }
 
-// TestDashboard_UsageLimits verifies a limited backend gets one bar per limit,
-// bytes for egress and a call count for a request budget, an unlimited backend
-// gets none, and a limit used up fills its bar the way a full quota does.
+// TestDashboard_UsageLimits verifies every backend that reports usage gets a
+// group with a row per dimension, named once, separated from the next by a
+// blank line: bytes for egress and ingress, a call count for requests, no
+// limit where the backend sets none, and a limit used up drawn as a full bar.
 func TestDashboard_UsageLimits(t *testing.T) {
 	t.Parallel()
-	got := dashboardModel(t).dashboardUsageLimits()
+	_, got := dashboardModel(t).dashboardMeters()
 	assertContains(t, got,
-		"usage limits", "Oct 15 - Nov 15 America/Los_Angeles",
-		"minio-a egress", "5.0 GiB / 5.0 GiB", "100%", "[####",
-		"minio-a requests:writes", "1,200 / 4,800", "25%")
-	for _, absent := range []string{"minio-b", "minio-c", "ingress"} {
-		if strings.Contains(got, absent) {
-			t.Errorf("block shows %q, which has no limit:\n%s", absent, got)
-		}
+		"usage limits", "Oct 15 - Nov 15 America/Los_Angeles", "Oct 1 - Nov 1 UTC",
+		"egress", "5.0 GiB / 5.0 GiB", "100%", "[####",
+		"requests:writes", "1,200 / 4,800", "25%",
+		"minio-b", "3.0 GiB", "34", "no limit", "\n\n")
+	if n := strings.Count(got, "minio-a"); n != 1 {
+		t.Errorf("minio-a is named %d times, want once for its group:\n%s", n, got)
+	}
+	if strings.Contains(got, "minio-c") {
+		t.Errorf("block shows minio-c, which reports no usage:\n%s", got)
 	}
 	for line := range strings.SplitSeq(got, "\n") {
-		if strings.Contains(line, "minio-a egress") && strings.Contains(line, "-]") {
+		if strings.Contains(line, "minio-a") && strings.Contains(line, "-]") {
 			t.Errorf("the exhausted limit is not drawn as a full bar: %q", line)
 		}
 	}
 }
 
-// TestDashboard_UsageLimitsMixedCycles verifies each backend's bars carry
-// that backend's own cycle, not one fleet-wide period.
+// TestDashboard_MetersAlign verifies the capacity and usage blocks share their
+// columns, so every bar starts in the same column in both.
+func TestDashboard_MetersAlign(t *testing.T) {
+	t.Parallel()
+	capacity, usage := dashboardModel(t).dashboardMeters()
+	starts := map[int]bool{}
+	for _, block := range []string{capacity, usage} {
+		for line := range strings.SplitSeq(block, "\n") {
+			if i := strings.Index(line, "["); i >= 0 {
+				starts[i] = true
+			}
+		}
+	}
+	if len(starts) != 1 {
+		t.Errorf("bars start in %d different columns, want 1:\n%s\n\n%s", len(starts), capacity, usage)
+	}
+}
+
+// TestDashboard_UsageLimitsMixedCycles verifies each backend's rows carry that
+// backend's own cycle, not one fleet-wide period.
 func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
@@ -130,8 +158,9 @@ func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
 		{Name: "c2", UsageLimits: egress, UsageCycle: wireCycle(15, "UTC", 0)},
 		{Name: "r2", UsageLimits: egress, UsageCycle: wireCycle(1, "America/Los_Angeles", -7)},
 	}})
-	want := map[string]string{"c2 egress": "Oct 15 - Nov 15 UTC", "r2 egress": "Oct 1 - Nov 1 America/Los_Angeles"}
-	for line := range strings.SplitSeq(m.dashboardUsageLimits(), "\n") {
+	want := map[string]string{"c2": "Oct 15 - Nov 15 UTC", "r2": "Oct 1 - Nov 1 America/Los_Angeles"}
+	_, usage := m.dashboardMeters()
+	for line := range strings.SplitSeq(usage, "\n") {
 		for name, cycle := range want {
 			if strings.Contains(line, name) && !strings.Contains(line, cycle) {
 				t.Errorf("%s line lacks its cycle %q: %q", name, cycle, line)
@@ -140,18 +169,28 @@ func TestDashboard_UsageLimitsMixedCycles(t *testing.T) {
 	}
 }
 
-// TestDashboard_NoUsageLimits verifies a fleet with no limits leaves the
-// block out of the dashboard instead of drawing an empty heading.
+// TestDashboard_NoUsageLimits verifies a fleet that reports no usage leaves
+// the block out of the dashboard instead of drawing an empty heading.
 func TestDashboard_NoUsageLimits(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 30
 	m.applyStatus(&adminapi.StatusResponse{Backends: []adminapi.BackendStatus{{Name: "b1", BytesUsed: 1}}})
-	if got := m.dashboardUsageLimits(); got != "" {
+	if _, got := m.dashboardMeters(); got != "" {
 		t.Errorf("usage limits = %q, want nothing", got)
 	}
 	if strings.Contains(bodyText(m.dashboardBody()), "usage limits") {
 		t.Error("dashboard drew a usage-limits block for a fleet with none")
+	}
+}
+
+// TestDashboard_SummaryBeforeUsage verifies the summary renders above the
+// usage block, so a short terminal cuts off usage rows rather than it.
+func TestDashboard_SummaryBeforeUsage(t *testing.T) {
+	t.Parallel()
+	body := bodyText(dashboardModel(t).dashboardBody())
+	if s, u := strings.Index(body, "nearest limit"), strings.Index(body, "usage limits"); s < 0 || u < 0 || s > u {
+		t.Errorf("summary at %d, usage at %d, want the summary first:\n%s", s, u, body)
 	}
 }
 
