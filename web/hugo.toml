@@ -77,26 +77,30 @@ enableRobotsTXT = true
     pageRef = "/guides"
     weight = 2
   [[menu.main]]
+    name = "Downloads"
+    pageRef = "/downloads"
+    weight = 3
+  [[menu.main]]
     name = "Diagrams"
     pageRef = "/diagrams"
-    weight = 3
+    weight = 4
   [[menu.main]]
     name = "Go API"
     pageRef = "/godoc"
-    weight = 4
+    weight = 5
   [[menu.main]]
     name = "alexfreidah.com"
     url = "https://alexfreidah.com"
-    weight = 5
+    weight = 6
   [[menu.main]]
     name = "Search"
-    weight = 5
+    weight = 6
     [menu.main.params]
       type = "search"
   [[menu.main]]
     name = "GitHub"
     url = "https://github.com/afreidah/s3-orchestrator"
-    weight = 6
+    weight = 7
     [menu.main.params]
       icon = "github"
 

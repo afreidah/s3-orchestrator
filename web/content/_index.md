@@ -28,6 +28,7 @@ type: docs
 <div class="hx:flex hx:flex-wrap hx:gap-3 hx:justify-center hx:mb-6">
 {{< hextra/hero-button text="Quickstart" link="docs/quickstart" >}}
 {{< hextra/hero-button text="Documentation" link="docs" style="background: transparent; border: 1px solid var(--s3o-border); color: var(--s3o-text);" >}}
+{{< hextra/hero-button text="Downloads" link="downloads" style="background: transparent; border: 1px solid var(--s3o-border); color: var(--s3o-text);" >}}
 {{< hextra/hero-button text="GitHub" link="https://github.com/afreidah/s3-orchestrator" style="background: transparent; border: 1px solid var(--s3o-border); color: var(--s3o-text);" >}}
 </div>
 
