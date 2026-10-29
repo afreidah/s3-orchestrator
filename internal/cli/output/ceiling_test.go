@@ -37,12 +37,12 @@ func TestUsageCeiling(t *testing.T) {
 func TestCeiling_Shares(t *testing.T) {
 	t.Parallel()
 	c := StorageCeiling(&adminapi.BackendStatus{BytesUsed: 3, BytesLimit: 4})
-	if c.Label != StorageLabel || c.Share() != 0.75 || c.Percent() != 75 || c.PercentText() != "75%" {
-		t.Errorf("storage ceiling = %q %v %d %q", c.Label, c.Share(), c.Percent(), c.PercentText())
+	if c.Label != StorageLabel || c.Share() != 0.75 || c.Percent() != 75 || c.PercentText() != "75%" || c.LimitText() != "4 B" {
+		t.Errorf("storage ceiling = %q %v %d %q %q", c.Label, c.Share(), c.Percent(), c.PercentText(), c.LimitText())
 	}
 	none := StorageCeiling(&adminapi.BackendStatus{BytesUsed: 3})
-	if none.Share() != 0 || none.Percent() != 0 || none.PercentText() != "-" {
-		t.Errorf("ceiling with no limit = %v %d %q", none.Share(), none.Percent(), none.PercentText())
+	if none.Share() != 0 || none.Percent() != 0 || none.PercentText() != "-" || none.LimitText() != NoLimit {
+		t.Errorf("ceiling with no limit = %v %d %q %q", none.Share(), none.Percent(), none.PercentText(), none.LimitText())
 	}
 }
 

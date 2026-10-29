@@ -23,9 +23,10 @@ import (
 
 const statusBody = `{
   "backends": [
-    {"name":"minio-1","healthy":true,"refused_calls":[],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":10737418240,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0},
+    {"name":"minio-1","healthy":true,"refused_calls":[],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":10737418240,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0,
+     "usage_limits":[{"kind":"egress","used":0,"limit":0},{"kind":"ingress","used":0,"limit":0},{"kind":"requests","used":0,"limit":0}]},
     {"name":"minio-2","healthy":false,"refused_calls":["GetObject"],"draining":true,"flags":["cordoned","draining"],"bytes_used":1048576,"bytes_limit":10737418240,"object_count":7,"api_requests":3,"ingress_bytes":2048,"egress_bytes":512,
-     "usage_limits":[{"kind":"egress","used":512,"limit":1024},{"kind":"requests","budget":"all","used":3,"limit":1200}],
+     "usage_limits":[{"kind":"egress","used":512,"limit":1024},{"kind":"ingress","used":2048,"limit":0},{"kind":"requests","budget":"all","used":3,"limit":1200}],
      "usage_cycle":{"start":"2026-06-15T00:00:00-07:00","next_reset":"2026-07-15T00:00:00-07:00","timezone":"America/Los_Angeles"}},
     {"name":"minio-3","healthy":false,"refused_calls":["PutObject","GetObject","HeadObject","DeleteObject","DeleteObjects","CopyObject","ListObjects"],"draining":false,"flags":[],"bytes_used":0,"bytes_limit":0,"object_count":0,"api_requests":0,"ingress_bytes":0,"egress_bytes":0}
   ],
@@ -76,8 +77,9 @@ func TestStatus_TextTable(t *testing.T) {
 	}
 }
 
-// TestStatus_UsageLimitsTable verifies the usage limits print as their own
-// table, one row per limit, with units chosen by kind and the share used.
+// TestStatus_UsageLimitsTable verifies the usage prints as its own table, one
+// row per dimension, with units chosen by kind, the share used, and no limit
+// for a dimension the backend does not limit.
 func TestStatus_UsageLimitsTable(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t)
@@ -86,26 +88,26 @@ func TestStatus_UsageLimitsTable(t *testing.T) {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"Cycle", "Jun 15 - Jul 15 America/Los_Angeles", "Usage limit", "Use%", "egress", "512 B", "1.0 KiB", "50%", "requests:all", "1,200", "0%"} {
+	for _, want := range []string{"Cycle", "Jun 15 - Jul 15 America/Los_Angeles", "Usage", "Use%", "egress", "512 B", "1.0 KiB", "50%", "requests:all", "1,200", "0%", "ingress", "2.0 KiB", output.NoLimit} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "minio-1   egress") || strings.Count(out, "minio-1") != 1 {
-		t.Errorf("an unlimited backend appears in the usage limits table:\n%s", out)
+	if strings.Count(out, "minio-1") != 4 {
+		t.Errorf("an unlimited backend should list its egress, ingress and requests:\n%s", out)
 	}
 }
 
-// TestStatus_NoUsageLimits verifies a fleet with no limits prints no usage
-// limits table and says it has no nearest limit.
+// TestStatus_NoUsageLimits verifies a status with no usage dimensions prints
+// no usage table and says the fleet has no nearest limit.
 func TestStatus_NoUsageLimits(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	if err := renderStatus(&buf, []byte(`{"backends":[{"name":"b1"}],"db_healthy":true}`)); err != nil {
 		t.Fatalf("renderStatus: %v", err)
 	}
-	if strings.Contains(buf.String(), "Usage limit") {
-		t.Errorf("printed a usage limits table for a fleet with none:\n%s", buf.String())
+	if strings.Contains(buf.String(), "Use%") {
+		t.Errorf("printed a usage table for a status with none:\n%s", buf.String())
 	}
 	if !strings.Contains(buf.String(), "Nearest limit: "+output.NoLimits) {
 		t.Errorf("nearest limit line missing for a fleet with none:\n%s", buf.String())

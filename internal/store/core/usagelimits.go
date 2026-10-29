@@ -172,10 +172,11 @@ const (
 	MeterRequests = "requests"
 )
 
-// UsageMeter is one limited dimension of a backend's usage: what it has used
-// this period against its limit. Budget and Operations name the request budget
-// of a requests meter and the operations it charges, and are empty for the
-// byte meters. A meter at its limit refuses those operations on the backend.
+// UsageMeter is one dimension of a backend's usage: what it has used this
+// period against its limit, zero when the dimension has none. Budget and
+// Operations name the request budget of a requests meter and the operations it
+// charges, and are empty for the byte meters and the request total. A meter at
+// its limit refuses those operations on the backend.
 type UsageMeter struct {
 	Kind       string
 	Budget     string
@@ -184,21 +185,20 @@ type UsageMeter struct {
 	Operations []s3op.Operation
 }
 
-// Meters pairs a backend's usage with every limit it enforces: egress, ingress,
-// then each limited request budget in configured order. A dimension with no
-// limit has nothing to be measured against and is left out.
+// Meters pairs every dimension of a backend's usage with its limit: egress,
+// ingress, then each request budget in configured order, or the request total
+// when the backend has no budgets. A dimension with no limit is still
+// measured, with a limit of zero.
 func (u UsageLimits) Meters(used Usage) []UsageMeter {
-	var out []UsageMeter
-	if u.EgressByteLimit > 0 {
-		out = append(out, UsageMeter{Kind: MeterEgress, Used: used.EgressBytes, Limit: u.EgressByteLimit})
+	out := []UsageMeter{
+		{Kind: MeterEgress, Used: used.EgressBytes, Limit: u.EgressByteLimit},
+		{Kind: MeterIngress, Used: used.IngressBytes, Limit: u.IngressByteLimit},
 	}
-	if u.IngressByteLimit > 0 {
-		out = append(out, UsageMeter{Kind: MeterIngress, Used: used.IngressBytes, Limit: u.IngressByteLimit})
+	if len(u.pools) == 0 {
+		return append(out, UsageMeter{Kind: MeterRequests, Used: used.APIRequests})
 	}
 	for _, p := range u.pools {
-		if p.Limit > 0 {
-			out = append(out, UsageMeter{Kind: MeterRequests, Budget: p.Name, Used: used.Pools[p.Name], Limit: p.Limit, Operations: p.Operations})
-		}
+		out = append(out, UsageMeter{Kind: MeterRequests, Budget: p.Name, Used: used.Pools[p.Name], Limit: p.Limit, Operations: p.Operations})
 	}
 	return out
 }

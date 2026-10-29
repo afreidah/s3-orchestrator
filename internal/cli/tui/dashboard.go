@@ -5,10 +5,10 @@
 //
 // The section the TUI opens on: a summary of the fleet, so an operator can see
 // whether anything is wrong without visiting every pane. It shows capacity per
-// backend and in total, each backend's usage against its egress, ingress and
-// request limits, the limit nearest full, the replication and verification
-// backlogs, encryption and compression coverage, usage for the period, and the
-// cleanup queues.
+// backend and in total, the limit nearest full, the replication and
+// verification backlogs, encryption and compression coverage, usage for the
+// period, the cleanup queues, and then every backend's usage in each dimension
+// against its limit, if it has one.
 //
 // Every figure here is fleet-wide, so the dashboard reads the same whichever
 // instance answers. All of it comes from the status, replication and cleanup
@@ -20,6 +20,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
@@ -84,21 +85,21 @@ func (m *model) dashboardHeaderView() string {
 	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 
-// dashboardBody renders the capacity block, the usage-limits block when any
-// backend has a limit, then the summary block, and the session's action log
-// below them once anything has been run. It waits for
-// the first status snapshot, since every figure but replication comes from
-// it; a status error is shown in its place.
+// dashboardBody renders the capacity block, the summary block, the session's
+// action log once anything has been run, then the usage block. Usage goes last
+// because it lists every backend's every dimension, so on a short terminal it
+// is what gets cut off. It waits for the first status snapshot, since every
+// figure but replication comes from it; a status error is shown in its place.
 func (m *model) dashboardBody() []pane {
 	loading := m.dbHealthy == nil && m.backends.err == nil
 	return m.paneBody(m.backends.err, "", loading, func() []pane {
-		body := []pane{textPane(m.dashboardCapacity()), textPane("")}
-		if limits := m.dashboardUsageLimits(); limits != "" {
-			body = append(body, textPane(limits), textPane(""))
-		}
-		body = append(body, textPane(m.dashboardSummary()))
+		capacity, usage := m.dashboardMeters()
+		body := []pane{textPane(capacity), textPane(""), textPane(m.dashboardSummary())}
 		if len(m.actionLog) > 0 {
 			body = append(body, textPane(""), m.actionLogPane())
+		}
+		if usage != "" {
+			body = append(body, textPane(""), textPane(usage))
 		}
 		return body
 	})
@@ -123,100 +124,142 @@ func (m *model) actionLogPane() pane {
 	}}
 }
 
-// meterRow is one line of a usage block: a ceiling drawn under the row's name,
-// followed by its markers. The fleet total has no markers.
+// meterRow is one line of a usage block: a ceiling drawn under the row's name
+// and dimension, followed by its markers. A backend's usage rows name it only
+// on the first, capacity rows leave the dimension blank, and the fleet total
+// has no markers.
 type meterRow struct {
 	output.Ceiling
 	name    string
+	label   string
 	markers string
 }
 
-// dashboardCapacity renders one storage bar per backend and one for the fleet,
-// each followed by its used and limit bytes and, for backends, its health and
-// drain state.
-func (m *model) dashboardCapacity() string {
+// dashboardMeters renders the capacity block and the usage block over one set
+// of columns, so names, bars and figures line up down both. The usage block is
+// empty when no backend has reported any usage.
+func (m *model) dashboardMeters() (capacity, usage string) {
+	storage := m.dashboardCapacityRows()
+	backends := m.dashboardUsageRows()
+	cols := m.meterColumns(append([][]meterRow{storage}, backends...)...)
+	if len(backends) > 0 {
+		usage = meterBlock("usage limits", cols, backends...)
+	}
+	return meterBlock("capacity", cols, storage), usage
+}
+
+// dashboardCapacityRows returns one storage row per backend, with its health
+// and drain state, and one for the fleet.
+func (m *model) dashboardCapacityRows() []meterRow {
 	rows := make([]meterRow, 0, len(m.backends.list.received)+1)
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
 		rows = append(rows, meterRow{Ceiling: output.StorageCeiling(b), name: b.Name, markers: backendMarkers(b)})
 	}
-	rows = append(rows, meterRow{Ceiling: m.fleetStorage(), name: dashFleetLabel})
-	return m.meterBlock("capacity", rows)
+	return append(rows, meterRow{Ceiling: m.fleetStorage(), name: dashFleetLabel})
 }
 
-// dashboardUsageLimits renders one bar per usage limit a backend enforces,
-// each marked with the backend's own cycle. Unlimited dimensions never appear,
-// and with no limits anywhere the block is left out.
-func (m *model) dashboardUsageLimits() string {
-	var rows []meterRow
+// dashboardUsageRows returns a group of rows per backend, one per usage
+// dimension, limited or not, each marked with the backend's own cycle. Only a
+// group's first row names the backend.
+func (m *model) dashboardUsageRows() [][]meterRow {
+	var groups [][]meterRow
 	for i := range m.backends.list.received {
 		b := &m.backends.list.received[i]
-		cycle := pathStyle.Render(output.Cycle(b.UsageCycle))
-		for _, u := range b.UsageLimits {
-			c := output.UsageCeiling(u)
-			rows = append(rows, meterRow{Ceiling: c, name: b.Name + " " + c.Label, markers: cycle})
+		if len(b.UsageLimits) == 0 {
+			continue
 		}
+		cycle := pathStyle.Render(output.Cycle(b.UsageCycle))
+		rows := make([]meterRow, len(b.UsageLimits))
+		for j, u := range b.UsageLimits {
+			c := output.UsageCeiling(u)
+			rows[j] = meterRow{Ceiling: c, label: c.Label, markers: cycle}
+		}
+		rows[0].name = b.Name
+		groups = append(groups, rows)
 	}
-	if len(rows) == 0 {
-		return ""
-	}
-	return m.meterBlock("usage limits", rows)
+	return groups
 }
 
-// meterBlock renders rows under a heading, each as a bar followed by its
-// figures. Every bar has the same width: what the content area leaves after
-// the widest name and the widest figures, so the figures line up and no line
-// wraps while there is room for a bar of the minimum width.
-func (m *model) meterBlock(heading string, rows []meterRow) string {
+// meterColumns holds the widths that line rows up: the name, the dimension,
+// the bar, and the used and limit figures.
+type meterColumns struct {
+	name  int
+	label int
+	bar   int
+	used  int
+	limit int
+}
+
+// prefix is the width the name and dimension columns take, each with the
+// space after it. Rows with no dimension anywhere leave that column out.
+func (c meterColumns) prefix() int {
+	if c.label == 0 {
+		return c.name + 1
+	}
+	return c.name + c.label + 2
+}
+
+// meterColumns sizes the columns for every row of the given groups. Every bar
+// has the same width: what the content area leaves after the widest name,
+// dimension and figures, so the figures line up and no line wraps while there
+// is room for a bar of the minimum width.
+func (m *model) meterColumns(groups ...[]meterRow) meterColumns {
+	rows := slices.Concat(groups...)
 	var cols meterColumns
 	for _, r := range rows {
 		cols.name = max(cols.name, len(r.name))
+		cols.label = max(cols.label, len(r.label))
 		cols.used = max(cols.used, len(r.Format(r.Used)))
 		if r.Limit > 0 {
 			cols.limit = max(cols.limit, len(r.Format(r.Limit)))
 		}
 	}
 	cols.name = min(cols.name, dashNameMax)
+	cols.label = min(cols.label, dashNameMax)
 	figuresW := 0
-	for _, r := range rows {
-		figuresW = max(figuresW, lipgloss.Width(meterFigures(r, cols)))
+	for i := range rows {
+		figuresW = max(figuresW, lipgloss.Width(meterFigures(&rows[i], cols)))
 	}
-	// One space after the name, the bar's two brackets, and two spaces before
-	// the figures.
-	cols.bar = min(max(m.contentWidth()-cols.name-figuresW-5, dashBarMin), dashBarMax)
+	// The bar's two brackets, and two spaces before the figures.
+	cols.bar = min(max(m.contentWidth()-cols.prefix()-figuresW-4, dashBarMin), dashBarMax)
+	return cols
+}
 
-	lines := make([]string, 0, len(rows)+1)
-	lines = append(lines, colHeaderStyle.Render(heading))
-	for _, r := range rows {
-		lines = append(lines, meterLine(r, cols))
+// meterBlock renders groups of rows under a heading, laid out to cols, with a
+// blank line between groups.
+func meterBlock(heading string, cols meterColumns, groups ...[]meterRow) string {
+	lines := []string{colHeaderStyle.Render(heading)}
+	for i, rows := range groups {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		for j := range rows {
+			lines = append(lines, meterLine(&rows[j], cols))
+		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// meterColumns holds the widths that line a block's rows up: the name, the
-// bar, and the used and limit figures.
-type meterColumns struct {
-	name  int
-	bar   int
-	used  int
-	limit int
-}
-
-// meterLine renders a row's name, its usage bar and the figures behind it.
-// A row with no limit has nothing to fill a bar against, so the bar's place
-// says it is unlimited.
-func meterLine(r meterRow, cols meterColumns) string {
-	bar := pathStyle.Render(fmt.Sprintf("%-*s", cols.bar+2, "no limit"))
+// meterLine renders a row's name and dimension, its usage bar and the figures
+// behind it. A row with no limit has nothing to fill a bar against, so the
+// bar's place says it is unlimited.
+func meterLine(r *meterRow, cols meterColumns) string {
+	line := fmt.Sprintf("%-*s ", cols.name, truncate(r.name, cols.name))
+	if cols.label > 0 {
+		line += fmt.Sprintf("%-*s ", cols.label, truncate(r.label, cols.label))
+	}
+	bar := pathStyle.Render(fmt.Sprintf("%-*s", cols.bar+2, output.NoLimit))
 	if r.Limit > 0 {
 		bar = usageBar(r.Percent(), cols.bar)
 	}
-	return fmt.Sprintf("%-*s ", cols.name, truncate(r.name, cols.name)) + bar + "  " + meterFigures(r, cols)
+	return line + bar + "  " + meterFigures(r, cols)
 }
 
 // meterFigures renders what a row holds against its limit, then its markers.
 // Each figure is padded to its column, so the percentages and markers line up
 // down the block; a row with no limit leaves those columns blank.
-func meterFigures(r meterRow, cols meterColumns) string {
+func meterFigures(r *meterRow, cols meterColumns) string {
 	figures := fmt.Sprintf("%*s", cols.used, r.Format(r.Used))
 	if r.Limit > 0 {
 		figures += fmt.Sprintf(" / %-*s  ", cols.limit, r.Format(r.Limit)) + percentText(r.Percent(), 4)

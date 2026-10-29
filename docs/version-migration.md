@@ -80,6 +80,10 @@ The Nomad job in `deploy/nomad` now takes variables, with production values in `
 
 The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it runs under, unless `GOMEMLIMIT` is set. A deployment that sets `GOMEMLIMIT` or `GOMAXPROCS` only to follow the container's limits can drop them. No migration and no config change.
 
+**Every usage dimension reported, limited or not ([#1805](https://github.com/afreidah/s3-orchestrator/issues/1805), v0.178.5)**
+
+`usage_limits` in `/admin/api/status` lists every dimension of each backend's usage, not only the limited ones: egress, ingress, then each request budget, or a `requests` entry with no `budget` holding the backend's total calls when it has no budgets. A dimension with no limit has `limit: 0`. A client that took every entry as an enforced limit should skip those. The TUI dashboard lists every backend's dimensions, one group per backend, under the capacity bars and the summary, with both blocks sharing their columns. The TUI backend detail and `admin status` list every dimension the same way, with `no limit` where there is none. No migration and no config change.
+
 ### v0.177.x
 
 **Admin state shared across instances ([#1572](https://github.com/afreidah/s3-orchestrator/issues/1572), v0.177.0)**

@@ -27,6 +27,9 @@ const StorageLabel = "storage"
 // nearest one.
 const NoLimits = "no limits set"
 
+// NoLimit is what a ceiling with no limit shows in place of one.
+const NoLimit = "no limit"
+
 // Ceiling is one limit and what has been used of it. Label names the limit,
 // and Format renders its figures: bytes, or a call count for a request
 // budget. A limit of zero or less means there is none.
@@ -43,9 +46,9 @@ func StorageCeiling(b *adminapi.BackendStatus) Ceiling {
 	return Ceiling{Label: StorageLabel, Used: b.BytesUsed, Limit: b.BytesLimit, Format: humanize.Bytes}
 }
 
-// UsageCeiling is one usage limit a backend enforces. It is named by its kind,
+// UsageCeiling is one dimension of a backend's usage. It is named by its kind,
 // and a request budget by kind and budget as "requests:<budget>"; egress and
-// ingress count bytes and a request budget counts calls.
+// ingress count bytes and requests count calls.
 func UsageCeiling(u adminapi.UsageMeter) Ceiling {
 	c := Ceiling{Label: u.Kind, Used: u.Used, Limit: u.Limit, Format: humanize.Bytes}
 	if u.Budget != "" {
@@ -79,6 +82,15 @@ func (c Ceiling) PercentText() string {
 		return "-"
 	}
 	return fmt.Sprintf("%d%%", c.Percent())
+}
+
+// LimitText renders the limit, and NoLimit for a ceiling with none, so a
+// table cell never reads as a limit of zero.
+func (c Ceiling) LimitText() string {
+	if c.Limit <= 0 {
+		return NoLimit
+	}
+	return c.Format(c.Limit)
 }
 
 // Figures renders what has been used against the limit, as "used / limit".

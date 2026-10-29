@@ -5,9 +5,9 @@
 //
 // Reports per-backend health, quota usage, usage limits, and circuit-breaker
 // state from the running instance. Text mode renders the backends as a table
-// led by the backend name, then a table of usage limits when any backend has
-// one, then the limit nearest full, DB health and the instance that answered;
-// JSON mode returns the raw payload.
+// led by the backend name, then a table of every backend's usage against its
+// limits, then the limit nearest full, DB health and the instance that
+// answered; JSON mode returns the raw payload.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -68,9 +68,9 @@ func renderStatus(w io.Writer, body []byte) error {
 	return err
 }
 
-// renderUsageLimits renders every usage limit the backends enforce, one row
-// each, with what the backend's own cycle has used of it. A fleet with no
-// limits prints nothing.
+// renderUsageLimits renders every usage dimension of every backend, one row
+// each, with what the backend's own cycle has used of it against its limit,
+// if it has one. A status with no dimensions prints nothing.
 func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 	var rows [][]string
 	for i := range backends {
@@ -78,7 +78,7 @@ func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 		cycle := output.Cycle(b.UsageCycle)
 		for _, u := range b.UsageLimits {
 			c := output.UsageCeiling(u)
-			rows = append(rows, []string{b.Name, cycle, c.Label, c.Format(c.Used), c.Format(c.Limit), c.PercentText()})
+			rows = append(rows, []string{b.Name, cycle, c.Label, c.Format(c.Used), c.LimitText(), c.PercentText()})
 		}
 	}
 	if len(rows) == 0 {
@@ -87,7 +87,7 @@ func renderUsageLimits(w io.Writer, backends []adminapi.BackendStatus) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return err
 	}
-	return output.Table(w, []string{"Backend", "Cycle", "Usage limit", "Used", "Limit", "Use%"}, rows)
+	return output.Table(w, []string{"Backend", "Cycle", "Usage", "Used", "Limit", "Use%"}, rows)
 }
 
 // nearestLimitText names the limit across the fleet that is nearest full, with
