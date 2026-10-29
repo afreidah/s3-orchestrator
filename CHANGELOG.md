@@ -3,6 +3,79 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.178.0] - 2026-10-28
+
+### Fixed
+- fix(store): count only availability failures on the database breaker and recover it by ping (#1789)
+- fix(s3api): refuse an invalid max-keys and answer max-keys=0 with an empty page (#1784)
+- fix(backend): cut ranges from backends that ignore Range and charge the bytes they send (#1748) (#1757)
+- fix(encryption): name master keys by fingerprint so rotation keeps objects readable (#1704) (#1747)
+- fix(notify): honor any max_retries and drain on the shared tick runner (#1731) (#1745)
+- fix(multipart): parts and aborts wait out a running completion (#1734) (#1743)
+- fix(store): clear every table referencing a backend on removal (#1738) (#1742)
+- fix(integrity): verify_on_read compares only complete downloads (#1740) (#1741)
+- fix(counter): usage counters in one hash with a staged, exactly-once flush (#1719) (#1737)
+- fix(cache): key object cache entries by storage path (#1720) (#1736)
+- fix(store): serialize capped-backend claims and reconcile usage from one snapshot (#1718) (#1735)
+- fix(store): settle cleanup rows only under their claim (#1716) (#1730)
+- fix(store): delete a copy only while it is the one the caller read (#1711) (#1723)
+- fix(routing): writes need a backend that serves reads (#1701) (#1702)
+
+### Refactored
+- refactor(worker): one name per worker, shared cycle reporting, batched lifecycle deletes (#1787)
+- refactor(store): cleanup outbox for every copy-removing transaction (#1715) (#1729)
+- refactor(store): rewrites through the placement step (#1714) (#1728)
+- refactor(store): stored form flags as generated columns (#1726) (#1727)
+- refactor(store): one placement step for moves and replicas (#1713) (#1725)
+- refactor(store): patch copy metadata only on the copy the caller read (#1712) (#1724)
+
+### Improved
+- update CHANGELOG.md for v0.158.3
+
+### Dependencies
+- chore(deps): bump the actions group with 2 updates (#1776)
+- chore(deps): bump the aws-sdk group across 1 directory with 4 updates (#1706)
+- chore(deps): bump the minor-and-patch group with 6 updates (#1707)
+- chore(deps): bump the actions group with 5 updates (#1705)
+
+### Other
+- publish a signed Helm chart and a Nomad pack; fix the chart's install-breaking bugs (#1800)
+- ci(images): record the released version and start its deployment (#1799)
+- share cache invalidation, worker health and instance reports across instances (#1798)
+- learn the optional features a backend refuses in one shared set (#1794)
+- docs(provider): document buckets and publishing; share provider and client helpers (#1792)
+- show the limit nearest full on the dashboard and in admin status (#1791)
+- show the highlighted backend in full below the backends table (#1786)
+- set and clear an object's tags from the inspector (#1785)
+- clean up dead code, duplicated helpers and stale comments (#1783)
+- show each backend's own usage cycle on every surface (#1772) (#1781)
+- escape the second apostrophe in the usage flush diagram card (#1780)
+- escape apostrophe in the usage flush diagram card and raise demo Traefik memory (#1779)
+- record usage in hourly buckets and read each backend's cycle as a window (#1777)
+- per-backend usage cycle settings and the UsagePeriod model (#1775)
+- show each backend's usage against its limits in the status API, TUI, admin status and metrics (#1769)
+- audit every backend request and report per-backend usage on cycle summaries (#1768)
+- cover parallel copies and compression in the replication guides (#1767)
+- docs(web): move the site to Hextra and correct the docs against the code (#1766)
+- keep a share of each backend's egress limit back from the scrubber (#1749) (#1764)
+- real tick runner tests, fake-time timing tests, and tighter assertions (#1762) (#1763)
+- attribute every usage charge to the workload that caused it (#1752) (#1761)
+- share duplicated scan, header and query code; escape adminctl backend names (#1759) (#1760)
+- test(store): assert advisory lock IDs are unique (#1563) (#1746)
+- perf(writepath): claim a replicated PUT's copies in one transaction (#1732) (#1744)
+- test(store): guard copy and cleanup mutations in the SQL (#1722) (#1739)
+- perf(store): covering indexes for the capacity sums (#1717) (#1733)
+- test(backend): accept HeadBucket paths with or without a trailing slash (#1709)
+- per-call breakers for operators and a diagram accuracy pass (#1694) (#1708)
+- dashboard names the calls a degraded backend refuses (#1693) (#1703)
+- run backing services in Nomad and Kubernetes (#265) (#1682)
+- per-call refused gauge and breaker events (#1690) (#1700)
+- show degraded backends and the calls they refuse (#1692) (#1699)
+- status names the calls each backend refuses (#1691) (#1698)
+- consumers ask for the calls they make (#1689) (#1697)
+- per-call circuit breakers (#1688) (#1696)
+- backend call bits and shared bitset tests (#1687) (#1695)
+
 ## [0.158.3] - 2026-10-11
 
 ### Fixed
