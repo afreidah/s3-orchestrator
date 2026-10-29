@@ -147,8 +147,10 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		intentID:        intentID,
 		start:           start,
 	}
-	if sameBackendCopyEligible(locations, destBackendName) {
-		cc.srcStorageKey = sameBackendStoragePath(locations, destBackendName, sourceKey)
+	// A server-side copy needs the source on the destination's backend, since
+	// no backend can read a CopySource in another provider's bucket.
+	if loc := core.LocationOn(locations, destBackendName); loc != nil {
+		cc.srcStorageKey = core.StoragePath(sourceKey, loc.StorageKey)
 		if etag, handled, nerr := o.tryNativeCopy(ctx, cc); handled {
 			return etag, nerr
 		}
@@ -194,26 +196,6 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 		ContentType:  contentType,
 		UserMetadata: metadata,
 	}
-}
-
-// sameBackendStoragePath returns the storage path of the source's copy on
-// destBackendName, which is what a server-side copy reads. It falls back to the
-// bare source key when there is no such copy, which callers rule out first
-// with sameBackendCopyEligible.
-func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, sourceKey string) string {
-	if loc := core.LocationOn(locations, destBackendName); loc != nil {
-		return core.StoragePath(sourceKey, loc.StorageKey)
-	}
-	return sourceKey
-}
-
-// sameBackendCopyEligible reports whether the source has at least one
-// replica on destBackendName. The orchestrator only triggers the
-// server-side copy fast path when both keys live on the same backend
-// because no backend can satisfy a CopySource that points at a
-// foreign bucket.
-func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName string) bool {
-	return core.LocationOn(locations, destBackendName) != nil
 }
 
 // CopyObjectRequest is one CopyObject call's inputs.

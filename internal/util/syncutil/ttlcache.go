@@ -68,12 +68,7 @@ func (c *TTLCache[K, V]) Get(key K) (V, bool) {
 
 // Set stores a key-value pair with the cache's default TTL.
 func (c *TTLCache[K, V]) Set(key K, value V) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[key] = cacheEntry[V]{
-		value:  value,
-		expiry: time.Now().Add(c.ttl),
-	}
+	c.SetWithTTL(key, value, c.ttl)
 }
 
 // SetWithTTL stores a key-value pair with a custom TTL. Use this when

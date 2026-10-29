@@ -446,11 +446,9 @@ func done(act Action, status int) routed {
 // objectRouteKey carries the path-derived identifiers a per-object
 // dispatcher needs.
 type objectRouteKey struct {
-	method      string
-	bucket      string
-	key         string
-	internalKey string
-	uploadID    string
+	bucket   string
+	key      string
+	uploadID string
 }
 
 // routeObjectRequest dispatches object-level operations to their
@@ -472,11 +470,9 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	rk := &objectRouteKey{
-		method:      r.Method,
-		bucket:      bucket,
-		key:         key,
-		internalKey: internalKey,
-		uploadID:    r.URL.Query().Get("uploadId"),
+		bucket:   bucket,
+		key:      key,
+		uploadID: r.URL.Query().Get("uploadId"),
 	}
 	if res, ok, err := s.routeTaggingRequest(ctx, w, r, act, internalKey); ok {
 		return res, err
