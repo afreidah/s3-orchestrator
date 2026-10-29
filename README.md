@@ -89,10 +89,14 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 | Channel | Source |
 |---|---|
 | Container | `docker pull ghcr.io/afreidah/s3-orchestrator:<version>` |
-| Debian / Ubuntu | `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
-| Static binary | Linux / macOS / Windows from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
+| Debian / Ubuntu | `.deb` for amd64 and arm64 from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
+| Static binary | Linux amd64 and arm64 from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
+| Helm chart | `oci://ghcr.io/afreidah/charts/s3-orchestrator`, also on [Artifact Hub](https://artifacthub.io/packages/helm/s3-orchestrator/s3-orchestrator) |
+| Nomad pack | [`afreidah/nomad-pack-s3-orchestrator`](https://github.com/afreidah/nomad-pack-s3-orchestrator), or the tarball on [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
 | From source | `git clone && make build` |
 | Terraform provider | [`afreidah/s3-orchestrator`](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) on the Terraform Registry, or the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
+
+Every artifact a release publishes, with the commands to fetch and verify each, is on the [Downloads](https://s3-orchestrator.munchbox.cc/downloads/) page.
 
 **Database:** SQLite is embedded - no external dependencies for single-instance use. PostgreSQL 14+ is also an option and is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
 
@@ -100,11 +104,16 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 
 ### Verify release artifacts
 
-Container images and release checksums are signed with [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore):
+Container images, Helm charts and release checksums are signed with [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore):
 
 ```bash
 # Container image
 cosign verify ghcr.io/afreidah/s3-orchestrator:<version> \
+  --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+
+# Helm chart, tagged with the version without its leading v
+cosign verify ghcr.io/afreidah/charts/s3-orchestrator:<version> \
   --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 
