@@ -53,6 +53,7 @@ jobs:
               - 'internal/store/sqlc/queries/**'
               - 'Makefile'
               - '.golangci.yml'
+              - '.version'
             web:
               - 'web/**'
               - 'docs/**'
