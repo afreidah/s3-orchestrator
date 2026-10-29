@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.178.3] - 2026-10-29
+
+### Improved
+- update CHANGELOG.md for v0.178.2
+
+### Other
+- build the images whenever .version changes (#1811)
+
 ## [0.178.2] - 2026-10-29
 
 ### Fixed
