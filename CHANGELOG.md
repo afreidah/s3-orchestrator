@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.178.2] - 2026-10-29
+
+### Fixed
+- fix(release): log cosign in to ghcr.io so the Helm chart's signature is stored (#1808)
+
+### Improved
+- update CHANGELOG.md for v0.178.1
+
 ## [0.178.1] - 2026-10-29
 
 ### Improved
