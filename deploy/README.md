@@ -15,7 +15,7 @@ helm install s3-orchestrator oci://ghcr.io/afreidah/charts/s3-orchestrator \
 
 ## Nomad
 
-The pack in [`nomad/packs/s3_orchestrator`](nomad/packs/s3_orchestrator/README.md) is attached to each GitHub Release, stamped with that release:
+The pack in [`nomad/packs/s3_orchestrator`](nomad/packs/s3_orchestrator/README.md) is attached to each GitHub Release, stamped with that release, and pushed to [afreidah/nomad-pack-s3-orchestrator](https://github.com/afreidah/nomad-pack-s3-orchestrator) with the release's tag:
 
 ```bash
 nomad-pack run ./s3_orchestrator --var config_file=./config.yaml

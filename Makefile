@@ -653,6 +653,7 @@ HELM_CHART       := deploy/helm/s3-orchestrator
 NOMAD_PACK       := deploy/nomad/packs/s3_orchestrator
 NOMAD_JOB        := deploy/nomad/s3-orchestrator.nomad.hcl
 NOMAD_JOB_VARS   := deploy/nomad/s3-orchestrator.vars.hcl
+PACK_REPO        ?= afreidah/nomad-pack-s3-orchestrator
 CHART_VERSION    := $(patsubst v%,%,$(VERSION))
 KUBECONFORM      := go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
 KUBECONFORM_CRDS := https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
@@ -694,6 +695,19 @@ pack-package: ## Stamp the Nomad pack with the release and archive it into dist/
 	grep -q '"$(CHART_VERSION)"' dist/pack/s3_orchestrator/metadata.hcl
 	grep -q '"$(VERSION)"' dist/pack/s3_orchestrator/variables.hcl
 	tar -czf dist/s3_orchestrator-pack-$(VERSION).tar.gz -C dist/pack s3_orchestrator
+
+# Registries such as Ramble read a pack from the root of a repository's main
+# branch, so each release replaces that repository's contents and tags it.
+pack-publish: pack-package ## Push the stamped Nomad pack to its own repository and tag it
+	@rm -rf dist/pack-repo
+	git clone --quiet git@github.com:$(PACK_REPO).git dist/pack-repo
+	git -C dist/pack-repo symbolic-ref HEAD refs/heads/main
+	find dist/pack-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+	cp -r dist/pack/s3_orchestrator/. LICENSE dist/pack-repo/
+	git -C dist/pack-repo add -A
+	git -C dist/pack-repo commit --quiet -m "s3_orchestrator pack $(VERSION)"
+	git -C dist/pack-repo tag $(VERSION)
+	git -C dist/pack-repo push --quiet origin main $(VERSION)
 
 ##@ Website
 

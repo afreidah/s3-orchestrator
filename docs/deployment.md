@@ -33,7 +33,7 @@ It deploys the orchestrator and needs a PostgreSQL database and at least one bac
 
 ### Nomad (Pack and Job)
 
-The pack is attached to each GitHub Release as `s3_orchestrator-pack-<version>.tar.gz`, and lives in [`deploy/nomad/packs/s3_orchestrator`](../deploy/nomad/packs/s3_orchestrator/README.md):
+The pack is attached to each GitHub Release as `s3_orchestrator-pack-<version>.tar.gz` and pushed to [afreidah/nomad-pack-s3-orchestrator](https://github.com/afreidah/nomad-pack-s3-orchestrator) with the release's tag. It is developed in [`deploy/nomad/packs/s3_orchestrator`](../deploy/nomad/packs/s3_orchestrator/README.md):
 
 ```bash
 nomad var put nomad/jobs/s3-orchestrator DB_PASSWORD=... UI_SESSION_SECRET=...

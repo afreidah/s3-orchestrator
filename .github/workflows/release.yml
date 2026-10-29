@@ -5,7 +5,8 @@
 #
 # Triggers on version tag pushes (v*). Runs GoReleaser to produce GitHub Release
 # artifacts including binaries, Debian packages, and checksums, then publishes
-# the Helm chart to ghcr.io and attaches the Nomad pack to the release.
+# the Helm chart to ghcr.io, attaches the Nomad pack to the release and pushes
+# it to its own repository.
 # -------------------------------------------------------------------------------
 
 name: Release
@@ -111,7 +112,8 @@ jobs:
   # HELM CHART AND NOMAD PACK
   # ---------------------------------------------------------------------------
   # The chart goes to ghcr.io as an OCI artifact, signed like the images; the
-  # pack, stamped with the release, goes on the GitHub Release beside the rest.
+  # pack, stamped with the release, goes on the GitHub Release beside the rest
+  # and to the root of its own repository, where pack registries read it.
   deploy-packaging:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -172,3 +174,22 @@ jobs:
         run: |
           make pack-package VERSION="$GITHUB_REF_NAME"
           gh release upload "$GITHUB_REF_NAME" "dist/s3_orchestrator-pack-${GITHUB_REF_NAME}.tar.gz"
+
+      # A deploy key on the pack repository is the only write access this job
+      # has there; GitHub's host key is pinned rather than scanned.
+      - name: Publish the Nomad pack to its repository
+        env:
+          PACK_DEPLOY_KEY: ${{ secrets.PACK_DEPLOY_KEY }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898283+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898283+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/pack_deploy_key"
+          hosts="$RUNNER_TEMP/known_hosts"
+          printf '%s\n' "$PACK_DEPLOY_KEY" > "$key"
+          chmod 600 "$key"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$hosts"
+          make pack-publish VERSION="$GITHUB_REF_NAME"
