@@ -110,24 +110,6 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	}
 	o.coord.Settle(ctx, cleanup)
 
-	o.finalizeBatchDelete(ctx, span, len(keys), results, start)
+	o.finalizeBatchDelete(ctx, span, len(keys), start)
 	return results
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// tallyDeleteResults counts how many entries in results carry an error
-// versus succeeded. Returned for metrics and audit logging.
-func tallyDeleteResults(results []DeleteObjectResult) (int, int) {
-	var successCount, errorCount int
-	for _, r := range results {
-		if r.Err != nil {
-			errorCount++
-		} else {
-			successCount++
-		}
-	}
-	return successCount, errorCount
 }

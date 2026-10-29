@@ -364,7 +364,7 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) batc
 // the stored content hash. On mismatch the corrupted copy is enqueued for
 // cleanup. Returns true if the hash matches.
 func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
-	actual, err := s.readAndHash(ctx, loc)
+	actual, err := s.hasher.hashStored(ctx, loc)
 	if err != nil {
 		return false, err
 	}
@@ -499,7 +499,7 @@ func (s *Scrubber) HashCopies(ctx context.Context, locs []core.ObjectLocation, o
 // hashOne computes and stores the hash for one object, returning the outcome
 // for the batch tally and a status for the progress stream.
 func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) batch.ItemResult {
-	digests, hashErr := s.readAndHash(ctx, loc)
+	digests, hashErr := s.hasher.hashStored(ctx, loc)
 	if undecodable(hashErr) {
 		// No later pass could hash it either, so it is not a failure.
 		s.log.WarnContext(ctx, "skipping object that cannot be decoded",
@@ -547,15 +547,4 @@ func (s *Scrubber) recordETag(ctx context.Context, loc *core.ObjectLocation, dig
 		s.log.WarnContext(ctx, "failed to record object etag",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 	}
-}
-
-// -------------------------------------------------------------------------
-// SHARED  -  read object from backend, decrypt if needed, compute SHA-256
-// -------------------------------------------------------------------------
-
-// readAndHash returns the digests of the bytes the client wrote for this copy.
-// They have to match what the replicator computes for the same copy, so the
-// work lives in storedHasher rather than here.
-func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (storedDigests, error) {
-	return s.hasher.hashStored(ctx, loc)
 }

@@ -89,7 +89,6 @@ func validateBuckets(buckets []BucketConfig) []error {
 type seenCredentials struct {
 	names      map[string]bool
 	accessKeys map[string]bool
-	tokens     map[string]bool
 }
 
 // newSeenCredentials builds an empty tracker.
@@ -97,7 +96,6 @@ func newSeenCredentials() *seenCredentials {
 	return &seenCredentials{
 		names:      make(map[string]bool),
 		accessKeys: make(map[string]bool),
-		tokens:     make(map[string]bool),
 	}
 }
 

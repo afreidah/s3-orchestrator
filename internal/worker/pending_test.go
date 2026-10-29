@@ -15,6 +15,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -546,38 +547,25 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// onPromote* handlers  -  direct tests of the four result-code branches
+// Resolution handlers  -  direct tests of the result-code branches
 // -------------------------------------------------------------------------
 
-// TestOnPromoteCommitted_CountsThePromotion verifies a successful promotion is
-// counted as promoted and settles nothing itself, since the caller settled the
-// displaced copies' cleanup.
-func TestOnPromoteCommitted_CountsThePromotion(t *testing.T) {
-	t.Parallel()
-	r, _, _, _, _ := setupReaper(t)
-	p := pendingFixture("i1", "bucket/k", "b1")
-
-	counter := telemetry.PendingIntentsResolvedTotal.WithLabelValues("promoted")
-	before := readCounterValue(t, counter)
-	r.onPromoteCommitted(context.Background(), &p, 2)
-	if got := readCounterValue(t, counter) - before; got < 1 {
-		t.Errorf("promoted counter moved by %v, want at least 1", got)
-	}
-}
-
-// TestOnPromoteSuperseded_NoFurtherDelete verifies the timestamp drop branch
-// takes no further store action - the store already deleted the pending row
-// in-txn. The resolved-count classification is covered end-to-end by the
-// ProcessPendingQueue tests.
-func TestOnPromoteSuperseded_NoFurtherDelete(t *testing.T) {
+// TestOnResolved_CountsWithoutStoreAction verifies a settled intent is counted
+// under its outcome and takes no further store action, since the store applied
+// the outcome in its own transaction and the caller settled the cleanup.
+func TestOnResolved_CountsWithoutStoreAction(t *testing.T) {
 	t.Parallel()
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	r.onPromoteSuperseded(context.Background(), &p)
-
+	counter := telemetry.PendingIntentsResolvedTotal.WithLabelValues("promoted")
+	before := readCounterValue(t, counter)
+	r.onResolved(context.Background(), &p, "promoted", slog.Int("displaced_copies", 2))
+	if got := readCounterValue(t, counter) - before; got < 1 {
+		t.Errorf("promoted counter moved by %v, want at least 1", got)
+	}
 	if len(ms.deletedPendingIDs) != 0 {
-		t.Errorf("onPromoteSuperseded must not call DeletePending again; deletedPendingIDs = %v", ms.deletedPendingIDs)
+		t.Errorf("onResolved must not call DeletePending; deletedPendingIDs = %v", ms.deletedPendingIDs)
 	}
 }
 

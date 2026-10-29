@@ -240,18 +240,18 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 		// The promotion charged the bytes and cleared the intent in one
 		// transaction, moving them from what the backend has in flight to what
 		// it stores without either total ever missing them.
-		r.onPromoteCommitted(ctx, p, len(cleanup))
+		r.onResolved(ctx, p, "promoted", slog.Int("displaced_copies", len(cleanup)))
 		return batch.ItemSucceeded
 	case core.PendingPromoteSuperseded:
-		r.onPromoteSuperseded(ctx, p)
+		r.onResolved(ctx, p, "superseded")
 		return batch.ItemSucceeded
 	case core.PendingPromoteCompanionKept:
-		r.onCompanionResolved(ctx, p, "companion_kept")
+		r.onResolved(ctx, p, "companion_kept")
 		return batch.ItemSucceeded
 	case core.PendingPromoteCompanionDiscarded:
 		// Nothing recorded these bytes and nothing can vouch for them, so they
 		// go and the replication worker rebuilds the copy from one we trust.
-		r.onCompanionResolved(ctx, p, "companion_discarded")
+		r.onResolved(ctx, p, "companion_discarded")
 		return batch.ItemSucceeded
 	case core.PendingPromoteAmbiguous:
 		r.onPromoteAmbiguous(ctx, p)
@@ -263,39 +263,16 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	return batch.ItemFailed
 }
 
-// onPromoteCommitted records the success metric and emits an audit log naming
-// how many copies the promotion displaced.
-func (r *PendingReaper) onPromoteCommitted(ctx context.Context, p *core.PendingObject, displaced int) {
-	telemetry.PendingIntentsResolvedTotal.WithLabelValues("promoted").Inc()
-	audit.Log(ctx, "pending_reaper.promoted",
-		slog.String("key", p.ObjectKey),
-		slog.String("backend", p.BackendName),
-		slog.String("intent_id", p.IntentID),
-		slog.Int("displaced_copies", displaced),
-	)
-}
-
-// onCompanionResolved records an extra-copy intent the reaper settled without
-// recording a copy.
-func (r *PendingReaper) onCompanionResolved(ctx context.Context, p *core.PendingObject, outcome string) {
+// onResolved records an intent the reaper settled: the outcome's metric and
+// an audit entry naming the intent, plus any outcome-specific fields. The
+// store has already applied the outcome, so nothing is left to do here.
+func (r *PendingReaper) onResolved(ctx context.Context, p *core.PendingObject, outcome string, extra ...slog.Attr) {
 	telemetry.PendingIntentsResolvedTotal.WithLabelValues(outcome).Inc()
-	audit.Log(ctx, "pending_reaper."+outcome,
+	audit.Log(ctx, "pending_reaper."+outcome, append([]slog.Attr{
 		slog.String("key", p.ObjectKey),
 		slog.String("backend", p.BackendName),
 		slog.String("intent_id", p.IntentID),
-	)
-}
-
-// onPromoteSuperseded handles the timestamp-aware drop path: the store
-// already deleted the pending row and queued its bytes in-txn, so the reaper
-// just records the outcome and emits an audit trail.
-func (r *PendingReaper) onPromoteSuperseded(ctx context.Context, p *core.PendingObject) {
-	telemetry.PendingIntentsResolvedTotal.WithLabelValues("superseded").Inc()
-	audit.Log(ctx, "pending_reaper.superseded",
-		slog.String("key", p.ObjectKey),
-		slog.String("backend", p.BackendName),
-		slog.String("intent_id", p.IntentID),
-	)
+	}, extra...)...)
 }
 
 // onPromoteAmbiguous logs the unexpected branch loudly. The current
