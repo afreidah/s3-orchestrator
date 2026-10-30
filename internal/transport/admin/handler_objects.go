@@ -13,16 +13,12 @@
 package admin
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
-	"path"
-	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
 // -------------------------------------------------------------------------
@@ -43,16 +39,16 @@ const objectKeyPattern = "{key...}"
 // or sweeping a subtree needs. Continuation resumes a truncated page.
 func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	prefix := q.Get("prefix")
+	prefix := q.Get(paramPrefix)
 
 	delimiter := q.Get("delimiter")
 	if !q.Has("delimiter") {
 		delimiter = "/"
 	}
 
-	page, err := h.objects.List(r.Context(), prefix, delimiter, q.Get("continuation"), 0)
+	page, err := h.d.Objects.List(r.Context(), prefix, delimiter, q.Get("continuation"), 0)
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to list objects", err, slog.String("prefix", prefix))
+		httputil.InternalError(r.Context(), h.log, w, "failed to list objects", err, slog.String("prefix", prefix))
 		return
 	}
 
@@ -73,22 +69,16 @@ func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
 
 // handleGetObject streams one object to the caller.
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
-	result, err := h.objects.Get(r.Context(), key)
+	result, err := h.d.Objects.Get(r.Context(), key)
 	if err != nil {
-		h.writeObjectError(w, r, err, "failed to read object", key)
+		httputil.WriteObjectError(w, r, h.log, err, "failed to read object", key)
 		return
 	}
 	defer result.Body.Close()
 
-	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(path.Base(key)))
-	w.Header().Set("Content-Type", "application/octet-stream")
-	if result.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
-	}
-
-	if _, err := bufpool.Copy(w, result.Body); err != nil {
+	if err := httputil.ServeAttachment(w, key, result.Size, result.Body); err != nil {
 		h.log.WarnContext(r.Context(), "object download interrupted", "key", key, "error", err)
 	}
 }
@@ -97,7 +87,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request) {
 // object bytes, so a caller uploads a file by streaming it directly rather
 // than wrapping it in a form.
 func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
 	if r.ContentLength <= 0 {
 		httputil.WriteJSONError(w, http.StatusLengthRequired, "content-length is required")
@@ -111,9 +101,9 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, ops.MaxUploadSize)
 	defer body.Close()
 
-	etag, err := h.objects.Put(r.Context(), key, body, r.ContentLength, r.Header.Get("Content-Type"))
+	etag, err := h.d.Objects.Put(r.Context(), key, body, r.ContentLength, r.Header.Get("Content-Type"))
 	if err != nil {
-		h.writeObjectError(w, r, err, "failed to store object", key)
+		httputil.WriteObjectError(w, r, h.log, err, "failed to store object", key)
 		return
 	}
 
@@ -122,10 +112,10 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteObject removes one object and every copy of it.
 func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
-	if err := h.objects.Delete(r.Context(), key); err != nil {
-		h.writeObjectError(w, r, err, "failed to delete object", key)
+	if err := h.d.Objects.Delete(r.Context(), key); err != nil {
+		httputil.WriteObjectError(w, r, h.log, err, "failed to delete object", key)
 		return
 	}
 
@@ -136,35 +126,17 @@ func (h *Handler) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
 // carries the count, so a caller can tell a no-op from a mass removal, and a
 // partial removal is reported as a failure carrying what it did remove.
 func (h *Handler) handleDeletePrefix(w http.ResponseWriter, r *http.Request) {
-	prefix := r.URL.Query().Get("prefix")
+	prefix := r.URL.Query().Get(paramPrefix)
 
-	res, err := h.objects.DeletePrefix(r.Context(), prefix, nil)
+	res, err := h.d.Objects.DeletePrefix(r.Context(), prefix, nil)
 	if err != nil {
-		h.writeObjectError(w, r, err, "failed to delete prefix", prefix)
+		httputil.WriteObjectError(w, r, h.log, err, "failed to delete prefix", prefix)
 		return
 	}
 
-	body := adminapi.ObjectDeleteResponse{Deleted: res.Deleted, Failed: res.Failed, Total: res.Total}
+	status := http.StatusOK
 	if res.Failed > 0 {
-		httputil.WriteJSON(w, http.StatusInternalServerError, body)
-		return
+		status = http.StatusInternalServerError
 	}
-
-	httputil.WriteJSON(w, http.StatusOK, body)
-}
-
-// writeObjectError renders a failed object operation. A rejection names what
-// was wrong with the request; anything else is a server fault that logs the
-// underlying error and reports the operator-facing message.
-func (h *Handler) writeObjectError(w http.ResponseWriter, r *http.Request, err error, msg, key string) {
-	switch {
-	case errors.Is(err, ops.ErrKeyRequired),
-		errors.Is(err, ops.ErrPrefixRequired),
-		errors.Is(err, ops.ErrInvalidKey):
-		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ops.ErrNotFound):
-		httputil.WriteJSONError(w, http.StatusNotFound, "not found")
-	default:
-		h.internalError(r.Context(), w, msg, err, slog.String("key", key))
-	}
+	httputil.WriteJSON(w, status, adminapi.ObjectDeleteResponse{Deleted: res.Deleted, Failed: res.Failed, Total: res.Total})
 }

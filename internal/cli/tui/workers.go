@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
@@ -27,10 +26,8 @@ import (
 
 // workersView holds the state of the worker health pane.
 type workersView struct {
-	list        sortTable[adminapi.WorkerHealth] // one entry per registered background service
-	loading     bool                             // a fetch is in flight
-	unavailable string                           // set when the deployment registers no workers
-	err         error                            // last fetch error, if any
+	loadState
+	list sortTable[adminapi.WorkerHealth] // one entry per registered background service
 }
 
 // newWorkersView builds the pane's empty state.
@@ -43,17 +40,9 @@ func newWorkersView() workersView {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// workersLoadedMsg carries a successfully loaded worker health snapshot.
-type workersLoadedMsg struct{ resp *adminapi.WorkersResponse }
-
-// workersErrMsg carries a failed worker health fetch.
-type workersErrMsg struct{ err error }
-
 // loadWorkers returns a command that fetches worker health off the main loop.
 func (m *model) loadWorkers() tea.Cmd {
-	return fetchCmd(m.client.GetWorkers,
-		func(r *adminapi.WorkersResponse) tea.Msg { return workersLoadedMsg{r} },
-		func(err error) tea.Msg { return workersErrMsg{err} })
+	return fetchCmd(m.client.GetWorkers)
 }
 
 // -------------------------------------------------------------------------
@@ -63,33 +52,13 @@ func (m *model) loadWorkers() tea.Cmd {
 // applyWorkers folds a loaded snapshot into the pane state.
 func (m *model) applyWorkers(resp *adminapi.WorkersResponse) {
 	m.workers.list.setItems(resp.Workers)
-	m.workers.loading = false
-	m.workers.unavailable = ""
-	m.workers.err = nil
+	m.workers.loaded()
 }
 
-// applyWorkersErr records a failed fetch, separating a proxy-only deployment
-// (which registers no worker pool) from a real failure.
-func (m *model) applyWorkersErr(err error) {
-	m.workers.loading = false
-	m.workers.unavailable = adminclient.UnavailableReason(err)
-	m.workers.err = nil
-	if m.workers.unavailable == "" {
-		m.workers.err = err
-	}
-}
-
-// handleWorkersKey applies pane keys (back, reload) and delegates cursor
-// movement to the table.
+// handleWorkersKey runs the highlighted worker's Ops action on "R" and
+// delegates cursor movement to the table.
 func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.workers.loading = !m.workers.list.loaded()
-		cmd := m.fetch(pollWorkers)
-		return m, cmd
-	case "R":
+	if key.String() == "R" {
 		return m.runWorkerOpsAction()
 	}
 
@@ -178,11 +147,6 @@ func tickAge(t time.Time) string {
 		return "-"
 	}
 	return humanize.Duration(max(time.Since(t), 0)) + " ago"
-}
-
-// workersPaneView composes the pane's full-screen layout.
-func (m *model) workersPaneView() string {
-	return m.frame(m.workersHeaderView(), m.hintFooter(), m.workersBody()...)
 }
 
 // workersHeaderView renders the title bar with the worker count and how many

@@ -27,24 +27,18 @@ import (
 // REBALANCE
 // -------------------------------------------------------------------------
 
-// handleAPIRebalance triggers an on-demand rebalance in the background.
-// Returns 202 Accepted immediately; poll /api/rebalance/status for results.
-func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.rebalanceOp())
-}
-
 // rebalanceStatus reports a rebalance cycle. The dashboard keys on moved.
 type rebalanceStatus struct {
 	adminActionState
 	Moved int `json:"moved"`
 }
 
-// rebalanceOp is the rebalance action, shared by its trigger and its poll.
-func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
+// rebalanceOp runs an on-demand rebalance.
+func (h *Handler) rebalanceOp(_ *http.Request) adminActionOp[rebalanceStatus] {
 	return adminActionOp[rebalanceStatus]{
 		name: opRebalance,
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.rebalance.Run(ctx, nil)
+			res, err := h.d.Rebalance.Run(ctx, nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -56,20 +50,9 @@ func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
 	}
 }
 
-// handleAPIRebalanceStatus returns the status of a running or completed rebalance.
-func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.rebalanceOp())
-}
-
 // -------------------------------------------------------------------------
 // OVER-REPLICATION CLEANUP
 // -------------------------------------------------------------------------
-
-// handleAPICleanExcess triggers an on-demand over-replication cleanup in the
-// background. Returns 202 Accepted immediately; poll /api/clean-excess/status.
-func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.cleanExcessOp())
-}
 
 // cleanExcessStatus reports an over-replication cleanup. The dashboard keys on
 // removed.
@@ -79,12 +62,12 @@ type cleanExcessStatus struct {
 	Failed  int `json:"failed"`
 }
 
-// cleanExcessOp is the clean-excess action, shared by its trigger and its poll.
-func (h *Handler) cleanExcessOp() adminActionOp[cleanExcessStatus] {
+// cleanExcessOp runs an on-demand over-replication cleanup.
+func (h *Handler) cleanExcessOp(_ *http.Request) adminActionOp[cleanExcessStatus] {
 	return adminActionOp[cleanExcessStatus]{
 		name: opCleanExcess,
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.replication.CleanExcess(ctx, 0, nil)
+			res, err := h.d.Replication.CleanExcess(ctx, 0, nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -94,11 +77,6 @@ func (h *Handler) cleanExcessOp() adminActionOp[cleanExcessStatus] {
 			return cleanExcessStatus{adminActionState: s, Removed: c.Count, Failed: c.Failed}
 		},
 	}
-}
-
-// handleAPICleanExcessStatus returns the status of a running or completed cleanup.
-func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.cleanExcessOp())
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects. It
@@ -113,20 +91,14 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		Backend string `json:"backend"`
 		Bucket  string `json:"bucket"`
 	}
-	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
 	if req.Backend == "" || req.Bucket == "" {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "backend and bucket are required")
 		return
 	}
-
-	if !h.validBackend(req.Backend) {
-		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
-		return
-	}
-
-	if !h.validBucketPrefix(req.Bucket + "/") {
+	if !h.validBackend(req.Backend) || !h.d.Buckets.HasPrefix(req.Bucket+"/") {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
@@ -140,10 +112,9 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imported, skipped, err := h.syncOps.SyncBackend(r.Context(), req.Backend, h.buckets.Names())
+	imported, skipped, err := h.d.Sync.SyncBackend(r.Context(), req.Backend, h.d.Buckets.Names())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, "sync failed")
+		httputil.InternalError(r.Context(), h.log, w, "sync failed", err, "backend", req.Backend, "bucket", req.Bucket)
 		return
 	}
 

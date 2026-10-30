@@ -72,11 +72,7 @@ func newTestServerWithQuota(
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := &Server{
-		Objects:       st.Objects,
-		Multipart:     st.Multipart,
-		MaxObjectSize: 10 * 1024 * 1024, // 10MB
-	}
+	srv := NewServer(st.Objects, st.Multipart, 10*1024*1024)
 
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
@@ -419,11 +415,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := &Server{
-		Objects:       st.Objects,
-		Multipart:     st.Multipart,
-		MaxObjectSize: 10 * 1024 * 1024,
-	}
+	srv := NewServer(st.Objects, st.Multipart, 10*1024*1024)
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
 	}))

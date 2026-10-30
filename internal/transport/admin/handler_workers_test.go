@@ -35,7 +35,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1715000000, 0)
 	h := newTestHandler(t)
-	h.workerHealth = func() []adminapi.WorkerHealth {
+	h.d.WorkerHealth = func() []adminapi.WorkerHealth {
 		return []adminapi.WorkerHealth{
 			{Name: "cleanup_queue", LastSuccess: now, ConsecutiveFailures: 0},
 			{Name: "replicator", LastFailure: now, LastError: "boom", ConsecutiveFailures: 3},
@@ -85,7 +85,7 @@ func TestHandleWorkers_NotWired(t *testing.T) {
 func TestHandleWorkers_RequiresToken(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.workerHealth = func() []adminapi.WorkerHealth { return nil }
+	h.d.WorkerHealth = func() []adminapi.WorkerHealth { return nil }
 	mux := http.NewServeMux()
 	h.Register(mux)
 

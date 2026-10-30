@@ -47,32 +47,30 @@ const (
 
 // navEntry is one row in the left nav.
 type navEntry struct {
-	label   string
-	sec     section
-	enabled bool
+	label string
+	sec   section
 }
 
-// navEntries lists the nav rows in display order. Disabled entries render as
-// placeholders and are skipped by cursor navigation.
+// navEntries lists the nav rows in display order.
 func navEntries() []navEntry {
 	return []navEntry{
-		{"Dashboard", sectionDashboard, true},
-		{"Files", sectionFiles, true},
-		{"Backends", sectionBackends, true},
-		{"Buckets", sectionBuckets, true},
-		{"Replication", sectionReplication, true},
-		{"Workers", sectionWorkers, true},
-		{"Cleanup", sectionCleanup, true},
-		{"Cache", sectionCache, true},
-		{"Config", sectionConfig, true},
-		{"Logs", sectionLogs, true},
-		{"Ops", sectionOps, true},
+		{"Dashboard", sectionDashboard},
+		{"Files", sectionFiles},
+		{"Backends", sectionBackends},
+		{"Buckets", sectionBuckets},
+		{"Replication", sectionReplication},
+		{"Workers", sectionWorkers},
+		{"Cleanup", sectionCleanup},
+		{"Cache", sectionCache},
+		{"Config", sectionConfig},
+		{"Logs", sectionLogs},
+		{"Ops", sectionOps},
 	}
 }
 
-// selectableSections is the number of enabled nav destinations; it bounds the
-// nav cursor.
-const selectableSections = 11
+// selectableSections is the number of nav destinations; it bounds the nav
+// cursor.
+var selectableSections = len(navEntries())
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -102,49 +100,51 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	m.navFocus = false
 	m.navCursor = int(s)
 	switch s {
-	// The polled panes keep what the poller already fetched, so a pane opens on
-	// current data and shows the loading state only before its first result.
-	case sectionDashboard:
-		cmd := m.refreshDashboard()
-		return m, cmd
-	case sectionBackends:
-		m.backends.loading = !m.backends.list.loaded()
-		cmd := m.fetch(pollStatus)
-		return m, cmd
-	case sectionBuckets:
-		m.buckets.loading = !m.buckets.list.loaded()
-		cmd := m.fetch(pollBuckets)
-		return m, cmd
-	case sectionReplication:
-		return m.enterReplication()
-	case sectionWorkers:
-		m.workers.loading = !m.workers.list.loaded()
-		cmd := m.fetch(pollWorkers)
-		return m, cmd
-	case sectionCleanup:
-		m.cleanup.loading = !m.cleanup.loaded
-		cmd := m.fetch(pollCleanup)
-		return m, cmd
-	case sectionCache:
-		m.cache.loading = m.cache.snap == nil
-		cmd := m.fetch(pollCache)
-		return m, cmd
 	case sectionOps:
 		// Entering from the nav is always the fleet-wide menu. A backend-scoped
 		// one is opened by the backends pane, which fills these in itself.
 		m.ops = opsView{actions: opsActions()}
 		return m, nil
-	case sectionConfig:
-		m.config.loading = m.config.resp == nil
-		cmd := m.loadConfig()
-		return m, cmd
 	case sectionLogs:
 		m.logs = newLogsView()
 		m.logs.loading = true
 		cmd := m.fetch(pollLogs)
 		return m, cmd
 	}
-	return m, nil
+	cmd := m.reload(s)
+	return m, cmd
+}
+
+// reload fetches what a pane shows, on entry and on "r". The polled panes keep
+// what the poller already fetched, so a pane shows current data and the
+// loading state only before its first result.
+func (m *model) reload(s section) tea.Cmd {
+	switch s {
+	case sectionDashboard:
+		return m.refreshDashboard()
+	case sectionBackends:
+		m.backends.loading = !m.backends.list.loaded()
+		return m.fetch(pollStatus)
+	case sectionBuckets:
+		m.buckets.loading = !m.buckets.list.loaded()
+		return m.fetch(pollBuckets)
+	case sectionReplication:
+		m.replication.loading = m.replication.snap == nil
+		return m.fetch(pollReplication)
+	case sectionWorkers:
+		m.workers.loading = !m.workers.list.loaded()
+		return m.fetch(pollWorkers)
+	case sectionCleanup:
+		m.cleanup.loading = !m.cleanup.loaded
+		return m.fetch(pollCleanup)
+	case sectionCache:
+		m.cache.loading = m.cache.snap == nil
+		return m.fetch(pollCache)
+	case sectionConfig:
+		m.config.loading = m.config.resp == nil
+		return m.loadConfig()
+	}
+	return nil
 }
 
 // handleNavKey drives the focused sidebar: move the highlight, open a section,
@@ -178,23 +178,11 @@ func (m *model) sidebarView() string {
 	b.WriteString(title.Render("s3o"))
 	b.WriteString("\n\n")
 	for i, e := range navEntries() {
-		active := (!m.navFocus && e.enabled && e.sec == m.section) || (m.navFocus && i == m.navCursor)
-		marker := "  "
-		if active {
-			marker = "> "
+		marker, style := "  ", navItemStyle
+		if (!m.navFocus && e.sec == m.section) || (m.navFocus && i == m.navCursor) {
+			marker, style = "> ", navActiveStyle
 		}
-		label := e.label
-		if !e.enabled {
-			label += " (soon)"
-		}
-		style := navItemStyle
-		switch {
-		case active:
-			style = navActiveStyle
-		case !e.enabled:
-			style = navDisabledStyle
-		}
-		b.WriteString(style.Render(marker + label))
+		b.WriteString(style.Render(marker + e.label))
 		b.WriteString("\n")
 	}
 

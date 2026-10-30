@@ -118,17 +118,6 @@ func TestDecodeOneShot_BadJSON(t *testing.T) {
 	}
 }
 
-// TestGrouped covers the digit boundaries where separator placement changes.
-func TestGrouped(t *testing.T) {
-	t.Parallel()
-	cases := map[int]string{0: "0", 999: "999", 1000: "1,000", 12345: "12,345", 1234567: "1,234,567", -4321: "-4,321"}
-	for n, want := range cases {
-		if got := grouped(n); got != want {
-			t.Errorf("grouped(%d) = %q, want %q", n, got, want)
-		}
-	}
-}
-
 // TestSignedSize asserts a byte delta reads as a direction.
 func TestSignedSize(t *testing.T) {
 	t.Parallel()

@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -86,10 +87,6 @@ const (
 	typeInteger = "integer"
 	typeBoolean = "boolean"
 )
-
-// mediaOctetStream is the media type of every route that carries raw bytes
-// rather than a JSON document.
-const mediaOctetStream = "application/octet-stream"
 
 // The parameters more than one entry declares, built once so a route cannot
 // describe a shared parameter differently from its siblings.
@@ -182,7 +179,7 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminRead,
 		},
 		{
-			Method: http.MethodGet, Pattern: adminapi.PathLogs, Handler: LogsHandler(h.logs),
+			Method: http.MethodGet, Pattern: adminapi.PathLogs, Handler: LogsHandler(h.d.LogBuffer),
 			Summary:  "Recent records from the in-memory log buffer",
 			Response: adminapi.LogsResponse{},
 			Params: []param{
@@ -217,7 +214,7 @@ func (h *Handler) routes() []route {
 		{
 			Method: http.MethodGet, Pattern: pathObject, Handler: h.handleGetObject,
 			Summary:      "Download one object",
-			ResponseType: mediaOctetStream,
+			ResponseType: httputil.MediaOctetStream,
 			Params: []param{
 				objectKeyPath,
 			},
@@ -226,7 +223,7 @@ func (h *Handler) routes() []route {
 		{
 			Method: http.MethodPut, Pattern: pathObject, Handler: h.handlePutObject,
 			Summary:     "Upload one object",
-			RequestType: mediaOctetStream,
+			RequestType: httputil.MediaOctetStream,
 			Response:    adminapi.ObjectUploadResponse{},
 			Params: []param{
 				objectKeyPath,
@@ -540,7 +537,7 @@ func (h *Handler) routes() []route {
 		{
 			Method: http.MethodPost, Pattern: adminapi.PathTraceSnap, Handler: h.handleTraceSnapshot,
 			Summary:      "Download a flight-recorder trace snapshot",
-			ResponseType: mediaOctetStream,
+			ResponseType: httputil.MediaOctetStream,
 			Kind:         core.ResourceOrchestrator, Perm: core.PermAdminLogs,
 		},
 		{

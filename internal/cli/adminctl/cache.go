@@ -13,10 +13,9 @@
 package adminctl
 
 import (
-	"flag"
-	"fmt"
 	"net/url"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -35,14 +34,9 @@ func cmdCacheStats(_ []string, c *client) int {
 // cmdCacheInvalidate implements `s3-orchestrator admin cache-invalidate
 // -key=<key>`. Drops a single key; returns 200 even for unknown keys.
 func cmdCacheInvalidate(args []string, c *client) int {
-	fs := flag.NewFlagSet("cache-invalidate", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("cache-invalidate")
 	key := fs.String("key", "", "Cache key to invalidate (required)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *key == "" {
-		fmt.Fprintln(c.stderr, "error: -key is required")
+	if !c.parse(fs, args, "key") {
 		return 1
 	}
 	return c.delete(adminapi.Path(adminapi.PathCacheKeys, *key))
@@ -52,15 +46,10 @@ func cmdCacheInvalidate(args []string, c *client) int {
 // cache-invalidate-prefix -prefix=<prefix>`. Drops every cached key under the
 // prefix; use cache-flush for a deliberate full flush.
 func cmdCacheInvalidatePrefix(args []string, c *client) int {
-	fs := flag.NewFlagSet("cache-invalidate-prefix", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("cache-invalidate-prefix")
 	prefix := fs.String("prefix", "", "Cache key prefix to invalidate (required)")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args, "prefix") {
 		return 1
 	}
-	if *prefix == "" {
-		fmt.Fprintln(c.stderr, "error: -prefix is required")
-		return 1
-	}
-	return c.delete(withQuery(adminapi.PathCachePrefix, url.Values{"prefix": {*prefix}}))
+	return c.delete(adminclient.WithQuery(adminapi.PathCachePrefix, url.Values{"prefix": {*prefix}}))
 }

@@ -52,12 +52,8 @@ const (
 // A SigV4-signed request is verified the way the S3 API verifies one, against
 // the same registry, so one keypair reaches both surfaces.
 func (h *Handler) authenticate(r *http.Request) (*auth.User, bool) {
-	// Without a registry nothing can be resolved to an identity, so nothing is
-	// authenticated, and a handler assembled without one authorizes no request.
-	if h.registry == nil {
-		return nil, false
-	}
-	registry := h.registry()
+	// A worker-mode instance has no registry, so nothing is authenticated.
+	registry := h.d.Registry()
 	if registry == nil {
 		return nil, false
 	}
@@ -77,7 +73,7 @@ func (h *Handler) authenticate(r *http.Request) (*auth.User, bool) {
 // response, a refusal included, names the instance that answered.
 func (h *Handler) guard(rt *route) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(adminapi.HeaderInstance, h.instance.ID)
+		w.Header().Set(adminapi.HeaderInstance, h.d.Instance.ID)
 		who, ok := h.authenticate(r)
 		if !ok {
 			h.log.WarnContext(r.Context(), "unauthorized request",
@@ -152,7 +148,7 @@ func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, 
 	if name == "" {
 		return "", true
 	}
-	if !slices.Contains(h.backendNames(), name) {
+	if !slices.Contains(h.d.BackendNames(), name) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "unknown backend: "+name)
 		return "", false
 	}

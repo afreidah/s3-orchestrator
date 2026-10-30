@@ -71,7 +71,7 @@ func grantedHandler(t *testing.T) (*http.ServeMux, func(withViewer bool)) {
 		current.Store(br)
 	}
 	publish(true)
-	h.registry = current.Load
+	h.d.Registry = current.Load
 	return mux, publish
 }
 

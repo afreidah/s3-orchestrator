@@ -16,7 +16,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -73,9 +72,7 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !h.asyncOps.TryStart(op.name) {
-		w.Header().Set(headerContentType, contentTypeJSON)
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": op.name + " already running"})
+		httputil.WriteJSONError(w, http.StatusConflict, op.name+" already running")
 		return
 	}
 
@@ -96,34 +93,31 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 		}
 	}()
 
-	w.Header().Set(headerContentType, contentTypeJSON)
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 // writeAdminActionStatus serialises the polling response for an admin action.
 // The three states that carry no counts render without the action's own type;
 // only a finished run reaches render.
 func (h *Handler) writeAdminActionStatus[R any](w http.ResponseWriter, op adminActionOp[R]) {
-	w.Header().Set(headerContentType, contentTypeJSON)
-	enc := json.NewEncoder(w)
-
+	var body any
 	result, running := h.asyncOps.Status(op.name)
 	switch {
 	case running:
-		_ = enc.Encode(adminActionState{Status: "running"})
+		body = adminActionState{Status: "running"}
 	case result == nil:
-		_ = enc.Encode(adminActionState{Status: "idle"})
+		body = adminActionState{Status: "idle"}
 	case result.Error != "":
-		_ = enc.Encode(adminActionState{Status: "error", Error: result.Error})
+		body = adminActionState{Status: "error", Error: result.Error}
 	default:
 		state := adminActionState{Status: "done", OK: true}
 		if result.Skipped != "" {
 			state.Status = "skipped"
 			state.Reason = result.Skipped
 		}
-		_ = enc.Encode(op.render(state, result.Counts))
+		body = op.render(state, result.Counts)
 	}
+	httputil.WriteJSON(w, http.StatusOK, body)
 }
 
 // -------------------------------------------------------------------------
@@ -138,12 +132,12 @@ type replicateStatus struct {
 	Failed        int `json:"failed"`
 }
 
-// replicateOp is the replicate action, shared by its trigger and its poll.
-func (h *Handler) replicateOp() adminActionOp[replicateStatus] {
+// replicateOp runs one replication cycle.
+func (h *Handler) replicateOp(_ *http.Request) adminActionOp[replicateStatus] {
 	return adminActionOp[replicateStatus]{
 		name: "replicate",
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.replication.Replicate(ctx, nil)
+			res, err := h.d.Replication.Replicate(ctx, nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -153,18 +147,6 @@ func (h *Handler) replicateOp() adminActionOp[replicateStatus] {
 			return replicateStatus{adminActionState: s, CopiesCreated: c.Count, Failed: c.Failed}
 		},
 	}
-}
-
-// handleAPIReplicate triggers one replication cycle in the background.
-func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.replicateOp())
-}
-
-// handleAPIReplicateStatus returns the latest progress payload for the
-// replicate admin action so the dashboard can poll without re-issuing the
-// trigger.
-func (h *Handler) handleAPIReplicateStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.replicateOp())
 }
 
 // -------------------------------------------------------------------------
@@ -178,12 +160,12 @@ type scrubStatus struct {
 	Failed  int `json:"failed"`
 }
 
-// scrubOp is the scrub action, shared by its trigger and its poll.
-func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
+// scrubOp runs one integrity-verification scrub pass.
+func (h *Handler) scrubOp(_ *http.Request) adminActionOp[scrubStatus] {
 	return adminActionOp[scrubStatus]{
 		name: "scrub",
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.integrity.Scrub(ctx, 0, "", nil)
+			res, err := h.d.Integrity.Scrub(ctx, 0, "", nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -193,17 +175,6 @@ func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
 			return scrubStatus{adminActionState: s, Checked: c.Count, Failed: c.Failed}
 		},
 	}
-}
-
-// handleAPIScrub triggers one integrity-verification scrub pass.
-func (h *Handler) handleAPIScrub(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.scrubOp())
-}
-
-// handleAPIScrubStatus returns the latest progress payload for the scrub admin
-// action so the dashboard can poll without re-triggering.
-func (h *Handler) handleAPIScrubStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.scrubOp())
 }
 
 // -------------------------------------------------------------------------
@@ -218,12 +189,13 @@ type backfillStatus struct {
 	Processed int `json:"processed"`
 }
 
-// backfillOp is the backfill-checksums action, shared by its trigger and poll.
-func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
+// backfillOp runs a checksum backfill pass over every object that lacks a
+// content hash.
+func (h *Handler) backfillOp(_ *http.Request) adminActionOp[backfillStatus] {
 	return adminActionOp[backfillStatus]{
 		name: "backfill-checksums",
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.integrity.BackfillChecksums(ctx, 0, 0, 0, "", nil)
+			res, err := h.d.Integrity.BackfillChecksums(ctx, 0, 0, 0, "", nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -235,73 +207,59 @@ func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
 	}
 }
 
-// handleAPIBackfillChecksums triggers a checksum backfill pass over every
-// object that lacks a content hash.
-func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.backfillOp())
-}
-
-// handleAPIBackfillChecksumsStatus returns the latest progress payload for the
-// backfill-checksums admin action.
-func (h *Handler) handleAPIBackfillChecksumsStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.backfillOp())
-}
-
 // -------------------------------------------------------------------------
 // BULK REWRITES
 // -------------------------------------------------------------------------
 
-// bulkRewriteCounts folds one rewrite pass into the shared counts. All four
-// passes report identically, which is the point of them sharing a driver.
-func bulkRewriteCounts(res ops.BulkRewriteResult, err error) (adminActionCounts, error) {
-	if err != nil {
-		return adminActionCounts{}, err
+// bulkRewriteTally is the part of a bulk-rewrite status every pass reports
+// alike; only the name of the count the dashboard keys on differs.
+type bulkRewriteTally struct {
+	Skipped int `json:"skipped"`
+	Failed  int `json:"failed"`
+	Total   int `json:"total"`
+}
+
+// bulkRewriteOp builds one bulk-rewrite action. The request's max caps how many
+// copies the run rewrites, 0 meaning the whole fleet; it only shapes the run,
+// so a poll that carries none renders the same.
+func bulkRewriteOp[R any](
+	name string,
+	r *http.Request,
+	pass func(ctx context.Context, maxObjects int) (ops.BulkRewriteResult, error),
+	render func(s adminActionState, count int, t bulkRewriteTally) R,
+) adminActionOp[R] {
+	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
+	return adminActionOp[R]{
+		name: name,
+		run: func(ctx context.Context) (adminActionCounts, error) {
+			res, err := pass(ctx, maxObjects)
+			if err != nil {
+				return adminActionCounts{}, err
+			}
+			return adminActionCounts{Count: res.Succeeded, Skipped: res.Skipped, Failed: res.Failed, Total: res.Total}, nil
+		},
+		render: func(s adminActionState, c adminActionCounts) R {
+			return render(s, c.Count, bulkRewriteTally{Skipped: c.Skipped, Failed: c.Failed, Total: c.Total})
+		},
 	}
-	return adminActionCounts{
-		Count:   res.Succeeded,
-		Skipped: res.Skipped,
-		Failed:  res.Failed,
-		Total:   res.Total,
-	}, nil
 }
 
 // encryptExistingStatus reports an encrypt-existing pass.
 type encryptExistingStatus struct {
 	adminActionState
 	Encrypted int `json:"encrypted"`
-	Skipped   int `json:"skipped"`
-	Failed    int `json:"failed"`
-	Total     int `json:"total"`
+	bulkRewriteTally
 }
 
-// encryptOp is the encrypt-existing action. maxObjects caps how many copies the
-// run rewrites, 0 meaning the whole fleet.
-func (h *Handler) encryptOp(maxObjects int) adminActionOp[encryptExistingStatus] {
-	return adminActionOp[encryptExistingStatus]{
-		name: "encrypt-existing",
-		run: func(ctx context.Context) (adminActionCounts, error) {
-			return bulkRewriteCounts(h.encryption.EncryptExisting(ctx, nil, maxObjects, ""))
+// encryptOp encrypts every unencrypted object.
+func (h *Handler) encryptOp(r *http.Request) adminActionOp[encryptExistingStatus] {
+	return bulkRewriteOp("encrypt-existing", r,
+		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
+			return h.d.Encryption.EncryptExisting(ctx, nil, n, "")
 		},
-		render: func(s adminActionState, c adminActionCounts) encryptExistingStatus {
-			return encryptExistingStatus{
-				adminActionState: s, Encrypted: c.Count,
-				Skipped: c.Skipped, Failed: c.Failed, Total: c.Total,
-			}
-		},
-	}
-}
-
-// handleAPIEncryptExisting encrypts every unencrypted object, or the first max
-// of them when the query parameter is set.
-func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.encryptOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
-}
-
-// handleAPIEncryptExistingStatus returns the latest progress payload for the
-// encrypt-existing admin action. The cap only shapes the run, so polling passes
-// none.
-func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.encryptOp(0))
+		func(s adminActionState, count int, t bulkRewriteTally) encryptExistingStatus {
+			return encryptExistingStatus{adminActionState: s, Encrypted: count, bulkRewriteTally: t}
+		})
 }
 
 // compressExistingStatus reports a compress-existing pass.
@@ -312,75 +270,37 @@ func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.
 type compressExistingStatus struct {
 	adminActionState
 	Compressed int `json:"compressed"`
-	Skipped    int `json:"skipped"`
-	Failed     int `json:"failed"`
-	Total      int `json:"total"`
+	bulkRewriteTally
 }
 
-// compressOp is the compress-existing action.
-func (h *Handler) compressOp(maxObjects int) adminActionOp[compressExistingStatus] {
-	return adminActionOp[compressExistingStatus]{
-		name: "compress-existing",
-		run: func(ctx context.Context) (adminActionCounts, error) {
-			return bulkRewriteCounts(h.compression.CompressExisting(ctx, nil, maxObjects, ""))
+// compressOp compresses every object stored verbatim.
+func (h *Handler) compressOp(r *http.Request) adminActionOp[compressExistingStatus] {
+	return bulkRewriteOp("compress-existing", r,
+		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
+			return h.d.Compression.CompressExisting(ctx, nil, n, "")
 		},
-		render: func(s adminActionState, c adminActionCounts) compressExistingStatus {
-			return compressExistingStatus{
-				adminActionState: s, Compressed: c.Count,
-				Skipped: c.Skipped, Failed: c.Failed, Total: c.Total,
-			}
-		},
-	}
-}
-
-// handleAPICompressExisting compresses every object stored verbatim, or the
-// first max of them when the query parameter is set.
-func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.compressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
-}
-
-// handleAPICompressExistingStatus returns the latest progress payload for the
-// compress-existing admin action.
-func (h *Handler) handleAPICompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.compressOp(0))
+		func(s adminActionState, count int, t bulkRewriteTally) compressExistingStatus {
+			return compressExistingStatus{adminActionState: s, Compressed: count, bulkRewriteTally: t}
+		})
 }
 
 // decompressExistingStatus reports a decompress-existing pass.
 type decompressExistingStatus struct {
 	adminActionState
 	Decompressed int `json:"decompressed"`
-	Skipped      int `json:"skipped"`
-	Failed       int `json:"failed"`
-	Total        int `json:"total"`
+	bulkRewriteTally
 }
 
-// decompressOp is the decompress-existing action.
-func (h *Handler) decompressOp(maxObjects int) adminActionOp[decompressExistingStatus] {
-	return adminActionOp[decompressExistingStatus]{
-		name: "decompress-existing",
-		run: func(ctx context.Context) (adminActionCounts, error) {
-			return bulkRewriteCounts(h.compression.DecompressExisting(ctx, nil, maxObjects, ""))
+// decompressOp rewrites every encoded object back to the bytes the client
+// wrote, which is how an operator takes the feature back out.
+func (h *Handler) decompressOp(r *http.Request) adminActionOp[decompressExistingStatus] {
+	return bulkRewriteOp("decompress-existing", r,
+		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
+			return h.d.Compression.DecompressExisting(ctx, nil, n, "")
 		},
-		render: func(s adminActionState, c adminActionCounts) decompressExistingStatus {
-			return decompressExistingStatus{
-				adminActionState: s, Decompressed: c.Count,
-				Skipped: c.Skipped, Failed: c.Failed, Total: c.Total,
-			}
-		},
-	}
-}
-
-// handleAPIDecompressExisting rewrites every encoded object back to the bytes
-// the client wrote, which is how an operator takes the feature back out. Takes
-// the same optional max as the forward pass.
-func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.decompressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
-}
-
-// handleAPIDecompressExistingStatus returns the latest progress payload for the
-// decompress-existing admin action.
-func (h *Handler) handleAPIDecompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.decompressOp(0))
+		func(s adminActionState, count int, t bulkRewriteTally) decompressExistingStatus {
+			return decompressExistingStatus{adminActionState: s, Decompressed: count, bulkRewriteTally: t}
+		})
 }
 
 // -------------------------------------------------------------------------
@@ -394,12 +314,13 @@ type lifecycleStatus struct {
 	Failed  int `json:"failed"`
 }
 
-// lifecycleOp is the lifecycle action, shared by its trigger and its poll.
-func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
+// lifecycleOp runs one expiration sweep, so an operator can confirm a rule they
+// just wrote matches something without waiting out the hourly tick.
+func (h *Handler) lifecycleOp(_ *http.Request) adminActionOp[lifecycleStatus] {
 	return adminActionOp[lifecycleStatus]{
 		name: opLifecycle,
 		run: func(ctx context.Context) (adminActionCounts, error) {
-			res, err := h.expiry.Run(ctx, nil)
+			res, err := h.d.Expiry.Run(ctx, nil)
 			if err != nil {
 				return adminActionCounts{}, err
 			}
@@ -409,17 +330,4 @@ func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
 			return lifecycleStatus{adminActionState: s, Deleted: c.Count, Failed: c.Failed}
 		},
 	}
-}
-
-// handleAPILifecycle runs one expiration sweep in the background, so an
-// operator can confirm a rule they just wrote matches something without
-// waiting out the hourly tick.
-func (h *Handler) handleAPILifecycle(w http.ResponseWriter, r *http.Request) {
-	h.startAdminAction(w, r, h.lifecycleOp())
-}
-
-// handleAPILifecycleStatus returns the latest progress payload for the
-// lifecycle admin action.
-func (h *Handler) handleAPILifecycleStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, h.lifecycleOp())
 }

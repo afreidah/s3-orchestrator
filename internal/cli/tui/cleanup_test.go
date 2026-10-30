@@ -135,13 +135,13 @@ func TestHandleCleanupKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := cleanupModel(t)
 
-	m.handleCleanupKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionCleanup) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
 	m.navFocus = false
-	_, cmd := m.handleCleanupKey(key("r"))
+	_, cmd := m.handlePaneKey(key("r"))
 	if cmd == nil || !m.poll.inFlight[pollCleanup] {
 		t.Fatalf("reload: cmd=%v in-flight=%v, want a fetch", cmd, m.poll.inFlight[pollCleanup])
 	}

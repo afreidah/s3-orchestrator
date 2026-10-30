@@ -13,7 +13,6 @@ package tui
 import (
 	"cmp"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -93,13 +91,12 @@ type model struct {
 	ops         opsView         // ops pane state, populated when section is sectionOps
 	run         run             // the one action streaming its output, shown by the pane that started it
 	poll        poller          // when each pane's endpoint was last requested, and which are in flight
-	files       fileAction      // the Files pane's in-flight transfer, if any
+	transfer    *transfer       // the Files pane's in-flight transfer, if any
 	prefix      string          // the prefix currently listed ("" is the root)
 	entries     []entry         // every loaded row under the current prefix
 	visible     []entry         // entries after filter + sort, indexed by table cursor
 	table       table.Model     // scrolling, selectable listing table
-	filter      textinput.Model // substring filter over the current listing
-	filtering   bool            // the filter input has focus and is capturing keys
+	filter      filterBox       // substring filter over the current listing
 	sort        sortField       // ordering applied to visible
 	loading     bool            // a fresh (page-replacing) load is in flight
 	next        string          // continuation token for the current prefix ("" = no more)
@@ -119,7 +116,7 @@ type model struct {
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
 func initialModel(client adminClient) *model {
-	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: newFilterInput()}
+	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(fileColumns), filter: newFilterBox()}
 	m.logs = newLogsView()
 	m.backends = newBackendsView()
 	m.buckets = newBucketsView()
@@ -140,13 +137,61 @@ func reselect(t *table.Model, keys []string, prev string) {
 	t.SetCursor(max(idx, 0))
 }
 
-// newFilterInput builds the substring filter input the Files and Logs panes
-// share.
-func newFilterInput() textinput.Model {
+// filterBox is the substring filter the Files and Logs panes narrow their rows
+// with. active is set while it has focus and captures keys.
+type filterBox struct {
+	textinput.Model
+	active bool
+}
+
+// newFilterBox builds an empty, unfocused filter.
+func newFilterBox() filterBox {
 	fi := textinput.New()
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
-	return fi
+	return filterBox{Model: fi}
+}
+
+// open gives the filter focus, so keys edit it.
+func (f *filterBox) open() tea.Cmd {
+	f.active = true
+	return f.Focus()
+}
+
+// clear empties the filter and takes its focus away.
+func (f *filterBox) clear() {
+	f.active = false
+	f.Blur()
+	f.SetValue("")
+}
+
+// handle feeds one key to the focused filter: esc clears it, enter keeps it
+// applied and hands the keys back, and any other key edits it. onChange runs
+// whenever the text changed, so the pane reshapes what it shows.
+func (f *filterBox) handle(key tea.KeyMsg, onChange func()) tea.Cmd {
+	switch key.String() {
+	case "esc":
+		f.clear()
+		onChange()
+		return nil
+	case "enter":
+		f.active = false
+		f.Blur()
+		return nil
+	}
+	var cmd tea.Cmd
+	f.Model, cmd = f.Update(key)
+	onChange()
+	return cmd
+}
+
+// label renders the filter for a status or title line: the live input while
+// it has focus, the applied text otherwise, and "" when there is none.
+func (f *filterBox) label() string {
+	if f.active {
+		return f.View()
+	}
+	return f.Value()
 }
 
 // -------------------------------------------------------------------------
@@ -229,52 +274,48 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		return m, nil
-	case locationsLoadedMsg:
+	case loadedMsg[*adminapi.ObjectLocationsResponse]:
 		m.applyLocations(msg.resp)
 		return m, nil
-	case locationsErrMsg:
-		m.insp.loading = false
-		m.insp.err = msg.err
+	case loadErrMsg[*adminapi.ObjectLocationsResponse]:
+		m.insp.fail(msg.err)
 		return m, nil
 	case tagsLoadedMsg:
 		m.applyTags(msg)
 		return m, nil
 	case scrubKeyMsg:
 		return m.applyScrubKey(msg)
-	case statusLoadedMsg:
+	case loadedMsg[*adminapi.StatusResponse]:
 		m.applyStatus(msg.resp)
 		return m, nil
-	case statusErrMsg:
-		m.backends.loading = false
-		m.backends.err = msg.err
+	case loadErrMsg[*adminapi.StatusResponse]:
+		m.backends.fail(msg.err)
 		return m, nil
 	case logsLoadedMsg:
 		m.applyLogs(msg)
 		return m, nil
 	case logsErrMsg:
-		m.logs.loading = false
-		m.logs.err = msg.err
+		m.logs.fail(msg.err)
 		return m, nil
-	case configLoadedMsg:
+	case loadedMsg[*adminapi.ConfigResponse]:
 		m.applyConfig(msg.resp)
 		return m, nil
-	case configErrMsg:
-		m.config.loading = false
-		m.config.err = msg.err
+	case loadErrMsg[*adminapi.ConfigResponse]:
+		m.config.fail(msg.err)
 		return m, nil
-	case replicationLoadedMsg:
+	case loadedMsg[*adminapi.ReplicationStatusResponse]:
 		m.applyReplication(msg.resp)
 		return m, nil
-	case replicationErrMsg:
+	case loadErrMsg[*adminapi.ReplicationStatusResponse]:
 		m.applyReplicationErr(msg.err)
 		return m, nil
 	case pollTickMsg:
 		return m.onPollTick(msg.now)
-	case workersLoadedMsg:
+	case loadedMsg[*adminapi.WorkersResponse]:
 		m.applyWorkers(msg.resp)
 		return m, nil
-	case workersErrMsg:
-		m.applyWorkersErr(msg.err)
+	case loadErrMsg[*adminapi.WorkersResponse]:
+		m.workers.failed(msg.err)
 		return m, nil
 	case cleanupLoadedMsg:
 		m.applyCleanup(msg)
@@ -285,17 +326,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case actionDoneMsg:
 		return m.applyActionDone(msg)
-	case cacheLoadedMsg:
+	case loadedMsg[*adminapi.CacheStatsResponse]:
 		m.applyCache(msg.resp)
 		return m, nil
-	case cacheErrMsg:
-		m.applyCacheErr(msg.err)
+	case loadErrMsg[*adminapi.CacheStatsResponse]:
+		m.cache.failed(msg.err)
 		return m, nil
-	case bucketsLoadedMsg:
+	case loadedMsg[*adminapi.ProvisioningResponse]:
 		m.applyBuckets(msg.resp)
 		return m, nil
-	case bucketsErrMsg:
-		m.applyBucketsErr(msg.err)
+	case loadErrMsg[*adminapi.ProvisioningResponse]:
+		m.buckets.failed(msg.err)
 		return m, nil
 	case runStreamMsg:
 		return m.applyRunStream(msg)
@@ -367,11 +408,14 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.section == sectionFiles && m.mode == modeBrowse && m.filtering {
-		return m.handleFilterKey(key)
+	if m.section == sectionFiles && m.mode == modeBrowse && m.filter.active {
+		return m, m.filter.handle(key, func() {
+			m.refreshVisible()
+			m.table.SetCursor(0)
+		})
 	}
-	if m.section == sectionLogs && m.logs.filtering {
-		return m.handleLogsFilterKey(key)
+	if m.section == sectionLogs && m.logs.filter.active {
+		return m, m.logs.filter.handle(key, m.refreshLogLines)
 	}
 
 	if model, cmd, handled := m.handleGlobalKey(key); handled {
@@ -391,13 +435,20 @@ func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.showingRun() {
 		return m.handleRunKey(key)
 	}
+	// Files, Logs and Ops give esc and "r" their own meaning; every other pane
+	// goes back to the nav and reloads the same way.
+	if m.section != sectionFiles && m.section != sectionLogs && m.section != sectionOps {
+		switch key.String() {
+		case "esc", "left", "h":
+			return m.navBack()
+		case "r":
+			cmd := m.reload(m.section)
+			return m, cmd
+		}
+	}
 	switch m.section {
-	case sectionDashboard:
-		return m.handleDashboardKey(key)
 	case sectionLogs:
 		return m.handleLogsKey(key)
-	case sectionReplication:
-		return m.handleReplicationKey(key)
 	case sectionOps:
 		return m.handleOpsKey(key)
 	case sectionBackends:
@@ -408,8 +459,8 @@ func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleWorkersKey(key)
 	case sectionCleanup:
 		return m.handleCleanupKey(key)
-	case sectionCache:
-		return m.handleCacheKey(key)
+	case sectionDashboard, sectionReplication, sectionCache:
+		return m, nil
 	case sectionConfig:
 		return m.handleConfigKey(key)
 	}
@@ -424,16 +475,14 @@ func (m *model) handlePaneKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) handleBrowseKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "/":
-		m.filtering = true
-		cmd := m.filter.Focus()
-		return m, cmd
+		return m, m.filter.open()
 	case "s":
 		m.sort = (m.sort + 1) % 2
 		m.refreshVisible()
 		return m, nil
 	case "esc":
 		if m.filter.Value() != "" {
-			m.clearFilter()
+			m.filter.clear()
 			m.refreshVisible()
 		}
 		return m, nil
@@ -478,7 +527,7 @@ func (m *model) applyPage(msg objectsLoadedMsg) {
 	if msg.continuation == "" {
 		m.prefix = msg.prefix
 		m.entries = loaded
-		m.clearFilter() // the filter is prefix-specific; a new prefix starts fresh
+		m.filter.clear() // the filter is prefix-specific; a new prefix starts fresh
 		m.refreshVisible()
 		m.table.SetCursor(0)
 	} else {
@@ -564,40 +613,41 @@ func (m *model) contentView() string {
 	if m.showingRun() {
 		return m.runPaneView()
 	}
-	if m.section == sectionDashboard {
-		return m.dashboardPaneView()
-	}
-	if m.section == sectionLogs {
-		return m.logsPaneView()
-	}
-	if m.section == sectionReplication {
-		return m.replicationPaneView()
-	}
-	if m.section == sectionOps {
-		return m.opsPaneView()
-	}
-	if m.section == sectionBackends {
-		return m.backendsPaneView()
-	}
-	if m.section == sectionBuckets {
-		return m.bucketsPaneView()
-	}
-	if m.section == sectionWorkers {
-		return m.workersPaneView()
-	}
-	if m.section == sectionCleanup {
-		return m.cleanupPaneView()
-	}
-	if m.section == sectionCache {
-		return m.cachePaneView()
-	}
-	if m.section == sectionConfig {
-		return m.configPaneView()
+	if header, body, ok := m.sectionParts(); ok {
+		return m.frame(header, m.hintFooter(), body...)
 	}
 	if m.mode == modeInspect {
 		return m.inspectView()
 	}
 	return m.frame(m.headerView(), m.footerView(), m.body()...)
+}
+
+// sectionParts is the header and body of the section on screen, or false for
+// the file browser, which draws its own footer and inspector.
+func (m *model) sectionParts() (string, []pane, bool) {
+	switch m.section {
+	case sectionDashboard:
+		return m.dashboardHeaderView(), m.dashboardBody(), true
+	case sectionLogs:
+		return m.logsHeaderView(), m.logsBody(), true
+	case sectionReplication:
+		return m.replicationHeaderView(), m.replicationBody(), true
+	case sectionOps:
+		return m.opsHeaderView(), []pane{textPane(m.opsMenuView())}, true
+	case sectionBackends:
+		return m.backendsHeaderView(), m.backendsBody(), true
+	case sectionBuckets:
+		return m.bucketsHeaderView(), m.bucketsBody(), true
+	case sectionWorkers:
+		return m.workersHeaderView(), m.workersBody(), true
+	case sectionCleanup:
+		return m.cleanupHeaderView(), m.cleanupBody(), true
+	case sectionCache:
+		return m.cacheHeaderView(), m.cacheBody(), true
+	case sectionConfig:
+		return m.configHeaderView(), m.configBody(), true
+	}
+	return "", nil, false
 }
 
 // paneBody renders the three states every pane reports the same way - a load
@@ -669,73 +719,23 @@ func (m *model) body() []pane {
 // ENTRY POINT
 // -------------------------------------------------------------------------
 
-// target is the resolved admin endpoint and the keypair to reach it with.
-type target struct {
-	baseAddr    string
-	accessKeyID string
-	secretKey   string
-}
-
-// signs reports whether this target carries a keypair to sign with.
-func (t target) signs() bool {
-	return t.accessKeyID != "" && t.secretKey != ""
-}
-
 // parseArgs parses the tui flags into the theme to draw with and the admin
 // target. The theme spec comes from -theme, else $S3O_TUI_THEME, and is
-// checked first, so a bad one is reported whatever else is missing. The
-// target's address and credential resolve flag -> env -> config; the address
-// comes back http-prefixed, or an error says what is missing.
-func parseArgs(args []string) (target, theme, error) {
+// checked first, so a bad one is reported whatever else is missing.
+func parseArgs(args []string) (admintarget.Target, theme, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr and its env var are unset)")
-	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
-	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
-	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
+	targetFlags := admintarget.RegisterFlags(fs)
 	themeSpec := fs.String("theme", "", "Colour theme: a preset, then slot:colour overrides (overrides $S3O_TUI_THEME)")
 	if err := fs.Parse(args); err != nil {
-		return target{}, theme{}, err
+		return admintarget.Target{}, theme{}, err
 	}
 	th, err := parseTheme(cmp.Or(*themeSpec, os.Getenv(EnvTheme)))
 	if err != nil {
-		return target{}, theme{}, err
+		return admintarget.Target{}, theme{}, err
 	}
-	t, err := resolveTarget(*configPath, *addr, *accessKey, *secretKey)
+	t, err := targetFlags.Resolve()
 	return t, th, err
-}
-
-// resolveTarget resolves the admin base address and credential from the flag
-// values, falling back to the environment and then the config file.
-func resolveTarget(configPath, addr, accessKey, secretKey string) (target, error) {
-	t := target{
-		accessKeyID: cmp.Or(accessKey, os.Getenv(admintarget.EnvAccessKey)),
-		secretKey:   cmp.Or(secretKey, os.Getenv(admintarget.EnvSecretKey)),
-	}
-	if !t.signs() {
-		return target{}, errors.New("a credential is required (set -access-key and -secret-key, " +
-			"or $S3O_ACCESS_KEY_ID and $S3O_SECRET_ACCESS_KEY)")
-	}
-	// The config file is only read when the address is still missing, so a
-	// keypair and an address given outright need no config on this machine.
-	baseAddr, err := admintarget.Resolve(addr, func() (*config.Config, error) {
-		return config.LoadConfig(configPath)
-	})
-	if err != nil {
-		return target{}, err
-	}
-	t.baseAddr = baseAddr
-	if t.baseAddr == "" {
-		return target{}, errors.New("admin address required (set -addr, $S3O_ADMIN_ADDR, or config)")
-	}
-	// A bare host:port defaults to http, because the common target is a local
-	// instance reached over a loopback or a private network. An operator
-	// pointing at a remote one supplies the scheme, and https is preserved
-	// exactly because the prefix check passes it through untouched.
-	if !strings.HasPrefix(t.baseAddr, "http") {
-		t.baseAddr = "http://" + t.baseAddr //nolint:gosec // NOSONAR S5332: scheme default for an operator-supplied address
-	}
-	return t, nil
 }
 
 // Run resolves the admin target and theme, starts the TUI, and returns a

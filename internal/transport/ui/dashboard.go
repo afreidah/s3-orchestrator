@@ -16,6 +16,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -98,7 +99,7 @@ type integrityStats struct {
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	data, err := h.dashboardOps.GetData(r.Context())
+	data, err := h.d.Dashboard.GetData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -106,7 +107,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.cfg.Load()
-	bucketNames := h.buckets.Names()
+	bucketNames := h.d.Buckets.Names()
 
 	// Ensure every declared bucket, from the config file or the store, appears
 	// as a top-level directory in the object tree, even when it has no files
@@ -124,11 +125,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	// The tree shows only the buckets this user may list, the same filter the
-	// tree API applies when the browser expands the root.
-	data.TopLevelEntries.Entries = slices.DeleteFunc(data.TopLevelEntries.Entries, func(e core.DirEntry) bool {
-		return !canList(r.Context(), strings.TrimSuffix(e.Name, "/"))
-	})
+	data.TopLevelEntries.Entries = listable(r.Context(), data.TopLevelEntries.Entries)
 
 	var totalUsed, totalLimit, totalOrphan int64
 	unlimited := false
@@ -146,7 +143,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	page := dashboardPage{
 		Version:          telemetry.Version,
-		DBHealthy:        h.dbHealthy(),
+		DBHealthy:        h.d.DBHealthy(),
 		Data:             data,
 		Buckets:          bucketNames,
 		TotalBytesUsed:   totalUsed,
@@ -182,12 +179,19 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDashboard returns dashboard data as JSON.
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
-	data, err := h.dashboardOps.GetData(r.Context())
+	data, err := h.d.Dashboard.GetData(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to load data")
+		httputil.InternalError(r.Context(), h.log, w, "failed to load data", err)
 		return
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, data)
+}
+
+// listable keeps the root entries naming a bucket this user may list, the one
+// filter the dashboard tree and the tree API both apply to the root.
+func listable(ctx context.Context, entries []core.DirEntry) []core.DirEntry {
+	return slices.DeleteFunc(entries, func(e core.DirEntry) bool {
+		return !canList(ctx, strings.TrimSuffix(e.Name, "/"))
+	})
 }

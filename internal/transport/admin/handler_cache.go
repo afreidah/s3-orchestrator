@@ -42,7 +42,7 @@ const cacheDisabledReason = "object data cache is not enabled"
 // other instances, returning how many entries this instance dropped. A failed
 // announcement is logged; the change still stands here.
 func (h *Handler) invalidateCache(ctx context.Context, inv cache.Invalidation) int {
-	dropped := inv.Apply(h.objectCache)
+	dropped := inv.Apply(h.d.ObjectCache)
 	if err := h.cacheTopic.Publish(ctx, inv); err != nil {
 		h.log.WarnContext(ctx, "cache change not announced to other instances", logfmt.Err(err))
 	}
@@ -50,7 +50,7 @@ func (h *Handler) invalidateCache(ctx context.Context, inv cache.Invalidation) i
 }
 
 // writeCacheDisabled emits the standard 503 response used by every
-// /admin/api/cache/* handler when h.objectCache is nil. Centralised so
+// /admin/api/cache/* handler when h.d.ObjectCache is nil. Centralised so
 // the shape ("status: disabled", reason) cannot drift between routes.
 func (h *Handler) writeCacheDisabled(w http.ResponseWriter) {
 	httputil.WriteJSON(w, http.StatusServiceUnavailable, adminapi.CacheDisabledResponse{
@@ -65,7 +65,7 @@ func (h *Handler) writeCacheDisabled(w http.ResponseWriter) {
 // after flush." Used by load-test tooling to characterise cache-cold
 // GET performance.
 func (h *Handler) handleCacheFlush(w http.ResponseWriter, r *http.Request) {
-	if h.objectCache == nil {
+	if h.d.ObjectCache == nil {
 		h.writeCacheDisabled(w)
 		return
 	}
@@ -83,18 +83,11 @@ func (h *Handler) handleCacheFlush(w http.ResponseWriter, r *http.Request) {
 // Mirrors the s3o_cache_* gauges so operators without Prometheus
 // access can still inspect cache state via the admin API.
 func (h *Handler) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
-	if h.objectCache == nil {
+	if h.d.ObjectCache == nil {
 		h.writeCacheDisabled(w)
 		return
 	}
-	stats := h.objectCache.Stats()
-	httputil.WriteJSON(w, http.StatusOK, adminapi.CacheStatsResponse{
-		Entries:   stats.Entries,
-		SizeBytes: stats.SizeBytes,
-		MaxBytes:  stats.MaxBytes,
-		Hits:      stats.Hits,
-		Misses:    stats.Misses,
-	})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.CacheStatsResponse(h.d.ObjectCache.Stats()))
 }
 
 // handleCacheInvalidateKey drops every cached copy of one object key. The key
@@ -102,11 +95,11 @@ func (h *Handler) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 // `{key...}` wildcard pattern. Always returns 200 - Invalidate is a
 // no-op for unknown keys, matching the cache's own contract.
 func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Request) {
-	if h.objectCache == nil {
+	if h.d.ObjectCache == nil {
 		h.writeCacheDisabled(w)
 		return
 	}
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 	if key == "" {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "key is required")
 		return
@@ -126,11 +119,11 @@ func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Reques
 // accidentally-empty parameter; operators wanting a full flush should
 // use POST /admin/api/cache/flush.
 func (h *Handler) handleCacheInvalidatePrefix(w http.ResponseWriter, r *http.Request) {
-	if h.objectCache == nil {
+	if h.d.ObjectCache == nil {
 		h.writeCacheDisabled(w)
 		return
 	}
-	prefix := r.URL.Query().Get("prefix")
+	prefix := r.URL.Query().Get(paramPrefix)
 	if prefix == "" {
 		httputil.WriteJSONError(w, http.StatusBadRequest,
 			"prefix query parameter is required (use POST /admin/api/cache/flush to drop every entry)")

@@ -26,6 +26,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // pollTarget is one endpoint the poller keeps fresh.
@@ -157,17 +159,17 @@ func (m *model) loadCmd(t pollTarget) tea.Cmd {
 // in-flight mark can be cleared. Messages the poller did not send report false.
 func pollTargetOf(msg tea.Msg) (pollTarget, bool) {
 	switch msg.(type) {
-	case statusLoadedMsg, statusErrMsg:
+	case loadedMsg[*adminapi.StatusResponse], loadErrMsg[*adminapi.StatusResponse]:
 		return pollStatus, true
-	case replicationLoadedMsg, replicationErrMsg:
+	case loadedMsg[*adminapi.ReplicationStatusResponse], loadErrMsg[*adminapi.ReplicationStatusResponse]:
 		return pollReplication, true
 	case cleanupLoadedMsg, cleanupErrMsg:
 		return pollCleanup, true
-	case bucketsLoadedMsg, bucketsErrMsg:
+	case loadedMsg[*adminapi.ProvisioningResponse], loadErrMsg[*adminapi.ProvisioningResponse]:
 		return pollBuckets, true
-	case workersLoadedMsg, workersErrMsg:
+	case loadedMsg[*adminapi.WorkersResponse], loadErrMsg[*adminapi.WorkersResponse]:
 		return pollWorkers, true
-	case cacheLoadedMsg, cacheErrMsg:
+	case loadedMsg[*adminapi.CacheStatsResponse], loadErrMsg[*adminapi.CacheStatsResponse]:
 		return pollCache, true
 	case drainProgressMsg:
 		return pollDrain, true

@@ -85,7 +85,7 @@ func TestUsageStyle_Thresholds(t *testing.T) {
 func TestBackendsStatsLine(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
-	m.backends.dbHealthy = true
+	m.dbHealthy = new(true)
 	m.backends.list.setItems([]adminapi.BackendStatus{
 		{Name: "a", BytesUsed: 2048, BytesLimit: 4096},
 		{Name: "b", BytesUsed: 1024, BytesLimit: 4096},
@@ -98,7 +98,7 @@ func TestBackendsStatsLine(t *testing.T) {
 		}
 	}
 
-	m.backends.dbHealthy = false
+	m.dbHealthy = new(false)
 	if got := m.backendsStatsLine(); !strings.Contains(got, "UNAVAILABLE") {
 		t.Errorf("unhealthy stats line = %q", got)
 	}
@@ -113,7 +113,7 @@ func TestApplyStatus(t *testing.T) {
 		DBHealthy: true,
 		Backends:  []adminapi.BackendStatus{{Name: "b1", Healthy: true}},
 	})
-	if m.backends.loading || !m.backends.dbHealthy {
+	if m.backends.loading || !*m.dbHealthy {
 		t.Errorf("state = %+v", m.backends)
 	}
 	if len(m.backends.list.items) != 1 || len(m.backends.list.table.Rows()) != 1 {
@@ -252,7 +252,7 @@ func TestBackendsHeaderView_CountAndDBHealth(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 	m.backends.list.setItems([]adminapi.BackendStatus{{Name: "b1"}, {Name: "b2"}})
-	m.backends.dbHealthy = true
+	m.dbHealthy = new(true)
 	out := m.backendsHeaderView()
 	for _, want := range []string{"2 configured", "db: healthy"} {
 		if !strings.Contains(out, want) {
@@ -268,27 +268,27 @@ func TestHandleBackendsKey_BackAndReload(t *testing.T) {
 	m.backends = newBackendsView()
 
 	// esc returns focus to the sidebar, cursor on the current section.
-	m.handleBackendsKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionBackends) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
 	// "r" reloads: sets loading and returns a fetch command.
 	m.navFocus = false
-	_, cmd := m.handleBackendsKey(key("r"))
+	_, cmd := m.handlePaneKey(key("r"))
 	if !m.backends.loading || cmd == nil {
 		t.Errorf("reload: loading=%v cmd=%v", m.backends.loading, cmd)
 	}
-	if _, ok := cmd().(statusLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want statusLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.StatusResponse]); !ok {
+		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.StatusResponse]", cmd())
 	}
 }
 
 func TestLoadStatus_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadStatus()
-	if _, ok := cmd().(statusErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want statusErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.StatusResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.StatusResponse]", cmd())
 	}
 }
 
@@ -326,7 +326,7 @@ func TestIntegrityCoverage(t *testing.T) {
 func TestBackendsStatsLine_CarriesIntegrity(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
-	m.backends.dbHealthy = true
+	m.dbHealthy = new(true)
 	m.backends.integrity = adminapi.IntegrityStatus{NeverVerifiedCopies: 7}
 	if got := m.backendsStatsLine(); !strings.Contains(got, "verified:") {
 		t.Errorf("stats line missing the verification summary: %q", got)

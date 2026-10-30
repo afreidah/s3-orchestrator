@@ -74,8 +74,8 @@ func photoTree() *treeClient {
 }
 
 // downloadPhotos drives a prefix download of bucket/photos/ through the pane
-// into dest and returns the finished message.
-func downloadPhotos(t *testing.T, c *treeClient, dest string) (*model, transferDoneMsg) {
+// into dest and returns the finished transfer.
+func downloadPhotos(t *testing.T, c *treeClient, dest string) (*model, *transfer) {
 	t.Helper()
 	m := filesModel(t, c.fakeLister)
 	m.client = c
@@ -83,7 +83,7 @@ func downloadPhotos(t *testing.T, c *treeClient, dest string) (*model, transferD
 	m.handleBrowseKey(key("D"))
 	submit(t, m, dest)
 	done := settle(t, m)
-	m.applyTransferDone(done)
+	m.applyTransferDone(transferDoneMsg{done})
 	return m, done
 }
 
@@ -236,7 +236,7 @@ func TestPrefixDownload_ListAndReadErrors(t *testing.T) {
 		dest := filepath.Join(parent, "photos")
 		tr := startPrefixDownload(tc.client, "bucket/photos/", dest)
 		m := filesModel(t, &fakeLister{})
-		m.files.transfer = tr
+		m.transfer = tr
 		done := settle(t, m)
 		if done.err == nil || !strings.Contains(done.err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", name, done.err, tc.want)

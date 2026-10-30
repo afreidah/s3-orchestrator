@@ -15,19 +15,14 @@
 package adminctl
 
 import (
-	"cmp"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"slices"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
-
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
-	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // The flag names, query formats and message literals the subcommands share.
@@ -45,15 +40,12 @@ const (
 
 // Run is the CLI entry point for `s3-orchestrator admin`. It parses the
 // admin-level flags, resolves the signing keypair (flag -> env) and the target
-// address (flag -> env -> config via admintarget.Resolve), then dispatches to a
+// address (flag -> env -> config) through admintarget, then dispatches to a
 // per-command handler.
 // Returns the process exit code so the caller in cmd/ can os.Exit cleanly.
 func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI entry point
 	fs := flag.NewFlagSet("admin", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr and its env var are unset)")
-	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
-	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
-	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
+	targetFlags := admintarget.RegisterFlags(fs)
 	jsonOut := fs.Bool("json", false, "Output raw JSON instead of human-readable text")
 	fs.SetOutput(stderr)
 	fs.Usage = func() { writeUsage(stderr, fs) }
@@ -66,38 +58,12 @@ func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI
 		return 0
 	}
 
-	creds := Credentials{
-		AccessKeyID: cmp.Or(*accessKey, os.Getenv(admintarget.EnvAccessKey)),
-		SecretKey:   cmp.Or(*secretKey, os.Getenv(admintarget.EnvSecretKey)),
-	}
-	if !creds.signs() {
-		fmt.Fprintln(stderr, "error: a credential is required (set -access-key and -secret-key, "+
-			"or $S3O_ACCESS_KEY_ID and $S3O_SECRET_ACCESS_KEY)")
-		return 1
-	}
-	// The config file is only read when the address is still missing, which is
-	// what lets a binary target a remote instance with three environment
-	// variables and nothing on disk.
-	baseAddr, err := admintarget.Resolve(*addr, func() (*config.Config, error) {
-		return config.LoadConfig(*configPath)
-	})
+	target, err := targetFlags.Resolve()
 	if err != nil {
 		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
-	if baseAddr == "" {
-		fmt.Fprintln(stderr, "error: server address required (set -addr, $S3O_ADMIN_ADDR, or server.listen_addr in config)")
-		return 1
-	}
-	// A bare host:port defaults to http, because the common target is a local
-	// instance reached over a loopback or a private network. An operator
-	// pointing at a remote one supplies the scheme, and https is preserved
-	// exactly because the prefix check passes it through untouched.
-	if !strings.HasPrefix(baseAddr, "http") {
-		baseAddr = "http://" + baseAddr //nolint:gosec // NOSONAR S5332: scheme default for an operator-supplied address
-	}
-
-	return CommandWithFormat(fs.Arg(0), fs.Args()[1:], baseAddr, creds, output.FromJSON(*jsonOut), stdout, stderr)
+	return CommandWithFormat(fs.Arg(0), fs.Args()[1:], target, output.FromJSON(*jsonOut), stdout, stderr)
 }
 
 // -------------------------------------------------------------------------
@@ -180,21 +146,10 @@ func findCommand(name string) (handler, bool) {
 	return nil, false
 }
 
-// Credentials is the keypair an admin CLI invocation signs with.
-type Credentials struct {
-	AccessKeyID string
-	SecretKey   string
-}
-
-// signs reports whether these credentials carry a keypair to sign with.
-func (c Credentials) signs() bool {
-	return c.AccessKeyID != "" && c.SecretKey != ""
-}
-
-// CommandWithFormat executes one admin CLI command in an explicit output
-// format, returning the exit code.
+// CommandWithFormat executes one admin CLI command against target in an
+// explicit output format, returning the exit code.
 func CommandWithFormat(
-	cmd string, args []string, baseAddr string, creds Credentials,
+	cmd string, args []string, target admintarget.Target,
 	format output.Format, stdout, stderr io.Writer,
 ) int {
 	h, ok := findCommand(cmd)
@@ -202,7 +157,7 @@ func CommandWithFormat(
 		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
 		return 1
 	}
-	api := adminclient.NewSigned(baseAddr, creds.AccessKeyID, creds.SecretKey)
+	api := adminclient.NewSigned(target.Addr, target.AccessKeyID, target.SecretKey)
 	return h(args, &client{
 		api:    api,
 		format: format,

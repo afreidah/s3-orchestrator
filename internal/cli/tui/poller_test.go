@@ -80,7 +80,7 @@ func TestPoller_WaitsOutTheInterval(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	start := time.Now()
 	m.onPollTick(start)
-	m.Update(statusLoadedMsg{resp: &adminapi.StatusResponse{}})
+	m.Update(loadedMsg[*adminapi.StatusResponse]{resp: &adminapi.StatusResponse{}})
 	if m.poll.inFlight[pollStatus] {
 		t.Fatal("a status result should clear the in-flight mark")
 	}
@@ -141,12 +141,12 @@ func TestPoller_ManualRefreshSkipsAnInFlightRequest(t *testing.T) {
 func TestPollTargetOf_MapsEveryResult(t *testing.T) {
 	t.Parallel()
 	cases := map[pollTarget][]any{
-		pollStatus:      {statusLoadedMsg{}, statusErrMsg{}},
-		pollReplication: {replicationLoadedMsg{}, replicationErrMsg{}},
+		pollStatus:      {loadedMsg[*adminapi.StatusResponse]{}, loadErrMsg[*adminapi.StatusResponse]{}},
+		pollReplication: {loadedMsg[*adminapi.ReplicationStatusResponse]{}, loadErrMsg[*adminapi.ReplicationStatusResponse]{}},
 		pollCleanup:     {cleanupLoadedMsg{}, cleanupErrMsg{}},
-		pollBuckets:     {bucketsLoadedMsg{}, bucketsErrMsg{}},
-		pollWorkers:     {workersLoadedMsg{}, workersErrMsg{}},
-		pollCache:       {cacheLoadedMsg{}, cacheErrMsg{}},
+		pollBuckets:     {loadedMsg[*adminapi.ProvisioningResponse]{}, loadErrMsg[*adminapi.ProvisioningResponse]{}},
+		pollWorkers:     {loadedMsg[*adminapi.WorkersResponse]{}, loadErrMsg[*adminapi.WorkersResponse]{}},
+		pollCache:       {loadedMsg[*adminapi.CacheStatsResponse]{}, loadErrMsg[*adminapi.CacheStatsResponse]{}},
 		pollDrain:       {drainProgressMsg{}},
 		pollLogs:        {logsLoadedMsg{}, logsErrMsg{}},
 	}
@@ -157,7 +157,7 @@ func TestPollTargetOf_MapsEveryResult(t *testing.T) {
 			}
 		}
 	}
-	if _, ok := pollTargetOf(configLoadedMsg{}); ok {
+	if _, ok := pollTargetOf(loadedMsg[*adminapi.ConfigResponse]{}); ok {
 		t.Error("config is not polled, so its result should map to no target")
 	}
 }

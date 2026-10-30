@@ -53,7 +53,7 @@ func provisioningWith(t *testing.T, h *Handler, cfgBuckets []config.BucketConfig
 	store.EXPECT().ListCredentials(a).Return(rows.credentials, nil).AnyTimes()
 	store.EXPECT().ListGrants(a).Return(rows.grants, nil).AnyTimes()
 
-	h.provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
 		Config: ops.NewConfigStore(&config.Config{Buckets: cfgBuckets}),
 	})
@@ -168,7 +168,7 @@ func TestHandleProvisioning_StoreFailureIs500(t *testing.T) {
 	h := newCoverageHandler(t)
 	store := opstest.NewMockProvisioningStore(gomock.NewController(t))
 	store.EXPECT().ListBuckets(gomock.Any()).Return(nil, context.DeadlineExceeded)
-	h.provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
 		Config: ops.NewConfigStore(&config.Config{}),
 	})
@@ -334,7 +334,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 
 	objects := opstest.NewMockNamespaceCounter(gomock.NewController(t))
 	objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "photos/").Return(int64(0), nil)
-	h.provision = ops.NewProvisioning(ops.ProvisioningDeps{
+	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:   store,
 		Objects: objects,
 		Config:  ops.NewConfigStore(&config.Config{}),

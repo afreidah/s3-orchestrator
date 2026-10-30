@@ -49,13 +49,12 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 	t.Helper()
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	return &Handler{
-		log:       slog.Default().With(logfmt.Component("admin")),
-		dbHealthy: cb.IsHealthy,
-		objects:   objectsOver(t, mock),
-		registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
-		logLevel:  &lv,
-	}
+	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		DBHealthy: cb.IsHealthy,
+		Objects:   objectsOver(t, mock),
+		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
+		LogLevel:  &lv,
+	}}
 }
 
 // -------------------------------------------------------------------------
@@ -163,16 +162,15 @@ func objectsAPIHandler(t *testing.T) (*Handler, *opstest.MockObjectAPI, *http.Se
 	t.Helper()
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	var lv slog.LevelVar
-	h := &Handler{
-		log: slog.Default().With(logfmt.Component("admin")),
-		objects: ops.NewObjects(ops.ObjectsDeps{
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
 		}),
-		logLevel: &lv,
-		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
-	}
+		LogLevel: &lv,
+		Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
+	}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	return h, api, mux

@@ -67,11 +67,10 @@ func signedServer(t *testing.T, admin map[core.Resource]core.PermissionSet) stri
 	}
 
 	var lv slog.LevelVar
-	h := &Handler{
-		log:      slog.Default().With(logfmt.Component("admin")),
-		registry: func() *auth.BucketRegistry { return registry },
-		logLevel: &lv,
-	}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		Registry: func() *auth.BucketRegistry { return registry },
+		LogLevel: &lv,
+	}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	srv := httptest.NewServer(mux)
@@ -232,11 +231,10 @@ func TestSigned_ConfigDeclaresTheRootCredential(t *testing.T) {
 	}
 
 	var lv slog.LevelVar
-	h := &Handler{
-		log:      slog.Default().With(logfmt.Component("admin")),
-		registry: func() *auth.BucketRegistry { return registry },
-		logLevel: &lv,
-	}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		Registry: func() *auth.BucketRegistry { return registry },
+		LogLevel: &lv,
+	}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	srv := httptest.NewServer(mux)

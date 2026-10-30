@@ -246,17 +246,15 @@ func TestPanicRecover_AuditCallbackFires(t *testing.T) {
 	}
 }
 
-// TestFormatPanicValue covers the awkward shapes formatPanicValue
-// handles so we lock in the contract that an audit attribute / slog
-// key never serialises as "{}".
-func TestFormatPanicValue(t *testing.T) {
+// TestPanicError covers the awkward shapes panicError handles so we lock in
+// the contract that an audit attribute / slog key never serialises as "{}".
+func TestPanicError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		in   any
 		want string
 	}{
-		{"nil", nil, "<nil panic>"},
 		{"string", "boom", "boom"},
 		{"error", errors.New("kapow"), "kapow"},
 		{"struct", struct{ X int }{X: 7}, "{7}"},
@@ -265,8 +263,8 @@ func TestFormatPanicValue(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := formatPanicValue(tc.in); got != tc.want {
-				t.Errorf("formatPanicValue(%v) = %q, want %q", tc.in, got, tc.want)
+			if got := panicError(tc.in).Error(); got != tc.want {
+				t.Errorf("panicError(%v) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

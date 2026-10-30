@@ -37,38 +37,25 @@ const (
 
 // inspector holds the state of the object-detail pane.
 type inspector struct {
+	loadState
 	key       string                    // the object key under inspection
 	locations []adminapi.ObjectLocation // per-backend copies, in load order
 	tags      []adminapi.ObjectTag      // the object's tag set, ordered by key
 	table     table.Model               // scrolling table over the copies
-	loading   bool                      // a locations fetch is in flight
 	scrubbing bool                      // a targeted scrub is in flight
-	err       error                     // last fetch error, if any
 }
 
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// locationsLoadedMsg carries a successfully loaded location ledger.
-type locationsLoadedMsg struct {
-	resp *adminapi.ObjectLocationsResponse
-}
-
-// locationsErrMsg carries a failed locations fetch.
-type locationsErrMsg struct{ err error }
-
 // loadLocations returns a command that fetches every copy of key off the main
-// loop, delivering the result back as a locationsLoadedMsg or locationsErrMsg.
+// loop.
 func (m *model) loadLocations(key string) tea.Cmd {
 	client := m.client
-	return func() tea.Msg {
-		resp, err := client.GetObjectLocations(context.Background(), key)
-		if err != nil {
-			return locationsErrMsg{err}
-		}
-		return locationsLoadedMsg{resp}
-	}
+	return fetchCmd(func(ctx context.Context) (*adminapi.ObjectLocationsResponse, error) {
+		return client.GetObjectLocations(ctx, key)
+	})
 }
 
 // tagsLoadedMsg carries an object's tag set, or the error that prevented
@@ -125,8 +112,7 @@ func (m *model) applyLocations(resp *adminapi.ObjectLocationsResponse) {
 	m.insp.locations = resp.Locations
 	m.insp.table.SetRows(rowsFromLocations(resp.Locations))
 	m.insp.table.SetCursor(0)
-	m.insp.loading = false
-	m.insp.err = nil
+	m.insp.loaded()
 }
 
 // applyTags folds a loaded tag set into the inspector state.

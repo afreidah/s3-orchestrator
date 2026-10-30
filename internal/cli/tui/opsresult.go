@@ -19,7 +19,6 @@ import (
 	"io"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
@@ -161,7 +160,7 @@ func rewriteSummary(verb string, succeeded, failed, total int) string {
 	}
 	summary := verb + " " + countOf(succeeded, "object", "objects")
 	if failed > 0 {
-		summary += fmt.Sprintf(", %s failed", grouped(failed))
+		summary += fmt.Sprintf(", %s failed", humanize.Comma(int64(failed)))
 	}
 	return summary
 }
@@ -182,21 +181,7 @@ func countOf(n int, singular, plural string) string {
 	if n == 1 {
 		noun = singular
 	}
-	return grouped(n) + " " + noun
-}
-
-// grouped renders an integer with thousands separators so large counts read at
-// a glance.
-func grouped(n int) string {
-	s := strconv.Itoa(n)
-	sign := ""
-	if strings.HasPrefix(s, "-") {
-		sign, s = "-", s[1:]
-	}
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return sign + s
+	return humanize.Comma(int64(n)) + " " + noun
 }
 
 // signedSize renders a byte delta with an explicit sign, so a correction reads

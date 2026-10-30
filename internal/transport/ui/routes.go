@@ -15,6 +15,7 @@ package ui
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -69,73 +70,79 @@ const (
 // endpoint that may touch a real backend. Adding a new route to Register
 // requires adding an entry here, which forces the developer to declare
 // whether the route is quota-tracked.
-var uiAPIRoutes = []uiAPIRoute{
-	{"/api/dashboard", func(h *Handler) http.HandlerFunc { return h.handleAPIDashboard }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/tree", func(h *Handler) http.HandlerFunc { return h.handleTreeAPI }, quotaTrackingNone, "",
-		onBucket, core.PermList},
-	{"/api/delete", func(h *Handler) http.HandlerFunc { return h.handleAPIDelete }, quotaTrackingTracked,
-		"object.DeleteObject -> cleanup Settler -> infra.deleteBatch Acct().APICall (DeleteObjects)",
-		onBucket, core.PermDelete},
-	{"/api/delete-prefix", func(h *Handler) http.HandlerFunc { return h.handleAPIDeletePrefix }, quotaTrackingTracked,
-		"object.ListObjects (ledger only) + DeleteObject per key -> infra.deleteBatch Acct().APICall (DeleteObjects)",
-		onBucket, core.PermDelete},
-	{"/api/upload", func(h *Handler) http.HandlerFunc { return h.handleAPIUpload }, quotaTrackingTracked,
-		"object.PutObject -> mutation_finalize.go Acct().PutSuccess (1 API + ingress)",
-		onBucket, core.PermWrite},
-	{"/api/download", func(h *Handler) http.HandlerFunc { return h.handleAPIDownload }, quotaTrackingTracked,
-		"object.GetObject -> get.go meteredGet + Acct().Egress (1 API + egress)",
-		onBucket, core.PermRead},
-	{"/api/rebalance", func(h *Handler) http.HandlerFunc { return h.handleAPIRebalance }, quotaTrackingTracked,
+var uiAPIRoutes = slices.Concat(
+	[]uiAPIRoute{
+		{"/api/dashboard", func(h *Handler) http.HandlerFunc { return h.handleAPIDashboard }, quotaTrackingNone, "",
+			onOrchestrator, adminRead},
+		{"/api/tree", func(h *Handler) http.HandlerFunc { return h.handleTreeAPI }, quotaTrackingNone, "",
+			onBucket, core.PermList},
+		{"/api/delete", func(h *Handler) http.HandlerFunc { return h.handleAPIDelete }, quotaTrackingTracked,
+			"object.DeleteObject -> cleanup Settler -> infra.deleteBatch Acct().APICall (DeleteObjects)",
+			onBucket, core.PermDelete},
+		{"/api/delete-prefix", func(h *Handler) http.HandlerFunc { return h.handleAPIDeletePrefix }, quotaTrackingTracked,
+			"object.ListObjects (ledger only) + DeleteObject per key -> infra.deleteBatch Acct().APICall (DeleteObjects)",
+			onBucket, core.PermDelete},
+		{"/api/upload", func(h *Handler) http.HandlerFunc { return h.handleAPIUpload }, quotaTrackingTracked,
+			"object.PutObject -> mutation_finalize.go Acct().PutSuccess (1 API + ingress)",
+			onBucket, core.PermWrite},
+		{"/api/download", func(h *Handler) http.HandlerFunc { return h.handleAPIDownload }, quotaTrackingTracked,
+			"object.GetObject -> get.go meteredGet + Acct().Egress (1 API + egress)",
+			onBucket, core.PermRead},
+		{"/api/sync", func(h *Handler) http.HandlerFunc { return h.handleAPISync }, quotaTrackingTracked,
+			"reconcile.SyncBackend -> pageBudget.charge Acct().APICall (ListObjects per page)",
+			onBucket, core.PermWrite},
+		{"/api/logs", func(h *Handler) http.HandlerFunc { return h.logs }, quotaTrackingNone, "",
+			onOrchestrator, core.PermAdminLogs},
+	},
+	actionRoutes("/api/rebalance", (*Handler).rebalanceOp,
 		"rebalancer.Rebalance -> infra.StreamCopy Acct().Egress + Ingress, source deletes via infra.deleteBatch",
-		onOrchestrator, adminMaintain},
-	{"/api/rebalance/status", func(h *Handler) http.HandlerFunc { return h.handleAPIRebalanceStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/clean-excess", func(h *Handler) http.HandlerFunc { return h.handleAPICleanExcess }, quotaTrackingTracked,
+		onOrchestrator, adminMaintain),
+	actionRoutes("/api/clean-excess", (*Handler).cleanExcessOp,
 		"overReplication.Clean -> infra.deleteBatch Acct().APICall (DeleteObjects)",
-		onOrchestrator, adminMaintain},
-	{"/api/clean-excess/status", func(h *Handler) http.HandlerFunc { return h.handleAPICleanExcessStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/lifecycle", func(h *Handler) http.HandlerFunc { return h.handleAPILifecycle }, quotaTrackingTracked,
+		onOrchestrator, adminMaintain),
+	actionRoutes("/api/lifecycle", (*Handler).lifecycleOp,
 		"expiry.ProcessRules -> object.DeleteObject -> infra.deleteBatch Acct().APICall (DeleteObjects)",
-		onOrchestrator, adminMaintain},
-	{"/api/lifecycle/status", func(h *Handler) http.HandlerFunc { return h.handleAPILifecycleStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/sync", func(h *Handler) http.HandlerFunc { return h.handleAPISync }, quotaTrackingTracked,
-		"reconcile.SyncBackend -> pageBudget.charge Acct().APICall (ListObjects per page)",
-		onBucket, core.PermWrite},
-	{"/api/logs", func(h *Handler) http.HandlerFunc { return h.logs }, quotaTrackingNone, "",
-		onOrchestrator, core.PermAdminLogs},
-	{"/api/replicate", func(h *Handler) http.HandlerFunc { return h.handleAPIReplicate }, quotaTrackingTracked,
+		onOrchestrator, adminMaintain),
+	actionRoutes("/api/replicate", (*Handler).replicateOp,
 		"ops.Replication.Replicate -> infra.StreamCopy Acct().Egress + Ingress",
-		onOrchestrator, adminMaintain},
-	{"/api/replicate/status", func(h *Handler) http.HandlerFunc { return h.handleAPIReplicateStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/scrub", func(h *Handler) http.HandlerFunc { return h.handleAPIScrub }, quotaTrackingTracked,
+		onOrchestrator, adminMaintain),
+	actionRoutes("/api/scrub", (*Handler).scrubOp,
 		"ops.Integrity.Scrub -> storedHasher.hashStored Acct().Egress (Get + egress)",
-		onBackend, adminMaintain},
-	{"/api/scrub/status", func(h *Handler) http.HandlerFunc { return h.handleAPIScrubStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/backfill-checksums", func(h *Handler) http.HandlerFunc { return h.handleAPIBackfillChecksums }, quotaTrackingTracked,
+		onBackend, adminMaintain),
+	actionRoutes("/api/backfill-checksums", (*Handler).backfillOp,
 		"ops.Integrity.BackfillChecksums -> storedHasher.hashStored Acct().Egress (Get + egress)",
-		onBackend, adminMaintain},
-	{"/api/backfill-checksums/status", func(h *Handler) http.HandlerFunc { return h.handleAPIBackfillChecksumsStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/encrypt-existing", func(h *Handler) http.HandlerFunc { return h.handleAPIEncryptExisting }, quotaTrackingTracked,
+		onBackend, adminMaintain),
+	actionRoutes("/api/encrypt-existing", (*Handler).encryptOp,
 		"ops.Encryption.EncryptExisting -> bulkRewriteOp MoveObject -> infra.StreamCopy Acct().Egress + Ingress",
-		onBackend, adminConvert},
-	{"/api/encrypt-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPIEncryptExistingStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/compress-existing", func(h *Handler) http.HandlerFunc { return h.handleAPICompressExisting }, quotaTrackingTracked,
+		onBackend, adminConvert),
+	actionRoutes("/api/compress-existing", (*Handler).compressOp,
 		"ops.Compression.CompressExisting -> bulkRewriteOp MoveObject -> infra.StreamCopy Acct().Egress + Ingress",
-		onBackend, adminConvert},
-	{"/api/compress-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPICompressExistingStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
-	{"/api/decompress-existing", func(h *Handler) http.HandlerFunc { return h.handleAPIDecompressExisting }, quotaTrackingTracked,
+		onBackend, adminConvert),
+	actionRoutes("/api/decompress-existing", (*Handler).decompressOp,
 		"ops.Compression.DecompressExisting -> bulkRewriteOp MoveObject -> infra.StreamCopy Acct().Egress + Ingress",
-		onBackend, adminConvert},
-	{"/api/decompress-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPIDecompressExistingStatus }, quotaTrackingNone, "",
-		onOrchestrator, adminRead},
+		onBackend, adminConvert),
+)
+
+// actionRoutes is one async action's trigger and its status poll. The trigger
+// starts the action in the background and answers 202; the poll only reads
+// the tracker, so it needs what any dashboard read needs.
+func actionRoutes[R any](
+	suffix string,
+	op func(*Handler, *http.Request) adminActionOp[R],
+	audit string,
+	kind core.ResourceKind,
+	perm core.PermissionSet,
+) []uiAPIRoute {
+	trigger := func(h *Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { h.startAdminAction(w, r, op(h, r)) }
+	}
+	status := func(h *Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { h.writeAdminActionStatus(w, op(h, r)) }
+	}
+	return []uiAPIRoute{
+		{suffix, trigger, quotaTrackingTracked, audit, kind, perm},
+		{suffix + "/status", status, quotaTrackingNone, "", onOrchestrator, adminRead},
+	}
 }
 
 // overviewRoute is the overview page's authorization, the same one signing in

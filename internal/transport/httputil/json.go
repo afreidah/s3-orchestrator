@@ -13,17 +13,31 @@
 package httputil
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
+	"path"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
 // The Err values are the user-facing messages, written when DecodeJSONBody
 // cannot parse a request body and when RequireMethod rejects a method.
+// MaxJSONBody is the read cap for a request body that carries only a few
+// fields.
 const (
 	contentTypeJSON   = "application/json"
 	headerContentType = "Content-Type"
+	MediaOctetStream  = "application/octet-stream"
+	MaxJSONBody       = 1 << 20
 
 	ErrInvalidRequestBody = "invalid request body"
 	ErrMethodNotAllowed   = "method not allowed"
@@ -42,6 +56,42 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 // backslash characters in msg cannot corrupt the response body.
 func WriteJSONError(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]string{"error": msg})
+}
+
+// InternalError logs err under msg with attrs and answers 500 with msg, so the
+// client sees the operator-facing message and the log keeps the cause.
+func InternalError(ctx context.Context, log *slog.Logger, w http.ResponseWriter, msg string, err error, attrs ...any) {
+	log.ErrorContext(ctx, msg, append([]any{logfmt.Err(err)}, attrs...)...)
+	WriteJSONError(w, http.StatusInternalServerError, msg)
+}
+
+// WriteObjectError renders a failed object operation. A rejected request names
+// what was wrong with it, a missing object is a 404, and anything else is a
+// server fault logged under msg.
+func WriteObjectError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error, msg, key string) {
+	switch {
+	case errors.Is(err, ops.ErrKeyRequired),
+		errors.Is(err, ops.ErrPrefixRequired),
+		errors.Is(err, ops.ErrInvalidKey):
+		WriteJSONError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ops.ErrNotFound):
+		WriteJSONError(w, http.StatusNotFound, "not found")
+	default:
+		InternalError(r.Context(), log, w, msg, err, slog.String("key", key))
+	}
+}
+
+// ServeAttachment streams body as a file download named after the last path
+// element of name. A size of zero or less leaves Content-Length off. The
+// error is the copy's, for a caller that logs an interrupted download.
+func ServeAttachment(w http.ResponseWriter, name string, size int64, body io.Reader) error {
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(path.Base(name)))
+	w.Header().Set(headerContentType, MediaOctetStream)
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	_, err := bufpool.Copy(w, body)
+	return err
 }
 
 // DecodeJSONBody applies a maxBytes read cap to the request body and

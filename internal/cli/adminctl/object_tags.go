@@ -11,7 +11,6 @@
 package adminctl
 
 import (
-	"flag"
 	"fmt"
 	"net/http"
 	"strings"
@@ -49,18 +48,12 @@ func (t *tagList) Set(v string) error {
 // with -set to replace the whole set and -clear to remove it. Without either
 // it reads the current set.
 func cmdObjectTags(args []string, c *client) int {
-	fs := flag.NewFlagSet("object-tags", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("object-tags")
 	key := fs.String("key", "", "Object key (required)")
 	clearTags := fs.Bool("clear", false, "Remove every tag from the object")
 	var tags tagList
 	fs.Var(&tags, "tag", "Tag to set as key=value; repeat for several. Replaces the whole set")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-
-	if *key == "" {
-		fmt.Fprintln(c.stderr, "error: -key is required")
+	if !c.parse(fs, args, "key") {
 		return 1
 	}
 	if *clearTags && len(tags) > 0 {

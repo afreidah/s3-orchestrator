@@ -37,7 +37,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 		op:      "replicate",
 		verb:    "replicating",
 		failMsg: "replication failed",
-		run:     h.replication.Replicate,
+		run:     h.d.Replication.Replicate,
 		body: func(o adminapi.Outcome, res worker.ReplicationSummary) any {
 			return adminapi.ReplicateResponse{Outcome: o, CopiesCreated: res.CopiesCreated, Failed: res.Failed}
 		},
@@ -53,7 +53,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	res, err := h.replication.CountSurplus(r.Context())
+	res, err := h.d.Replication.CountSurplus(r.Context())
 	if reason, skipped := ops.SkipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
 			Status: statusSkipped, Reason: reason,
@@ -61,7 +61,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to count over-replicated objects", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to count over-replicated objects", err)
 		return
 	}
 
@@ -77,14 +77,14 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 // objects out across a worker pool, so streamed steps render as complete
 // labeled lines.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
 
 	h.servePass(w, r, passEndpoint[worker.OverReplicationSummary]{
 		op:      "over-replication",
 		verb:    "removing",
 		failMsg: "over-replication cleanup failed",
 		run: func(ctx context.Context, obs progress.Observer) (worker.OverReplicationSummary, error) {
-			return h.replication.CleanExcess(ctx, batchSize, obs)
+			return h.d.Replication.CleanExcess(ctx, batchSize, obs)
 		},
 		body: func(o adminapi.Outcome, res worker.OverReplicationSummary) any {
 			return adminapi.OverReplicationCleanResponse{Outcome: o, CopiesRemoved: res.CopiesRemoved, Failed: res.Failed}
@@ -111,11 +111,11 @@ type replicationSnapshotter interface {
 // same answer. Returns 503 when the collector is not wired or no snapshot has
 // been computed yet.
 func (h *Handler) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	if h.replMetrics == nil {
+	if h.d.ReplMetrics == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "replication status not available")
 		return
 	}
-	snap := h.replMetrics.ReplicationSnapshot(r.Context())
+	snap := h.d.ReplMetrics.ReplicationSnapshot(r.Context())
 	if !snap.Ready {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "replication status not yet computed")
 		return

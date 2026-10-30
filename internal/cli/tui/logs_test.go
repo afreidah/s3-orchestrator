@@ -57,7 +57,7 @@ func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	}
 	// The viewport shows the rendered lines once its pane sizes it, even though
 	// it scrolled to the bottom before it had a height.
-	view := m.logsPaneView()
+	view := m.contentView()
 	for _, want := range []string{"one", "two", "three", "WARN", "ERROR"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("viewport missing %q:\n%s", want, view)

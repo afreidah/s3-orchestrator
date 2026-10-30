@@ -12,11 +12,9 @@
 package admin
 
 import (
-	"context"
 	"crypto/rand"
 	"io"
 	"log/slog"
-	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -26,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -34,37 +31,15 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// Handler serves the admin API endpoints.
+// Handler serves the admin API endpoints. d holds the dependencies New was
+// given; the remaining fields are derived from them or set later.
 //
 // reloadStatus and liveConfig are functions set after construction rather
 // than dependencies, so this package does not import internal/reload - which
 // would cycle back here through the UI.
 type Handler struct {
+	d            Deps
 	log          *slog.Logger
-	backendOps   BackendOps
-	dashboardOps DashboardReader
-	objects      *ops.Objects
-	integrity    *ops.Integrity
-	replication  *ops.Replication
-	rebalance    *ops.Rebalance
-	expiry       *ops.Lifecycle
-	encryption   *ops.Encryption
-	compression  *ops.Compression
-	provision    *ops.Provisioning
-	states       *backendstate.Manager
-	stateStore   core.BackendStateStore
-	reconciler   Reconciler
-	dbHealthy    func() bool
-	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
-	logs         LogReader                      // nil when the log buffer is not wired
-	replMetrics  replicationSnapshotter         // nil when the metrics collector is not wired
-	cleanup      core.CleanupStore
-	objectCache  cache.ObjectCache
-	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
-	registry     func() *auth.BucketRegistry
-	backendNames func() []string
-	logLevel     *slog.LevelVar
-	instance     adminapi.InstanceStatus
 	cacheTopic   sharedstate.Topic[cache.Invalidation]
 	instances    *sharedstate.Roster[adminapi.InstanceReport]
 	confirmKey   []byte
@@ -126,33 +101,10 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Registry", d.Registry)
 	must.NotNil("d.BackendNames", d.BackendNames)
 	h := &Handler{
-		log:          slog.Default().With(logfmt.Component("admin")),
-		backendOps:   d.BackendOps,
-		dashboardOps: d.Dashboard,
-		objects:      d.Objects,
-		integrity:    d.Integrity,
-		replication:  d.Replication,
-		rebalance:    d.Rebalance,
-		expiry:       d.Expiry,
-		encryption:   d.Encryption,
-		compression:  d.Compression,
-		provision:    d.Provision,
-		states:       d.States,
-		stateStore:   d.StateStore,
-		reconciler:   d.Reconciler,
-		dbHealthy:    d.DBHealthy,
-		workerHealth: d.WorkerHealth,
-		logs:         d.LogBuffer,
-		replMetrics:  d.ReplMetrics,
-		cleanup:      d.Cleanup,
-		objectCache:  d.ObjectCache,
-		flightRec:    d.FlightRec,
-		registry:     d.Registry,
-		backendNames: d.BackendNames,
-		logLevel:     d.LogLevel,
-		instance:     d.Instance,
-		cacheTopic:   cache.InvalidationTopic(d.Shared),
-		confirmKey:   mustConfirmKey(),
+		d:          *d,
+		log:        slog.Default().With(logfmt.Component("admin")),
+		cacheTopic: cache.InvalidationTopic(d.Shared),
+		confirmKey: mustConfirmKey(),
 	}
 	h.instances = h.instanceRoster(d.Shared)
 	return h
@@ -193,15 +145,3 @@ const (
 	statusSkipped  = "skipped"
 	statusComplete = "complete"
 )
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// internalError logs err with any extra attrs and writes msg as a 500 JSON
-// response, so the underlying error never reaches the caller.
-func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg string, err error, attrs ...any) {
-	args := append([]any{logfmt.Err(err)}, attrs...)
-	h.log.ErrorContext(ctx, msg, args...)
-	httputil.WriteJSONError(w, http.StatusInternalServerError, msg)
-}

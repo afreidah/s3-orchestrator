@@ -47,7 +47,7 @@ func (h *Handler) handleInstances(w http.ResponseWriter, r *http.Request) {
 // handleWorkers returns each background service's last tick across the running
 // instances, or 503 when no lifecycle manager is wired here.
 func (h *Handler) handleWorkers(w http.ResponseWriter, r *http.Request) {
-	if h.workerHealth == nil {
+	if h.d.WorkerHealth == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "worker health not available")
 		return
 	}
@@ -71,13 +71,13 @@ func (h *Handler) instanceRoster(s *sharedstate.Shared) *sharedstate.Roster[admi
 // instanceReport is this instance's report as it stands now.
 func (h *Handler) instanceReport(context.Context) adminapi.InstanceReport {
 	rep := adminapi.InstanceReport{
-		Instance:   h.instance,
+		Instance:   h.d.Instance,
 		ReportedAt: time.Now().UTC(),
 		LogLevel:   h.levelName(),
 		Reload:     h.reloadState(),
 	}
-	if h.workerHealth != nil {
-		rep.Workers = h.workerHealth()
+	if h.d.WorkerHealth != nil {
+		rep.Workers = h.d.WorkerHealth()
 	}
 	return rep
 }

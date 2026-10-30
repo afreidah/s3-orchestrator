@@ -32,12 +32,10 @@ import (
 
 // backendsView holds the state of the backends status pane.
 type backendsView struct {
+	loadState
 	list      sortTable[adminapi.BackendStatus] // one row per configured backend, in server order until sorted
-	dbHealthy bool                              // metadata database health
 	integrity adminapi.IntegrityStatus          // how far behind content verification is
 	instance  adminapi.InstanceStatus           // the instance that answered the last status fetch
-	loading   bool                              // a status fetch is in flight
-	err       error                             // last fetch error, if any
 	drain     drainWatch                        // the drain this pane is following, if any
 }
 
@@ -62,11 +60,12 @@ type drainWatch struct {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// statusLoadedMsg carries a successfully loaded status snapshot.
-type statusLoadedMsg struct{ resp *adminapi.StatusResponse }
-
-// statusErrMsg carries a failed status fetch.
-type statusErrMsg struct{ err error }
+// loadedMsg carries a snapshot fetched for one pane; the type of resp names the
+// pane. loadErrMsg carries a failed fetch of the same snapshot.
+type (
+	loadedMsg[T any]  struct{ resp T }
+	loadErrMsg[T any] struct{ err error }
+)
 
 // drainStartedMsg reports that a drain was accepted (or failed to start).
 type drainStartedMsg struct {
@@ -82,23 +81,21 @@ type drainProgressMsg struct {
 }
 
 // loadStatus returns a command that fetches the status snapshot off the main
-// loop, delivering the result back as a statusLoadedMsg or statusErrMsg.
+// loop.
 func (m *model) loadStatus() tea.Cmd {
-	return fetchCmd(m.client.GetStatus,
-		func(r *adminapi.StatusResponse) tea.Msg { return statusLoadedMsg{r} },
-		func(err error) tea.Msg { return statusErrMsg{err} })
+	return fetchCmd(m.client.GetStatus)
 }
 
-// fetchCmd calls get off the main loop and delivers loaded with the response,
-// or failed with the error. Every pane that loads one snapshot builds its
-// command with it; the returned function must not touch the model.
-func fetchCmd[T any](get func(context.Context) (T, error), loaded func(T) tea.Msg, failed func(error) tea.Msg) tea.Cmd {
+// fetchCmd calls get off the main loop and delivers the response as a
+// loadedMsg, or the error as a loadErrMsg. Every pane that loads one snapshot
+// builds its command with it; the returned function must not touch the model.
+func fetchCmd[T any](get func(context.Context) (T, error)) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := get(context.Background())
 		if err != nil {
-			return failed(err)
+			return loadErrMsg[T]{err}
 		}
-		return loaded(resp)
+		return loadedMsg[T]{resp}
 	}
 }
 
@@ -180,25 +177,16 @@ func (m *model) reconcileBackend(backend string) tea.Cmd {
 // highlighted backend selected across the refresh.
 func (m *model) applyStatus(resp *adminapi.StatusResponse) {
 	m.backends.list.setItems(resp.Backends)
-	m.backends.dbHealthy = resp.DBHealthy
 	m.backends.integrity = resp.Integrity
 	m.backends.instance = resp.Instance
-	healthy := resp.DBHealthy
-	m.dbHealthy = &healthy // surface globally for the sidebar indicator
-	m.backends.loading = false
-	m.backends.err = nil
+	m.dbHealthy = new(resp.DBHealthy)
+	m.backends.loaded()
 }
 
-// handleBackendsKey applies backends-level keys (quit, back, reload) and
-// delegates cursor movement to the table.
+// handleBackendsKey arms or opens the backend actions and delegates cursor
+// movement to the table.
 func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.backends.loading = !m.backends.list.loaded()
-		cmd := m.fetch(pollStatus)
-		return m, cmd
 	case "d", "R", "Q", "x", "C":
 		return m.armBackendAction(key.String())
 	case "a", "enter", "right", "l":
@@ -427,11 +415,6 @@ func healthRank(refused []string) int {
 	}
 }
 
-// backendsView composes the pane's full-screen layout.
-func (m *model) backendsPaneView() string {
-	return m.frame(m.backendsHeaderView(), m.hintFooter(), m.backendsBody()...)
-}
-
 // backendsHeaderView renders the title bar with the backend count and DB health.
 func (m *model) backendsHeaderView() string {
 	title := fmt.Sprintf("backends   %d configured", len(m.backends.list.received))
@@ -459,8 +442,8 @@ func (m *model) drainProgressLine() string {
 	}
 	return pathStyle.Render(fmt.Sprintf("draining %s   moved %s   remaining %s (%s)",
 		watch.backend,
-		grouped(int(watch.progress.ObjectsMoved)),
-		grouped(int(watch.progress.ObjectsRemaining)),
+		humanize.Comma(watch.progress.ObjectsMoved),
+		humanize.Comma(watch.progress.ObjectsRemaining),
 		humanize.Bytes(watch.progress.BytesRemaining)))
 }
 
@@ -468,10 +451,7 @@ func (m *model) drainProgressLine() string {
 // the backends title. Kept out of the title bar so the colours are not fighting
 // its background.
 func (m *model) backendsStatsLine() string {
-	db := statusOKStyle.Render("healthy")
-	if !m.backends.dbHealthy {
-		db = statusErrStyle.Render("UNAVAILABLE")
-	}
+	db := m.dbText()
 
 	fleet := m.fleetStorage()
 	total := "total: " + humanize.Bytes(fleet.Used)

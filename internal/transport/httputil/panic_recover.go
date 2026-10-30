@@ -18,6 +18,7 @@
 package httputil
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -73,6 +74,7 @@ func handleRecoveredPanic(r *http.Request, w http.ResponseWriter, log *slog.Logg
 	ctx := r.Context()
 	requestID := audit.RequestID(ctx)
 	stack := debug.Stack()
+	err := panicError(rec)
 
 	telemetry.HTTPPanicRecoveredTotal.WithLabelValues(route).Inc()
 
@@ -80,72 +82,34 @@ func handleRecoveredPanic(r *http.Request, w http.ResponseWriter, log *slog.Logg
 		"route", route,
 		"method", r.Method,
 		"path", r.URL.Path,
-		"panic", panicMessage(rec),
+		"panic", err.Error(),
 		"stack", string(stack),
-		logfmt.Err(panicError(rec)),
+		logfmt.Err(err),
 	)
 
 	audit.Log(ctx, "http.PanicRecovered",
 		slog.String("route", route),
 		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),
-		slog.String("panic", panicMessage(rec)),
+		slog.String("panic", err.Error()),
 	)
 
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.SetStatus(codes.Error, "panic recovered")
-		span.RecordError(panicError(rec))
+		span.RecordError(err)
 	}
 
 	writeErr(w, http.StatusInternalServerError, "InternalError", buildClientMessage(requestID))
 }
 
 // panicError returns the recovered value as an error, wrapping a non-error so
-// it logs as a readable message.
+// it logs as a readable message. A nil panic never reaches here: since Go 1.21
+// it arrives as a *runtime.PanicNilError.
 func panicError(rec any) error {
 	if err, ok := rec.(error); ok {
 		return err
 	}
-	return panicValueError{value: rec}
-}
-
-// panicMessage returns a printable representation for the structured
-// "panic" log key and the audit "panic" attribute. Kept separate from
-// panicError so the audit and slog forms stay consistent even when the
-// recovered value is not an error type.
-func panicMessage(rec any) string {
-	if err, ok := rec.(error); ok {
-		return err.Error()
-	}
-	return panicValueError{value: rec}.Error()
-}
-
-// panicValueError lifts a non-error recovered value into the error
-// interface. Used for the common case where a handler panics with a
-// string or a runtime.Error that does not satisfy error directly.
-type panicValueError struct {
-	value any
-}
-
-// Error renders the wrapped value via the default fmt verb so any
-// recovered shape produces a stable string.
-func (p panicValueError) Error() string {
-	return formatPanicValue(p.value)
-}
-
-// formatPanicValue keeps the panic-to-string conversion in one place so
-// log lines and the response body stay consistent.
-func formatPanicValue(v any) string {
-	if v == nil {
-		return "<nil panic>"
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	if err, ok := v.(error); ok {
-		return err.Error()
-	}
-	return fmt.Sprintf("%v", v)
+	return errors.New(fmt.Sprint(rec))
 }
 
 // buildClientMessage builds the client-facing panic message. It echoes the

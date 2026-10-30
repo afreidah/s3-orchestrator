@@ -13,7 +13,6 @@ package httputil
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -82,28 +81,16 @@ func (cr *CertReloader) Reload() error {
 	return nil
 }
 
-// checkCertExpiry parses the leaf certificate and logs a warning if it expires
-// within certExpiryWarningThreshold.
+// checkCertExpiry logs a warning if the leaf certificate expires within
+// certExpiryWarningThreshold. tls.LoadX509KeyPair fills in Leaf itself.
 func checkCertExpiry(log *slog.Logger, cert *tls.Certificate, certFile string) {
 	if cert.Leaf == nil {
-		// tls.LoadX509KeyPair does not populate Leaf; parse it ourselves.
-		if len(cert.Certificate) > 0 {
-			parsed, err := x509.ParseCertificate(cert.Certificate[0])
-			if err != nil {
-				log.WarnContext(context.Background(), "leaf certificate parse failed",
-					"cert_file", certFile, "error", err)
-				return
-			}
-			cert.Leaf = parsed
-		}
+		return
 	}
-	if cert.Leaf != nil {
-		remaining := time.Until(cert.Leaf.NotAfter)
-		if remaining < certExpiryWarningThreshold {
-			log.WarnContext(context.Background(), "TLS certificate expires soon",
-				"cert_file", certFile,
-				"expires_at", cert.Leaf.NotAfter,
-				"remaining", remaining.Truncate(time.Minute))
-		}
+	if remaining := time.Until(cert.Leaf.NotAfter); remaining < certExpiryWarningThreshold {
+		log.WarnContext(context.Background(), "TLS certificate expires soon",
+			"cert_file", certFile,
+			"expires_at", cert.Leaf.NotAfter,
+			"remaining", remaining.Truncate(time.Minute))
 	}
 }

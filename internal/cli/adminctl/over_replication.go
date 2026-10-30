@@ -11,30 +11,26 @@
 package adminctl
 
 import (
-	"flag"
 	"net/http"
 	"net/url"
-	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdOverReplication implements `s3-orchestrator admin over-replication
 // [-execute] [-batch-size=N]`.
 func cmdOverReplication(args []string, c *client) int {
-	fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("over-replication")
 	execute := fs.Bool("execute", false, "Run cleanup (default: show status only)")
 	batchSize := fs.Int(flagBatchSize, 0, "Override batch size for cleanup")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 	if *execute {
 		q := url.Values{}
-		if *batchSize > 0 {
-			q.Set(queryBatch, strconv.Itoa(*batchSize))
-		}
-		return c.stream(http.MethodPost, withQuery(adminapi.PathOverReplication, q))
+		setPositive(q, queryBatch, *batchSize)
+		return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathOverReplication, q))
 	}
 	return c.get(adminapi.PathOverReplication, nil)
 }

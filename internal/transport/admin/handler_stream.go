@@ -95,7 +95,7 @@ func (h *Handler) servePass[R any](w http.ResponseWriter, r *http.Request, ep pa
 		var zero R
 		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusSkipped, Reason: reason}, zero))
 	case err != nil:
-		h.internalError(r.Context(), w, ep.failMsg, err)
+		httputil.InternalError(r.Context(), h.log, w, ep.failMsg, err)
 	default:
 		httputil.WriteJSON(w, http.StatusOK, ep.body(adminapi.Outcome{Status: statusOK}, res))
 	}

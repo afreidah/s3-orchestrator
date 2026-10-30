@@ -27,7 +27,7 @@ func (h *Handler) handleRebalance(w http.ResponseWriter, r *http.Request) {
 		op:      "rebalance",
 		verb:    "moving",
 		failMsg: "rebalance failed",
-		run:     h.rebalance.Run,
+		run:     h.d.Rebalance.Run,
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.RebalanceResponse{Outcome: o, Moved: res.Succeeded}
 		},

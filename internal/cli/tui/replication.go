@@ -23,51 +23,31 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// replicationView holds the state of the replication status pane.
+// replicationView holds the state of the replication status pane. Its error is
+// surfaced only when there is no snapshot yet.
 type replicationView struct {
-	snap    *adminapi.ReplicationStatusResponse // last snapshot, nil until the first load
-	loading bool                                // a fetch is in flight (only shown on the first load)
-	err     error                               // last fetch error, surfaced only when there is no snapshot yet
+	loadState
+	snap *adminapi.ReplicationStatusResponse // last snapshot, nil until the first load
 }
 
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// replicationLoadedMsg carries a successfully loaded replication snapshot.
-type replicationLoadedMsg struct {
-	resp *adminapi.ReplicationStatusResponse
-}
-
-// replicationErrMsg carries a failed replication fetch.
-type replicationErrMsg struct{ err error }
-
 // loadReplication returns a command that fetches the replication snapshot off
-// the main loop, delivering a replicationLoadedMsg or replicationErrMsg.
+// the main loop.
 func (m *model) loadReplication() tea.Cmd {
-	return fetchCmd(m.client.GetReplicationStatus,
-		func(r *adminapi.ReplicationStatusResponse) tea.Msg { return replicationLoadedMsg{r} },
-		func(err error) tea.Msg { return replicationErrMsg{err} })
+	return fetchCmd(m.client.GetReplicationStatus)
 }
 
 // -------------------------------------------------------------------------
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
-// enterReplication refreshes the snapshot on entry. The poller keeps it fresh
-// between visits, so re-entering shows data immediately instead of a spinner
-// flash.
-func (m *model) enterReplication() (tea.Model, tea.Cmd) {
-	m.replication.loading = m.replication.snap == nil
-	cmd := m.fetch(pollReplication)
-	return m, cmd
-}
-
 // applyReplication folds a loaded snapshot into the pane state.
 func (m *model) applyReplication(resp *adminapi.ReplicationStatusResponse) {
 	m.replication.snap = resp
-	m.replication.loading = false
-	m.replication.err = nil
+	m.replication.loaded()
 }
 
 // applyReplicationErr records a fetch failure. A transient auto-refresh error is
@@ -80,28 +60,9 @@ func (m *model) applyReplicationErr(err error) {
 	}
 }
 
-// handleReplicationKey applies replication-pane keys (back, reload); scrolling
-// is unused because the pane is a fixed summary.
-func (m *model) handleReplicationKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.replication.loading = m.replication.snap == nil
-		cmd := m.fetch(pollReplication)
-		return m, cmd
-	}
-	return m, nil
-}
-
 // -------------------------------------------------------------------------
 // RENDERING
 // -------------------------------------------------------------------------
-
-// replicationPaneView composes the pane's full-screen layout.
-func (m *model) replicationPaneView() string {
-	return m.frame(m.replicationHeaderView(), m.hintFooter(), m.replicationBody()...)
-}
 
 // replicationHeaderView renders the title bar with the auto-refresh cadence.
 func (m *model) replicationHeaderView() string {

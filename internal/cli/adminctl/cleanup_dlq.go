@@ -14,12 +14,12 @@ package adminctl
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/url"
 	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
@@ -34,22 +34,19 @@ func cmdCleanupDLQ(args []string, c *client) int {
 		sub, args = args[0], args[1:]
 	}
 
-	fs := flag.NewFlagSet("cleanup-dlq", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("cleanup-dlq")
 	backend := fs.String("backend", "", "Scope to a single backend (default: all)")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 
 	q := url.Values{}
-	if *backend != "" {
-		q.Set(queryBackend, *backend)
-	}
+	setIf(q, queryBackend, *backend)
 
 	if sub == "requeue" {
-		return c.post(withQuery(adminapi.PathCleanupDLQRequeue, q), renderCleanupDLQRequeue)
+		return c.post(adminclient.WithQuery(adminapi.PathCleanupDLQRequeue, q), renderCleanupDLQRequeue)
 	}
-	return c.get(withQuery(adminapi.PathCleanupDLQ, q), renderCleanupDLQList)
+	return c.get(adminclient.WithQuery(adminapi.PathCleanupDLQ, q), renderCleanupDLQList)
 }
 
 // renderCleanupDLQList renders the DLQ listing as a table led by the backend,

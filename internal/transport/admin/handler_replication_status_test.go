@@ -30,9 +30,9 @@ func (f fakeReplication) ReplicationSnapshot(context.Context) metrics.Replicatio
 
 func TestHandleReplicationStatus_ReturnsSnapshot(t *testing.T) {
 	t.Parallel()
-	h := &Handler{replMetrics: fakeReplication{snap: metrics.ReplicationSnapshot{
+	h := &Handler{d: Deps{ReplMetrics: fakeReplication{snap: metrics.ReplicationSnapshot{
 		Factor: 2, UnderReplicated: 143, OverReplicated: 12, ComputedAt: time.Now(), Ready: true,
-	}}}
+	}}}}
 
 	w := httptest.NewRecorder()
 	h.handleReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/replication", nil))
@@ -60,7 +60,7 @@ func TestHandleReplicationStatus_NotWiredReturns503(t *testing.T) {
 
 func TestHandleReplicationStatus_NotReadyReturns503(t *testing.T) {
 	t.Parallel()
-	h := &Handler{replMetrics: fakeReplication{snap: metrics.ReplicationSnapshot{Ready: false}}}
+	h := &Handler{d: Deps{ReplMetrics: fakeReplication{snap: metrics.ReplicationSnapshot{Ready: false}}}}
 	w := httptest.NewRecorder()
 	h.handleReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/replication", nil))
 	if w.Code != http.StatusServiceUnavailable {

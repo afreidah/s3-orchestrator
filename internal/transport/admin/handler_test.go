@@ -119,8 +119,8 @@ func TestLogLevel_Put(t *testing.T) {
 		if resp.Level != "debug" {
 			t.Errorf("%s: level = %q, want %q", level, resp.Level, "debug")
 		}
-		if h.logLevel.Level() != slog.LevelDebug {
-			t.Errorf("%s: logLevel = %v, want %v", level, h.logLevel.Level(), slog.LevelDebug)
+		if h.d.LogLevel.Level() != slog.LevelDebug {
+			t.Errorf("%s: logLevel = %v, want %v", level, h.d.LogLevel.Level(), slog.LevelDebug)
 		}
 	}
 }
@@ -237,7 +237,7 @@ func TestCacheFlush_Empty(t *testing.T) {
 func TestCacheFlush_Cleared(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mc := h.objectCache.(*cache.MemoryCache)
+	mc := h.d.ObjectCache.(*cache.MemoryCache)
 	for _, k := range []string{"a", "b", "c"} {
 		mc.PutBytes(k, []byte(k+"-data"), cache.EntryMeta{})
 	}
@@ -276,7 +276,7 @@ func TestCacheStats_Disabled(t *testing.T) {
 func TestCacheStats_Populated(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mc := h.objectCache.(*cache.MemoryCache)
+	mc := h.d.ObjectCache.(*cache.MemoryCache)
 	mc.PutBytes("key-a", []byte("hello"), cache.EntryMeta{ContentType: "text/plain"})
 	mc.PutBytes("key-b", []byte("world"), cache.EntryMeta{ContentType: "text/plain"})
 
@@ -305,7 +305,7 @@ func TestCacheStats_Populated(t *testing.T) {
 func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mc := h.objectCache.(*cache.MemoryCache)
+	mc := h.d.ObjectCache.(*cache.MemoryCache)
 	mc.PutBytes("a/1", []byte("aaa"), cache.EntryMeta{})
 	mc.PutBytes("a/2", []byte("bbb"), cache.EntryMeta{})
 
@@ -348,7 +348,7 @@ func TestCacheInvalidateKey_UnknownKey(t *testing.T) {
 func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithCache(t)
-	mc := h.objectCache.(*cache.MemoryCache)
+	mc := h.d.ObjectCache.(*cache.MemoryCache)
 	for _, k := range []string{"users/1/a", "users/1/b", "users/2/c", "logs/1/x"} {
 		mc.PutBytes(k, []byte("data"), cache.EntryMeta{})
 	}
@@ -422,8 +422,7 @@ func newTestHandler(t *testing.T) *Handler {
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
-		registry:   func() *auth.BucketRegistry { return rootRegistry(t) },
-		logLevel:   &lv,
+		d:          Deps{Registry: func() *auth.BucketRegistry { return rootRegistry(t) }, LogLevel: &lv},
 		confirmKey: mustConfirmKey(),
 	}
 	h.instances = h.instanceRoster(nil)
@@ -452,7 +451,7 @@ func newTestHandlerWithCache(t *testing.T) *Handler {
 		t.Fatalf("NewMemoryCache: %v", err)
 	}
 	h := newTestHandler(t)
-	h.objectCache = mc
+	h.d.ObjectCache = mc
 	return h
 }
 

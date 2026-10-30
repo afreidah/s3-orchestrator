@@ -10,25 +10,19 @@
 package adminctl
 
 import (
-	"flag"
-	"fmt"
 	"net/url"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdObjectLocations implements `s3-orchestrator admin object-locations
 // -key=<key>`.
 func cmdObjectLocations(args []string, c *client) int {
-	fs := flag.NewFlagSet("object-locations", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("object-locations")
 	key := fs.String("key", "", "Object key to look up (required)")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args, "key") {
 		return 1
 	}
-	if *key == "" {
-		fmt.Fprintln(c.stderr, "error: -key is required")
-		return 1
-	}
-	return c.get(withQuery(adminapi.PathObjectLocations, url.Values{"key": {*key}}), nil)
+	return c.get(adminclient.WithQuery(adminapi.PathObjectLocations, url.Values{"key": {*key}}), nil)
 }

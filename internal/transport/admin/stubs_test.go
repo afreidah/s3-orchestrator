@@ -91,7 +91,7 @@ func newOpsIntegrityCfg(t *testing.T, cfg backendOpsStub) *opstest.MockIntegrity
 // the handler tests that drive scrub, per-key verification, or backfill.
 func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub) {
 	t.Helper()
-	h.integrity = ops.NewIntegrity(ops.IntegrityDeps{
+	h.d.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber:     newScrubber(t, sc),
 		Store:        backfillStore{cfg: sc},
 		IntegrityCfg: newOpsIntegrityCfg(t, be),
@@ -104,7 +104,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 // serves both the copy-creating and the surplus-removing endpoints.
 func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRepStub) {
 	t.Helper()
-	h.replication = ops.NewReplication(ops.ReplicationDeps{
+	h.d.Replication = ops.NewReplication(ops.ReplicationDeps{
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
 		Runtime:    newRuntimeOps(t),
@@ -124,14 +124,14 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 	if cfg != nil {
 		deps.Rebalancer = newRebalancer(t, cfg)
 	}
-	h.rebalance = ops.NewRebalance(deps)
+	h.d.Rebalance = ops.NewRebalance(deps)
 }
 
 // encryptionWith installs encryption operations over one store, for the tests
 // that drive the bulk rewrite and key rotation endpoints.
 func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.RewriteStore) {
 	t.Helper()
-	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
+	h.d.Encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor: enc,
 		Store:     store,
 		Mover:     newOpsMover(t),
@@ -143,7 +143,7 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 // rest of the operations layer.
 func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.RewriteStore) {
 	t.Helper()
-	h.compression = ops.NewCompression(&ops.CompressionDeps{
+	h.d.Compression = ops.NewCompression(&ops.CompressionDeps{
 		Codec:  codec,
 		Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:  store,

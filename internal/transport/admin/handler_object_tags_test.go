@@ -45,17 +45,16 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{
-		log:       slog.Default().With(logfmt.Component("admin")),
-		dbHealthy: cb.IsHealthy,
-		objects: ops.NewObjects(ops.ObjectsDeps{
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		DBHealthy: cb.IsHealthy,
+		Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
 		}),
-		logLevel: &lv,
-		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
-	}
+		LogLevel: &lv,
+		Registry: func() *auth.BucketRegistry { return rootRegistry(t) },
+	}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	return api, mux

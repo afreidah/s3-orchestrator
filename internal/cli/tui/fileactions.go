@@ -30,11 +30,6 @@ import (
 // agreed to anything would be a lot of work to answer a question they may
 // answer with "no". A truncated page reports the count as a floor.
 
-// fileAction is a write action armed against the highlighted row.
-type fileAction struct {
-	transfer *transfer // set while bytes are moving, nil otherwise
-}
-
 // prefixCountedMsg carries the key count behind a prefix, and the confirmation
 // it should arm.
 type prefixCountedMsg struct {
@@ -136,7 +131,7 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 		model, cmd := m.askForValue("Download everything under "+key+" into which new directory?",
 			filepath.Base(strings.TrimSuffix(key, "/")), func(dest string) adminAction {
 				return adminAction{
-					before: func(m *model) { m.beginTransfer(startPrefixDownload(m.client, key, dest)) },
+					before: func(m *model) { m.transfer = startPrefixDownload(m.client, key, dest) },
 					run:    transferTick(),
 				}
 			})
@@ -145,7 +140,7 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 
 	model, cmd := m.askForValue("Download "+key+" to?", filepath.Base(key), func(dest string) adminAction {
 		return adminAction{
-			before: func(m *model) { m.beginTransfer(startDownload(m.client, key, dest)) },
+			before: func(m *model) { m.transfer = startDownload(m.client, key, dest) },
 			run:    transferTick(),
 		}
 	})
@@ -156,7 +151,7 @@ func (m *model) armDownload() (tea.Model, tea.Cmd, bool) {
 // the footer. The pane follows one transfer at a time, so starting another
 // would leave the first running with nothing reporting on it.
 func (m *model) transferBusy() bool {
-	if m.files.transfer == nil {
+	if m.transfer == nil {
 		return false
 	}
 	m.status = &actionStatus{text: "a transfer is already running; wait for it to finish"}
@@ -183,7 +178,7 @@ func (m *model) askUploadKey(local string) (tea.Model, tea.Cmd) {
 	return m.askForValue("Store "+filepath.Base(local)+" under which key?", m.prefix+filepath.Base(local),
 		func(key string) adminAction {
 			return adminAction{
-				before: func(m *model) { m.beginTransfer(startUpload(m.client, key, local)) },
+				before: func(m *model) { m.transfer = startUpload(m.client, key, local) },
 				run:    transferTick(),
 			}
 		})
@@ -245,7 +240,7 @@ func (m *model) applyPrefixCounted(msg prefixCountedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	scale := grouped(msg.count)
+	scale := humanize.Comma(int64(msg.count))
 	if msg.atLeast {
 		scale = "at least " + scale
 	}
@@ -267,49 +262,41 @@ func (m *model) reloadListing() tea.Cmd {
 // TRANSFERS
 // -------------------------------------------------------------------------
 
-// beginTransfer shows the transfer starting and begins polling its progress.
-func (m *model) beginTransfer(t *transfer) {
-	m.files.transfer = t
-}
-
 // onTransferTick reads the running transfer's counter, reporting completion
 // once the goroutine has finished. The ticker lapses when nothing is moving.
 func (m *model) onTransferTick() (tea.Model, tea.Cmd) {
-	t := m.files.transfer
+	t := m.transfer
 	if t == nil {
 		return m, nil
 	}
 	if t.done.Load() {
-		return m, func() tea.Msg {
-			return transferDoneMsg{kind: t.kind, key: t.key, local: t.local,
-				moved: t.moved.Load(), objects: t.fetched.Load(), err: t.err}
-		}
+		return m, func() tea.Msg { return transferDoneMsg{t} }
 	}
 	return m, transferTick()
 }
 
 // applyTransferDone reports the finished transfer and clears the pane's hold
 // on it. A failure names what went wrong; the partial file or tree is already
-// gone.
+// gone. A finished upload reloads the listing that now holds it.
 func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
-	m.files.transfer = nil
-	if msg.err != nil {
-		m.report(false, fmt.Sprintf("%s %s: %s", msg.kind.verb(), msg.key, msg.err.Error()))
+	t := msg.t
+	m.transfer = nil
+	if t.err != nil {
+		m.report(false, fmt.Sprintf("%s %s: %s", t.kind.verb(), t.key, t.err.Error()))
 		return m, nil
 	}
 
-	switch msg.kind {
+	moved := humanize.Bytes(t.moved.Load())
+	switch t.kind {
 	case transferPrefix:
 		m.report(true, fmt.Sprintf("downloaded %s under %s to %s (%s)",
-			countOf(int(msg.objects), "object", "objects"), msg.key, msg.local, humanize.Bytes(msg.moved)))
+			countOf(int(t.fetched.Load()), "object", "objects"), t.key, t.local, moved))
 	case transferUpload:
-		m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), msg.key, humanize.Bytes(msg.moved)))
-	default:
-		m.report(true, fmt.Sprintf("%s %s (%s)", msg.kind.past(), msg.local, humanize.Bytes(msg.moved)))
-	}
-	if msg.kind == transferUpload {
+		m.report(true, fmt.Sprintf("%s %s (%s)", t.kind.past(), t.key, moved))
 		reload := m.reloadListing()
 		return m, reload
+	default:
+		m.report(true, fmt.Sprintf("%s %s (%s)", t.kind.past(), t.local, moved))
 	}
 	return m, nil
 }
@@ -317,8 +304,8 @@ func (m *model) applyTransferDone(msg transferDoneMsg) (tea.Model, tea.Cmd) {
 // fileTransferLine reports the running transfer's progress, or nothing when
 // the pane is idle. The caller styles it, as it does the line it replaces.
 func (m *model) fileTransferLine() string {
-	if m.files.transfer == nil {
+	if m.transfer == nil {
 		return ""
 	}
-	return transferLine(m.files.transfer)
+	return transferLine(m.transfer)
 }

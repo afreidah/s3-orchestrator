@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -37,10 +37,12 @@ import (
 
 // The flag names and messages the provisioning verbs share.
 const (
-	flagUser   = "user"
-	flagBucket = "bucket"
-	flagKind   = "kind"
-	flagName   = "name"
+	flagUser      = "user"
+	flagBucket    = "bucket"
+	flagKind      = "kind"
+	flagName      = "name"
+	flagID        = "id"
+	flagAccessKey = "access-key"
 
 	defaultGrantKind = "bucket"
 
@@ -55,9 +57,6 @@ const (
 	usageIssueAccessKey = "Access key ID to register; omit with -secret-key to mint a keypair instead"
 	usageIssueSecretKey = "Secret access key to register; required with -access-key"
 
-	errIDRequired        = "error: -id is required"
-	errNameRequired      = "error: -name is required"
-	errUserRequired      = "error: -user is required"
 	errKeypairIncomplete = "error: -access-key and -secret-key must both be given, or both omitted"
 	errGrantNameRequired = "error: -name is required for a bucket or backend grant"
 
@@ -105,15 +104,10 @@ func bucketList(_ []string, c *client) int {
 
 // bucketCreate declares a virtual bucket in the store.
 func bucketCreate(args []string, c *client) int {
-	fs := flag.NewFlagSet("bucket create", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	name := fs.String("name", "", usageBucketName)
+	fs := c.flags("bucket create")
+	name := fs.String(flagName, "", usageBucketName)
 	maxMultipart := fs.Int("max-multipart", 0, "Cap concurrent multipart uploads; 0 is unlimited")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *name == "" {
-		fmt.Fprintln(c.stderr, errNameRequired)
+	if !c.parse(fs, args, flagName) {
 		return 1
 	}
 	return c.sendJSON(http.MethodPost, adminapi.PathProvBuckets, adminapi.CreateBucketRequest{
@@ -124,14 +118,9 @@ func bucketCreate(args []string, c *client) int {
 
 // bucketDelete removes a stored virtual bucket.
 func bucketDelete(args []string, c *client) int {
-	fs := flag.NewFlagSet("bucket delete", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	name := fs.String("name", "", usageBucketName)
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *name == "" {
-		fmt.Fprintln(c.stderr, errNameRequired)
+	fs := c.flags("bucket delete")
+	name := fs.String(flagName, "", usageBucketName)
+	if !c.parse(fs, args, flagName) {
 		return 1
 	}
 	return c.delete(adminapi.Path(adminapi.PathProvBuckets, *name))
@@ -150,14 +139,9 @@ func userList(_ []string, c *client) int {
 // response is rendered rather than discarded: every later verb names the user
 // by it.
 func userCreate(args []string, c *client) int {
-	fs := flag.NewFlagSet("user create", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	name := fs.String("name", "", "User name (required)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *name == "" {
-		fmt.Fprintln(c.stderr, errNameRequired)
+	fs := c.flags("user create")
+	name := fs.String(flagName, "", "User name (required)")
+	if !c.parse(fs, args, flagName) {
 		return 1
 	}
 	return c.sendJSON(http.MethodPost, adminapi.PathProvUsers, adminapi.CreateUserRequest{Name: *name}, nil)
@@ -169,19 +153,10 @@ func userCreate(args []string, c *client) int {
 // untouched. Correcting a name is otherwise impossible: a delete is refused
 // while the user holds either of those.
 func userRename(args []string, c *client) int {
-	fs := flag.NewFlagSet("user rename", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	id := fs.String("id", "", usageUserID)
-	name := fs.String("name", "", "New name for the identity (required)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *id == "" {
-		fmt.Fprintln(c.stderr, errIDRequired)
-		return 1
-	}
-	if *name == "" {
-		fmt.Fprintln(c.stderr, errNameRequired)
+	fs := c.flags("user rename")
+	id := fs.String(flagID, "", usageUserID)
+	name := fs.String(flagName, "", "New name for the identity (required)")
+	if !c.parse(fs, args, flagID, flagName) {
 		return 1
 	}
 	return c.sendJSON(http.MethodPatch, adminapi.Path(adminapi.PathProvUsers, *id), adminapi.RenameUserRequest{Name: *name}, nil)
@@ -189,14 +164,9 @@ func userRename(args []string, c *client) int {
 
 // userDelete removes an identity.
 func userDelete(args []string, c *client) int {
-	fs := flag.NewFlagSet("user delete", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	id := fs.String("id", "", usageUserID)
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *id == "" {
-		fmt.Fprintln(c.stderr, "error: -id is required")
+	fs := c.flags("user delete")
+	id := fs.String(flagID, "", usageUserID)
+	if !c.parse(fs, args, flagID) {
 		return 1
 	}
 	return c.delete(adminapi.Path(adminapi.PathProvUsers, *id))
@@ -217,17 +187,12 @@ func credentialList(_ []string, c *client) int {
 // loses it issues a replacement. Supplying a keypair registers that one
 // instead, so the command can be rerun without minting a second credential.
 func credentialIssue(args []string, c *client) int {
-	fs := flag.NewFlagSet("credential issue", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("credential issue")
 	user := fs.String(flagUser, "", "User ID to issue against (required)")
 	label := fs.String("label", "", "Human label recording what holds this keypair")
-	accessKey := fs.String("access-key", "", usageIssueAccessKey)
+	accessKey := fs.String(flagAccessKey, "", usageIssueAccessKey)
 	secretKey := fs.String("secret-key", "", usageIssueSecretKey)
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *user == "" {
-		fmt.Fprintln(c.stderr, errUserRequired)
+	if !c.parse(fs, args, flagUser) {
 		return 1
 	}
 	if (*accessKey == "") != (*secretKey == "") {
@@ -244,14 +209,9 @@ func credentialIssue(args []string, c *client) int {
 
 // credentialRevoke revokes one keypair.
 func credentialRevoke(args []string, c *client) int {
-	fs := flag.NewFlagSet("credential revoke", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	accessKey := fs.String("access-key", "", "Access key ID to revoke (required)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *accessKey == "" {
-		fmt.Fprintln(c.stderr, "error: -access-key is required")
+	fs := c.flags("credential revoke")
+	accessKey := fs.String(flagAccessKey, "", "Access key ID to revoke (required)")
+	if !c.parse(fs, args, flagAccessKey) {
 		return 1
 	}
 	return c.delete(adminapi.Path(adminapi.PathProvCreds, *accessKey))
@@ -273,8 +233,7 @@ type grantFlagValues struct {
 // grantFlags registers the flags every grant verb shares and returns the set,
 // so a verb can add the ones only it takes before parsing.
 func grantFlags(verb string, c *client) (*flag.FlagSet, *grantFlagValues) {
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags(verb)
 	return fs, &grantFlagValues{
 		user:   fs.String(flagUser, "", usageUserID),
 		kind:   fs.String(flagKind, defaultGrantKind, usageGrantKind),
@@ -290,11 +249,7 @@ func grantFlags(verb string, c *client) (*flag.FlagSet, *grantFlagValues) {
 func resolveGrant(
 	fs *flag.FlagSet, args []string, c *client, v *grantFlagValues,
 ) (string, core.Resource, bool) {
-	if err := fs.Parse(args); err != nil {
-		return "", core.Resource{}, false
-	}
-	if *v.user == "" {
-		fmt.Fprintln(c.stderr, errUserRequired)
+	if !c.parse(fs, args, flagUser) {
 		return "", core.Resource{}, false
 	}
 	resource := core.Resource{
@@ -312,7 +267,7 @@ func resolveGrant(
 // path carries a placeholder segment the server ignores.
 func grantPath(user string, r core.Resource) string {
 	path := adminapi.Path(adminapi.PathProvGrants, user, cmp.Or(r.Name, string(core.ResourceOrchestrator)))
-	return withQuery(path, url.Values{flagKind: {string(r.Kind)}})
+	return adminclient.WithQuery(path, url.Values{flagKind: {string(r.Kind)}})
 }
 
 // grantAdd lets a user reach a resource, with the permissions that reach
@@ -372,53 +327,50 @@ func grantRemove(args []string, c *client) int {
 // RENDERERS
 // -------------------------------------------------------------------------
 
-// renderBuckets renders the bucket slice of the provisioning response.
-func renderBuckets(w io.Writer, body []byte) error {
-	p, err := decodeProvisioning(body)
-	if err != nil {
-		return err
+// provisioningTable renders one slice of the provisioning listing as a table
+// under headers, followed by the notices the merge of the two sources found.
+func provisioningTable(headers []string, rowsOf func(*adminapi.ProvisioningResponse) [][]string) renderFunc {
+	return func(w io.Writer, body []byte) error {
+		var p adminapi.ProvisioningResponse
+		if err := json.Unmarshal(body, &p); err != nil {
+			return err
+		}
+		if err := output.Table(w, headers, rowsOf(&p)); err != nil {
+			return err
+		}
+		return writeConfigNote(w, p.Notices)
 	}
-	rows := make([][]string, len(p.Buckets))
-	for i, b := range p.Buckets {
-		rows[i] = []string{b.Name, multipartLimit(b.MaxMultipartUploads), b.Source}
-	}
-	if err := output.Table(w, []string{"Bucket", "Multipart", colSource}, rows); err != nil {
-		return err
-	}
-	return writeConfigNote(w, p.Notices)
 }
+
+// renderBuckets renders the bucket slice of the provisioning response.
+var renderBuckets = provisioningTable([]string{"Bucket", "Multipart", colSource},
+	func(p *adminapi.ProvisioningResponse) [][]string {
+		rows := make([][]string, len(p.Buckets))
+		for i, b := range p.Buckets {
+			rows[i] = []string{b.Name, output.MultipartCap(b.MaxMultipartUploads), b.Source}
+		}
+		return rows
+	})
 
 // renderUsers renders the user slice, each with the buckets it reaches.
-func renderUsers(w io.Writer, body []byte) error {
-	p, err := decodeProvisioning(body)
-	if err != nil {
-		return err
-	}
-	rows := make([][]string, len(p.Users))
-	for i, u := range p.Users {
-		rows[i] = []string{u.ID, u.Name, renderGrants(&u), u.Source}
-	}
-	if err := output.Table(w, []string{"User ID", "Name", "Grants", colSource}, rows); err != nil {
-		return err
-	}
-	return writeConfigNote(w, p.Notices)
-}
+var renderUsers = provisioningTable([]string{"User ID", "Name", "Grants", colSource},
+	func(p *adminapi.ProvisioningResponse) [][]string {
+		rows := make([][]string, len(p.Users))
+		for i, u := range p.Users {
+			rows[i] = []string{u.ID, u.Name, renderGrants(&u), u.Source}
+		}
+		return rows
+	})
 
 // renderCredentials renders the credential slice.
-func renderCredentials(w io.Writer, body []byte) error {
-	p, err := decodeProvisioning(body)
-	if err != nil {
-		return err
-	}
-	rows := make([][]string, len(p.Credentials))
-	for i, cred := range p.Credentials {
-		rows[i] = []string{cred.AccessKeyID, cred.UserID, cred.Label, cred.Source}
-	}
-	if err := output.Table(w, []string{"Access key", "User ID", "Label", colSource}, rows); err != nil {
-		return err
-	}
-	return writeConfigNote(w, p.Notices)
-}
+var renderCredentials = provisioningTable([]string{"Access key", "User ID", "Label", colSource},
+	func(p *adminapi.ProvisioningResponse) [][]string {
+		rows := make([][]string, len(p.Credentials))
+		for i, cred := range p.Credentials {
+			rows[i] = []string{cred.AccessKeyID, cred.UserID, cred.Label, cred.Source}
+		}
+		return rows
+	})
 
 // renderNewCredential prints a minted keypair. Both halves go to stdout so the
 // output can be captured whole; this is the only time the secret is available.
@@ -459,22 +411,6 @@ func shorthand(perms []string) string {
 		}
 	}
 	return strings.Join(perms, ",")
-}
-
-// decodeProvisioning parses the shared listing response.
-func decodeProvisioning(body []byte) (adminapi.ProvisioningResponse, error) {
-	var p adminapi.ProvisioningResponse
-	err := json.Unmarshal(body, &p)
-	return p, err
-}
-
-// multipartLimit renders a bucket's multipart cap, spelling out that zero means
-// no cap rather than no uploads.
-func multipartLimit(n int) string {
-	if n == 0 {
-		return "unlimited"
-	}
-	return strconv.Itoa(n)
 }
 
 // writeConfigNote appends what the server found worth reporting about the two

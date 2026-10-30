@@ -48,18 +48,17 @@ func (h *Handler) handleReloadStatus(w http.ResponseWriter, _ *http.Request) {
 // "no_reload_yet" placeholder when SIGHUP has not fired since startup or the
 // runtime has not wired the provider.
 func (h *Handler) reloadState() adminapi.ReloadStatusResponse {
-	if h.reloadStatus == nil {
-		return adminapi.ReloadStatusResponse{Status: reloadNotYetStatus}
-	}
-	if result := h.reloadStatus(); result != nil {
-		return *result
+	if h.reloadStatus != nil {
+		if result := h.reloadStatus(); result != nil {
+			return *result
+		}
 	}
 	return adminapi.ReloadStatusResponse{Status: reloadNotYetStatus}
 }
 
 // levelName is the log level this instance runs at, as the API reports it.
 func (h *Handler) levelName() string {
-	return strings.ToLower(h.logLevel.Level().String())
+	return strings.ToLower(h.d.LogLevel.Level().String())
 }
 
 // handleConfig returns the running configuration and the log level in effect.
@@ -71,7 +70,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.liveConfig()
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to render configuration", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to render configuration", err)
 		return
 	}
 	resp.LogLevel = h.levelName()
@@ -82,14 +81,14 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 // and profile, plus database health, integrity figures and the identity of the
 // instance answering, from the fleet snapshot.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	data, err := h.dashboardOps.GetStatus(r.Context())
+	data, err := h.d.Dashboard.GetStatus(r.Context())
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to fetch status", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to fetch status", err)
 		return
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.StatusResponse{
-		DBHealthy:   h.dbHealthy(),
+		DBHealthy:   h.d.DBHealthy(),
 		UsagePeriod: data.UsagePeriod,
 		Backends:    backendStatuses(data),
 		Integrity: adminapi.IntegrityStatus{
@@ -98,7 +97,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 			DeferredCopies:          data.DeferredCopies,
 			PlaintextCopies:         data.PlaintextCopies,
 		},
-		Instance: h.instance,
+		Instance: h.d.Instance,
 	})
 }
 
@@ -146,15 +145,15 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 // handleObjectLocations returns every recorded copy of the object named by
 // the key query parameter, answering 400 when the key is missing.
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
+	key := r.URL.Query().Get(paramKey)
 
-	locations, err := h.objects.Locations(r.Context(), key)
+	locations, err := h.d.Objects.Locations(r.Context(), key)
 	if errors.Is(err, ops.ErrKeyRequired) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "key parameter is required")
 		return
 	}
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to fetch locations", err, slog.String("key", key))
+		httputil.InternalError(r.Context(), h.log, w, "failed to fetch locations", err, slog.String("key", key))
 		return
 	}
 
@@ -187,15 +186,15 @@ func objectLocationsResponse(key string, locations []core.ObjectLocation) admina
 // handleCleanupQueue returns the cleanup queue's depth and its first 50
 // pending items.
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
-	depth, err := h.cleanup.CleanupQueueDepth(r.Context())
+	depth, err := h.d.Cleanup.CleanupQueueDepth(r.Context())
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to fetch cleanup queue", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to fetch cleanup queue", err)
 		return
 	}
 
-	items, err := h.cleanup.GetPendingCleanups(r.Context(), 50)
+	items, err := h.d.Cleanup.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to fetch cleanup queue", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to fetch cleanup queue", err)
 		return
 	}
 
@@ -230,8 +229,8 @@ func cleanupQueueItems(items []core.CleanupItem) []adminapi.CleanupQueueItem {
 // handleUsageFlush writes the in-memory usage counters to the database now,
 // rather than waiting for the next flush interval.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
-	if err := h.backendOps.FlushUsage(r.Context()); err != nil {
-		h.internalError(r.Context(), w, "flush failed", err)
+	if err := h.d.BackendOps.FlushUsage(r.Context()); err != nil {
+		httputil.InternalError(r.Context(), h.log, w, "flush failed", err)
 		return
 	}
 
@@ -241,9 +240,9 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 // handleReconcileUsage recomputes each backend's bytes_used from the object
 // ledger and returns the per-backend byte corrections that were applied.
 func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
-	adjustments, err := h.backendOps.ReconcileUsage(r.Context())
+	adjustments, err := h.d.BackendOps.ReconcileUsage(r.Context())
 	if err != nil {
-		h.internalError(r.Context(), w, "usage reconcile failed", err)
+		httputil.InternalError(r.Context(), h.log, w, "usage reconcile failed", err)
 		return
 	}
 
@@ -264,11 +263,11 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req adminapi.SetLogLevelRequest
-	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
 	parsed := config.ParseLogLevel(req.Level)
-	h.logLevel.Set(parsed)
+	h.d.LogLevel.Set(parsed)
 	h.log.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
 	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: h.levelName()})
 }

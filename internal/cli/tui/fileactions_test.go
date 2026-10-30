@@ -52,7 +52,7 @@ func submit(t *testing.T, m *model, value string) (tea.Model, tea.Cmd) {
 
 // settle runs the transfer poll loop until the transfer reports done, so a
 // test asserts on the finished state rather than on a race.
-func settle(t *testing.T, m *model) transferDoneMsg {
+func settle(t *testing.T, m *model) *transfer {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -61,12 +61,12 @@ func settle(t *testing.T, m *model) transferDoneMsg {
 			t.Fatal("the transfer stopped being polled before it finished")
 		}
 		if done, ok := cmd().(transferDoneMsg); ok {
-			return done
+			return done.t
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("the transfer did not finish within the deadline")
-	return transferDoneMsg{}
+	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -88,7 +88,7 @@ func TestDownload_WritesTheObject(t *testing.T) {
 	}
 	submit(t, m, dest)
 
-	if m.files.transfer == nil {
+	if m.transfer == nil {
 		t.Fatal("submitting the destination did not start a transfer")
 	}
 	done := settle(t, m)
@@ -107,7 +107,7 @@ func TestDownload_WritesTheObject(t *testing.T) {
 		t.Errorf("wrote %q, want the object body", got)
 	}
 
-	m.applyTransferDone(done)
+	m.applyTransferDone(transferDoneMsg{done})
 	if m.status == nil || !m.status.ok || !strings.Contains(m.status.text, "downloaded") {
 		t.Errorf("status = %+v, want a download completion line", m.status)
 	}
@@ -141,7 +141,7 @@ func TestDownload_FailureLeavesNoFile(t *testing.T) {
 		t.Errorf("a failed download left %d file(s) behind: %v", len(entries), entries)
 	}
 
-	m.applyTransferDone(done)
+	m.applyTransferDone(transferDoneMsg{done})
 	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "backend unavailable") {
 		t.Errorf("status = %+v, want the failure explained", m.status)
 	}
@@ -205,7 +205,7 @@ func TestUpload_MissingLocalFileReports(t *testing.T) {
 	if done.err == nil {
 		t.Fatal("uploading a missing file reported success")
 	}
-	m.applyTransferDone(done)
+	m.applyTransferDone(transferDoneMsg{done})
 	if m.status == nil || m.status.ok {
 		t.Errorf("status = %+v, want a failure line", m.status)
 	}
@@ -332,7 +332,7 @@ func TestDownload_DirectoryAsksForANewDirectory(t *testing.T) {
 func TestTransfer_OneAtATime(t *testing.T) {
 	t.Parallel()
 	m := filesModel(t, &fakeLister{})
-	m.files.transfer = &transfer{kind: transferDownload, key: "bucket/readme.txt"}
+	m.transfer = &transfer{kind: transferDownload, key: "bucket/readme.txt"}
 
 	for _, k := range []string{"D", "U"} {
 		m.handleBrowseKey(key(k))
@@ -357,7 +357,7 @@ func TestTransferLine_ReportsProgress(t *testing.T) {
 	tr := &transfer{kind: transferDownload, key: "bucket/readme.txt"}
 	tr.total.Store(2048)
 	tr.moved.Store(1024)
-	m.files.transfer = tr
+	m.transfer = tr
 
 	got := m.fileTransferLine()
 	if !strings.Contains(got, "downloading") || !strings.Contains(got, "50%") {
@@ -407,7 +407,7 @@ func TestFileActions_DispatchThroughUpdate(t *testing.T) {
 		},
 		{
 			name: "transfer done",
-			msg:  transferDoneMsg{kind: transferDownload, key: "bucket/readme.txt", local: "/tmp/readme.txt", moved: 11},
+			msg:  transferDoneMsg{&transfer{kind: transferDownload, key: "bucket/readme.txt", local: "/tmp/readme.txt"}},
 			want: func() bool { return m.status != nil && strings.Contains(m.status.text, "downloaded") },
 		},
 		{

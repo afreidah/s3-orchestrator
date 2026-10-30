@@ -11,11 +11,10 @@
 package adminctl
 
 import (
-	"flag"
 	"net/http"
 	"net/url"
-	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -23,25 +22,20 @@ import (
 // With -key the sweep is bypassed: the named object's copies are verified
 // immediately and reported one per line.
 func cmdScrub(args []string, c *client) int {
-	fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("scrub")
 	batchSize := fs.Int(flagBatchSize, 0, "Number of objects to verify (0 = use server default)")
 	key := fs.String("key", "", "Verify every copy of this object now instead of running a pass")
 	backend := fs.String(flagBackend, "", usageBackend)
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 
 	if *key != "" {
-		return c.post(withQuery(adminapi.PathObjectScrub, url.Values{"key": {*key}}), nil)
+		return c.post(adminclient.WithQuery(adminapi.PathObjectScrub, url.Values{"key": {*key}}), nil)
 	}
 
 	q := url.Values{}
-	if *batchSize > 0 {
-		q.Set(queryBatch, strconv.Itoa(*batchSize))
-	}
-	if *backend != "" {
-		q.Set(queryBackend, *backend)
-	}
-	return c.stream(http.MethodPost, withQuery(adminapi.PathScrub, q))
+	setPositive(q, queryBatch, *batchSize)
+	setIf(q, queryBackend, *backend)
+	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathScrub, q))
 }

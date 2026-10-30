@@ -387,7 +387,7 @@ func (*opsHook) Name() string                    { return "ops" }
 func (*opsHook) Check(_, _ *config.Config) error { return nil }
 func (h *opsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "operations layer", func(svc *ops.Services) error {
-		svc.UpdateConfig(newCfg)
+		svc.Config.Store(newCfg)
 		return nil
 	})
 }

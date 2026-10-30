@@ -46,16 +46,14 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 	if cfg.Listen != "" {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle(cfg.Path, promhttp.Handler())
-		pprofMounted := false
 		if cfg.Pprof {
 			mountPprof(metricsMux)
-			pprofMounted = true
 		}
 		slog.InfoContext(context.Background(), "metrics endpoint enabled on dedicated listener",
 			logfmt.Component("httpserver"),
 			"listen", cfg.Listen,
 			"path", cfg.Path,
-			"pprof", pprofMounted,
+			"pprof", cfg.Pprof,
 		)
 		return &http.Server{
 			Addr:              cfg.Listen,

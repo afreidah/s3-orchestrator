@@ -23,28 +23,19 @@ import (
 
 // configView holds the state of the config pane.
 type configView struct {
-	resp    *adminapi.ConfigResponse
-	vp      viewport.Model
-	loading bool
-	err     error
+	loadState
+	resp *adminapi.ConfigResponse
+	vp   viewport.Model
 }
 
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// configLoadedMsg carries a successfully loaded configuration.
-type configLoadedMsg struct{ resp *adminapi.ConfigResponse }
-
-// configErrMsg carries a failed configuration fetch.
-type configErrMsg struct{ err error }
-
 // loadConfig returns a command that fetches the running configuration off the
 // main loop.
 func (m *model) loadConfig() tea.Cmd {
-	return fetchCmd(m.client.GetConfig,
-		func(r *adminapi.ConfigResponse) tea.Msg { return configLoadedMsg{r} },
-		func(err error) tea.Msg { return configErrMsg{err} })
+	return fetchCmd(m.client.GetConfig)
 }
 
 // -------------------------------------------------------------------------
@@ -55,22 +46,11 @@ func (m *model) loadConfig() tea.Cmd {
 func (m *model) applyConfig(resp *adminapi.ConfigResponse) {
 	m.config.resp = resp
 	m.config.vp.SetContent(resp.Config)
-	m.config.loading = false
-	m.config.err = nil
+	m.config.loaded()
 }
 
-// handleConfigKey applies pane keys (back, reload) and delegates scrolling to
-// the viewport.
+// handleConfigKey scrolls the configuration.
 func (m *model) handleConfigKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.config.loading = true
-		cmd := m.loadConfig()
-		return m, cmd
-	}
-
 	var cmd tea.Cmd
 	m.config.vp, cmd = m.config.vp.Update(key)
 	return m, cmd
@@ -79,11 +59,6 @@ func (m *model) handleConfigKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // -------------------------------------------------------------------------
 // RENDERING
 // -------------------------------------------------------------------------
-
-// configPaneView composes the pane's full-screen layout.
-func (m *model) configPaneView() string {
-	return m.frame(m.configHeaderView(), m.hintFooter(), m.configBody()...)
-}
 
 // configHeaderView renders the title bar with the log level in effect.
 func (m *model) configHeaderView() string {

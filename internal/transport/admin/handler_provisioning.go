@@ -39,9 +39,9 @@ const provisioningBodyLimit = 64 << 10
 // handleProvisioning returns every bucket, user and credential a deployment
 // declares, from both the config file and the store.
 func (h *Handler) handleProvisioning(w http.ResponseWriter, r *http.Request) {
-	view, err := h.provision.View(r.Context())
+	view, err := h.d.Provision.View(r.Context())
 	if err != nil {
-		h.internalError(r.Context(), w, "provisioning listing failed", err)
+		httputil.InternalError(r.Context(), h.log, w, "provisioning listing failed", err)
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, provisioningResponse(&view))
@@ -62,7 +62,7 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 		MaxMultipartUploads: req.MaxMultipartUploads,
 		CORS:                configCORS(req.CORS),
 	}
-	if err := h.provision.CreateBucket(r.Context(), &b); err != nil {
+	if err := h.d.Provision.CreateBucket(r.Context(), &b); err != nil {
 		h.provisioningError(w, r, "create bucket failed", err)
 		return
 	}
@@ -83,7 +83,7 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 		MaxMultipartUploads: req.MaxMultipartUploads,
 		CORS:                configCORS(req.CORS),
 	}
-	if err := h.provision.UpdateBucket(r.Context(), &b); err != nil {
+	if err := h.d.Provision.UpdateBucket(r.Context(), &b); err != nil {
 		h.provisioningError(w, r, "update bucket failed", err)
 		return
 	}
@@ -95,7 +95,7 @@ func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 // handleDeleteBucket removes a virtual bucket that holds nothing.
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue(paramName)
-	if err := h.provision.DeleteBucket(r.Context(), name); err != nil {
+	if err := h.d.Provision.DeleteBucket(r.Context(), name); err != nil {
 		h.provisioningError(w, r, "delete bucket failed", err)
 		return
 	}
@@ -114,7 +114,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
 		return
 	}
-	u, err := h.provision.CreateUser(r.Context(), req.Name)
+	u, err := h.d.Provision.CreateUser(r.Context(), req.Name)
 	if err != nil {
 		h.provisioningError(w, r, "create user failed", err)
 		return
@@ -132,7 +132,7 @@ func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue(paramID)
-	if err := h.provision.RenameUser(r.Context(), id, req.Name); err != nil {
+	if err := h.d.Provision.RenameUser(r.Context(), id, req.Name); err != nil {
 		h.provisioningError(w, r, "rename user failed", err)
 		return
 	}
@@ -144,7 +144,7 @@ func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 // handleDeleteUser removes an identity that holds nothing.
 func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue(paramID)
-	if err := h.provision.DeleteUser(r.Context(), id); err != nil {
+	if err := h.d.Provision.DeleteUser(r.Context(), id); err != nil {
 		h.provisioningError(w, r, "delete user failed", err)
 		return
 	}
@@ -166,7 +166,7 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	keys := ops.Keypair{AccessKeyID: req.AccessKeyID, SecretAccessKey: req.SecretAccessKey}
-	c, err := h.provision.CreateCredential(r.Context(), req.UserID, req.Label, keys)
+	c, err := h.d.Provision.CreateCredential(r.Context(), req.UserID, req.Label, keys)
 	if err != nil {
 		h.provisioningError(w, r, "create credential failed", err)
 		return
@@ -182,7 +182,7 @@ func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request)
 // handleDeleteCredential revokes one keypair, leaving its siblings alone.
 func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
 	accessKeyID := r.PathValue(paramID)
-	if err := h.provision.DeleteCredential(r.Context(), accessKeyID); err != nil {
+	if err := h.d.Provision.DeleteCredential(r.Context(), accessKeyID); err != nil {
 		h.provisioningError(w, r, "delete credential failed", err)
 		return
 	}
@@ -205,7 +205,7 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.provision.CreateGrant(r.Context(), req.UserID, resource, perms); err != nil {
+	if err := h.d.Provision.CreateGrant(r.Context(), req.UserID, resource, perms); err != nil {
 		h.provisioningError(w, r, "create grant failed", err)
 		return
 	}
@@ -228,7 +228,7 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.provision.SetGrant(r.Context(), userID, resource, perms); err != nil {
+	if err := h.d.Provision.SetGrant(r.Context(), userID, resource, perms); err != nil {
 		h.provisioningError(w, r, "set grant failed", err)
 		return
 	}
@@ -244,7 +244,7 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 // writes keeps working.
 func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 	userID, resource := grantTarget(r)
-	if err := h.provision.DeleteGrant(r.Context(), userID, resource); err != nil {
+	if err := h.d.Provision.DeleteGrant(r.Context(), userID, resource); err != nil {
 		h.provisioningError(w, r, "delete grant failed", err)
 		return
 	}
@@ -297,7 +297,7 @@ func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg 
 		errors.Is(err, ops.ErrUserInUse):
 		httputil.WriteJSONError(w, http.StatusConflict, err.Error())
 	default:
-		h.internalError(r.Context(), w, msg, err)
+		httputil.InternalError(r.Context(), h.log, w, msg, err)
 	}
 }
 

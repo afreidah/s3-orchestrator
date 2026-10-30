@@ -731,8 +731,7 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 	})
 	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := &Server{Objects: st.Objects,
-		Multipart: st.Multipart, MaxObjectSize: 10 * 1024 * 1024}
+	srv := NewServer(st.Objects, st.Multipart, 10*1024*1024)
 	buckets := []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,
@@ -882,7 +881,7 @@ func TestUploadPartCopy_StoresTheSourceBytes(t *testing.T) {
 		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
 	}
 
-	var result copyPartResult
+	var result copyResult
 	body, _ := io.ReadAll(resp.Body)
 	if err := xml.Unmarshal(body, &result); err != nil {
 		t.Fatalf("failed to decode CopyPartResult: %v. body: %s", err, body)

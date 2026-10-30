@@ -45,7 +45,7 @@ func TestRefreshVisible_Filter(t *testing.T) {
 	}
 
 	// clearing the filter restores every row
-	m.clearFilter()
+	m.filter.clear()
 	m.refreshVisible()
 	if len(m.visible) != 3 {
 		t.Errorf("cleared visible = %d, want 3", len(m.visible))
@@ -55,26 +55,25 @@ func TestRefreshVisible_Filter(t *testing.T) {
 func TestHandleFilterKey(t *testing.T) {
 	t.Parallel()
 	m := modelWith([]entry{{name: "apple"}, {name: "banana"}}, "", &fakeLister{})
-	m.filtering = true
-	m.filter.Focus()
+	m.filter.open()
 
 	// typing narrows the listing live
-	m.handleFilterKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
 	if m.filter.Value() != "b" || len(m.visible) != 1 || m.visible[0].name != "banana" {
 		t.Fatalf("after typing 'b': value=%q visible=%v", m.filter.Value(), names(m.visible))
 	}
 
 	// enter keeps the filter applied but returns focus to the table
-	m.handleFilterKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.filtering || m.filter.Value() != "b" {
-		t.Errorf("after enter: filtering=%v value=%q", m.filtering, m.filter.Value())
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.filter.active || m.filter.Value() != "b" {
+		t.Errorf("after enter: filtering=%v value=%q", m.filter.active, m.filter.Value())
 	}
 
 	// esc abandons the filter entirely
-	m.filtering = true
-	m.handleFilterKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.filtering || m.filter.Value() != "" || len(m.visible) != 2 {
-		t.Errorf("after esc: filtering=%v value=%q visible=%d", m.filtering, m.filter.Value(), len(m.visible))
+	m.filter.active = true
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.filter.active || m.filter.Value() != "" || len(m.visible) != 2 {
+		t.Errorf("after esc: filtering=%v value=%q visible=%d", m.filter.active, m.filter.Value(), len(m.visible))
 	}
 }
 
@@ -83,7 +82,7 @@ func TestHandleKey_FilterSortToggles(t *testing.T) {
 	// "/" enters filter mode
 	m := modelWith([]entry{{name: "a"}}, "", &fakeLister{})
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	if !m.filtering {
+	if !m.filter.active {
 		t.Error("'/' did not enter filter mode")
 	}
 

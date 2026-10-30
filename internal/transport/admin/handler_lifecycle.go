@@ -32,7 +32,7 @@ func (h *Handler) handleLifecycle(w http.ResponseWriter, r *http.Request) {
 		verb:       "expiring",
 		sequential: true,
 		failMsg:    "lifecycle sweep failed",
-		run:        h.expiry.Run,
+		run:        h.d.Expiry.Run,
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.LifecycleResponse{Outcome: o, Deleted: res.Succeeded, Failed: res.Failed}
 		},

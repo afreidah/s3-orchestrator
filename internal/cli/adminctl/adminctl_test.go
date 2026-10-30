@@ -29,15 +29,23 @@ import (
 
 // testCreds is the keypair these tests sign with. No server here verifies a
 // signature, so only the access key it names is ever asserted on.
-var testCreds = Credentials{ //nolint:gosec // G101: test credential
+var testCreds = admintarget.Target{ //nolint:gosec // G101: test credential
 	AccessKeyID: "AKIAADMINCTLTEST",
 	SecretKey:   "adminctl-test-secret",
 }
 
+// testTarget points the test keypair at addr.
+func testTarget(addr string) admintarget.Target {
+	t := testCreds
+	t.Addr = addr
+	return t
+}
+
 // Command runs one admin CLI command in text output mode and returns its exit
 // code, so a test drives a subcommand without parsing process-level flags.
-func Command(cmd string, args []string, baseAddr string, creds Credentials, stdout, stderr io.Writer) int {
-	return CommandWithFormat(cmd, args, baseAddr, creds, output.FormatText, stdout, stderr)
+func Command(cmd string, args []string, baseAddr string, creds admintarget.Target, stdout, stderr io.Writer) int {
+	creds.Addr = baseAddr
+	return CommandWithFormat(cmd, args, creds, output.FormatText, stdout, stderr)
 }
 
 // TestMain clears the credential environment variables before the suite runs.
@@ -421,7 +429,7 @@ func TestCommand_ServerErrorJSON(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := CommandWithFormat("drain", []string{"bad"}, srv.URL, testCreds, output.FormatJSON, &stdout, &stderr)
+	code := CommandWithFormat("drain", []string{"bad"}, testTarget(srv.URL), output.FormatJSON, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -1013,7 +1021,7 @@ func TestCommand_TextVsJSONRendering(t *testing.T) {
 	}
 
 	var jsonOut, jsonErr bytes.Buffer
-	if code := CommandWithFormat("cache-stats", nil, srv.URL, testCreds, output.FormatJSON, &jsonOut, &jsonErr); code != 0 {
+	if code := CommandWithFormat("cache-stats", nil, testTarget(srv.URL), output.FormatJSON, &jsonOut, &jsonErr); code != 0 {
 		t.Fatalf("json exit = %d (stderr=%q)", code, jsonErr.String())
 	}
 	if !strings.Contains(jsonOut.String(), "{\n  \"") {

@@ -330,12 +330,6 @@ func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
 // s3CodeAccessDenied is the S3 error code a refused request carries.
 const s3CodeAccessDenied = "AccessDenied"
 
-// writeAccessDenied writes the 403 an authorization refusal ends with. The
-// refusals differ in what they log, not in what the client is told.
-func writeAccessDenied(w http.ResponseWriter) {
-	writeS3Error(w, http.StatusForbidden, s3CodeAccessDenied, "Access denied")
-}
-
 // WriteS3Error writes an S3 XML error. It matches httputil.ErrorWriter so the
 // panic-recovery middleware can use it directly.
 func WriteS3Error(w http.ResponseWriter, code int, errCode, message string) {
