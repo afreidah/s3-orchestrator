@@ -39,8 +39,15 @@ type EncryptionConfig struct {
 	PreviousKeyFiles []string            `yaml:"previous_key_files"` // Paths to raw 32-byte previous master keys for rotation (unwrap only)
 }
 
-// KeySize is the length of every master key, AES-256.
-const KeySize = 32
+// KeySize is the length of every master key, AES-256. The chunk size bounds
+// also cap the size an envelope header may declare, since a read allocates
+// buffers for it.
+const (
+	KeySize                    = 32
+	DefaultEncryptionChunkSize = 1 << 16 // 64 KiB
+	MinEncryptionChunkSize     = 1 << 12 // 4 KiB
+	MaxEncryptionChunkSize     = 1 << 20 // 1 MiB
+)
 
 // DecodeKey decodes a base64 master key and checks it is KeySize bytes.
 // Validation and the key providers share it, so a key that passes startup
@@ -108,9 +115,9 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 // validateChunkSize applies the ChunkSize default and enforces the
 // 4KB-1MB-power-of-two constraints.
 func (e *EncryptionConfig) validateChunkSize() []error {
-	e.ChunkSize = cmp.Or(e.ChunkSize, 65536)
+	e.ChunkSize = cmp.Or(e.ChunkSize, DefaultEncryptionChunkSize)
 	cs := e.ChunkSize
-	if cs < 4096 || cs > 1048576 {
+	if cs < MinEncryptionChunkSize || cs > MaxEncryptionChunkSize {
 		return []error{ErrInvalidChunkSize}
 	}
 	if cs&(cs-1) != 0 {
