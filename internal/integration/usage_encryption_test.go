@@ -118,10 +118,9 @@ func TestUsage_EncryptedGetChargesCiphertext(t *testing.T) {
 // not the client's slice.
 func TestUsage_EncryptedRangeGetChargesFetchedChunks(t *testing.T) {
 	env := setupEncryptionEnv(t)
-	chunk := env.encryptor.ChunkSize()
 	setQuotaLimits(t, 4<<20)
 
-	body := bytes.Repeat([]byte("R"), chunk*3)
+	body := bytes.Repeat([]byte("R"), encryptionChunkSize*3)
 	key, target, _ := putEncrypted(t, env, "usage-enc-range", body)
 
 	const want = 64
@@ -147,7 +146,7 @@ func TestUsage_EncryptedRangeGetChargesFetchedChunks(t *testing.T) {
 	}
 	// One whole chunk plus its nonce and tag. The header is not refetched: the
 	// base nonce needed to decrypt is already on the ledger row.
-	fetched := int64(chunk + encryption.ChunkOverhead)
+	fetched := int64(encryptionChunkSize + encryption.ChunkOverhead)
 	assertCharged(t, "encrypted ranged GET on "+target, delta,
 		usageSnapshot{APICalls: 1, Egress: fetched})
 }

@@ -159,7 +159,7 @@ func TestDecryptResponse_RangeRead(t *testing.T) {
 
 	// Request a range within the plaintext
 	ptStart, ptEnd := int64(10), int64(50)
-	rng, err := encryption.CiphertextRange(ptStart, ptEnd, enc.ChunkSize())
+	rng, err := encryption.CiphertextRange(ptStart, ptEnd, int64(len(plain)), int64(len(ciphertext)))
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDecryptResponse_RangeDecryptError(t *testing.T) {
 		PlaintextSize: 256,
 	}
 
-	rng, _ := encryption.CiphertextRange(10, 50, enc.ChunkSize())
+	rng, _ := encryption.CiphertextRange(10, 50, 256, encResult.CiphertextSize)
 
 	r := &s3be.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader([]byte("garbage-ciphertext-for-range"))),

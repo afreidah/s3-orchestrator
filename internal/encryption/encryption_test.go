@@ -265,7 +265,7 @@ func TestDecryptRange_FirstChunk(t *testing.T) {
 	}
 
 	// Request bytes 10-30 (within first chunk)
-	rng, err := CiphertextRange(10, 30, chunkSize)
+	rng, err := CiphertextRange(10, 30, int64(len(original)), int64(len(ciphertext)))
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestDecryptStored_Range(t *testing.T) {
 		t.Fatalf("ReadAll: %v", err)
 	}
 
-	rng, err := CiphertextRange(10, 30, chunkSize)
+	rng, err := CiphertextRange(10, 30, int64(len(original)), int64(len(ciphertext)))
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestDecryptStored_Telemetry(t *testing.T) {
 	if _, _, err := enc.DecryptStored(ctx, bytes.NewReader(ciphertext), packed, result.KeyID, int64(len(original)), nil); err != nil {
 		t.Fatalf("DecryptStored full: %v", err)
 	}
-	rng, err := CiphertextRange(0, 10, chunkSize)
+	rng, err := CiphertextRange(0, 10, int64(len(original)), int64(len(ciphertext)))
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 	}
 
 	// Request bytes 60-70 (crosses chunk 0->1 boundary at byte 64)
-	rng, err := CiphertextRange(60, 70, chunkSize)
+	rng, err := CiphertextRange(60, 70, int64(len(original)), int64(len(ciphertext)))
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}
@@ -695,16 +695,6 @@ func TestParseHeader_TooShort(t *testing.T) {
 // ACCESSOR METHODS
 // -------------------------------------------------------------------------
 
-// TestEncryptor_ChunkSize verifies the encryptor chunk size contract.
-// Asserts that ChunkSize = , want 4096.
-func TestEncryptor_ChunkSize(t *testing.T) {
-	t.Parallel()
-	enc := testEncryptor(t, 4096)
-	if enc.ChunkSize() != 4096 {
-		t.Errorf("ChunkSize = %d, want 4096", enc.ChunkSize())
-	}
-}
-
 // TestNewEncryptor_InvalidChunkSize verifies the new encryptor invalid chunk size contract.
 // Asserts that NewEncryptor(chunkSize=) should return error.
 func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
@@ -814,10 +804,62 @@ func TestDecryptRange_BadWrappedDEK(t *testing.T) {
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
-	rng, _ := CiphertextRange(0, 10, 64)
+	rng, _ := CiphertextRange(0, 10, 256, ciphertextSizeExact(256, 64))
 	_, _, err := enc.DecryptRange(ctx, bytes.NewReader(nil), []byte("garbage"), "test-0", rng, make([]byte, NonceSize))
 	if err == nil {
 		t.Error("expected error for bad wrapped DEK")
+	}
+}
+
+// TestDecryptStored_ChunkSizeChangedSinceWrite pins that an envelope stays
+// readable, whole and by range, after the configured chunk size changes in
+// either direction: reads use the size the envelope was written with.
+func TestDecryptStored_ChunkSizeChangedSinceWrite(t *testing.T) {
+	t.Parallel()
+	original := make([]byte, 1000)
+	for i := range original {
+		original[i] = byte(i % 251)
+	}
+	checkReadAtOtherChunkSize(t, original, 64, 256)
+	checkReadAtOtherChunkSize(t, original, 256, 64)
+}
+
+// checkReadAtOtherChunkSize encrypts original in chunks of written, then reads
+// it whole and by range through an Encryptor configured for chunks of read.
+func checkReadAtOtherChunkSize(t *testing.T, original []byte, written, read int) {
+	t.Helper()
+	ctx := context.Background()
+	result, err := testEncryptor(t, written).Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	packed := PackKeyData(result.BaseNonce, result.WrappedDEK)
+	enc := testEncryptor(t, read)
+
+	full, _, err := enc.DecryptStored(ctx, bytes.NewReader(ciphertext), packed, result.KeyID, int64(len(original)), nil)
+	if err != nil {
+		t.Fatalf("DecryptStored full: %v", err)
+	}
+	if got, err := io.ReadAll(full); err != nil || !bytes.Equal(got, original) {
+		t.Errorf("written at %d, read at %d: full read gave %d bytes, %v", written, read, len(got), err)
+	}
+
+	rng, err := CiphertextRange(300, 700, int64(len(original)), int64(len(ciphertext)))
+	if err != nil {
+		t.Fatalf("CiphertextRange: %v", err)
+	}
+	var ctStart, ctEnd int64
+	_, _ = fmt.Sscanf(rng.BackendRange, "bytes=%d-%d", &ctStart, &ctEnd)
+	part, _, err := enc.DecryptStored(ctx, bytes.NewReader(ciphertext[ctStart:ctEnd+1]), packed, result.KeyID, int64(len(original)), rng)
+	if err != nil {
+		t.Fatalf("DecryptStored range: %v", err)
+	}
+	if got, err := io.ReadAll(part); err != nil || !bytes.Equal(got, original[300:701]) {
+		t.Errorf("written at %d, read at %d: range read gave %d bytes, %v", written, read, len(got), err)
 	}
 }
 

@@ -96,6 +96,6 @@ If any objects failed, check the logs for details and re-POST to `/admin/api/enc
 
 ## Important Notes
 
-- The `chunk_size` (default: 64KB) must stay the same for the lifetime of the data. Changing it after objects are encrypted makes those objects unreadable.
+- `chunk_size` (default: 64KB) applies to newly written objects only. Each object records the size it was written with, so existing objects stay readable after it changes.
 - Encrypted objects are slightly larger: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
 - The operation is idempotent - running it multiple times only processes unencrypted objects.

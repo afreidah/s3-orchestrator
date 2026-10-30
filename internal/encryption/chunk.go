@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // HeaderSize and the AES-GCM sizes the envelope format is built from. Every
@@ -69,14 +71,14 @@ func newChunkBuffers(chunkSize int) *chunkBuffers {
 }
 
 // -------------------------------------------------------------------------
-// ENCRYPT READER
+// CHUNK STREAM
 // -------------------------------------------------------------------------
 
-// encryptReader wraps an io.Reader and produces chunked AES-256-GCM
-// ciphertext. The header is emitted first, followed by encrypted chunks.
-// bufs are borrowed from the caller (typically Encryptor.bufPool); when
-// release is non-nil it fires once at EOF to return them to the pool.
-type encryptReader struct {
+// chunkStream is the state the encrypt and decrypt readers share. bufs are
+// borrowed from the caller (typically Encryptor.bufPool); when release is
+// non-nil it fires once at EOF to return them. A reader abandoned before EOF
+// leaks them to GC, which the pool tolerates.
+type chunkStream struct {
 	src       io.Reader
 	gcm       cipher.AEAD
 	baseNonce []byte
@@ -84,9 +86,71 @@ type encryptReader struct {
 	chunkIdx  uint64
 	bufs      *chunkBuffers
 	release   func()
-	buf       []byte // view into bufs.framed showing the unconsumed prefix
-	header    []byte // view into bufs.header showing header bytes not yet emitted
+	buf       []byte // the current chunk's output not yet returned
 	srcDone   bool
+}
+
+// returnBufs drops the buffers and fires release at most once, the moment
+// EOF is observed, so they go back to the pool without waiting on a Close.
+func (s *chunkStream) returnBufs() {
+	release := s.release
+	s.release, s.bufs, s.buf = nil, nil, nil
+	if release != nil {
+		release()
+	}
+}
+
+// drain answers a Read from what is already buffered, or with io.EOF once
+// the stream has ended. ok is false when the caller has to produce the next
+// chunk.
+func (s *chunkStream) drain(p []byte) (n int, ok bool, err error) {
+	switch {
+	case s.bufs == nil:
+		return 0, true, io.EOF
+	case len(s.buf) > 0:
+		n, err = s.emit(p)
+		return n, true, err
+	case s.srcDone:
+		s.returnBufs()
+		return 0, true, io.EOF
+	}
+	return 0, false, nil
+}
+
+// emit copies the buffered output into p.
+func (s *chunkStream) emit(p []byte) (int, error) {
+	n := copy(p, s.buf)
+	s.buf = s.buf[n:]
+	return n, nil
+}
+
+// fill reads the next chunk into buf. A clean end of stream is io.EOF, and a
+// short final chunk marks the source done. A source error must never become
+// io.EOF, or a transient backend failure would be stored as a truncated but
+// valid object.
+func (s *chunkStream) fill(buf []byte, what string) (int, error) {
+	n, err := io.ReadFull(s.src, buf)
+	switch {
+	case n == 0 && errors.Is(err, io.EOF):
+		s.returnBufs()
+		return 0, io.EOF
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
+		s.srcDone = true
+	case err != nil:
+		return 0, fmt.Errorf("read %s: %w", what, err)
+	}
+	return n, nil
+}
+
+// -------------------------------------------------------------------------
+// ENCRYPT READER
+// -------------------------------------------------------------------------
+
+// encryptReader wraps an io.Reader and produces chunked AES-256-GCM
+// ciphertext. The header is emitted first, followed by encrypted chunks.
+type encryptReader struct {
+	chunkStream
+	header []byte // view into bufs.header showing header bytes not yet emitted
 }
 
 // newEncryptReader creates a streaming encryption reader. The dek must be a
@@ -115,84 +179,31 @@ func newEncryptReader(src io.Reader, dek []byte, chunkSize int, bufs *chunkBuffe
 	}
 
 	return &encryptReader{
-		src:       src,
-		gcm:       gcm,
-		baseNonce: baseNonce,
-		chunkSize: chunkSize,
-		bufs:      bufs,
-		release:   release,
-		header:    hdr,
+		chunkStream: chunkStream{
+			src:       src,
+			gcm:       gcm,
+			baseNonce: baseNonce,
+			chunkSize: chunkSize,
+			bufs:      bufs,
+			release:   release,
+		},
+		header: hdr,
 	}, nil
-}
-
-// returnBufs fires the release callback at most once. Called from the
-// Read path the moment EOF is observed so the buffers go back to the
-// pool without waiting on a separate Close. Callers that abandon the
-// reader before EOF leak the bufs to GC, which the pool tolerates.
-func (r *encryptReader) returnBufs() {
-	if r.release == nil {
-		return
-	}
-	release := r.release
-	r.release = nil
-	r.bufs = nil
-	r.buf = nil
-	r.header = nil
-	release()
-}
-
-// readChunk fills buf from src and reports which of the three endings
-// io.ReadFull distinguishes it hit: a clean end of stream (0, io.EOF), a
-// partial final chunk (n>0, io.ErrUnexpectedEOF), or a real error from the
-// source. done covers the first two; the error is returned as io.EOF only for
-// the first. A source error must never become io.EOF, or a transient backend
-// failure would be stored as a truncated but valid object.
-func readChunk(src io.Reader, buf []byte, what string) (n int, done bool, err error) {
-	n, err = io.ReadFull(src, buf)
-	switch {
-	case n == 0 && errors.Is(err, io.EOF):
-		return 0, true, io.EOF
-	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
-		return n, true, nil
-	case err != nil:
-		return 0, false, fmt.Errorf("read %s: %w", what, err)
-	}
-	return n, false, nil
 }
 
 // Read implements io.Reader. Emits the header followed by encrypted chunks.
 func (r *encryptReader) Read(p []byte) (int, error) {
-	if r.bufs == nil {
-		return 0, io.EOF
-	}
-
-	// Drain header first.
 	if len(r.header) > 0 {
 		n := copy(p, r.header)
 		r.header = r.header[n:]
 		return n, nil
 	}
-
-	// Drain buffered ciphertext.
-	if len(r.buf) > 0 {
-		n := copy(p, r.buf)
-		r.buf = r.buf[n:]
-		return n, nil
+	if n, ok, err := r.drain(p); ok {
+		return n, err
 	}
 
-	if r.srcDone {
-		r.returnBufs()
-		return 0, io.EOF
-	}
-
-	n, done, err := readChunk(r.src, r.bufs.plain, "plaintext")
-	if done {
-		r.srcDone = true
-	}
+	n, err := r.fill(r.bufs.plain, "plaintext")
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			r.returnBufs()
-		}
 		return 0, err
 	}
 	plain := r.bufs.plain[:n]
@@ -206,10 +217,7 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 	r.bufs.framed = append(r.bufs.framed[:0], r.bufs.nonce...)
 	r.bufs.framed = r.gcm.Seal(r.bufs.framed, r.bufs.nonce, plain, nil)
 	r.buf = r.bufs.framed
-
-	copied := copy(p, r.buf)
-	r.buf = r.buf[copied:]
-	return copied, nil
+	return r.emit(p)
 }
 
 // -------------------------------------------------------------------------
@@ -218,19 +226,9 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 
 // decryptReader wraps an io.Reader of chunked ciphertext and produces
 // plaintext. The header must already be consumed; this reader expects raw
-// chunks starting at chunk index startChunk. bufs are borrowed from the
-// caller (typically Encryptor.bufPool); when release is non-nil it fires
-// once at EOF to return them to the pool.
+// chunks of chunkSize starting at chunk index startChunk.
 type decryptReader struct {
-	src       io.Reader
-	gcm       cipher.AEAD
-	baseNonce []byte
-	chunkSize int
-	chunkIdx  uint64
-	bufs      *chunkBuffers
-	release   func()
-	buf       []byte // view into bufs.plain showing the unconsumed prefix
-	srcDone   bool
+	chunkStream
 }
 
 // newDecryptReader creates a streaming decryption reader. The baseNonce is
@@ -243,7 +241,7 @@ func newDecryptReader(src io.Reader, dek []byte, baseNonce []byte, chunkSize int
 		return nil, err
 	}
 
-	return &decryptReader{
+	return &decryptReader{chunkStream{
 		src:       src,
 		gcm:       gcm,
 		baseNonce: baseNonce,
@@ -251,48 +249,20 @@ func newDecryptReader(src io.Reader, dek []byte, baseNonce []byte, chunkSize int
 		chunkIdx:  startChunk,
 		bufs:      bufs,
 		release:   release,
-	}, nil
-}
-
-func (r *decryptReader) returnBufs() {
-	if r.release == nil {
-		return
-	}
-	release := r.release
-	r.release = nil
-	r.bufs = nil
-	r.buf = nil
-	release()
+	}}, nil
 }
 
 // Read implements io.Reader. Decrypts one chunk at a time and returns
 // plaintext bytes.
 func (r *decryptReader) Read(p []byte) (int, error) {
-	if r.bufs == nil {
-		return 0, io.EOF
+	if n, ok, err := r.drain(p); ok {
+		return n, err
 	}
 
-	// Drain buffered plaintext.
-	if len(r.buf) > 0 {
-		n := copy(p, r.buf)
-		r.buf = r.buf[n:]
-		return n, nil
-	}
-
-	if r.srcDone {
-		r.returnBufs()
-		return 0, io.EOF
-	}
-
-	chunkBuf := r.bufs.framed[:cap(r.bufs.framed)]
-	n, done, err := readChunk(r.src, chunkBuf, "ciphertext")
-	if done {
-		r.srcDone = true
-	}
+	// Pooled buffers can be larger than this object's chunks.
+	chunkBuf := r.bufs.framed[:NonceSize+r.chunkSize+TagSize]
+	n, err := r.fill(chunkBuf, "ciphertext")
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			r.returnBufs()
-		}
 		return 0, err
 	}
 	chunk := chunkBuf[:n]
@@ -319,9 +289,7 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 	}
 
 	r.buf = plain
-	copied := copy(p, r.buf)
-	r.buf = r.buf[copied:]
-	return copied, nil
+	return r.emit(p)
 }
 
 // -------------------------------------------------------------------------
@@ -382,7 +350,7 @@ func ParseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
 	}
 
 	cs := int(binary.BigEndian.Uint32(hdr[5:9]))
-	if cs <= 0 {
+	if cs <= 0 || cs > config.MaxEncryptionChunkSize {
 		return 0, nil, fmt.Errorf("invalid chunk size in header: %d", cs)
 	}
 	nonce := make([]byte, NonceSize)

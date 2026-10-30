@@ -295,7 +295,7 @@ func TestStoredRangeFetcher_TranslatesEncryptedRange(t *testing.T) {
 	if _, err := f.FetchRange(context.Background(), 100, 199); err != nil {
 		t.Fatalf("FetchRange: %v", err)
 	}
-	want, err := encryption.CiphertextRange(100, 199, s.enc.ChunkSize())
+	want, err := encryption.CiphertextRange(100, 199, s.loc.PlaintextSize, s.loc.SizeBytes)
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
 	}

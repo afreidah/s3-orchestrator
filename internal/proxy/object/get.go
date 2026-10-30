@@ -254,7 +254,7 @@ func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocati
 		// plaintext offsets for ciphertext.
 		return backendRange{}, nil
 	}
-	rng, err := encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
+	rng, err := encryption.CiphertextRange(ptStart, ptEnd, loc.PlaintextSize, loc.SizeBytes)
 	if err != nil {
 		return backendRange{}, fmt.Errorf("%w: %w", core.ErrInvalidRange, err)
 	}

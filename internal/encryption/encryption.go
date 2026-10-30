@@ -68,9 +68,6 @@ func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
 	return e, nil
 }
 
-// ChunkSize returns the configured plaintext chunk size.
-func (e *Encryptor) ChunkSize() int { return e.chunkSize }
-
 // Provider returns the underlying KeyProvider.
 func (e *Encryptor) Provider() KeyProvider { return e.provider }
 
@@ -92,14 +89,9 @@ func (e *Encryptor) Shutdown() {
 // ETag is not computed here: the write path digests the plaintext during the
 // pass that buffers it, before this layer sees the bytes.
 func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize int64) (*EncryptResult, error) {
-	// Generate random DEK
-	dek := make([]byte, 32)
-	if _, err := rand.Read(dek); err != nil {
-		return nil, fmt.Errorf("generate DEK: %w", err)
-	}
-	wrappedDEK, keyID, err := e.provider.WrapDEK(ctx, dek)
+	dek, wrappedDEK, keyID, err := e.GenerateAndWrapDEK(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("wrap DEK: %w", err)
+		return nil, err
 	}
 	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
 }
@@ -132,7 +124,7 @@ func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []b
 // downstream is identical. Buffers come from the per-Encryptor pool
 // and are returned automatically when the reader reaches io.EOF.
 func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
-	bufs, release := e.borrowChunkBuffers()
+	bufs, release := e.borrowChunkBuffers(e.chunkSize)
 	encReader, err := newEncryptReader(body, dek, e.chunkSize, bufs, release)
 	if err != nil {
 		release()
@@ -147,10 +139,14 @@ func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, d
 	}, nil
 }
 
-// borrowChunkBuffers fetches a chunkBuffers from the pool and returns
-// the release closure that puts it back. The reader fires release on
-// io.EOF; callers also fire it on a construction error path.
-func (e *Encryptor) borrowChunkBuffers() (*chunkBuffers, func()) {
+// borrowChunkBuffers returns buffers that hold a chunk of chunkSize and the
+// release that puts them back in the pool. Pooled buffers hold any chunk up to
+// the configured size; an object written under a larger setting gets buffers
+// of its own and a nil release.
+func (e *Encryptor) borrowChunkBuffers(chunkSize int) (*chunkBuffers, func()) {
+	if chunkSize > e.chunkSize {
+		return newChunkBuffers(chunkSize), nil
+	}
 	bufs := e.bufPool.Get().(*chunkBuffers)
 	return bufs, func() { e.bufPool.Put(bufs) }
 }
@@ -174,13 +170,22 @@ func (e *Encryptor) Decrypt(ctx context.Context, body io.Reader, wrappedDEK []by
 		return nil, fmt.Errorf("parse header: %w", err)
 	}
 
-	bufs, release := e.borrowChunkBuffers()
-	dr, err := newDecryptReader(body, dek, baseNonce, chunkSize, 0, bufs, release)
+	dr, err := e.openDecryptReader(body, dek, baseNonce, chunkSize, 0)
 	if err != nil {
-		release()
 		return nil, err
 	}
 	return dr, nil
+}
+
+// openDecryptReader starts decrypting chunks of chunkSize at startChunk over
+// borrowed buffers, returning them if the reader cannot be built.
+func (e *Encryptor) openDecryptReader(body io.Reader, dek, baseNonce []byte, chunkSize int, startChunk uint64) (*decryptReader, error) {
+	bufs, release := e.borrowChunkBuffers(chunkSize)
+	dr, err := newDecryptReader(body, dek, baseNonce, chunkSize, startChunk, bufs, release)
+	if err != nil && release != nil {
+		release()
+	}
+	return dr, err
 }
 
 // DecryptRange unwraps the DEK and returns a streaming plaintext reader for
@@ -193,10 +198,8 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 		return nil, 0, fmt.Errorf("unwrap DEK: %w", err)
 	}
 
-	bufs, release := e.borrowChunkBuffers()
-	dr, err := newDecryptReader(body, dek, baseNonce, e.chunkSize, rng.StartChunk, bufs, release)
+	dr, err := e.openDecryptReader(body, dek, baseNonce, rng.ChunkSize, rng.StartChunk)
 	if err != nil {
-		release()
 		return nil, 0, fmt.Errorf("decrypt reader: %w", err)
 	}
 
