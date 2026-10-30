@@ -154,7 +154,7 @@ func (f *storedRangeFetcher) backendRangeFor(start, end int64) (string, *encrypt
 	if f.enc == nil {
 		return "", nil, fmt.Errorf("backend %s: %w", f.beName, core.ErrServiceUnavailable)
 	}
-	rng, err := encryption.CiphertextRange(start, end, f.enc.ChunkSize())
+	rng, err := encryption.CiphertextRange(start, end, f.loc.PlaintextSize, f.loc.SizeBytes)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: %w", core.ErrInvalidRange, err)
 	}

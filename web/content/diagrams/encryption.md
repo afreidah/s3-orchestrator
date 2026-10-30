@@ -57,7 +57,7 @@ The plaintext DEK is never stored anywhere - it exists only in memory during the
 
 When a client requests a byte range (e.g., `Range: bytes=1000-2000`), the system doesn't need to download and decrypt the entire object:
 
-1. **Translate the plaintext byte range to ciphertext byte range**: figure out which chunks contain the requested bytes, accounting for the 32-byte header and 28-byte overhead per chunk.
+1. **Translate the plaintext byte range to ciphertext byte range**: figure out which chunks contain the requested bytes, accounting for the 32-byte header and 28-byte overhead per chunk. The chunk size is the one the object was written with, recovered from its stored and plaintext sizes, so the header is not fetched.
 2. **Fetch only those chunks** from the S3 backend using a range request.
 3. **Decrypt just the fetched chunks** (typically one or two chunks for a small range).
 4. **Slice the plaintext** to the exact requested bytes and stream them to the client.
@@ -179,7 +179,7 @@ window.s3oDiagram = {
     PARSE: {
       title: 'Parse 32-Byte Header',
       badge: 'process', badgeText: 'header parsing',
-      body: '<p><code>ParseHeader(r)</code> reads 32 bytes, validates the <code>SENC</code> magic and version <code>0x01</code>, extracts chunk size (big-endian uint32 at offset 5) and base nonce (12 bytes at offset 9).</p><p>Returns error on invalid magic or unsupported version, preventing decryption of corrupted or non-encrypted data.</p>'
+      body: '<p><code>ParseHeader(r)</code> reads 32 bytes, validates the <code>SENC</code> magic and version <code>0x01</code>, extracts chunk size (big-endian uint32 at offset 5) and base nonce (12 bytes at offset 9).</p><p>Returns error on invalid magic, unsupported version, or a chunk size over the 1 MiB maximum, preventing decryption of corrupted or non-encrypted data. Decryption reads chunks of the size the header declares, not the configured <code>chunk_size</code>.</p>'
     },
     DCHUNK: {
       title: 'Read Ciphertext Chunk',
@@ -214,7 +214,7 @@ window.s3oDiagram = {
     XLATE: {
       title: 'CiphertextRange Translation',
       badge: 'process', badgeText: 'range math',
-      body: '<p><code>CiphertextRange(start, end, chunkSize)</code> computes:</p><p><b>startChunk</b> = <code>start / chunkSize</code><br><b>endChunk</b> = <code>end / chunkSize</code><br><b>ctStart</b> = <code>HeaderSize + startChunk * (chunkSize + ChunkOverhead)</code><br><b>ctEnd</b> = <code>HeaderSize + (endChunk+1) * (chunkSize + ChunkOverhead) - 1</code></p><p>Returns <code>RangeResult</code> with <code>BackendRange</code> (e.g., <code>"bytes=32-65595"</code>), <code>SliceStart</code> (offset within first chunk), and <code>SliceLen</code> (plaintext bytes to emit).</p>'
+      body: '<p><code>CiphertextRange(start, end, plaintextSize, ciphertextSize)</code> first recovers the object&rsquo;s <b>chunkSize</b>: the size difference fixes the chunk count, and only one power of two gives that count. It then computes:</p><p><b>startChunk</b> = <code>start / chunkSize</code><br><b>endChunk</b> = <code>end / chunkSize</code><br><b>ctStart</b> = <code>HeaderSize + startChunk * (chunkSize + ChunkOverhead)</code><br><b>ctEnd</b> = <code>HeaderSize + (endChunk+1) * (chunkSize + ChunkOverhead) - 1</code></p><p>Returns <code>RangeResult</code> with <code>BackendRange</code> (e.g., <code>"bytes=32-65595"</code>), <code>SliceStart</code> (offset within first chunk), and <code>SliceLen</code> (plaintext bytes to emit).</p>'
     },
     FETCH: {
       title: 'Fetch Ciphertext Chunks Only',
