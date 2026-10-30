@@ -806,7 +806,7 @@ After updating the config, call the `rotate-encryption-key` admin API with `all_
 
 **Important notes:**
 - Encryption is **not reloadable** - changing encryption settings requires a restart.
-- The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
+- `chunk_size` applies to newly written objects only. Each object records the size it was written with, so existing objects stay readable after it changes.
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
 
 ### compression

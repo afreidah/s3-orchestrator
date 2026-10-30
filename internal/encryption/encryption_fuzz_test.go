@@ -58,28 +58,34 @@ func FuzzParseHeader(f *testing.F) {
 }
 
 // FuzzCiphertextRange exercises the plaintext-to-ciphertext range translator
-// with arbitrary offsets and chunk sizes. Verifies that SliceLen always equals
-// the requested range length and SliceStart stays within chunk bounds.
+// with arbitrary offsets, object sizes and power-of-two chunk sizes. Verifies
+// that the recovered chunk size gives the envelope its real layout, SliceLen
+// always equals the requested range length, and SliceStart stays within
+// chunk bounds.
 func FuzzCiphertextRange(f *testing.F) {
-	f.Add(int64(0), int64(63), 64)
-	f.Add(int64(0), int64(0), 1)
-	f.Add(int64(0), int64(65535), 65536)
-	f.Add(int64(100), int64(200), 64)
-	f.Add(int64(0), int64(1<<20), 65536)
+	f.Add(int64(0), int64(63), int64(256), uint8(6))
+	f.Add(int64(0), int64(0), int64(1), uint8(0))
+	f.Add(int64(0), int64(65535), int64(65536), uint8(16))
+	f.Add(int64(100), int64(200), int64(300), uint8(6))
+	f.Add(int64(0), int64(1<<20), int64(3<<20), uint8(16))
 
-	f.Fuzz(func(t *testing.T, start, end int64, chunkSize int) {
-		if chunkSize <= 0 || start < 0 || end < start {
+	f.Fuzz(func(t *testing.T, start, end, plaintextSize int64, shift uint8) {
+		if plaintextSize <= 0 || plaintextSize > 1<<40 || start < 0 || end < start {
 			return
 		}
-		r, err := CiphertextRange(start, end, chunkSize)
+		ciphertextSize := ciphertextSizeExact(plaintextSize, 1<<(shift%21))
+		r, err := CiphertextRange(start, end, plaintextSize, ciphertextSize)
 		if err != nil {
-			return
+			t.Fatalf("CiphertextRange: %v", err)
+		}
+		if got := ciphertextSizeExact(plaintextSize, r.ChunkSize); got != ciphertextSize {
+			t.Errorf("chunk size %d gives a %d-byte envelope, want %d", r.ChunkSize, got, ciphertextSize)
 		}
 		if r.SliceLen != end-start+1 {
 			t.Errorf("SliceLen %d != expected %d", r.SliceLen, end-start+1)
 		}
-		if r.SliceStart < 0 || r.SliceStart >= int64(chunkSize) {
-			t.Errorf("SliceStart %d out of [0, %d)", r.SliceStart, chunkSize)
+		if r.SliceStart < 0 || r.SliceStart >= int64(r.ChunkSize) {
+			t.Errorf("SliceStart %d out of [0, %d)", r.SliceStart, r.ChunkSize)
 		}
 	})
 }
