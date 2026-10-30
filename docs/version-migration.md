@@ -84,6 +84,10 @@ The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it
 
 `usage_limits` in `/admin/api/status` lists every dimension of each backend's usage, not only the limited ones: egress, ingress, then each request budget, or a `requests` entry with no `budget` holding the backend's total calls when it has no budgets. A dimension with no limit has `limit: 0`. A client that took every entry as an enforced limit should skip those. The TUI dashboard lists every backend's dimensions, one group per backend, under the capacity bars and the summary, with both blocks sharing their columns. The TUI backend detail and `admin status` list every dimension the same way, with `no limit` where there is none. No migration and no config change.
 
+**Encrypted objects readable after a chunk size change ([#1826](https://github.com/afreidah/s3-orchestrator/issues/1826), v0.178.7)**
+
+Reads now use the chunk size each encrypted object was written with instead of the configured `encryption.chunk_size`, so changing the setting no longer makes existing objects unreadable. Objects that became unreadable after an earlier change can be read again with no other action. No migration and no config change.
+
 ### v0.177.x
 
 **Admin state shared across instances ([#1572](https://github.com/afreidah/s3-orchestrator/issues/1572), v0.177.0)**

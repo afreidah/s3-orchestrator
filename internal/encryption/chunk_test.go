@@ -17,6 +17,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------
@@ -197,6 +199,20 @@ func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
 	_, _, err := ParseHeader(bytes.NewReader(hdr))
 	if err == nil {
 		t.Fatal("expected error for unsupported version")
+	}
+}
+
+// TestChunkParseHeader_ChunkSizeOverMax pins that a header declaring a chunk
+// size over the configured maximum is refused, since a read sizes its buffers
+// from it.
+func TestChunkParseHeader_ChunkSizeOverMax(t *testing.T) {
+	t.Parallel()
+	hdr := make([]byte, HeaderSize)
+	copy(hdr[0:4], headerMagic[:])
+	hdr[4] = 0x01
+	binary.BigEndian.PutUint32(hdr[5:9], config.MaxEncryptionChunkSize+1)
+	if _, _, err := ParseHeader(bytes.NewReader(hdr)); err == nil {
+		t.Fatal("expected error for a chunk size over the maximum")
 	}
 }
 

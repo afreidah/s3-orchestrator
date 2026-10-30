@@ -62,7 +62,7 @@ Each key is recorded under its fingerprint (`k-` and 16 hex digits), so it keeps
 - Each object's wrapped data key is stored only in the metadata database, so the master key alone cannot recover anything. Losing the database without a backup makes every encrypted object permanently unreadable. Back up the database as carefully as the master key; see [Losing PostgreSQL without a backup](disaster-recovery.md#losing-postgresql-without-a-backup).
 - Per-object data-encryption keys and wrapped key material are held server-side only. They are never serialized in API responses - the admin object-locations endpoint reports the `encrypted` flag and `key_id`, never the key itself.
 - Encryption is **not reloadable** - changing encryption settings requires a restart.
-- The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
+- `chunk_size` applies to newly written objects only. Each object records the size it was written with, so existing objects stay readable after it changes.
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag). Because that overhead is a fixed function of the size, the stored size of a write is known before it starts, and placement and the usage counters both use it rather than the size the client announced.
 
 
