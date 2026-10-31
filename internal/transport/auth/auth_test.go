@@ -17,14 +17,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
 )
 
 // TestParseSigV4Fields verifies the parse sig v4 fields contract.
@@ -156,8 +157,8 @@ func BenchmarkSigV4KnownVsUnknown(b *testing.B) {
 		name string
 		req  *http.Request
 	}{
-		{name: "known", req: signedRequestFor(b, knownAccess, knownSecret)},
-		{name: "unknown", req: signedRequestFor(b, "AKIDUNKNOWN", knownSecret)},
+		{name: "known", req: signRequest(b, http.MethodGet, "/bucket/key", knownAccess, knownSecret)},
+		{name: "unknown", req: signRequest(b, http.MethodGet, "/bucket/key", "AKIDUNKNOWN", knownSecret)},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
@@ -166,35 +167,6 @@ func BenchmarkSigV4KnownVsUnknown(b *testing.B) {
 			}
 		})
 	}
-}
-
-// signedRequestFor builds a syntactically valid signed request for the
-// given access key. The signature is computed against a fixed secret so
-// the unknown-key request still exercises every parsing/validation step
-// on the auth path before the secret-mismatch failure.
-func signedRequestFor(tb testing.TB, accessKey, secret string) *http.Request {
-	tb.Helper()
-	r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/bucket/key", http.NoBody)
-	if err != nil {
-		tb.Fatalf("NewRequest: %v", err)
-	}
-	r.Host = "example.com"
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	dateStamp := now.Format("20060102")
-	r.Header.Set("X-Amz-Date", amzDate)
-	r.Header.Set("X-Amz-Content-SHA256", hashSHA256(nil))
-	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-	canonical := buildCanonicalRequest(r, signedHeaders)
-	scope := dateStamp + "/us-east-1/s3/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hashSHA256([]byte(canonical))
-	key := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	sig := hex.EncodeToString(hmacSHA256(key, stringToSign))
-	r.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+scope+
-			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
-			", Signature="+sig)
-	return r
 }
 
 // TestDeriveSigningKey_Deterministic verifies the same inputs produce
@@ -264,68 +236,53 @@ func TestEncodePath(t *testing.T) {
 	}
 }
 
-// TestVerifySigV4_StaleTimestamp verifies the verify sig v4 stale timestamp path by exercising time.Now, http.NewRequestWithContext, context.Background.
+// TestVerifySigV4_StaleTimestamp checks that a correct signature made 30
+// minutes ago, outside the skew window, is refused.
 func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	t.Parallel()
-	// A request signed with a timestamp 30 minutes in the past should be rejected
-	staleDate := time.Now().UTC().Add(-30 * time.Minute).Format("20060102T150405Z")
-	dateStamp := staleDate[:8]
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
-	accessKey := "AKIDEXAMPLE"
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-	r.Header.Set("X-Amz-Date", staleDate)
-	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/bucket/key", http.NoBody)
 	r.Host = "localhost"
+	sigv4test.SignAt(t, r, "AKIDEXAMPLE", secret, time.Now().Add(-30*time.Minute))
 
-	// Build a valid signature so we test the timestamp check, not a sig mismatch
-	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + staleDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	r.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
-			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
-			", Signature="+signature)
-
-	err := verifySigV4(r, secret)
-	if err == nil {
+	if err := verifySigV4(r, secret); err == nil {
 		t.Error("stale timestamp (30m) should be rejected")
 	}
 }
 
-// TestVerifySigV4_HostHeaderMustBeSigned verifies the verify sig v4 host header must be signed path by exercising time.Now, http.NewRequestWithContext, context.Background.
-func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
+// TestSigV4Claim_Refused covers the checks both claim forms make before the
+// signature: host must be signed, the credential date must match X-Amz-Date,
+// and a presigned URL's X-Amz-Expires must be a positive count within 7 days.
+func TestSigV4Claim_Refused(t *testing.T) {
 	t.Parallel()
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
-	accessKey := "AKIDEXAMPLE"
-	amzDate := time.Now().UTC().Format("20060102T150405Z")
-	dateStamp := amzDate[:8]
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-	r.Header.Set("X-Amz-Date", amzDate)
-	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-	r.Host = "localhost"
-
-	// Sign with only x-amz-date and x-amz-content-sha256, deliberately omitting host
-	signedHeaders := []string{"x-amz-content-sha256", "x-amz-date"}
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	r.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
-			", SignedHeaders=x-amz-content-sha256;x-amz-date"+
-			", Signature="+signature)
-
-	err := verifySigV4(r, secret)
-	if err == nil {
-		t.Error("request without host in SignedHeaders should be rejected")
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	scope := "AKID/" + now.Format("20060102") + "/us-east-1/s3/aws4_request"
+	yesterday := "AKID/" + now.AddDate(0, 0, -1).Format("20060102") + "/us-east-1/s3/aws4_request"
+	type refusal struct {
+		name string
+		c    sigV4Claim
+		want string
+	}
+	cases := []refusal{
+		{"header without host", sigV4Claim{credential: scope, signedHeaders: "x-amz-date"}, "host header must be signed"},
+		{"presigned without host", sigV4Claim{credential: scope, signedHeaders: "x-amz-date", presigned: true}, "host header must be signed"},
+		{"header date mismatch", sigV4Claim{credential: yesterday, signedHeaders: "host"}, "credential date does not match"},
+		{"presigned date mismatch", sigV4Claim{credential: yesterday, signedHeaders: "host", presigned: true, expires: "300"}, "credential date does not match"},
+	}
+	for _, expires := range []string{"abc", "0", "-100", "", "9999999999999"} {
+		claim := sigV4Claim{credential: scope, signedHeaders: "host", presigned: true, expires: expires}
+		cases = append(cases, refusal{"expires " + expires, claim, "X-Amz-Expires"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.c.amzDate, tc.c.signature = amzDate, "fakesig"
+			_, err := tc.c.verify(&http.Request{URL: &url.URL{}, Host: "localhost", Header: http.Header{}}, "SECRET")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("verify = %v, want an error containing %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -368,33 +325,6 @@ func TestBucketRegistry_UnsignedRequestDenied(t *testing.T) {
 // -------------------------------------------------------------------------
 // BUCKET REGISTRY TESTS
 // -------------------------------------------------------------------------
-
-// signRequest creates a valid SigV4-signed request for testing.
-func signRequest(t *testing.T, method, path, accessKey, secret string) *http.Request {
-	t.Helper()
-
-	amzDate := time.Now().UTC().Format("20060102T150405Z")
-	dateStamp := amzDate[:8]
-
-	r, _ := http.NewRequestWithContext(context.Background(), method, path, nil)
-	r.Header.Set("X-Amz-Date", amzDate)
-	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-	r.Host = "localhost"
-
-	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	r.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
-			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
-			", Signature="+signature)
-
-	return r
-}
 
 // TestBucketRegistry_SigV4ResolvesCorrectBucket verifies the bucket registry sig v4 resolves correct bucket contract.
 // Asserts that auth should succeed:.
@@ -582,42 +512,6 @@ func TestBucketRegistry_MaxMultipartUploads(t *testing.T) {
 // PRESIGNED URL TESTS
 // -------------------------------------------------------------------------
 
-// presignRequest creates a valid presigned URL request for testing. Auth
-// credentials are placed in query parameters, not the Authorization header.
-func presignRequest(t *testing.T, method, path, accessKey, secret string, expireSeconds int) *http.Request {
-	t.Helper()
-
-	amzDate := time.Now().UTC().Format("20060102T150405Z")
-	dateStamp := amzDate[:8]
-	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
-	signedHeadersStr := "host"
-
-	r, _ := http.NewRequestWithContext(context.Background(), method, path, nil)
-	r.Host = "localhost"
-
-	// Set the presigned query parameters (except Signature, computed below)
-	q := r.URL.Query()
-	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
-	q.Set("X-Amz-Date", amzDate)
-	q.Set("X-Amz-Expires", strconv.Itoa(expireSeconds))
-	q.Set("X-Amz-SignedHeaders", signedHeadersStr)
-	r.URL.RawQuery = q.Encode()
-
-	// Build canonical request with all query params EXCEPT Signature
-	signedHeaders := []string{"host"}
-	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	// Now add the signature to the query string
-	q.Set("X-Amz-Signature", signature)
-	r.URL.RawQuery = q.Encode()
-
-	return r
-}
-
 // TestBucketRegistry_PresignedResolvesCorrectBucket verifies that a valid
 // presigned URL resolves to the correct virtual bucket.
 func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
@@ -632,7 +526,7 @@ func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
 	}
 
 	br := mustBucketRegistry(t, buckets)
-	r := presignRequest(t, "GET", "/app1-files/test.txt", "APP1_KEY", "APP1_SECRET", 300)
+	r := presignRequest(t, "/app1-files/test.txt", "APP1_KEY", "APP1_SECRET", "300", time.Now())
 	u, _, err := br.Authenticate(r)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
@@ -641,7 +535,7 @@ func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
 		t.Errorf("reached %v, want %q", u.Buckets(), "app1-files")
 	}
 
-	r2 := presignRequest(t, "GET", "/app2-files/other.txt", "APP2_KEY", "APP2_SECRET", 300)
+	r2 := presignRequest(t, "/app2-files/other.txt", "APP2_KEY", "APP2_SECRET", "300", time.Now())
 	u2, _, err := br.Authenticate(r2)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
@@ -655,34 +549,9 @@ func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
 // window has passed is rejected.
 func TestPresigned_ExpiredURL(t *testing.T) {
 	t.Parallel()
-	accessKey := "AKID"
-	secret := "SECRET"
-	dateStamp := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
-	ds := dateStamp[:8]
-	credentialScope := ds + "/us-east-1/s3/aws4_request"
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-	r.Host = "localhost"
-
-	q := r.URL.Query()
-	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
-	q.Set("X-Amz-Date", dateStamp)
-	q.Set("X-Amz-Expires", "3600") // 1 hour  -  expired 1 hour ago
-	q.Set("X-Amz-SignedHeaders", "host")
-	r.URL.RawQuery = q.Encode()
-
-	canonicalRequest := buildPresignedCanonicalRequest(r, []string{"host"})
-	stringToSign := "AWS4-HMAC-SHA256\n" + dateStamp + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, ds, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-	q.Set("X-Amz-Signature", signature)
-	r.URL.RawQuery = q.Encode()
-
-	err := verifyPresignedSigV4(r,
-		secret,
-		accessKey+"/"+credentialScope, "host", signature, dateStamp, "3600")
-	if err == nil {
+	// Valid for an hour, signed two hours ago.
+	r := presignRequest(t, "/bucket/key", "AKID", "SECRET", "3600", time.Now().Add(-2*time.Hour))
+	if err := verifySigV4(r, "SECRET"); err == nil {
 		t.Error("expired presigned URL should be rejected")
 	}
 }
@@ -691,7 +560,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 // the 7-day maximum are rejected.
 func TestPresigned_ExcessiveExpiry(t *testing.T) {
 	t.Parallel()
-	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 604800+1)
+	r := presignRequest(t, "/bucket/key", "AKID", "SECRET", "604801", time.Now())
 
 	buckets := []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
@@ -705,33 +574,11 @@ func TestPresigned_ExcessiveExpiry(t *testing.T) {
 	}
 }
 
-// TestPresigned_InvalidExpiry verifies that non-integer, zero, and negative
-// X-Amz-Expires values are rejected.
-func TestPresigned_InvalidExpiry(t *testing.T) {
-	t.Parallel()
-	for _, expires := range []string{"abc", "0", "-100", ""} {
-		t.Run(expires, func(t *testing.T) {
-			err := verifyPresignedSigV4(
-				&http.Request{URL: &url.URL{}, Host: "localhost"},
-				"SECRET",
-				"AKID/20260326/us-east-1/s3/aws4_request",
-				"host",
-				"fakesig",
-				time.Now().UTC().Format("20060102T150405Z"),
-				expires,
-			)
-			if err == nil {
-				t.Errorf("expires=%q should be rejected", expires)
-			}
-		})
-	}
-}
-
 // TestPresigned_TamperedSignature verifies that a presigned URL with a
 // modified signature is rejected.
 func TestPresigned_TamperedSignature(t *testing.T) {
 	t.Parallel()
-	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 300)
+	r := presignRequest(t, "/bucket/key", "AKID", "SECRET", "300", time.Now())
 
 	// Tamper with the signature  -  replace entirely with zeros
 	q := r.URL.Query()
@@ -755,7 +602,7 @@ func TestPresigned_TamperedSignature(t *testing.T) {
 // unknown access key is rejected (constant-time path).
 func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
 	t.Parallel()
-	r := presignRequest(t, "GET", "/bucket/key", "UNKNOWN_KEY", "SOME_SECRET", 300)
+	r := presignRequest(t, "/bucket/key", "UNKNOWN_KEY", "SOME_SECRET", "300", time.Now())
 
 	buckets := []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
@@ -774,7 +621,7 @@ func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
 func TestPresigned_WrongSecretDenied(t *testing.T) {
 	t.Parallel()
 	// Sign with "WRONG_SECRET" but register "REAL_SECRET"
-	r := presignRequest(t, "GET", "/bucket/key", "AKID", "WRONG_SECRET", 300)
+	r := presignRequest(t, "/bucket/key", "AKID", "WRONG_SECRET", "300", time.Now())
 
 	buckets := []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
@@ -788,24 +635,6 @@ func TestPresigned_WrongSecretDenied(t *testing.T) {
 	}
 }
 
-// TestPresigned_HostHeaderMustBeSigned verifies that presigned URLs that do
-// not include "host" in X-Amz-SignedHeaders are rejected.
-func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
-	t.Parallel()
-	err := verifyPresignedSigV4(
-		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		"SECRET",
-		"AKID/20260326/us-east-1/s3/aws4_request",
-		"x-amz-date", // missing "host"
-		"fakesig",
-		time.Now().UTC().Format("20060102T150405Z"),
-		"300",
-	)
-	if err == nil {
-		t.Error("presigned URL without host in signed headers should be rejected")
-	}
-}
-
 // TestPresigned_SignatureExcludedFromCanonicalQuery verifies that
 // X-Amz-Signature is excluded from the canonical query string but other
 // X-Amz-* parameters are included.
@@ -814,7 +643,7 @@ func TestPresigned_SignatureExcludedFromCanonicalQuery(t *testing.T) {
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", nil)
 	r.Host = "localhost"
 
-	canonical := buildPresignedCanonicalRequest(r, []string{"host"})
+	canonical := (&sigV4Claim{presigned: true}).canonicalRequest(r, []string{"host"})
 	if strings.Contains(canonical, "X-Amz-Signature") {
 		t.Error("canonical request should NOT contain X-Amz-Signature")
 	}
@@ -851,86 +680,13 @@ func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
 	}
 
 	// Presigned URL auth
-	rPresigned := presignRequest(t, "GET", "/bucket-b/file.txt", "KEY_B", "SECRET_B", 300)
+	rPresigned := presignRequest(t, "/bucket-b/file.txt", "KEY_B", "SECRET_B", "300", time.Now())
 	u, _, err = br.Authenticate(rPresigned)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
 	}
 	if !u.CanReach("bucket-b") {
 		t.Errorf("presigned auth reached %v, want %q", u.Buckets(), "bucket-b")
-	}
-}
-
-// TestPresigned_OverflowExpiry verifies that an expiry value large enough to
-// overflow time.Duration is rejected before the multiplication.
-func TestPresigned_OverflowExpiry(t *testing.T) {
-	t.Parallel()
-	err := verifyPresignedSigV4(
-		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		"SECRET",
-		"AKID/20260329/us-east-1/s3/aws4_request",
-		"host",
-		"fakesig",
-		time.Now().UTC().Format("20060102T150405Z"),
-		"9999999999999", // would overflow time.Duration
-	)
-	if err == nil {
-		t.Error("huge expiry should be rejected")
-	}
-}
-
-// TestSigV4_CredentialDateMismatch verifies that a request where the
-// credential scope date differs from X-Amz-Date is rejected.
-func TestSigV4_CredentialDateMismatch(t *testing.T) {
-	t.Parallel()
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	wrongDate := now.AddDate(0, 0, -1).Format("20060102") // yesterday
-
-	_, err := verifySigV4Parsed(
-		&http.Request{
-			Method: "GET",
-			URL:    &url.URL{Path: "/"},
-			Host:   "localhost",
-			Header: http.Header{
-				"X-Amz-Date": {amzDate},
-				"Host":       {"localhost"},
-			},
-		},
-		"SECRET",
-		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
-		"host",
-		"fakesig",
-	)
-	if err == nil {
-		t.Error("credential date mismatch should be rejected")
-	}
-	if !strings.Contains(err.Error(), "credential date does not match") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// TestPresigned_CredentialDateMismatch verifies the same check for presigned URLs.
-func TestPresigned_CredentialDateMismatch(t *testing.T) {
-	t.Parallel()
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	wrongDate := now.AddDate(0, 0, -1).Format("20060102")
-
-	err := verifyPresignedSigV4(
-		&http.Request{URL: &url.URL{}, Host: "localhost"},
-		"SECRET",
-		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
-		"host",
-		"fakesig",
-		amzDate,
-		"300",
-	)
-	if err == nil {
-		t.Error("presigned credential date mismatch should be rejected")
-	}
-	if !strings.Contains(err.Error(), "credential date does not match") {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
 

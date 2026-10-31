@@ -15,6 +15,7 @@
 package auth
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -43,8 +44,9 @@ const presignedMaxExpiry = 7 * 24 * time.Hour
 
 // The generic rejection message and the SigV4 Authorization scheme prefix.
 const (
-	errAuthFailed = "authentication failed"
-	sigV4Prefix   = "AWS4-HMAC-SHA256 "
+	errAuthFailed   = "authentication failed"
+	sigV4Prefix     = "AWS4-HMAC-SHA256 "
+	unsignedPayload = "UNSIGNED-PAYLOAD"
 
 	// dummySecret keeps an unknown access key costing the same work as a known
 	// one, so response timing cannot be used to enumerate valid keys.
@@ -186,15 +188,25 @@ func (br *BucketRegistry) UserByAccessKey(accessKey string) (*User, bool) {
 	return e.user, true
 }
 
-// AuthenticateSecret verifies a keypair submitted by a form login. An unknown
-// key is compared against a dummy so timing cannot enumerate valid keys.
+// AuthenticateSecret verifies a keypair submitted by a form login.
 func (br *BucketRegistry) AuthenticateSecret(accessKey, secret string) (*User, error) {
+	return br.verify(accessKey, func(known string) error {
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(known)) != 1 {
+			return errors.New(errAuthFailed)
+		}
+		return nil
+	})
+}
+
+// verify runs check against the secret accessKey proves itself with and
+// returns the identity behind it. An unknown key is checked against
+// dummySecret, so the time a check takes cannot reveal which keys exist.
+func (br *BucketRegistry) verify(accessKey string, check func(secret string) error) (*User, error) {
 	e, ok := br.byAccessKey[accessKey]
-	known := e.secret
 	if !ok {
-		known = dummySecret
+		e.secret = dummySecret
 	}
-	if subtle.ConstantTimeCompare([]byte(secret), []byte(known)) != 1 || !ok {
+	if err := check(e.secret); err != nil || !ok {
 		return nil, errors.New(errAuthFailed)
 	}
 	return e.user, nil
@@ -213,42 +225,24 @@ func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
 // requests and presigned URLs. Bucket authorization is left to the returned
 // User.
 func (br *BucketRegistry) Authenticate(r *http.Request) (*User, *StreamingMaterial, error) {
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, sigV4Prefix) {
-		return br.authenticateSigV4(r, authHeader)
+	var c sigV4Claim
+	switch authHeader := r.Header.Get("Authorization"); {
+	case strings.HasPrefix(authHeader, sigV4Prefix):
+		c = headerClaim(r, authHeader)
+	case isPresignedRequest(r):
+		c = presignedClaim(r)
+	default:
+		return nil, nil, fmt.Errorf("missing authentication credentials")
 	}
-	if isPresignedRequest(r) {
-		p, err := br.authenticatePresigned(r)
-		return p, nil, err
+	var mat *StreamingMaterial
+	u, err := br.verify(c.accessKey(), func(secret string) (err error) {
+		mat, err = c.verify(r, secret)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, nil, fmt.Errorf("missing authentication credentials")
-}
-
-// authenticateSigV4 verifies a SigV4 Authorization header against the
-// registry. To prevent timing side-channels that could enumerate valid
-// access keys, the signature is always computed - with a dummy secret
-// when the key is unknown - so both paths take the same time.
-func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) (*User, *StreamingMaterial, error) {
-	parts := authHeader[len(sigV4Prefix):]
-	credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
-	if credential == "" {
-		return nil, nil, errors.New(errAuthFailed)
-	}
-	accessKey, _, _ := strings.Cut(credential, "/")
-	if accessKey == "" {
-		return nil, nil, errors.New(errAuthFailed)
-	}
-
-	e, ok := br.byAccessKey[accessKey]
-	secret := dummySecret
-	if ok {
-		secret = e.secret
-	}
-	mat, err := verifySigV4Parsed(r, secret, credential, signedHeaders, signature)
-	if err != nil || !ok {
-		return nil, nil, errors.New(errAuthFailed)
-	}
-	return e.user, mat, nil
+	return u, mat, nil
 }
 
 // -------------------------------------------------------------------------
@@ -272,56 +266,117 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 // timing-equivalent. A signing-key cache needs a constant-time strategy
 // that doesn't leak known-vs-unknown before it can be added.
 
-// verifySigV4Parsed verifies the signature using pre-parsed Authorization
-// header fields and, when the request declares a streaming payload via
-// the X-Amz-Content-Sha256 header, returns the StreamingMaterial the
-// transport layer needs to verify the chunk chain. secret is the access
-// key's secret, or the dummy one for an unregistered key so the check takes
-// the same time either way.
-func verifySigV4Parsed(r *http.Request, secret, credential, signedHeadersStr, signature string) (*StreamingMaterial, error) {
-	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
-	if err != nil {
-		return nil, err
-	}
+// sigV4Claim is what a request presents as its SigV4 signature, from either
+// the Authorization header or a presigned URL's query string.
+type sigV4Claim struct {
+	credential    string
+	signedHeaders string
+	signature     string
+	amzDate       string
+	presigned     bool
+	expires       string
+}
 
-	// Validate request timestamp to prevent replay attacks. The header
-	// variant additionally enforces a skew window  -  presigned URLs use
-	// X-Amz-Expires and have their own freshness check.
-	amzDate := r.Header.Get("X-Amz-Date")
-	if amzDate == "" {
-		return nil, fmt.Errorf("missing X-Amz-Date header")
+// headerClaim reads the claim of a request signed in its Authorization header.
+func headerClaim(r *http.Request, authHeader string) sigV4Claim {
+	credential, signedHeaders, signature := parseSigV4FieldsDirect(authHeader[len(sigV4Prefix):])
+	return sigV4Claim{
+		credential:    credential,
+		signedHeaders: signedHeaders,
+		signature:     signature,
+		amzDate:       r.Header.Get("X-Amz-Date"),
 	}
-	reqTime, err := parseSigV4Time(amzDate, dateStamp)
+}
+
+// presignedClaim reads the claim of a presigned URL from its query string.
+func presignedClaim(r *http.Request) sigV4Claim {
+	q := r.URL.Query()
+	return sigV4Claim{
+		credential:    q.Get("X-Amz-Credential"),
+		signedHeaders: q.Get("X-Amz-SignedHeaders"),
+		signature:     q.Get("X-Amz-Signature"),
+		amzDate:       q.Get("X-Amz-Date"),
+		presigned:     true,
+		expires:       q.Get("X-Amz-Expires"),
+	}
+}
+
+// accessKey returns the access key the claim's credential names.
+func (c *sigV4Claim) accessKey() string {
+	key, _, _ := strings.Cut(c.credential, "/")
+	return key
+}
+
+// verify checks the claim against secret. For a header-signed request that
+// declares a streaming payload, it also returns the StreamingMaterial the
+// transport layer verifies the chunk chain with.
+func (c *sigV4Claim) verify(r *http.Request, secret string) (*StreamingMaterial, error) {
+	scope, signedHeaders, err := parseSigV4Credential(c.credential, c.signedHeaders)
 	if err != nil {
 		return nil, err
+	}
+	reqTime, err := parseSigV4Time(c.amzDate, scope.date)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.fresh(reqTime); err != nil {
+		return nil, err
+	}
+	signingKey, err := verifySigV4Signature(c.canonicalRequest(r, signedHeaders), c.signature, secret, scope, c.amzDate)
+	if err != nil || c.presigned {
+		return nil, err
+	}
+	return streamingMaterialFromRequest(r, c.signature, signingKey, scope.String(), c.amzDate)
+}
+
+// fresh rejects a replayed claim: a header signature outside the clock-skew
+// window, or a presigned URL past its X-Amz-Expires.
+func (c *sigV4Claim) fresh(reqTime time.Time) error {
+	if c.presigned {
+		return validatePresignedExpiry(reqTime, c.expires)
 	}
 	if skew := time.Since(reqTime).Abs(); skew > sigV4MaxSkew {
-		return nil, fmt.Errorf("request timestamp too skewed (%s)", skew.Truncate(time.Second))
+		return fmt.Errorf("request timestamp too skewed (%s)", skew.Truncate(time.Second))
 	}
+	return nil
+}
 
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	signingKey, err := verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate)
-	if err != nil {
-		return nil, err
+// canonicalRequest builds the canonical request the claim was signed over. A
+// presigned URL leaves X-Amz-Signature out of the query and is always signed
+// over an unsigned payload.
+func (c *sigV4Claim) canonicalRequest(r *http.Request, signedHeaders []string) string {
+	q := r.URL.Query()
+	payloadHash := cmp.Or(r.Header.Get("X-Amz-Content-Sha256"), unsignedPayload)
+	if c.presigned {
+		q.Del("X-Amz-Signature")
+		payloadHash = unsignedPayload
 	}
-	credScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
-	return streamingMaterialFromRequest(r, signature, signingKey, credScope, amzDate)
+	return buildCanonicalRequest(r, signedHeaders, q, payloadHash)
+}
+
+// credentialScope is the date, region and service a signature is bound to.
+type credentialScope struct {
+	date, region, service string
+}
+
+// String renders the scope as it appears in the string to sign.
+func (s credentialScope) String() string {
+	return s.date + "/" + s.region + "/" + s.service + "/aws4_request"
 }
 
 // parseSigV4Credential splits the SigV4 credential scope and validates the
 // signed-headers list contains "host" (which the spec requires to defeat
-// cross-endpoint replay). Returns the date/region/service triple plus the
-// expanded header list.
-func parseSigV4Credential(credential, signedHeadersStr string) (dateStamp, region, service string, signedHeaders []string, err error) {
+// cross-endpoint replay). Returns the scope plus the expanded header list.
+func parseSigV4Credential(credential, signedHeadersStr string) (credentialScope, []string, error) {
 	credParts := strings.SplitN(credential, "/", 5)
 	if len(credParts) != 5 {
-		return "", "", "", nil, fmt.Errorf("malformed credential scope")
+		return credentialScope{}, nil, fmt.Errorf("malformed credential scope")
 	}
-	signedHeaders = strings.Split(signedHeadersStr, ";")
+	signedHeaders := strings.Split(signedHeadersStr, ";")
 	if !slices.Contains(signedHeaders, "host") {
-		return "", "", "", nil, fmt.Errorf("host header must be signed")
+		return credentialScope{}, nil, fmt.Errorf("host header must be signed")
 	}
-	return credParts[1], credParts[2], credParts[3], signedHeaders, nil
+	return credentialScope{date: credParts[1], region: credParts[2], service: credParts[3]}, signedHeaders, nil
 }
 
 // parseSigV4Time parses the SigV4 amzDate (yyyymmddTHHMMSSZ) and asserts
@@ -343,10 +398,9 @@ func parseSigV4Time(amzDate, dateStamp string) (time.Time, error) {
 // constant time. Returns the derived signing key on success so the
 // caller can chain it into per-chunk validation for streaming requests.
 // Shared by the header and presigned verification paths.
-func verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate string) ([]byte, error) {
-	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := deriveSigningKey(secret, dateStamp, region, service)
+func verifySigV4Signature(canonicalRequest, signature, secret string, scope credentialScope, amzDate string) ([]byte, error) {
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope.String() + "\n" + hashSHA256([]byte(canonicalRequest))
+	signingKey := deriveSigningKey(secret, scope.date, scope.region, scope.service)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
 		return nil, fmt.Errorf("signature mismatch")
@@ -362,60 +416,6 @@ func verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region
 // in query string parameters (presigned URL).
 func isPresignedRequest(r *http.Request) bool {
 	return r.URL.Query().Get("X-Amz-Algorithm") != ""
-}
-
-// authenticatePresigned extracts SigV4 credentials from query string
-// parameters and verifies the presigned URL signature.
-func (br *BucketRegistry) authenticatePresigned(r *http.Request) (*User, error) {
-	q := r.URL.Query()
-	credential := q.Get("X-Amz-Credential")
-	signedHeaders := q.Get("X-Amz-SignedHeaders")
-	signature := q.Get("X-Amz-Signature")
-	amzDate := q.Get("X-Amz-Date")
-	expires := q.Get("X-Amz-Expires")
-
-	if credential == "" || signedHeaders == "" || signature == "" || amzDate == "" || expires == "" {
-		return nil, errors.New(errAuthFailed)
-	}
-
-	accessKey, _, _ := strings.Cut(credential, "/")
-	if accessKey == "" {
-		return nil, errors.New(errAuthFailed)
-	}
-
-	e, ok := br.byAccessKey[accessKey]
-	secret := dummySecret
-	if ok {
-		secret = e.secret
-	}
-
-	if err := verifyPresignedSigV4(r, secret, credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
-		return nil, errors.New(errAuthFailed)
-	}
-
-	return e.user, nil
-}
-
-// verifyPresignedSigV4 verifies a presigned URL signature. Unlike header-based
-// SigV4, the date and expiry come from query parameters, the X-Amz-Signature
-// parameter is excluded from the canonical query string, and the payload hash
-// is always UNSIGNED-PAYLOAD.
-func verifyPresignedSigV4(r *http.Request, secret, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
-	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
-	if err != nil {
-		return err
-	}
-	reqTime, err := parseSigV4Time(amzDate, dateStamp)
-	if err != nil {
-		return err
-	}
-	if err := validatePresignedExpiry(reqTime, expiresStr); err != nil {
-		return err
-	}
-
-	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
-	_, err = verifySigV4Signature(canonicalRequest, signature, secret, dateStamp, region, service, amzDate)
-	return err
 }
 
 // validatePresignedExpiry rejects presigned URLs whose X-Amz-Expires value
@@ -435,41 +435,6 @@ func validatePresignedExpiry(reqTime time.Time, expiresStr string) error {
 		return fmt.Errorf("presigned URL has expired")
 	}
 	return nil
-}
-
-// buildPresignedCanonicalRequest constructs the canonical request for presigned
-// URL verification. Differs from the header-based variant in two ways:
-// X-Amz-Signature is excluded from the canonical query string, and the payload
-// hash is always UNSIGNED-PAYLOAD.
-func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) string {
-	var b strings.Builder
-	b.Grow(512) // presigned URLs have more query params than header-based
-
-	// Method
-	b.WriteString(r.Method)
-	b.WriteByte('\n')
-
-	// Canonical URI - see buildCanonicalRequest comment; same wire-form
-	// rule applies here for presigned URL verification.
-	encodePath(&b, canonicalPath(r))
-	b.WriteByte('\n')
-
-	// Canonical query string (excluding X-Amz-Signature)
-	qv := make(url.Values)
-	for k, vs := range r.URL.Query() {
-		if k != "X-Amz-Signature" {
-			qv[k] = vs
-		}
-	}
-	buildCanonicalQueryString(&b, qv)
-	b.WriteByte('\n')
-
-	writeCanonicalHeadersAndSigned(&b, r, signedHeaders)
-
-	// Payload hash  -  always UNSIGNED-PAYLOAD for presigned URLs
-	b.WriteString("UNSIGNED-PAYLOAD")
-
-	return b.String()
 }
 
 // writeCanonicalHeadersAndSigned emits the four lines of the SigV4
@@ -533,10 +498,11 @@ func parseSigV4FieldsDirect(s string) (credential, signedHeaders, signature stri
 	return
 }
 
-// buildCanonicalRequest constructs the canonical request string per SigV4 spec.
-func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
+// buildCanonicalRequest constructs the canonical request string per SigV4
+// spec, over the given query and payload hash.
+func buildCanonicalRequest(r *http.Request, signedHeaders []string, query url.Values, payloadHash string) string {
 	var b strings.Builder
-	b.Grow(256) // typical canonical request fits in 256 bytes
+	b.Grow(512) // fits a typical request, presigned query included
 
 	// Method
 	b.WriteString(r.Method)
@@ -548,19 +514,11 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	encodePath(&b, canonicalPath(r))
 	b.WriteByte('\n')
 
-	// Canonical query string
-	buildCanonicalQueryString(&b, r.URL.Query())
+	buildCanonicalQueryString(&b, query)
 	b.WriteByte('\n')
 
 	writeCanonicalHeadersAndSigned(&b, r, signedHeaders)
-
-	// Payload hash
-	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash == "" {
-		payloadHash = "UNSIGNED-PAYLOAD"
-	}
 	b.WriteString(payloadHash)
-
 	return b.String()
 }
 

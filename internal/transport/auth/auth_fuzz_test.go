@@ -121,7 +121,7 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 		}
 
 		// Must not panic on any combination of method, path, query, and headers.
-		result := buildCanonicalRequest(r, headers)
+		result := (&sigV4Claim{}).canonicalRequest(r, headers)
 
 		// SigV4 canonical request structure: method, URI, query, one line
 		// per header, blank line, signed headers, payload hash. Total
@@ -156,7 +156,7 @@ func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
 		if len(headers) == 0 {
 			return
 		}
-		result := buildPresignedCanonicalRequest(r, headers)
+		result := (&sigV4Claim{presigned: true}).canonicalRequest(r, headers)
 		assertNoSignatureInCanonicalQuery(t, result)
 	})
 }

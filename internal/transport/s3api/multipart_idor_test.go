@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
 
 	"go.uber.org/mock/gomock"
 
@@ -97,7 +98,7 @@ func doMultipartReq(
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = contentLength
 	}
-	signRequestAs(t, req, creds.AccessKeyID, creds.SecretAccessKey)
+	sigv4test.Sign(t, req, creds.AccessKeyID, creds.SecretAccessKey)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost
 	if err != nil {
 		t.Fatalf("Do: %v", err)
