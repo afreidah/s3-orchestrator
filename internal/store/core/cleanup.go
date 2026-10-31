@@ -60,10 +60,7 @@ func intentBytes(p *PendingObject) removedCopy {
 // nothing is returned for it.
 func (o TxOps) DiscardPending(ctx context.Context, p *PendingObject, reason string) ([]CleanupItem, error) {
 	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
-			return nil, err
-		}
-		claimed, err := tx.ClaimPending(ctx, p.IntentID)
+		claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
 		if err != nil || !claimed {
 			return nil, err
 		}

@@ -12,6 +12,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"time"
 )
@@ -162,15 +163,11 @@ type removedCopy struct {
 // request is the cleanup that deletes this copy of objectKey, labelled with the
 // copy's own reason or defaultReason when it has none.
 func (d removedCopy) request(objectKey, defaultReason string) *CleanupRequest {
-	reason := d.Reason
-	if reason == "" {
-		reason = defaultReason
-	}
 	return &CleanupRequest{
 		BackendName: d.BackendName,
 		ObjectKey:   objectKey,
 		StorageKey:  StoragePath(objectKey, d.StorageKey),
-		Reason:      reason,
+		Reason:      cmp.Or(d.Reason, defaultReason),
 		SizeBytes:   d.SizeBytes,
 	}
 }
@@ -401,8 +398,9 @@ type CompletePart struct {
 // CLEANUP QUEUE
 // -------------------------------------------------------------------------
 
-// CleanupRequest is one deletion a transaction queues. StorageKey is what is
-// deleted; ObjectKey tells an operator what the bytes belonged to. SizeBytes
+// CleanupRequest is one deletion a transaction queues. StorageKey is the
+// resolved path that is deleted, never empty; ObjectKey tells an operator what
+// the bytes belonged to. SizeBytes
 // counts as the backend's orphan bytes until the row is retired.
 type CleanupRequest struct {
 	BackendName string

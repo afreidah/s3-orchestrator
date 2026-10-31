@@ -66,7 +66,7 @@ func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
 func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
 	rows, err := s.queries.ClaimPendingCleanups(ctx, db.ClaimPendingCleanupsParams{
 		MaxAttempts: core.MaxCleanupAttempts,
-		GraceCutoff: pgtype.Timestamptz{Time: graceCutoff, Valid: true},
+		GraceCutoff: pgTimestamptz(graceCutoff),
 		RowLimit:    rowLimit(limit),
 		ClaimedBy:   instanceID,
 	})
@@ -93,7 +93,7 @@ func (s *Store) CompleteCleanupItems(ctx context.Context, items []core.CleanupIt
 	for i := range items {
 		claim := claimOf(&items[i])
 		params.Ids[i] = items[i].ID
-		params.ClaimedAts[i] = pgtype.Timestamptz{Time: claim.At, Valid: true}
+		params.ClaimedAts[i] = pgTimestamptz(claim.At)
 		params.ClaimedBys[i] = claim.By
 	}
 	retired, err := s.queries.CompleteCleanupItems(ctx, params)
@@ -112,7 +112,7 @@ func (s *Store) RetryCleanupItem(ctx context.Context, item *core.CleanupItem, ba
 		Backoff:   durationToInterval(backoff),
 		LastError: &lastError,
 		ID:        item.ID,
-		ClaimedAt: pgtype.Timestamptz{Time: claim.At, Valid: true},
+		ClaimedAt: pgTimestamptz(claim.At),
 		ClaimedBy: claim.By,
 	})
 	return changed(n, err, "update cleanup retry")
@@ -125,7 +125,7 @@ func (s *Store) MoveCleanupToDLQ(ctx context.Context, item *core.CleanupItem, la
 	n, err := s.queries.MoveCleanupToDLQ(ctx, db.MoveCleanupToDLQParams{
 		LastError: lastError,
 		ID:        item.ID,
-		ClaimedAt: pgtype.Timestamptz{Time: claim.At, Valid: true},
+		ClaimedAt: pgTimestamptz(claim.At),
 		ClaimedBy: claim.By,
 	})
 	return changed(n, err, "move cleanup row to DLQ")

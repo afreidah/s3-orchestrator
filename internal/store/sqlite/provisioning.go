@@ -98,14 +98,11 @@ func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "create bucket "+b.Name,
 		`INSERT INTO buckets (name, max_multipart_uploads, cors, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		b.Name, b.MaxMultipartUploads, cors, now(),
-	); err != nil {
-		return fmt.Errorf("create bucket %s: %w", b.Name, err)
-	}
-	return nil
+	)
 }
 
 // UpdateBucket writes what a bucket carries. The name identifies it and its
@@ -117,24 +114,16 @@ func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "update bucket "+b.Name,
 		`UPDATE buckets SET max_multipart_uploads = ?, cors = ? WHERE name = ?`,
 		b.MaxMultipartUploads, cors, b.Name,
-	); err != nil {
-		return fmt.Errorf("update bucket %s: %w", b.Name, err)
-	}
-	return nil
+	)
 }
 
 // CreateUser inserts a user.
 func (s *Store) CreateUser(ctx context.Context, u *core.User) error {
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, name, created_at) VALUES (?, ?, ?)`,
-		u.ID, u.Name, now(),
-	); err != nil {
-		return fmt.Errorf("create user %s: %w", u.Name, err)
-	}
-	return nil
+	return s.exec(ctx, "create user "+u.Name,
+		`INSERT INTO users (id, name, created_at) VALUES (?, ?, ?)`, u.ID, u.Name, now())
 }
 
 // CreateCredential inserts a keypair against an existing user.
@@ -142,94 +131,72 @@ func (s *Store) CreateUser(ctx context.Context, u *core.User) error {
 // The error names the access key rather than the secret, which never reaches a
 // log, an error string or an audit record on any path.
 func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error {
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "create credential "+c.AccessKeyID,
 		`INSERT INTO credentials
 		   (access_key_id, user_id, secret, label, disabled, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		c.AccessKeyID, c.UserID, c.Secret,
-		nullableString(c.Label), boolToInt(c.Disabled), now(),
-	); err != nil {
-		return fmt.Errorf("create credential %s: %w", c.AccessKeyID, err)
-	}
-	return nil
+		c.AccessKeyID, c.UserID, c.Secret, nullableString(c.Label), c.Disabled, now(),
+	)
 }
 
 // CreateGrant gives a user access to one resource.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "create grant "+grantLabel(g.UserID, g.Resource),
 		`INSERT INTO grants (user_id, resource_kind, resource_name, permissions, created_at) VALUES (?, ?, ?, ?, ?)`,
-		g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now(),
-	); err != nil {
-		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
-	}
-	return nil
+		grantArgs(g)...)
 }
 
 // RenameUser changes the name an operator reads a user by. The id is what
 // credentials and grants reference and does not move.
 func (s *Store) RenameUser(ctx context.Context, id, name string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE users SET name = ? WHERE id = ?`, name, id,
-	); err != nil {
-		return fmt.Errorf("rename user %s: %w", id, err)
-	}
-	return nil
+	return s.exec(ctx, "rename user "+id, `UPDATE users SET name = ? WHERE id = ?`, name, id)
 }
 
 // SetGrant records exactly what a user reaches on one resource, creating the
 // grant when it is absent. created_at is left alone on the update, so a
 // re-declared grant keeps its original age.
 func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "set grant "+grantLabel(g.UserID, g.Resource),
 		`INSERT INTO grants (user_id, resource_kind, resource_name, permissions, created_at)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, resource_kind, resource_name)
 		 DO UPDATE SET permissions = excluded.permissions`,
-		g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now(),
-	); err != nil {
-		return fmt.Errorf("set grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
-	}
-	return nil
+		grantArgs(g)...)
+}
+
+// grantArgs is the column list both grant writes insert, in schema order.
+func grantArgs(g *core.Grant) []any {
+	return []any{g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now()}
+}
+
+// grantLabel names a grant in an error as "user -> kind name".
+func grantLabel(userID string, r core.Resource) string {
+	return userID + " -> " + string(r.Kind) + " " + r.Name
 }
 
 // DeleteBucket removes a stored bucket. Objects under it are unaffected, so a
 // caller that means to destroy data does that first.
 func (s *Store) DeleteBucket(ctx context.Context, name string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM buckets WHERE name = ?`, name); err != nil {
-		return fmt.Errorf("delete bucket %s: %w", name, err)
-	}
-	return nil
+	return s.exec(ctx, "delete bucket "+name, `DELETE FROM buckets WHERE name = ?`, name)
 }
 
 // DeleteUser removes a user. The schema refuses while it still holds credentials
 // or grants, so those are removed first and revocation stays an explicit act.
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete user %s: %w", id, err)
-	}
-	return nil
+	return s.exec(ctx, "delete user "+id, `DELETE FROM users WHERE id = ?`, id)
 }
 
 // DeleteCredential revokes one keypair, leaving its siblings working.
 func (s *Store) DeleteCredential(ctx context.Context, accessKeyID string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM credentials WHERE access_key_id = ?`, accessKeyID,
-	); err != nil {
-		return fmt.Errorf("delete credential %s: %w", accessKeyID, err)
-	}
-	return nil
+	return s.exec(ctx, "delete credential "+accessKeyID, `DELETE FROM credentials WHERE access_key_id = ?`, accessKeyID)
 }
 
 // DeleteGrant withdraws a user's access to one resource, leaving its other
 // grants in place.
 func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
-	if _, err := s.db.ExecContext(ctx,
+	return s.exec(ctx, "delete grant "+grantLabel(userID, r),
 		`DELETE FROM grants WHERE user_id = ? AND resource_kind = ? AND resource_name = ?`,
-		userID, string(r.Kind), r.Name,
-	); err != nil {
-		return fmt.Errorf("delete grant %s -> %s %s: %w", userID, r.Kind, r.Name, err)
-	}
-	return nil
+		userID, string(r.Kind), r.Name)
 }
 
 // -------------------------------------------------------------------------
@@ -277,16 +244,14 @@ func scanCredential(rows *sql.Rows) (core.Credential, error) {
 	var (
 		c        core.Credential
 		label    sql.NullString
-		disabled int
 		created  string
 		lastUsed sql.NullString
 	)
 	if err := rows.Scan(&c.AccessKeyID, &c.UserID, &c.Secret,
-		&label, &disabled, &created, &lastUsed); err != nil {
+		&label, &c.Disabled, &created, &lastUsed); err != nil {
 		return core.Credential{}, fmt.Errorf("scan credential: %w", err)
 	}
 	c.Label = nullStringValue(label)
-	c.Disabled = disabled != 0
 
 	var err error
 	if c.CreatedAt, err = parseTime(created); err != nil {

@@ -34,13 +34,7 @@ type promoteOutcome struct {
 // orchestration reads as five ordered steps: claim, key-lock, supersession
 // check, commit, and the same-tx delete of the pending row.
 func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (promoteOutcome, error) {
-	// The key lock comes first, ahead of the claim. A write takes it and then
-	// deletes this key's intent rows, so claiming the row first would leave the
-	// two transactions each holding what the other is waiting for.
-	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
-		return promoteOutcome{}, err
-	}
-	claimed, err := tx.ClaimPending(ctx, p.IntentID)
+	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
 	if err != nil {
 		return promoteOutcome{}, err
 	}
@@ -79,16 +73,8 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
-	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
-		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
-	}
-	deltas.add(p.BackendName, p.SizeBytes)
-	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+	if err := recordIntent(ctx, tx, p, deltas); err != nil {
 		return promoteOutcome{}, err
-	}
-	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
-		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
 	}
 	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonOverwritten, displaced)
 	if err != nil {
@@ -133,27 +119,35 @@ type companionOutcome struct {
 // key, claim the intent, and either add the copy or discard it. Any newer write
 // clears this intent, so a successful claim proves nothing newer took the key.
 func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
-	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
-		return companionOutcome{}, err
-	}
-	claimed, err := tx.ClaimPending(ctx, p.IntentID)
+	claimed, err := keyIntentsHeld(ctx, tx, p.ObjectKey, p.IntentID)
 	if err != nil {
 		return companionOutcome{}, err
 	}
 	if !claimed {
 		return discardUntrustedCopy(ctx, tx, p)
 	}
-	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
-	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
-		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
-	}
-	if err := chargeStripes(ctx, tx, p.ObjectKey, quotaDeltas{p.BackendName: p.SizeBytes}); err != nil {
+	if err := recordIntent(ctx, tx, p, quotaDeltas{}); err != nil {
 		return companionOutcome{}, err
 	}
-	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
-		return companionOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
-	}
 	return companionOutcome{result: CompanionCopyCommitted}, nil
+}
+
+// recordIntent records the claimed intent's upload as a copy of its key,
+// charges deltas plus its bytes, and deletes the intent row, all in the
+// transaction that claimed it.
+func recordIntent(ctx context.Context, tx TxAdapter, p *PendingObject, deltas quotaDeltas) error {
+	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, &p.StoredForm, p.Identity)
+	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
+		return fmt.Errorf("insert %s location: %w", p.RoleOrDefault(), err)
+	}
+	deltas.add(p.BackendName, p.SizeBytes)
+	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+		return err
+	}
+	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
+		return fmt.Errorf("delete %s pending row: %w", p.RoleOrDefault(), err)
+	}
+	return nil
 }
 
 // discardUntrustedCopy resolves an upload overtaken by a newer write by queueing

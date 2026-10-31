@@ -285,43 +285,23 @@ func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
 	return out
 }
 
-// toFatObjectLocations converts a slice of encryption-aware sqlc rows.
-// Pointer-typed nullable columns are safely dereferenced.
+// toFatObjectLocations converts a slice of encryption-aware sqlc rows, adding
+// the stored form to the slim columns. A NULL column leaves its zero value.
 func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
-	out := make([]core.ObjectLocation, len(rows))
+	out := toSlimObjectLocations(rows)
 	for i := range rows {
 		r := rows[i]
-		loc := core.ObjectLocation{
-			ObjectKey:     r.GetObjectKey(),
-			BackendName:   r.GetBackendName(),
-			StorageKey:    r.GetStorageKey(),
-			SizeBytes:     r.GetSizeBytes(),
-			CreatedAt:     r.GetCreatedAt().Time,
-			Encrypted:     r.GetEncrypted(),
-			EncryptionKey: r.GetEncryptionKey(),
+		out[i].StoredForm = core.StoredForm{
+			Encrypted:                r.GetEncrypted(),
+			EncryptionKey:            r.GetEncryptionKey(),
+			KeyID:                    derefStr(r.GetKeyID()),
+			PlaintextSize:            derefInt64(r.GetPlaintextSize()),
+			ContentHash:              derefStr(r.GetContentHash()),
+			CompressionAlgorithm:     derefStr(r.GetCompressionAlgorithm()),
+			CompressionLevel:         derefStr(r.GetCompressionLevel()),
+			CompressionFormatVersion: int(derefInt16(r.GetCompressionFormatVersion())),
+			LogicalSize:              derefInt64(r.GetLogicalSize()),
 		}
-		if k := r.GetKeyID(); k != nil {
-			loc.KeyID = *k
-		}
-		if p := r.GetPlaintextSize(); p != nil {
-			loc.PlaintextSize = *p
-		}
-		if h := r.GetContentHash(); h != nil {
-			loc.ContentHash = *h
-		}
-		if a := r.GetCompressionAlgorithm(); a != nil {
-			loc.CompressionAlgorithm = *a
-		}
-		if l := r.GetCompressionLevel(); l != nil {
-			loc.CompressionLevel = *l
-		}
-		if v := r.GetCompressionFormatVersion(); v != nil {
-			loc.CompressionFormatVersion = int(*v)
-		}
-		if s := r.GetLogicalSize(); s != nil {
-			loc.LogicalSize = *s
-		}
-		out[i] = loc
 	}
 	return out
 }

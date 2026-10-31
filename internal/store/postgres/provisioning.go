@@ -29,15 +29,7 @@ func (s *Store) ListBuckets(ctx context.Context) ([]core.Bucket, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list buckets: %w", err)
 	}
-	out := make([]core.Bucket, 0, len(rows))
-	for i := range rows {
-		b, err := bucketFromRow(&rows[i])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, nil
+	return mapSliceErr(rows, bucketFromRow)
 }
 
 // ListUsers returns every stored user, ordered by name.
@@ -64,16 +56,9 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list grants: %w", err)
 	}
-	out := make([]core.Grant, 0, len(rows))
-	for i := range rows {
-		r := &rows[i]
-		g, err := core.GrantFromColumns(r.UserID, r.ResourceKind, r.ResourceName, r.Permissions, r.CreatedAt.Time)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, nil
+	return mapSliceErr(rows, func(r *db.ListGrantsRow) (core.Grant, error) {
+		return core.GrantFromColumns(r.UserID, r.ResourceKind, r.ResourceName, r.Permissions, r.CreatedAt.Time)
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -126,15 +111,20 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 
 // CreateGrant gives a user access to one resource.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
-	if err := s.queries.CreateGrant(ctx, db.CreateGrantParams{
+	if err := s.queries.CreateGrant(ctx, grantParams(g)); err != nil {
+		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
+	}
+	return nil
+}
+
+// grantParams is the column set both grant writes take.
+func grantParams(g *core.Grant) db.CreateGrantParams {
+	return db.CreateGrantParams{
 		UserID:       g.UserID,
 		ResourceKind: string(g.Resource.Kind),
 		ResourceName: g.Resource.Name,
 		Permissions:  g.Permissions.String(),
-	}); err != nil {
-		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
 	}
-	return nil
 }
 
 // UpdateBucket writes what a bucket carries. The name identifies it and its
@@ -167,12 +157,7 @@ func (s *Store) RenameUser(ctx context.Context, id, name string) error {
 // grant when it is absent. The upsert is what lets a caller declare access
 // without first asking whether it is already there.
 func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
-	if err := s.queries.SetGrant(ctx, db.SetGrantParams{
-		UserID:       g.UserID,
-		ResourceKind: string(g.Resource.Kind),
-		ResourceName: g.Resource.Name,
-		Permissions:  g.Permissions.String(),
-	}); err != nil {
+	if err := s.queries.SetGrant(ctx, db.SetGrantParams(grantParams(g))); err != nil {
 		return fmt.Errorf("set grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
 	}
 	return nil

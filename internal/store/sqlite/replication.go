@@ -11,7 +11,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -37,13 +36,10 @@ import (
 // copies going there, not one already on its way.
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int, excluded []string) ([]core.ObjectLocation, error) {
 	const query = `
-		SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
-		       ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
-		       ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
-		       ol.logical_size, ol.created_at
+		SELECT ` + objectColumns + `
 		FROM object_locations ol
 		JOIN (
-		    SELECT ol2.object_key
+		    SELECT ol2.object_key AS under_key
 		    FROM object_locations ol2
 		    LEFT JOIN (
 		        SELECT object_key, COUNT(*) AS copies
@@ -54,16 +50,14 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		    GROUP BY ol2.object_key, i.copies
 		    HAVING COUNT(*) + COALESCE(i.copies, 0) < ?
 		    LIMIT ?
-		) ur ON ol.object_key = ur.object_key
+		) ur ON ol.object_key = ur.under_key
 		ORDER BY ol.object_key, ol.created_at ASC`
 
 	rows, err := s.db.QueryContext(ctx, query, jsonList(excluded), factor, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
-	defer rows.Close()
-
-	return scanObjectLocations(rows)
+	return collectRows(rows, rowsObjectLocations, scanObjectLocation)
 }
 
 // -------------------------------------------------------------------------
@@ -75,28 +69,23 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 // score each copy and decide which to remove.
 func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
-		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
-		        ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
-		        ol.logical_size, ol.created_at
+		`SELECT `+objectColumns+`
 		 FROM object_locations ol
 		 JOIN (
-		     SELECT object_key
+		     SELECT object_key AS over_key
 		     FROM object_locations
 		     WHERE managed
 		     GROUP BY object_key
 		     HAVING COUNT(*) > ?
 		     LIMIT ?
-		 ) orep ON ol.object_key = orep.object_key
+		 ) orep ON ol.object_key = orep.over_key
 		 ORDER BY ol.object_key, ol.created_at ASC`,
 		factor, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)
 	}
-	defer rows.Close()
-
-	return scanObjectLocations(rows)
+	return collectRows(rows, rowsObjectLocations, scanObjectLocation)
 }
 
 // CountReplicationBacklog counts every key under and over the target factor,
@@ -124,31 +113,4 @@ func (s *Store) CountReplicationBacklog(ctx context.Context, factor int) (core.R
 		return core.ReplicationBacklog{}, fmt.Errorf("failed to count replication backlog: %w", err)
 	}
 	return b, nil
-}
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// scanObjectLocations converts sql.Rows into a slice of ObjectLocation.
-func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
-	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
-		var (
-			loc       core.ObjectLocation
-			form      storedFormColumns
-			createdAt string
-		)
-		dest := append([]any{&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes},
-			form.scanDest(&loc.StoredForm)...)
-		if err := rows.Scan(append(dest, &createdAt)...); err != nil {
-			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
-		}
-		form.apply(&loc.StoredForm)
-		var parseErr error
-		loc.CreatedAt, parseErr = parseTime(createdAt)
-		if parseErr != nil {
-			return core.ObjectLocation{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
-		}
-		return loc, nil
-	})
 }

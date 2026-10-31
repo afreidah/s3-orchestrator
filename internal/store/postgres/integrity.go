@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -38,7 +36,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	}
 	rows, err := s.queries.GetLeastRecentlyScrubbedObjects(ctx, db.GetLeastRecentlyScrubbedObjectsParams{
 		BackendNames:   backends,
-		ScrubbedBefore: pgtype.Timestamptz{Time: scrubbedBefore, Valid: true},
+		ScrubbedBefore: pgTimestamptz(scrubbedBefore),
 		RowLimit:       rowLimit(max(1, limit)),
 	})
 	if err != nil {
@@ -56,7 +54,7 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 	}
 	n, err := s.queries.CountScrubCandidatesOnBackends(ctx, db.CountScrubCandidatesOnBackendsParams{
 		BackendNames:   backends,
-		ScrubbedBefore: pgtype.Timestamptz{Time: scrubbedBefore, Valid: true},
+		ScrubbedBefore: pgTimestamptz(scrubbedBefore),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count scrub candidates: %w", err)

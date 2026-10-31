@@ -86,26 +86,20 @@ func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error
 // AddDrainedObjects adds moved to the count of objects a drain in progress has
 // moved off its backend.
 func (s *Store) AddDrainedObjects(ctx context.Context, backendName string, moved int64) error {
-	if _, err := s.db.ExecContext(ctx, `
+	return s.exec(ctx, "add drained objects", `
 		UPDATE backend_states SET objects_moved = objects_moved + ?
-		WHERE backend_name = ? AND (flags & ?) <> 0`, moved, backendName, core.FlagDraining); err != nil {
-		return fmt.Errorf("add drained objects: %w", err)
-	}
-	return nil
+		WHERE backend_name = ? AND (flags & ?) <> 0`, moved, backendName, core.FlagDraining)
 }
 
 // MarkDrainFailed records why a drain in progress stopped. The failed flag
 // stays, so the backend remains refused until an operator retries or clears
 // it.
 func (s *Store) MarkDrainFailed(ctx context.Context, backendName, reason string) error {
-	if _, err := s.db.ExecContext(ctx, `
+	return s.exec(ctx, "mark drain failed", `
 		UPDATE backend_states
 		SET flags = (flags & ~?3) | ?4, last_error = ?5, finished_at = ?6
 		WHERE backend_name = ?1 AND (flags & ?2) <> 0`,
-		backendName, core.FlagDraining, core.DrainFlags, core.FlagDrainFailed, reason, now()); err != nil {
-		return fmt.Errorf("mark drain failed: %w", err)
-	}
-	return nil
+		backendName, core.FlagDraining, core.DrainFlags, core.FlagDrainFailed, reason, now())
 }
 
 // CompleteDrain marks a drain in progress as drained when no managed object

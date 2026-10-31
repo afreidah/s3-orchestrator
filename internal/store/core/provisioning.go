@@ -153,14 +153,7 @@ func EncodeCORS(rules []config.CORSRule) ([]byte, error) {
 // that is not a rule set is an error rather than a bucket with no CORS, which
 // would silently drop a browser policy.
 func DecodeCORS(b []byte) ([]config.CORSRule, error) {
-	if len(b) == 0 {
-		return nil, nil
-	}
-	var rules []config.CORSRule
-	if err := json.Unmarshal(b, &rules); err != nil {
-		return nil, fmt.Errorf("decode bucket cors: %w", err)
-	}
-	return rules, nil
+	return decodeJSONColumn[[]config.CORSRule](b, "bucket cors")
 }
 
 // GrantFromColumns builds a grant from its stored columns, compiling the

@@ -191,10 +191,6 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 // with aggregate stats for subdirectories. Files include backend and creation
 // time. Prefix must end with "/" (or be "" for root).
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 200
-	}
-
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Get aggregate stats for all immediate children (dirs + files). NameStart

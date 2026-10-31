@@ -34,14 +34,21 @@ func EncodeUserMetadata(m map[string]string) ([]byte, error) {
 // column yields a nil map, which is what an object whose metadata was never
 // recorded has.
 func DecodeUserMetadata(b []byte) (map[string]string, error) {
+	return decodeJSONColumn[map[string]string](b, "user metadata")
+}
+
+// decodeJSONColumn reads a stored JSON column as T. An empty column is T's
+// zero value; anything that does not decode is an error naming what.
+func decodeJSONColumn[T any](b []byte, what string) (T, error) {
+	var v T
 	if len(b) == 0 {
-		return nil, nil
+		return v, nil
 	}
-	var m map[string]string
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("decode user metadata: %w", err)
+	if err := json.Unmarshal(b, &v); err != nil {
+		var zero T
+		return zero, fmt.Errorf("decode %s: %w", what, err)
 	}
-	return m, nil
+	return v, nil
 }
 
 // IdentityFromColumns assembles the identity a row carries, or nil when the

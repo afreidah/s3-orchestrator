@@ -63,16 +63,7 @@ func (s *Store) PendingDepth(ctx context.Context) (int64, error) {
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
 func pendingInsertParams(p *core.PendingObject, accepts core.BackendFlags) db.InsertPendingObjectIfFitsParams {
-	var (
-		etag        *string
-		contentType *string
-		userMeta    []byte
-	)
-	if id := p.Identity; id != nil {
-		etag = strPtr(id.ETag)
-		contentType = strPtr(id.ContentType)
-		userMeta, _ = core.EncodeUserMetadata(id.UserMetadata)
-	}
+	etag, contentType, userMeta := identityColumns(p.Identity)
 	return db.InsertPendingObjectIfFitsParams{
 		Etag:                     etag,
 		ContentType:              contentType,
