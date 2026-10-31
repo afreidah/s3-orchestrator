@@ -28,6 +28,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -229,101 +230,48 @@ func TestQuotaSyncHook_FailedOnSyncError(t *testing.T) {
 	}
 }
 
-// TestBucketAuthHook_FailedResolution proves that a broken S3-server
-// provider surfaces as HookFailed with the labelled error, instead of
-// silently being treated as "feature off".
-func TestBucketAuthHook_FailedResolution(t *testing.T) {
-	inj := do.New()
-	failingProvider[*s3api.Server](inj)
-	h := &bucketAuthHook{inj: inj}
-	cfg := &config.Config{}
-	status, err := h.Apply(context.Background(), nil, cfg)
-	if status != HookFailed {
-		t.Fatalf("status = %s, want failed", status)
-	}
-	if !errors.Is(err, errResolve) {
-		t.Fatalf("err = %v, want wrap of errResolve", err)
-	}
-}
+// TestProvisioningHook_ApplyInstalls proves a reload publishes the new bucket
+// set, credentials and CORS rules, which is what makes adding a bucket or a
+// browser origin a reload rather than a restart.
+func TestProvisioningHook_ApplyInstalls(t *testing.T) {
+	inj, declared, srv := provisioningInjector(t)
+	h := &provisioningHook{inj: inj}
 
-// TestBucketAuthHook_SkippedWhenDisabled covers the "no S3 server
-// registered" path: the hook reports Skipped without touching anything.
-func TestBucketAuthHook_SkippedWhenDisabled(t *testing.T) {
-	h := &bucketAuthHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookSkipped || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
-	}
-}
-
-// TestCORSHook_Applied proves a reload publishes the new rule set to the
-// live policy, which is what makes adding a browser origin a reload rather
-// than a restart.
-func TestCORSHook_Applied(t *testing.T) {
-	inj := do.New()
-	do.Provide(inj, func(do.Injector) (*cors.Policy, error) {
-		return cors.New(s3api.BucketFromPath, s3api.WriteS3Error), nil
-	})
-	h := &corsHook{inj: inj}
-	cfg := &config.Config{Buckets: []config.BucketConfig{{
-		Name: "photos",
-		CORS: []config.CORSRule{{
-			AllowedOrigins: []string{"https://app.example.com"},
-			AllowedMethods: []string{"GET"},
-		}},
-	}}}
-	declared := provisioning.NewDeclared()
-	declared.Set(provisioning.Merge(cfg.Buckets, cfg.Auth, &provisioning.Snapshot{}).Buckets)
-	do.ProvideValue(inj, declared)
-
-	status, err := h.Apply(context.Background(), nil, cfg)
+	status, err := h.Apply(context.Background(), nil, corsBucketConfig("https://app.example.com"))
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
-}
-
-// TestCORSHook_CheckRejectsUnreadableRule proves an unusable pattern aborts
-// the reload during Check, so no hook applies anything and the running
-// server keeps the rules it already had.
-func TestCORSHook_CheckRejectsUnreadableRule(t *testing.T) {
-	h := &corsHook{inj: do.New()}
-	cfg := &config.Config{Buckets: []config.BucketConfig{{
-		Name: "photos",
-		CORS: []config.CORSRule{{
-			AllowedOrigins: []string{"https://*.*.example.com"},
-			AllowedMethods: []string{"GET"},
-		}},
-	}}}
-
-	if err := h.Check(nil, cfg); err == nil {
-		t.Error("Check accepted a pattern the matcher cannot read, want an error")
+	if !slices.Contains(declared.Names(), "photos") {
+		t.Errorf("declared = %v, want photos published", declared.Names())
+	}
+	if srv.GetBucketAuth() == nil {
+		t.Error("credential registry not installed")
 	}
 }
 
-// TestCORSHook_FailedResolution proves a broken policy provider surfaces as
-// HookFailed rather than being read as "feature off".
-func TestCORSHook_FailedResolution(t *testing.T) {
+// TestProvisioningHook_ApplyFailsOnBrokenServer proves a broken S3-server
+// provider surfaces as HookFailed rather than being read as "feature off".
+func TestProvisioningHook_ApplyFailsOnBrokenServer(t *testing.T) {
 	inj := do.New()
-	failingProvider[*cors.Policy](inj)
-	h := &corsHook{inj: inj}
+	emptyProvisioningStore(t, inj)
+	do.ProvideValue(inj, provisioning.NewDeclared())
+	do.ProvideValue(inj, config.ModeAPI)
+	failingProvider[*s3api.Server](inj)
+	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed {
-		t.Fatalf("status = %s, want failed", status)
-	}
-	if !errors.Is(err, errResolve) {
-		t.Fatalf("err = %v, want wrap of errResolve", err)
+	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), nil, &config.Config{})
+	if status != HookFailed || !errors.Is(err, errResolve) {
+		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
 	}
 }
 
-// TestCORSHook_SkippedWhenUnregistered covers the path where no policy is
-// registered at all, which is the worker-only mode with no S3 surface.
-func TestCORSHook_SkippedWhenUnregistered(t *testing.T) {
-	h := &corsHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookSkipped || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
-	}
+// corsBucketConfig is a config declaring one bucket, photos, with a CORS rule
+// allowing origin.
+func corsBucketConfig(origin string) *config.Config {
+	return &config.Config{Buckets: []config.BucketConfig{{
+		Name: "photos",
+		CORS: []config.CORSRule{{AllowedOrigins: []string{origin}, AllowedMethods: []string{"GET"}}},
+	}}}
 }
 
 // TestRateLimitHook_FeatureDisabled covers the early-return when the
@@ -563,8 +511,7 @@ func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 func TestHookNamesStable(t *testing.T) {
 	cases := map[Hook]string{
 		&tlsCertHook{}:       "tls_certificate",
-		&bucketAuthHook{}:    "bucket_credentials",
-		&corsHook{}:          "bucket_cors",
+		&provisioningHook{}:  "provisioning",
 		&rateLimitHook{}:     "rate_limit",
 		&quotaSyncHook{}:     "quota_sync",
 		&usageLimitsHook{}:   "usage_limits",
@@ -617,7 +564,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Scrubber:     workers.Scrubber,
 		Unhashed:     mock,
 		Declared:     provisioning.NewDeclared(),
-		Cfg:          &config.Config{},
+		Config:       ops.NewConfigStore(&config.Config{}),
 	})
 	throttle := httputil.NewLoginThrottle(5, time.Minute)
 	t.Cleanup(throttle.Close)
@@ -652,10 +599,10 @@ func duplicateKeyConfig() *config.Config {
 // -------------------------------------------------------------------------
 
 // emptyProvisioningStore registers a store answering every listing empty, which
-// the hook reads because a reload assembles the registry from config merged with
-// the store. Without it a hook fails on the missing dependency rather than on
-// the config it was handed, and a test asserting rejection would pass for the
-// wrong reason.
+// the hook reads because a reload loads the provisioning view from config
+// merged with the store. Without it a hook fails on the missing dependency
+// rather than on the config it was handed, and a test asserting rejection
+// would pass for the wrong reason.
 func emptyProvisioningStore(t *testing.T, inj do.Injector) {
 	t.Helper()
 	s := storetest.NewMockProvisioningStore(gomock.NewController(t))
@@ -665,52 +612,55 @@ func emptyProvisioningStore(t *testing.T, inj do.Injector) {
 	s.EXPECT().ListCredentials(a).Return(nil, nil).AnyTimes()
 	s.EXPECT().ListGrants(a).Return(nil, nil).AnyTimes()
 	do.ProvideValue[core.ProvisioningStore](inj, s)
-	do.ProvideValue(inj, provisioning.NewDeclared())
 }
 
-// TestBucketAuthHook_CheckRejectsAmbiguousCredential proves an ambiguous
-// credential is caught in the Check pass. That is what matters for safety:
-// Reload aborts before any hook applies, so the server keeps serving with the
-// registry it already had rather than one where an access key resolves to
-// whichever bucket happened to be written last.
-func TestBucketAuthHook_CheckRejectsAmbiguousCredential(t *testing.T) {
+// provisioningInjector registers everything the provisioning hook loads from
+// and installs into, in a mode serving S3, and returns the views a test reads.
+func provisioningInjector(t *testing.T) (do.Injector, *provisioning.Declared, *s3api.Server) {
+	t.Helper()
 	inj := do.New()
 	emptyProvisioningStore(t, inj)
-	h := &bucketAuthHook{inj: inj}
-	if err := h.Check(&config.Config{}, duplicateKeyConfig()); err == nil {
-		t.Fatal("Check must reject an access key claimed by two buckets")
+	declared, srv := provisioning.NewDeclared(), &s3api.Server{}
+	do.ProvideValue(inj, declared)
+	do.ProvideValue(inj, srv)
+	do.ProvideValue(inj, config.ModeAPI)
+	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
+	return inj, declared, srv
+}
+
+// TestProvisioningHook_CheckChangesNothing proves the Check pass publishes
+// nothing, whether it accepts the config or refuses it: an ambiguous credential
+// or an unreadable CORS rule aborts the reload with every running view as it
+// was, and a valid config waits for Apply.
+func TestProvisioningHook_CheckChangesNothing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg     *config.Config
+		wantErr bool
+	}{
+		"valid":                {corsBucketConfig("https://app.example.com"), false},
+		"ambiguous credential": {duplicateKeyConfig(), true},
+		"unreadable CORS rule": {corsBucketConfig("https://*.*.example.com"), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inj, declared, srv := provisioningInjector(t)
+			err := (&provisioningHook{inj: inj}).Check(&config.Config{}, tc.cfg)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Check = %v, want error %v", err, tc.wantErr)
+			}
+			if len(declared.Names()) != 0 || srv.GetBucketAuth() != nil {
+				t.Errorf("Check published: declared %v, registry %v", declared.Names(), srv.GetBucketAuth())
+			}
+		})
 	}
 }
 
-// TestBucketAuthHook_CheckAcceptsDistinctCredentials verifies the Check pass
-// stays out of the way of a valid reload.
-func TestBucketAuthHook_CheckAcceptsDistinctCredentials(t *testing.T) {
-	inj := do.New()
-	emptyProvisioningStore(t, inj)
-	h := &bucketAuthHook{inj: inj}
-	cfg := &config.Config{Buckets: []config.BucketConfig{
-		{Name: "backups", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AKIABACKUPS", SecretAccessKey: "backups-secret"},
-		}},
-		{Name: "traces", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AKIATRACES", SecretAccessKey: "traces-secret"},
-		}},
-	}}
-	if err := h.Check(&config.Config{}, cfg); err != nil {
-		t.Fatalf("Check rejected a valid config: %v", err)
-	}
-}
-
-// TestBucketAuthHook_ApplyRejectsAmbiguousCredential covers the Apply path
+// TestProvisioningHook_ApplyRejectsAmbiguousCredential covers the Apply path
 // directly, so a caller that skipped Check still cannot install a registry
 // built from an ambiguous credential.
-func TestBucketAuthHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
-	inj := do.New()
-	do.ProvideValue(inj, &s3api.Server{})
-	emptyProvisioningStore(t, inj)
-	h := &bucketAuthHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, duplicateKeyConfig())
-	if status != HookFailed || err == nil {
-		t.Fatalf("Apply = (%s, %v), want (failed, error)", status, err)
+func TestProvisioningHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
+	inj, _, srv := provisioningInjector(t)
+	status, err := (&provisioningHook{inj: inj}).Apply(context.Background(), nil, duplicateKeyConfig())
+	if status != HookFailed || err == nil || srv.GetBucketAuth() != nil {
+		t.Fatalf("Apply = (%s, %v), registry %v; want failed and nothing installed", status, err, srv.GetBucketAuth())
 	}
 }
