@@ -107,7 +107,7 @@ func registerSharedStateWatchers(sm *lifecycle.Manager, i do.Injector) error {
 		return err
 	}
 	sm.Register("provisioning_watch", newProvisioningWatcher(shared, func(ctx context.Context) error {
-		return applyProvisioning(ctx, i)
+		return applyLiveProvisioning(ctx, i)
 	}))
 	objectCache := Optional[objcache.ObjectCache](i)
 	if objectCache.Failed() {

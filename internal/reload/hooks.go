@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// One Hook implementation per reloadable subsystem: TLS cert rotator,
-// S3 bucket auth registry, browser CORS rules, rate limiter, quota sync,
+// One Hook implementation per reloadable subsystem: TLS cert rotator, the
+// provisioning view (bucket set, credentials, CORS rules), rate limiter, quota sync,
 // per-backend usage limits, slog level, worker configs, manager config
 // sections, and the UI handler. Each hook resolves its dependencies through
 // the injector (or a coordinator-owned handle for the cert reloader) so the
@@ -24,10 +24,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -45,8 +43,7 @@ func resolutionError(label string, err error) error {
 func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel *slog.LevelVar) []Hook {
 	return []Hook{
 		&tlsCertHook{reloader: certReloader},
-		&bucketAuthHook{inj: inj},
-		&corsHook{inj: inj},
+		&provisioningHook{inj: inj},
 		&rateLimitHook{inj: inj},
 		&quotaSyncHook{inj: inj},
 		&usageLimitsHook{inj: inj},
@@ -98,72 +95,36 @@ func (h *tlsCertHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus,
 }
 
 // -------------------------------------------------------------------------
-// BUCKET CREDENTIALS
+// PROVISIONING
 // -------------------------------------------------------------------------
 
-// bucketAuthHook swaps the S3 server's bucket credentials registry.
-type bucketAuthHook struct {
+// provisioningHook rebuilds what the config file merged with the store
+// yields: the declared bucket set, the credential registry and the CORS rules.
+// Loading from the file alone would drop every bucket and credential created
+// through the API on each reload.
+type provisioningHook struct {
 	inj do.Injector
 }
 
-func (*bucketAuthHook) Name() string { return "bucket_credentials" }
+func (*provisioningHook) Name() string { return "provisioning" }
 
-// Check builds the replacement registry and throws it away. Doing it here
-// means an ambiguous credential aborts the whole reload before any hook has
-// applied anything, so the running server keeps the registry it already had.
-func (h *bucketAuthHook) Check(_, newCfg *config.Config) error {
+// Check loads the replacement and throws it away. Loading publishes nothing,
+// so an ambiguous credential, an unreadable CORS rule or an unreadable store
+// aborts the reload with every running view untouched.
+func (h *provisioningHook) Check(_, newCfg *config.Config) error {
 	if newCfg == nil {
 		return nil
 	}
-	_, err := di.AssembleBucketRegistry(context.Background(), h.inj, newCfg)
+	_, err := di.LoadProvisioning(context.Background(), h.inj, newCfg)
 	return err
 }
 
-// Apply rebuilds from the config file merged with the store, which is what a
-// boot does. Rebuilding from the file alone would drop every bucket and
-// credential created through the API on each reload.
-func (h *bucketAuthHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "S3 server", func(srv *s3api.Server) error {
-		registry, err := di.AssembleBucketRegistry(ctx, h.inj, newCfg)
-		if err != nil {
-			return err
-		}
-		srv.SetBucketAuth(registry)
-		return nil
-	})
-}
-
-// -------------------------------------------------------------------------
-// BUCKET CORS
-// -------------------------------------------------------------------------
-
-// corsHook swaps the compiled browser CORS rule set.
-type corsHook struct {
-	inj do.Injector
-}
-
-func (*corsHook) Name() string { return "bucket_cors" }
-
-// Check compiles the incoming file's rules and discards them, so a rule the
-// matcher cannot read aborts the reload before any hook has applied anything
-// and the running server keeps the rules it already had. Only the file's rules
-// are checked; the store's were compiled when the provisioning API accepted
-// them.
-func (*corsHook) Check(_, newCfg *config.Config) error {
-	if newCfg == nil {
-		return nil
+// Apply loads and installs the replacement.
+func (h *provisioningHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
+	if err := di.ApplyProvisioning(ctx, h.inj, newCfg); err != nil {
+		return HookFailed, err
 	}
-	_, err := cors.NewRegistry(provisioning.Merge(newCfg.Buckets, newCfg.Auth, &provisioning.Snapshot{}).Buckets)
-	return err
-}
-
-// Apply compiles from the merged set bucketAuthHook has just republished, so a
-// bucket created through the provisioning API keeps its rules across a reload
-// instead of having them dropped back to whatever the file declares.
-func (h *corsHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "CORS policy", func(policy *cors.Policy) error {
-		return di.RebuildCORS(h.inj, policy)
-	})
+	return HookApplied, nil
 }
 
 // -------------------------------------------------------------------------

@@ -22,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -136,7 +135,8 @@ func registerWorkers(inj do.Injector, mode config.Mode) {
 // registered above. Conditional transport surfaces (UI, admin) live in
 // registerOptionalFeatures.
 func registerTransport(inj do.Injector) {
-	do.ProvideValue(inj, provisioning.NewDeclared())
+	do.Provide(inj, ProvideProvisioned)
+	do.Provide(inj, ProvideDeclared)
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideCORS)
 	do.Provide(inj, ProvideS3Server)
