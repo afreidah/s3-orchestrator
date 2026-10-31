@@ -11,22 +11,8 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
-// Browser preflight metrics.
-var (
-	// CORSPreflightTotal counts preflight requests by outcome, labelled
-	// allowed or rejected. A climbing rejected count with no allowed count is
-	// the signature of a bucket whose rules do not cover the origin the
-	// application is served from. Read by the CORS panel on the dashboard.
-	CORSPreflightTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_cors_preflight_total",
-			Help: "Browser CORS preflight requests by outcome",
-		},
-		[]string{"result"},
-	)
-)
+// CORSPreflightTotal counts preflight requests by outcome, labelled
+// allowed or rejected. A climbing rejected count with no allowed count is
+// the signature of a bucket whose rules do not cover the origin the
+// application is served from. Read by the CORS panel on the dashboard.
+var CORSPreflightTotal = counterVec("s3o_cors_preflight_total", "Browser CORS preflight requests by outcome", "result")

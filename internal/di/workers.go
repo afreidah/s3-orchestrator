@@ -15,8 +15,6 @@
 package di
 
 import (
-	"fmt"
-
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
@@ -122,18 +120,12 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 // stored bytes back into the plaintext a content hash covers. The codec is
 // resolved even with compression disabled, so already-compressed objects stay
 // readable.
-func resolveStoredForm(i do.Injector, cfg *config.Config) (*encryption.Encryptor, *compression.Codec, error) {
-	var enc *encryption.Encryptor
+func resolveStoredForm(i do.Injector, cfg *config.Config) (enc *encryption.Encryptor, codec *compression.Codec, err error) {
 	if cfg.Encryption.Enabled {
-		if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
-			enc = e
-		}
+		enc, _ = do.Invoke[*encryption.Encryptor](i)
 	}
-	codec, err := do.Invoke[*compression.Codec](i)
-	if err != nil {
-		return nil, nil, err
-	}
-	return enc, codec, nil
+	codec, err = do.Invoke[*compression.Codec](i)
+	return enc, codec, err
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
@@ -158,14 +150,10 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	concurrency := cfg.CleanupQueue.Concurrency
-	if concurrency <= 0 {
-		concurrency = 10
-	}
 	w := worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 		Ops:              rt,
 		Store:            stores,
-		Concurrency:      concurrency,
+		Concurrency:      cfg.CleanupQueue.Concurrency,
 		InstanceID:       id.String(),
 		ClaimGracePeriod: cfg.CleanupQueue.ClaimGracePeriod,
 	})
@@ -174,16 +162,11 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. It is always
-// provided, since every write claims its bytes with an intent. A nil
-// dependency here is a wiring bug and surfaces as an error, so
-// Optional[*worker.PendingReaper] reports Failed.
+// provided, since every write claims its bytes with an intent.
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
-	}
-	if c.Stores == nil {
-		return nil, fmt.Errorf("pending reaper: MetadataStore resolved to nil")
 	}
 	r := worker.NewPendingReaper(worker.PendingReaperDeps{
 		Ops:       c.Runtime,
@@ -257,11 +240,8 @@ func ProvideBackendStateManager(i do.Injector) (*backendstate.Manager, error) {
 // AcceptsWrites current on the instance that runs it, and aborts a drained
 // backend's open uploads through the multipart manager.
 func ProvideDrainer(i do.Injector) (*worker.Drainer, error) {
-	c, err := resolveWorkerCore(i)
-	if err != nil {
-		return nil, err
-	}
 	r := newResolver(i)
+	c := workerCoreFrom(r)
 	dm := r.Resolve[*backendstate.Manager]()
 	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
 	if r.err != nil {

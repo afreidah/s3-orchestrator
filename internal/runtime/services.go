@@ -6,8 +6,8 @@
 // Forces eager construction of the services the daemon needs available before
 // the HTTP server starts accepting traffic. Required services bail with a
 // startup error; optional services are constructed lazily on first use by
-// their consumers. Worker config application is colocated here because it
-// runs immediately after the workers' providers fire.
+// their consumers. The reloadable config sections are applied here, right
+// after the providers that read them are built.
 // -------------------------------------------------------------------------------
 
 package runtime
@@ -31,8 +31,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -44,11 +42,11 @@ import (
 // in order during shutdown. Everything else the injector owns and disposes of
 // itself.
 type bootstrapped struct {
-	objects      *object.Manager
-	multipart    *multipart.Manager
-	usage        *usage.Service
-	runtime      *infra.BackendRuntime
-	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	objects   *object.Manager
+	multipart *multipart.Manager
+	usage     *usage.Service
+	runtime   *infra.BackendRuntime
+	lifecyc   *lifecycle.Manager
 }
 
 // -------------------------------------------------------------------------
@@ -73,9 +71,6 @@ func resolveBootstrapped(inj do.Injector) (bootstrapped, error) {
 	}
 	if b.usage, err = do.Invoke[*usage.Service](inj); err != nil {
 		return b, fmt.Errorf("initialize usage service: %w", err)
-	}
-	if b.integrityCfg, err = do.Invoke[*syncutil.AtomicConfig[config.IntegrityConfig]](inj); err != nil {
-		return b, fmt.Errorf("initialize integrity config: %w", err)
 	}
 	return b, nil
 }
@@ -103,14 +98,14 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 		return b, fmt.Errorf("initialize S3 server: %w", err)
 	}
 
-	if err := applyWorkerConfigs(inj, &cfg.Rebalance, &cfg.Replication, &cfg.Integrity); err != nil {
-		return b, err
+	if err := di.ApplyWorkerConfigs(inj, cfg); err != nil {
+		return b, fmt.Errorf("apply worker configs: %w", err)
 	}
-	b.usage.SetConfig(&cfg.UsageFlush)
-	b.integrityCfg.Store(&cfg.Integrity)
-	// Lifecycle config is seeded by ProvideExpiryManager, which owns it.
+	if err := di.ApplyRuntimeConfigs(inj, cfg); err != nil {
+		return b, fmt.Errorf("apply runtime configs: %w", err)
+	}
 
-	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
+	if b.lifecyc, err = do.Invoke[*lifecycle.Manager](inj); err != nil {
 		return b, fmt.Errorf("initialize lifecycle manager: %w", err)
 	}
 
@@ -133,25 +128,4 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 		)
 	}
 	return b, nil
-}
-
-// applyWorkerConfigs pushes Rebalance / Replication / Integrity configs
-// onto each worker. Workers that did not get constructed (e.g. api-only
-// mode) silently skip. Errors are returned only for unexpected wiring
-// failures; "worker not registered" is normal.
-func applyWorkerConfigs(inj do.Injector, rebalance *config.RebalanceConfig, replication *config.ReplicationConfig, integrity *config.IntegrityConfig) error {
-	if rb, err := do.Invoke[*worker.Rebalancer](inj); err == nil {
-		rb.SetConfig(rebalance)
-	}
-	if rp, err := do.Invoke[*worker.Replicator](inj); err == nil {
-		rp.SetConfig(replication)
-		rp.SetIntegrityConfig(integrity)
-	}
-	if or, err := do.Invoke[*worker.OverReplicationCleaner](inj); err == nil {
-		or.SetConfig(replication)
-	}
-	if sc, err := do.Invoke[*worker.Scrubber](inj); err == nil {
-		sc.SetConfig(integrity)
-	}
-	return nil
 }

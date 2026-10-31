@@ -9,45 +9,20 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
 // Rebalancer progress metrics.
 var (
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.
-	RebalanceObjectsMoved = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_rebalance_objects_moved_total",
-			Help: "Total number of objects moved by the rebalancer",
-		},
-		[]string{"strategy", "status"},
-	)
+	RebalanceObjectsMoved = counterVec("s3o_rebalance_objects_moved_total",
+		"Total number of objects moved by the rebalancer", "strategy", "status")
 
 	// RebalanceBytesMoved counts bytes moved by the rebalancer.
-	RebalanceBytesMoved = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_rebalance_bytes_moved_total",
-			Help: "Total bytes moved by the rebalancer",
-		},
-		[]string{"strategy"},
-	)
+	RebalanceBytesMoved = counterVec("s3o_rebalance_bytes_moved_total",
+		"Total bytes moved by the rebalancer", "strategy")
 
 	// RebalanceSkipped counts rebalancer runs that were skipped.
-	RebalanceSkipped = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_rebalance_skipped_total",
-			Help: "Total number of rebalancer runs skipped",
-		},
-		[]string{"reason"},
-	)
+	RebalanceSkipped = counterVec("s3o_rebalance_skipped_total",
+		"Total number of rebalancer runs skipped", "reason")
 
 	// RebalancePending tracks objects planned for rebalance in the current cycle.
-	RebalancePending = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_rebalance_pending",
-			Help: "Number of objects planned for rebalance",
-		},
-	)
+	RebalancePending = gauge("s3o_rebalance_pending", "Number of objects planned for rebalance")
 )

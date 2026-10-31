@@ -54,3 +54,23 @@ func Outcome(value string) slog.Attr {
 func Component(name string) slog.Attr {
 	return slog.String("component", name)
 }
+
+// TransformAttr returns a with an error value replaced by its Error() string,
+// recursing into groups, so call sites can pass a raw error and still log a
+// printable string. Any other value is returned unchanged.
+func TransformAttr(a slog.Attr) slog.Attr {
+	switch a.Value.Kind() {
+	case slog.KindAny:
+		if err, ok := a.Value.Any().(error); ok {
+			return slog.String(a.Key, err.Error())
+		}
+	case slog.KindGroup:
+		group := a.Value.Group()
+		out := make([]slog.Attr, len(group))
+		for i, child := range group {
+			out[i] = TransformAttr(child)
+		}
+		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
+	}
+	return a
+}

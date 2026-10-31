@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/di"
-	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -71,7 +70,6 @@ type Runtime struct {
 	svc      bootstrapped
 	http     *httpserver.Server
 	reload   *reload.Coordinator
-	lifecyc  *lifecycle.Manager
 	bgCancel context.CancelFunc
 	bgDone   chan struct{}
 
@@ -98,8 +96,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	}
 	r.obs = obs
 	// Scoped logger built after observability so it inherits the
-	// production handler chain (ErrAttrHandler wrapping the JSON
-	// handler) rather than the bare default.
+	// production handler chain rather than the bare default.
 	r.log = slog.Default().With(logfmt.Component("runtime"))
 
 	if limit := containerMemoryLimit(cgroupMemoryMaxPath(procSelfCgroup, cgroupRoot)); limit > 0 {
@@ -156,18 +153,12 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 			}
 			return &adminapi.ConfigResponse{Config: string(doc), PendingRestart: r.reload.PendingRestart()}, nil
 		})
-	}
-
-	lifecyc, err := do.Invoke[*lifecycle.Manager](r.inj)
-	if err != nil {
-		return nil, fmt.Errorf("resolve lifecycle manager: %w", err)
-	}
-	r.lifecyc = lifecyc
-
-	// Registered here rather than with the other services because the admin
-	// handler that builds the report resolves the lifecycle manager itself.
-	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil && cfg.Redis != nil {
-		lifecyc.Register("instance_report", adminHandler.InstanceReporter())
+		// Registered here rather than with the other services because the
+		// admin handler that builds the report resolves the lifecycle manager
+		// itself.
+		if cfg.Redis != nil {
+			r.svc.lifecyc.Register("instance_report", adminHandler.InstanceReporter())
+		}
 	}
 
 	return r, nil
@@ -261,7 +252,7 @@ func (r *Runtime) startBackgroundServices() {
 	r.bgCancel = bgCancel
 	r.bgDone = make(chan struct{})
 	go func() {
-		r.lifecyc.Run(bgCtx)
+		r.svc.lifecyc.Run(bgCtx)
 		close(r.bgDone)
 	}()
 }
@@ -310,7 +301,7 @@ func (r *Runtime) shutdown() {
 
 	r.bgCancel()
 	<-r.bgDone
-	r.lifecyc.Stop(10 * time.Second)
+	r.svc.lifecyc.Stop(10 * time.Second)
 
 	// Caches close before the final flush: the eviction goroutines are what
 	// would otherwise still be running while the counters are read.

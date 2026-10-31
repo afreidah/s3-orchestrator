@@ -13,10 +13,13 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -29,8 +32,8 @@ func TestLogBuffer_AddAndRetrieve(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
 
-	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "hello"})
-	buf.Add(LogEntry{Time: time.Now(), Level: "WARN", Message: "world"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "hello"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelWarn, Message: "world"})
 
 	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 2 {
@@ -54,7 +57,7 @@ func TestLogBuffer_Wraps(t *testing.T) {
 	for i := range logBufferCapacity + 100 {
 		buf.Add(LogEntry{
 			Time:    time.Now(),
-			Level:   "INFO",
+			Level:   slog.LevelInfo,
 			Message: "msg",
 			Attrs:   map[string]any{"i": i},
 		})
@@ -95,10 +98,10 @@ func TestLogBuffer_FilterByLevel(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
 
-	buf.Add(LogEntry{Time: time.Now(), Level: "DEBUG", Message: "debug"})
-	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "info"})
-	buf.Add(LogEntry{Time: time.Now(), Level: "WARN", Message: "warn"})
-	buf.Add(LogEntry{Time: time.Now(), Level: "ERROR", Message: "error"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelDebug, Message: "debug"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "info"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelWarn, Message: "warn"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelError, Message: "error"})
 
 	entries := buf.Entries(&LogQueryOpts{MinLevel: slog.LevelWarn})
 	if len(entries) != 2 {
@@ -121,8 +124,8 @@ func TestLogBuffer_FilterBySince(t *testing.T) {
 	old := time.Now().Add(-10 * time.Minute)
 	recent := time.Now()
 
-	buf.Add(LogEntry{Time: old, Level: "INFO", Message: "old"})
-	buf.Add(LogEntry{Time: recent, Level: "INFO", Message: "new"})
+	buf.Add(LogEntry{Time: old, Level: slog.LevelInfo, Message: "old"})
+	buf.Add(LogEntry{Time: recent, Level: slog.LevelInfo, Message: "new"})
 
 	entries := buf.Entries(&LogQueryOpts{Since: time.Now().Add(-1 * time.Minute)})
 	if len(entries) != 1 {
@@ -143,9 +146,9 @@ func TestLogBuffer_Before(t *testing.T) {
 	mid := time.Now().Add(-5 * time.Minute)
 	recent := time.Now()
 
-	buf.Add(LogEntry{Time: old, Level: "INFO", Message: "old"})
-	buf.Add(LogEntry{Time: mid, Level: "INFO", Message: "mid"})
-	buf.Add(LogEntry{Time: recent, Level: "INFO", Message: "new"})
+	buf.Add(LogEntry{Time: old, Level: slog.LevelInfo, Message: "old"})
+	buf.Add(LogEntry{Time: mid, Level: slog.LevelInfo, Message: "mid"})
+	buf.Add(LogEntry{Time: recent, Level: slog.LevelInfo, Message: "new"})
 
 	// Before mid should return only the old entry.
 	entries := buf.Entries(&LogQueryOpts{Before: mid})
@@ -181,9 +184,9 @@ func TestLogBuffer_FilterByComponent(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
 
-	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "a", Attrs: map[string]any{"component": "server"}})
-	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "b", Attrs: map[string]any{"component": "storage"}})
-	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "c"})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "a", Attrs: map[string]any{"component": "server"}})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "b", Attrs: map[string]any{"component": "storage"}})
+	buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "c"})
 
 	entries := buf.Entries(&LogQueryOpts{Component: "server"})
 	if len(entries) != 1 {
@@ -203,7 +206,7 @@ func TestLogBuffer_Limit(t *testing.T) {
 	for i := range 100 {
 		buf.Add(LogEntry{
 			Time:    time.Now(),
-			Level:   "INFO",
+			Level:   slog.LevelInfo,
 			Message: "msg",
 			Attrs:   map[string]any{"i": i},
 		})
@@ -231,7 +234,7 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 	for range 10 {
 		wg.Go(func() {
 			for range 500 {
-				buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "concurrent"})
+				buf.Add(LogEntry{Time: time.Now(), Level: slog.LevelInfo, Message: "concurrent"})
 			}
 		})
 	}
@@ -281,8 +284,8 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	if entries[0].Message != "test message" {
 		t.Errorf("message = %q, want 'test message'", entries[0].Message)
 	}
-	if entries[0].Level != "INFO" {
-		t.Errorf("level = %q, want INFO", entries[0].Level)
+	if entries[0].Level != slog.LevelInfo {
+		t.Errorf("level = %v, want INFO", entries[0].Level)
 	}
 	if entries[0].Attrs["key"] != "value" {
 		t.Errorf("attrs[key] = %v, want 'value'", entries[0].Attrs["key"])
@@ -298,31 +301,60 @@ type teeBufErr struct{ msg string }
 // Error returns the wrapped message.
 func (e *teeBufErr) Error() string { return e.msg }
 
-// TestTeeHandler_StringifiesErrorAttr pins the contract that error-typed
-// attrs land in the ring buffer as their Error() string rather than as
-// the raw error struct, so the UI's /ui/api/logs endpoint emits a
-// printable string instead of the empty-object that renders as
-// "[object Object]" downstream.
-func TestTeeHandler_StringifiesErrorAttr(t *testing.T) {
+// TestNewLogHandler_StringifiesErrors pins the production logging contract:
+// an error attr reaches both stdout and the ring buffer as its Error()
+// string, whichever call-site form passed it, so neither the JSON log nor
+// the UI's log pane shows the "{}" encoding/json gives an error struct.
+func TestNewLogHandler_StringifiesErrors(t *testing.T) {
 	t.Parallel()
-	var stdout bytes.Buffer
-	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	buf := NewLogBuffer()
-
-	logger := slog.New(NewTeeHandler(jsonHandler, buf))
-	logger.WarnContext(context.Background(), "HEAD probe failed",
-		"backend", "e2", "error", &teeBufErr{msg: "vault token expired"})
-
-	entries := buf.Entries(&LogQueryOpts{})
-	if len(entries) != 1 {
-		t.Fatalf("buffer has %d entries, want 1", len(entries))
+	cases := []struct {
+		name string
+		emit func(log *slog.Logger, err error)
+	}{
+		{"raw kv pair", func(log *slog.Logger, err error) {
+			log.WarnContext(context.Background(), "probe failed", "error", err)
+		}},
+		{"slog.Any", func(log *slog.Logger, err error) {
+			log.WarnContext(context.Background(), "probe failed", slog.Any("error", err))
+		}},
+		{"logfmt.Err", func(log *slog.Logger, err error) {
+			log.WarnContext(context.Background(), "probe failed", logfmt.Err(err))
+		}},
+		{"With", func(log *slog.Logger, err error) {
+			log.With("error", err).WarnContext(context.Background(), "probe failed")
+		}},
 	}
-	got, ok := entries[0].Attrs["error"].(string)
-	if !ok {
-		t.Fatalf("error attr type = %T, want string", entries[0].Attrs["error"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			buf := NewLogBuffer()
+			log := slog.New(NewLogHandler(&stdout, slog.LevelDebug, buf)).With(logfmt.Component("test"))
+			tc.emit(log, &teeBufErr{msg: "vault token expired"})
+
+			var record map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+				t.Fatalf("decode %q: %v", stdout.String(), err)
+			}
+			entries := buf.Entries(&LogQueryOpts{})
+			if len(entries) != 1 {
+				t.Fatalf("buffer has %d entries, want 1", len(entries))
+			}
+			assertRendered(t, "stdout", record)
+			assertRendered(t, "buffer", entries[0].Attrs)
+		})
 	}
-	if got != "vault token expired" {
-		t.Errorf("error attr = %q, want %q", got, "vault token expired")
+}
+
+// assertRendered checks that attrs carry the error as its Error() string and
+// the component the logger was scoped with.
+func assertRendered(t *testing.T, where string, attrs map[string]any) {
+	t.Helper()
+	if got := attrs["error"]; got != "vault token expired" {
+		t.Errorf("%s error = %#v, want the Error() string", where, got)
+	}
+	if got := attrs["component"]; got != "test" {
+		t.Errorf("%s component = %v, want test", where, got)
 	}
 }
 
@@ -396,19 +428,6 @@ func TestTeeHandler_WithGroupEmpty(t *testing.T) {
 	// WithGroup("") should return the same handler.
 	if same != handler {
 		t.Error("WithGroup(\"\") should return the same handler")
-	}
-}
-
-// TestLevelToSlog_UnknownLevel verifies the level to slog unknown level contract.
-// Asserts that levelToSlog(\"UNKNOWN\") = , want DEBUG.
-func TestLevelToSlog_UnknownLevel(t *testing.T) {
-	t.Parallel()
-	// Unknown level strings should map to DEBUG.
-	if got := levelToSlog("UNKNOWN"); got != slog.LevelDebug {
-		t.Errorf("levelToSlog(\"UNKNOWN\") = %v, want DEBUG", got)
-	}
-	if got := levelToSlog(""); got != slog.LevelDebug {
-		t.Errorf("levelToSlog(\"\") = %v, want DEBUG", got)
 	}
 }
 

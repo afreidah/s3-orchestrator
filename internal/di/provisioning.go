@@ -120,13 +120,11 @@ func (p *RegistryPublisher) announce(ctx context.Context) {
 // provisioning view: the declared bucket set and, in a mode that serves the
 // S3 API, the request-time registry and the compiled CORS rules.
 func applyProvisioning(ctx context.Context, i do.Injector) error {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return err
-	}
-	mode, err := do.InvokeNamed[config.Mode](i, "mode")
-	if err != nil {
-		return err
+	r := newResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	mode := r.Resolve[config.Mode]()
+	if r.err != nil {
+		return r.err
 	}
 	registry, err := AssembleBucketRegistry(ctx, i, cfg)
 	if err != nil {
@@ -136,24 +134,15 @@ func applyProvisioning(ctx context.Context, i do.Injector) error {
 		return nil
 	}
 
-	srv, err := do.Invoke[*s3api.Server](i)
-	if err != nil {
-		return err
+	srv := r.Resolve[*s3api.Server]()
+	policy := r.Resolve[*cors.Policy]()
+	if r.err != nil {
+		return r.err
 	}
-	policy, err := do.Invoke[*cors.Policy](i)
-	if err != nil {
-		return err
-	}
-	declared, err := do.Invoke[*provisioning.Declared](i)
-	if err != nil {
-		return err
-	}
-	rules, err := cors.NewRegistry(declared.Buckets())
-	if err != nil {
+	if err := RebuildCORS(i, policy); err != nil {
 		return err
 	}
 	srv.SetBucketAuth(registry)
-	policy.SetRules(rules)
 	return nil
 }
 

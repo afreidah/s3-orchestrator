@@ -431,12 +431,7 @@ func circuitBreakerChanged(old, next CircuitBreakerConfig) bool {
 // redisFieldsChanged handles the *RedisConfig pointer-nullable case  -
 // either presence change or struct inequality counts as a diff.
 func redisFieldsChanged(old, next *RedisConfig) []string {
-	oldHas := old != nil
-	nextHas := next != nil
-	if oldHas != nextHas {
-		return []string{"redis"}
-	}
-	if oldHas && nextHas && *old != *next {
+	if (old == nil) != (next == nil) || (old != nil && *old != *next) {
 		return []string{"redis"}
 	}
 	return nil

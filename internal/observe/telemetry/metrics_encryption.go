@@ -9,69 +9,32 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
 // Encryption operation and error metrics.
 var (
 	// EncryptionOpsTotal counts encryption operations by type.
-	EncryptionOpsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_encryption_operations_total",
-			Help: "Total encryption operations",
-		},
-		[]string{"op"},
-	)
+	EncryptionOpsTotal = counterVec("s3o_encryption_operations_total", "Total encryption operations", "op")
 
 	// EncryptionErrorsTotal counts encryption errors by operation and type.
-	EncryptionErrorsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_encryption_errors_total",
-			Help: "Total encryption errors",
-		},
-		[]string{"op", "error_type"},
-	)
+	EncryptionErrorsTotal = counterVec("s3o_encryption_errors_total", "Total encryption errors", "op", "error_type")
 
 	// EncryptionUnknownKeyIDTotal counts decryption attempts refused because
 	// the keyID was not found in the configured keys.
-	EncryptionUnknownKeyIDTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_encryption_unknown_key_id_total",
-			Help: "Decryption attempts refused because the keyID matches no configured key",
-		},
-	)
+	EncryptionUnknownKeyIDTotal = counter("s3o_encryption_unknown_key_id_total",
+		"Decryption attempts refused because the keyID matches no configured key")
 
 	// IntegrityErrorsTotal counts hash mismatches detected during read,
 	// replication, or background scrubbing.
-	IntegrityErrorsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_integrity_errors_total",
-			Help: "Content hash mismatches detected",
-		},
-		[]string{"operation"},
-	)
+	IntegrityErrorsTotal = counterVec("s3o_integrity_errors_total", "Content hash mismatches detected", "operation")
 
 	// IntegrityUsageDeclinedTotal counts copies a scrub left unverified
 	// because the backend had no egress headroom for them. A sweep that
 	// declines is not finding corruption it cannot see; the copies are simply
 	// unchecked, and stay unchecked until the budget allows.
-	IntegrityUsageDeclinedTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_integrity_usage_declined_total",
-			Help: "Copies left unverified for lack of backend egress headroom",
-		},
-	)
+	IntegrityUsageDeclinedTotal = counter("s3o_integrity_usage_declined_total",
+		"Copies left unverified for lack of backend egress headroom")
 
 	// IntegrityChecksTotal counts hash verifications performed.
-	IntegrityChecksTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_integrity_checks_total",
-			Help: "Content hash verifications performed",
-		},
-		[]string{"operation"},
-	)
+	IntegrityChecksTotal = counterVec("s3o_integrity_checks_total", "Content hash verifications performed", "operation")
 
 	// IntegrityOldestUnverifiedSeconds rises when the scrubber cannot keep
 	// pace with the fleet, so it is the figure to alert on. A copy that has
@@ -80,126 +43,69 @@ var (
 	// Copies the sweep is not allowed to read are excluded and counted by
 	// IntegrityDeferredCopies instead: they can never be stamped, so leaving
 	// them in would make this climb by a day every day and never fall.
-	IntegrityOldestUnverifiedSeconds = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_integrity_oldest_unverified_seconds",
-			Help: "How long the most overdue object copy has gone unverified",
-		},
-	)
+	IntegrityOldestUnverifiedSeconds = gauge("s3o_integrity_oldest_unverified_seconds",
+		"How long the most overdue object copy has gone unverified")
 
 	// IntegrityNeverVerifiedCopies stays non-zero on a fleet that is still
 	// being written to, since new copies queue behind older data. Alert on it
 	// climbing, not on it being above zero.
-	IntegrityNeverVerifiedCopies = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_integrity_never_verified_copies",
-			Help: "Object copies with a content hash that have never been verified",
-		},
-	)
+	IntegrityNeverVerifiedCopies = gauge("s3o_integrity_never_verified_copies",
+		"Object copies with a content hash that have never been verified")
 
 	// IntegrityDeferredCopies counts the copies the sweep cannot reach because
 	// their backend is over its usage limit, or has used all the egress the
 	// scrub reserve leaves the scrubber this month. Non-zero means the coverage
 	// figures above describe only part of the fleet until the month resets.
-	IntegrityDeferredCopies = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_integrity_deferred_copies",
-			Help: "Object copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve",
-		},
-	)
+	IntegrityDeferredCopies = gauge("s3o_integrity_deferred_copies",
+		"Object copies the scrubber cannot reach because their backend is over its usage limit or scrub reserve")
 
 	// EncryptionPlaintextCopies stays non-zero until an operator runs
 	// encrypt-existing, since enabling encryption covers new writes only.
-	EncryptionPlaintextCopies = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_encryption_plaintext_copies",
-			Help: "Object copies still stored unencrypted",
-		},
-	)
+	EncryptionPlaintextCopies = gauge("s3o_encryption_plaintext_copies", "Object copies still stored unencrypted")
 
 	// UnreadableCopies counts copies imported as encrypted with no key, which
 	// stay until an operator purges them.
-	UnreadableCopies = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_unreadable_copies",
-			Help: "Object copies encrypted with no key to decrypt them",
-		},
-	)
+	UnreadableCopies = gauge("s3o_unreadable_copies", "Object copies encrypted with no key to decrypt them")
 
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
-	KeyRotationObjectsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_key_rotation_objects_total",
-			Help: "Total objects processed during key rotation",
-		},
-		[]string{"status"},
-	)
+	KeyRotationObjectsTotal = counterVec("s3o_key_rotation_objects_total",
+		"Total objects processed during key rotation", "status")
 
 	// BulkRewriteUsageDeclinedTotal counts objects a bulk rewrite pass left
 	// alone because the backend had no usage headroom for them, labelled by
 	// the pass that declined. Separate from the per-pass skipped status: a
 	// threshold skip is the feature working, this one means a fleet-wide pass
 	// is being throttled by a monthly limit and will not finish its sweep.
-	BulkRewriteUsageDeclinedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_bulk_rewrite_usage_declined_total",
-			Help: "Objects skipped by a bulk rewrite pass for lack of backend usage headroom",
-		},
-		[]string{"operation"},
-	)
+	BulkRewriteUsageDeclinedTotal = counterVec("s3o_bulk_rewrite_usage_declined_total",
+		"Objects skipped by a bulk rewrite pass for lack of backend usage headroom", "operation")
 
 	// BulkRewriteCopyChangedTotal counts copies a bulk rewrite pass converted
 	// and then could not record, because a client wrote the key while the pass
 	// held it, labelled by the pass that lost the race. The client's write
 	// stands and the pass's bytes are deleted; a non-zero value means a fleet
 	// conversion is overlapping live traffic.
-	BulkRewriteCopyChangedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_bulk_rewrite_copy_changed_total",
-			Help: "Copies a bulk rewrite pass converted but could not record, because a client wrote the key first",
-		},
-		[]string{"operation"},
-	)
+	BulkRewriteCopyChangedTotal = counterVec("s3o_bulk_rewrite_copy_changed_total",
+		"Copies a bulk rewrite pass converted but could not record, because a client wrote the key first", "operation")
 
 	// EncryptExistingObjectsTotal counts objects processed during encrypt-existing.
-	EncryptExistingObjectsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_encrypt_existing_objects_total",
-			Help: "Total objects processed during encrypt-existing operation",
-		},
-		[]string{"status"},
-	)
+	EncryptExistingObjectsTotal = counterVec("s3o_encrypt_existing_objects_total",
+		"Total objects processed during encrypt-existing operation", "status")
 
 	// DecryptExistingObjectsTotal counts objects processed during decrypt-existing.
-	DecryptExistingObjectsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_decrypt_existing_objects_total",
-			Help: "Total objects processed during decrypt-existing operation",
-		},
-		[]string{"status"},
-	)
+	DecryptExistingObjectsTotal = counterVec("s3o_decrypt_existing_objects_total",
+		"Total objects processed during decrypt-existing operation", "status")
 )
 
 // EncryptionFlagMismatchTotal counts copies whose stored bytes disagreed with
 // their row's encrypted flag, labelled by the component that noticed. Any
 // non-zero value means at least one object cannot be safely read or hashed
 // until its metadata is repaired.
-var EncryptionFlagMismatchTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_encryption_flag_mismatch_total",
-		Help: "Copies whose stored bytes disagreed with their recorded encryption flag",
-	},
-	[]string{"component"},
-)
+var EncryptionFlagMismatchTotal = counterVec("s3o_encryption_flag_mismatch_total",
+	"Copies whose stored bytes disagreed with their recorded encryption flag", "component")
 
 // ImportClassifiedTotal counts objects brought under management by reconcile
 // or sync, labelled by what their bytes turned out to be. A rising
 // "unreadable" count means encrypted objects are being discovered whose key
 // is gone, which no amount of retrying will fix.
-var ImportClassifiedTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_import_classified_total",
-		Help: "Discovered objects imported, by what their bytes were classified as",
-	},
-	[]string{"source", "decision"},
-)
+var ImportClassifiedTotal = counterVec("s3o_import_classified_total",
+	"Discovered objects imported, by what their bytes were classified as", "source", "decision")

@@ -9,124 +9,66 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 // Circuit breaker state and transition metrics.
 var (
 	// CircuitBreakerState tracks the current circuit breaker state per component.
 	// 0=closed (healthy), 1=open (down).
-	CircuitBreakerState = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "s3o_circuit_breaker_state",
-			Help: "Current circuit breaker state: 0=closed, 1=open",
-		},
-		[]string{"name"},
-	)
+	CircuitBreakerState = gaugeVec("s3o_circuit_breaker_state",
+		"Current circuit breaker state: 0=closed, 1=open", "name")
 
 	// BackendCallRefused is 1 for each call a backend's circuit breakers are
 	// refusing and 0 for each it serves, labeled by backend and call, so every
 	// call of every backend has a series to chart.
-	BackendCallRefused = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "s3o_backend_call_refused",
-			Help: "1 while a backend's circuit breakers refuse the call, 0 while it is served",
-		},
-		[]string{"backend", "call"},
-	)
+	BackendCallRefused = gaugeVec("s3o_backend_call_refused",
+		"1 while a backend's circuit breakers refuse the call, 0 while it is served", "backend", "call")
 
 	// CircuitBreakerTransitionsTotal counts state transitions per component.
-	CircuitBreakerTransitionsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_circuit_breaker_transitions_total",
-			Help: "Total number of circuit breaker state transitions",
-		},
-		[]string{"name", "from", "to"},
-	)
+	CircuitBreakerTransitionsTotal = counterVec("s3o_circuit_breaker_transitions_total",
+		"Total number of circuit breaker state transitions", "name", "from", "to")
 
 	// CircuitBreakerInternalErrorsTotal counts errors returned by the
 	// breaker's own machinery (PostCheck / state transition helpers).
 	// Non-zero values indicate a bookkeeping bug, not an application
 	// error  -  alert on any increase.
-	CircuitBreakerInternalErrorsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_circuit_breaker_internal_errors_total",
-			Help: "Errors returned by circuit breaker PostCheck/state transitions",
-		},
-		[]string{"name", "operation"},
-	)
+	CircuitBreakerInternalErrorsTotal = counterVec("s3o_circuit_breaker_internal_errors_total",
+		"Errors returned by circuit breaker PostCheck/state transitions", "name", "operation")
 
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.
-	DegradedReadsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_degraded_reads_total",
-			Help: "Total number of read operations served via broadcast during degraded mode",
-		},
-		[]string{"operation"},
-	)
+	DegradedReadsTotal = counterVec("s3o_degraded_reads_total",
+		"Total number of read operations served via broadcast during degraded mode", "operation")
 
 	// DegradedCacheHitsTotal counts location cache hits during degraded reads.
-	DegradedCacheHitsTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_degraded_cache_hits_total",
-			Help: "Total number of location cache hits during degraded reads",
-		},
-	)
+	DegradedCacheHitsTotal = counter("s3o_degraded_cache_hits_total",
+		"Total number of location cache hits during degraded reads")
 
 	// DegradedWriteRejectionsTotal counts writes rejected during degraded mode.
-	DegradedWriteRejectionsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_degraded_write_rejections_total",
-			Help: "Total number of write operations rejected during degraded mode",
-		},
-		[]string{"operation"},
-	)
+	DegradedWriteRejectionsTotal = counterVec("s3o_degraded_write_rejections_total",
+		"Total number of write operations rejected during degraded mode", "operation")
 
 	// WriteFailoverTotal counts writes that failed on one backend and were
 	// retried on another. Labels: operation, failed_backend, success_backend.
-	WriteFailoverTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_write_failover_total",
-			Help: "Total number of write operations that failed over to a different backend",
-		},
-		[]string{"operation", "failed_backend", "success_backend"},
-	)
+	WriteFailoverTotal = counterVec("s3o_write_failover_total",
+		"Total number of write operations that failed over to a different backend",
+		"operation", "failed_backend", "success_backend")
 
 	// DegradedModeActive is 1 when the DB breaker is open.
-	DegradedModeActive = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3o_degraded_mode_active",
-			Help: "1 when the read path is currently in degraded mode (DB unavailable), 0 otherwise",
-		},
-	)
+	DegradedModeActive = gauge("s3o_degraded_mode_active",
+		"1 when the read path is currently in degraded mode (DB unavailable), 0 otherwise")
 
 	// DegradedBroadcastDuration is the wall-clock duration of degraded-mode broadcast reads.
-	DegradedBroadcastDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "s3o_degraded_broadcast_duration_seconds",
-			Help:    "Wall-clock duration of degraded-mode broadcast reads, terminal outcome labelled.",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"operation", "outcome"},
-	)
+	DegradedBroadcastDuration = histogramVec("s3o_degraded_broadcast_duration_seconds",
+		"Wall-clock duration of degraded-mode broadcast reads, terminal outcome labelled.",
+		prometheus.DefBuckets, "operation", "outcome")
 
 	// DegradedBroadcastMixedOutcomesTotal counts broadcasts where some backends returned 404 and others failed differently.
-	DegradedBroadcastMixedOutcomesTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_degraded_broadcast_mixed_outcomes_total",
-			Help: "Broadcasts where the all-failed terminal saw both 404 and non-404 failures across backends. Surfaces provider divergence or transient backend storms hidden under not_found.",
-		},
-		[]string{"operation"},
-	)
+	DegradedBroadcastMixedOutcomesTotal = counterVec("s3o_degraded_broadcast_mixed_outcomes_total",
+		"Broadcasts where the all-failed terminal saw both 404 and non-404 failures across backends. Surfaces provider divergence or transient backend storms hidden under not_found.",
+		"operation")
 
 	// DegradedBroadcastDrainTimeoutTotal counts loser-drain goroutines that hit their bounded timeout because a probe never returned after cancellation.
-	DegradedBroadcastDrainTimeoutTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_degraded_broadcast_drain_timeout_total",
-			Help: "Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out.",
-		},
-		[]string{"operation"},
-	)
+	DegradedBroadcastDrainTimeoutTotal = counterVec("s3o_degraded_broadcast_drain_timeout_total",
+		"Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out.",
+		"operation")
 )

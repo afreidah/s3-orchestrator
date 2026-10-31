@@ -25,16 +25,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // resolutionError wraps a failed Optional[T] resolution with the subsystem's
@@ -166,16 +162,7 @@ func (*corsHook) Check(_, newCfg *config.Config) error {
 // instead of having them dropped back to whatever the file declares.
 func (h *corsHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "CORS policy", func(policy *cors.Policy) error {
-		declared := di.Optional[*provisioning.Declared](h.inj)
-		if declared.Failed() {
-			return resolutionError("declared buckets", declared.Err)
-		}
-		rules, err := cors.NewRegistry(declared.Value.Buckets())
-		if err != nil {
-			return err
-		}
-		policy.SetRules(rules)
-		return nil
+		return di.RebuildCORS(h.inj, policy)
 	})
 }
 
@@ -271,10 +258,8 @@ func (h *logLevelHook) Apply(_ context.Context, _, newCfg *config.Config) (HookS
 // WORKER CONFIGS
 // -------------------------------------------------------------------------
 
-// workerConfigsHook pushes new Rebalance/Replication/Integrity configs
-// onto each registered worker. Workers not constructed in this run mode
-// (e.g. api-only) silently skip; the hook reports Applied as long as
-// at least one worker accepted the new config, Skipped otherwise.
+// workerConfigsHook pushes the new Rebalance, Replication and Integrity
+// configs onto the workers, through the same call startup makes.
 type workerConfigsHook struct {
 	inj do.Injector
 }
@@ -282,42 +267,8 @@ type workerConfigsHook struct {
 func (*workerConfigsHook) Name() string                    { return "worker_configs" }
 func (*workerConfigsHook) Check(_, _ *config.Config) error { return nil }
 func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	rbRes := di.Optional[*worker.Rebalancer](h.inj)
-	if rbRes.Failed() {
-		return HookFailed, resolutionError("rebalancer", rbRes.Err)
-	}
-	rpRes := di.Optional[*worker.Replicator](h.inj)
-	if rpRes.Failed() {
-		return HookFailed, resolutionError("replicator", rpRes.Err)
-	}
-	orRes := di.Optional[*worker.OverReplicationCleaner](h.inj)
-	if orRes.Failed() {
-		return HookFailed, resolutionError("over-replication cleaner", orRes.Err)
-	}
-	scRes := di.Optional[*worker.Scrubber](h.inj)
-	if scRes.Failed() {
-		return HookFailed, resolutionError("scrubber", scRes.Err)
-	}
-	applied := 0
-	if rbRes.Value != nil {
-		rbRes.Value.SetConfig(&newCfg.Rebalance)
-		applied++
-	}
-	if rpRes.Value != nil {
-		rpRes.Value.SetConfig(&newCfg.Replication)
-		rpRes.Value.SetIntegrityConfig(&newCfg.Integrity)
-		applied++
-	}
-	if orRes.Value != nil {
-		orRes.Value.SetConfig(&newCfg.Replication)
-		applied++
-	}
-	if scRes.Value != nil {
-		scRes.Value.SetConfig(&newCfg.Integrity)
-		applied++
-	}
-	if applied == 0 {
-		return HookSkipped, nil
+	if err := di.ApplyWorkerConfigs(h.inj, newCfg); err != nil {
+		return HookFailed, err
 	}
 	return HookApplied, nil
 }
@@ -326,11 +277,10 @@ func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (
 // RELOADABLE CONFIG SECTIONS
 // -------------------------------------------------------------------------
 
-// runtimeConfigHook updates the UsageFlush, Lifecycle, and Integrity
-// per-section configs on the collaborators that read them, and refreshes
-// Prometheus quota gauges. The metrics refresh is the only fallible step, and
-// it is best-effort: a failure there returns HookFailed, but the AtomicConfig
-// swaps have already happened and are not rolled back.
+// runtimeConfigHook swaps the UsageFlush, Lifecycle and Integrity sections
+// through the same call startup makes, then refreshes the quota gauges. A
+// failed refresh returns HookFailed, but the swaps have already happened and
+// are not rolled back.
 type runtimeConfigHook struct {
 	inj do.Injector
 }
@@ -338,39 +288,12 @@ type runtimeConfigHook struct {
 func (*runtimeConfigHook) Name() string                    { return "runtime_config" }
 func (*runtimeConfigHook) Check(_, _ *config.Config) error { return nil }
 func (h *runtimeConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	usageRes := di.Optional[*usage.Service](h.inj)
-	if usageRes.Failed() {
-		return HookFailed, resolutionError("usage service", usageRes.Err)
-	}
-	integrityRes := di.Optional[*syncutil.AtomicConfig[config.IntegrityConfig]](h.inj)
-	if integrityRes.Failed() {
-		return HookFailed, resolutionError("integrity config", integrityRes.Err)
-	}
-	fleetRes := di.Optional[*infra.BackendRuntime](h.inj)
-	if fleetRes.Failed() {
-		return HookFailed, resolutionError("backend runtime", fleetRes.Err)
-	}
-	if usageRes.Value == nil || integrityRes.Value == nil || fleetRes.Value == nil {
-		return HookSkipped, nil
-	}
-
-	var flushApplier usageFlushConfigApplier = usageRes.Value
-	flushApplier.SetConfig(&newCfg.UsageFlush)
-	integrityRes.Value.Store(&newCfg.Integrity)
-
-	// Lifecycle rules live with the code that applies them.
-	if exp := di.Optional[*expiry.Manager](h.inj); exp.Failed() {
-		return HookFailed, resolutionError("expiry manager", exp.Err)
-	} else if exp.Value != nil {
-		var lifecycleApplier lifecycleConfigApplier = exp.Value
-		lifecycleApplier.SetConfig(&newCfg.Lifecycle)
-	}
-
-	var refresher quotaMetricsRefresher = fleetRes.Value
-	if err := refresher.UpdateQuotaMetrics(ctx); err != nil {
+	if err := di.ApplyRuntimeConfigs(h.inj, newCfg); err != nil {
 		return HookFailed, err
 	}
-	return HookApplied, nil
+	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
+		return rt.UpdateQuotaMetrics(ctx)
+	})
 }
 
 // -------------------------------------------------------------------------

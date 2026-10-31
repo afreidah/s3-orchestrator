@@ -20,7 +20,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
@@ -42,13 +41,7 @@ func startObservability(cfg *config.Config, stdout io.Writer, logLevel *slog.Lev
 	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
 
 	logBuffer := telemetry.NewLogBuffer()
-	jsonHandler := slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: logLevel})
-	// logfmt.ErrAttrHandler stringifies any error-typed attribute before
-	// the JSON handler renders the record. Without it, encoding/json would
-	// emit "{}" for error structs without JSON tags.
-	errHandler := logfmt.NewErrAttrHandler(jsonHandler)
-	traceHandler := telemetry.NewTraceHandler(errHandler)
-	slog.SetDefault(slog.New(telemetry.NewTeeHandler(traceHandler, logBuffer)))
+	slog.SetDefault(slog.New(telemetry.NewLogHandler(stdout, logLevel, logBuffer)))
 
 	shutdownTracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry.Tracing)
 	if err != nil {

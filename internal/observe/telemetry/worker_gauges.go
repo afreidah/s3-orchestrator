@@ -53,9 +53,7 @@ func (g *WorkerGauges) Apply() {
 	setIf(CleanupQueueDepth.Set, g.CleanupQueueDepth)
 	setIf(CleanupDLQDepth.Set, g.CleanupDLQDepth)
 	setIf(PendingIntentsDepth.Set, g.PendingIntentsDepth)
-	if g.OldestUnverifiedSeconds != nil {
-		IntegrityOldestUnverifiedSeconds.Set(*g.OldestUnverifiedSeconds)
-	}
+	setIf(IntegrityOldestUnverifiedSeconds.Set, g.OldestUnverifiedSeconds)
 	setIf(IntegrityNeverVerifiedCopies.Set, g.NeverVerifiedCopies)
 	setIf(IntegrityDeferredCopies.Set, g.DeferredCopies)
 	setIf(RebalancePending.Set, g.RebalancePending)
@@ -91,8 +89,9 @@ func (s *SharedGauges) PublishGauges(ctx context.Context, source string, g Worke
 	s.publisher.PublishWorkerGauges(ctx, source, g)
 }
 
-// setIf sets a gauge from a count the value carries.
-func setIf(set func(float64), v *int64) {
+// setIf sets a gauge from a value the snapshot carries, leaving it alone when
+// the snapshot has none.
+func setIf[T int64 | float64](set func(float64), v *T) {
 	if v != nil {
 		set(float64(*v))
 	}

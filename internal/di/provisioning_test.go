@@ -156,7 +156,7 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
 	do.ProvideValue(inj, provisioning.NewDeclared())
-	do.ProvideNamedValue(inj, "mode", config.ModeAPI)
+	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{
 		Name: "photos",
 		CORS: []config.CORSRule{{AllowedOrigins: []string{"https://app.example.com"}, AllowedMethods: []string{"GET"}}},
@@ -196,7 +196,7 @@ func TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly(t *testing.T) {
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
 	declared := provisioning.NewDeclared()
 	do.ProvideValue(inj, declared)
-	do.ProvideNamedValue(inj, "mode", config.ModeWorker)
+	do.ProvideValue(inj, config.ModeWorker)
 	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
 
 	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
@@ -223,17 +223,17 @@ func TestRegistryPublisher_MissingDependencyFails(t *testing.T) {
 		}},
 		{"no store", func(i do.Injector) {
 			do.ProvideValue(i, &config.Config{})
-			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+			do.ProvideValue(i, config.ModeAPI)
 		}},
 		{"no server", func(i do.Injector) {
 			do.ProvideValue(i, &config.Config{})
-			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+			do.ProvideValue(i, config.ModeAPI)
 			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
 			do.ProvideValue(i, provisioning.NewDeclared())
 		}},
 		{"no CORS policy", func(i do.Injector) {
 			do.ProvideValue(i, &config.Config{})
-			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+			do.ProvideValue(i, config.ModeAPI)
 			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
 			do.ProvideValue(i, provisioning.NewDeclared())
 			do.ProvideValue(i, &s3api.Server{})

@@ -119,7 +119,7 @@ func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 		return []error{fmt.Errorf("integrity.scrubber_min_age must be >= 0")}
 	}
 
-	if r := ic.ScrubberEgressReserve; r != nil && (*r < 0 || *r > 1) {
+	if r := *ic.ScrubberEgressReserve; r < 0 || r > 1 {
 		return []error{fmt.Errorf("integrity.scrubber_egress_reserve must be between 0 and 1")}
 	}
 

@@ -72,11 +72,9 @@ type Coordinator struct {
 	generation atomic.Int64
 	lastResult atomic.Pointer[Result]
 
-	hupChan chan os.Signal
-	hupDone chan struct{}
-
-	mu      sync.Mutex
-	stopped bool
+	hupChan  chan os.Signal
+	hupDone  chan struct{}
+	shutdown sync.Once
 }
 
 // New returns a Coordinator with the given deps. Watch must be called
@@ -116,17 +114,11 @@ func (c *Coordinator) Watch() {
 // Shutdown stops the SIGHUP goroutine and waits for it to exit. Safe
 // to call multiple times.
 func (c *Coordinator) Shutdown() {
-	c.mu.Lock()
-	if c.stopped {
-		c.mu.Unlock()
-		return
-	}
-	c.stopped = true
-	c.mu.Unlock()
-
-	signal.Stop(c.hupChan)
-	close(c.hupChan)
-	<-c.hupDone
+	c.shutdown.Do(func() {
+		signal.Stop(c.hupChan)
+		close(c.hupChan)
+		<-c.hupDone
+	})
 }
 
 // LastResult returns the most recent reload result, or nil if no
@@ -249,7 +241,7 @@ func (c *Coordinator) finalize(ctx context.Context, r *Result) *Result {
 	case ReloadValidationFailed:
 		c.log.ErrorContext(ctx, "configuration reload validation failed, keeping current config",
 			"generation", r.Generation,
-			"failed_hook", firstFailedHookName(r),
+			"failed_hooks", failedHookNames(r),
 		)
 		event.Publish(event.ConfigReloadFailed, "", map[string]any{
 			"generation":   r.Generation,
@@ -279,16 +271,4 @@ func failedHookNames(r *Result) []string {
 		}
 	}
 	return names
-}
-
-// firstFailedHookName returns the name of the first failed hook in the
-// outcomes slice. Used in the validation-failure log line where there
-// is exactly one failure.
-func firstFailedHookName(r *Result) string {
-	for _, o := range r.Outcomes {
-		if o.Status == HookFailed {
-			return o.Name
-		}
-	}
-	return ""
 }

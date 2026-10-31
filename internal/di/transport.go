@@ -21,6 +21,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
@@ -92,17 +93,26 @@ func ProvideCORS(i do.Injector) (*cors.Policy, error) {
 	if _, err := do.Invoke[*auth.BucketRegistry](i); err != nil {
 		return nil, err
 	}
+	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
+	if err := RebuildCORS(i, policy); err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+// RebuildCORS compiles the rules every declared bucket carries and installs
+// them on policy. Callers publish the declared set first.
+func RebuildCORS(i do.Injector, policy *cors.Policy) error {
 	declared, err := do.Invoke[*provisioning.Declared](i)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	rules, err := cors.NewRegistry(declared.Buckets())
 	if err != nil {
-		return nil, err
+		return err
 	}
-	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
 	policy.SetRules(rules)
-	return policy, nil
+	return nil
 }
 
 // ProvideRateLimiter creates the per-IP rate limiter.
@@ -140,18 +150,15 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	scrubber := r.Resolve[*worker.Scrubber]()
 	expirer := r.Resolve[*expiry.Manager]()
 	declared := r.Resolve[*provisioning.Declared]()
+	// The codec is resolved whether or not compression is enabled for writes,
+	// so decompress-existing can undo a fleet an operator has already turned the
+	// feature off for.
+	codec := r.Resolve[*compression.Codec]()
 	if r.err != nil {
 		return nil, r.err
 	}
 
 	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
-	if err != nil {
-		return nil, err
-	}
-	// The codec is resolved whether or not compression is enabled for writes,
-	// so decompress-existing can undo a fleet an operator has already turned the
-	// feature off for.
-	codec, err := do.Invoke[*compression.Codec](i)
 	if err != nil {
 		return nil, err
 	}
@@ -257,12 +264,9 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	runtime := r.Resolve[*infra.BackendRuntime]()
 	id := r.ResolveNamed[instanceid.ID]("InstanceID")
 	shared := r.Resolve[*sharedstate.Shared]()
+	mode := r.Resolve[config.Mode]()
 	if r.err != nil {
 		return nil, r.err
-	}
-	mode, err := do.InvokeNamed[config.Mode](i, "mode")
-	if err != nil {
-		return nil, err
 	}
 	recRes := Optional[*worker.Reconciler](i)
 	if recRes.Failed() {
@@ -300,7 +304,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		DBHealthy:    cb.IsHealthy,
 		WorkerHealth: workerHealth,
 		Cleanup:      stores,
-		ObjectCache:  resolveOptionalCache(i),
+		ObjectCache:  Optional[objcache.ObjectCache](i).Value,
 		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
 		Registry:     adminBucketRegistry(i),

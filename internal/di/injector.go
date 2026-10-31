@@ -66,7 +66,7 @@ func NewInjector(deps InjectorDeps) do.Injector {
 // via do.Invoke without re-reading the YAML on every call.
 func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) {
 	do.ProvideValue(inj, cfg)
-	do.ProvideNamedValue(inj, "mode", mode)
+	do.ProvideValue(inj, mode)
 	do.ProvideValue(inj, logLevel)
 	do.ProvideValue(inj, logBuffer)
 }

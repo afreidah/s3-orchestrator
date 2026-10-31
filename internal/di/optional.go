@@ -19,7 +19,6 @@ import (
 
 	"github.com/samber/do/v2"
 
-	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
@@ -58,9 +57,6 @@ func (r OptionalResult[T]) Failed() bool { return r.Resolution == ResolutionFail
 // is registered in this run mode; Failed means a provider is registered but
 // its constructor, or a transitive dependency, returned an error.
 func Optional[T any](inj do.Injector) OptionalResult[T] {
-	if inj == nil {
-		return OptionalResult[T]{Resolution: ResolutionDisabled}
-	}
 	if !IsRegistered[T](inj) {
 		return OptionalResult[T]{Resolution: ResolutionDisabled}
 	}
@@ -89,17 +85,6 @@ func IsRegistered[T any](inj do.Injector) bool {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// resolveOptionalCache returns the object data cache, or nil when
-// caching is disabled / not registered. The object manager treats nil as
-// "object data caching is off" (read path bypasses the cache layer).
-func resolveOptionalCache(i do.Injector) objcache.ObjectCache {
-	c, err := do.Invoke[objcache.ObjectCache](i)
-	if err != nil {
-		return nil
-	}
-	return c
-}
 
 // resolveOptionalEncryptor returns the live *encryption.Encryptor when
 // encryption is enabled, or nil otherwise. A configured-but-failing

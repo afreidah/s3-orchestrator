@@ -95,7 +95,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 
 	inj := do.New()
 	do.ProvideValue(inj, cfg)
-	do.ProvideNamedValue(inj, "mode", config.ModeAPI)
+	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue[core.ProvisioningStore](inj, testStore)
 	do.ProvideValue(inj, declared)
 	do.ProvideValue(inj, srv)

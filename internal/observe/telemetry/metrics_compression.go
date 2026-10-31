@@ -15,40 +15,24 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 // Write-side volume, counting only objects stored encoded. The fleet ratio is
 // stored/logical over any window, and the bytes saved are logical - stored.
 // CompressionLogicalBytesTotal counts the bytes clients wrote for those objects.
 var (
-	CompressionLogicalBytesTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_compression_logical_bytes_total",
-			Help: "Logical bytes of objects stored compressed, before encoding",
-		},
-	)
+	CompressionLogicalBytesTotal = counter("s3o_compression_logical_bytes_total",
+		"Logical bytes of objects stored compressed, before encoding")
 
 	// CompressionStoredBytesTotal counts what those objects actually occupy.
-	CompressionStoredBytesTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_compression_stored_bytes_total",
-			Help: "Bytes those objects occupy on backends after encoding",
-		},
-	)
+	CompressionStoredBytesTotal = counter("s3o_compression_stored_bytes_total",
+		"Bytes those objects occupy on backends after encoding")
 
 	// CompressionRatio observes the ratio one object reached, which the two
 	// counters above cannot show: a fleet averaging 0.4 behaves differently
 	// depending on whether that is every object or half of them at 0.05.
-	CompressionRatio = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "s3o_compression_ratio",
-			Help:    "Encoded size as a fraction of logical size, per stored object",
-			Buckets: prometheus.LinearBuckets(0.05, 0.05, 20),
-		},
-	)
+	CompressionRatio = histogram("s3o_compression_ratio",
+		"Encoded size as a fraction of logical size, per stored object", prometheus.LinearBuckets(0.05, 0.05, 20))
 )
 
 // Read-side volume, which together give read amplification: fetched/served.
@@ -56,21 +40,13 @@ var (
 // frames than a range needs. CompressionFetchedBytesTotal counts stored bytes
 // fetched from backends.
 var (
-	CompressionFetchedBytesTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_compression_fetched_bytes_total",
-			Help: "Stored bytes fetched from backends while serving compressed objects",
-		},
-	)
+	CompressionFetchedBytesTotal = counter("s3o_compression_fetched_bytes_total",
+		"Stored bytes fetched from backends while serving compressed objects")
 
 	// CompressionServedBytesTotal counts logical bytes handed to clients from
 	// those reads.
-	CompressionServedBytesTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_compression_served_bytes_total",
-			Help: "Logical bytes served to clients from compressed objects",
-		},
-	)
+	CompressionServedBytesTotal = counter("s3o_compression_served_bytes_total",
+		"Logical bytes served to clients from compressed objects")
 )
 
 // RecordCompressed reports one object stored encoded. The three instruments
@@ -88,24 +64,14 @@ func RecordCompressed(logicalSize, storedSize int64) {
 // CompressionSkippedTotal counts objects a write declined to encode. The reason
 // separates the two floors: size is answered before any encoding, ratio only
 // after one that turned out not to be worth keeping.
-var CompressionSkippedTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_compression_skipped_total",
-		Help: "Objects stored verbatim despite compression being enabled, by reason",
-	},
-	[]string{"reason"},
-)
+var CompressionSkippedTotal = counterVec("s3o_compression_skipped_total",
+	"Objects stored verbatim despite compression being enabled, by reason", "reason")
 
 // CompressionErrorsTotal counts codec failures by which direction failed.
 // A decode failure is the serious one: it means bytes already stored cannot be
 // read back, whereas an encode failure only fails the write that caused it.
-var CompressionErrorsTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_compression_errors_total",
-		Help: "Codec failures, by operation (encode, decode)",
-	},
-	[]string{"operation"},
-)
+var CompressionErrorsTotal = counterVec("s3o_compression_errors_total",
+	"Codec failures, by operation (encode, decode)", "operation")
 
 // Reasons an object was stored verbatim, and the codec operations that can
 // fail. Named so a call site cannot invent a label value the dashboard does not
@@ -122,20 +88,10 @@ const (
 // an object alone - too small, or too incompressible to be worth encoding - and
 // an operator reading a run wants that separate from work that was done.
 var (
-	CompressExistingObjectsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_compress_existing_objects_total",
-			Help: "Total objects processed during compress-existing operation",
-		},
-		[]string{"status"},
-	)
+	CompressExistingObjectsTotal = counterVec("s3o_compress_existing_objects_total",
+		"Total objects processed during compress-existing operation", "status")
 
 	// DecompressExistingObjectsTotal counts objects processed during decompress-existing.
-	DecompressExistingObjectsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_decompress_existing_objects_total",
-			Help: "Total objects processed during decompress-existing operation",
-		},
-		[]string{"status"},
-	)
+	DecompressExistingObjectsTotal = counterVec("s3o_decompress_existing_objects_total",
+		"Total objects processed during decompress-existing operation", "status")
 )

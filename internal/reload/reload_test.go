@@ -16,6 +16,7 @@ package reload
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
@@ -80,9 +80,7 @@ func resolvedInjector(t *testing.T, cfg *config.Config, logLevel *slog.LevelVar)
 	t.Helper()
 	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
 	logBuffer := telemetry.NewLogBuffer()
-	errHandler := logfmt.NewErrAttrHandler(slog.DiscardHandler)
-	traceHandler := telemetry.NewTraceHandler(errHandler)
-	slog.SetDefault(slog.New(telemetry.NewTeeHandler(traceHandler, logBuffer)))
+	slog.SetDefault(slog.New(telemetry.NewLogHandler(io.Discard, logLevel, logBuffer)))
 
 	shutdownTracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry.Tracing)
 	if err != nil {

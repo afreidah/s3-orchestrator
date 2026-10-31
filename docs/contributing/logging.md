@@ -27,7 +27,7 @@ call site uses:
 | `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Use in typed-attr calls (`slog.LogAttrs`, `audit.Log`) or where `err` may be nil — see the error-attribute section below. |
 | `logfmt.Outcome(value)` | `slog.Attr` | `outcome` attr; pass one of `OutcomeOK`, `OutcomeError`, `OutcomeSkipped`, `OutcomeTimeout`, `OutcomeNotFound`. |
 | `logfmt.Component(name)` | `slog.Attr` | `component` attr used at logger construction. |
-| `logfmt.NewErrAttrHandler(inner)` | `slog.Handler` | Wraps a handler so any error-typed attribute is rendered as its `Error()` string; see below. |
+| `logfmt.TransformAttr(a)` | `slog.Attr` | Replaces an error-typed attribute value with its `Error()` string, recursing into groups; the runtime's handler applies it to every record, see below. |
 
 The request ID is read from context with `audit.RequestID(ctx)`.
 
@@ -74,13 +74,13 @@ directly with an explicit `logfmt.Component(...)` attr.
 ## Error attributes
 
 Error values are rendered safely by the runtime, not by call-site
-discipline. The slog pipeline is wrapped with `logfmt.ErrAttrHandler`,
-which replaces any attribute whose value implements `error` with its
-`Error()` string before the inner handler serialises the record. The
-wrapper covers raw `"error", err` pairs, `slog.Any("error", err)`, and
-group-nested errors. The runtime composes the handler in
-`internal/runtime/observability.go`, so every production log line goes
-through it.
+discipline. The handler chain `telemetry.NewLogHandler` builds replaces any
+attribute whose value implements `error` with its `Error()` string, once,
+before the record reaches the JSON handler and the in-memory log buffer the
+UI reads. It covers raw `"error", err` pairs, `slog.Any("error", err)`,
+`logger.With("error", err)`, and group-nested errors. The runtime installs
+the chain in `internal/runtime/observability.go`, so every production log
+line goes through it.
 
 Pick the form that matches the slog API you are already using:
 
@@ -96,7 +96,7 @@ slog.LogAttrs(ctx, slog.LevelWarn, "replication failed",
 ```
 
 Default to the bare `"error", err` form: it is the shortest, reads as
-plain slog, and the runtime's `logfmt.ErrAttrHandler` renders the error
+plain slog, and the runtime's handler chain renders the error
 identically to the helper form. Reach for `logfmt.Err(err)` only when:
 
 - The surrounding call uses the typed-attr API (`slog.LogAttrs`,
@@ -122,10 +122,11 @@ break log structure:
 | `"error", fmt.Sprintf("%v", err)` | Same problem; loses error identity for downstream tooling. |
 | `"error_message", err` | Non-canonical key. |
 
-The handler contract has tests in
-`internal/observe/logfmt/handler_contract_test.go` that pin the rendering
-behaviour end-to-end, so a regression in the runtime composition fails
-the suite rather than silently shipping `[object Object]` to operators.
+`TestNewLogHandler_StringifiesErrors` in
+`internal/observe/telemetry/logbuffer_test.go` pins the rendering
+behaviour end-to-end for stdout and the buffer, so a regression in the
+handler chain fails the suite rather than silently shipping
+`[object Object]` to operators.
 
 ---
 

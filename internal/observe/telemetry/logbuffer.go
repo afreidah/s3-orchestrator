@@ -14,6 +14,7 @@ package telemetry
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -33,7 +34,7 @@ const logBufferCapacity = 5000
 // LogEntry is a single structured log record stored in the buffer.
 type LogEntry struct {
 	Time    time.Time      `json:"time"`
-	Level   string         `json:"level"`
+	Level   slog.Level     `json:"level"`
 	Message string         `json:"message"`
 	Attrs   map[string]any `json:"attrs,omitempty"`
 }
@@ -107,26 +108,10 @@ func (b *LogBuffer) snapshotEntries() []LogEntry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	var count int
-	if b.full {
-		count = len(b.entries)
-	} else {
-		count = b.pos
+	if !b.full {
+		return slices.Clone(b.entries[:b.pos])
 	}
-	if count == 0 {
-		return nil
-	}
-	snapshot := make([]LogEntry, count)
-	for i := range count {
-		var idx int
-		if b.full {
-			idx = (b.pos + i) % len(b.entries)
-		} else {
-			idx = i
-		}
-		snapshot[i] = b.entries[idx]
-	}
-	return snapshot
+	return append(slices.Clone(b.entries[b.pos:]), b.entries[:b.pos]...)
 }
 
 // filterEntries applies the query filters (time range, min level,
@@ -140,7 +125,7 @@ func filterEntries(snapshot []LogEntry, opts *LogQueryOpts) []LogEntry {
 		if !opts.Before.IsZero() && !e.Time.Before(opts.Before) {
 			continue
 		}
-		if levelToSlog(e.Level) < opts.MinLevel {
+		if e.Level < opts.MinLevel {
 			continue
 		}
 		if opts.Component != "" {
@@ -151,22 +136,6 @@ func filterEntries(snapshot []LogEntry, opts *LogQueryOpts) []LogEntry {
 		result = append(result, e)
 	}
 	return result
-}
-
-// levelToSlog converts a level string back to slog.Level for comparison.
-func levelToSlog(s string) slog.Level {
-	switch s {
-	case "DEBUG":
-		return slog.LevelDebug
-	case "INFO":
-		return slog.LevelInfo
-	case "WARN":
-		return slog.LevelWarn
-	case "ERROR":
-		return slog.LevelError
-	default:
-		return slog.LevelDebug
-	}
 }
 
 // -------------------------------------------------------------------------
@@ -180,6 +149,13 @@ type TeeHandler struct {
 	buf     *LogBuffer
 	attrs   []slog.Attr
 	groups  []string
+}
+
+// NewLogHandler builds the daemon's handler chain: each record at or above
+// level is captured in buf and written to w as JSON, carrying the trace and
+// span IDs from its context.
+func NewLogHandler(w io.Writer, level slog.Leveler, buf *LogBuffer) slog.Handler {
+	return NewTeeHandler(NewTraceHandler(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})), buf)
 }
 
 // NewTeeHandler creates a handler that fans out to both the primary handler
@@ -197,49 +173,45 @@ func (h *TeeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.primary.Enabled(ctx, level)
 }
 
-// Handle writes the record to the primary handler and captures it in the buffer.
-// The slog.Handler interface requires a value receiver for slog.Record.
+// Handle renders the record's error attributes as strings once, then writes
+// the result to the primary handler and captures it in the buffer. JSON
+// encoding would otherwise render many errors as "{}".
 func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
-	// Write to primary handler first.
-	err := h.primary.Handle(ctx, r)
-
-	// Capture in ring buffer regardless of primary handler errors.
-	entry := LogEntry{
-		Time:    r.Time,
-		Level:   r.Level.String(),
-		Message: r.Message,
-	}
-
-	// Collect attributes: handler-level attrs first, then record attrs.
+	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	attrs := make(map[string]any)
 	prefix := groupPrefix(h.groups)
-
-	// Errors are stored as strings; json.Marshal would render many as "{}".
 	for _, a := range h.attrs {
-		t := logfmt.TransformAttr(a)
-		attrs[prefix+t.Key] = t.Value.Any()
+		attrs[prefix+a.Key] = a.Value.Any()
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		t := logfmt.TransformAttr(a)
-		attrs[prefix+t.Key] = t.Value.Any()
+		a = logfmt.TransformAttr(a)
+		out.AddAttrs(a)
+		attrs[prefix+a.Key] = a.Value.Any()
 		return true
 	})
 
+	err := h.primary.Handle(ctx, out)
+
+	// Captured regardless of primary handler errors.
+	entry := LogEntry{Time: r.Time, Level: r.Level, Message: r.Message}
 	if len(attrs) > 0 {
 		entry.Attrs = attrs
 	}
-
 	h.buf.Add(entry)
-
 	return err
 }
 
-// WithAttrs returns a new TeeHandler with the given attributes added.
+// WithAttrs returns a new TeeHandler with the given attributes added, their
+// errors rendered as strings for both the primary handler and the buffer.
 func (h *TeeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	out := make([]slog.Attr, len(attrs))
+	for i, a := range attrs {
+		out[i] = logfmt.TransformAttr(a)
+	}
 	return &TeeHandler{
-		primary: h.primary.WithAttrs(attrs),
+		primary: h.primary.WithAttrs(out),
 		buf:     h.buf,
-		attrs:   append(slices.Clone(h.attrs), attrs...),
+		attrs:   append(slices.Clone(h.attrs), out...),
 		groups:  slices.Clone(h.groups),
 	}
 }

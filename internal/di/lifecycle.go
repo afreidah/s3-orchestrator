@@ -133,14 +133,9 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	registry := r.Resolve[*breaker.Registry]()
 	locker := r.Resolve[core.AdvisoryLocker]()
 	states := r.Resolve[*backendstate.Manager]()
+	mode := r.Resolve[config.Mode]()
 	if r.err != nil {
 		return nil, r.err
-	}
-	// mode is keyed by service name rather than type, so it stays outside
-	// the batch.
-	mode, err := do.InvokeNamed[config.Mode](i, "mode")
-	if err != nil {
-		return nil, err
 	}
 
 	sm := lifecycle.NewManager()

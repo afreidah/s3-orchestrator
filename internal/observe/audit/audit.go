@@ -75,10 +75,8 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 // RequestID extracts the request ID from the context. Returns empty string
 // if no request ID is set.
 func RequestID(ctx context.Context) string {
-	if id, ok := ctx.Value(requestIDKey).(string); ok {
-		return id
-	}
-	return ""
+	id, _ := ctx.Value(requestIDKey).(string)
+	return id
 }
 
 // -------------------------------------------------------------------------
@@ -97,10 +95,8 @@ func WithUser(ctx context.Context, id string) context.Context {
 // which is what keeps a rejected request from claiming an identity it never
 // proved.
 func User(ctx context.Context) string {
-	if id, ok := ctx.Value(userKey).(string); ok {
-		return id
-	}
-	return ""
+	id, _ := ctx.Value(userKey).(string)
+	return id
 }
 
 // -------------------------------------------------------------------------

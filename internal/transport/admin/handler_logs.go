@@ -92,7 +92,7 @@ func logEntries(entries []telemetry.LogEntry) []adminapi.LogEntry {
 		component, _ := entries[i].Attrs["component"].(string)
 		out = append(out, adminapi.LogEntry{
 			Time:      entries[i].Time,
-			Level:     entries[i].Level,
+			Level:     entries[i].Level.String(),
 			Message:   entries[i].Message,
 			Component: component,
 			Attrs:     attrsExceptComponent(entries[i].Attrs),

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -89,28 +90,28 @@ func parseByteSize(s string) (int64, error) {
 	}
 
 	// Try to find a unit suffix
-	s = trimSpace(s)
+	s = strings.TrimSpace(s)
 	var multiplier int64 = 1
 	var numStr string
 
-	upper := toUpper(s)
+	upper := strings.ToUpper(s)
 	switch {
-	case hasSuffix(upper, "GB"):
+	case strings.HasSuffix(upper, "GB"):
 		multiplier = 1024 * 1024 * 1024
 		numStr = s[:len(s)-2]
-	case hasSuffix(upper, "MB"):
+	case strings.HasSuffix(upper, "MB"):
 		multiplier = 1024 * 1024
 		numStr = s[:len(s)-2]
-	case hasSuffix(upper, "KB"):
+	case strings.HasSuffix(upper, "KB"):
 		multiplier = 1024
 		numStr = s[:len(s)-2]
-	case hasSuffix(upper, "B"):
+	case strings.HasSuffix(upper, "B"):
 		numStr = s[:len(s)-1]
 	default:
 		numStr = s
 	}
 
-	numStr = trimSpace(numStr)
+	numStr = strings.TrimSpace(numStr)
 	if numStr == "" {
 		return 0, fmt.Errorf("invalid byte size %q: missing numeric value", s)
 	}
@@ -127,35 +128,4 @@ func parseByteSize(s string) (int64, error) {
 		return 0, fmt.Errorf("byte size %q overflows int64", s)
 	}
 	return val * multiplier, nil
-}
-
-// trimSpace, toUpper, hasSuffix avoid importing strings for a config package.
-func trimSpace(s string) string {
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
-		s = s[1:]
-	}
-	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-// toUpper is an ASCII-only uppercase. Used for the cache mode comparator
-// without pulling in unicode/text since cache mode values are a small
-// closed set ("memory", "redis", etc.) and never carry non-ASCII.
-func toUpper(s string) string {
-	b := make([]byte, len(s))
-	for i := range s {
-		c := s[i]
-		if c >= 'a' && c <= 'z' {
-			c -= 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
-// hasSuffix reports whether suffix.
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
