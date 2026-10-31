@@ -50,7 +50,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -146,10 +145,9 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 // ProvideOps creates the operations layer both transports call.
 func ProvideOps(i do.Injector) (*ops.Services, error) {
 	r := newResolver(i)
-	cfgStore := r.Resolve[*ops.ConfigStore]()
+	live := r.Resolve[*config.Live]()
 	rt := r.Resolve[*infra.BackendRuntime]()
 	objectManager := r.Resolve[*object.Manager]()
-	integrityCfg := r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]]()
 	stores := r.Resolve[metadataStore]()
 	coord := r.Resolve[*writepath.Coordinator]()
 	replicator := r.Resolve[*worker.Replicator]()
@@ -166,7 +164,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		return nil, r.err
 	}
 
-	enc, err := resolveOptionalEncryptor(i, cfgStore.Load().Encryption.Enabled)
+	enc, err := resolveOptionalEncryptor(i, live.Load().Encryption.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +178,6 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		CompStore:    stores,
 		Runtime:      rt,
 		Mover:        coord,
-		IntegrityCfg: integrityCfg,
 		Replicator:   replicator,
 		OverRep:      overRep,
 		Rebalancer:   rebalancer,
@@ -191,14 +188,14 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Provisioning: stores,
 		Registry:     NewRegistryPublisher(i),
 		Declared:     declared,
-		Config:       cfgStore,
+		Config:       live,
 	}), nil
 }
 
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	r := newResolver(i)
-	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
 	cb := r.Resolve[*breaker.CircuitBreaker]()
 	logBuffer := r.Resolve[*telemetry.LogBuffer]()
 	loginThrottle := r.Resolve[*httputil.LoginThrottle]()
@@ -222,7 +219,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Encryption:    opsSvc.Encryption,
 		Compression:   opsSvc.Compression,
 		DBHealthy:     cb.IsHealthy,
-		Cfg:           cfg,
+		Config:        live,
 		LogBuffer:     logBuffer,
 		LoginThrottle: loginThrottle,
 		Registry:      adminBucketRegistry(i),

@@ -49,10 +49,10 @@ type OverReplicationCleanerStore interface {
 const reasonOverReplication = "over_replication"
 
 // OverReplicationCleaner removes excess copies of objects that exceed the
-// configured replication factor. Its replication config is reloadable through
-// the embedded SetConfig and Config.
+// configured replication factor. The embedded Section reads its replication
+// config from the running configuration.
 type OverReplicationCleaner struct {
-	syncutil.Reloadable[config.ReplicationConfig]
+	syncutil.Section[config.ReplicationConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
@@ -60,11 +60,13 @@ type OverReplicationCleaner struct {
 }
 
 // OverReplicationCleanerDeps groups the cleaner's constructor dependencies:
-// fleet operations, write-path placement, and the metadata store.
+// fleet operations, write-path placement, the metadata store, and the
+// replication section of the running configuration.
 type OverReplicationCleanerDeps struct {
 	Ops       Ops
 	Placement Placement
 	Store     OverReplicationCleanerStore
+	Config    syncutil.Section[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner from its dependencies, all of
@@ -73,7 +75,9 @@ func NewOverReplicationCleaner(deps OverReplicationCleanerDeps) *OverReplication
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
+	must.NotNil("Config", deps.Config)
 	return &OverReplicationCleaner{
+		Section:   deps.Config,
 		ops:       deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,

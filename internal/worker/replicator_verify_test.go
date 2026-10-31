@@ -32,11 +32,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // verifyOnBody is the plaintext every verification test replicates, kept short
 // so a mismatch is obvious in a failure message.
 const verifyOnBody = "replicated payload"
+
+// verifyOnReplicate is an integrity section that asks for every new copy to be
+// read back and hash-checked.
+var verifyOnReplicate = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 
 // verifyingReplicator builds a replicator whose integrity config asks for
 // replica verification, with a fleet that can afford any read. Returns the
@@ -56,7 +61,7 @@ func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator
 	placeThroughStore(pl, ms)
 
 	r := newTestReplicator(ops, pl, ms)
-	r.SetIntegrityConfig(cfg)
+	r.integrity = syncutil.Fixed(cfg)
 	return r, ops, pl, ms
 }
 
@@ -214,7 +219,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	r := newTestReplicator(ops, NewMockPlacement(ctrl), ms)
-	r.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
+	r.integrity = verifyOnReplicate
 
 	before := promtest.ToFloat64(telemetry.IntegrityUsageDeclinedTotal)
 	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
@@ -241,13 +246,14 @@ func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 	codec := newScrubCodec(t)
 	plain, stored := encodeForScrub(t, codec)
 
-	r := NewReplicator(ReplicatorDeps{
+	r := NewReplicator(&ReplicatorDeps{
 		Ops:       ops,
 		Placement: NewMockPlacement(ctrl),
 		Store:     ms,
+		Config:    defaultReplication,
+		Integrity: verifyOnReplicate,
 		Codec:     codec,
 	})
-	r.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 
 	source := compressedRow(hashString(string(plain)), len(stored))
 	expectReadBack(ops, "b2", stored)
@@ -286,13 +292,14 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	r := NewReplicator(ReplicatorDeps{
+	r := NewReplicator(&ReplicatorDeps{
 		Ops:       ops,
 		Placement: NewMockPlacement(ctrl),
 		Store:     ms,
+		Config:    defaultReplication,
+		Integrity: verifyOnReplicate,
 		Encryptor: enc,
 	})
-	r.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 
 	source := &core.ObjectLocation{
 		ObjectKey:     "bucket/key1",
@@ -308,22 +315,6 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 
 	if got := r.verifyReplica(context.Background(), "b2", replicaPath, source); got != replicaVerified {
 		t.Errorf("verdict = %v, want replicaVerified", got)
-	}
-}
-
-// TestReplicator_IntegrityConfigRoundTrips covers the accessor the reload hook
-// and the verification gate both read.
-func TestReplicator_IntegrityConfigRoundTrips(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	r := newTestReplicator(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
-
-	if got := r.IntegrityConfig(); got != nil {
-		t.Errorf("IntegrityConfig() = %+v, want nil before any config is pushed", got)
-	}
-	r.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
-	if got := r.IntegrityConfig(); got == nil || !got.ShouldVerifyOnReplicate() {
-		t.Errorf("IntegrityConfig() = %+v, want replica verification on", got)
 	}
 }
 

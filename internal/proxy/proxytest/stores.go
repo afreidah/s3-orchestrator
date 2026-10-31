@@ -32,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -155,16 +154,17 @@ func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore) *usage.S
 
 // Stack is the set of collaborators internal/di builds, assembled the same way
 // and handed back as separate values. It carries no behaviour of its own: a
-// test reaches for the collaborator it is exercising.
+// test reaches for the collaborator it is exercising. Config is the running
+// configuration every collaborator reads its reloadable sections from.
 type Stack struct {
-	Runtime      *infra.BackendRuntime
-	Coord        *writepath.Coordinator
-	Objects      *object.Manager
-	Multipart    *multipart.Manager
-	States       *backendstate.Manager
-	Drainer      *worker.Drainer
-	Usage        *usage.Service
-	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	Runtime   *infra.BackendRuntime
+	Coord     *writepath.Coordinator
+	Objects   *object.Manager
+	Multipart *multipart.Manager
+	States    *backendstate.Manager
+	Drainer   *worker.Drainer
+	Usage     *usage.Service
+	Config    *config.Live
 }
 
 // New builds the whole stack over store and registers its teardown, so a test
@@ -196,10 +196,10 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		rt = NewRuntime(nil)
 	}
 
-	// One integrity-config pointer shared by both managers, and one coordinator
-	// shared by everything: production wires it this way, and a fixture that
-	// hands out two of either lets a test pass against a shape that cannot exist.
-	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
+	// One running config and one coordinator shared by everything: production
+	// wires it this way, and a fixture that hands out two of either lets a test
+	// pass against a shape that cannot exist.
+	live := config.NewLive(&config.Config{})
 	coord := writepath.New(rt, store)
 
 	mp := multipart.New(&multipart.Deps{
@@ -208,7 +208,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		Stores:       store,
 		Encryptor:    opts.Encryptor,
 		DEKCacheTTL:  dekCacheTTL,
-		IntegrityCfg: integrityCfg,
+		IntegrityCfg: live.Integrity(),
 	})
 	om := object.New(&object.Deps{
 		Core:                         rt,
@@ -224,7 +224,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		Detached:                     writepath.NewDetachedUploads(detachedUploadCeiling),
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
-		IntegrityCfg:                 integrityCfg,
+		IntegrityCfg:                 live.Integrity(),
 		BackendTimeout:               opts.BackendTimeout,
 	})
 
@@ -242,8 +242,8 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 			AbortUploads: mp.AbortMultipartUploadsOnBackend,
 			OnRecords:    states.SetStates,
 		}),
-		Usage:        NewUsage(rt, store),
-		IntegrityCfg: integrityCfg,
+		Usage:  NewUsage(rt, store),
+		Config: live,
 	}
 }
 
@@ -285,26 +285,29 @@ func BuildWorkers(s *Stack, m storetest.MetadataStore) *Workers {
 // encrypted, compressed, or both, mirroring what di.ProvideScrubber and
 // di.ProvideReplicator wire in production.
 func BuildWorkersWithFeatures(s *Stack, m storetest.MetadataStore, features WorkerFeatures) *Workers {
-	rt, coord := s.Runtime, s.Coord
+	rt, coord, live := s.Runtime, s.Coord, s.Config
 	return &Workers{
-		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: m}),
-		Replicator: worker.NewReplicator(worker.ReplicatorDeps{
+		Rebalancer: worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: m, Config: live.Rebalance()}),
+		Replicator: worker.NewReplicator(&worker.ReplicatorDeps{
 			Ops:       rt,
 			Placement: coord,
 			Store:     m,
+			Config:    live.Replication(),
+			Integrity: live.Integrity(),
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: m}),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: m, Config: live.Replication()}),
 		CleanupWorker: worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 			Ops: rt, Store: m, Concurrency: cleanupConcurrency,
 			InstanceID: testInstanceID, ClaimGracePeriod: claimGracePeriod,
 		}),
 		PendingReaper: worker.NewPendingReaper(worker.PendingReaperDeps{Ops: rt, Placement: coord, Store: m}),
-		Scrubber: worker.NewScrubber(worker.ScrubberDeps{
+		Scrubber: worker.NewScrubber(&worker.ScrubberDeps{
 			Ops:       rt,
 			Placement: coord,
 			Store:     m,
+			Config:    live.Integrity(),
 			Encryptor: features.Encryptor,
 			Codec:     features.Codec,
 		}),

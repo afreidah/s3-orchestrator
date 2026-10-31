@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -247,20 +246,5 @@ func TestRedisCounterConfigured_SharedBackend(t *testing.T) {
 
 	if !s.RedisCounterConfigured() {
 		t.Error("RedisCounterConfigured = false for a shared counter backend")
-	}
-}
-
-// TestConfig_NilUntilStored covers the reload contract: the service starts
-// without a flush config and returns whatever was last stored.
-func TestConfig_NilUntilStored(t *testing.T) {
-	t.Parallel()
-	s := newService(t, newFakeStores())
-
-	if got := s.Config(); got != nil {
-		t.Fatalf("Config = %v before a store, want nil", got)
-	}
-	s.SetConfig(&config.UsageFlushConfig{Interval: 30 * time.Second})
-	if got := s.Config(); got == nil || got.Interval != 30*time.Second {
-		t.Errorf("Config = %v, want Interval 30s", got)
 	}
 }

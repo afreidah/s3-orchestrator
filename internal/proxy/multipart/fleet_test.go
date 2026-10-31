@@ -32,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -69,17 +68,19 @@ type fleetOpts struct {
 }
 
 // fleet is a multipart Manager plus the collaborators a test asserts against:
-// the runtime carries the usage counters, and the integrity config is the one
-// the manager reads at completion time.
+// the runtime carries the usage counters, and the running config holds the
+// integrity settings the manager reads at completion time.
 type fleet struct {
 	*Manager
-	Runtime   *infra.BackendRuntime
-	Integrity *syncutil.AtomicConfig[config.IntegrityConfig]
+	Runtime *infra.BackendRuntime
+	Config  *config.Live
 }
 
 // SetIntegrityConfig swaps the integrity settings the manager reads when it
 // completes an upload.
-func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
+func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) {
+	f.Config.Store(&config.Config{Integrity: *cfg})
+}
 
 // usageOf reads a backend's unflushed usage counters for the current
 // period.
@@ -122,7 +123,7 @@ func newFleet(
 		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
 	})
 
-	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
+	live := config.NewLive(&config.Config{})
 	mp := New(&Deps{
 		Core:               rt,
 		Coord:              writepath.New(rt, store),
@@ -131,11 +132,11 @@ func newFleet(
 		Codec:              opts.Codec,
 		Compression:        opts.Compression,
 		DEKCacheTTL:        fleetDEKTTL,
-		IntegrityCfg:       integrity,
+		IntegrityCfg:       live.Integrity(),
 		EnforceMinPartSize: opts.EnforceMinPartSize,
 	})
 	t.Cleanup(mp.Close)
-	return &fleet{Manager: mp, Runtime: rt, Integrity: integrity}
+	return &fleet{Manager: mp, Runtime: rt, Config: live}
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already

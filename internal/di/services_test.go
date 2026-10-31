@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -36,17 +37,19 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
+// defaultFlush is the usage-flush section a test that does not drive the ticker
+// builds the service with.
+var defaultFlush = syncutil.Fixed(&config.UsageFlushConfig{Interval: 30 * time.Second})
+
 // recordingFlusher is a usageFlushOps that appends each flush call to calls,
 // shared with recordingFleet so a test sees the whole tick in order.
 type recordingFlusher struct {
-	cfg   *config.UsageFlushConfig
 	redis bool
 	err   error
 	calls *[]string
 }
 
-func (r recordingFlusher) Config() *config.UsageFlushConfig { return r.cfg }
-func (r recordingFlusher) RedisCounterConfigured() bool     { return r.redis }
+func (r recordingFlusher) RedisCounterConfigured() bool { return r.redis }
 
 func (r recordingFlusher) FlushUsage(_ context.Context) error {
 	*r.calls = append(*r.calls, "FlushUsage")
@@ -139,28 +142,21 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 		}),
 	})
 
-	rt := st.Runtime
+	rt, live := st.Runtime, st.Config
+	live.Update(func(c *config.Config) { c.Replication.Factor = 1 })
 	coord := writepath.New(rt, mock)
-	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: mock})
-	rb.SetConfig(&config.RebalanceConfig{})
-
-	rp := worker.NewReplicator(worker.ReplicatorDeps{Ops: rt, Placement: coord, Store: mock})
-	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
-
-	or := worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: mock})
-	or.SetConfig(&config.ReplicationConfig{Factor: 1})
-
+	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Rebalance()})
+	rp := worker.NewReplicator(&worker.ReplicatorDeps{
+		Ops: rt, Placement: coord, Store: mock, Config: live.Replication(), Integrity: live.Integrity(),
+	})
+	or := worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Replication()})
 	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: mock, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-
-	sc := worker.NewScrubber(worker.ScrubberDeps{Ops: rt, Placement: coord, Store: mock})
-	sc.SetConfig(&config.IntegrityConfig{})
+	sc := worker.NewScrubber(&worker.ScrubberDeps{Ops: rt, Placement: coord, Store: mock, Config: live.Integrity()})
 
 	rec := reconcile.NewManager(&reconcile.Deps{
 		Backends: rt, Stores: mock, Usage: rt.Acct(),
 	})
-	exp := expiry.New(mock, st.Objects, nil)
-	exp.SetConfig(&config.LifecycleConfig{})
-	st.IntegrityCfg.Store(&config.IntegrityConfig{})
+	exp := expiry.New(mock, st.Objects, live.Lifecycle(), nil)
 	return &servicesFixture{
 		stack:         st,
 		expirer:       exp,
@@ -207,6 +203,7 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 				Tracker: nearLimit(false),
 				Fleet:   recordingFleet{err: tt.err, calls: &calls},
 				States:  recordingStates{err: tt.err, calls: &calls},
+				Config:  defaultFlush,
 			}).(*usageFlushService)
 
 			svc.flushTick(t.Context())
@@ -230,7 +227,6 @@ func TestUsageFlushService_RunFlushesEachInterval(t *testing.T) {
 		elapsed time.Duration
 		want    int
 	}{
-		{"default interval with no config", nil, false, 95 * time.Second, 3},
 		{"configured interval", &config.UsageFlushConfig{Interval: 10 * time.Second}, false, 45 * time.Second, 4},
 		{"adaptive off ignores the limit", &config.UsageFlushConfig{Interval: 30 * time.Second, FastInterval: 5 * time.Second}, true, 52 * time.Second, 1},
 		{"adaptive switches to the fast interval", &config.UsageFlushConfig{
@@ -254,10 +250,11 @@ func flushesIn(t *testing.T, cfg *config.UsageFlushConfig, near nearLimit, elaps
 	t.Helper()
 	var calls []string
 	svc := NewUsageFlushService(&UsageFlushDeps{
-		Flusher: recordingFlusher{cfg: cfg, calls: &calls},
+		Flusher: recordingFlusher{calls: &calls},
 		Tracker: near,
 		Fleet:   recordingFleet{calls: &calls},
 		States:  noStates{},
+		Config:  syncutil.Fixed(cfg),
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error)

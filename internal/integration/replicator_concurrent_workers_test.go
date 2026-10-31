@@ -40,7 +40,10 @@ import (
 // same testManager / testStore as the bundled testWorkers.Replicator
 // but participates as a separate worker instance.
 func newAuxReplicator() *worker.Replicator {
-	return worker.NewReplicator(worker.ReplicatorDeps{Ops: testStack.Runtime, Placement: testCoord, Store: testStore})
+	return worker.NewReplicator(&worker.ReplicatorDeps{
+		Ops: testStack.Runtime, Placement: testCoord, Store: testStore,
+		Config: testStack.Config.Replication(), Integrity: testStack.Config.Integrity(),
+	})
 }
 
 // -------------------------------------------------------------------------

@@ -127,6 +127,7 @@ func registerSharedStateWatchers(sm *lifecycle.Manager, i do.Injector) error {
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	r := newResolver(i)
 	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
 	rt := r.Resolve[*infra.BackendRuntime]()
 	multipartManager := r.Resolve[*multipart.Manager]()
 	usageSvc := r.Resolve[*usage.Service]()
@@ -144,6 +145,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		Tracker: rt.Usage(),
 		Fleet:   rt,
 		States:  states,
+		Config:  live.UsageFlush(),
 	}))
 	sm.Register("fleet_snapshot", NewFleetSnapshotService(rt, locker, cfg.Telemetry.Metrics.FleetInterval))
 	sm.Register("cb_watchdog", breaker.NewWatchdog(registry))

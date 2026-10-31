@@ -33,7 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -97,17 +96,20 @@ func (d drainingSet) Flags(name string) core.BackendFlags {
 
 // fleet is an object Manager plus the collaborators a test asserts against:
 // the runtime carries the usage counters, the coordinator is the one the
-// manager writes through, and the integrity config is what it reads on write.
+// manager writes through, and the running config holds the integrity settings
+// it reads on write.
 type fleet struct {
 	*Manager
-	Runtime   *infra.BackendRuntime
-	Coord     *writepath.Coordinator
-	Integrity *syncutil.AtomicConfig[config.IntegrityConfig]
-	Detached  *writepath.DetachedUploads
+	Runtime  *infra.BackendRuntime
+	Coord    *writepath.Coordinator
+	Config   *config.Live
+	Detached *writepath.DetachedUploads
 }
 
 // SetIntegrityConfig swaps the integrity settings the manager reads on write.
-func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
+func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) {
+	f.Config.Store(&config.Config{Integrity: *cfg})
+}
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
@@ -148,7 +150,7 @@ func newFleet(
 		rt.SetStateChecker(d)
 	}
 
-	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
+	live := config.NewLive(&config.Config{})
 	coord := writepath.New(rt, store)
 	// Generous unless a test is about the ceiling itself, so a fan-out test is
 	// never refused a slot for a reason it did not ask for.
@@ -167,12 +169,12 @@ func newFleet(
 		Detached:                     detached,
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
-		IntegrityCfg:                 integrity,
+		IntegrityCfg:                 live.Integrity(),
 		BackendTimeout:               cmp.Or(opts.BackendTimeout, fleetTimeout),
 	})
 	// Stops the cache's eviction goroutine, as proxytest.New does for a stack.
 	t.Cleanup(om.LocationCache().Close)
-	return &fleet{Manager: om, Runtime: rt, Coord: coord, Integrity: integrity, Detached: detached}
+	return &fleet{Manager: om, Runtime: rt, Coord: coord, Config: live, Detached: detached}
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -58,34 +59,34 @@ type UnreadableList struct {
 
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
-	Scrubber     ScrubberOps
-	Store        UnhashedLister
-	IntegrityCfg IntegrityConfigLoader
-	Locker       AdvisoryLocker
+	Scrubber ScrubberOps
+	Store    UnhashedLister
+	Locker   AdvisoryLocker
+	Config   *config.Live
 }
 
 // Integrity serves the verification operations shared by the admin API and
 // the web UI.
 type Integrity struct {
-	log          *slog.Logger
-	scrubber     ScrubberOps
-	store        UnhashedLister
-	integrityCfg IntegrityConfigLoader
-	locker       AdvisoryLocker
+	log      *slog.Logger
+	scrubber ScrubberOps
+	store    UnhashedLister
+	locker   AdvisoryLocker
+	cfg      *config.Live
 }
 
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
 	must.NotNil("d.Store", d.Store)
-	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
 	must.NotNil("d.Locker", d.Locker)
+	must.NotNil("d.Config", d.Config)
 	return &Integrity{
-		log:          slog.Default().With(logfmt.Component("ops")),
-		scrubber:     d.Scrubber,
-		store:        d.Store,
-		integrityCfg: d.IntegrityCfg,
-		locker:       d.Locker,
+		log:      slog.Default().With(logfmt.Component("ops")),
+		scrubber: d.Scrubber,
+		store:    d.Store,
+		locker:   d.Locker,
+		cfg:      d.Config,
 	}
 }
 
@@ -104,7 +105,7 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // a tick cannot overlap. If the lock is held it returns ErrScrubInProgress
 // instead of waiting.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (batch.Summary, error) {
-	icfg := i.integrityCfg.Load()
+	icfg := &i.cfg.Load().Integrity
 	if !icfg.IsEnabled() {
 		return batch.Summary{}, ErrIntegrityDisabled
 	}
@@ -133,7 +134,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 	if key == "" {
 		return nil, ErrKeyRequired
 	}
-	if !i.integrityCfg.Load().IsEnabled() {
+	if !i.cfg.Load().Integrity.IsEnabled() {
 		return nil, ErrIntegrityDisabled
 	}
 
@@ -154,7 +155,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // every backend. observer, when non-nil, receives a start and end step per
 // object hashed.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (BackfillResult, error) {
-	if !i.integrityCfg.Load().IsEnabled() {
+	if !i.cfg.Load().Integrity.IsEnabled() {
 		return BackfillResult{}, ErrIntegrityDisabled
 	}
 	if batchSize <= 0 {

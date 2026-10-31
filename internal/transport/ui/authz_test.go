@@ -59,7 +59,7 @@ func grantedUsers(withViewer bool) *provisioning.Snapshot {
 func grantedHandler(t *testing.T) (*http.ServeMux, func(withViewer bool)) {
 	t.Helper()
 	h, mux := newTestHandler(t)
-	cfg := h.cfg.Load()
+	cfg := h.d.Config.Load()
 
 	var current atomic.Pointer[auth.BucketRegistry]
 	publish := func(withViewer bool) {

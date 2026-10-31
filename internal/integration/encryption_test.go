@@ -131,7 +131,6 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Locker:       testStore,
 		Runtime:      st.Runtime,
 		Mover:        st.Coord,
-		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
@@ -139,7 +138,7 @@ func startEncryptionEnv(t *testing.T, cfg *config.EncryptionConfig) *encryptionT
 		Unhashed:     testStore,
 		Provisioning: testStore,
 		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
-		Config:       ops.NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),
+		Config:       config.NewLive(&config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}}),
 	})
 	adminHandler := admin.New(&admin.Deps{
 		BackendOps:   st.Usage,

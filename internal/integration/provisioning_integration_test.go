@@ -94,8 +94,8 @@ func setupProvEnv(t *testing.T) *provEnv {
 	declared := provisioning.NewDeclared()
 
 	inj := do.New()
-	cfgStore := ops.NewConfigStore(cfg)
-	do.ProvideValue(inj, cfgStore)
+	st.Config.Store(cfg)
+	do.ProvideValue(inj, st.Config)
 	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue[core.ProvisioningStore](inj, testStore)
 	do.ProvideValue(inj, declared)
@@ -115,7 +115,6 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Locker:       testStore,
 		Runtime:      st.Runtime,
 		Mover:        st.Coord,
-		IntegrityCfg: st.IntegrityCfg,
 		Replicator:   workers.Replicator,
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
@@ -124,7 +123,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Provisioning: testStore,
 		Registry:     publisher,
 		Declared:     declared,
-		Config:       cfgStore,
+		Config:       st.Config,
 	})
 
 	env := &provEnv{declared: declared, cfg: cfg}

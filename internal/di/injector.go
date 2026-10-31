@@ -22,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -63,12 +62,12 @@ func NewInjector(deps InjectorDeps) do.Injector {
 
 // registerValues seeds the injector with already-constructed values
 // (config, mode, log level, log buffer) so providers can resolve them
-// via do.Invoke without re-reading the YAML on every call. The config store
+// via do.Invoke without re-reading the YAML on every call. *config.Live
 // holds the running configuration, which a reload replaces; the bare
 // *config.Config stays the one the process started with.
 func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) {
 	do.ProvideValue(inj, cfg)
-	do.ProvideValue(inj, ops.NewConfigStore(cfg))
+	do.ProvideValue(inj, config.NewLive(cfg))
 	do.ProvideValue(inj, mode)
 	do.ProvideValue(inj, logLevel)
 	do.ProvideValue(inj, logBuffer)
@@ -103,7 +102,6 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideUsageTracker)
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendRuntime)
-	do.Provide(inj, ProvideIntegrityConfig)
 	do.Provide(inj, ProvideWriteCoordinator)
 	do.Provide(inj, ProvideDetachedUploads)
 	do.Provide(inj, ProvideMultipartManager)

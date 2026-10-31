@@ -88,6 +88,10 @@ The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it
 
 Reads now use the chunk size each encrypted object was written with instead of the configured `encryption.chunk_size`, so changing the setting no longer makes existing objects unreadable. Objects that became unreadable after an earlier change can be read again with no other action. No migration and no config change.
 
+**One running configuration ([#1843](https://github.com/afreidah/s3-orchestrator/issues/1843), v0.178.15)**
+
+Every component now reads its reloadable settings from one copy of the running config, which a reload replaces once validation passes, before the hooks run. The `worker_configs`, `runtime_config`, `ops` and `ui_handler` entries in the reload status are gone; the quota gauge refresh `runtime_config` performed reports as `quota_metrics`. No migration and no config change.
+
 **A refused reload leaves the bucket set as it was ([#1827](https://github.com/afreidah/s3-orchestrator/issues/1827), v0.178.14)**
 
 A reload's validation no longer publishes the new bucket set, so a reload another hook refuses leaves the admin endpoints, CORS and the reconciler on the buckets S3 authentication still serves. The `bucket_credentials` and `bucket_cors` entries in the reload status are one `provisioning` entry, and its validation now also checks stored CORS rules. A bucket or credential change through the provisioning API after a reload now rebuilds from the reloaded config file instead of the one the process started with. No migration and no config change.

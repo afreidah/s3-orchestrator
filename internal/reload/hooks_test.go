@@ -37,21 +37,14 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
-	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -379,107 +372,14 @@ func TestLogLevelHook_Applied(t *testing.T) {
 	}
 }
 
-// TestWorkerConfigsHook_FailedRebalancer threads a failing rebalancer
-// provider through and asserts the hook fails with the labelled error
-// before touching the other workers.
-func TestWorkerConfigsHook_FailedRebalancer(t *testing.T) {
+// TestQuotaMetricsHook_FailedResolution drives the Failed branch.
+func TestQuotaMetricsHook_FailedResolution(t *testing.T) {
 	inj := do.New()
-	failingProvider[*worker.Rebalancer](inj)
-	h := &workerConfigsHook{inj: inj}
+	failingProvider[*infra.BackendRuntime](inj)
+	h := &quotaMetricsHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-	if !strings.Contains(err.Error(), "rebalancer") {
-		t.Errorf("err %q missing rebalancer label", err)
-	}
-}
-
-// TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator covers the section the
-// replicator gained with verify_on_replicate. The replicator reads two config
-// sections now, and a reload that refreshed only Replication would leave replica
-// verification pinned to whatever it was at startup while the operator watched
-// SIGHUP report success.
-func TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator(t *testing.T) {
-	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	st := proxytest.New(t, mock, &proxytest.StackOptions{
-		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
-			Backends:        map[string]backend.ObjectBackend{},
-			Order:           []string{},
-			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
-		}),
-	})
-	workers := proxytest.BuildWorkers(st, mock)
-
-	inj := do.New()
-	do.ProvideValue(inj, workers.Rebalancer)
-	do.ProvideValue(inj, workers.Replicator)
-	do.ProvideValue(inj, workers.OverReplicationCleaner)
-	do.ProvideValue(inj, workers.Scrubber)
-
-	newCfg := &config.Config{
-		Replication: config.ReplicationConfig{Factor: 3},
-		Integrity:   config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true},
-	}
-	h := &workerConfigsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, newCfg)
-	if status != HookApplied || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
-	}
-
-	if got := workers.Replicator.Config().Factor; got != 3 {
-		t.Errorf("replication factor = %d, want 3", got)
-	}
-	icfg := workers.Replicator.IntegrityConfig()
-	if icfg == nil || !icfg.ShouldVerifyOnReplicate() {
-		t.Errorf("integrity config = %+v, want replica verification on", icfg)
-	}
-}
-
-// TestManagerConfigHook_FailedResolution drives the Failed branch.
-func TestManagerConfigHook_FailedResolution(t *testing.T) {
-	inj := do.New()
-	failingProvider[*usage.Service](inj)
-	h := &runtimeConfigHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-}
-
-// TestUIHandlerHook_FailedResolution drives the Failed branch.
-func TestUIHandlerHook_FailedResolution(t *testing.T) {
-	inj := do.New()
-	failingProvider[*ui.Handler](inj)
-	h := &uiHandlerHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-}
-
-// TestUIHandlerHook_SkippedWhenDisabled covers the no-provider path.
-func TestUIHandlerHook_SkippedWhenDisabled(t *testing.T) {
-	h := &uiHandlerHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookSkipped || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
-	}
-}
-
-// TestUIHandlerHook_AppliedPushesNewConfig wires a real ui.Handler
-// through the injector and confirms Apply pushes the new config onto
-// it, returning HookApplied.
-func TestUIHandlerHook_AppliedPushesNewConfig(t *testing.T) {
-	inj := do.New()
-	do.Provide(inj, func(do.Injector) (*ui.Handler, error) {
-		return ui.New(newUIDepsForReloadTest(t)), nil
-	})
-	h := &uiHandlerHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookApplied || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
 	}
 }
 
@@ -510,16 +410,13 @@ func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 // breaking change that should be deliberate.
 func TestHookNamesStable(t *testing.T) {
 	cases := map[Hook]string{
-		&tlsCertHook{}:       "tls_certificate",
-		&provisioningHook{}:  "provisioning",
-		&rateLimitHook{}:     "rate_limit",
-		&quotaSyncHook{}:     "quota_sync",
-		&usageLimitsHook{}:   "usage_limits",
-		&logLevelHook{}:      "log_level",
-		&workerConfigsHook{}: "worker_configs",
-		&runtimeConfigHook{}: "runtime_config",
-		&opsHook{}:           "ops",
-		&uiHandlerHook{}:     "ui_handler",
+		&tlsCertHook{}:      "tls_certificate",
+		&provisioningHook{}: "provisioning",
+		&rateLimitHook{}:    "rate_limit",
+		&quotaSyncHook{}:    "quota_sync",
+		&usageLimitsHook{}:  "usage_limits",
+		&logLevelHook{}:     "log_level",
+		&quotaMetricsHook{}: "quota_metrics",
 	}
 	for h, want := range cases {
 		if got := h.Name(); got != want {
@@ -528,57 +425,6 @@ func TestHookNamesStable(t *testing.T) {
 		if err := h.Check(nil, nil); err != nil {
 			t.Errorf("%s Check returned %v, want nil", want, err)
 		}
-	}
-}
-
-// -------------------------------------------------------------------------
-// CONSTRUCTOR
-// -------------------------------------------------------------------------
-
-// newUIDepsForReloadTest wires the minimum real deps the ui handler
-// constructor requires. The reload-hook test only exercises UpdateConfig,
-// but the constructor still panics via must.NotNil on missing deps.
-func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
-	t.Helper()
-	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	st := proxytest.New(t, mock, &proxytest.StackOptions{
-		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
-			Backends:        map[string]backend.ObjectBackend{},
-			Order:           []string{},
-			RoutingStrategy: config.RoutingPack,
-			Metrics:         mock,
-		}),
-	})
-	workers := proxytest.BuildWorkers(st, mock)
-	svc := ops.New(&ops.Deps{
-		Objects:      st.Objects,
-		Store:        mock,
-		EncStore:     mock,
-		Locker:       mock,
-		Runtime:      st.Runtime,
-		Mover:        st.Coord,
-		IntegrityCfg: st.IntegrityCfg,
-		Replicator:   workers.Replicator,
-		OverRep:      workers.OverReplicationCleaner,
-		Rebalancer:   workers.Rebalancer,
-		Scrubber:     workers.Scrubber,
-		Unhashed:     mock,
-		Declared:     provisioning.NewDeclared(),
-		Config:       ops.NewConfigStore(&config.Config{}),
-	})
-	throttle := httputil.NewLoginThrottle(5, time.Minute)
-	t.Cleanup(throttle.Close)
-	return &ui.Deps{
-		Objects:       svc.Objects,
-		Integrity:     svc.Integrity,
-		Replication:   svc.Replication,
-		Rebalance:     svc.Rebalance,
-		Encryption:    svc.Encryption,
-		Compression:   svc.Compression,
-		Buckets:       provisioning.NewDeclared(),
-		Cfg:           &config.Config{},
-		LoginThrottle: throttle,
-		Registry:      func() *auth.BucketRegistry { return nil },
 	}
 }
 

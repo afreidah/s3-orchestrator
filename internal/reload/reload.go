@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // Watches for SIGHUP, loads the replacement configuration, runs a Check
-// pass across every Hook (any error aborts before mutation), then runs
-// the Apply pass collecting per-hook outcomes. A monotonic generation
-// counter advances on every successful Apply pass (full or partial) so
+// pass across every Hook (any error aborts before mutation), stores the new
+// configuration, then runs the Apply pass collecting per-hook outcomes. A
+// monotonic generation counter advances on every Apply pass (full or partial) so
 // operators can correlate reload events with the version each component
 // is running. The most recent Result is held atomically and
 // exposed via LastResult() for admin status surfaces.
@@ -30,7 +30,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -47,13 +46,13 @@ const applyTimeout = 10 * time.Second
 // -------------------------------------------------------------------------
 
 // Deps groups everything the coordinator mutates or reads on reload.
-// CfgPtr is the atomic config the rest of the process reads; the coordinator
-// swaps the new one in after a successful Apply pass. Hooks is nil in
+// Live is the running configuration the rest of the process reads; the
+// coordinator stores the new one once every Check passes. Hooks is nil in
 // production, where the default set is used, and set by tests injecting fakes.
 type Deps struct {
 	ConfigPath   string      // the on-disk YAML SIGHUP reloads
 	Injector     do.Injector // consulted by hooks for optional subsystems
-	CfgPtr       *syncutil.AtomicConfig[config.Config]
+	Live         *config.Live
 	LogLevel     *slog.LevelVar         // updated by the log_level hook
 	CertReloader *httputil.CertReloader // rotates the TLS certificate; nil when TLS is off
 	Hooks        []Hook
@@ -88,7 +87,7 @@ func New(deps *Deps) *Coordinator {
 		deps:    *deps,
 		hooks:   hooks,
 		log:     slog.Default().With(logfmt.Component("reload")),
-		startup: deps.CfgPtr.Load(),
+		startup: deps.Live.Load(),
 	}
 }
 
@@ -128,7 +127,7 @@ func (c *Coordinator) LastResult() *Result {
 }
 
 // Generation returns the reload generation, starting at 0 and advancing on
-// every successful Apply, full or partial.
+// every Apply pass, full or partial.
 func (c *Coordinator) Generation() int64 {
 	return c.generation.Load()
 }
@@ -136,7 +135,7 @@ func (c *Coordinator) Generation() int64 {
 // PendingRestart lists non-reloadable fields the config in use changed since
 // startup; computed live so a failed reload cannot hide them.
 func (c *Coordinator) PendingRestart() []string {
-	return config.NonReloadableFieldsChanged(c.startup, c.deps.CfgPtr.Load())
+	return config.NonReloadableFieldsChanged(c.startup, c.deps.Live.Load())
 }
 
 // Reload performs one full reload pass, the one Watch runs on each SIGHUP.
@@ -167,7 +166,7 @@ func (c *Coordinator) Reload() *Result {
 		RequiresRestart: config.NonReloadableFieldsChanged(c.startup, newCfg),
 	}
 
-	currentCfg := c.deps.CfgPtr.Load()
+	currentCfg := c.deps.Live.Load()
 
 	for _, h := range c.hooks {
 		if err := h.Check(currentCfg, newCfg); err != nil {
@@ -180,6 +179,14 @@ func (c *Coordinator) Reload() *Result {
 			return c.finalize(ctx, result)
 		}
 	}
+
+	// Store the new config once every Check passes, so each component reading
+	// its section from it, and every hook below, sees the new settings. The
+	// generation advances even on PartialApplied so operators can tell that
+	// state moved.
+	c.deps.Live.Store(newCfg)
+	newGen := c.generation.Add(1)
+	result.Generation = newGen
 
 	applyCtx, cancel := context.WithTimeout(ctx, applyTimeout)
 	defer cancel()
@@ -195,13 +202,6 @@ func (c *Coordinator) Reload() *Result {
 		}
 		result.Outcomes = append(result.Outcomes, outcome)
 	}
-
-	// Mutate the live atomic config and advance the generation only
-	// once Apply has run end-to-end. Generation advances even on
-	// PartialApplied so operators can tell that state moved.
-	c.deps.CfgPtr.Store(newCfg)
-	newGen := c.generation.Add(1)
-	result.Generation = newGen
 
 	if failed > 0 {
 		result.Status = ReloadPartialApplied

@@ -23,7 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -94,14 +93,6 @@ type RegistryPublisher interface {
 	Republish(ctx context.Context) error
 }
 
-// IntegrityConfigLoader reads the hot-reloadable integrity settings that gate
-// a scrub. Satisfied by the *syncutil.AtomicConfig[config.IntegrityConfig]
-// the composition root builds, so the operations layer reads the same value
-// the scrubber and the read path do rather than a copy of it.
-type IntegrityConfigLoader interface {
-	Load() *config.IntegrityConfig
-}
-
 // -------------------------------------------------------------------------
 // RUNTIME AND WORKERS
 // -------------------------------------------------------------------------
@@ -120,29 +111,24 @@ type Mover interface {
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 }
 
-// ReplicatorOps is the slice of *worker.Replicator the replication operations
-// use. Config returns nil when the worker is unconfigured; Replicate runs one
-// cycle and returns the copies it created alongside the per-item tally, so a
-// caller can tell a cycle that did its work from one where objects failed.
-type ReplicatorOps interface {
-	Config() *config.ReplicationConfig
+// Replicator is the slice of *worker.Replicator the replication operations
+// use. Replicate runs one cycle and returns the copies it created alongside the
+// per-item tally, so a caller can tell a cycle that did its work from one where
+// objects failed.
+type Replicator interface {
 	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error)
 }
 
-// RebalancerOps is the slice of *worker.Rebalancer the rebalance operation
-// uses. Config returns nil when the worker is unconfigured; Rebalance runs one
-// cycle, reporting each move through the observer.
-type RebalancerOps interface {
-	Config() *config.RebalanceConfig
+// Rebalancer is the slice of *worker.Rebalancer the rebalance operation uses.
+// Rebalance runs one cycle, reporting each move through the observer.
+type Rebalancer interface {
 	Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (worker.RebalanceSummary, error)
 }
 
-// LifecycleOps is the slice of *expiry.Manager the on-demand expiration sweep
-// uses. Config returns nil when no lifecycle block is configured, which is
-// distinct from one configured with no rules; ProcessRules applies every rule
-// once and reports what it deleted against what it could not.
-type LifecycleOps interface {
-	Config() *config.LifecycleConfig
+// RuleProcessor is the slice of *expiry.Manager the on-demand expiration sweep
+// uses. ProcessRules applies every rule once and reports what it deleted
+// against what it could not.
+type RuleProcessor interface {
 	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) batch.Summary
 }
 
@@ -151,7 +137,6 @@ type LifecycleOps interface {
 // the per-item tally, so an object it could not clean is visible rather than
 // hidden behind a smaller count.
 type OverReplicationOps interface {
-	Config() *config.ReplicationConfig
 	CountPending(ctx context.Context, factor int) (int64, error)
 	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error)
 }
@@ -178,12 +163,11 @@ type AdvisoryLocker interface {
 
 // Compile-time assertions.
 var (
-	_ ObjectAPI             = (*object.Manager)(nil)
-	_ IntegrityConfigLoader = (*syncutil.AtomicConfig[config.IntegrityConfig])(nil)
-	_ RuntimeOps            = (*infra.BackendRuntime)(nil)
-	_ Mover                 = (*writepath.Coordinator)(nil)
-	_ ReplicatorOps         = (*worker.Replicator)(nil)
-	_ RebalancerOps         = (*worker.Rebalancer)(nil)
-	_ OverReplicationOps    = (*worker.OverReplicationCleaner)(nil)
-	_ ScrubberOps           = (*worker.Scrubber)(nil)
+	_ ObjectAPI          = (*object.Manager)(nil)
+	_ RuntimeOps         = (*infra.BackendRuntime)(nil)
+	_ Mover              = (*writepath.Coordinator)(nil)
+	_ Replicator         = (*worker.Replicator)(nil)
+	_ Rebalancer         = (*worker.Rebalancer)(nil)
+	_ OverReplicationOps = (*worker.OverReplicationCleaner)(nil)
+	_ ScrubberOps        = (*worker.Scrubber)(nil)
 )

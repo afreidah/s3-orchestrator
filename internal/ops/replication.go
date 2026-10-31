@@ -52,20 +52,20 @@ type SurplusCount struct {
 
 // ReplicationDeps holds the collaborators Replication requires.
 type ReplicationDeps struct {
-	Replicator ReplicatorOps
+	Replicator Replicator
 	OverRep    OverReplicationOps
 	Runtime    RuntimeOps
-	Config     *ConfigStore
+	Config     *config.Live
 }
 
 // Replication serves the copy-count operations shared by the admin API and
 // the web UI.
 type Replication struct {
 	log        *slog.Logger
-	replicator ReplicatorOps
+	replicator Replicator
 	overRep    OverReplicationOps
 	runtime    RuntimeOps
-	cfg        *ConfigStore
+	cfg        *config.Live
 }
 
 // NewReplication is the explicit-deps constructor.
@@ -91,7 +91,7 @@ func NewReplication(d ReplicationDeps) *Replication {
 // created. observer, when non-nil, receives a start and end step per object
 // replicated.
 func (r *Replication) Replicate(ctx context.Context, observer progress.Observer) (worker.ReplicationSummary, error) {
-	runCfg, err := r.runConfig(r.replicator.Config())
+	runCfg, err := r.runConfig()
 	if err != nil {
 		return worker.ReplicationSummary{}, err
 	}
@@ -117,7 +117,7 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 // CountSurplus reports the current over-replication backlog at the running
 // factor.
 func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
-	runCfg, err := r.runConfig(r.overRep.Config())
+	runCfg, err := r.runConfig()
 	if err != nil {
 		return SurplusCount{}, err
 	}
@@ -133,7 +133,7 @@ func (r *Replication) CountSurplus(ctx context.Context) (SurplusCount, error) {
 // the resolved config; a larger request is capped. observer, when non-nil,
 // receives an end step per copy removed.
 func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer progress.Observer) (worker.OverReplicationSummary, error) {
-	runCfg, err := r.runConfig(r.overRep.Config())
+	runCfg, err := r.runConfig()
 	if err != nil {
 		return worker.OverReplicationSummary{}, err
 	}
@@ -155,18 +155,11 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 	return sum, nil
 }
 
-// runConfig resolves the settings for one manual cycle: whatever the worker
-// holds, then the running config, then the defaults. Reports
-// ErrReplicationDisabled when the resolved factor leaves nothing to replicate.
-func (r *Replication) runConfig(workerCfg *config.ReplicationConfig) (config.ReplicationConfig, error) {
-	var runCfg config.ReplicationConfig
-	switch {
-	case workerCfg != nil:
-		runCfg = *workerCfg
-	case r.cfg.Load() != nil:
-		runCfg = r.cfg.Load().Replication
-	}
-
+// runConfig resolves the settings for one manual cycle: the running config,
+// with the defaults filling anything it leaves unset. Reports
+// ErrReplicationDisabled when the factor leaves nothing to replicate.
+func (r *Replication) runConfig() (config.ReplicationConfig, error) {
+	runCfg := r.cfg.Load().Replication
 	if runCfg.Factor <= 1 {
 		return config.ReplicationConfig{}, ErrReplicationDisabled
 	}

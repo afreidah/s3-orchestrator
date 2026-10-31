@@ -106,7 +106,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.cfg.Load()
+	cfg := h.d.Config.Load()
 	bucketNames := h.d.Buckets.Names()
 
 	// Ensure every declared bucket, from the config file or the store, appears

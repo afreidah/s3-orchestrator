@@ -55,7 +55,7 @@ func provisioningWith(t *testing.T, h *Handler, cfgBuckets []config.BucketConfig
 
 	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
-		Config: ops.NewConfigStore(&config.Config{Buckets: cfgBuckets}),
+		Config: config.NewLive(&config.Config{Buckets: cfgBuckets}),
 	})
 	return store
 }
@@ -170,7 +170,7 @@ func TestHandleProvisioning_StoreFailureIs500(t *testing.T) {
 	store.EXPECT().ListBuckets(gomock.Any()).Return(nil, context.DeadlineExceeded)
 	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:  store,
-		Config: ops.NewConfigStore(&config.Config{}),
+		Config: config.NewLive(&config.Config{}),
 	})
 
 	w := httptest.NewRecorder()
@@ -337,7 +337,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 	h.d.Provision = ops.NewProvisioning(ops.ProvisioningDeps{
 		Store:   store,
 		Objects: objects,
-		Config:  ops.NewConfigStore(&config.Config{}),
+		Config:  config.NewLive(&config.Config{}),
 	})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/admin/api/provisioning/buckets/photos", nil)

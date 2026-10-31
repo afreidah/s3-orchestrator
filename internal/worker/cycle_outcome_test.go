@@ -341,7 +341,7 @@ func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 
 // cleaner builds the worker under test from the fleet.
 func (f *cleanerFleet) cleaner() *OverReplicationCleaner {
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: f.ops, Placement: f.pl, Store: f.store})
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: f.ops, Placement: f.pl, Store: f.store, Config: defaultReplication})
 }
 
 // overReplicatedOn returns one key's copies, one row per backend.
@@ -507,7 +507,7 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).AnyTimes()
 	ops.EXPECT().ReleaseAdmission().AnyTimes()
 	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), moveErr).AnyTimes()
-	return NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: store})
+	return NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: store, Config: defaultRebalance})
 }
 
 // TestRebalance_ReportsCycleOutcome asserts a rebalance cycle labels its
@@ -543,6 +543,7 @@ func TestRebalance_QuotaQueryFailureReportsError(t *testing.T) {
 		Ops:       newMockOps(ctrl),
 		Placement: NewMockPlacement(ctrl),
 		Store:     &mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")},
+		Config:    defaultRebalance,
 	})
 
 	wantCycleLabel(t, audit.WorkloadRebalance, batch.OutcomeError, func() {

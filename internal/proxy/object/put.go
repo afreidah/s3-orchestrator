@@ -291,7 +291,7 @@ type putAttemptResult struct {
 // computed because the client is told it; the SHA-256 is empty when integrity
 // verification is disabled.
 func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
-	hasher := o.integrityCfg.Load().Hasher()
+	hasher := o.integrityCfg.Config().Hasher()
 	etagHasher := etag.NewHasher()
 	mb, err := materialize.New(body, size, hasher, etagHasher)
 	if err != nil {

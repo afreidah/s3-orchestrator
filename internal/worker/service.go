@@ -23,9 +23,9 @@ import (
 
 // passSpec describes a worker that runs one pass per tick under its config C.
 // Interval is the tick when the config sets none, and Configured reads the one
-// it sets. Enabled decides from the config whether a tick runs; an unset config
-// never runs. Pass runs one cycle and returns how much it changed, which is
-// logged under CountKey. RunAtStartup also runs a pass as the service starts.
+// it sets. Enabled decides from the config whether a tick runs. Pass runs one
+// cycle and returns how much it changed, which is logged under CountKey.
+// RunAtStartup also runs a pass as the service starts.
 type passSpec[C any] struct {
 	Workload     audit.Workload
 	Lock         int64
@@ -44,28 +44,21 @@ type passSpec[C any] struct {
 func passService[C any](spec *passSpec[C], manager tickrunner.QuotaMetricsRefresher, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
 	log := workerLogger(spec.Workload)
 	work := func(ctx context.Context) error {
-		cfg := spec.Config()
-		if cfg == nil {
-			return nil
-		}
-		n, err := spec.Pass(ctx, cfg)
+		n, err := spec.Pass(ctx, spec.Config())
 		return tickrunner.HandlePassResult(ctx, log, manager, n, err, spec.CountKey)
 	}
 	interval := spec.Interval
-	if cfg := spec.Config(); cfg != nil && spec.Configured(cfg) > 0 {
-		interval = spec.Configured(cfg)
+	if configured := spec.Configured(spec.Config()); configured > 0 {
+		interval = configured
 	}
 	svc := tickrunner.Config{
-		Locker:   locker,
-		Interval: interval,
-		LockID:   spec.Lock,
-		Name:     string(spec.Workload),
-		Log:      log,
-		ShouldRun: func() bool {
-			cfg := spec.Config()
-			return cfg != nil && spec.Enabled(cfg)
-		},
-		Work: work,
+		Locker:    locker,
+		Interval:  interval,
+		LockID:    spec.Lock,
+		Name:      string(spec.Workload),
+		Log:       log,
+		ShouldRun: func() bool { return spec.Enabled(spec.Config()) },
+		Work:      work,
 	}
 	if spec.RunAtStartup {
 		svc.Startup = work

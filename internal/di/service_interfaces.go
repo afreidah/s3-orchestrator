@@ -20,10 +20,8 @@ import (
 )
 
 // usageFlushOps is the subset of *usage.Service that usageFlushService needs
-// to read flush configuration, decide whether to load the shared fleet state,
-// and run the flush itself.
+// to decide whether to load the shared fleet state and run the flush itself.
 type usageFlushOps interface {
-	Config() *config.UsageFlushConfig
 	RedisCounterConfigured() bool
 	FlushUsage(ctx context.Context) error
 	RefreshQuotaBaselines(ctx context.Context) error

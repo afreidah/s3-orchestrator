@@ -44,10 +44,10 @@ type RebalancerStore interface {
 }
 
 // Rebalancer moves objects between backends to optimize space distribution.
-// Its rebalance config is reloadable through the embedded SetConfig and
-// Config.
+// The embedded Section reads its rebalance config from the running
+// configuration.
 type Rebalancer struct {
-	syncutil.Reloadable[config.RebalanceConfig]
+	syncutil.Section[config.RebalanceConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
@@ -56,11 +56,13 @@ type Rebalancer struct {
 }
 
 // RebalancerDeps groups the rebalancer's constructor dependencies: fleet
-// operations, write-path placement, and the metadata store.
+// operations, write-path placement, the metadata store, and the rebalance
+// section of the running configuration.
 type RebalancerDeps struct {
 	Ops       Ops
 	Placement Placement
 	Store     RebalancerStore
+	Config    syncutil.Section[config.RebalanceConfig]
 }
 
 // NewRebalancer creates a Rebalancer from its dependencies, all of which are
@@ -69,7 +71,9 @@ func NewRebalancer(deps RebalancerDeps) *Rebalancer {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
+	must.NotNil("Config", deps.Config)
 	return &Rebalancer{
+		Section:   deps.Config,
 		ops:       deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,

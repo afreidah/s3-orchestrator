@@ -53,29 +53,23 @@ type ObjectDeleter interface {
 }
 
 // Manager applies lifecycle rules on demand. Safe for concurrent use; the
-// config is swapped atomically by the reload path.
+// embedded Section reads its lifecycle config from the running configuration.
 type Manager struct {
+	syncutil.Section[config.LifecycleConfig]
 	store   core.ExpiredObjectsLister
 	objects ObjectDeleter
-	cfg     syncutil.AtomicConfig[config.LifecycleConfig]
 	log     *slog.Logger
 }
 
-// New builds a Manager. log may be nil, in which case the default logger is
-// used at call time.
-func New(store core.ExpiredObjectsLister, objects ObjectDeleter, log *slog.Logger) *Manager {
-	return &Manager{store: store, objects: objects, log: log}
+// New builds a Manager over the lifecycle section cfg. log may be nil, in
+// which case the default logger is used at call time.
+func New(store core.ExpiredObjectsLister, objects ObjectDeleter, cfg syncutil.Section[config.LifecycleConfig], log *slog.Logger) *Manager {
+	return &Manager{Section: cfg, store: store, objects: objects, log: log}
 }
 
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
-
-// SetConfig atomically replaces the lifecycle configuration.
-func (m *Manager) SetConfig(cfg *config.LifecycleConfig) { m.cfg.Store(cfg) }
-
-// Config returns the current lifecycle configuration, or nil when unset.
-func (m *Manager) Config() *config.LifecycleConfig { return m.cfg.Load() }
 
 // logger returns the configured logger, falling back to the default so a
 // Manager built without one in a test still logs through the standard handler.

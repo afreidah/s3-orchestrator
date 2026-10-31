@@ -67,10 +67,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)
-	// Empty reloadable configs so Replicator.Config()/Scrubber.Config() return
-	// sentinel states the handlers can interpret.
-	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	st.Config.Update(func(c *config.Config) { c.Replication.Factor = 1 })
 
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
@@ -111,21 +108,20 @@ func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
 // workers, so a handler test drives the same code the process wires.
 func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.MetadataStore, enc *encryption.Encryptor) *ops.Services {
 	return ops.New(&ops.Deps{
-		Objects:      st.Objects,
-		Store:        store,
-		Encryptor:    enc,
-		EncStore:     store,
-		Locker:       store,
-		Runtime:      st.Runtime,
-		Mover:        st.Coord,
-		IntegrityCfg: st.IntegrityCfg,
-		Replicator:   workers.Replicator,
-		OverRep:      workers.OverReplicationCleaner,
-		Rebalancer:   workers.Rebalancer,
-		Scrubber:     workers.Scrubber,
-		Unhashed:     store,
-		Declared:     declaredBuckets(),
-		Config:       ops.NewConfigStore(&config.Config{}),
+		Objects:    st.Objects,
+		Store:      store,
+		Encryptor:  enc,
+		EncStore:   store,
+		Locker:     store,
+		Runtime:    st.Runtime,
+		Mover:      st.Coord,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
+		Rebalancer: workers.Rebalancer,
+		Scrubber:   workers.Scrubber,
+		Unhashed:   store,
+		Declared:   declaredBuckets(),
+		Config:     st.Config,
 	})
 }
 

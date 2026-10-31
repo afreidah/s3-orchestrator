@@ -12,6 +12,7 @@
 package ops
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
@@ -34,24 +35,22 @@ type Deps struct {
 	CompStore    RewriteStore
 	Runtime      RuntimeOps
 	Mover        Mover
-	IntegrityCfg IntegrityConfigLoader
-	Replicator   ReplicatorOps
+	Replicator   Replicator
 	OverRep      OverReplicationOps
-	Rebalancer   RebalancerOps
-	Expiry       LifecycleOps
+	Rebalancer   Rebalancer
+	Expiry       RuleProcessor
 	Scrubber     ScrubberOps
 	Unhashed     UnhashedLister
 	Locker       AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
 	Declared     BucketMatcher
-	Config       *ConfigStore
+	Config       *config.Live
 }
 
 // Services is the assembled operations layer. Transports hold the services
-// they serve; the composition root holds Config so it can push reloads.
+// they serve.
 type Services struct {
-	Config      *ConfigStore
 	Objects     *Objects
 	Integrity   *Integrity
 	Replication *Replication
@@ -70,17 +69,16 @@ type Services struct {
 func New(d *Deps) *Services {
 	cfg := d.Config
 	return &Services{
-		Config: cfg,
 		Objects: NewObjects(ObjectsDeps{
 			Objects: d.Objects,
 			Store:   d.Store,
 			Buckets: d.Declared,
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
-			Scrubber:     d.Scrubber,
-			Store:        d.Unhashed,
-			IntegrityCfg: d.IntegrityCfg,
-			Locker:       d.Locker,
+			Scrubber: d.Scrubber,
+			Store:    d.Unhashed,
+			Locker:   d.Locker,
+			Config:   cfg,
 		}),
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,
@@ -93,7 +91,7 @@ func New(d *Deps) *Services {
 			Runtime:    d.Runtime,
 			Config:     cfg,
 		}),
-		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry}),
+		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry, Config: cfg}),
 		Encryption: NewEncryption(EncryptionDeps{
 			Encryptor: d.Encryptor,
 			Store:     d.EncStore,

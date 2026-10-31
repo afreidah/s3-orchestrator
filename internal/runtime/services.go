@@ -98,13 +98,6 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (bootstrapped,
 		return b, fmt.Errorf("initialize S3 server: %w", err)
 	}
 
-	if err := di.ApplyWorkerConfigs(inj, cfg); err != nil {
-		return b, fmt.Errorf("apply worker configs: %w", err)
-	}
-	if err := di.ApplyRuntimeConfigs(inj, cfg); err != nil {
-		return b, fmt.Errorf("apply runtime configs: %w", err)
-	}
-
 	if b.lifecyc, err = do.Invoke[*lifecycle.Manager](inj); err != nil {
 		return b, fmt.Errorf("initialize lifecycle manager: %w", err)
 	}

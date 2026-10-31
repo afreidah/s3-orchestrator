@@ -19,6 +19,7 @@
 package admin
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"testing"
@@ -79,36 +80,38 @@ func newOpsMover(t *testing.T) *opstest.MockMover {
 	return opstest.NewMockMover(gomock.NewController(t))
 }
 
-// newOpsIntegrityCfg builds the integrity settings that gate a scrub.
-func newOpsIntegrityCfg(t *testing.T, cfg backendOpsStub) *opstest.MockIntegrityConfigLoader {
-	t.Helper()
-	m := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
-	m.EXPECT().Load().Return(cfg.integrity).AnyTimes()
-	return m
-}
-
 // integrityWith installs integrity operations built from the given stubs, for
-// the handler tests that drive scrub, per-key verification, or backfill.
+// the handler tests that drive scrub, per-key verification, or backfill. The
+// stub's integrity settings are the running config's.
 func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub) {
 	t.Helper()
+	running := &config.Config{}
+	if be.integrity != nil {
+		running.Integrity = *be.integrity
+	}
 	h.d.Integrity = ops.NewIntegrity(ops.IntegrityDeps{
-		Scrubber:     newScrubber(t, sc),
-		Store:        backfillStore{cfg: sc},
-		IntegrityCfg: newOpsIntegrityCfg(t, be),
-		Locker:       newGrantingLocker(t),
+		Scrubber: newScrubber(t, sc),
+		Store:    backfillStore{cfg: sc},
+		Locker:   newGrantingLocker(t),
+		Config:   config.NewLive(running),
 	})
 }
 
 // replicationWith installs replication operations built from the given stubs.
 // The half a test does not exercise still needs a stub, since one service
-// serves both the copy-creating and the surplus-removing endpoints.
+// serves both the copy-creating and the surplus-removing endpoints. Whichever
+// stub sets a replication config supplies the running one.
 func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRepStub) {
 	t.Helper()
+	running := &config.Config{}
+	if cfg := cmp.Or(repl.cfg, over.cfg); cfg != nil {
+		running.Replication = *cfg
+	}
 	h.d.Replication = ops.NewReplication(ops.ReplicationDeps{
 		Replicator: newReplicator(t, repl),
 		OverRep:    newOverRep(t, over),
 		Runtime:    newRuntimeOps(t),
-		Config:     ops.NewConfigStore(&config.Config{}),
+		Config:     config.NewLive(running),
 	})
 }
 
@@ -119,7 +122,7 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 	t.Helper()
 	deps := ops.RebalanceDeps{
 		Runtime: newRuntimeOps(t),
-		Config:  ops.NewConfigStore(&config.Config{}),
+		Config:  config.NewLive(&config.Config{}),
 	}
 	if cfg != nil {
 		deps.Rebalancer = newRebalancer(t, cfg)
@@ -170,7 +173,7 @@ func newRuntimeOps(t *testing.T) *opstest.MockRuntimeOps {
 	return m
 }
 
-// replicatorStub configures the ReplicatorOps mock. failed stands for the
+// replicatorStub configures the Replicator mock. failed stands for the
 // objects the cycle could not bring up to factor.
 type replicatorStub struct {
 	cfg     *config.ReplicationConfig
@@ -179,11 +182,10 @@ type replicatorStub struct {
 	err     error
 }
 
-// newReplicator builds a ReplicatorOps mock that reports cfg.created copies.
-func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicatorOps {
+// newReplicator builds a Replicator mock that reports cfg.created copies.
+func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicator {
 	t.Helper()
-	m := opstest.NewMockReplicatorOps(gomock.NewController(t))
-	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
+	m := opstest.NewMockReplicator(gomock.NewController(t))
 	m.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 			trackN(observer, cfg.created, fixedKey(""))
@@ -195,22 +197,20 @@ func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicatorOps 
 	return m
 }
 
-// rebalancerStub configures the RebalancerOps mock. gotCfg captures the config
+// rebalancerStub configures the Rebalancer mock. gotCfg captures the config
 // the handler ran with, so the default-fallback can be asserted.
 type rebalancerStub struct {
-	cfg    *config.RebalanceConfig
 	moved  int
 	skip   string
 	err    error
 	gotCfg *config.RebalanceConfig
 }
 
-// newRebalancer builds a RebalancerOps mock that reports cfg.moved moves, or
+// newRebalancer builds a Rebalancer mock that reports cfg.moved moves, or
 // the configured skip reason.
-func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancerOps {
+func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancer {
 	t.Helper()
-	m := opstest.NewMockRebalancerOps(gomock.NewController(t))
-	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
+	m := opstest.NewMockRebalancer(gomock.NewController(t))
 	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, ran config.RebalanceConfig, observer progress.Observer) (worker.RebalanceSummary, error) {
 			cfg.gotCfg = &ran
@@ -239,7 +239,6 @@ type overRepStub struct {
 func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 	t.Helper()
 	m := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(cfg.count, cfg.countErr).AnyTimes()
 	m.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error) {

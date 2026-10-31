@@ -18,11 +18,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -44,15 +42,11 @@ type Deps struct {
 }
 
 // Service flushes usage counters to the store and reconciles the drift the
-// incremental counter accumulates. The flush configuration lives here because
-// it is hot-reloadable and this is what reads it.
-//
-// Holds an atomic config value, so it must not be copied after construction.
+// incremental counter accumulates.
 type Service struct {
 	usage  *counter.UsageTracker
 	quota  *counter.QuotaTracker
 	stores Stores
-	cfg    syncutil.AtomicConfig[config.UsageFlushConfig]
 }
 
 // New constructs the service. Usage, Quota and Stores are required.
@@ -112,14 +106,4 @@ func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
 func (s *Service) RedisCounterConfigured() bool {
 	_, ok := s.usage.Backend().(counter.SharedBackend)
 	return ok
-}
-
-// SetConfig atomically replaces the flush configuration.
-func (s *Service) SetConfig(cfg *config.UsageFlushConfig) {
-	s.cfg.Store(cfg)
-}
-
-// Config returns the current flush configuration, nil until one is stored.
-func (s *Service) Config() *config.UsageFlushConfig {
-	return s.cfg.Load()
 }

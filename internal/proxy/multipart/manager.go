@@ -74,8 +74,8 @@ type Manager struct {
 	codec              Codec
 	compression        config.CompressionConfig
 	dekCache           *syncutil.TTLCache[string, []byte]
-	integrityCfg       *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
-	enforceMinPartSize bool                                           // reject non-final parts below the S3 5 MiB floor
+	integrityCfg       syncutil.Section[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
+	enforceMinPartSize bool                                     // reject non-final parts below the S3 5 MiB floor
 	log                *slog.Logger
 }
 
@@ -114,7 +114,7 @@ type Deps struct {
 	Codec        Codec                 // nil when no codec is configured
 	Compression  config.CompressionConfig
 	DEKCacheTTL  time.Duration
-	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	IntegrityCfg syncutil.Section[config.IntegrityConfig]
 
 	EnforceMinPartSize bool // every non-final part must meet the S3 5 MiB floor
 }
@@ -736,7 +736,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// the assembled object lands with a content_hash matching the
 	// regular PutObject path. Without this, the scrubber cannot verify
 	// multipart-completed objects.
-	hasher := mp.integrityCfg.Load().Hasher()
+	hasher := mp.integrityCfg.Config().Hasher()
 	// An upload whose parts predate per-part digests has no composite, and the
 	// MD5 of the assembled bytes is the only ETag left to give it. Every other
 	// upload already knows its own and must not pay for a second pass over

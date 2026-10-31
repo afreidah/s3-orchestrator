@@ -68,22 +68,8 @@ func TestNewStack_WiresEveryCollaborator(t *testing.T) {
 	if st.Usage == nil {
 		t.Error("Usage not wired")
 	}
-	if st.IntegrityCfg == nil {
-		t.Error("IntegrityCfg not wired")
-	}
-}
-
-// TestNewStack_SharesTheIntegrityConfig pins the invariant the fixture exists
-// to hold: both managers read one config value, so a reload reaches both. Two
-// pointers here would let a test pass against a shape production cannot have.
-func TestNewStack_SharesTheIntegrityConfig(t *testing.T) {
-	t.Parallel()
-	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	st := newStack(t, mock)
-
-	st.IntegrityCfg.Store(&config.IntegrityConfig{Enabled: true})
-	if got := st.IntegrityCfg.Load(); got == nil || !got.Enabled {
-		t.Errorf("integrity config = %+v, want the stored value", got)
+	if st.Config == nil {
+		t.Error("Config not wired")
 	}
 }
 

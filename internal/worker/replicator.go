@@ -50,54 +50,50 @@ type ReplicatorStore interface {
 }
 
 // Replicator creates additional copies of under-replicated objects across
-// backends. Its replication config is reloadable through the embedded
-// SetConfig and Config.
+// backends. The embedded Section reads its replication config from the running
+// configuration.
 type Replicator struct {
-	syncutil.Reloadable[config.ReplicationConfig]
+	syncutil.Section[config.ReplicationConfig]
 	log       *slog.Logger
 	ops       Ops
 	placement Placement
 	store     ReplicatorStore
 	hasher    *storedHasher
-	integrity syncutil.AtomicConfig[config.IntegrityConfig]
+	integrity syncutil.Section[config.IntegrityConfig]
 }
 
-// ReplicatorDeps groups the replicator's constructor dependencies. Encryptor
-// and Codec are optional and are only consulted when integrity.verify_on_replicate
-// is on: verifying a copy means undoing its stored form before hashing, so a
-// deployment that stores encrypted or compressed objects needs the matching one.
+// ReplicatorDeps groups the replicator's constructor dependencies. Integrity
+// decides whether a new copy is read back and hash-checked before it is
+// recorded. Encryptor and Codec are optional and are only consulted when
+// integrity.verify_on_replicate is on: verifying a copy means undoing its
+// stored form before hashing, so a deployment that stores encrypted or
+// compressed objects needs the matching one.
 type ReplicatorDeps struct {
 	Ops       Ops
 	Placement Placement
 	Store     ReplicatorStore
+	Config    syncutil.Section[config.ReplicationConfig]
+	Integrity syncutil.Section[config.IntegrityConfig]
 	Encryptor *encryption.Encryptor
 	Codec     storedform.Decompressor
 }
 
 // NewReplicator creates a Replicator with the given dependencies.
-func NewReplicator(deps ReplicatorDeps) *Replicator {
+func NewReplicator(deps *ReplicatorDeps) *Replicator {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
+	must.NotNil("Config", deps.Config)
+	must.NotNil("Integrity", deps.Integrity)
 	return &Replicator{
+		Section:   deps.Config,
 		ops:       deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,
 		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec),
+		integrity: deps.Integrity,
 		log:       workerLogger(audit.WorkloadReplication),
 	}
-}
-
-// SetIntegrityConfig atomically stores the integrity configuration, which
-// decides whether a new copy is read back and hash-checked before it is
-// recorded.
-func (r *Replicator) SetIntegrityConfig(cfg *config.IntegrityConfig) {
-	r.integrity.Store(cfg)
-}
-
-// IntegrityConfig returns the current integrity configuration.
-func (r *Replicator) IntegrityConfig() *config.IntegrityConfig {
-	return r.integrity.Load()
 }
 
 // -------------------------------------------------------------------------

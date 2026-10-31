@@ -8,9 +8,6 @@
 // the backend runtime's eligibility filters at the backend state manager so
 // AcceptsWrites and IsDraining reflect live state. Called once by the runtime
 // after NewInjector.
-//
-// ApplyWorkerConfigs and ApplyRuntimeConfigs push the reloadable config
-// sections onto the collaborators that read them, at startup and on reload.
 // -------------------------------------------------------------------------------
 
 package di
@@ -21,50 +18,11 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
-
-// ApplyWorkerConfigs pushes the rebalance, replication and integrity sections
-// of cfg onto the workers that read them. Every run mode registers all four.
-func ApplyWorkerConfigs(inj do.Injector, cfg *config.Config) error {
-	r := newResolver(inj)
-	rb := r.ResolveNamed[*worker.Rebalancer]("rebalancer")
-	rp := r.ResolveNamed[*worker.Replicator]("replicator")
-	or := r.ResolveNamed[*worker.OverReplicationCleaner]("over-replication cleaner")
-	sc := r.ResolveNamed[*worker.Scrubber]("scrubber")
-	if r.err != nil {
-		return r.err
-	}
-	rb.SetConfig(&cfg.Rebalance)
-	rp.SetConfig(&cfg.Replication)
-	rp.SetIntegrityConfig(&cfg.Integrity)
-	or.SetConfig(&cfg.Replication)
-	sc.SetConfig(&cfg.Integrity)
-	return nil
-}
-
-// ApplyRuntimeConfigs swaps the usage-flush, integrity and lifecycle sections
-// of cfg onto the collaborators that read them.
-func ApplyRuntimeConfigs(inj do.Injector, cfg *config.Config) error {
-	r := newResolver(inj)
-	flush := r.ResolveNamed[*usage.Service]("usage service")
-	integrity := r.ResolveNamed[*syncutil.AtomicConfig[config.IntegrityConfig]]("integrity config")
-	lifecycle := r.ResolveNamed[*expiry.Manager]("expiry manager")
-	if r.err != nil {
-		return r.err
-	}
-	flush.SetConfig(&cfg.UsageFlush)
-	integrity.Store(&cfg.Integrity)
-	lifecycle.SetConfig(&cfg.Lifecycle)
-	return nil
-}
 
 // WireManager resolves every required worker as a smoke check and points the
 // runtime's eligibility filters at the backend state manager. It returns the first

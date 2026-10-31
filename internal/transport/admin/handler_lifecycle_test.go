@@ -44,9 +44,6 @@ type expiryStub struct {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// Config returns the configured rules, or nil for a deployment with none.
-func (s *expiryStub) Config() *config.LifecycleConfig { return s.cfg }
-
 // ProcessRules records that the sweep ran, brackets one step per object it
 // claims to have handled, and reports the fixed outcome.
 func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, obs progress.Observer) batch.Summary {
@@ -64,13 +61,18 @@ func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, o
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// lifecycleWith installs a lifecycle service over the stub. A nil stub stands
-// for a deployment whose expiry manager was never wired.
+// lifecycleWith installs a lifecycle service over the stub, with the stub's
+// lifecycle config as the running one. A nil stub stands for a deployment
+// whose expiry manager was never wired.
 func lifecycleWith(t *testing.T, h *Handler, stub *expiryStub) {
 	t.Helper()
-	var deps ops.LifecycleDeps
+	running := &config.Config{}
+	deps := ops.LifecycleDeps{Config: config.NewLive(running)}
 	if stub != nil {
 		deps.Expiry = stub
+		if stub.cfg != nil {
+			running.Lifecycle = *stub.cfg
+		}
 	}
 	h.d.Expiry = ops.NewLifecycle(deps)
 }

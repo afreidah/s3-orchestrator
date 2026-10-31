@@ -315,7 +315,7 @@ Applied across `internal/store` (the per-role store interfaces consumed at use s
 | `internal/proxy/<consumer>/consumer_interfaces.go` | The narrow interfaces `readpath`, `multipart`, `writepath` and `object` declare against other proxy subpackages |
 | Beside the constructor that takes it | Everywhere else: `backendstate.Runtime` in `manager.go`, `writepath.CoordinatorStores` in `coordinator.go`, the `Stores` composites of `object`, `multipart`, `reconcile` and `usage` |
 | `internal/worker/ops_runtime.go` | The worker-side `Ops`, `FleetOps` and `Placement` interfaces against the proxy infrastructure |
-| `internal/ops/interfaces.go` | What the operations layer needs from workers and the runtime (`ReplicatorOps`, `ScrubberOps`, ...) |
+| `internal/ops/interfaces.go` | What the operations layer needs from workers and the runtime (`Replicator`, `ScrubberOps`, ...) |
 | `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
 
 **Naming convention:** name the interface for the producer concept and let the package name the consumer - `multipart.Runtime` and `object.Runtime` are each package's view of `*infra.BackendRuntime`.
@@ -350,7 +350,7 @@ Until a mock is needed, the interface declaration alone documents the dependency
 **When NOT to declare a narrow interface (#918).** A consumer-side interface earns its keep when at least one of these is true:
 
 1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
-2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `ops.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps` and `admin.Reconciler`, whose fakes drive the operations layer and the admin handlers).
+2. **A test fake genuinely benefits from the seam** - a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `ops.Replicator`/`OverReplicationOps`/`ScrubberOps` and `admin.Reconciler`, whose fakes drive the operations layer and the admin handlers).
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` - without the interface, `readpath` would have to import `object` which already imports `readpath`).
 4. **The interface models a real domain boundary** between subsystems (`backendstate.Runtime`, `multipart.Runtime`, `object.Runtime`, `writepath.WriteRuntime`).
 

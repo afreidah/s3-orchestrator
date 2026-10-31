@@ -272,7 +272,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		t.Fatalf("prime harness quota baselines: %v", err)
 	}
 	if spec.Integrity != nil {
-		h.stack.IntegrityCfg.Store(spec.Integrity)
+		h.stack.Config.Update(func(c *config.Config) { c.Integrity = *spec.Integrity })
 	}
 	// The workers get the same stored-form layers the stack writes with, so
 	// the scrubber can undo them; without that it cannot read the objects this

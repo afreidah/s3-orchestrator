@@ -354,12 +354,17 @@ func TestAdminActions_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// lifecycleHandler builds a UI handler whose expiry service is backed by stub.
+// lifecycleHandler builds a UI handler whose expiry service is backed by stub,
+// with the stub's lifecycle config as the running one.
 func lifecycleHandler(t *testing.T, stub *uiExpiryStub) *Handler {
 	t.Helper()
-	var deps ops.LifecycleDeps
+	running := &config.Config{}
+	deps := ops.LifecycleDeps{Config: config.NewLive(running)}
 	if stub != nil {
 		deps.Expiry = stub
+		if stub.cfg != nil {
+			running.Lifecycle = *stub.cfg
+		}
 	}
 	return &Handler{log: slog.Default(), d: Deps{Expiry: ops.NewLifecycle(deps)}}
 }
@@ -370,9 +375,6 @@ type uiExpiryStub struct {
 	deleted int
 	failed  int
 }
-
-// Config returns the configured rules, or nil when none are configured.
-func (s *uiExpiryStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules reports the fixed outcome.
 func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule, progress.Observer) batch.Summary {

@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // reasonScrubFailed is the cleanup reason a copy failing its hash check is
@@ -68,11 +69,10 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockOps, *MockPlacement, *backendt
 	ops.EXPECT().Usage().
 		Return(counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
-	s.SetConfig(&config.IntegrityConfig{
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: pl, Store: ms, Config: syncutil.Fixed(&config.IntegrityConfig{
 		Enabled:           true,
 		ScrubberBatchSize: 100,
-	})
+	})})
 	return s, ops, pl, be, ms
 }
 
@@ -309,7 +309,7 @@ func TestScrub_AppliesConfiguredFloor(t *testing.T) {
 	t.Parallel()
 	s, _, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10, ScrubberMinAge: 6 * time.Hour})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10, ScrubberMinAge: 6 * time.Hour})
 
 	before := time.Now()
 	s.Scrub(context.Background(), 10, "", nil)
@@ -330,8 +330,8 @@ func TestScrub_FloorIsSharedByBothQueries(t *testing.T) {
 	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberMinAge: 6 * time.Hour})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberMinAge: 6 * time.Hour})
 
 	s.Scrub(context.Background(), 10, "", nil)
 
@@ -348,31 +348,7 @@ func TestScrub_FallsBackToDefaultFloor(t *testing.T) {
 	t.Parallel()
 	s, _, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
-
-	before := time.Now()
-	s.Scrub(context.Background(), 10, "", nil)
-
-	assertCutoffNear(t, "batch", ms.scrubBatchCutoff, before.Add(-config.DefaultScrubberMinAge))
-}
-
-// TestScrub_FloorWithoutConfig asserts a cycle that runs before any config has
-// been pushed still applies a floor, since the tick and the admin path can both
-// reach the scrubber during startup.
-func TestScrub_FloorWithoutConfig(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	ops := newMockOps(ctrl)
-	ms := &mockMetadataStore{}
-
-	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
-	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	if s.Config() != nil {
-		t.Fatal("expected nil config before SetConfig")
-	}
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
 
 	before := time.Now()
 	s.Scrub(context.Background(), 10, "", nil)
@@ -386,23 +362,6 @@ func assertCutoffNear(t *testing.T, label string, got, want time.Time) {
 	t.Helper()
 	if got.Before(want.Add(-time.Minute)) || got.After(want.Add(time.Minute)) {
 		t.Errorf("%s cutoff = %v, want about %v", label, got, want)
-	}
-}
-
-// TestScrubber_SetConfig verifies the scrubber set config contract.
-// Asserts that expected batch size 50, got.
-func TestScrubber_SetConfig(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	s := NewScrubber(ScrubberDeps{Ops: newMockOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
-	if s.Config() != nil {
-		t.Fatal("expected nil config initially")
-	}
-	cfg := &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}
-	s.SetConfig(cfg)
-	got := s.Config()
-	if got == nil || got.ScrubberBatchSize != 50 {
-		t.Errorf("expected batch size 50, got %v", got)
 	}
 }
 
@@ -782,7 +741,7 @@ func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
 func TestScrubCycle_LogsAPassOfOnlyUnreadableCopies(t *testing.T) {
 	t.Parallel()
 	s, ops, _, be, ms := setupScrubber(t)
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
 
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
@@ -813,7 +772,7 @@ func TestScrubCycle_LogsAPassOfOnlyUnreadableCopies(t *testing.T) {
 func TestScrubCycle_SilentWhenNothingToDo(t *testing.T) {
 	t.Parallel()
 	s, _, _, _, ms := setupScrubber(t)
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
 	ms.randomHashedObjects = nil
 
 	var buf bytes.Buffer
@@ -856,8 +815,8 @@ func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 
@@ -887,8 +846,8 @@ func reserveScrubber(t *testing.T, spent int64, reserve *float64) (*Scrubber, *c
 	ops.EXPECT().Usage().Return(tracker).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: reserve})
 	return s, tracker, ms
 }
 
@@ -989,8 +948,8 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Deferred != 40 {
@@ -1024,8 +983,8 @@ func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
 	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms, Config: defaultIntegrity})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 
@@ -1204,10 +1163,10 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 		{ObjectKey: "bucket/big", BackendName: "b1", SizeBytes: 4096, ContentHash: hashString("x")},
 	}
 
-	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
+	s := NewScrubber(&ScrubberDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultIntegrity})
 	// No reserve, so the backend passes the batch split and only the copy's own
 	// size is refused.
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberEgressReserve: new(0.0)})
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Failed != 0 {

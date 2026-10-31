@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -39,15 +40,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// defaultUsageFlushInterval is the usage-flush service's tick cadence
-// when the config does not specify one. The lifecycleService uses
-// defaultLifecycleTick.
-const (
-	defaultUsageFlushInterval = 30 * time.Second
-	defaultLifecycleTick      = 1 * time.Hour
-)
+// defaultLifecycleTick is the lifecycle service's tick cadence.
+const defaultLifecycleTick = 1 * time.Hour
 
 // -------------------------------------------------------------------------
 // USAGE FLUSH
@@ -64,13 +61,15 @@ type usageFlushService struct {
 
 // UsageFlushDeps groups what the flush tick draws on: the usage service that
 // owns the flush, the counters that say whether to tick faster, the runtime
-// that republishes the gauges afterwards, and the backend state manager whose
-// cached states the tick reloads.
+// that republishes the gauges afterwards, the backend state manager whose
+// cached states the tick reloads, and the usage-flush section of the running
+// configuration.
 type UsageFlushDeps struct {
 	Flusher usageFlushOps
 	Tracker nearLimitReporter
 	Fleet   quotaMetricsRefresher
 	States  backendStateRefresher
+	Config  syncutil.Section[config.UsageFlushConfig]
 }
 
 // NewUsageFlushService constructs the usage flush background service.
@@ -80,18 +79,14 @@ func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
 	must.NotNil("d.Tracker", d.Tracker)
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.States", d.States)
+	must.NotNil("d.Config", d.Config)
 	return &usageFlushService{UsageFlushDeps: *d, log: tickrunner.ComponentLogger("usage_flush")}
 }
 
 // Run periodically flushes in-memory usage counters and adapts the tick
 // interval toward FastInterval when a backend nears its limits.
 func (s *usageFlushService) Run(ctx context.Context) error {
-	cfg := s.Flusher.Config()
-	interval := defaultUsageFlushInterval
-	if cfg != nil {
-		interval = cfg.Interval
-	}
-
+	interval := s.Config.Config().Interval
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	currentInterval := interval
@@ -112,10 +107,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 // adaptive fast-path changes the target interval, and returns the interval now
 // in effect (unchanged when nothing moved).
 func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Ticker, current time.Duration) time.Duration {
-	cfg := s.Flusher.Config()
-	if cfg == nil {
-		return current
-	}
+	cfg := s.Config.Config()
 	target := cfg.Interval
 	if cfg.AdaptiveEnabled && s.Tracker.NearLimit(cfg.AdaptiveThreshold) {
 		target = cfg.FastInterval
@@ -212,16 +204,11 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 		Name:     slug,
 		Log:      log,
 		ShouldRun: func() bool {
-			cfg := manager.Config()
-			return cfg != nil && len(cfg.Rules) > 0
+			return len(manager.Config().Rules) > 0
 		},
 		Work: func(ctx context.Context) error {
-			cfg := manager.Config()
-			if cfg == nil {
-				return nil
-			}
 			// No observer: nothing is watching a scheduled tick.
-			sum := manager.ProcessRules(ctx, cfg.Rules, nil)
+			sum := manager.ProcessRules(ctx, manager.Config().Rules, nil)
 			if sum.Succeeded > 0 || sum.Failed > 0 {
 				log.InfoContext(ctx, "expiration completed",
 					"deleted", sum.Succeeded, "failed", sum.Failed)

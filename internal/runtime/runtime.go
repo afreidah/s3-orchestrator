@@ -40,7 +40,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -59,8 +58,8 @@ type Options struct {
 type Runtime struct {
 	opts Options
 
-	cfg    *config.Config
-	cfgPtr syncutil.AtomicConfig[config.Config]
+	cfg  *config.Config
+	live *config.Live
 
 	logLevel slog.LevelVar
 	obs      *Observability
@@ -117,7 +116,9 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 		return nil, fmt.Errorf("resolve services: %w", err)
 	}
 	r.svc = svc
-	r.cfgPtr.Store(cfg)
+	if r.live, err = do.Invoke[*config.Live](r.inj); err != nil {
+		return nil, fmt.Errorf("resolve running config: %w", err)
+	}
 
 	httpSrv, err := httpserver.New(httpserver.Deps{
 		Cfg:       cfg,
@@ -134,7 +135,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	r.reload = reload.New(&reload.Deps{
 		ConfigPath:   opts.ConfigPath,
 		Injector:     r.inj,
-		CfgPtr:       &r.cfgPtr,
+		Live:         r.live,
 		LogLevel:     &r.logLevel,
 		CertReloader: httpSrv.CertReloader(),
 	})
@@ -147,7 +148,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 			return toAdminReloadStatus(r.reload.LastResult())
 		})
 		adminHandler.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
-			doc, err := r.cfgPtr.Load().MarshalRedacted()
+			doc, err := r.live.Load().MarshalRedacted()
 			if err != nil {
 				return nil, err
 			}
@@ -278,7 +279,7 @@ func (r *Runtime) shutdown() {
 		}
 	}()
 
-	if delay := r.cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
+	if delay := r.live.Load().Server.ShutdownDelay; delay > 0 {
 		r.log.InfoContext(ctx, "waiting for load balancer deregistration", "delay", delay)
 		time.Sleep(delay)
 	}
