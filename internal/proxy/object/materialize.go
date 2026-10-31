@@ -71,7 +71,7 @@ func (o *Manager) tryMaterializeFromLocation(
 	size int64,
 	backendName string,
 ) (*materializedSource, error) {
-	if !o.core.Usage().WithinLimits(backendName, s3op.GetObject, size, 0) {
+	if !o.core.Acct().Allow(backendName, s3op.GetObject, size, 0) {
 		return nil, nil
 	}
 	be, ok := o.core.Backends()[backendName]

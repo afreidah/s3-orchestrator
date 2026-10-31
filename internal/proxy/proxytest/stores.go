@@ -122,25 +122,26 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		counters = counter.NewLocalCounterBackend(names)
 	}
 	tracker := counter.NewUsageTracker(counters, opts.UsageLimits)
-	rt := infra.New(&infra.Config{
-		Backends:        opts.Backends,
-		Order:           names,
-		BackendTimeout:  opts.BackendTimeout,
-		Usage:           tracker,
-		Quota:           NewQuotaTracker(names, opts.QuotaBaselines),
-		RoutingStrategy: opts.RoutingStrategy,
-		Profiles:        opts.Profiles,
-		AdmissionSem:    opts.AdmissionSem,
-		Log:             slog.Default().With(logfmt.Component("proxytest")),
-	})
+	var collector *metrics.Collector
 	if opts.Metrics != nil {
-		rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
+		collector = metrics.New(&metrics.CollectorDeps{
 			Store:             opts.Metrics,
 			Usage:             tracker,
 			ReplicationFactor: opts.ReplicationFactor,
-		}))
+		})
 	}
-	return rt
+	return infra.New(&infra.Config{
+		Backends:         opts.Backends,
+		Order:            names,
+		BackendTimeout:   opts.BackendTimeout,
+		Usage:            tracker,
+		Quota:            NewQuotaTracker(names, opts.QuotaBaselines),
+		RoutingStrategy:  opts.RoutingStrategy,
+		Profiles:         opts.Profiles,
+		MetricsCollector: collector,
+		AdmissionSem:     opts.AdmissionSem,
+		Log:              slog.Default().With(logfmt.Component("proxytest")),
+	})
 }
 
 // NewUsage builds the usage service over a runtime and store.

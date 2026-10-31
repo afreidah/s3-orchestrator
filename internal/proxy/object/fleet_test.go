@@ -131,17 +131,15 @@ func newFleet(
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), opts.UsageLimits)
 	rt := infra.New(&infra.Config{
-		Backends:        backends,
-		Order:           names,
-		BackendTimeout:  cmp.Or(opts.BackendTimeout, fleetTimeout),
-		Usage:           usage,
-		Quota:           newFleetQuota(names, opts.QuotaBaselines),
-		RoutingStrategy: cmp.Or(opts.Routing, config.RoutingPack),
-		AdmissionSem:    opts.AdmissionSem,
+		Backends:         backends,
+		Order:            names,
+		BackendTimeout:   cmp.Or(opts.BackendTimeout, fleetTimeout),
+		Usage:            usage,
+		Quota:            newFleetQuota(names, opts.QuotaBaselines),
+		RoutingStrategy:  cmp.Or(opts.Routing, config.RoutingPack),
+		AdmissionSem:     opts.AdmissionSem,
+		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
 	})
-	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage,
-	}))
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))
 		for _, name := range opts.Draining {

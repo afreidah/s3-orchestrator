@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
@@ -28,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -207,8 +209,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.UpdateLimits(map[string]core.UsageLimits{"b2": {EgressByteLimit: 100}})
 	tracker.SetBaselines(map[string]core.Usage{"b2": {UsageStat: core.UsageStat{EgressBytes: 99}}})
-	ops.EXPECT().Usage().Return(tracker).AnyTimes()
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().Acct().Return(accounting.New(tracker, func(string, string, time.Time, error) {})).AnyTimes()
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 

@@ -59,11 +59,6 @@ type OutboxStore interface {
 // (e.g. capacity warnings) are suppressed after the first emission.
 const dampenTTL = 1 * time.Hour
 
-// httpClientTimeout is the default per-request HTTP timeout the shared
-// http.Client is initialized with. Per-endpoint overrides (ep.Timeout)
-// replace this on a per-delivery basis.
-const httpClientTimeout = 10 * time.Second
-
 // emitTimeout bounds the outbox-write fan-out inside a single emit() call
 // when an event targets multiple endpoints. Must cover all endpoint inserts
 // combined, not each one.
@@ -106,9 +101,9 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		log:       log,
 		endpoints: cfg.Endpoints,
 		store:     store,
-		client: &http.Client{
-			Timeout: httpClientTimeout,
-		},
+		// The timeout is each endpoint's own, set per delivery; deliveries
+		// run one at a time.
+		client:   &http.Client{},
 		dampener: syncutil.NewTTLCache[string, struct{}](dampenTTL),
 	}
 	n.Service = tickrunner.New(tickrunner.Config{

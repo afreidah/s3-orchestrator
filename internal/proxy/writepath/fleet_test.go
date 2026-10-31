@@ -56,14 +56,12 @@ func newFleet(
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), opts.UsageLimits)
 	rt := infra.New(&infra.Config{
-		Backends:        backends,
-		Order:           names,
-		BackendTimeout:  fleetTimeout,
-		Usage:           usage,
-		RoutingStrategy: config.RoutingPack,
+		Backends:         backends,
+		Order:            names,
+		BackendTimeout:   fleetTimeout,
+		Usage:            usage,
+		RoutingStrategy:  config.RoutingPack,
+		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
 	})
-	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage,
-	}))
 	return New(rt, store), rt
 }

@@ -93,16 +93,14 @@ func newFleet(
 		routing = config.RoutingPack
 	}
 	rt := infra.New(&infra.Config{
-		Backends:        backends,
-		Order:           names,
-		BackendTimeout:  fleetTimeout,
-		Usage:           usage,
-		Quota:           newFleetQuota(names, opts.QuotaBaselines),
-		RoutingStrategy: routing,
+		Backends:         backends,
+		Order:            names,
+		BackendTimeout:   fleetTimeout,
+		Usage:            usage,
+		Quota:            newFleetQuota(names, opts.QuotaBaselines),
+		RoutingStrategy:  routing,
+		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
 	})
-	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage,
-	}))
 	if len(opts.Draining) > 0 {
 		d := make(drainingSet, len(opts.Draining))
 		for _, name := range opts.Draining {

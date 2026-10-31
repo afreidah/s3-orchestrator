@@ -101,12 +101,6 @@ func (c *BackendRuntime) Acct() *accounting.Recorder {
 	return c.recorder
 }
 
-// SetMetricsCollector installs the metrics collector, which is built after the
-// runtime because it reads the runtime's usage tracker.
-func (c *BackendRuntime) SetMetricsCollector(m *metrics.Collector) {
-	c.metricsCollector = m
-}
-
 // MetricsCollector returns the wired metrics collector (nil if unset).
 func (c *BackendRuntime) MetricsCollector() *metrics.Collector {
 	return c.metricsCollector

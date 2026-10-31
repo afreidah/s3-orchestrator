@@ -15,7 +15,7 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -51,8 +51,10 @@ type Runner[T any] struct {
 func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, T) ItemResult) Summary {
 	start := time.Now()
 	ctx, usage := audit.WithTally(ctx)
-	var succeeded, failed, skipped atomic.Int64
-
+	var (
+		mu      sync.Mutex
+		results = make([]ItemResult, 0, len(items))
+	)
 	workerpool.Run(ctx, r.Concurrency, items, func(ctx context.Context, item T) {
 		var res ItemResult
 		label := ""
@@ -63,25 +65,14 @@ func (r Runner[T]) Run(ctx context.Context, items []T, fn func(context.Context, 
 			res = fn(ctx, item)
 			return res.Status
 		})
-		switch res.Outcome {
-		case ItemSucceeded:
-			succeeded.Add(1)
-		case ItemFailed:
-			failed.Add(1)
-		case ItemSkipped:
-			skipped.Add(1)
-		}
+		mu.Lock()
+		results = append(results, res)
+		mu.Unlock()
 	})
 
-	sum := Summary{
-		Planned:   len(items),
-		Succeeded: int(succeeded.Load()),
-		Failed:    int(failed.Load()),
-		Skipped:   int(skipped.Load()),
-		Duration:  time.Since(start),
-		Usage:     usage.Usage(),
-	}
-	sum.Attempted = sum.Succeeded + sum.Failed
+	sum := Tally(results, start)
+	sum.Planned = len(items)
+	sum.Usage = usage.Usage()
 	LogCycle(ctx, r.Log, cmp.Or(r.Name, string(audit.WorkloadOf(ctx))), sum)
 	return sum
 }

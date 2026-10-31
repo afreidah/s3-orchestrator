@@ -19,7 +19,6 @@ import (
 	"hash"
 	"io"
 	"log/slog"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -210,7 +209,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	defer span.End()
 
 	if partNumber < 1 || partNumber > 10000 {
-		err := &core.S3Error{StatusCode: http.StatusBadRequest, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
+		err := badRequest("InvalidArgument", "Part number must be between 1 and 10000")
 		observe.MarkSpanError(span, err.Message)
 		return "", err
 	}
@@ -228,7 +227,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 
 	// Checked against what the part will occupy, which for an encrypted upload
 	// is the envelope rather than the bytes the client sent.
-	if !mp.core.Usage().WithinLimits(mu.BackendName, s3op.UploadPart, 0, mp.physicalPartSize(mu, size)) {
+	if !mp.core.Acct().Allow(mu.BackendName, s3op.UploadPart, 0, mp.physicalPartSize(mu, size)) {
 		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
@@ -316,22 +315,8 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 // and size UploadPart handed the client rather than what the backend holds;
 // the two differ once the stored part is an encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
-	const operation = s3op.GetParts
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
-		telemetry.AttrUploadID.String(uploadID),
-	)
-	defer span.End()
-	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
-		return nil, err
-	}
-	parts, err := mp.stores.ListParts(ctx, uploadID, 0, MaxPartNumber)
-	if err != nil {
-		return nil, err
-	}
-	for i := range parts {
-		presentToClient(&parts[i])
-	}
-	return parts, nil
+	parts, _, err := mp.ListParts(ctx, bucket, key, uploadID, 0, MaxPartNumber)
+	return parts, err
 }
 
 // ListParts returns one page of an upload's parts: up to maxParts numbered
@@ -475,7 +460,7 @@ func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, u
 	if len(missing) > 0 {
 		msg := "parts not uploaded: " + formatPartNumbers(missing)
 		observe.MarkSpanError(span, msg)
-		return nil, &core.S3Error{StatusCode: http.StatusBadRequest, Code: "InvalidPart", Message: msg}
+		return nil, badRequest(codeInvalidPart, msg)
 	}
 	return parts, nil
 }
@@ -872,15 +857,7 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 	if err != nil {
 		return nil, err
 	}
-	meta := mu.Metadata
-	if meta == nil {
-		meta = map[string]string{}
-	}
-	return &core.ObjectIdentity{
-		ETag:         composite,
-		ContentType:  mu.ContentType,
-		UserMetadata: meta,
-	}, nil
+	return core.NewObjectIdentity(composite, mu.ContentType, mu.Metadata), nil
 }
 
 // cleanupCompletedUpload removes the multipart_uploads row, queueing its parts'

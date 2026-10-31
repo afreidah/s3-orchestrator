@@ -342,15 +342,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 // empty one so a stored identity means "this object has no user metadata"
 // rather than "nobody looked".
 func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
-	meta := req.Metadata
-	if meta == nil {
-		meta = map[string]string{}
-	}
-	return &core.ObjectIdentity{
-		ETag:         etag.Single(digest),
-		ContentType:  req.ContentType,
-		UserMetadata: meta,
-	}
+	return core.NewObjectIdentity(etag.Single(digest), req.ContentType, req.Metadata)
 }
 
 // reasonWriteTargetRefused is the cleanup-queue reason for bytes a write left

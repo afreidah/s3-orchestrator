@@ -56,7 +56,7 @@ func newTestBackend(t *testing.T, handler http.HandlerFunc) *S3Backend {
 // -------------------------------------------------------------------------
 
 // TestGetObject covers the GET path and the attribute unwrapping in
-// mapGetObjectResult / objectAttrsFromSDK.
+// mapGetObjectResult / headResultFromSDK.
 func TestGetObject(t *testing.T) {
 	t.Parallel()
 	payload := []byte("get-object-body")

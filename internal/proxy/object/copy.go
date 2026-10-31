@@ -45,7 +45,7 @@ func (o *Manager) headSourceForCopy(
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.StoredForm, bool) {
 	for i := range locations {
-		if !o.core.Usage().WithinLimits(locations[i].BackendName, s3op.CopyObject, 0, 0) {
+		if !o.core.Acct().Allow(locations[i].BackendName, s3op.CopyObject, 0, 0) {
 			continue
 		}
 		be, ok := o.core.Backends()[locations[i].BackendName]
@@ -188,14 +188,7 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 	if len(locations) == 0 || !locations[0].Identity.Complete() {
 		return nil
 	}
-	if metadata == nil {
-		metadata = map[string]string{}
-	}
-	return &core.ObjectIdentity{
-		ETag:         locations[0].Identity.ETag,
-		ContentType:  contentType,
-		UserMetadata: metadata,
-	}
+	return core.NewObjectIdentity(locations[0].Identity.ETag, contentType, metadata)
 }
 
 // CopyObjectRequest is one CopyObject call's inputs.

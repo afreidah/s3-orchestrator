@@ -52,49 +52,39 @@ const (
 // separately.
 func validateManifestShape(manifest []core.CompletePart) error {
 	if len(manifest) == 0 {
-		return &core.S3Error{
-			StatusCode: http.StatusBadRequest,
-			Code:       "InvalidRequest",
-			Message:    "You must specify at least one part",
-		}
+		return badRequest("InvalidRequest", "You must specify at least one part")
 	}
 	if len(manifest) > MaxPartCount {
-		return &core.S3Error{
-			StatusCode: http.StatusBadRequest,
-			Code:       "InvalidRequest",
-			Message:    fmt.Sprintf("Too many parts: %d exceeds the maximum of %d", len(manifest), MaxPartCount),
-		}
+		return badRequest("InvalidRequest",
+			fmt.Sprintf("Too many parts: %d exceeds the maximum of %d", len(manifest), MaxPartCount))
 	}
 
 	for i, p := range manifest {
 		if p.PartNumber < MinPartNumber || p.PartNumber > MaxPartNumber {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "InvalidPart",
-				Message: fmt.Sprintf("Part number %d is outside the valid range %d-%d",
-					p.PartNumber, MinPartNumber, MaxPartNumber),
-			}
+			return badRequest(codeInvalidPart, fmt.Sprintf("Part number %d is outside the valid range %d-%d",
+				p.PartNumber, MinPartNumber, MaxPartNumber))
 		}
 		if i == 0 {
 			continue
 		}
 		prev := manifest[i-1].PartNumber
 		if p.PartNumber == prev {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "InvalidPart",
-				Message:    fmt.Sprintf("Duplicate part number %d", p.PartNumber),
-			}
+			return badRequest(codeInvalidPart, fmt.Sprintf("Duplicate part number %d", p.PartNumber))
 		}
 		if p.PartNumber < prev {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "InvalidPartOrder",
-				Message:    "The list of parts was not in ascending order",
-			}
+			return badRequest("InvalidPartOrder", "The list of parts was not in ascending order")
 		}
 	}
 	return nil
+}
+
+// codeInvalidPart is the S3 code for a part the manifest names wrongly.
+const codeInvalidPart = "InvalidPart"
+
+// badRequest is the 400 S3 error every manifest and part-number check answers
+// with.
+func badRequest(code, message string) *core.S3Error {
+	return &core.S3Error{StatusCode: http.StatusBadRequest, Code: code, Message: message}
 }
 
 // clientPartETag returns the ETag UploadPart handed the client for this part:
@@ -133,23 +123,15 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		// accepted, so an omitted ETag skips the comparison and every
 		// supplied one is checked.
 		if want.ETag != "" && etag.Normalize(want.ETag) != etag.Normalize(clientPartETag(got)) {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "InvalidPart",
-				Message: fmt.Sprintf("Part number %d has ETag %s, which does not match the uploaded part",
-					want.PartNumber, want.ETag),
-			}
+			return badRequest(codeInvalidPart, fmt.Sprintf("Part number %d has ETag %s, which does not match the uploaded part",
+				want.PartNumber, want.ETag))
 		}
 		// The final part carries whatever remains, so only the parts before
 		// it have to meet the floor.
 		isFinal := i == len(manifest)-1
 		if size := got.ClientSize(got.SizeBytes); enforceMinSize && !isFinal && size < MinPartSizeBytes {
-			return &core.S3Error{
-				StatusCode: http.StatusBadRequest,
-				Code:       "EntityTooSmall",
-				Message: fmt.Sprintf("Part number %d is %d bytes, below the %d byte minimum for a non-final part",
-					want.PartNumber, size, MinPartSizeBytes),
-			}
+			return badRequest("EntityTooSmall", fmt.Sprintf("Part number %d is %d bytes, below the %d byte minimum for a non-final part",
+				want.PartNumber, size, MinPartSizeBytes))
 		}
 	}
 	return nil
