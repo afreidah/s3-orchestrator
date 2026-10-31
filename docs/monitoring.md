@@ -289,7 +289,6 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open (name: "database" or backend name) |
 | `s3o_backend_call_refused` | Gauge | backend, call | 1 while the backend's circuit breakers refuse the call, 0 while it is served |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
-| `s3o_circuit_breaker_internal_errors_total` | Counter | name, operation | Errors returned by breaker post-check or state transitions |
 | `s3o_degraded_mode_active` | Gauge | - | 1 while the read path is in degraded mode (database unavailable), 0 otherwise |
 | `s3o_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
 | `s3o_degraded_cache_hits_total` | Counter | - | Cache hits during degraded reads |

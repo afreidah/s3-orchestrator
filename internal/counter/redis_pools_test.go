@@ -208,14 +208,12 @@ func newHashBackend(t *testing.T, client RedisClient, backends ...string) *Redis
 		backends = []string{backendB1}
 	}
 	return &RedisCounterBackend{
-		client:    client,
-		prefix:    testPrefix,
-		local:     NewLocalCounterBackend(backends),
-		backends:  backends,
-		cb:        newTestCB(),
-		log:       slog.Default(),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
+		client:   client,
+		prefix:   testPrefix,
+		local:    NewLocalCounterBackend(backends),
+		backends: backends,
+		cb:       newTestCB(),
+		log:      slog.Default(),
 	}
 }
 
@@ -343,8 +341,7 @@ func TestLoad_AddsLocalToTheHash(t *testing.T) {
 func TestFallback_ChargesAndLoadsLocally(t *testing.T) {
 	fr := newFakeRedis()
 	r := newHashBackend(t, fr)
-	r.setFallback(true)
-	t.Cleanup(func() { r.setFallback(false) })
+	r.cb.Trip(errRedisDown)
 
 	r.Charge(backendB1, oldBucket, Charge{APIRequests: 4})
 
@@ -415,8 +412,7 @@ func TestSettle_InFallbackKeepsTheStagedHash(t *testing.T) {
 	r := newHashBackend(t, fr)
 	key := r.stagedKey(backendB1, "abc")
 	fr.seed(key, fieldAPIRequests, 1)
-	r.setFallback(true)
-	t.Cleanup(func() { r.setFallback(false) })
+	r.cb.Trip(errRedisDown)
 
 	r.Settle(context.Background(), &core.UsageBatch{ID: "abc", Backend: backendB1}, true)
 

@@ -36,15 +36,8 @@ func NewDatabaseBreaker(cfg config.CircuitBreakerConfig, requestError func(error
 		IsError:   func(err error) bool { return unavailable(err, requestError) },
 		Sentinel:  core.ErrDBUnavailable,
 	})
-	cb.SetOnStateChange(telemetry.NewDatabaseBreakerHook("database"))
+	cb.AddOnStateChange(telemetry.NewDatabaseBreakerHook("database"))
 	return cb
-}
-
-// DatabaseRecovery is the recovery for the database breaker: ping, which must
-// bypass the breaker, every open timeout until the database answers. A ping
-// costs nothing, so the checks do not back off.
-func DatabaseRecovery(ping func(context.Context) error) breaker.Recovery {
-	return breaker.Recovery{Check: ping}
 }
 
 // unavailable reports whether err says the database cannot serve. A cancelled

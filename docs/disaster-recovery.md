@@ -228,11 +228,11 @@ When Redis is configured for shared usage counters:
 
 The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters - identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3o_redis_fallback_active` gauge transitions to `1`.
 
-A background health probe PINGs Redis every 5 seconds while the circuit is open. This requires no manual intervention.
+While the circuit is open, the circuit breaker watchdog PINGs Redis every `redis.open_timeout` (default: 15s). This requires no manual intervention.
 
 ### Recovery sequence
 
-When the health probe detects Redis is reachable again, the circuit breaker closes and shared operation resumes. Nothing is replayed into Redis: each instance flushes the charges it kept locally straight to the database on its next flush tick, under the month they were made in. Staged hashes a flush left in Redis before the outage are flushed by the next tick on any instance, and the flush id the database records with them keeps them from being counted twice.
+When a PING succeeds, the circuit breaker closes and shared operation resumes. Nothing is replayed into Redis: each instance flushes the charges it kept locally straight to the database on its next flush tick, under the month they were made in. Staged hashes a flush left in Redis before the outage are flushed by the next tick on any instance, and the flush id the database records with them keeps them from being counted twice.
 
 ### Monitoring
 

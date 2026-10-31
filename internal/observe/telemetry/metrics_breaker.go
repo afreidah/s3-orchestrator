@@ -28,13 +28,6 @@ var (
 	CircuitBreakerTransitionsTotal = counterVec("s3o_circuit_breaker_transitions_total",
 		"Total number of circuit breaker state transitions", "name", "from", "to")
 
-	// CircuitBreakerInternalErrorsTotal counts errors returned by the
-	// breaker's own machinery (PostCheck / state transition helpers).
-	// Non-zero values indicate a bookkeeping bug, not an application
-	// error  -  alert on any increase.
-	CircuitBreakerInternalErrorsTotal = counterVec("s3o_circuit_breaker_internal_errors_total",
-		"Errors returned by circuit breaker PostCheck/state transitions", "name", "operation")
-
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.
 	DegradedReadsTotal = counterVec("s3o_degraded_reads_total",
 		"Total number of read operations served via broadcast during degraded mode", "operation")

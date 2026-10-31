@@ -77,17 +77,3 @@ func TestNewDatabaseBreaker_DuplicateKeysDoNotOpen(t *testing.T) {
 		t.Error("broken connections past the threshold left the breaker closed")
 	}
 }
-
-// TestDatabaseRecovery_PingsWithoutBackoff verifies the recovery checks with
-// the ping it is given and sets no backoff cap or admission.
-func TestDatabaseRecovery_PingsWithoutBackoff(t *testing.T) {
-	t.Parallel()
-	errDown := errors.New("database down")
-	r := DatabaseRecovery(func(context.Context) error { return errDown })
-	if err := r.Check(t.Context()); !errors.Is(err, errDown) {
-		t.Errorf("Check = %v, want the ping's error", err)
-	}
-	if r.MaxBackoff != 0 || r.Admit != nil {
-		t.Errorf("recovery = %+v, want no backoff cap and no admission", r)
-	}
-}

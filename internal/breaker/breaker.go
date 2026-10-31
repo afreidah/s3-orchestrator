@@ -95,7 +95,7 @@ type CircuitBreaker struct {
 	onStateChange func(StateChangeInfo)
 }
 
-// Config configures a CircuitBreaker. Use SetOnStateChange after
+// Config configures a CircuitBreaker. Use AddOnStateChange after
 // construction to install metric / event hooks. Timeout is how long an open
 // breaker waits before its owner first checks whether the dependency is back.
 type Config struct {
@@ -122,19 +122,9 @@ func NewCircuitBreaker(cfg Config) *CircuitBreaker {
 	}
 }
 
-// SetOnStateChange installs a callback invoked on every closed/open
-// transition. The callback runs synchronously while the breaker holds its
-// lock, so implementations must be cheap and non-blocking. Passing nil clears
-// any previously installed callback.
-func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo)) {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.onStateChange = fn
-}
-
-// AddOnStateChange appends a callback to the existing hook chain. Used
-// to attach an additional listener (e.g. cache invalidation on recovery)
-// without disturbing the telemetry hook already installed.
+// AddOnStateChange appends a callback invoked on every closed/open transition,
+// after any already installed. Callbacks run synchronously while the breaker
+// holds its lock, so they must be cheap and non-blocking.
 func (cb *CircuitBreaker) AddOnStateChange(fn func(StateChangeInfo)) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -178,12 +168,6 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration {
 	return time.Since(cb.openedAt)
 }
 
-// RecoveryDelay returns the open timeout: how long an open circuit waits
-// before recovery is first attempted.
-func (cb *CircuitBreaker) RecoveryDelay() time.Duration {
-	return cb.openTimeout
-}
-
 // -------------------------------------------------------------------------
 // STATE MACHINE
 // -------------------------------------------------------------------------
@@ -213,6 +197,17 @@ func (cb *CircuitBreaker) PostCheck(err error) error {
 		return fmt.Errorf("%w: %w", cb.sentinel, err)
 	}
 	return err
+}
+
+// Trip opens the breaker on err without waiting for failures to reach the
+// threshold, for an owner that already knows the dependency is unreachable.
+func (cb *CircuitBreaker) Trip(err error) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.lastErr = err
+	if cb.state != StateOpen {
+		cb.transition(StateOpen)
+	}
 }
 
 // Recover closes the breaker and zeroes the failure count, for an

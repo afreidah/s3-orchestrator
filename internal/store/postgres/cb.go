@@ -43,20 +43,12 @@ func wrapDBTX(inner db.DBTX, cb *breaker.CircuitBreaker) db.DBTX {
 // from app-shaped ones (sentinel pass-through, real DB faults trip the
 // breaker).
 func (c *cbDBTX) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if err := c.cb.PreCheck(); err != nil {
-		return pgconn.CommandTag{}, err
-	}
-	tag, err := c.inner.Exec(ctx, sql, args...)
-	return tag, c.cb.PostCheck(err)
+	return c.cb.Call(func() (pgconn.CommandTag, error) { return c.inner.Exec(ctx, sql, args...) })
 }
 
 // Query runs the query under the breaker.
 func (c *cbDBTX) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if err := c.cb.PreCheck(); err != nil {
-		return nil, err
-	}
-	rows, err := c.inner.Query(ctx, sql, args...)
-	return rows, c.cb.PostCheck(err)
+	return c.cb.Call(func() (pgx.Rows, error) { return c.inner.Query(ctx, sql, args...) })
 }
 
 // QueryRow runs the query under the breaker. PreCheck failure surfaces

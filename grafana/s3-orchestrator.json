@@ -4995,7 +4995,7 @@
       "gridPos": {
         "x": 0,
         "y": 287,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -5006,27 +5006,6 @@
         {
           "expr": "sum(rate(s3o_write_target_refused_total[5m]))",
           "legendFormat": "aborted"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "id": 103,
-      "title": "Circuit breaker internal errors",
-      "gridPos": {
-        "x": 12,
-        "y": 287,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum by (name) (rate(s3o_circuit_breaker_internal_errors_total[5m]))",
-          "legendFormat": "{{name}}"
         }
       ]
     },

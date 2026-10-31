@@ -78,7 +78,7 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 	}
 	now := p.now()
 	if p.nextDue.IsZero() {
-		p.backoff = max(cb.RecoveryDelay(), DefaultWatchdogInterval)
+		p.backoff = max(cb.openTimeout, DefaultWatchdogInterval)
 		p.nextDue = now.Add(p.backoff)
 		return
 	}
@@ -98,7 +98,7 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 		return
 	}
 
-	p.backoff = min(p.backoff*2, max(p.recovery.MaxBackoff, cb.RecoveryDelay(), DefaultWatchdogInterval))
+	p.backoff = min(p.backoff*2, max(p.recovery.MaxBackoff, cb.openTimeout, DefaultWatchdogInterval))
 	p.nextDue = now.Add(p.backoff)
 	p.log.WarnContext(ctx, "recovery check failed; circuit stays open",
 		logfmt.Err(err),

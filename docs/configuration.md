@@ -706,13 +706,13 @@ redis:
   open_timeout: "15s"                 # delay before probing Redis recovery (default: 15s)
 ```
 
-- `address` - required when the `redis` section is present. The orchestrator PINGs Redis on startup and fails hard if unreachable.
+- `address` - required when the `redis` section is present. The orchestrator PINGs Redis on startup; if it is unreachable, the breaker opens and the instance starts on local counters.
 - `key_prefix` - namespaces all Redis keys. Use different prefixes if multiple orchestrator deployments share one Redis instance.
 - `failure_threshold` and `open_timeout` - control the circuit breaker that falls back to local counters when Redis is unavailable.
 
 Every instance runs the usage flush without a lock. Shared counters are staged under a flush id before they are written, and the database records the id with the deltas, so a batch two instances both find is applied once. Charges kept in local counters during a Redis outage are flushed by the instance that holds them.
 
-A background health probe runs every 5 seconds while the breaker is open: it PINGs Redis and, on success, recloses the breaker. The breaker recovery is clean: the failure counter is zeroed so the system tolerates the configured `failure_threshold` of new transient errors before tripping again. No process restart is required after a Redis outage.
+While the breaker is open, the circuit breaker watchdog PINGs Redis once `open_timeout` has passed and again every `open_timeout` after that, and recloses the breaker when Redis answers. The breaker recovery is clean: the failure counter is zeroed so the system tolerates the configured `failure_threshold` of new transient errors before tripping again. No process restart is required after a Redis outage.
 
 Redis is not reloadable - changing Redis settings requires a restart.
 
