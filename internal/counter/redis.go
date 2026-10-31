@@ -37,8 +37,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
@@ -54,18 +52,13 @@ import (
 // flushes, such as a removed backend's, expires on its own.
 const keyTTL = 35 * 24 * time.Hour
 
-// healthProbeInterval controls how often the background goroutine PINGs
-// Redis while the circuit breaker is open.
-const healthProbeInterval = 5 * time.Second
-
 // opTimeout bounds individual Redis round-trip operations. Must be short
 // enough that a stalled Redis can't stall a request thread, but long enough
 // to tolerate transient latency.
 const opTimeout = 2 * time.Second
 
-// pingTimeout bounds Redis liveness checks  -  both the initial boot-time
-// PING and the ongoing health probe that runs while the circuit breaker
-// is open. Longer than opTimeout because these aren't on the request path.
+// pingTimeout bounds the boot-time PING. Longer than opTimeout because it is
+// not on the request path.
 const pingTimeout = 5 * time.Second
 
 // watchRetryDelay is how long WatchShared waits before resubscribing after
@@ -148,8 +141,8 @@ type subscription interface {
 // -------------------------------------------------------------------------
 
 // RedisCounterBackend stores per-backend usage counters in Redis for
-// cross-instance visibility. Falls back to local counters when Redis is
-// unavailable. log may be nil, so read it through logger().
+// cross-instance visibility. While its circuit breaker is open it serves from
+// local counters instead, and the watchdog's prober moves it back onto Redis.
 type RedisCounterBackend struct {
 	client    RedisClient
 	subscribe func(ctx context.Context, channel string) subscription
@@ -158,27 +151,12 @@ type RedisCounterBackend struct {
 	cb        *breaker.CircuitBreaker
 	backends  []string
 	log       *slog.Logger
-	fallback  atomic.Bool // currently serving from the local counters
-
-	stopProbe chan struct{}
-	probeDone chan struct{}
-	closeOnce sync.Once
 }
 
-// logger returns the component-scoped logger, falling back to
-// slog.Default() when the backend was constructed by a test that did
-// not set the log field.
-func (r *RedisCounterBackend) logger() *slog.Logger {
-	if r.log == nil {
-		return slog.Default()
-	}
-	return r.log
-}
-
-// NewRedisCounterBackend creates a shared counter backend backed by Redis and
-// starts the background health probe. An unreachable Redis at boot does not
-// fail startup: the backend starts in fallback on local counters, logs at
-// error level, and the probe moves it onto Redis once Redis answers.
+// NewRedisCounterBackend creates a shared counter backend backed by Redis. An
+// unreachable Redis at boot does not fail startup: the breaker opens, the
+// backend serves from local counters and logs at error level, and the
+// breaker's prober moves it onto Redis once Redis answers.
 func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) *RedisCounterBackend {
 	sentinel := errors.New("redis unavailable")
 	cb := breaker.NewCircuitBreaker(breaker.Config{
@@ -188,39 +166,45 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 		IsError:   func(err error) bool { return err != nil },
 		Sentinel:  sentinel,
 	})
-	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
+	cb.AddOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
 
 	r := &RedisCounterBackend{
 		client: client,
 		subscribe: func(ctx context.Context, channel string) subscription {
 			return client.Subscribe(ctx, channel)
 		},
-		prefix:    cfg.KeyPrefix,
-		local:     NewLocalCounterBackend(backendNames),
-		cb:        cb,
-		backends:  backendNames,
-		log:       slog.Default().With(logfmt.Component("redis_counters")),
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
+		prefix:   cfg.KeyPrefix,
+		local:    NewLocalCounterBackend(backendNames),
+		cb:       cb,
+		backends: backendNames,
+		log:      slog.Default().With(logfmt.Component("redis_counters")),
 	}
+	cb.AddOnStateChange(r.onStateChange)
 
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		r.setFallback(true)
-		r.logger().ErrorContext(ctx, "Redis unreachable at startup, running on local counters until it answers",
+		cb.Trip(err)
+		r.log.ErrorContext(ctx, "Redis unreachable at startup, running on local counters until it answers",
 			"address", cfg.Address,
 			logfmt.Err(err),
 		)
 	} else {
-		r.logger().InfoContext(ctx, "initialized",
+		r.log.InfoContext(ctx, "initialized",
 			"address", cfg.Address,
 			"prefix", cfg.KeyPrefix,
 		)
 	}
-
-	go r.healthProbe()
 	return r
+}
+
+// Prober returns the watchdog prober that pings Redis while the breaker is
+// open and closes it once Redis answers. A ping costs nothing, so the checks
+// do not back off.
+func (r *RedisCounterBackend) Prober() breaker.Prober {
+	return breaker.NewRecoveryProber(r.cb, breaker.Recovery{
+		Check: func(ctx context.Context) error { return r.client.Ping(ctx).Err() },
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -347,21 +331,33 @@ func (r *RedisCounterBackend) stage(ctx context.Context) {
 // time it is read was applied and deleted by another flush.
 func (r *RedisCounterBackend) readStaged(ctx context.Context) []core.UsageBatch {
 	var batches []core.UsageBatch
+	_ = r.scanKeys(ctx, "scan_staged", globEscaper.Replace(r.prefix)+":usage-staged:*", func(key string) error {
+		if b, ok := r.readBatch(ctx, key); ok {
+			batches = append(batches, b)
+		}
+		return nil
+	})
+	return batches
+}
+
+// scanKeys calls fn for every key matching match, until the scan ends or fn
+// fails. A scan failure is observed as op and returned.
+func (r *RedisCounterBackend) scanKeys(ctx context.Context, op, match string, fn func(key string) error) error {
 	var cursor uint64
 	for {
 		octx, cancel := context.WithTimeout(ctx, opTimeout)
-		keys, next, err := r.client.Scan(octx, cursor, globEscaper.Replace(r.prefix)+":usage-staged:*", scanCount).Result()
+		keys, next, err := r.client.Scan(octx, cursor, match, scanCount).Result()
 		cancel()
-		if r.observe("scan_staged", err) != nil {
-			return batches
+		if err := r.observe(op, err); err != nil {
+			return err
 		}
 		for _, key := range keys {
-			if b, ok := r.readBatch(ctx, key); ok {
-				batches = append(batches, b)
+			if err := fn(key); err != nil {
+				return err
 			}
 		}
 		if next == 0 {
-			return batches
+			return nil
 		}
 		cursor = next
 	}
@@ -403,7 +399,7 @@ func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]s
 		v, err := strconv.ParseInt(raw, 10, 64)
 		bucket, workload, name, ok := parseField(field)
 		if err != nil || !ok {
-			r.logger().WarnContext(ctx, "discarding unparseable usage counter",
+			r.log.WarnContext(ctx, "discarding unparseable usage counter",
 				slog.String("field", field), slog.String("value", raw))
 			continue
 		}
@@ -427,100 +423,42 @@ func (r *RedisCounterBackend) addFields(ctx context.Context, fields map[string]s
 }
 
 // -------------------------------------------------------------------------
-// HEALTH PROBE AND RECOVERY
+// FALLBACK
 // -------------------------------------------------------------------------
 
-// healthProbe runs in a background goroutine, periodically PINGing Redis
-// while the backend is in fallback, and resumes normal operation once it
-// answers. It keys off the fallback flag rather than the breaker, because a
-// backend that could not reach Redis at startup is in fallback without the
-// breaker ever having opened.
-func (r *RedisCounterBackend) healthProbe() {
-	defer close(r.probeDone)
-	ticker := time.NewTicker(healthProbeInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if r.inFallback() {
-				r.tryRecover()
-			}
-		case <-r.stopProbe:
-			return
-		}
-	}
+// inFallback reports whether the backend is serving from local counters,
+// which it does while the breaker is open.
+func (r *RedisCounterBackend) inFallback() bool {
+	return !r.cb.IsHealthy()
 }
 
-// tryRecover PINGs Redis and, on success, closes the circuit breaker and
-// leaves fallback. The charges kept locally meanwhile need nothing here: the
-// usage flush writes them to the store.
-func (r *RedisCounterBackend) tryRecover() {
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-	defer cancel()
-	if err := r.client.Ping(ctx).Err(); err != nil {
+// onStateChange moves the gauge and the log with the breaker: open means
+// local counters, closed means Redis again. The charges kept locally
+// meanwhile need nothing here: the usage flush writes them to the store.
+func (r *RedisCounterBackend) onStateChange(info breaker.StateChangeInfo) {
+	if info.To == breaker.StateClosed {
+		telemetry.RedisFallbackActive.Set(0)
+		r.log.InfoContext(context.Background(), "Redis counter backend recovered")
 		return
 	}
-
-	// Recover, not PostCheck(nil): only Recover closes an open breaker.
-	r.setFallback(false)
-	r.cb.Recover()
-	r.logger().InfoContext(ctx, "Redis counter backend recovered")
-}
-
-// -------------------------------------------------------------------------
-// FALLBACK MANAGEMENT
-// -------------------------------------------------------------------------
-
-// inFallback returns true when using local counters due to Redis unavailability.
-func (r *RedisCounterBackend) inFallback() bool {
-	return r.fallback.Load()
-}
-
-// setFallback toggles fallback mode and updates the Prometheus gauge.
-func (r *RedisCounterBackend) setFallback(v bool) {
-	r.fallback.Store(v)
-	if v {
-		telemetry.RedisFallbackActive.Set(1)
-	} else {
-		telemetry.RedisFallbackActive.Set(0)
-	}
+	telemetry.RedisFallbackActive.Set(1)
+	r.log.WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
 }
 
 // observe records one Redis operation's outcome on the operations metric and
 // the circuit breaker, and returns err so the caller can fall back on it.
 // redis.Nil, a key that does not exist, counts as success.
 func (r *RedisCounterBackend) observe(op string, err error) error {
-	if err != nil && !errors.Is(err, redis.Nil) {
-		telemetry.RedisOperationsTotal.WithLabelValues(op, "error").Inc()
-		r.recordFailure(err)
-		return err
+	if errors.Is(err, redis.Nil) {
+		err = nil
 	}
-	telemetry.RedisOperationsTotal.WithLabelValues(op, "success").Inc()
-	r.notePostCheck(op, nil)
-	return nil
-}
-
-// notePostCheck feeds the operation outcome to the circuit breaker and
-// records any bookkeeping error to the internal-errors metric. Prefer this
-// over a bare `_ = r.cb.PostCheck(...)`: it makes state-transition bugs
-// observable via s3o_circuit_breaker_internal_errors_total.
-func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
-	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
-		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
-		r.logger().WarnContext(context.Background(), "Redis circuit breaker PostCheck reported error",
-			"operation", op, "error", cbErr)
+	status := "success"
+	if err != nil {
+		status = "error"
 	}
-}
-
-// recordFailure feeds the error to the circuit breaker. If the breaker
-// opens, transitions to fallback mode.
-func (r *RedisCounterBackend) recordFailure(err error) {
-	r.notePostCheck("failure", err)
-	if !r.cb.IsHealthy() && !r.inFallback() {
-		r.setFallback(true)
-		r.logger().WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
-	}
+	telemetry.RedisOperationsTotal.WithLabelValues(op, status).Inc()
+	_ = r.cb.PostCheck(err)
+	return err
 }
 
 // -------------------------------------------------------------------------
@@ -596,31 +534,19 @@ func (r *RedisCounterBackend) ListShared(ctx context.Context, prefix string) (ma
 	if r.inFallback() {
 		return nil, ErrSharedStateUnavailable
 	}
-	match := globEscaper.Replace(r.sharedKey(prefix)) + "*"
 	out := make(map[string][]byte)
-	var cursor uint64
-	for {
-		octx, cancel := context.WithTimeout(ctx, opTimeout)
-		keys, next, err := r.client.Scan(octx, cursor, match, scanCount).Result()
-		cancel()
-		if err := r.observe("scan_shared", err); err != nil {
-			return nil, err
+	err := r.scanKeys(ctx, "scan_shared", globEscaper.Replace(r.sharedKey(prefix))+"*", func(key string) error {
+		name := strings.TrimPrefix(key, r.sharedKey(""))
+		val, err := r.GetShared(ctx, name)
+		if val != nil {
+			out[name] = val
 		}
-		for _, key := range keys {
-			name := strings.TrimPrefix(key, r.sharedKey(""))
-			val, err := r.GetShared(ctx, name)
-			if err != nil {
-				return nil, err
-			}
-			if val != nil {
-				out[name] = val
-			}
-		}
-		if next == 0 {
-			return out, nil
-		}
-		cursor = next
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
+	return out, nil
 }
 
 // PublishShared sends payload to every instance watching channel. An instance
@@ -660,7 +586,7 @@ func (r *RedisCounterBackend) WatchShared(ctx context.Context, channel string, o
 				continue
 			}
 			if interrupted {
-				r.logger().InfoContext(ctx, "shared state subscription restored", "channel", channel)
+				r.log.InfoContext(ctx, "shared state subscription restored", "channel", channel)
 				interrupted = false
 			}
 			onMessage(ctx, nil)
@@ -678,7 +604,7 @@ func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel stri
 		return false
 	}
 	if first {
-		r.logger().WarnContext(ctx, "shared state subscription lost, resubscribing",
+		r.log.WarnContext(ctx, "shared state subscription lost, resubscribing",
 			"channel", channel, logfmt.Err(err))
 	}
 	select {
@@ -693,17 +619,7 @@ func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel stri
 // LIFECYCLE
 // -------------------------------------------------------------------------
 
-// IsHealthy returns true when Redis is reachable and the circuit is closed.
-func (r *RedisCounterBackend) IsHealthy() bool {
-	return r.cb.IsHealthy()
-}
-
-// Close stops the health probe goroutine and closes the Redis client.
-// Safe to call multiple times.
+// Close closes the Redis client.
 func (r *RedisCounterBackend) Close() error {
-	r.closeOnce.Do(func() {
-		close(r.stopProbe)
-	})
-	<-r.probeDone
 	return r.client.Close()
 }

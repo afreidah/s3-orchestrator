@@ -3,9 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Tests for the constructor, shared state, the circuit breaker feed, and the
-// tryRecover path that moves the backend off its local fallback once Redis
-// answers again.
+// Tests for the constructor, shared state, the circuit breaker feed, and
+// what the backend does when its breaker's prober recovers it.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -24,48 +23,25 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// recoveringBackend builds a backend in fallback over the mock client, the
-// state tryRecover runs in.
-func recoveringBackend(mock *MockRedisClient, cb *breaker.CircuitBreaker) *RedisCounterBackend {
+// recoveringBackend builds a backend in fallback over the mock client, its
+// breaker open the way an outage leaves it.
+func recoveringBackend(mock *MockRedisClient) *RedisCounterBackend {
 	r := &RedisCounterBackend{
-		client:    mock,
-		prefix:    testPrefix,
-		local:     NewLocalCounterBackend([]string{backendB1}),
-		backends:  []string{backendB1},
-		cb:        cb,
-		stopProbe: make(chan struct{}),
-		probeDone: make(chan struct{}),
+		client:   mock,
+		prefix:   testPrefix,
+		local:    NewLocalCounterBackend([]string{backendB1}),
+		backends: []string{backendB1},
+		cb:       newTestCB(),
+		log:      slog.Default(),
 	}
-	r.setFallback(true)
+	r.cb.AddOnStateChange(r.onStateChange)
+	r.cb.Trip(errors.New("outage"))
 	return r
 }
 
-// TestRedisCounterBackend_LoggerFallback pins the nil-safe behaviour
-// of logger(): tests construct *RedisCounterBackend directly without
-// setting log, and the helper must return slog.Default() so the Redis
-// code path never dereferences a nil logger.
-func TestRedisCounterBackend_LoggerFallback(t *testing.T) {
-	if (&RedisCounterBackend{}).logger() == nil {
-		t.Fatal("logger() returned nil for zero-value RedisCounterBackend")
-	}
-}
-
-// TestRedisCounterBackend_LoggerReturnsCustomLog covers the non-nil
-// branch of logger(): when the backend was constructed by
-// NewRedisCounterBackend the log field is populated and the helper
-// returns it unchanged.
-func TestRedisCounterBackend_LoggerReturnsCustomLog(t *testing.T) {
-	custom := slog.Default().With("scope", "test")
-	r := &RedisCounterBackend{log: custom}
-	if r.logger() != custom {
-		t.Fatal("logger() did not return the assigned log field")
-	}
-}
-
-// TestNewRedisCounterBackend_HappyPath drives the production
-// constructor so the log-field assignment, the "initialized" info log,
-// and the background probe spawn each run under coverage. The mock
-// Redis client makes Ping succeed; the probe goroutine exits on Close.
+// TestNewRedisCounterBackend_HappyPath drives the production constructor so
+// the log-field assignment and the "initialized" info log run under coverage.
+// The mock Redis client makes Ping succeed.
 func TestNewRedisCounterBackend_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mock := NewMockRedisClient(ctrl)
@@ -169,36 +145,27 @@ func TestSharedState_PutAndGet(t *testing.T) {
 	}
 }
 
-// TestRecordFailure_LogsFallbackAndPostCheckError verifies that a failure
-// opening the breaker logs the PostCheck error and moves the backend into
-// fallback.
-func TestRecordFailure_LogsFallbackAndPostCheckError(t *testing.T) {
-	sentinel := errors.New("redis unavailable")
-	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "redis", Threshold: 1, Timeout: time.Second, IsError: func(error) bool { return true }, Sentinel: sentinel})
-
-	r := &RedisCounterBackend{
-		cb:    cb,
-		local: NewLocalCounterBackend([]string{"b1"}),
-		log:   slog.Default(),
+// TestObserve_FailureOpensFallback verifies that a failed operation reaching
+// the breaker's threshold moves the backend into fallback, and that a
+// redis.Nil answer counts as success.
+func TestObserve_FailureOpensFallback(t *testing.T) {
+	r := &RedisCounterBackend{cb: newTestCB(), local: NewLocalCounterBackend([]string{"b1"}), log: slog.Default()}
+	if err := r.observe("get", redis.Nil); err != nil || r.inFallback() {
+		t.Fatalf("observe(redis.Nil) = %v, fallback %v; want nil and no fallback", err, r.inFallback())
 	}
-	r.recordFailure(errors.New("boom"))
-	if !r.inFallback() {
-		t.Fatal("expected fallback after breaker opened")
+	if err := r.observe("get", errors.New("boom")); err == nil || !r.inFallback() {
+		t.Fatalf("observe(boom) = %v, fallback %v; want the error and fallback", err, r.inFallback())
 	}
 }
 
-// TestTryRecover_LeavesLocalChargesForTheFlush asserts recovery only leaves
+// TestRecovery_LeavesLocalChargesForTheFlush asserts recovery only leaves
 // fallback: the charges kept locally stay put until this instance's flush
 // takes them, and nothing is written to Redis.
-func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-
-	r := recoveringBackend(mock, newTestCB())
+func TestRecovery_LeavesLocalChargesForTheFlush(t *testing.T) {
+	r := recoveringBackend(NewMockRedisClient(gomock.NewController(t)))
 	r.Charge(backendB1, oldBucket, Charge{APIRequests: 100, EgressBytes: 1024})
 
-	r.tryRecover()
+	r.cb.Recover()
 
 	if r.inFallback() {
 		t.Error("expected fallback to be cleared after recovery")
@@ -209,88 +176,7 @@ func TestTryRecover_LeavesLocalChargesForTheFlush(t *testing.T) {
 	}
 }
 
-// TestTryRecover_PingFailure_NoOp verifies that tryRecover does nothing when
-// Redis is still unreachable (Ping fails).
-func TestTryRecover_PingFailure_NoOp(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("", errors.New("connection refused")))
-
-	r := recoveringBackend(mock, newTestCB())
-	r.Charge(backendB1, oldBucket, Charge{APIRequests: 50})
-
-	r.tryRecover()
-
-	if got := loaded(r, backendB1).APIRequests; got != 50 {
-		t.Errorf("b1 apiRequests = %d, want 50 (unchanged)", got)
-	}
-	if !r.inFallback() {
-		t.Error("expected fallback to remain active when ping fails")
-	}
-}
-
-// newTestCB creates a circuit breaker in the open state for recovery tests.
+// newTestCB creates a closed circuit breaker that opens on the first failure.
 func newTestCB() *breaker.CircuitBreaker {
-	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 1, Timeout: time.Millisecond, IsError: func(error) bool { return true }, Sentinel: errors.New("redis unavailable")})
-	// Trip the circuit so tryRecover's recovery transition can close it.
-	_ = cb.PostCheck(errors.New("trigger"))
-	return cb
-}
-
-// TestTryRecover_ClosesCircuitBreaker verifies tryRecover closes an open
-// breaker. The hot path bypasses PreCheck, so nothing else would close it.
-func TestTryRecover_ClosesCircuitBreaker(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-
-	r := recoveringBackend(mock, newTestCB())
-
-	if r.cb.IsHealthy() {
-		t.Fatal("setup: breaker should be open before tryRecover")
-	}
-
-	r.tryRecover()
-
-	if !r.cb.IsHealthy() {
-		t.Errorf("breaker still unhealthy after tryRecover; recovery probe must close it cleanly, not via PostCheck(nil)")
-	}
-	if r.inFallback() {
-		t.Error("fallback flag should be cleared after recovery")
-	}
-}
-
-// TestTryRecover_TolerantOfTransientErrorAfterRecovery pins the contract
-// that the failure counter is reset by recovery so the breaker tolerates
-// new transient errors up to its threshold. Without a clean recovery
-// transition the failure counter would still equal the threshold; the
-// next error would re-trip the breaker immediately.
-func TestTryRecover_TolerantOfTransientErrorAfterRecovery(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mock := NewMockRedisClient(ctrl)
-	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
-
-	// Use a threshold of 3 so the test can prove the failure counter
-	// was reset (one post-recovery error must not trip a 3-strike
-	// breaker).
-	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 3, Timeout: time.Millisecond, IsError: func(error) bool { return true }, Sentinel: errors.New("redis unavailable")})
-	for range 3 {
-		_ = cb.PostCheck(errors.New("outage"))
-	}
-
-	r := recoveringBackend(mock, cb)
-
-	r.tryRecover()
-
-	if !r.cb.IsHealthy() {
-		t.Fatal("setup: tryRecover should have closed the breaker")
-	}
-
-	// One transient error must NOT immediately re-open the breaker;
-	// the failure counter must have been zeroed by recovery so the
-	// breaker tolerates the configured threshold (3) of new failures.
-	_ = r.cb.PostCheck(errors.New("transient"))
-	if !r.cb.IsHealthy() {
-		t.Errorf("a single failure post-recovery re-opened the breaker; failure counter not reset by recovery")
-	}
+	return breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 1, Timeout: time.Millisecond, IsError: func(err error) bool { return err != nil }, Sentinel: errors.New("redis unavailable")})
 }

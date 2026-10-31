@@ -184,12 +184,3 @@ func TestRedis_Backends(t *testing.T) {
 	}
 }
 
-// TestRedis_IsHealthy verifies the redis is healthy path by exercising rb.IsHealthy.
-func TestRedis_IsHealthy(t *testing.T) {
-	backends := []string{"b1"}
-	rb, _ := newTestRedisBackend(t, backends)
-
-	if !rb.IsHealthy() {
-		t.Error("expected IsHealthy = true after successful init")
-	}
-}

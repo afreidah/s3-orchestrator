@@ -22,50 +22,28 @@ type Prober interface {
 	Probe(ctx context.Context)
 }
 
-// Registry is a thread-safe collection of breakers probed by the watchdog.
+// Registry is the fixed set of breakers the watchdog probes, built once at
+// startup and only read after.
 type Registry struct {
-	mu       sync.RWMutex
-	breakers []Prober
+	probers []Prober
 }
 
-// NewRegistry constructs a Registry preloaded with the given breakers.
-// Nil entries are silently dropped.
-func NewRegistry(initial ...Prober) *Registry {
-	r := &Registry{}
-	for _, b := range initial {
-		if b != nil {
-			r.breakers = append(r.breakers, b)
-		}
-	}
-	return r
+// NewRegistry constructs a Registry over probers.
+func NewRegistry(probers ...Prober) *Registry {
+	return &Registry{probers: probers}
 }
 
-// Register appends a breaker to the registry. Nil is a no-op.
-func (r *Registry) Register(b Prober) {
-	if b == nil {
-		return
-	}
-	r.mu.Lock()
-	r.breakers = append(r.breakers, b)
-	r.mu.Unlock()
+// Len returns the number of breakers the registry probes.
+func (r *Registry) Len() int {
+	return len(r.probers)
 }
 
-// ProbeAll invokes Probe on every registered breaker concurrently, so one slow
-// health check cannot delay the others, and returns when all have finished.
-// Safe for concurrent use.
+// ProbeAll invokes Probe on every breaker concurrently, so one slow health
+// check cannot delay the others, and returns when all have finished.
 func (r *Registry) ProbeAll(ctx context.Context) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	var wg sync.WaitGroup
-	for _, b := range r.breakers {
-		wg.Go(func() { b.Probe(ctx) })
+	for _, p := range r.probers {
+		wg.Go(func() { p.Probe(ctx) })
 	}
 	wg.Wait()
-}
-
-// Len returns the number of registered breakers.
-func (r *Registry) Len() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.breakers)
 }

@@ -1271,7 +1271,7 @@ func tripCircuitBreaker(t *testing.T) {
 // interval, which is longer than the test's open timeout.
 func waitForRecovery(t *testing.T) {
 	t.Helper()
-	prober := breaker.NewRecoveryProber(testDatabaseCB, store.DatabaseRecovery(testStore.Ping))
+	prober := breaker.NewRecoveryProber(testDatabaseCB, breaker.Recovery{Check: testStore.Ping})
 	deadline := time.After(3 * breaker.DefaultWatchdogInterval)
 	for !testDatabaseCB.IsHealthy() {
 		select {

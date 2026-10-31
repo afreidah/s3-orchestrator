@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Verifies the registry the watchdog probes on each tick. Tests cover
-// registration, nil filtering, a safe no-op when the registry is empty, and
-// that the real *CircuitBreaker satisfies Prober without an adapter.
+// Verifies the registry the watchdog probes on each tick. Tests cover probing
+// every breaker, a safe no-op when the registry is empty, and that the real
+// *RecoveryProber satisfies Prober without an adapter.
 // -------------------------------------------------------------------------------
 
 package breaker
@@ -32,27 +32,11 @@ func (f *fakeProber) Probe(ctx context.Context) {
 	f.workload.Store(audit.WorkloadOf(ctx))
 }
 
-// TestNewRegistry_DropsNil verifies that nil entries passed to NewRegistry
-// are filtered out instead of panicking later.
-func TestNewRegistry_DropsNil(t *testing.T) {
-	r := NewRegistry(nil, &fakeProber{}, nil)
-	if got := r.Len(); got != 1 {
-		t.Fatalf("Len = %d, want 1", got)
-	}
-}
-
-// TestRegistry_RegisterAndProbe verifies that ProbeAll probes every
-// registered breaker exactly once per call.
-func TestRegistry_RegisterAndProbe(t *testing.T) {
+// TestRegistry_ProbeAll verifies that ProbeAll probes every breaker exactly
+// once per call.
+func TestRegistry_ProbeAll(t *testing.T) {
 	a, b, c := &fakeProber{}, &fakeProber{}, &fakeProber{}
-	r := NewRegistry(a)
-	r.Register(b)
-	r.Register(c)
-	r.Register(nil) // no-op
-
-	if got := r.Len(); got != 3 {
-		t.Fatalf("Len = %d, want 3", got)
-	}
+	r := NewRegistry(a, b, c)
 
 	r.ProbeAll(t.Context())
 	r.ProbeAll(t.Context())
@@ -67,20 +51,13 @@ func TestRegistry_RegisterAndProbe(t *testing.T) {
 // TestRegistry_EmptyProbeIsNoOp verifies that ProbeAll on an empty registry
 // does not panic.
 func TestRegistry_EmptyProbeIsNoOp(t *testing.T) {
-	r := NewRegistry()
-	r.ProbeAll(t.Context()) // must not panic
-	if r.Len() != 0 {
-		t.Fatalf("Len = %d, want 0", r.Len())
-	}
+	NewRegistry().ProbeAll(t.Context()) // must not panic
 }
 
 // TestRegistry_RecoveryProberSatisfiesInterface verifies that a real
 // *RecoveryProber can be registered without type assertions.
 func TestRegistry_RecoveryProberSatisfiesInterface(t *testing.T) {
 	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: 0, IsError: func(error) bool { return true }, Sentinel: ErrBackendUnavailable})
-	r := NewRegistry(NewRecoveryProber(cb, Recovery{Check: func(context.Context) error { return nil }}))
-	if r.Len() != 1 {
-		t.Fatalf("Len = %d, want 1", r.Len())
-	}
-	r.ProbeAll(t.Context()) // must not panic on a closed circuit
+	NewRegistry(NewRecoveryProber(cb, Recovery{Check: func(context.Context) error { return nil }})).
+		ProbeAll(t.Context()) // must not panic on a closed circuit
 }

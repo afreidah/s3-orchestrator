@@ -60,20 +60,12 @@ func wrapDB(inner *sql.DB, cb *breaker.CircuitBreaker) dbAPI {
 
 // ExecContext runs the statement under the breaker.
 func (c *cbDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	if err := c.cb.PreCheck(); err != nil {
-		return nil, err
-	}
-	res, err := c.inner.ExecContext(ctx, query, args...)
-	return res, c.cb.PostCheck(err)
+	return c.cb.Call(func() (sql.Result, error) { return c.inner.ExecContext(ctx, query, args...) })
 }
 
 // QueryContext runs the query under the breaker.
 func (c *cbDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	if err := c.cb.PreCheck(); err != nil {
-		return nil, err
-	}
-	rows, err := c.inner.QueryContext(ctx, query, args...)
-	return rows, c.cb.PostCheck(err)
+	return c.cb.Call(func() (*sql.Rows, error) { return c.inner.QueryContext(ctx, query, args...) })
 }
 
 // QueryRowContext bypasses the breaker, unlike the Postgres wrapper: *sql.Row
@@ -120,10 +112,8 @@ func cbWithTx(ctx context.Context, inner *sql.DB, cb *breaker.CircuitBreaker, fn
 // PingContext routes through the breaker so explicit health probes feed
 // the same failure counter as real queries.
 func (c *cbDB) PingContext(ctx context.Context) error {
-	if err := c.cb.PreCheck(); err != nil {
-		return err
-	}
-	return c.cb.PostCheck(c.inner.PingContext(ctx))
+	_, err := c.cb.Call(func() (struct{}, error) { return struct{}{}, c.inner.PingContext(ctx) })
+	return err
 }
 
 // Close closes the wrapped *sql.DB; not CB-routed.

@@ -107,10 +107,17 @@ func TestCB_OpenStaysOpenPastTimeout(t *testing.T) {
 		if err := cb.PreCheck(); err != nil {
 			t.Fatalf("PreCheck after Recover = %v, want nil", err)
 		}
-		if cb.RecoveryDelay() != 5*time.Millisecond {
-			t.Errorf("RecoveryDelay = %v, want the open timeout", cb.RecoveryDelay())
-		}
 	})
+}
+
+// TestCB_TripOpensBeforeTheThreshold verifies Trip opens a closed breaker on
+// its own, for an owner that already knows the dependency is down.
+func TestCB_TripOpensBeforeTheThreshold(t *testing.T) {
+	cb := newTestBreaker(5, time.Hour)
+	cb.Trip(errTest)
+	if err := cb.PreCheck(); !errors.Is(err, errSentinel) {
+		t.Fatalf("PreCheck after Trip = %v, want the sentinel", err)
+	}
 }
 
 // TestCB_SuccessWhileOpenDoesNotClose verifies a call that succeeds while the
@@ -270,7 +277,7 @@ func TestCB_OpeningErrorWrapsCause(t *testing.T) {
 func TestTransition_InvokesHookOnOpen(t *testing.T) {
 	var infos []StateChangeInfo
 	cb := newTestBreaker(2, time.Hour)
-	cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
+	cb.AddOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
 
 	_ = cb.PostCheck(errTest)
 	_ = cb.PostCheck(errTest)
@@ -294,7 +301,7 @@ func TestTransition_InvokesHookOnRecovery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var infos []StateChangeInfo
 		cb := newTestBreaker(1, 10*time.Millisecond)
-		cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
+		cb.AddOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
 
 		_ = cb.PostCheck(errTest) // closed -> open
 		time.Sleep(15 * time.Millisecond)
@@ -330,7 +337,7 @@ func TestTransition_NilHookIsNoop(t *testing.T) {
 func TestAddOnStateChange_ChainsListeners(t *testing.T) {
 	var standardCalls, addedCalls int
 	cb := newTestBreaker(1, time.Hour)
-	cb.SetOnStateChange(func(StateChangeInfo) { standardCalls++ })
+	cb.AddOnStateChange(func(StateChangeInfo) { standardCalls++ })
 	cb.AddOnStateChange(func(StateChangeInfo) { addedCalls++ })
 
 	_ = cb.PostCheck(errTest) // closed -> open
@@ -341,7 +348,7 @@ func TestAddOnStateChange_ChainsListeners(t *testing.T) {
 }
 
 // TestAddOnStateChange_NoPriorHook verifies AddOnStateChange installs
-// the callback cleanly when no SetOnStateChange has been called first.
+// the first callback on a breaker that has none.
 func TestAddOnStateChange_NoPriorHook(t *testing.T) {
 	var calls int
 	cb := newTestBreaker(1, time.Hour)

@@ -44,7 +44,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -157,10 +156,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 }
 
 // ProvideBreakerRegistry assembles the watchdog's breaker registry: a recovery
-// prober that pings the database for the database circuit breaker, and one for
-// each breaker of every backend produced during backend initialization, the
-// backend breaker and one per call. The backend probers charge their checks
-// through the usage tracker.
+// prober that pings the database for the database circuit breaker, one for
+// each breaker of every backend produced during backend initialization (the
+// backend breaker and one per call), and the Redis breaker's when Redis is
+// configured. The database ping costs nothing, so its checks do not back off;
+// the backend probers charge their checks through the usage tracker.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
@@ -170,13 +170,20 @@ func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	reg := breaker.NewRegistry(breaker.NewRecoveryProber(dbCB, store.DatabaseRecovery(stores.Ping)))
+	probers := []breaker.Prober{breaker.NewRecoveryProber(dbCB, breaker.Recovery{Check: stores.Ping})}
 	for _, b := range br.Breakers {
 		for _, p := range b.Probes() {
-			reg.Register(breaker.NewRecoveryProber(p.Breaker, p.Recovery(b.Name(), usage)))
+			probers = append(probers, breaker.NewRecoveryProber(p.Breaker, p.Recovery(b.Name(), usage)))
 		}
 	}
-	return reg, nil
+	redisRes := Optional[*counter.RedisCounterBackend](i)
+	if redisRes.Failed() {
+		return nil, redisRes.Err
+	}
+	if redisRes.Value != nil {
+		probers = append(probers, redisRes.Value.Prober())
+	}
+	return breaker.NewRegistry(probers...), nil
 }
 
 // -------------------------------------------------------------------------

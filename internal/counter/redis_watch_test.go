@@ -13,6 +13,7 @@ package counter
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -75,6 +76,8 @@ func TestWatchShared_ReactsToSubscribeMessagesAndReconnects(t *testing.T) {
 	var subscribedTo string
 	r := &RedisCounterBackend{
 		prefix: "p",
+		cb:     newTestCB(),
+		log:    slog.Default(),
 		subscribe: func(_ context.Context, channel string) subscription {
 			subscribedTo = channel
 			return sub
@@ -138,7 +141,7 @@ func TestPublishShared_SendsPayloadAndDeclinesInFallback(t *testing.T) {
 	}
 
 	fallback := newBackend()
-	fallback.setFallback(true)
+	fallback.cb.Trip(errors.New("redis down"))
 	if err := fallback.PublishShared(ctx, "prov", []byte("m")); !errors.Is(err, ErrSharedStateUnavailable) {
 		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
 	}
@@ -176,7 +179,6 @@ func TestListShared_PagesScanAndSkipsExpired(t *testing.T) {
 		t.Errorf("err = %v, want %v", err, boom)
 	}
 
-	r.setFallback(true)
 	if _, err := r.ListShared(ctx, "inst:"); !errors.Is(err, ErrSharedStateUnavailable) {
 		t.Errorf("err = %v in fallback, want ErrSharedStateUnavailable", err)
 	}

@@ -118,7 +118,7 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 	cb.callsClosed.Store(uint64(core.AllCalls))
 
 	cb.backend = newBreaker(cfg, cfg.Name, scopeBackend)
-	cb.backend.SetOnStateChange(func(info breaker.StateChangeInfo) {
+	cb.backend.AddOnStateChange(func(info breaker.StateChangeInfo) {
 		cb.apply(info, func() { cb.backendOpen.Store(info.To != breaker.StateClosed) })
 		telemetry.BackendCircuitEvent(cb.name, backendBreakerCall, info)
 	})
@@ -127,7 +127,7 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 	for rest := uint64(core.AllCalls); rest != 0; rest &= rest - 1 {
 		call := core.BackendCalls(rest & -rest)
 		br := newBreaker(cfg, cfg.Name+"/"+call.String(), scopeCall)
-		br.SetOnStateChange(func(info breaker.StateChangeInfo) {
+		br.AddOnStateChange(func(info breaker.StateChangeInfo) {
 			cb.apply(info, func() {
 				if info.To == breaker.StateClosed {
 					cb.callsClosed.Or(uint64(call))
