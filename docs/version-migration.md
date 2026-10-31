@@ -88,6 +88,10 @@ The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it
 
 Reads now use the chunk size each encrypted object was written with instead of the configured `encryption.chunk_size`, so changing the setting no longer makes existing objects unreadable. Objects that became unreadable after an earlier change can be read again with no other action. No migration and no config change.
 
+**A refused reload leaves the bucket set as it was ([#1827](https://github.com/afreidah/s3-orchestrator/issues/1827), v0.178.14)**
+
+A reload's validation no longer publishes the new bucket set, so a reload another hook refuses leaves the admin endpoints, CORS and the reconciler on the buckets S3 authentication still serves. The `bucket_credentials` and `bucket_cors` entries in the reload status are one `provisioning` entry, and its validation now also checks stored CORS rules. A bucket or credential change through the provisioning API after a reload now rebuilds from the reloaded config file instead of the one the process started with. No migration and no config change.
+
 **Redis recovers on the breaker watchdog's schedule ([#1838](https://github.com/afreidah/s3-orchestrator/issues/1838), v0.178.13)**
 
 A Redis counter backend in fallback is now probed by the circuit breaker watchdog, like the database and the backends: the first PING comes once `redis.open_timeout` (default: 15s) has passed and then every `open_timeout`, instead of every 5 seconds. Lower `open_timeout` to recover faster. `s3o_circuit_breaker_internal_errors_total` is removed: it counted every ordinary Redis failure rather than a breaker fault, and nothing else reported to it. Drop alerts and panels that query it. No migration and no other config change.

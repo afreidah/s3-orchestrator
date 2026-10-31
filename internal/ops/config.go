@@ -16,7 +16,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// ConfigStore is the operations layer's view of the running configuration.
+// ConfigStore holds the running configuration, which a reload replaces. One
+// is shared by the operations layer and the provisioning rebuild.
 type ConfigStore = syncutil.AtomicConfig[config.Config]
 
 // NewConfigStore seeds the holder with the configuration the process started

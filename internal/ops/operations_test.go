@@ -187,7 +187,7 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		Unhashed:     mock,
 		Locker:       mock,
 		Declared:     declaredBuckets(testBucket),
-		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
+		Config:       NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}}),
 	})
 }
 

@@ -12,7 +12,6 @@
 package ops
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/storedform"
 )
@@ -46,7 +45,7 @@ type Deps struct {
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
 	Declared     BucketMatcher
-	Cfg          *config.Config
+	Config       *ConfigStore
 }
 
 // Services is the assembled operations layer. Transports hold the services
@@ -69,7 +68,7 @@ type Services struct {
 
 // New builds every operation service from one dependency bag.
 func New(d *Deps) *Services {
-	cfg := NewConfigStore(d.Cfg)
+	cfg := d.Config
 	return &Services{
 		Config: cfg,
 		Objects: NewObjects(ObjectsDeps{
@@ -102,7 +101,7 @@ func New(d *Deps) *Services {
 		}),
 		Compression: NewCompression(&CompressionDeps{
 			Codec:     d.Codec,
-			Config:    d.Cfg.Compression,
+			Config:    d.Config.Load().Compression,
 			Encryptor: d.Encryptor,
 			Store:     d.CompStore,
 			Mover:     d.Mover,

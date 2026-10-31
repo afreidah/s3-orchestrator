@@ -94,7 +94,8 @@ func setupProvEnv(t *testing.T) *provEnv {
 	declared := provisioning.NewDeclared()
 
 	inj := do.New()
-	do.ProvideValue(inj, cfg)
+	cfgStore := ops.NewConfigStore(cfg)
+	do.ProvideValue(inj, cfgStore)
 	do.ProvideValue(inj, config.ModeAPI)
 	do.ProvideValue[core.ProvisioningStore](inj, testStore)
 	do.ProvideValue(inj, declared)
@@ -123,7 +124,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Provisioning: testStore,
 		Registry:     publisher,
 		Declared:     declared,
-		Cfg:          cfg,
+		Config:       cfgStore,
 	})
 
 	env := &provEnv{declared: declared, cfg: cfg}

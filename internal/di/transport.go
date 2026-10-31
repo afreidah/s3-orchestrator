@@ -58,14 +58,41 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ProvideBucketAuth creates the credential-to-user registry from the config file
-// and the store together.
-func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
+// ProvideProvisioned loads the provisioning state the process starts with, from
+// the config file and the store together. Reloads and provisioning changes
+// load and install their own.
+func ProvideProvisioned(i do.Injector) (*Provisioned, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
 	}
-	return AssembleBucketRegistry(context.Background(), i, cfg)
+	ctx := context.Background()
+	p, err := LoadProvisioning(ctx, i, cfg)
+	if err != nil {
+		return nil, err
+	}
+	logAssemblyNotices(ctx, p.registry.Notices())
+	return p, nil
+}
+
+// ProvideDeclared publishes the bucket set the process starts with.
+func ProvideDeclared(i do.Injector) (*provisioning.Declared, error) {
+	p, err := do.Invoke[*Provisioned](i)
+	if err != nil {
+		return nil, err
+	}
+	declared := provisioning.NewDeclared()
+	declared.Set(p.buckets)
+	return declared, nil
+}
+
+// ProvideBucketAuth provides the credential registry the process starts with.
+func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
+	p, err := do.Invoke[*Provisioned](i)
+	if err != nil {
+		return nil, err
+	}
+	return p.registry, nil
 }
 
 // ProvideS3Server creates the S3-compatible HTTP handler.
@@ -83,36 +110,17 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	return srv, nil
 }
 
-// ProvideCORS creates the browser CORS policy with the rules every declared
-// bucket carries, already compiled. It is registered even with no rules, so a
-// reload can add the first rule without a restart.
-//
-// The registry is resolved first because assembling it publishes the declared
-// set; compiling before that would drop every stored bucket's rules.
+// ProvideCORS creates the browser CORS policy with the rules the process
+// starts with. It is registered even with no rules, so a reload can add the
+// first rule without a restart.
 func ProvideCORS(i do.Injector) (*cors.Policy, error) {
-	if _, err := do.Invoke[*auth.BucketRegistry](i); err != nil {
+	p, err := do.Invoke[*Provisioned](i)
+	if err != nil {
 		return nil, err
 	}
 	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
-	if err := RebuildCORS(i, policy); err != nil {
-		return nil, err
-	}
+	policy.SetRules(p.cors)
 	return policy, nil
-}
-
-// RebuildCORS compiles the rules every declared bucket carries and installs
-// them on policy. Callers publish the declared set first.
-func RebuildCORS(i do.Injector, policy *cors.Policy) error {
-	declared, err := do.Invoke[*provisioning.Declared](i)
-	if err != nil {
-		return err
-	}
-	rules, err := cors.NewRegistry(declared.Buckets())
-	if err != nil {
-		return err
-	}
-	policy.SetRules(rules)
-	return nil
 }
 
 // ProvideRateLimiter creates the per-IP rate limiter.
@@ -138,7 +146,7 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 // ProvideOps creates the operations layer both transports call.
 func ProvideOps(i do.Injector) (*ops.Services, error) {
 	r := newResolver(i)
-	cfg := r.Resolve[*config.Config]()
+	cfgStore := r.Resolve[*ops.ConfigStore]()
 	rt := r.Resolve[*infra.BackendRuntime]()
 	objectManager := r.Resolve[*object.Manager]()
 	integrityCfg := r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]]()
@@ -158,7 +166,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		return nil, r.err
 	}
 
-	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	enc, err := resolveOptionalEncryptor(i, cfgStore.Load().Encryption.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +191,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Provisioning: stores,
 		Registry:     NewRegistryPublisher(i),
 		Declared:     declared,
-		Cfg:          cfg,
+		Config:       cfgStore,
 	}), nil
 }
 

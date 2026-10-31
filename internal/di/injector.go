@@ -22,7 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -63,9 +63,12 @@ func NewInjector(deps InjectorDeps) do.Injector {
 
 // registerValues seeds the injector with already-constructed values
 // (config, mode, log level, log buffer) so providers can resolve them
-// via do.Invoke without re-reading the YAML on every call.
+// via do.Invoke without re-reading the YAML on every call. The config store
+// holds the running configuration, which a reload replaces; the bare
+// *config.Config stays the one the process started with.
 func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) {
 	do.ProvideValue(inj, cfg)
+	do.ProvideValue(inj, ops.NewConfigStore(cfg))
 	do.ProvideValue(inj, mode)
 	do.ProvideValue(inj, logLevel)
 	do.ProvideValue(inj, logBuffer)
@@ -136,7 +139,8 @@ func registerWorkers(inj do.Injector, mode config.Mode) {
 // registered above. Conditional transport surfaces (UI, admin) live in
 // registerOptionalFeatures.
 func registerTransport(inj do.Injector) {
-	do.ProvideValue(inj, provisioning.NewDeclared())
+	do.Provide(inj, ProvideProvisioned)
+	do.Provide(inj, ProvideDeclared)
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideCORS)
 	do.Provide(inj, ProvideS3Server)

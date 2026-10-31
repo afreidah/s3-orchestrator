@@ -104,7 +104,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Scrubber:     workers.Scrubber,
 		Unhashed:     store,
 		Declared:     declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
-		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}},
+		Config:       ops.NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 	})
 }
 
