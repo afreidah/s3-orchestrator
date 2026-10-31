@@ -28,14 +28,17 @@ type CopyScrubResult struct {
 }
 
 // The values CopyScrubResult.Outcome takes. NotHashed means there was no stored
-// hash to compare against, which is not the same as passing. Defined here rather
-// than in the worker so every client reads the vocabulary from the wire package
-// instead of importing the server's internals to interpret a response.
+// hash to compare against, which is not the same as passing; Declined means the
+// backend's usage limit refused the read, so the copy was not examined. Defined
+// here rather than in the worker so every client reads the vocabulary from the
+// wire package instead of importing the server's internals to interpret a
+// response.
 const (
 	CopyVerified   = "verified"
 	CopyMismatch   = "mismatch"
 	CopyUnreadable = "unreadable"
 	CopyNotHashed  = "not_hashed"
+	CopyDeclined   = "declined"
 )
 
 // ScrubResponse reports a scrub pass: how many stored copies had their content

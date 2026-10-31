@@ -120,6 +120,7 @@ const (
 	CopyMismatch
 	CopyUnreadable
 	CopyNotHashed
+	CopyDeclined
 )
 
 // String names the outcome for logs and test failures. It is not the wire
@@ -135,14 +136,17 @@ func (o CopyOutcome) String() string {
 		return "unreadable"
 	case CopyNotHashed:
 		return "not hashed"
+	case CopyDeclined:
+		return "declined"
 	default:
 		return "unknown"
 	}
 }
 
 // ScrubKey verifies every copy of one key immediately and reports each
-// separately. Unlike the sweep, it ignores usage limits, since an operator
-// checking one object should get an answer even near an egress cap.
+// separately. Unlike the sweep, it holds no scrub reserve back: a read is
+// admitted as a client read is, against the backend's whole egress limit, and
+// a copy the limit refuses is reported declined rather than unreadable.
 //
 // A mismatch is handled as the sweep handles one: the bytes are discarded and
 // the ledger row dropped, so the replicator rebuilds from a healthy copy.
@@ -174,11 +178,14 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyNotHashed}
 	}
 
-	switch s.verifyOne(ctx, loc).Outcome {
-	case batch.ItemSucceeded:
+	res := s.verifyOne(ctx, loc, s.admitsRead)
+	switch {
+	case res.Outcome == batch.ItemSucceeded:
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyVerified}
-	case batch.ItemFailed:
+	case res.Outcome == batch.ItemFailed:
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyMismatch}
+	case res.Status == progress.StatusSkipped:
+		return CopyVerification{Backend: loc.BackendName, Outcome: CopyDeclined}
 	default:
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyUnreadable}
 	}
@@ -228,7 +235,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 		Key: func(l core.ObjectLocation) string { return l.ObjectKey + " [" + l.BackendName + "]" },
 	}
 	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) batch.ItemResult {
-		res := s.verifyOne(ctx, &loc)
+		res := s.verifyOne(ctx, &loc, s.admits)
 		// "checked" = an object we actually verified (matched or mismatched); a
 		// verify error is skipped, not checked.
 		if res.Outcome != batch.ItemSkipped {
@@ -268,14 +275,20 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 	return affordable, declined
 }
 
-// admits reports whether the scrubber may read egress bytes from a backend.
-// The read is checked as if it also spent the scrub reserve, so the scrubber
-// stops while that share of the monthly egress limit is still free for client
-// reads, which are checked against the whole limit.
+// admits reports whether the sweep may read egress bytes from a backend. The
+// read is checked as if it also spent the scrub reserve, so the sweep stops
+// while that share of the monthly egress limit is still free for client reads,
+// which are checked against the whole limit.
 func (s *Scrubber) admits(backend string, egress int64) bool {
-	usage := s.deps.Usage()
-	reserve := s.Config().ScrubReserve(usage.GetLimits()[backend].EgressByteLimit)
-	return usage.WithinLimits(backend, s3op.GetObject, egress+reserve, 0)
+	reserve := s.Config().ScrubReserve(s.deps.Usage().GetLimits()[backend].EgressByteLimit)
+	return s.deps.Acct().Allow(backend, s3op.GetObject, egress+reserve, 0)
+}
+
+// admitsRead reports whether an operator's check of one key may read egress
+// bytes from a backend: the whole limit, as a client read gets, with no scrub
+// reserve held back.
+func (s *Scrubber) admitsRead(backend string, egress int64) bool {
+	return s.deps.Acct().Allow(backend, s3op.GetObject, egress, 0)
 }
 
 // restrictToBackend narrows an affordable set to the one backend a caller named,
@@ -329,13 +342,14 @@ func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
 
 // verifyOne verifies one object's stored hash and classifies the result for the
 // batch tally: a matched hash succeeds, a mismatch fails, and a verify error is
-// skipped (not counted as checked). The returned Status feeds the progress
-// stream the batch.Runner brackets each item with.
-func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) batch.ItemResult {
+// skipped (not counted as checked). A read admit refuses is skipped with
+// StatusSkipped, a failed read with StatusUnreadable. The returned Status feeds
+// the progress stream the batch.Runner brackets each item with.
+func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation, admit func(backend string, egress int64) bool) batch.ItemResult {
 	// Admit the object's own size, since the batch-level split only checked
 	// for any headroom. This must run before the scrub stamp below, so an
 	// unread copy is not recorded as verified.
-	if !s.admits(loc.BackendName, loc.SizeBytes) {
+	if !admit(loc.BackendName, loc.SizeBytes) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		s.log.WarnContext(ctx, "scrub declined by usage limits",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)

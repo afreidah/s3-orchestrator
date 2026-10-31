@@ -67,7 +67,7 @@ const (
 // BackendSyncer is the backend-sync surface the UI's admin actions pane
 // invokes. *reconcile.Manager satisfies it.
 type BackendSyncer interface {
-	SyncBackend(ctx context.Context, backendName string, virtualBuckets []string) (int, int, error)
+	SyncBackend(ctx context.Context, backendName, prefix string, knownBuckets []string) (int, int, error)
 }
 
 // DashboardOps is the dashboard surface the UI reads: the aggregated snapshot

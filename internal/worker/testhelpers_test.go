@@ -458,6 +458,14 @@ func newTestRecorder() *accounting.Recorder {
 	return accounting.New(newTestUsageTracker(), func(string, string, time.Time, error) {})
 }
 
+// expectUsage has ops report tracker both as the usage counters and as the
+// recorder that admits reads against them, so a limit set on the tracker is
+// the limit every admission check sees.
+func expectUsage(ops *MockOps, tracker *counter.UsageTracker) {
+	ops.EXPECT().Usage().Return(tracker).AnyTimes()
+	ops.EXPECT().Acct().Return(accounting.New(tracker, func(string, string, time.Time, error) {})).AnyTimes()
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------

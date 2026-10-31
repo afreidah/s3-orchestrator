@@ -97,7 +97,6 @@ func TestScrub_CompressedObjectVerifies(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
@@ -130,7 +129,6 @@ func TestScrub_CompressedObjectHashBackfill(t *testing.T) {
 	locs := withPaths([]core.ObjectLocation{row})
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
@@ -159,7 +157,6 @@ func TestScrub_CompressedWithoutCodecDoesNotJudge(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
@@ -196,7 +193,6 @@ func TestScrub_UndecodableCopyIsNotCorrupt(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString("whatever"), 64)}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(make([]byte, 64))),
 		Size: 64,
@@ -226,7 +222,6 @@ func TestScrub_CompressedConfigDisabledStillVerifies(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),

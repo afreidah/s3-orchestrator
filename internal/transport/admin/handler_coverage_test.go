@@ -918,6 +918,7 @@ func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 		&scrubberStub{scrubKeyCopies: []worker.CopyVerification{
 			{Backend: "b1", Outcome: worker.CopyVerified},
 			{Backend: "b2", Outcome: worker.CopyMismatch},
+			{Backend: "b3", Outcome: worker.CopyDeclined},
 		}})
 
 	w := httptest.NewRecorder()
@@ -930,15 +931,16 @@ func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Key != "bucket/k" || len(resp.Copies) != 2 {
-		t.Fatalf("response = %+v, want two copies for bucket/k", resp)
+	if resp.Key != "bucket/k" || len(resp.Copies) != 3 {
+		t.Fatalf("response = %+v, want three copies for bucket/k", resp)
 	}
-	if resp.Copies[0].Outcome != adminapi.CopyVerified || resp.Copies[1].Outcome != adminapi.CopyMismatch {
-		t.Errorf("outcomes = %q/%q, want verified/mismatch",
-			resp.Copies[0].Outcome, resp.Copies[1].Outcome)
+	if resp.Copies[0].Outcome != adminapi.CopyVerified || resp.Copies[1].Outcome != adminapi.CopyMismatch ||
+		resp.Copies[2].Outcome != adminapi.CopyDeclined {
+		t.Errorf("outcomes = %q/%q/%q, want verified/mismatch/declined",
+			resp.Copies[0].Outcome, resp.Copies[1].Outcome, resp.Copies[2].Outcome)
 	}
-	if resp.Copies[1].Detail == "" {
-		t.Error("a mismatch should explain what happened to the copy")
+	if resp.Copies[1].Detail == "" || resp.Copies[2].Detail == "" {
+		t.Error("a mismatch and a declined read should each explain what happened to the copy")
 	}
 }
 

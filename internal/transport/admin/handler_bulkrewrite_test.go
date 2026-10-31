@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
@@ -81,6 +82,22 @@ func TestCompressExisting_NoCodec(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+// TestCompressExisting_NoCodecStreamsFailure verifies the stream refuses the
+// pass as JSON mode does: a failed result carrying the reason, not a skip.
+func TestCompressExisting_NoCodecStreamsFailure(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler(t)
+
+	w := httptest.NewRecorder()
+	h.handleCompressExisting(w, streamReq("/admin/api/compress-existing"))
+
+	events := decodeEvents(t, w.Body.Bytes())
+	last := events[len(events)-1]
+	if last.Outcome != adminstream.OutcomeFailed || last.Error != ops.ErrCompressionUnavailable.Reason {
+		t.Errorf("result = %+v, want failed with %q", last, ops.ErrCompressionUnavailable.Reason)
 	}
 }
 

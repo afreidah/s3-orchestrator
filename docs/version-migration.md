@@ -88,6 +88,10 @@ The process now sets its Go memory limit to 90% of the cgroup v2 memory limit it
 
 Reads now use the chunk size each encrypted object was written with instead of the configured `encryption.chunk_size`, so changing the setting no longer makes existing objects unreadable. Objects that became unreadable after an earlier change can be read again with no other action. No migration and no config change.
 
+**Operator operations report what they did ([#1820](https://github.com/afreidah/s3-orchestrator/issues/1820), v0.178.16)**
+
+The dashboard's Sync imports only the chosen bucket's keys; it used to list and import the whole backend. A streamed admin pass that fails ends with the endpoint's failure message, as the JSON response does, rather than the internal error, and a bulk rewrite the JSON mode refuses with 400 now ends its stream failed with the reason instead of skipped. `POST /admin/api/object-scrub` admits each read against the backend's whole egress limit, without the scrub sweep's reserve, and reports a copy the limit refuses as `declined` rather than `unreadable`. No migration and no config change.
+
 **One running configuration ([#1843](https://github.com/afreidah/s3-orchestrator/issues/1843), v0.178.15)**
 
 Every component now reads its reloadable settings from one copy of the running config, which a reload replaces once validation passes, before the hooks run. The `worker_configs`, `runtime_config`, `ops` and `ui_handler` entries in the reload status are gone; the quota gauge refresh `runtime_config` performed reports as `quota_metrics`. No migration and no config change.

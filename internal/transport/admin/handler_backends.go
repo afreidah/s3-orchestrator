@@ -175,23 +175,27 @@ func (h *Handler) removeBackend(purge bool) func(context.Context, string) error 
 // objects one at a time, so each step renders live (sequential=true): a prefix
 // when the object starts, the status when it finishes.
 func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name string) {
-	h.streamSteps(w, "remove-backend", "deleting", true, func(obs progress.Observer) (stepResult, error) {
-		var purged int
-		counting := func(s progress.Step) {
-			if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
-				purged++
+	h.streamPass(w, r, passEndpoint[int]{
+		op: "remove-backend", verb: "deleting", sequential: true, failMsg: "purge failed",
+		run: func(ctx context.Context, obs progress.Observer) (int, error) {
+			var purged int
+			counting := func(s progress.Step) {
+				if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
+					purged++
+				}
+				obs(s)
 			}
-			obs(s)
-		}
-		if err := h.d.States.RemoveBackend(r.Context(), name, true, counting); err != nil {
-			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
-			return stepResult{}, err
-		}
-		return stepResult{
-			Processed: purged,
-			Summary:   fmt.Sprintf("purged %d objects from backend %q", purged, name),
-			Fields:    map[string]any{"backend": name, "purged": purged},
-		}, nil
+			if err := h.d.States.RemoveBackend(ctx, name, true, counting); err != nil {
+				return purged, fmt.Errorf("purge backend %s: %w", name, err)
+			}
+			return purged, nil
+		},
+		body: func(_ adminapi.Outcome, purged int) any {
+			return map[string]any{"backend": name, "purged": purged}
+		},
+		summary: func(purged int) (int, string) {
+			return purged, fmt.Sprintf("purged %d objects from backend %q", purged, name)
+		},
 	})
 }
 
