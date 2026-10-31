@@ -177,7 +177,7 @@ func newRebalancerFor(
 ) *Rebalancer {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
-	return NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store})
+	return NewRebalancer(RebalancerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultRebalance})
 }
 
 // newDrainerFor builds a Drainer over a fleet of the named backends. Aborting
@@ -200,5 +200,5 @@ func newOverRepFor(
 ) *OverReplicationCleaner {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
-	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: store})
+	return NewOverReplicationCleaner(OverReplicationCleanerDeps{Ops: rt, Placement: coord, Store: store, Config: defaultReplication})
 }

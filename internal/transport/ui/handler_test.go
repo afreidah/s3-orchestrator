@@ -135,7 +135,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -499,8 +499,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
-	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -707,20 +707,18 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 	}
 }
 
-// TestUpdateConfig_ReflectsInDashboard verifies a reloaded config's settings
-// reach the dashboard. The bucket list comes from the declared set, which a
-// reload updates separately; TestDashboard_ListsStoreBuckets covers it.
-func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
+// TestReload_ReflectsInDashboard verifies a reloaded config's settings reach
+// the dashboard. The bucket list comes from the declared set, which a reload
+// updates separately; TestDashboard_ListsStoreBuckets covers it.
+func TestReload_ReflectsInDashboard(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
 
-	// Update config with a different routing strategy
-	newCfg := &config.Config{
+	h.d.Config.Store(&config.Config{
 		RoutingStrategy: config.RoutingSpread,
 		Replication:     config.ReplicationConfig{Factor: 2},
 		RateLimit:       config.RateLimitConfig{Enabled: true},
-	}
-	h.UpdateConfig(newCfg)
+	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
 	w := httptest.NewRecorder()
@@ -1574,7 +1572,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Config: config.NewLive(cfg), LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

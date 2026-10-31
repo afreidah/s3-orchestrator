@@ -27,8 +27,8 @@ const DefaultScrubberInterval = 6 * time.Hour
 // NewScrubberService constructs the integrity scrubber background service.
 func NewScrubberService(scrubber *Scrubber, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
 	interval := DefaultScrubberInterval
-	if icfg := scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
-		interval = icfg.ScrubberInterval
+	if configured := scrubber.Config().ScrubberInterval; configured > 0 {
+		interval = configured
 	}
 	log := workerLogger(audit.WorkloadScrub)
 	return tickrunner.New(tickrunner.Config{
@@ -51,11 +51,7 @@ func NewScrubberService(scrubber *Scrubber, locker tickrunner.AdvisoryLocker) li
 // inlined into the tick closure so the reporting can be asserted without
 // driving a ticker.
 func scrubCycle(ctx context.Context, scrubber *Scrubber, log *slog.Logger) error {
-	icfg := scrubber.Config()
-	if icfg == nil {
-		return nil
-	}
-	sum := scrubber.Scrub(ctx, icfg.ScrubberBatchSize, "", nil)
+	sum := scrubber.Scrub(ctx, scrubber.Config().ScrubberBatchSize, "", nil)
 	// Skipped is excluded from Attempted, so every counter has to be checked:
 	// a cycle whose every copy was unreadable would otherwise satisfy no arm
 	// and log nothing at all - the quietest possible report of the loudest

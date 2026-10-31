@@ -91,8 +91,8 @@ func TestPassService_NamedForWorkloadWithConfiguredInterval(t *testing.T) {
 	if configured.Name() != string(audit.WorkloadRebalance) || configured.Interval() != 2*time.Hour {
 		t.Errorf("service = %q every %v, want rebalance every 2h", configured.Name(), configured.Interval())
 	}
-	if unset := (&passProbe{}).service(t, &refreshCounter{}, false); unset.Interval() != time.Hour {
-		t.Errorf("interval without a config = %v, want the 1h default", unset.Interval())
+	if unset := (&passProbe{cfg: &config.RebalanceConfig{}}).service(t, &refreshCounter{}, false); unset.Interval() != time.Hour {
+		t.Errorf("interval with none configured = %v, want the 1h default", unset.Interval())
 	}
 }
 
@@ -117,17 +117,6 @@ func TestPassService_TickRefreshesOnlyAfterChange(t *testing.T) {
 				t.Errorf("passes=%d refreshes=%d, want 1 and %d", probe.passes.Load(), refresh.n.Load(), tc.wantRefresh)
 			}
 		})
-	}
-}
-
-// TestPassService_NoConfigRunsNoPass verifies a tick before any config is set
-// runs nothing.
-func TestPassService_NoConfigRunsNoPass(t *testing.T) {
-	t.Parallel()
-	probe := &passProbe{}
-	probe.service(t, &refreshCounter{}, false).Tick(t.Context())
-	if probe.passes.Load() != 0 {
-		t.Errorf("passes = %d, want none without a config", probe.passes.Load())
 	}
 }
 

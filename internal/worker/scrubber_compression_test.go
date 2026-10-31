@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -219,7 +220,7 @@ func TestScrub_CompressedConfigDisabledStillVerifies(t *testing.T) {
 	s, ops, pl, be, ms := setupScrubber(t)
 	codec := newScrubCodec(t)
 	s.hasher.codec = codec
-	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+	s.Section = syncutil.Fixed(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	plain, stored := encodeForScrub(t, codec)
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}

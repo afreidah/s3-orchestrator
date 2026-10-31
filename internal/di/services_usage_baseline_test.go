@@ -32,7 +32,6 @@ import (
 // configured, so the flush tick takes the multi-instance path.
 type sharedCounterFlusher struct{}
 
-func (sharedCounterFlusher) Config() *config.UsageFlushConfig              { return nil }
 func (sharedCounterFlusher) RedisCounterConfigured() bool                  { return true }
 func (sharedCounterFlusher) FlushUsage(_ context.Context) error            { return nil }
 func (sharedCounterFlusher) RefreshQuotaBaselines(_ context.Context) error { return nil }
@@ -73,6 +72,7 @@ func TestUsageFlushService_SharedTickRefreshesBaseline(t *testing.T) {
 		Tracker: rt.Usage(),
 		Fleet:   rt,
 		States:  noStates{},
+		Config:  defaultFlush,
 	}).(*usageFlushService)
 	svc.flushTick(context.Background())
 

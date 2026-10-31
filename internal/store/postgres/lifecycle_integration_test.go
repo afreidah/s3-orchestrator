@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -76,8 +77,7 @@ func (d *recordingDeleter) deleted() []string {
 func sweep(t *testing.T, s *Store, rules []config.LifecycleRule) []string {
 	t.Helper()
 	deleter := &recordingDeleter{}
-	m := expiry.New(s, deleter, nil)
-	m.SetConfig(&config.LifecycleConfig{BatchSize: 100})
+	m := expiry.New(s, deleter, syncutil.Fixed(&config.LifecycleConfig{BatchSize: 100}), nil)
 	m.ProcessRules(context.Background(), rules, nil)
 	return deleter.deleted()
 }

@@ -23,10 +23,12 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -141,12 +143,20 @@ func expectFleet(ops *MockOps, fleet map[string]backend.ObjectBackend) {
 	}).AnyTimes()
 }
 
-// newTestReplicator builds a Replicator with no stored-form decoders and no
-// integrity config, which is the shape most replication tests want: copies move
+// The default config sections a worker built by a test reads. A test that
+// exercises a setting builds its own with syncutil.Fixed.
+var (
+	defaultRebalance   = syncutil.Fixed(&config.RebalanceConfig{})
+	defaultReplication = syncutil.Fixed(&config.ReplicationConfig{})
+	defaultIntegrity   = syncutil.Fixed(&config.IntegrityConfig{})
+)
+
+// newTestReplicator builds a Replicator with no stored-form decoders and
+// integrity off, which is the shape most replication tests want: copies move
 // verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate
-// call SetIntegrityConfig and pass their own decoders through ReplicatorDeps.
+// set its integrity section and pass their own decoders through ReplicatorDeps.
 func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator {
-	return NewReplicator(ReplicatorDeps{Ops: ops, Placement: pl, Store: store})
+	return NewReplicator(&ReplicatorDeps{Ops: ops, Placement: pl, Store: store, Config: defaultReplication, Integrity: defaultIntegrity})
 }
 
 // admitClaims has pl accept every copy-target claim, recording each intent

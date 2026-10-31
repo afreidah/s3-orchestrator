@@ -299,13 +299,6 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 // WRITE-PATH COLLABORATOR PROVIDERS
 // -------------------------------------------------------------------------
 
-// ProvideIntegrityConfig provides the atomic integrity config shared by the
-// multipart manager and the object manager so a SIGHUP flips both write
-// paths' hashing behavior in one swap.
-func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.IntegrityConfig], error) {
-	return &syncutil.AtomicConfig[config.IntegrityConfig]{}, nil
-}
-
 // ProvideWriteCoordinator builds the write coordinator: the shared
 // delete/move/orphan-cleanup primitive the manager, multipart manager,
 // object manager, and drain manager all route writes through.
@@ -338,7 +331,7 @@ type writePathDeps struct {
 	rt           *infra.BackendRuntime
 	coord        *writepath.Coordinator
 	stores       metadataStore
-	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	integrityCfg syncutil.Section[config.IntegrityConfig]
 	codec        *compression.Codec
 	enc          *encryption.Encryptor
 }
@@ -354,7 +347,7 @@ func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
 		rt:           r.Resolve[*infra.BackendRuntime](),
 		coord:        r.Resolve[*writepath.Coordinator](),
 		stores:       r.Resolve[metadataStore](),
-		integrityCfg: r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](),
+		integrityCfg: r.Resolve[*config.Live]().Integrity(),
 		codec:        r.Resolve[*compression.Codec](),
 	}
 	if r.err != nil {
@@ -426,6 +419,7 @@ func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	r := newResolver(i)
 	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
 	br := r.Resolve[*BackendsResult]()
 	metricsDeps := r.Resolve[metrics.Deps]()
 	usage := r.Resolve[*counter.UsageTracker]()
@@ -441,7 +435,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	collector := metrics.New(&metrics.CollectorDeps{
 		Store:             metricsDeps,
 		Usage:             usage,
-		ReplicationFactor: replicationFactorFromInjector(i),
+		ReplicationFactor: func() int { return live.Load().Replication.Factor },
 		Shared:            shared,
 		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,
 	})
@@ -529,20 +523,17 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	return dashboard.New(stores, rt.Usage(), scrubber, br.Order, rt, drainReader), nil
 }
 
-// ProvideExpiryManager builds the lifecycle-expiration manager. It owns the
-// reloadable lifecycle config, so the reload hook and the tick service both
-// talk to it directly.
+// ProvideExpiryManager builds the lifecycle-expiration manager over the
+// lifecycle section of the running configuration.
 func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
 	r := newResolver(i)
-	cfg := r.Resolve[*config.Config]()
+	live := r.Resolve[*config.Live]()
 	objects := r.Resolve[*object.Manager]()
 	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	m := expiry.New(stores, objects, slog.Default().With(logfmt.Component("lifecycle")))
-	m.SetConfig(&cfg.Lifecycle)
-	return m, nil
+	return expiry.New(stores, objects, live.Lifecycle(), slog.Default().With(logfmt.Component("lifecycle"))), nil
 }
 
 // ProvideReconcileManager builds the sync/reconcile orchestrator. Its store
@@ -590,22 +581,5 @@ func admissionSemFor(s *config.ServerConfig) chan struct{} {
 		return make(chan struct{}, s.MaxConcurrentRequests)
 	default:
 		return nil
-	}
-}
-
-// replicationFactorFromInjector returns a closure that lazily resolves
-// the replicator from i and reads its hot-reloadable factor. Returns 0
-// when replication is disabled or the replicator hasn't been registered
-// yet (api mode).
-func replicationFactorFromInjector(i do.Injector) func() int {
-	return func() int {
-		rep, err := do.Invoke[*worker.Replicator](i)
-		if err != nil {
-			return 0
-		}
-		if rc := rep.Config(); rc != nil {
-			return rc.Factor
-		}
-		return 0
 	}
 }

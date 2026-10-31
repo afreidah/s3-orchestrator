@@ -21,7 +21,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -136,7 +135,7 @@ func TestLoadProvisioning_ReadFailurePropagates(t *testing.T) {
 // liveConfig registers cfg as the configuration in force, which is what a
 // provisioning change rebuilds from.
 func liveConfig(inj do.Injector, cfg *config.Config) {
-	do.ProvideValue(inj, ops.NewConfigStore(cfg))
+	do.ProvideValue(inj, config.NewLive(cfg))
 }
 
 // -------------------------------------------------------------------------

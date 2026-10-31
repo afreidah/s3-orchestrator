@@ -54,7 +54,7 @@ type ProvisioningDeps struct {
 	Store    ProvisioningStore
 	Objects  NamespaceCounter
 	Registry RegistryPublisher
-	Config   *ConfigStore
+	Config   *config.Live
 }
 
 // Provisioning serves the bucket and credential administration shared by the
@@ -63,7 +63,7 @@ type Provisioning struct {
 	store    ProvisioningStore
 	objects  NamespaceCounter
 	registry RegistryPublisher
-	config   *ConfigStore
+	config   *config.Live
 }
 
 // NewProvisioning is the explicit-deps constructor.

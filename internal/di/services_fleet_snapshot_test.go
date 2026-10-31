@@ -168,6 +168,7 @@ func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
 
 	inj := do.New()
 	do.ProvideValue(inj, cfg)
+	do.ProvideValue(inj, config.NewLive(cfg))
 	do.ProvideValue(inj, &BackendsResult{Backends: map[string]backend.ObjectBackend{}, Order: names})
 	do.ProvideValue[metrics.Deps](inj, store)
 	do.ProvideValue(inj, rb)
@@ -207,6 +208,7 @@ func TestUsageFlushService_ServesPublishedFleetSnapshot(t *testing.T) {
 		Tracker: other.Usage(),
 		Fleet:   other,
 		States:  noStates{},
+		Config:  defaultFlush,
 	}).(*usageFlushService).flushTick(context.Background())
 
 	want := computer.MetricsCollector().ReplicationSnapshot(context.Background())

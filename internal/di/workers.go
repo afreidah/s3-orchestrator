@@ -6,10 +6,10 @@
 // One Provide<Worker> per background worker. Each provider invokes the
 // backend runtime (which satisfies worker.Ops),
 // the write coordinator, and the opened store, which already satisfies every
-// per-worker store contract via implicit interface satisfaction. The
-// resolveWorkerCore / resolveWorkerCoreWithCfg helpers centralize that
-// dependency pattern so each provider stays a single short call plus the
-// worker-specific constructor arguments.
+// per-worker store contract via implicit interface satisfaction, plus the
+// running configuration each worker reads its section from. resolveWorkerCore
+// centralizes that dependency pattern so each provider stays a single short
+// call plus the worker-specific constructor arguments.
 // -------------------------------------------------------------------------------
 
 package di
@@ -35,49 +35,37 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// workerCore bundles the dependencies every background worker needs.
+// workerCore bundles the dependencies every background worker needs: the
+// runtime, coordinator and store, and the running configuration the workers
+// read their sections from.
 type workerCore struct {
 	Runtime *infra.BackendRuntime
 	Coord   *writepath.Coordinator
 	Stores  metadataStore
-}
-
-// workerCoreWithCfg extends workerCore with *config.Config for workers
-// whose constructors take reloadable config knobs.
-type workerCoreWithCfg struct {
-	workerCore
-	Cfg *config.Config
+	Live    *config.Live
 }
 
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// workerCoreFrom pulls the runtime, coordinator and store through an
-// in-flight resolver, so a caller that needs more than the core resolves
-// everything in one batch. Errors are wrapped with the dependency name so a
-// missing provider points at the right registration site.
+// workerCoreFrom pulls the runtime, coordinator, store and running config
+// through an in-flight resolver, so a caller that needs more than the core
+// resolves everything in one batch. Errors are wrapped with the dependency name
+// so a missing provider points at the right registration site.
 func workerCoreFrom(r *resolver) workerCore {
 	return workerCore{
 		Runtime: r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime"),
 		Coord:   r.ResolveNamed[*writepath.Coordinator]("WriteCoordinator"),
 		Stores:  r.ResolveNamed[metadataStore]("MetadataStore"),
+		Live:    r.ResolveNamed[*config.Live]("Live"),
 	}
 }
 
-// resolveWorkerCore resolves the pair every worker provider depends on.
+// resolveWorkerCore resolves the core every worker provider depends on.
 func resolveWorkerCore(i do.Injector) (workerCore, error) {
 	r := newResolver(i)
 	return workerCoreFrom(r), r.err
-}
-
-// resolveWorkerCoreWithCfg pulls *config.Config first, then the worker
-// core. Resolving config first lets feature-gated providers short-circuit
-// before touching the runtime.
-func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
-	r := newResolver(i)
-	cfg := r.ResolveNamed[*config.Config]("Config")
-	return workerCoreWithCfg{workerCore: workerCoreFrom(r), Cfg: cfg}, r.err
 }
 
 // -------------------------------------------------------------------------
@@ -90,7 +78,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores})
+	rb := worker.NewRebalancer(worker.RebalancerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores, Config: c.Live.Rebalance()})
 	rb.SetGaugePublisher(c.Runtime)
 	return rb, nil
 }
@@ -99,18 +87,20 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 // and codec because integrity.verify_on_replicate reads a new copy back, and
 // undoing its stored form is what makes the digest comparable to content_hash.
 func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
-	c, err := resolveWorkerCoreWithCfg(i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
-	enc, codec, err := resolveStoredForm(i, c.Cfg)
+	enc, codec, err := resolveStoredForm(i, c.Live.Load())
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewReplicator(worker.ReplicatorDeps{
+	return worker.NewReplicator(&worker.ReplicatorDeps{
 		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
+		Config:    c.Live.Replication(),
+		Integrity: c.Live.Integrity(),
 		Encryptor: enc,
 		Codec:     codec,
 	}), nil
@@ -134,7 +124,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores}), nil
+	return worker.NewOverReplicationCleaner(worker.OverReplicationCleanerDeps{Ops: c.Runtime, Placement: c.Coord, Store: c.Stores, Config: c.Live.Replication()}), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves
@@ -164,16 +154,17 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 // ProvidePendingReaper constructs the pending-reaper worker. It is always
 // provided, since every write claims its bytes with an intent.
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
-	c, err := resolveWorkerCoreWithCfg(i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
+	pending := c.Live.Load().WritePath.PendingPattern
 	r := worker.NewPendingReaper(worker.PendingReaperDeps{
 		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
-		MinAge:    c.Cfg.WritePath.PendingPattern.MinAge,
-		BatchSize: c.Cfg.WritePath.PendingPattern.BatchSize,
+		MinAge:    pending.MinAge,
+		BatchSize: pending.BatchSize,
 	})
 	r.SetGaugePublisher(c.Runtime)
 	return r, nil
@@ -181,18 +172,19 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 
 // ProvideScrubber constructs the integrity-verification worker.
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
-	c, err := resolveWorkerCoreWithCfg(i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
-	enc, codec, err := resolveStoredForm(i, c.Cfg)
+	enc, codec, err := resolveStoredForm(i, c.Live.Load())
 	if err != nil {
 		return nil, err
 	}
-	s := worker.NewScrubber(worker.ScrubberDeps{
+	s := worker.NewScrubber(&worker.ScrubberDeps{
 		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
+		Config:    c.Live.Integrity(),
 		Encryptor: enc,
 		Codec:     codec,
 	})

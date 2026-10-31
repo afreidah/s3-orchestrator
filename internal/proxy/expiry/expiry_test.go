@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -117,12 +118,13 @@ func objectsNamed(keys ...string) []core.ObjectLocation {
 	return out
 }
 
-// newManager wires a Manager over the two mocks and records every deleted key.
+// newManager wires a Manager over the two mocks with the default lifecycle
+// config.
 func newManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *storetest.MockExpiredObjectsLister, *MockObjectDeleter) {
 	t.Helper()
 	lister := storetest.NewMockExpiredObjectsLister(ctrl)
 	deleter := NewMockObjectDeleter(ctrl)
-	return New(lister, deleter, nil), lister, deleter
+	return New(lister, deleter, syncutil.Fixed(&config.LifecycleConfig{}), nil), lister, deleter
 }
 
 // -------------------------------------------------------------------------
@@ -224,7 +226,7 @@ func TestProcessRules_BatchPagination(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
-	m.SetConfig(&config.LifecycleConfig{BatchSize: 2})
+	m.Section = syncutil.Fixed(&config.LifecycleConfig{BatchSize: 2})
 
 	// A full batch of 2, then a short batch of 1, which ends the rule.
 	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryLimit(2)).
@@ -282,7 +284,7 @@ func TestProcessRules_FailedObjectsArePassedOver(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
-	m.SetConfig(&config.LifecycleConfig{BatchSize: 2})
+	m.Section = syncutil.Fixed(&config.LifecycleConfig{BatchSize: 2})
 
 	queryAfter := func(after string) queryMatcher {
 		return queryMatcher{
@@ -369,19 +371,5 @@ func TestBatchSizeFor(t *testing.T) {
 				t.Errorf("batchSizeFor(%+v) = %d, want %d", c.cfg, got, c.want)
 			}
 		})
-	}
-}
-
-// TestSetConfig_RoundTrip covers the reloadable config the manager owns.
-func TestSetConfig_RoundTrip(t *testing.T) {
-	t.Parallel()
-	m := New(nil, nil, nil)
-	if m.Config() != nil {
-		t.Error("a fresh manager should report no config")
-	}
-	cfg := &config.LifecycleConfig{BatchSize: 7}
-	m.SetConfig(cfg)
-	if got := m.Config(); got == nil || got.BatchSize != 7 {
-		t.Errorf("Config() = %+v, want BatchSize 7", got)
 	}
 }

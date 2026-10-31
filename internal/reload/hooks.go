@@ -3,13 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// One Hook implementation per reloadable subsystem: TLS cert rotator, the
-// provisioning view (bucket set, credentials, CORS rules), rate limiter, quota sync,
-// per-backend usage limits, slog level, worker configs, manager config
-// sections, and the UI handler. Each hook resolves its dependencies through
-// the injector (or a coordinator-owned handle for the cert reloader) so the
-// coordinator stays a plain orchestrator that does not import any individual
-// subsystem.
+// One Hook implementation per subsystem that rebuilds state from a reload: TLS
+// cert rotator, the provisioning view (bucket set, credentials, CORS rules),
+// rate limiter, quota sync, per-backend usage limits, slog level, and the quota
+// gauges. Settings a component reads straight from the running configuration
+// need no hook. Each hook resolves its dependencies through the injector (or a
+// coordinator-owned handle for the cert reloader) so the coordinator stays a
+// plain orchestrator that does not import any individual subsystem.
 // -------------------------------------------------------------------------------
 
 package reload
@@ -23,12 +23,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
-	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 )
 
 // resolutionError wraps a failed Optional[T] resolution with the subsystem's
@@ -48,10 +46,7 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 		&quotaSyncHook{inj: inj},
 		&usageLimitsHook{inj: inj},
 		&logLevelHook{level: logLevel},
-		&workerConfigsHook{inj: inj},
-		&runtimeConfigHook{inj: inj},
-		&opsHook{inj: inj},
-		&uiHandlerHook{inj: inj},
+		&quotaMetricsHook{inj: inj},
 	}
 }
 
@@ -216,80 +211,19 @@ func (h *logLevelHook) Apply(_ context.Context, _, newCfg *config.Config) (HookS
 }
 
 // -------------------------------------------------------------------------
-// WORKER CONFIGS
+// QUOTA METRICS
 // -------------------------------------------------------------------------
 
-// workerConfigsHook pushes the new Rebalance, Replication and Integrity
-// configs onto the workers, through the same call startup makes.
-type workerConfigsHook struct {
+// quotaMetricsHook refreshes the quota gauges, which the new limits and
+// replication factor change.
+type quotaMetricsHook struct {
 	inj do.Injector
 }
 
-func (*workerConfigsHook) Name() string                    { return "worker_configs" }
-func (*workerConfigsHook) Check(_, _ *config.Config) error { return nil }
-func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	if err := di.ApplyWorkerConfigs(h.inj, newCfg); err != nil {
-		return HookFailed, err
-	}
-	return HookApplied, nil
-}
-
-// -------------------------------------------------------------------------
-// RELOADABLE CONFIG SECTIONS
-// -------------------------------------------------------------------------
-
-// runtimeConfigHook swaps the UsageFlush, Lifecycle and Integrity sections
-// through the same call startup makes, then refreshes the quota gauges. A
-// failed refresh returns HookFailed, but the swaps have already happened and
-// are not rolled back.
-type runtimeConfigHook struct {
-	inj do.Injector
-}
-
-func (*runtimeConfigHook) Name() string                    { return "runtime_config" }
-func (*runtimeConfigHook) Check(_, _ *config.Config) error { return nil }
-func (h *runtimeConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	if err := di.ApplyRuntimeConfigs(h.inj, newCfg); err != nil {
-		return HookFailed, err
-	}
+func (*quotaMetricsHook) Name() string                    { return "quota_metrics" }
+func (*quotaMetricsHook) Check(_, _ *config.Config) error { return nil }
+func (h *quotaMetricsHook) Apply(ctx context.Context, _, _ *config.Config) (HookStatus, error) {
 	return applyResolved(h.inj, "backend runtime", func(rt *infra.BackendRuntime) error {
 		return rt.UpdateQuotaMetrics(ctx)
-	})
-}
-
-// -------------------------------------------------------------------------
-// OPERATIONS LAYER
-// -------------------------------------------------------------------------
-
-// opsHook swaps the config every operation reads, so a manual run started
-// after a reload uses the settings now in force.
-type opsHook struct {
-	inj do.Injector
-}
-
-func (*opsHook) Name() string                    { return "ops" }
-func (*opsHook) Check(_, _ *config.Config) error { return nil }
-func (h *opsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "operations layer", func(svc *ops.Services) error {
-		svc.Config.Store(newCfg)
-		return nil
-	})
-}
-
-// -------------------------------------------------------------------------
-// UI HANDLER
-// -------------------------------------------------------------------------
-
-// uiHandlerHook swaps the UI handler's config pointer.
-type uiHandlerHook struct {
-	inj do.Injector
-}
-
-func (*uiHandlerHook) Name() string                    { return "ui_handler" }
-func (*uiHandlerHook) Check(_, _ *config.Config) error { return nil }
-func (h *uiHandlerHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	return applyResolved(h.inj, "UI handler", func(handler *ui.Handler) error {
-		handler.UpdateConfig(newCfg)
-		return nil
 	})
 }

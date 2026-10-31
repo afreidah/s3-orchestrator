@@ -77,8 +77,10 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)
-	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	st.Config.Update(func(c *config.Config) {
+		c.Buckets = []config.BucketConfig{{Name: "test-bucket"}}
+		c.Replication.Factor = 1
+	})
 	for _, opt := range opts {
 		opt(st, workers)
 	}
@@ -90,21 +92,20 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 // same wiring the composition root performs.
 func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.MetadataStore) *ops.Services {
 	return ops.New(&ops.Deps{
-		Objects:      st.Objects,
-		Store:        store,
-		EncStore:     store,
-		CompStore:    store,
-		Locker:       store,
-		Runtime:      st.Runtime,
-		Mover:        st.Coord,
-		IntegrityCfg: st.IntegrityCfg,
-		Replicator:   workers.Replicator,
-		OverRep:      workers.OverReplicationCleaner,
-		Rebalancer:   workers.Rebalancer,
-		Scrubber:     workers.Scrubber,
-		Unhashed:     store,
-		Declared:     declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
-		Config:       ops.NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
+		Objects:    st.Objects,
+		Store:      store,
+		EncStore:   store,
+		CompStore:  store,
+		Locker:     store,
+		Runtime:    st.Runtime,
+		Mover:      st.Coord,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
+		Rebalancer: workers.Rebalancer,
+		Scrubber:   workers.Scrubber,
+		Unhashed:   store,
+		Declared:   declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
+		Config:     st.Config,
 	})
 }
 
@@ -133,8 +134,8 @@ func newActionsHandler(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.W
 // rather than a skipped reason.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
-	h := newActionsHandler(t, func(_ *proxytest.Stack, workers *proxytest.Workers) {
-		workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	h := newActionsHandler(t, func(st *proxytest.Stack, _ *proxytest.Workers) {
+		st.Config.Update(func(c *config.Config) { c.Replication = config.ReplicationConfig{Factor: 2, BatchSize: 10} })
 	})
 
 	triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
@@ -258,7 +259,7 @@ func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 		t.Run(opName, func(t *testing.T) {
 			t.Parallel()
 			h := newActionsHandler(t, func(st *proxytest.Stack, _ *proxytest.Workers) {
-				st.IntegrityCfg.Store(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+				st.Config.Update(func(c *config.Config) { c.Integrity = config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10} })
 			})
 
 			w := httptest.NewRecorder()
@@ -279,8 +280,8 @@ func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 // reports what it removed once the factor makes the pass meaningful.
 func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	t.Parallel()
-	h := newActionsHandler(t, func(_ *proxytest.Stack, workers *proxytest.Workers) {
-		workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	h := newActionsHandler(t, func(st *proxytest.Stack, _ *proxytest.Workers) {
+		st.Config.Update(func(c *config.Config) { c.Replication = config.ReplicationConfig{Factor: 2, BatchSize: 10} })
 	})
 
 	w := httptest.NewRecorder()
@@ -305,10 +306,7 @@ func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 func partialReplication(t *testing.T, created, removed, failed int) *ops.Replication {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	cfg := &config.ReplicationConfig{Factor: 2, BatchSize: 10}
-
-	repl := opstest.NewMockReplicatorOps(ctrl)
-	repl.EXPECT().Config().Return(cfg).AnyTimes()
+	repl := opstest.NewMockReplicator(ctrl)
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
 			Succeeded: created, Failed: failed,
@@ -316,7 +314,6 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 		}, nil).AnyTimes()
 
 	over := opstest.NewMockOverReplicationOps(ctrl)
-	over.EXPECT().Config().Return(cfg).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.OverReplicationSummary{
 			Succeeded: removed, Failed: failed,
@@ -330,7 +327,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 		Replicator: repl,
 		OverRep:    over,
 		Runtime:    runtime,
-		Config:     ops.NewConfigStore(&config.Config{}),
+		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2, BatchSize: 10}}),
 	})
 }
 

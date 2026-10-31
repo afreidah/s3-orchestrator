@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -165,41 +164,40 @@ func testServicesWith(t *testing.T, backends map[string]s3be.ObjectBackend, enc 
 		}),
 	})
 	workers := proxytest.BuildWorkers(st, mock)
-	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	st.Config.Update(func(c *config.Config) {
+		c.Buckets = []config.BucketConfig{{Name: testBucket}}
+		c.Replication.Factor = 1
+	})
 
 	var store RewriteStore = mock
 	if encStore != nil {
 		store = encStore
 	}
 	return New(&Deps{
-		Objects:      st.Objects,
-		Store:        mock,
-		Encryptor:    enc,
-		EncStore:     store,
-		Runtime:      st.Runtime,
-		Mover:        mover,
-		IntegrityCfg: st.IntegrityCfg,
-		Replicator:   workers.Replicator,
-		OverRep:      workers.OverReplicationCleaner,
-		Rebalancer:   workers.Rebalancer,
-		Scrubber:     workers.Scrubber,
-		Unhashed:     mock,
-		Locker:       mock,
-		Declared:     declaredBuckets(testBucket),
-		Config:       NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}}),
+		Objects:    st.Objects,
+		Store:      mock,
+		Encryptor:  enc,
+		EncStore:   store,
+		Runtime:    st.Runtime,
+		Mover:      mover,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
+		Rebalancer: workers.Rebalancer,
+		Scrubber:   workers.Scrubber,
+		Unhashed:   mock,
+		Locker:     mock,
+		Declared:   declaredBuckets(testBucket),
+		Config:     st.Config,
 	})
 }
 
-// enableIntegrity turns verification on for the config behind svc, so the
-// integrity operations get past their disabled guard.
+// enableIntegrity turns verification on in the running config behind svc, so
+// the integrity operations get past their disabled guard.
 func enableIntegrity(t *testing.T, svc *Services) {
 	t.Helper()
-	cfg, ok := svc.Integrity.integrityCfg.(*syncutil.AtomicConfig[config.IntegrityConfig])
-	if !ok {
-		t.Fatalf("integrityCfg is %T, want the shared atomic config", svc.Integrity.integrityCfg)
-	}
-	cfg.Store(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50})
+	svc.Integrity.cfg.Update(func(c *config.Config) {
+		c.Integrity = config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}
+	})
 }
 
 // assertSkipped fails unless err is a skip carrying a reason.
@@ -263,7 +261,9 @@ func TestReplicate_SkippedAtFactorOne(t *testing.T) {
 func TestReplicate_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
-	svc.Replication.replicator.(*worker.Replicator).SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	svc.Replication.cfg.Update(func(c *config.Config) {
+		c.Replication = config.ReplicationConfig{Factor: 2, BatchSize: 10}
+	})
 
 	res, err := svc.Replication.Replicate(context.Background(), nil)
 	if err != nil {
@@ -274,12 +274,11 @@ func TestReplicate_EmptyStore(t *testing.T) {
 	}
 }
 
-// rebalanceOver builds a rebalance service over one stubbed worker, recording
-// the config each cycle ran with.
-func rebalanceOver(t *testing.T, workerCfg *config.RebalanceConfig, ran *config.RebalanceConfig) *Rebalance {
+// rebalanceOver builds a rebalance service over one stubbed worker and the
+// configured rebalance section, recording the config each cycle ran with.
+func rebalanceOver(t *testing.T, configured config.RebalanceConfig, ran *config.RebalanceConfig) *Rebalance {
 	t.Helper()
-	m := opstest.NewMockRebalancerOps(gomock.NewController(t))
-	m.EXPECT().Config().Return(workerCfg).AnyTimes()
+	m := opstest.NewMockRebalancer(gomock.NewController(t))
 	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, cfg config.RebalanceConfig, _ progress.Observer) (worker.RebalanceSummary, error) {
 			*ran = cfg
@@ -292,7 +291,7 @@ func rebalanceOver(t *testing.T, workerCfg *config.RebalanceConfig, ran *config.
 	return NewRebalance(RebalanceDeps{
 		Rebalancer: m,
 		Runtime:    runtime,
-		Config:     NewConfigStore(&config.Config{}),
+		Config:     config.NewLive(&config.Config{Rebalance: configured}),
 	})
 }
 
@@ -301,7 +300,7 @@ func rebalanceOver(t *testing.T, workerCfg *config.RebalanceConfig, ran *config.
 func TestRebalance_AppliesDefaults(t *testing.T) {
 	t.Parallel()
 	var ran config.RebalanceConfig
-	svc := rebalanceOver(t, nil, &ran)
+	svc := rebalanceOver(t, config.RebalanceConfig{}, &ran)
 
 	if _, err := svc.Run(context.Background(), nil); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -317,7 +316,7 @@ func TestRebalance_AppliesDefaults(t *testing.T) {
 func TestRebalance_PreservesConfiguredValues(t *testing.T) {
 	t.Parallel()
 	var ran config.RebalanceConfig
-	svc := rebalanceOver(t, &config.RebalanceConfig{
+	svc := rebalanceOver(t, config.RebalanceConfig{
 		Strategy: "pack", BatchSize: 50, Threshold: 0.2, Concurrency: 8,
 	}, &ran)
 
@@ -334,7 +333,7 @@ func TestRebalance_PreservesConfiguredValues(t *testing.T) {
 func TestRebalance_NotWired(t *testing.T) {
 	t.Parallel()
 	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
-	svc := NewRebalance(RebalanceDeps{Runtime: runtime, Config: NewConfigStore(&config.Config{})})
+	svc := NewRebalance(RebalanceDeps{Runtime: runtime, Config: config.NewLive(&config.Config{})})
 
 	_, err := svc.Run(context.Background(), nil)
 	assertSkipped(t, err)
@@ -344,14 +343,13 @@ func TestRebalance_NotWired(t *testing.T) {
 // refresh does not undo a cycle that already moved objects.
 func TestRebalance_QuotaMetricsFailureStillReports(t *testing.T) {
 	t.Parallel()
-	m := opstest.NewMockRebalancerOps(gomock.NewController(t))
-	m.EXPECT().Config().Return(nil).AnyTimes()
+	m := opstest.NewMockRebalancer(gomock.NewController(t))
 	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.RebalanceSummary{Succeeded: 2}, nil).Times(1)
 	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
 	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(errors.New("metrics down")).Times(1)
 
-	svc := NewRebalance(RebalanceDeps{Rebalancer: m, Runtime: runtime, Config: NewConfigStore(&config.Config{})})
+	svc := NewRebalance(RebalanceDeps{Rebalancer: m, Runtime: runtime, Config: config.NewLive(&config.Config{})})
 
 	res, err := svc.Run(context.Background(), nil)
 	if err != nil {
@@ -400,15 +398,11 @@ func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
-	icfg.EXPECT().Load().
-		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-
 	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, nil)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if !errors.Is(err, ErrScrubInProgress) {
@@ -428,16 +422,12 @@ func TestScrub_LockErrorSurfaces(t *testing.T) {
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
 	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
-	icfg.EXPECT().Load().
-		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-
 	wantErr := errors.New("lock unavailable")
 	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, wantErr)
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
 
 	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
 		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
@@ -459,10 +449,6 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 			return batch.Summary{Attempted: 3}
 		})
 
-	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
-	icfg.EXPECT().Load().
-		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-
 	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
 	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
@@ -472,7 +458,7 @@ func TestScrub_RunsUnderTheLock(t *testing.T) {
 			return true, err
 		})
 
-	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), IntegrityCfg: icfg, Locker: locker})
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: newBacklog(0), Locker: locker, Config: integrityEnabled()})
 
 	res, err := svc.Scrub(context.Background(), 0, "", nil)
 	if err != nil {
@@ -961,10 +947,13 @@ func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 // from store.
 func integrityWithBacklog(t *testing.T, scrubber ScrubberOps, store UnhashedLister) *Integrity {
 	t.Helper()
-	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
-	icfg.EXPECT().Load().
-		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: store, IntegrityCfg: icfg, Locker: grantingLocker(t)})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, Store: store, Locker: grantingLocker(t), Config: integrityEnabled()})
+}
+
+// integrityEnabled is a running config with verification on, so the integrity
+// operations get past their disabled guard.
+func integrityEnabled() *config.Live {
+	return config.NewLive(&config.Config{Integrity: config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
 }
 
 // grantingLocker is an advisory locker that always takes the lock and runs the
@@ -1250,16 +1239,15 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 func TestCountSurplus_ReportsBacklog(t *testing.T) {
 	t.Parallel()
 	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 3}).AnyTimes()
-	over.EXPECT().CountPending(gomock.Any(), 3).Return(int64(7), nil).Times(1)
-	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+	over.EXPECT().CountPending(gomock.Any(), 2).Return(int64(7), nil).Times(1)
+	svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
 
 	res, err := svc.CountSurplus(context.Background())
 	if err != nil {
 		t.Fatalf("CountSurplus: %v", err)
 	}
-	if res.Factor != 3 || res.Pending != 7 {
-		t.Errorf("res = %+v, want factor=3 pending=7", res)
+	if res.Factor != 2 || res.Pending != 7 {
+		t.Errorf("res = %+v, want factor=2 pending=7", res)
 	}
 }
 
@@ -1269,8 +1257,7 @@ func TestCountSurplus_ReportsBacklog(t *testing.T) {
 // nothing to do.
 func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 	t.Parallel()
-	repl := opstest.NewMockReplicatorOps(gomock.NewController(t))
-	repl.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
+	repl := opstest.NewMockReplicator(gomock.NewController(t))
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
 			Succeeded: 1, Failed: 2,
@@ -1295,13 +1282,12 @@ func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 func TestCleanExcess_ReportsObjectsItCouldNotClean(t *testing.T) {
 	t.Parallel()
 	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.OverReplicationSummary{
 			Failed:        5,
 			CopiesRemoved: 0,
 		}, nil).Times(1)
-	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+	svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
 
 	res, err := svc.CleanExcess(context.Background(), 0, nil)
 	if err != nil {
@@ -1321,7 +1307,6 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 	t.Parallel()
 	var ran config.ReplicationConfig
 	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig, _ progress.Observer) (worker.OverReplicationSummary, error) {
 			ran = cfg
@@ -1330,7 +1315,7 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 				CopiesRemoved: 4,
 			}, nil
 		}).Times(1)
-	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+	svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
 
 	res, err := svc.CleanExcess(context.Background(), maxCleanBatchSize*10, nil)
 	if err != nil {
@@ -1344,8 +1329,9 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 	}
 }
 
-// replicationOver builds a replication service over the two stubbed workers.
-func replicationOver(t *testing.T, repl ReplicatorOps, over OverReplicationOps) *Replication {
+// replicationOver builds a replication service over the two stubbed workers,
+// running at factor 2.
+func replicationOver(t *testing.T, repl Replicator, over OverReplicationOps) *Replication {
 	t.Helper()
 	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
 	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
@@ -1353,7 +1339,7 @@ func replicationOver(t *testing.T, repl ReplicatorOps, over OverReplicationOps) 
 		Replicator: repl,
 		OverRep:    over,
 		Runtime:    runtime,
-		Config:     NewConfigStore(&config.Config{}),
+		Config:     config.NewLive(&config.Config{Replication: config.ReplicationConfig{Factor: 2}}),
 	})
 }
 
@@ -1510,8 +1496,7 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 
 	t.Run("replicate", func(t *testing.T) {
 		t.Parallel()
-		repl := opstest.NewMockReplicatorOps(gomock.NewController(t))
-		repl.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
+		repl := opstest.NewMockReplicator(gomock.NewController(t))
 		repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(worker.ReplicationSummary{}, errBackend).Times(1)
 		svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
@@ -1524,10 +1509,9 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 	t.Run("clean excess", func(t *testing.T) {
 		t.Parallel()
 		over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-		over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 		over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(worker.OverReplicationSummary{}, errBackend).Times(1)
-		svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+		svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
 
 		if _, err := svc.CleanExcess(context.Background(), 0, nil); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the worker failure", err)
@@ -1537,9 +1521,8 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 	t.Run("count surplus", func(t *testing.T) {
 		t.Parallel()
 		over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
-		over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 		over.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(int64(0), errBackend).Times(1)
-		svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+		svc := replicationOver(t, opstest.NewMockReplicator(gomock.NewController(t)), over)
 
 		if _, err := svc.CountSurplus(context.Background()); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the store failure", err)
@@ -1548,14 +1531,13 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 
 	t.Run("rebalance", func(t *testing.T) {
 		t.Parallel()
-		m := opstest.NewMockRebalancerOps(gomock.NewController(t))
-		m.EXPECT().Config().Return(nil).AnyTimes()
+		m := opstest.NewMockRebalancer(gomock.NewController(t))
 		m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(worker.RebalanceSummary{}, errBackend).Times(1)
 		svc := NewRebalance(RebalanceDeps{
 			Rebalancer: m,
 			Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
-			Config:     NewConfigStore(&config.Config{}),
+			Config:     config.NewLive(&config.Config{}),
 		})
 
 		if _, err := svc.Run(context.Background(), nil); !errors.Is(err, errBackend) {

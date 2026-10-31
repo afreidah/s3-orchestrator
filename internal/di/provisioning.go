@@ -19,7 +19,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -114,11 +113,11 @@ func ApplyProvisioning(ctx context.Context, i do.Injector, cfg *config.Config) e
 // applyLiveProvisioning applies the provisioning state from the configuration
 // in force now, which a reload may have replaced since startup.
 func applyLiveProvisioning(ctx context.Context, i do.Injector) error {
-	cfg, err := do.Invoke[*ops.ConfigStore](i)
+	live, err := do.Invoke[*config.Live](i)
 	if err != nil {
 		return err
 	}
-	return ApplyProvisioning(ctx, i, cfg.Load())
+	return ApplyProvisioning(ctx, i, live.Load())
 }
 
 // RegistryPublisher rebuilds everything assembled from the provisioning view

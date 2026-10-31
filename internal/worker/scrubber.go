@@ -58,9 +58,10 @@ type ScrubberStore interface {
 // Scrubber periodically verifies stored object integrity by reading objects
 // from backends, computing their SHA-256 hash, and comparing against the
 // stored content hash. Also supports backfilling hashes for objects that
-// were written before integrity was enabled.
+// were written before integrity was enabled. The embedded Section reads its
+// integrity config from the running configuration.
 type Scrubber struct {
-	syncutil.Reloadable[config.IntegrityConfig]
+	syncutil.Section[config.IntegrityConfig]
 	log       *slog.Logger
 	deps      Ops
 	placement Placement
@@ -77,16 +78,19 @@ type ScrubberDeps struct {
 	Ops       Ops
 	Placement Placement
 	Store     ScrubberStore
+	Config    syncutil.Section[config.IntegrityConfig]
 	Encryptor *encryption.Encryptor
 	Codec     storedform.Decompressor
 }
 
 // NewScrubber creates a Scrubber with the given dependencies.
-func NewScrubber(deps ScrubberDeps) *Scrubber {
+func NewScrubber(deps *ScrubberDeps) *Scrubber {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
+	must.NotNil("Config", deps.Config)
 	return &Scrubber{
+		Section:   deps.Config,
 		deps:      deps.Ops,
 		placement: deps.Placement,
 		store:     deps.Store,

@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Hand-rolled fakes for the narrow consumer interfaces (BackendOps,
-// ReplicatorOps, OverReplicationOps, ScrubberOps, Reconciler) so the
+// Replicator, OverReplicationOps, ScrubberOps, Reconciler) so the
 // success branches of handlers that otherwise required a full
 // backend runtime + worker fleet stay exercised. Pairs with the existing
 // handler_manager_test.go which covers the empty/skip paths via a real

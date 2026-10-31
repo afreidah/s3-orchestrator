@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -141,17 +140,15 @@ func (h *fakeHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, er
 	return h.applyStat, h.applyErr
 }
 
-// initialCfgPtr stores the loaded YAML into a fresh AtomicConfig and
+// initialCfgPtr stores the loaded YAML into a fresh running config and
 // returns the cfg pointer so tests can compare swap identity.
-func initialCfgPtr(t *testing.T, path string) (*syncutil.AtomicConfig[config.Config], *config.Config) {
+func initialCfgPtr(t *testing.T, path string) (*config.Live, *config.Config) {
 	t.Helper()
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	var ptr syncutil.AtomicConfig[config.Config]
-	ptr.Store(cfg)
-	return &ptr, cfg
+	return config.NewLive(cfg), cfg
 }
 
 // -------------------------------------------------------------------------
@@ -166,7 +163,7 @@ func TestReload_LoadFailure_KeepsCurrentAndReportsStatus(t *testing.T) {
 
 	coord := New(&Deps{
 		ConfigPath: path,
-		CfgPtr:     cfgPtr,
+		Live:       cfgPtr,
 		Hooks:      []Hook{}, // no hooks needed; load fails first
 	})
 
@@ -209,7 +206,7 @@ func TestReload_ValidationFailure_AbortsBeforeApply(t *testing.T) {
 
 	coord := New(&Deps{
 		ConfigPath: path,
-		CfgPtr:     cfgPtr,
+		Live:       cfgPtr,
 		Hooks:      []Hook{good, bad, tail},
 	})
 
@@ -252,7 +249,7 @@ func TestReload_PartialApply_StillSwapsCfgAndAdvancesGen(t *testing.T) {
 
 	coord := New(&Deps{
 		ConfigPath: path,
-		CfgPtr:     cfgPtr,
+		Live:       cfgPtr,
 		Hooks:      []Hook{a, b, c},
 	})
 
@@ -303,7 +300,7 @@ func TestReload_FullSuccess_MonotonicGeneration(t *testing.T) {
 
 	coord := New(&Deps{
 		ConfigPath: path,
-		CfgPtr:     cfgPtr,
+		Live:       cfgPtr,
 		Hooks:      []Hook{a, b},
 	})
 
@@ -341,7 +338,7 @@ func TestReload_RequiresRestart_Populated(t *testing.T) {
 
 	coord := New(&Deps{
 		ConfigPath: path,
-		CfgPtr:     cfgPtr,
+		Live:       cfgPtr,
 		Hooks:      []Hook{}, // no hook noise; we only check RequiresRestart
 	})
 
@@ -369,7 +366,7 @@ func TestReload_RequiresRestart_Populated(t *testing.T) {
 func TestReload_RequiresRestart_SinceStartup(t *testing.T) {
 	path := writeYAML(t, validTestConfigYAML)
 	cfgPtr, _ := initialCfgPtr(t, path)
-	coord := New(&Deps{ConfigPath: path, CfgPtr: cfgPtr, Hooks: []Hook{}})
+	coord := New(&Deps{ConfigPath: path, Live: cfgPtr, Hooks: []Hook{}})
 
 	reloadWith := func(yaml string) []string {
 		t.Helper()
@@ -409,14 +406,13 @@ func TestReload_DefaultHooks_AppliesNewConfig(t *testing.T) {
 	inj, cleanup := resolvedInjector(t, cfg, &logLevel)
 	t.Cleanup(cleanup)
 
-	var cfgPtr syncutil.AtomicConfig[config.Config]
-	cfgPtr.Store(cfg)
+	cfgPtr := config.NewLive(cfg)
 	original := cfgPtr.Load()
 
 	coord := New(&Deps{
 		ConfigPath: path,
 		Injector:   inj,
-		CfgPtr:     &cfgPtr,
+		Live:       cfgPtr,
 		LogLevel:   &logLevel,
 	})
 

@@ -75,13 +75,16 @@ func queryHashedCopies(t *testing.T, key string) int {
 // default, so a test that wants it has to ask.
 func enableVerifyOnRead(t *testing.T) func() {
 	t.Helper()
+	return withIntegrity(config.IntegrityConfig{Enabled: true, VerifyOnRead: true})
+}
 
-	previous := testStack.IntegrityCfg.Load()
-	testStack.IntegrityCfg.Store(&config.IntegrityConfig{
-		Enabled:      true,
-		VerifyOnRead: true,
-	})
-	return func() { testStack.IntegrityCfg.Store(previous) }
+// withIntegrity sets the integrity section of the shared stack's running
+// config, which its managers and workers all read, and returns a function
+// restoring the configuration it replaced.
+func withIntegrity(integrity config.IntegrityConfig) func() {
+	previous := testStack.Config.Load()
+	testStack.Config.Update(func(c *config.Config) { c.Integrity = integrity })
+	return func() { testStack.Config.Store(previous) }
 }
 
 // resyncQuotaLimits restores the configured quota limits, which backend
@@ -597,13 +600,7 @@ func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
 // that wants it has to ask.
 func enableVerifyOnReplicate(t *testing.T) func() {
 	t.Helper()
-
-	previous := testWorkers.Replicator.IntegrityConfig()
-	testWorkers.Replicator.SetIntegrityConfig(&config.IntegrityConfig{
-		Enabled:           true,
-		VerifyOnReplicate: true,
-	})
-	return func() { testWorkers.Replicator.SetIntegrityConfig(previous) }
+	return withIntegrity(config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 }
 
 // seedHashedObject writes one object and backfills its hash, leaving a single
@@ -693,10 +690,8 @@ func TestIntegrity_VerifyOnReplicateRecordsAnUncheckableCopy(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	restore := enableVerifyOnReplicate(t)
-	defer restore()
-
-	// No backfill, so the row carries no content_hash.
+	// Written before integrity is on and never backfilled, so the row carries
+	// no content_hash.
 	key := uniqueKey(t, "verify-replicate-unhashed")
 	body := bytes.Repeat([]byte("U"), 512)
 	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
@@ -710,6 +705,9 @@ func TestIntegrity_VerifyOnReplicateRecordsAnUncheckableCopy(t *testing.T) {
 	if hashed := queryHashedCopies(t, key); hashed != 0 {
 		t.Fatalf("expected an unhashed copy, got %d hashed", hashed)
 	}
+
+	restore := enableVerifyOnReplicate(t)
+	defer restore()
 
 	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
 		t.Fatalf("Replicate: %v", err)

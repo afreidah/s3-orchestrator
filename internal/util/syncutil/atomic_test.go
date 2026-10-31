@@ -88,17 +88,22 @@ func TestAtomicConfig_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-// TestReloadable_EmbeddedAccessors verifies a struct embedding Reloadable
-// reports no config until one is set, then the one set most recently.
-func TestReloadable_EmbeddedAccessors(t *testing.T) {
+// TestSection_ReadsTheStoreEachCall verifies a struct embedding a Section reads
+// the store it was built over on every call, so a replaced value reaches it,
+// and that a nil Section reports no config.
+func TestSection_ReadsTheStoreEachCall(t *testing.T) {
 	t.Parallel()
-	var component struct{ Reloadable[string] }
-	if got := component.Config(); got != nil {
-		t.Fatalf("Config before SetConfig = %v, want nil", *got)
-	}
-	component.SetConfig(new("alpha"))
-	component.SetConfig(new("beta"))
+	var store AtomicConfig[string]
+	component := struct{ Section[string] }{store.Load}
+	store.Store(new("alpha"))
+	store.Store(new("beta"))
 	if got := component.Config(); got == nil || *got != "beta" {
 		t.Errorf("Config = %v, want pointer to beta", got)
+	}
+	if got := (struct{ Section[string] }{}).Config(); got != nil {
+		t.Errorf("nil Section Config = %v, want nil", *got)
+	}
+	if got := Fixed(new("gamma")).Config(); got == nil || *got != "gamma" {
+		t.Errorf("Fixed Config = %v, want pointer to gamma", got)
 	}
 }

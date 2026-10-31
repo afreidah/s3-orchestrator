@@ -208,22 +208,6 @@ func TestReplicationOutcome_FailedCountsAllFailureKinds(t *testing.T) {
 	}
 }
 
-// TestReplicator_SetConfig_RoundTrip verifies the replicator set config round trip contract.
-// Asserts that Config().Factor = , want 3.
-func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	r := newTestReplicator(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
-	if r.Config() != nil {
-		t.Fatal("expected nil config before set")
-	}
-	cfg := &config.ReplicationConfig{Factor: 3}
-	r.SetConfig(cfg)
-	if got := r.Config(); got.Factor != 3 {
-		t.Errorf("Config().Factor = %d, want 3", got.Factor)
-	}
-}
-
 // TestCopyToReplica_Success verifies the copy to replica success contract.
 // Asserts that unexpected error:.
 func TestCopyToReplica_Success(t *testing.T) {

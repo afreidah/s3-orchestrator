@@ -64,7 +64,7 @@ func TestCandidateCache_MemoizesPerSource(t *testing.T) {
 		getBackendsForKeysResp: map[string][]string{"k1": {"b1", "b2"}},
 	}
 
-	r := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: ms})
+	r := NewRebalancer(RebalancerDeps{Ops: ops, Placement: pl, Store: ms, Config: defaultRebalance})
 	cc := r.newCandidateCache(10)
 
 	sc1, err := cc.forBackend(context.Background(), "b1")

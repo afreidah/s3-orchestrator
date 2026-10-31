@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Wraps sync/atomic.Pointer[T] to provide a reusable, type-safe container for
-// hot-reloadable configuration values, and Reloadable, which a component
-// embeds for its SetConfig/Config pair instead of writing the accessors itself.
+// hot-reloadable configuration values, and Section, the reader of one part of
+// it a component embeds for its Config accessor.
 // -------------------------------------------------------------------------------
 
 package syncutil
@@ -34,19 +34,20 @@ func (a *AtomicConfig[T]) Load() *T {
 	return a.p.Load()
 }
 
-// Reloadable is the reloadable config a component embeds to gain SetConfig
-// and Config, the pair the reload hooks and services call, without writing
-// them by hand.
-type Reloadable[T any] struct {
-	cfg AtomicConfig[T]
+// Section reads one section of the running configuration, so a reload that
+// replaces the configuration reaches every reader without a copy to update. A
+// component embeds it to gain Config.
+type Section[T any] func() *T
+
+// Config returns the section as it stands now, or nil for a nil Section.
+func (s Section[T]) Config() *T {
+	if s == nil {
+		return nil
+	}
+	return s()
 }
 
-// SetConfig atomically replaces the configuration.
-func (r *Reloadable[T]) SetConfig(cfg *T) {
-	r.cfg.Store(cfg)
-}
-
-// Config returns the current configuration, or nil when none was set.
-func (r *Reloadable[T]) Config() *T {
-	return r.cfg.Load()
+// Fixed is a Section that always returns v, for a value no reload replaces.
+func Fixed[T any](v *T) Section[T] {
+	return func() *T { return v }
 }

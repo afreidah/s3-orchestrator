@@ -29,7 +29,6 @@ import (
 // lifecycleStub stands in for *expiry.Manager, reporting a fixed outcome and
 // recording the rules it was handed.
 type lifecycleStub struct {
-	cfg         *config.LifecycleConfig
 	deleted     int
 	failed      int
 	gotRules    []config.LifecycleRule
@@ -40,9 +39,6 @@ type lifecycleStub struct {
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
-
-// Config returns the configured rules, or nil for a deployment with none.
-func (s *lifecycleStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules records the call and reports the fixed outcome.
 func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
@@ -56,9 +52,15 @@ func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.Lifecycle
 // INTERNALS
 // -------------------------------------------------------------------------
 
+// lifecycleOver builds the sweep over expiry with lifecycle as the configured
+// section.
+func lifecycleOver(expiry RuleProcessor, lifecycle config.LifecycleConfig) *Lifecycle {
+	return NewLifecycle(LifecycleDeps{Expiry: expiry, Config: config.NewLive(&config.Config{Lifecycle: lifecycle})})
+}
+
 // rules is a minimal configured ruleset.
-func rules() *config.LifecycleConfig {
-	return &config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}}
+func rules() config.LifecycleConfig {
+	return config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}}
 }
 
 // captureEvents installs an emitter for one test and returns the slice it fills.
@@ -81,9 +83,9 @@ func captureEvents(t *testing.T) *[]event.Event {
 // Not parallel: asserts on the process-global event emitter.
 func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 	emitted := captureEvents(t)
-	stub := &lifecycleStub{cfg: rules(), deleted: 12, failed: 2}
+	stub := &lifecycleStub{deleted: 12, failed: 2}
 
-	res, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background(), func(progress.Step) {})
+	res, err := lifecycleOver(stub, rules()).Run(context.Background(), func(progress.Step) {})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -116,7 +118,7 @@ func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 // exists for: a rule that ran and matched nothing completed, and reporting it
 // as skipped would read as "nothing happened" when something did.
 func TestLifecycleRun_MatchedNothingIsNotASkip(t *testing.T) {
-	res, err := NewLifecycle(LifecycleDeps{Expiry: &lifecycleStub{cfg: rules()}}).Run(context.Background(), nil)
+	res, err := lifecycleOver(&lifecycleStub{}, rules()).Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("a sweep that matched nothing is not a skip, got %v", err)
 	}
@@ -125,36 +127,28 @@ func TestLifecycleRun_MatchedNothingIsNotASkip(t *testing.T) {
 	}
 }
 
-// TestLifecycleRun_NoRulesSkips holds the other half: config that never reached
-// the process is a different answer from a rule that matched nothing. Both the
-// absent block and an empty ruleset mean there is nothing to run.
+// TestLifecycleRun_NoRulesSkips holds the other half: a config with no rules is
+// a different answer from a rule that matched nothing.
 func TestLifecycleRun_NoRulesSkips(t *testing.T) {
-	for name, cfg := range map[string]*config.LifecycleConfig{
-		"no lifecycle block":  nil,
-		"block with no rules": {},
-	} {
-		t.Run(name, func(t *testing.T) {
-			stub := &lifecycleStub{cfg: cfg}
-			_, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background(), nil)
+	stub := &lifecycleStub{}
+	_, err := lifecycleOver(stub, config.LifecycleConfig{}).Run(context.Background(), nil)
 
-			var skip *SkipError
-			if !errors.As(err, &skip) {
-				t.Fatalf("err = %v, want a SkipError", err)
-			}
-			if skip.Reason == "" {
-				t.Error("a skip must name its reason; the operator is asking why nothing ran")
-			}
-			if stub.calls != 0 {
-				t.Error("no rules configured; the sweep should not have run")
-			}
-		})
+	var skip *SkipError
+	if !errors.As(err, &skip) {
+		t.Fatalf("err = %v, want a SkipError", err)
+	}
+	if skip.Reason == "" {
+		t.Error("a skip must name its reason; the operator is asking why nothing ran")
+	}
+	if stub.calls != 0 {
+		t.Error("no rules configured; the sweep should not have run")
 	}
 }
 
 // TestLifecycleRun_UnwiredManagerSkips covers the deployment where the expiry
 // manager is absent entirely, which must report that rather than panic.
 func TestLifecycleRun_UnwiredManagerSkips(t *testing.T) {
-	_, err := NewLifecycle(LifecycleDeps{}).Run(context.Background(), nil)
+	_, err := lifecycleOver(nil, rules()).Run(context.Background(), nil)
 	if !errors.Is(err, ErrLifecycleUnavailable) {
 		t.Errorf("err = %v, want ErrLifecycleUnavailable", err)
 	}

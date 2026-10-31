@@ -44,18 +44,18 @@ const (
 
 // RebalanceDeps holds the collaborators Rebalance requires.
 type RebalanceDeps struct {
-	Rebalancer RebalancerOps
+	Rebalancer Rebalancer
 	Runtime    RuntimeOps
-	Config     *ConfigStore
+	Config     *config.Live
 }
 
 // Rebalance serves the on-demand rebalance operation shared by the admin API
 // and the web UI.
 type Rebalance struct {
 	log        *slog.Logger
-	rebalancer RebalancerOps
+	rebalancer Rebalancer
 	runtime    RuntimeOps
-	cfg        *ConfigStore
+	cfg        *config.Live
 }
 
 // NewRebalance is the explicit-deps constructor. Rebalancer is nil when the
@@ -97,17 +97,10 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.
 	return sum.Summary, nil
 }
 
-// runConfig resolves the settings for one manual cycle: whatever the worker
-// holds, then the running config, then the defaults.
+// runConfig resolves the settings for one manual cycle: the running config,
+// with the defaults filling anything it leaves unset.
 func (r *Rebalance) runConfig() config.RebalanceConfig {
-	var runCfg config.RebalanceConfig
-	switch {
-	case r.rebalancer.Config() != nil:
-		runCfg = *r.rebalancer.Config()
-	case r.cfg.Load() != nil:
-		runCfg = r.cfg.Load().Rebalance
-	}
-
+	runCfg := r.cfg.Load().Rebalance
 	runCfg.Strategy = cmp.Or(runCfg.Strategy, defaultRebalanceStrategy)
 	runCfg.BatchSize = cmp.Or(runCfg.BatchSize, defaultRebalanceBatchSize)
 	runCfg.Threshold = cmp.Or(runCfg.Threshold, defaultRebalanceThreshold)

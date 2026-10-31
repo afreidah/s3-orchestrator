@@ -61,7 +61,7 @@ type Manager struct {
 	objectCache    objcache.ObjectCache // nil when object data caching is disabled
 	copiesPerWrite int                  // 1 leaves every copy after the first to the replicator
 	detached       DetachedRegistry
-	integrityCfg   *syncutil.AtomicConfig[config.IntegrityConfig]
+	integrityCfg   syncutil.Section[config.IntegrityConfig]
 	failover       *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
 	log            *slog.Logger
 }
@@ -84,7 +84,7 @@ type Deps struct {
 
 	DegradedBroadcastParallelism int  // caps concurrent probes; 0 is uncapped
 	DisableDegradedReads         bool // fail fast instead of broadcasting
-	IntegrityCfg                 *syncutil.AtomicConfig[config.IntegrityConfig]
+	IntegrityCfg                 syncutil.Section[config.IntegrityConfig]
 	BackendTimeout               time.Duration // bounds the degraded-mode loser-drain goroutine
 }
 

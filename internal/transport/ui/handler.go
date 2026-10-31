@@ -41,7 +41,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // Session and CSRF cookie names, plus the header, path and message literals
@@ -100,7 +99,7 @@ type Deps struct {
 	Compression   *ops.Compression
 	DBHealthy     func() bool
 	Buckets       DeclaredBuckets
-	Cfg           *config.Config
+	Config        *config.Live
 	LogBuffer     admin.LogReader
 	LoginThrottle *httputil.LoginThrottle
 	Registry      func() *auth.BucketRegistry
@@ -111,7 +110,6 @@ type Deps struct {
 type Handler struct {
 	d              Deps
 	log            *slog.Logger
-	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
 	logs           http.HandlerFunc
 	prefix         string
@@ -137,20 +135,19 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Encryption", d.Encryption)
 	must.NotNil("d.Compression", d.Compression)
 	must.NotNil("d.Buckets", d.Buckets)
-	must.NotNil("d.Cfg", d.Cfg)
+	must.NotNil("d.Config", d.Config)
 	must.NotNil("d.LoginThrottle", d.LoginThrottle)
 	must.NotNil("d.Registry", d.Registry)
-	h := &Handler{
+	cfg := d.Config.Load()
+	return &Handler{
 		d:              *d,
 		log:            slog.Default().With(logfmt.Component("ui")),
 		templates:      loadTemplates(),
 		logs:           admin.LogsHandler(d.LogBuffer),
-		sessionKey:     deriveSessionKey(&d.Cfg.UI),
-		forceSecure:    d.Cfg.UI.ForceSecureCookies,
-		trustedProxies: httputil.ParseTrustedProxies(d.Cfg.RateLimit.TrustedProxies),
+		sessionKey:     deriveSessionKey(&cfg.UI),
+		forceSecure:    cfg.UI.ForceSecureCookies,
+		trustedProxies: httputil.ParseTrustedProxies(cfg.RateLimit.TrustedProxies),
 	}
-	h.cfg.Store(d.Cfg)
-	return h
 }
 
 // deriveSessionKey derives the session HMAC key from session_secret, so sessions
@@ -161,19 +158,13 @@ func deriveSessionKey(ui *config.UIConfig) []byte {
 	return mac.Sum(nil)
 }
 
-// UpdateConfig atomically replaces the config used by the dashboard.
-// Called on SIGHUP to keep the dashboard in sync with the running config.
-func (h *Handler) UpdateConfig(cfg *config.Config) {
-	h.cfg.Store(cfg)
-}
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
 // validBackend checks whether the backend name exists in config.
 func (h *Handler) validBackend(name string) bool {
-	return slices.ContainsFunc(h.cfg.Load().Backends, func(b config.BackendConfig) bool { return b.Name == name })
+	return slices.ContainsFunc(h.d.Config.Load().Backends, func(b config.BackendConfig) bool { return b.Name == name })
 }
 
 // setSecurityHeaders adds security headers to dashboard responses.

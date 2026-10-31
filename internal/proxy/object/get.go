@@ -297,7 +297,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 	key, beName string,
 	partial bool,
 ) {
-	icfg := o.integrityCfg.Load()
+	icfg := o.integrityCfg.Config()
 	if partial || loc == nil || loc.ContentHash == "" || !icfg.ShouldVerifyOnRead() {
 		return
 	}
