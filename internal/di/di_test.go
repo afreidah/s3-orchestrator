@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/backendstate"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -127,11 +127,11 @@ func TestProvideBucketAuth(t *testing.T) {
 		Buckets: []config.BucketConfig{{Name: "test"}},
 	})
 
-	// The registry is assembled from config merged with the store, so the
+	// The startup state is loaded from config merged with the store, so the
 	// provider reads the provisioning tables. An empty answer is the state a
 	// deployment that has provisioned nothing is in.
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
-	do.ProvideValue(inj, provisioning.NewDeclared())
+	do.Provide(inj, ProvideProvisioned)
 
 	reg, err := ProvideBucketAuth(inj)
 	if err != nil {
@@ -139,6 +139,10 @@ func TestProvideBucketAuth(t *testing.T) {
 	}
 	if reg == nil {
 		t.Fatal("ProvideBucketAuth returned nil registry")
+	}
+	declared, err := ProvideDeclared(inj)
+	if err != nil || !slices.Contains(declared.Names(), "test") {
+		t.Fatalf("ProvideDeclared = %v, %v; want the startup bucket published", declared, err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -41,39 +42,84 @@ func provisioningTopic(s *sharedstate.Shared) sharedstate.Topic[struct{}] {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// AssembleBucketRegistry builds the bucket registry from both sources a
-// deployment declares credentials in: the buckets in cfg, and the users the
-// store holds. The reload hook uses it too, since rebuilding from config alone
-// would drop every API-created bucket. An unreadable store is an error rather
-// than a fallback to config, which would answer 403 to entitled callers.
-func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Config) (*auth.BucketRegistry, error) {
+// Provisioned is everything built from the provisioning view: the declared
+// bucket set, the credential registry the request path authenticates against,
+// and the compiled CORS rules. Building it changes nothing; Install publishes it.
+type Provisioned struct {
+	buckets  []provisioning.Bucket
+	registry *auth.BucketRegistry
+	cors     *cors.Registry
+}
+
+// LoadProvisioning builds the provisioning state from both sources a
+// deployment declares buckets in: the buckets in cfg and what the store holds.
+// Loading from config alone would drop every API-created bucket. An unreadable
+// store is an error rather than a fallback to config, which would answer 403
+// to entitled callers; so is an ambiguous credential or an unreadable CORS rule.
+func LoadProvisioning(ctx context.Context, i do.Injector, cfg *config.Config) (*Provisioned, error) {
 	store, err := do.Invoke[core.ProvisioningStore](i)
 	if err != nil {
 		return nil, err
 	}
-
-	declared, err := do.Invoke[*provisioning.Declared](i)
-	if err != nil {
-		return nil, err
-	}
-
 	view, err := provisioning.LoadMerged(ctx, store, cfg.Buckets, cfg.Auth)
 	if err != nil {
 		return nil, err
 	}
-
-	registry, err := auth.NewBucketRegistry(&view)
-	if err != nil {
+	p := &Provisioned{buckets: view.Buckets}
+	if p.registry, err = auth.NewBucketRegistry(&view); err != nil {
 		return nil, err
 	}
+	if p.cors, err = cors.NewRegistry(view.Buckets); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
 
-	// Published before the registry is returned, so nothing can observe a
-	// bucket as reachable over S3 while the admin endpoints, the CORS policy
-	// and the reconciler still believe it does not exist.
-	declared.Set(view.Buckets)
+// Install publishes p on this instance: the declared bucket set first, then,
+// in a mode that serves the S3 API, the CORS rules and the credential registry.
+// The order means no bucket is reachable over S3 while the admin endpoints,
+// the CORS policy and the reconciler still believe it does not exist.
+func (p *Provisioned) Install(ctx context.Context, i do.Injector) error {
+	r := newResolver(i)
+	declared := r.Resolve[*provisioning.Declared]()
+	mode := r.Resolve[config.Mode]()
+	if r.err != nil {
+		return r.err
+	}
+	declared.Set(p.buckets)
+	logAssemblyNotices(ctx, p.registry.Notices())
+	if !mode.IsAPI() {
+		return nil
+	}
+	srv := r.Resolve[*s3api.Server]()
+	policy := r.Resolve[*cors.Policy]()
+	if r.err != nil {
+		return r.err
+	}
+	policy.SetRules(p.cors)
+	srv.SetBucketAuth(p.registry)
+	return nil
+}
 
-	logAssemblyNotices(ctx, registry.Notices())
-	return registry, nil
+// ApplyProvisioning loads the provisioning state from cfg and the store and
+// installs it, which is what a reload and a provisioning change both do.
+func ApplyProvisioning(ctx context.Context, i do.Injector, cfg *config.Config) error {
+	p, err := LoadProvisioning(ctx, i, cfg)
+	if err != nil {
+		return err
+	}
+	return p.Install(ctx, i)
+}
+
+// applyLiveProvisioning applies the provisioning state from the configuration
+// in force now. The injector's *config.Config is the one the process started
+// with; a reload replaces the one the operations layer reads.
+func applyLiveProvisioning(ctx context.Context, i do.Injector) error {
+	svc, err := do.Invoke[*ops.Services](i)
+	if err != nil {
+		return err
+	}
+	return ApplyProvisioning(ctx, i, svc.Config.Load())
 }
 
 // RegistryPublisher rebuilds everything assembled from the provisioning view
@@ -96,7 +142,7 @@ func NewRegistryPublisher(i do.Injector) *RegistryPublisher {
 // announcement is only logged, because the change is stored and live here,
 // and an instance that missed it rebuilds when its subscription reconnects.
 func (p *RegistryPublisher) Republish(ctx context.Context) error {
-	if err := applyProvisioning(ctx, p.inj); err != nil {
+	if err := applyLiveProvisioning(ctx, p.inj); err != nil {
 		return err
 	}
 	p.announce(ctx)
@@ -114,36 +160,6 @@ func (p *RegistryPublisher) announce(ctx context.Context) {
 		slog.WarnContext(ctx, "provisioning change not announced to other instances",
 			logfmt.Component("di"), logfmt.Err(err))
 	}
-}
-
-// applyProvisioning rebuilds, on this instance, everything assembled from the
-// provisioning view: the declared bucket set and, in a mode that serves the
-// S3 API, the request-time registry and the compiled CORS rules.
-func applyProvisioning(ctx context.Context, i do.Injector) error {
-	r := newResolver(i)
-	cfg := r.Resolve[*config.Config]()
-	mode := r.Resolve[config.Mode]()
-	if r.err != nil {
-		return r.err
-	}
-	registry, err := AssembleBucketRegistry(ctx, i, cfg)
-	if err != nil {
-		return err
-	}
-	if !mode.IsAPI() {
-		return nil
-	}
-
-	srv := r.Resolve[*s3api.Server]()
-	policy := r.Resolve[*cors.Policy]()
-	if r.err != nil {
-		return r.err
-	}
-	if err := RebuildCORS(i, policy); err != nil {
-		return err
-	}
-	srv.SetBucketAuth(registry)
-	return nil
 }
 
 // logAssemblyNotices reports what assembly served through. Warn rather than
