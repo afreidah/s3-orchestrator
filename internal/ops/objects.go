@@ -117,10 +117,7 @@ func (o *Objects) Tags(ctx context.Context, key string) ([]core.Tag, error) {
 	}
 	tags, err := o.objects.GetObjectTags(ctx, key)
 	if err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+		return nil, notFound(err)
 	}
 	return tags, nil
 }
@@ -131,13 +128,7 @@ func (o *Objects) SetTags(ctx context.Context, key string, tags []core.Tag) erro
 	if err := o.validateKey(key); err != nil {
 		return err
 	}
-	if err := o.objects.PutObjectTags(ctx, key, tags); err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			return ErrNotFound
-		}
-		return err
-	}
-	return nil
+	return notFound(o.objects.PutObjectTags(ctx, key, tags))
 }
 
 // DeleteTags removes one object's whole tag set.
@@ -145,13 +136,16 @@ func (o *Objects) DeleteTags(ctx context.Context, key string) error {
 	if err := o.validateKey(key); err != nil {
 		return err
 	}
-	if err := o.objects.DeleteObjectTags(ctx, key); err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			return ErrNotFound
-		}
-		return err
+	return notFound(o.objects.DeleteObjectTags(ctx, key))
+}
+
+// notFound reports a key holding no copies as ErrNotFound and passes any other
+// error, nil included, through.
+func notFound(err error) error {
+	if errors.Is(err, core.ErrObjectNotFound) {
+		return ErrNotFound
 	}
-	return nil
+	return err
 }
 
 // Get streams one object. The caller closes the returned body. Reports
@@ -163,10 +157,7 @@ func (o *Objects) Get(ctx context.Context, key string) (*s3be.GetObjectResult, e
 
 	result, err := o.objects.GetObject(ctx, key, "")
 	if err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+		return nil, notFound(err)
 	}
 	// The operations layer moves bytes; the object-level metadata riding on the
 	// manager's result is for the S3 surface to render, not for this caller.

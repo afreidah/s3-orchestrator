@@ -87,12 +87,12 @@ func TestApplyWorkersErr_SeparatesUnavailable(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
-	m.applyWorkersErr(&adminclient.Error{Status: http.StatusServiceUnavailable, Body: `{"error":"worker health not available"}`})
+	m.workers.failed(&adminclient.Error{Status: http.StatusServiceUnavailable, Body: `{"error":"worker health not available"}`})
 	if m.workers.err != nil || m.workers.unavailable != "worker health not available" {
 		t.Errorf("503: err=%v unavailable=%q", m.workers.err, m.workers.unavailable)
 	}
 
-	m.applyWorkersErr(errors.New("boom"))
+	m.workers.failed(errors.New("boom"))
 	if m.workers.err == nil || m.workers.unavailable != "" {
 		t.Errorf("generic: err=%v unavailable=%q", m.workers.err, m.workers.unavailable)
 	}
@@ -145,25 +145,25 @@ func TestHandleWorkersKey_BackAndReload(t *testing.T) {
 	m.section = sectionWorkers
 	m.workers = newWorkersView()
 
-	m.handleWorkersKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionWorkers) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
 	m.navFocus = false
-	_, cmd := m.handleWorkersKey(key("r"))
+	_, cmd := m.handlePaneKey(key("r"))
 	if !m.workers.loading || cmd == nil {
 		t.Fatalf("reload: loading=%v cmd=%v", m.workers.loading, cmd)
 	}
-	if _, ok := cmd().(workersLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want workersLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.WorkersResponse]); !ok {
+		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.WorkersResponse]", cmd())
 	}
 }
 
 func TestLoadWorkers_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadWorkers()
-	if _, ok := cmd().(workersErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want workersErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.WorkersResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.WorkersResponse]", cmd())
 	}
 }

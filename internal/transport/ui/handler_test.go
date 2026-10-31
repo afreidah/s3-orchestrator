@@ -135,7 +135,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -499,8 +499,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
-	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
+	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(t), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -580,9 +580,9 @@ func TestDashboard_Returns200HTML(t *testing.T) {
 func TestDashboard_ListsStoreBuckets(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
-	declared, ok := h.buckets.(*provisioning.Declared)
+	declared, ok := h.d.Buckets.(*provisioning.Declared)
 	if !ok {
-		t.Fatalf("buckets = %T, want *provisioning.Declared", h.buckets)
+		t.Fatalf("buckets = %T, want *provisioning.Declared", h.d.Buckets)
 	}
 	declared.Set(append(slices.Clone(declared.Buckets()),
 		provisioning.Bucket{Name: "store-only", Source: provisioning.SourceStore}))
@@ -1484,7 +1484,7 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 	h, mux := newTestHandler(t)
 	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
-	h.loginThrottle = lt
+	h.d.LoginThrottle = lt
 
 	// 3 bad attempts
 	for range 3 {
@@ -1574,7 +1574,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), LoginThrottle: testThrottle(b), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -1718,7 +1718,7 @@ func TestLogin_BruteForceReset(t *testing.T) {
 	h, mux := newTestHandler(t)
 	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
-	h.loginThrottle = lt
+	h.d.LoginThrottle = lt
 
 	addr := "10.0.0.1:12345"
 
@@ -1863,13 +1863,34 @@ func declaredFrom(cfg *config.Config) *provisioning.Declared {
 }
 
 // registryFrom builds the registry the handler logs in against, from the same
-// config it is otherwise wired with. A registry that cannot be assembled yields
-// no accessor, which is the pre-publication state a handler starts in.
+// config it is otherwise wired with. A registry that cannot be assembled reads
+// as nil, which is the pre-publication state a handler starts in.
 func registryFrom(cfg *config.Config) func() *auth.BucketRegistry {
 	v := provisioning.Merge(cfg.Buckets, cfg.Auth, &provisioning.Snapshot{})
 	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
-		return nil
+		br = nil
 	}
 	return func() *auth.BucketRegistry { return br }
+}
+
+// testThrottle is a login throttle loose enough that no test trips it by
+// accident, closed with the test.
+func testThrottle(tb testing.TB) *httputil.LoginThrottle {
+	tb.Helper()
+	lt := httputil.NewLoginThrottle(1000, time.Minute)
+	tb.Cleanup(lt.Close)
+	return lt
+}
+
+// serveRoute runs the table entry for r's path on h, as Register mounts it but
+// without the auth wrapper, so a test drives one action's trigger or poll.
+func serveRoute(h *Handler, w http.ResponseWriter, r *http.Request) {
+	for i := range uiAPIRoutes {
+		if uiAPIRoutes[i].suffix == r.URL.Path {
+			uiAPIRoutes[i].handler(h)(w, r)
+			return
+		}
+	}
+	panic("no UI route for " + r.URL.Path)
 }

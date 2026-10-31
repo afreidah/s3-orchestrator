@@ -88,7 +88,7 @@ func TestApplyCacheErr_SeparatesDisabled(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
-	m.applyCacheErr(&adminclient.Error{
+	m.cache.failed(&adminclient.Error{
 		Status: http.StatusServiceUnavailable,
 		Body:   `{"status":"disabled","reason":"object data caching is disabled"}`,
 	})
@@ -96,7 +96,7 @@ func TestApplyCacheErr_SeparatesDisabled(t *testing.T) {
 		t.Errorf("503: err=%v unavailable=%q", m.cache.err, m.cache.unavailable)
 	}
 
-	m.applyCacheErr(errors.New("boom"))
+	m.cache.failed(errors.New("boom"))
 	if m.cache.err == nil || m.cache.unavailable != "" {
 		t.Errorf("generic: err=%v unavailable=%q", m.cache.err, m.cache.unavailable)
 	}
@@ -143,18 +143,18 @@ func TestHandleCacheKey_BackAndReload(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.section = sectionCache
 
-	m.handleCacheKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionCache) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
 	m.navFocus = false
-	_, cmd := m.handleCacheKey(key("r"))
+	_, cmd := m.handlePaneKey(key("r"))
 	if cmd == nil {
 		t.Fatal("reload returned no command")
 	}
-	if _, ok := cmd().(cacheLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want cacheLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.CacheStatsResponse]); !ok {
+		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.CacheStatsResponse]", cmd())
 	}
 }
 
@@ -166,7 +166,7 @@ func TestHandleCacheKey_ReloadKeepsSnapshot(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.section = sectionCache
 	m.cache.snap = &adminapi.CacheStatsResponse{Entries: 1}
-	m.handleCacheKey(key("r"))
+	m.handlePaneKey(key("r"))
 	if m.cache.loading {
 		t.Error("reload over an existing snapshot set loading")
 	}
@@ -175,7 +175,7 @@ func TestHandleCacheKey_ReloadKeepsSnapshot(t *testing.T) {
 func TestLoadCache_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadCache()
-	if _, ok := cmd().(cacheErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want cacheErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.CacheStatsResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.CacheStatsResponse]", cmd())
 	}
 }

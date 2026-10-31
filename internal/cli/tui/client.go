@@ -18,6 +18,7 @@ import (
 	"net/url"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -28,8 +29,8 @@ type apiClient struct {
 }
 
 // newAPIClient builds a signing client for the resolved target.
-func newAPIClient(t target) *apiClient {
-	return &apiClient{c: adminclient.NewSigned(t.baseAddr, t.accessKeyID, t.secretKey)}
+func newAPIClient(t admintarget.Target) *apiClient {
+	return &apiClient{c: adminclient.NewSigned(t.Addr, t.AccessKeyID, t.SecretKey)}
 }
 
 // ListObjects fetches one delimiter-grouped page under prefix. A non-empty

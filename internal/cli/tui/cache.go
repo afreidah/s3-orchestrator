@@ -26,27 +26,45 @@ import (
 
 // cacheView holds the state of the object cache pane.
 type cacheView struct {
-	snap        *adminapi.CacheStatsResponse // last snapshot, nil until the first load
-	loading     bool                         // a fetch is in flight
-	unavailable string                       // set when object caching is disabled
-	err         error                        // last fetch error, if any
+	loadState
+	snap *adminapi.CacheStatsResponse // last snapshot, nil until the first load
+}
+
+// loadState is what a pane knows about its last fetch: whether one is in
+// flight, the reason the deployment does not serve the pane, or the error the
+// fetch failed with.
+type loadState struct {
+	loading     bool
+	unavailable string
+	err         error
+}
+
+// loaded records a fetch that succeeded.
+func (s *loadState) loaded() {
+	s.loading, s.unavailable, s.err = false, "", nil
+}
+
+// fail records a failed fetch as an error, for a pane every deployment serves.
+func (s *loadState) fail(err error) {
+	s.loading, s.err = false, err
+}
+
+// failed records a failed fetch, separating an endpoint the deployment did not
+// wire from a real failure.
+func (s *loadState) failed(err error) {
+	s.loading, s.err = false, nil
+	if s.unavailable = adminclient.UnavailableReason(err); s.unavailable == "" {
+		s.err = err
+	}
 }
 
 // -------------------------------------------------------------------------
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// cacheLoadedMsg carries a successfully loaded cache snapshot.
-type cacheLoadedMsg struct{ resp *adminapi.CacheStatsResponse }
-
-// cacheErrMsg carries a failed cache fetch.
-type cacheErrMsg struct{ err error }
-
 // loadCache returns a command that fetches the cache snapshot off the main loop.
 func (m *model) loadCache() tea.Cmd {
-	return fetchCmd(m.client.GetCacheStats,
-		func(r *adminapi.CacheStatsResponse) tea.Msg { return cacheLoadedMsg{r} },
-		func(err error) tea.Msg { return cacheErrMsg{err} })
+	return fetchCmd(m.client.GetCacheStats)
 }
 
 // -------------------------------------------------------------------------
@@ -56,44 +74,12 @@ func (m *model) loadCache() tea.Cmd {
 // applyCache folds a loaded snapshot into the pane state.
 func (m *model) applyCache(resp *adminapi.CacheStatsResponse) {
 	m.cache.snap = resp
-	m.cache.loading = false
-	m.cache.unavailable = ""
-	m.cache.err = nil
-}
-
-// applyCacheErr records a failed fetch, separating a deployment with caching
-// switched off from a real failure.
-func (m *model) applyCacheErr(err error) {
-	m.cache.loading = false
-	m.cache.unavailable = adminclient.UnavailableReason(err)
-	m.cache.err = nil
-	if m.cache.unavailable == "" {
-		m.cache.err = err
-	}
-}
-
-// handleCacheKey applies cache-pane keys (back, reload); the pane is a fixed
-// summary, so there is nothing to scroll.
-func (m *model) handleCacheKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.cache.loading = m.cache.snap == nil
-		cmd := m.fetch(pollCache)
-		return m, cmd
-	}
-	return m, nil
+	m.cache.loaded()
 }
 
 // -------------------------------------------------------------------------
 // RENDERING
 // -------------------------------------------------------------------------
-
-// cachePaneView composes the pane's full-screen layout.
-func (m *model) cachePaneView() string {
-	return m.frame(m.cacheHeaderView(), m.hintFooter(), m.cacheBody()...)
-}
 
 // cacheHeaderView renders the title bar.
 func (m *model) cacheHeaderView() string {

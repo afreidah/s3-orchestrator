@@ -57,27 +57,9 @@ func (m *model) refreshDashboard() tea.Cmd {
 	return tea.Batch(m.fetch(pollStatus), m.fetch(pollReplication), m.fetch(pollCleanup))
 }
 
-// handleDashboardKey applies dashboard keys (back, reload). The dashboard is a
-// summary, so there is nothing to select.
-func (m *model) handleDashboardKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		cmd := m.refreshDashboard()
-		return m, cmd
-	}
-	return m, nil
-}
-
 // -------------------------------------------------------------------------
 // RENDERING
 // -------------------------------------------------------------------------
-
-// dashboardPaneView composes the dashboard's full-screen layout.
-func (m *model) dashboardPaneView() string {
-	return m.frame(m.dashboardHeaderView(), m.hintFooter(), m.dashboardBody()...)
-}
 
 // dashboardHeaderView renders the title bar with the backend count.
 func (m *model) dashboardHeaderView() string {
@@ -304,7 +286,7 @@ func (m *model) dashboardSummary() string {
 	iv := m.backends.integrity
 	return fieldBlock(summaryLabelWidth,
 		field{"nearest limit", m.dashboardNearestLimit()},
-		field{"database", m.dashboardDB()},
+		field{"database", m.dbText()},
 		field{"replication", m.dashboardReplication()},
 		field{"verified", integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)},
 		field{"encryption", dashboardEncryption(iv.PlaintextCopies)},
@@ -329,9 +311,10 @@ func (m *model) dashboardNearestLimit() string {
 	return text
 }
 
-// dashboardDB renders the metadata database's health.
-func (m *model) dashboardDB() string {
-	if m.backends.dbHealthy {
+// dbText renders the metadata database's health from the last status fetch;
+// before one lands it reads as unavailable.
+func (m *model) dbText() string {
+	if m.dbHealthy != nil && *m.dbHealthy {
 		return statusOKStyle.Render("healthy")
 	}
 	return statusErrStyle.Render("UNAVAILABLE")

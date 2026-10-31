@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -305,68 +306,19 @@ func TestHandleKey_TableDelegationAndUnknownMsg(t *testing.T) {
 	}
 }
 
-// targetOf parses args and returns only the target, for the tests that check
-// address and credential resolution.
-func targetOf(args []string) (target, error) {
-	t, _, err := parseArgs(args)
-	return t, err
-}
-
-func TestResolveTarget(t *testing.T) {
-	// The resolver falls back to these, so a shell holding a real keypair
-	// would satisfy the half-keypair case below and hide the check.
-	t.Setenv("S3O_ACCESS_KEY_ID", "")
-	t.Setenv("S3O_SECRET_ACCESS_KEY", "")
-
-	// flags win and the address gets an http prefix
-	got, err := targetOf([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
-	if err != nil || got.baseAddr != "http://host:9000" {
-		t.Fatalf("flags: addr=%q err=%v", got.baseAddr, err)
-	}
-	if !got.signs() || got.accessKeyID != "AK" || got.secretKey != "SK" {
-		t.Fatalf("keypair: %+v", got)
-	}
-
-	// an explicit scheme is left untouched
-	if got, _ := targetOf([]string{
-		"-addr", "https://x", "-access-key", "AK", "-secret-key", "SK",
-	}); got.baseAddr != "https://x" {
-		t.Errorf("scheme passthrough: addr=%q", got.baseAddr)
-	}
-
-	// half a keypair proves nothing and cannot sign
-	if got, _ := targetOf([]string{"-addr", "host:9000", "-access-key", "AK"}); got.signs() {
-		t.Error("a target holding only an access key reported that it signs")
-	}
-
-	// an unknown flag surfaces the parse error
-	if _, err := targetOf([]string{"-nope"}); err == nil {
-		t.Error("bad flag: expected error")
-	}
-
-	// with no flags/env and an unreadable config, resolution fails
-	t.Setenv("S3O_ADMIN_ADDR", "")
-	if _, err := targetOf([]string{"-config", "/no/such/file.yaml"}); err == nil {
-		t.Error("missing target: expected error")
-	}
-}
-
-// TestResolveTarget_KeypairNeedsNoConfig pins that a keypair and an address
-// given outright resolve without a config file, which is the documented setup
-// for a binary targeting a remote instance from a machine holding no server
-// config.
-func TestResolveTarget_KeypairNeedsNoConfig(t *testing.T) {
+// TestParseArgs_ResolvesTarget pins that the tui's flags reach the shared
+// target resolution, and that an unknown flag surfaces the parse error. The
+// resolution rules themselves are covered in admintarget.
+func TestParseArgs_ResolvesTarget(t *testing.T) {
 	t.Setenv("S3O_ADMIN_ADDR", "")
 
-	got, err := targetOf([]string{
-		"-config", "/no/such/file.yaml",
-		"-addr", "host:9000",
-		"-access-key", "AK", "-secret-key", "SK",
+	got, _, err := parseArgs([]string{
+		"-config", "/no/such/file.yaml", "-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK",
 	})
-	if err != nil {
-		t.Fatalf("a keypair still required the config file: %v", err)
+	if err != nil || got != (admintarget.Target{Addr: "http://host:9000", AccessKeyID: "AK", SecretKey: "SK"}) {
+		t.Fatalf("target = %+v, err = %v", got, err)
 	}
-	if !got.signs() || got.baseAddr != "http://host:9000" {
-		t.Errorf("target = %+v", got)
+	if _, _, err := parseArgs([]string{"-nope"}); err == nil {
+		t.Error("bad flag: expected error")
 	}
 }

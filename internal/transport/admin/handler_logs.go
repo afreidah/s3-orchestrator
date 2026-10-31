@@ -104,9 +104,6 @@ func logEntries(entries []telemetry.LogEntry) []adminapi.LogEntry {
 // attrsExceptComponent copies attrs without the "component" key (which is
 // surfaced in its own field), returning nil when nothing remains.
 func attrsExceptComponent(attrs map[string]any) map[string]any {
-	if len(attrs) == 0 {
-		return nil
-	}
 	out := make(map[string]any, len(attrs))
 	for k, v := range attrs {
 		if k != "component" {

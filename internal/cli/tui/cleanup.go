@@ -122,16 +122,10 @@ func (m *model) applyCleanup(msg cleanupLoadedMsg) {
 	m.cleanup.err = nil
 }
 
-// handleCleanupKey applies pane keys (back, reload, tab switch, requeue) and
+// handleCleanupKey applies pane keys (tab switch, requeue) and
 // delegates cursor movement to the active table.
 func (m *model) handleCleanupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.cleanup.loading = !m.cleanup.loaded
-		cmd := m.fetch(pollCleanup)
-		return m, cmd
 	case "t":
 		if m.cleanupOnDLQ() {
 			m.cleanup.tab = cleanupTabQueue
@@ -260,11 +254,6 @@ func rowsFromCleanupDLQ(items []adminapi.CleanupDLQItem) []table.Row {
 		})
 	}
 	return rows
-}
-
-// cleanupPaneView composes the pane's full-screen layout.
-func (m *model) cleanupPaneView() string {
-	return m.frame(m.cleanupHeaderView(), m.hintFooter(), m.cleanupBody()...)
 }
 
 // cleanupHeaderView renders the title bar with both depths, marking the active

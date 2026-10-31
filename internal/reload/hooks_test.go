@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -675,15 +676,19 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Declared:     provisioning.NewDeclared(),
 		Cfg:          &config.Config{},
 	})
+	throttle := httputil.NewLoginThrottle(5, time.Minute)
+	t.Cleanup(throttle.Close)
 	return &ui.Deps{
-		Objects:     svc.Objects,
-		Integrity:   svc.Integrity,
-		Replication: svc.Replication,
-		Rebalance:   svc.Rebalance,
-		Encryption:  svc.Encryption,
-		Compression: svc.Compression,
-		Buckets:     provisioning.NewDeclared(),
-		Cfg:         &config.Config{},
+		Objects:       svc.Objects,
+		Integrity:     svc.Integrity,
+		Replication:   svc.Replication,
+		Rebalance:     svc.Rebalance,
+		Encryption:    svc.Encryption,
+		Compression:   svc.Compression,
+		Buckets:       provisioning.NewDeclared(),
+		Cfg:           &config.Config{},
+		LoginThrottle: throttle,
+		Registry:      func() *auth.BucketRegistry { return nil },
 	}
 }
 

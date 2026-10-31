@@ -138,10 +138,10 @@ func generateCSRFToken() (string, error) {
 // someone else - so revoking a key ends every session it opened.
 func (h *Handler) sessionUser(r *http.Request) (*auth.User, bool) {
 	userID, accessKey, ok := h.sessionClaims(r)
-	if !ok || h.registry == nil {
+	if !ok {
 		return nil, false
 	}
-	registry := h.registry()
+	registry := h.d.Registry()
 	if registry == nil {
 		return nil, false
 	}
@@ -201,18 +201,15 @@ func (h *Handler) serveLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 		return
 	}
-	w.Header().Set(headerContentType, contentTypeHTML)
-	if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
-		h.log.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
-	}
+	h.renderLoginError(w, r, http.StatusOK, "")
 }
 
 // processLoginAttempt validates the POSTed credentials, applies the
 // login-attempt throttle, and either creates a session or re-renders the
 // login form with the appropriate error.
 func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
-	clientIP := h.clientIP(r)
-	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(clientIP) {
+	clientIP := httputil.ExtractClientIP(r, h.trustedProxies)
+	if h.d.LoginThrottle.IsLockedOut(clientIP) {
 		h.log.WarnContext(r.Context(), "login attempt while locked out", "client_addr", clientIP)
 		h.renderLoginError(w, r, http.StatusTooManyRequests, "Too many attempts. Try again later.")
 		return
@@ -222,17 +219,12 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 	secret := r.FormValue("secret_key")
 	user, ok := h.resolveLogin(key, secret)
 	if !ok {
-		if h.loginThrottle != nil {
-			h.loginThrottle.RecordFailure(clientIP)
-		}
+		h.d.LoginThrottle.RecordFailure(clientIP)
 		h.log.WarnContext(r.Context(), "failed login attempt", "client_addr", clientIP)
 		h.renderLoginError(w, r, http.StatusUnauthorized, "Invalid credentials.")
 		return
 	}
-
-	if h.loginThrottle != nil {
-		h.loginThrottle.RecordSuccess(clientIP)
-	}
+	h.d.LoginThrottle.RecordSuccess(clientIP)
 
 	// A valid credential without admin-read reaches the data through the S3
 	// API; the dashboard is an operator console showing the whole fleet.
@@ -252,10 +244,7 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 // and reports the user it proves. Both halves are always compared, so timing
 // does not reveal whether the access key or the secret was wrong.
 func (h *Handler) resolveLogin(key, secret string) (*auth.User, bool) {
-	if h.registry == nil {
-		return nil, false
-	}
-	registry := h.registry()
+	registry := h.d.Registry()
 	if registry == nil {
 		return nil, false
 	}
@@ -267,7 +256,7 @@ func (h *Handler) resolveLogin(key, secret string) (*auth.User, bool) {
 }
 
 // renderLoginError writes the login form with status and an inline error
-// message. Used by both the throttle-lockout and bad-credential paths.
+// message, which is empty on a plain GET of the page.
 func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
 	w.Header().Set(headerContentType, contentTypeHTML)
 	w.WriteHeader(status)

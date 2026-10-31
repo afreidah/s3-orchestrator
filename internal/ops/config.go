@@ -17,26 +17,12 @@ import (
 )
 
 // ConfigStore is the operations layer's view of the running configuration.
-// The zero value is not usable; construct it with NewConfigStore.
-type ConfigStore struct {
-	cfg syncutil.AtomicConfig[config.Config]
-}
+type ConfigStore = syncutil.AtomicConfig[config.Config]
 
 // NewConfigStore seeds the holder with the configuration the process started
 // with.
 func NewConfigStore(cfg *config.Config) *ConfigStore {
 	s := &ConfigStore{}
-	s.cfg.Store(cfg)
+	s.Store(cfg)
 	return s
-}
-
-// UpdateConfig atomically replaces the configuration the operations layer
-// reads. Called by the reload hook after a successful SIGHUP.
-func (s *ConfigStore) UpdateConfig(cfg *config.Config) {
-	s.cfg.Store(cfg)
-}
-
-// Load returns the configuration currently in force.
-func (s *ConfigStore) Load() *config.Config {
-	return s.cfg.Load()
 }

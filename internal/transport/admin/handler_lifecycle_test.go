@@ -72,7 +72,7 @@ func lifecycleWith(t *testing.T, h *Handler, stub *expiryStub) {
 	if stub != nil {
 		deps.Expiry = stub
 	}
-	h.expiry = ops.NewLifecycle(deps)
+	h.d.Expiry = ops.NewLifecycle(deps)
 }
 
 // postLifecycle drives the endpoint and decodes its response.

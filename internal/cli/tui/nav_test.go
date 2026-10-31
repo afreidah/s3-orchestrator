@@ -68,8 +68,8 @@ func TestHandleNavKey_CursorBoundsAndOpen(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("selecting backends should return a load command")
 	}
-	if _, ok := cmd().(statusLoadedMsg); !ok {
-		t.Errorf("load command result = %#v, want statusLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.StatusResponse]); !ok {
+		t.Errorf("load command result = %#v, want loadedMsg[*adminapi.StatusResponse]", cmd())
 	}
 }
 

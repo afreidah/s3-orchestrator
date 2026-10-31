@@ -15,8 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // -------------------------------------------------------------------------
@@ -74,45 +72,12 @@ func sortEntries(entries []entry, field sortField) {
 	})
 }
 
-// clearFilter blurs and empties the filter without reshaping; callers that need
-// the table resynced call refreshVisible afterward.
-func (m *model) clearFilter() {
-	m.filtering = false
-	m.filter.Blur()
-	m.filter.SetValue("")
-}
-
-// handleFilterKey feeds keys to the focused filter input. esc abandons the
-// filter, enter keeps it applied and returns focus to the table, and every
-// other key edits the query and reshapes the listing live.
-func (m *model) handleFilterKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc":
-		m.clearFilter()
-		m.refreshVisible()
-		return m, nil
-	case "enter":
-		m.filtering = false
-		m.filter.Blur()
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.filter, cmd = m.filter.Update(key)
-	m.refreshVisible()
-	m.table.SetCursor(0)
-	return m, cmd
-}
-
 // statusLine describes the current filter and sort state for the footer. It is
 // always present so the footer keeps a fixed height.
 func (m *model) statusLine() string {
 	parts := []string{"sort: " + m.sort.String()}
-	switch {
-	case m.filtering:
-		parts = append(parts, "filter: "+m.filter.View(), matchCount(len(m.visible), len(m.entries)))
-	case m.filter.Value() != "":
-		parts = append(parts, "filter: "+m.filter.Value(), matchCount(len(m.visible), len(m.entries)))
+	if filter := m.filter.label(); filter != "" {
+		parts = append(parts, "filter: "+filter, matchCount(len(m.visible), len(m.entries)))
 	}
 	if m.next != "" {
 		parts = append(parts, "(more below)")

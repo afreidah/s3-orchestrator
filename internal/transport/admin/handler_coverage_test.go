@@ -46,12 +46,11 @@ func newCoverageHandler(t *testing.T) *Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	return &Handler{
-		log:       slog.Default().With(logfmt.Component("admin")),
-		registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
-		logLevel:  &lv,
-		dbHealthy: func() bool { return true },
-	}
+	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		Registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
+		LogLevel:  &lv,
+		DBHealthy: func() bool { return true },
+	}}
 }
 
 // -------------------------------------------------------------------------
@@ -65,14 +64,14 @@ func newCoverageHandler(t *testing.T) *Handler {
 func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.dashboardOps = newDashboardOps(t, &dashboard.Data{
+	h.d.Dashboard = newDashboardOps(t, &dashboard.Data{
 		BackendOrder: []string{"b1"},
 		QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		ObjectCounts: map[string]int64{"b1": 5},
 		UsageStats:   map[string]core.Usage{"b1": {UsageStat: core.UsageStat{APIRequests: 3, IngressBytes: 50, EgressBytes: 25}}},
 		UsagePeriod:  "2026-05",
 	}, nil)
-	h.instance = adminapi.InstanceStatus{ID: "host-1a2b3c4d", Version: "v1.2.3", Mode: "all"}
+	h.d.Instance = adminapi.InstanceStatus{ID: "host-1a2b3c4d", Version: "v1.2.3", Mode: "all"}
 
 	w := httptest.NewRecorder()
 	h.handleStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil))
@@ -90,8 +89,8 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	if b := resp.Backends[0]; b.BytesUsed != 100 || b.ObjectCount != 5 || b.APIRequests != 3 {
 		t.Errorf("backend row not fully populated: %+v", b)
 	}
-	if resp.Instance != h.instance {
-		t.Errorf("instance = %+v, want %+v", resp.Instance, h.instance)
+	if resp.Instance != h.d.Instance {
+		t.Errorf("instance = %+v, want %+v", resp.Instance, h.d.Instance)
 	}
 }
 
@@ -167,7 +166,7 @@ func TestHandleOverReplicationStatus_CountError(t *testing.T) {
 func TestHandleOverReplicationClean_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{})
 	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3})
 
 	w := httptest.NewRecorder()
@@ -192,7 +191,7 @@ func TestHandleOverReplicationClean_Configured(t *testing.T) {
 func TestHandleReconcileUsage_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{reconcileMap: map[string]int64{"e2": -163}})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{reconcileMap: map[string]int64{"e2": -163}})
 
 	w := httptest.NewRecorder()
 	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
@@ -215,7 +214,7 @@ func TestHandleReconcileUsage_Success(t *testing.T) {
 func TestHandleReconcileUsage_Error(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{reconcileErr: errors.New("db down")})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{reconcileErr: errors.New("db down")})
 
 	w := httptest.NewRecorder()
 	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
@@ -235,7 +234,7 @@ func TestHandleReconcileUsage_Error(t *testing.T) {
 func TestHandleReplicate_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{})
 	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 4}, overRepStub{})
 
 	w := httptest.NewRecorder()
@@ -262,7 +261,7 @@ func TestHandleReplicate_Configured(t *testing.T) {
 func TestHandleReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{})
 	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 1, failed: 3}, overRepStub{})
 
 	w := httptest.NewRecorder()
@@ -288,7 +287,7 @@ func TestHandleReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 func TestHandleOverReplicationClean_ReportsObjectsItCouldNotClean(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.d.BackendOps = newBackendOps(t, backendOpsStub{})
 	replicationWith(t, h, replicatorStub{}, overRepStub{
 		cfg: &config.ReplicationConfig{Factor: 2}, cleaned: 2, failed: 1,
 	})
@@ -457,7 +456,7 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
+	h.d.Reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
@@ -477,7 +476,7 @@ func TestHandleReconcile_Success(t *testing.T) {
 func TestHandleReconcile_Error(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.reconciler = newReconciler(t, nil, errors.New("scan failed"))
+	h.d.Reconciler = newReconciler(t, nil, errors.New("scan failed"))
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile", nil))
@@ -841,7 +840,7 @@ func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
 func TestHandleStatus_ReportsPlaintextCopies(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.dashboardOps = newDashboardOps(t, &dashboard.Data{
+	h.d.Dashboard = newDashboardOps(t, &dashboard.Data{
 		BackendOrder:    []string{"b1"},
 		QuotaStats:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		UsagePeriod:     "2026-05",

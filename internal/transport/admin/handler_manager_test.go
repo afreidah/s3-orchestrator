@@ -75,22 +75,21 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	svc := testOps(st, workers, mock, nil)
-	return &Handler{
-		log:          slog.Default().With(logfmt.Component("admin")),
-		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
-		objects:      svc.Objects,
-		integrity:    svc.Integrity,
-		replication:  svc.Replication,
-		rebalance:    svc.Rebalance,
-		encryption:   svc.Encryption,
-		states:       st.States,
-		stateStore:   mock,
-		dbHealthy:    cb.IsHealthy,
-		cleanup:      mock,
-		logLevel:     &lv,
-		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
-	}
+	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		BackendOps:  st.Usage,
+		Dashboard:   dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
+		Objects:     svc.Objects,
+		Integrity:   svc.Integrity,
+		Replication: svc.Replication,
+		Rebalance:   svc.Rebalance,
+		Encryption:  svc.Encryption,
+		States:      st.States,
+		StateStore:  mock,
+		DBHealthy:   cb.IsHealthy,
+		Cleanup:     mock,
+		LogLevel:    &lv,
+		Registry:    func() *auth.BucketRegistry { return rootRegistry(t) },
+	}}
 }
 
 // -------------------------------------------------------------------------
@@ -199,7 +198,7 @@ func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 		SizeBytes:   4096,
 		Attempts:    2,
 	}}, nil).Times(1)
-	h.cleanup = cleanupMock
+	h.d.Cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -266,7 +265,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Objects: objectsOver(t, mock), LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -302,7 +301,7 @@ func TestHandleObjectLocations_NotFound(t *testing.T) {
 	h := newTestHandlerWithManager(t)
 	objects := storetest.NewMockObjectStore(gomock.NewController(t))
 	objects.EXPECT().GetAllObjectLocations(gomock.Any(), "ghost").Return(nil, core.ErrObjectNotFound).Times(1)
-	h.objects = objectsOver(t, objects)
+	h.d.Objects = objectsOver(t, objects)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -540,11 +539,11 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 	// Swap the cleanup store for one whose depth call fails. The
-	// handler reads h.cleanup directly, so assigning a fresh mock
+	// handler reads h.d.Cleanup directly, so assigning a fresh mock
 	// is sufficient.
 	cleanupMock := storetest.NewMockCleanupStore(gomock.NewController(t))
 	cleanupMock.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(0), errors.New("db down")).Times(1)
-	h.cleanup = cleanupMock
+	h.d.Cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -564,7 +563,7 @@ func TestHandleCleanupQueue_PendingError(t *testing.T) {
 	cleanupMock := storetest.NewMockCleanupStore(gomock.NewController(t))
 	cleanupMock.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(5), nil).Times(1)
 	cleanupMock.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).Return(nil, errors.New("query failed")).Times(1)
-	h.cleanup = cleanupMock
+	h.d.Cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -581,10 +580,10 @@ func TestHandleCleanupQueue_PendingError(t *testing.T) {
 func TestHandleUsageFlush_Error(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	// h.backendOps is a *usage.Service backed by a MockStore.
+	// h.d.BackendOps is a *usage.Service backed by a MockStore.
 	// We cannot easily inject an error through it, so swap the
 	// BackendOps interface with a stub that fails FlushUsage.
-	h.backendOps = &flushUsageFailingOps{inner: h.backendOps}
+	h.d.BackendOps = &flushUsageFailingOps{inner: h.d.BackendOps}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -639,7 +638,7 @@ func TestHandleReconcile_CancelledContext(t *testing.T) {
 func TestHandleStatus_DashboardError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	h.dashboardOps = newDashboardOps(t, nil, errors.New("dashboard unavailable"))
+	h.d.Dashboard = newDashboardOps(t, nil, errors.New("dashboard unavailable"))
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -659,7 +658,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3}, postgres.RequestError)
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{DBHealthy: cb.IsHealthy, Objects: objectsOver(t, mock), LogLevel: &lv, Registry: func() *auth.BucketRegistry { return rootRegistry(t) }}}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -718,7 +717,7 @@ func TestHandleConfig(t *testing.T) {
 	}
 
 	h := newTestHandlerWithManager(t)
-	h.logLevel.Set(slog.LevelDebug)
+	h.d.LogLevel.Set(slog.LevelDebug)
 	h.SetConfigProvider(func() (*adminapi.ConfigResponse, error) {
 		return &adminapi.ConfigResponse{Config: "server:\n", PendingRestart: []string{"database"}}, nil
 	})
@@ -870,15 +869,14 @@ func newKnownBackendHandler(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	})
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	return &Handler{
-		log:          slog.Default().With(logfmt.Component("admin")),
-		backendOps:   st.Usage,
-		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
-		states:       st.States,
-		stateStore:   mock,
-		logLevel:     &lv,
-		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
-	}
+	return &Handler{log: slog.Default().With(logfmt.Component("admin")), d: Deps{
+		BackendOps: st.Usage,
+		Dashboard:  dashboard.New(mock, st.Runtime.Usage(), nil, nil, st.Runtime, st.States),
+		States:     st.States,
+		StateStore: mock,
+		LogLevel:   &lv,
+		Registry:   func() *auth.BucketRegistry { return rootRegistry(t) },
+	}}
 }
 
 // serveOn sends one authenticated request through a handler's routes.
@@ -896,7 +894,7 @@ func serveOn(t *testing.T, h *Handler, method, path string) *httptest.ResponseRe
 func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	t.Parallel()
 	h := newKnownBackendHandler(t)
-	t.Cleanup(func() { _ = h.states.CancelDrain(context.Background(), "b1") })
+	t.Cleanup(func() { _ = h.d.States.CancelDrain(context.Background(), "b1") })
 
 	w := serveOn(t, h, http.MethodPost, "/admin/api/backends/b1/drain")
 

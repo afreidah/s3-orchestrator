@@ -27,7 +27,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -42,19 +41,17 @@ const (
 
 // logsView holds the state of the logs pane.
 type logsView struct {
+	loadState
 	entries   []adminapi.LogEntry // recent entries, oldest first
 	vp        viewport.Model      // scrolling viewport over the rendered lines
 	minLevel  string              // minimum severity filter ("" = all levels)
-	filter    textinput.Model     // substring filter over the component and message
-	filtering bool                // the filter input has focus and is capturing keys
+	filter    filterBox           // substring filter over the component and message
 	following bool                // the poller re-fetches the entries while the pane shows
-	loading   bool                // a logs fetch is in flight
-	err       error               // last fetch error, if any
 }
 
 // newLogsView builds the pane's empty state.
 func newLogsView() logsView {
-	return logsView{filter: newFilterInput()}
+	return logsView{filter: newFilterBox()}
 }
 
 // logLevelCycle is the order the level filter steps through: all levels, then
@@ -116,8 +113,7 @@ func (m *model) applyLogs(msg logsLoadedMsg) {
 	if atBottom {
 		m.logs.vp.GotoBottom()
 	}
-	m.logs.loading = false
-	m.logs.err = nil
+	m.logs.loaded()
 }
 
 // refreshLogLines re-renders the entries the filter lets through and scrolls
@@ -133,12 +129,11 @@ func (m *model) refreshLogLines() {
 func (m *model) handleLogsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "/":
-		m.logs.filtering = true
-		cmd := m.logs.filter.Focus()
-		return m, cmd
+		return m, m.logs.filter.open()
 	case "esc":
 		if m.logs.filter.Value() != "" {
-			m.clearLogsFilter()
+			m.logs.filter.clear()
+			m.refreshLogLines()
 			return m, nil
 		}
 		return m.navBack()
@@ -162,34 +157,6 @@ func (m *model) handleLogsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.logs.vp, cmd = m.logs.vp.Update(key)
 	return m, cmd
-}
-
-// handleLogsFilterKey feeds keys to the focused filter. esc abandons the
-// filter, enter keeps it applied and returns the keys to the pane, and every
-// other key edits the filter and narrows the lines as it is typed.
-func (m *model) handleLogsFilterKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc":
-		m.clearLogsFilter()
-		return m, nil
-	case "enter":
-		m.logs.filtering = false
-		m.logs.filter.Blur()
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.logs.filter, cmd = m.logs.filter.Update(key)
-	m.refreshLogLines()
-	return m, cmd
-}
-
-// clearLogsFilter empties and blurs the filter and shows every entry again.
-func (m *model) clearLogsFilter() {
-	m.logs.filtering = false
-	m.logs.filter.Blur()
-	m.logs.filter.SetValue("")
-	m.refreshLogLines()
 }
 
 // visibleLogs returns the entries the filter lets through: those whose
@@ -270,11 +237,6 @@ func logMessage(e *adminapi.LogEntry) string {
 	return b.String()
 }
 
-// logsPaneView composes the pane's full-screen layout.
-func (m *model) logsPaneView() string {
-	return m.frame(m.logsHeaderView(), m.hintFooter(), m.logsBody()...)
-}
-
 // logsHeaderView renders the title bar (entry count, level filter, whether the
 // pane is following, and the text filter while one is being typed or applied)
 // plus the column header row beneath it.
@@ -288,13 +250,9 @@ func (m *model) logsHeaderView() string {
 		name = "logs (following)"
 	}
 	title := fmt.Sprintf("%s   %d entries   level: %s", name, len(m.logs.entries), level)
-	switch {
-	case m.logs.filtering:
+	if filter := m.logs.filter.label(); filter != "" {
 		title = fmt.Sprintf("%s   %d of %d entries   level: %s   filter: %s",
-			name, len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.View())
-	case m.logs.filter.Value() != "":
-		title = fmt.Sprintf("%s   %d of %d entries   level: %s   filter: %s",
-			name, len(m.visibleLogs()), len(m.logs.entries), level, m.logs.filter.Value())
+			name, len(m.visibleLogs()), len(m.logs.entries), level, filter)
 	}
 	cols := fmt.Sprintf("%-*s %-*s %-*s %s",
 		logTimeWidth, "TIME", logLevelWidth, "LEVEL", logComponentWidth, "COMPONENT", "MESSAGE")

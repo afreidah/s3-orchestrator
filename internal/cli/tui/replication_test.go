@@ -36,12 +36,12 @@ var errNope = errors.New("nope")
 func TestLoadReplication(t *testing.T) {
 	t.Parallel()
 	ok := initialModel(&fakeLister{replic: &adminapi.ReplicationStatusResponse{Factor: 2}}).loadReplication()
-	if _, isMsg := ok().(replicationLoadedMsg); !isMsg {
-		t.Errorf("success cmd = %#v, want replicationLoadedMsg", ok())
+	if _, isMsg := ok().(loadedMsg[*adminapi.ReplicationStatusResponse]); !isMsg {
+		t.Errorf("success cmd = %#v, want loadedMsg[*adminapi.ReplicationStatusResponse]", ok())
 	}
 	fail := initialModel(errLister{}).loadReplication()
-	if _, isMsg := fail().(replicationErrMsg); !isMsg {
-		t.Errorf("error cmd = %#v, want replicationErrMsg", fail())
+	if _, isMsg := fail().(loadErrMsg[*adminapi.ReplicationStatusResponse]); !isMsg {
+		t.Errorf("error cmd = %#v, want loadErrMsg[*adminapi.ReplicationStatusResponse]", fail())
 	}
 }
 
@@ -70,18 +70,18 @@ func TestApplyReplicationErr(t *testing.T) {
 func TestEnterReplication(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
-	if _, cmd := m.enterReplication(); cmd == nil {
+	if _, cmd := m.selectSection(sectionReplication); cmd == nil {
 		t.Fatal("first enter: expected a fetch")
 	}
 	if !m.replication.loading {
 		t.Error("first enter should show the spinner")
 	}
-	if _, cmd := m.enterReplication(); cmd != nil {
+	if _, cmd := m.selectSection(sectionReplication); cmd != nil {
 		t.Error("re-entering while the first fetch is in flight should not send another")
 	}
 
-	m.Update(replicationLoadedMsg{resp: &adminapi.ReplicationStatusResponse{Factor: 2}})
-	if _, cmd := m.enterReplication(); cmd == nil {
+	m.Update(loadedMsg[*adminapi.ReplicationStatusResponse]{resp: &adminapi.ReplicationStatusResponse{Factor: 2}})
+	if _, cmd := m.selectSection(sectionReplication); cmd == nil {
 		t.Error("re-entering after the fetch landed should refresh")
 	}
 	if m.replication.loading {
@@ -94,10 +94,10 @@ func TestHandleReplicationKey(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionReplication
-	if _, _ = m.handleReplicationKey(tea.KeyMsg{Type: tea.KeyEsc}); !m.navFocus {
+	if _, _ = m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc}); !m.navFocus {
 		t.Error("esc should return focus to the nav")
 	}
-	if _, cmd := m.handleReplicationKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}); cmd == nil {
+	if _, cmd := m.handlePaneKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}); cmd == nil {
 		t.Error("r should issue a reload command")
 	}
 }

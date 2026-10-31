@@ -25,11 +25,11 @@ import (
 // old keys must stay configured for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.RotateEncryptionKeyRequest
-	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
 
-	res, err := h.encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
+	res, err := h.d.Encryption.RotateKey(r.Context(), req.OldKeyID, req.AllStale)
 	if errors.Is(err, ops.ErrKeyIDRequired) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -39,7 +39,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to list encrypted objects", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to list encrypted objects", err)
 		return
 	}
 

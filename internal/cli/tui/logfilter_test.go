@@ -49,7 +49,7 @@ func TestLogsFilter_NarrowsAsYouType(t *testing.T) {
 	t.Parallel()
 	m := logsWithEntries(t)
 	m.handleKey(key("/"))
-	if !m.logs.filtering {
+	if !m.logs.filter.active {
 		t.Fatal("/ did not start the filter")
 	}
 
@@ -61,7 +61,7 @@ func TestLogsFilter_NarrowsAsYouType(t *testing.T) {
 		t.Errorf("header = %q, want the filtered count", header)
 	}
 
-	m.clearLogsFilter()
+	m.logs.filter.clear()
 	m.handleKey(key("/"))
 	typeText(m, "PHOTOS/A")
 	view := m.contentView()
@@ -79,8 +79,8 @@ func TestLogsFilter_EnterKeepsEscClears(t *testing.T) {
 	m.handleKey(key("/"))
 	typeText(m, "scrub")
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.logs.filtering || len(m.visibleLogs()) != 1 {
-		t.Fatalf("after enter: filtering=%v visible=%d, want the filter kept and keys back", m.logs.filtering, len(m.visibleLogs()))
+	if m.logs.filter.active || len(m.visibleLogs()) != 1 {
+		t.Fatalf("after enter: filtering=%v visible=%d, want the filter kept and keys back", m.logs.filter.active, len(m.visibleLogs()))
 	}
 	if header := m.logsHeaderView(); !strings.Contains(header, "filter: scrub") {
 		t.Errorf("header = %q, want the applied filter", header)
@@ -104,8 +104,8 @@ func TestLogsFilter_EscWhileTypingAbandons(t *testing.T) {
 	m.handleKey(key("/"))
 	typeText(m, "scrub")
 	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.logs.filtering || m.logs.filter.Value() != "" || len(m.visibleLogs()) != 3 {
-		t.Errorf("esc while typing: filtering=%v value=%q visible=%d", m.logs.filtering, m.logs.filter.Value(), len(m.visibleLogs()))
+	if m.logs.filter.active || m.logs.filter.Value() != "" || len(m.visibleLogs()) != 3 {
+		t.Errorf("esc while typing: filtering=%v value=%q visible=%d", m.logs.filter.active, m.logs.filter.Value(), len(m.visibleLogs()))
 	}
 }
 

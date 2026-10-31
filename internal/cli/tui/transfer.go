@@ -98,19 +98,10 @@ type transfer struct {
 	fetched atomic.Int64 // objects a prefix download has written
 	done    atomic.Bool  // set once the transfer finished or failed
 	err     error        // set before done, read only after done is true
-	cancel  context.CancelFunc
 }
 
-// transferDoneMsg reports a finished transfer. objects is how many a prefix
-// download wrote.
-type transferDoneMsg struct {
-	kind    transferKind
-	key     string
-	local   string
-	moved   int64
-	objects int64
-	err     error
-}
+// transferDoneMsg reports a finished transfer.
+type transferDoneMsg struct{ t *transfer }
 
 // transferTickMsg schedules the next progress poll.
 type transferTickMsg struct{}
@@ -124,38 +115,34 @@ func transferTick() tea.Cmd {
 	return tea.Tick(transferPollInterval, func(time.Time) tea.Msg { return transferTickMsg{} })
 }
 
-// startDownload begins writing one object to a local path and returns the
-// transfer the pane polls. The work runs in a goroutine so the loop stays
-// responsive while bytes move.
-func startDownload(client adminClient, key, local string) *transfer {
-	ctx, cancel := context.WithCancel(context.Background())
-	t := &transfer{kind: transferDownload, key: key, local: local, cancel: cancel}
+// startTransfer runs work in a goroutine, so the loop stays responsive while
+// bytes move, and returns the transfer the pane polls. work's error is the
+// transfer's outcome.
+func startTransfer(kind transferKind, key, local string, work func(*transfer) error) *transfer {
+	t := &transfer{kind: kind, key: key, local: local}
+	go func() { t.finish(work(t)) }()
+	return t
+}
 
-	go func() {
-		defer cancel()
-		body, size, err := client.DownloadObject(ctx, key)
+// startDownload begins writing one object to a local path.
+func startDownload(client adminClient, key, local string) *transfer {
+	return startTransfer(transferDownload, key, local, func(t *transfer) error {
+		body, size, err := client.DownloadObject(context.Background(), key)
 		if err != nil {
-			t.finish(err)
-			return
+			return err
 		}
 		defer body.Close()
 		t.total.Store(size)
-		t.finish(writeToFile(local, body, &t.moved))
-	}()
-	return t
+		return writeToFile(local, body, &t.moved)
+	})
 }
 
 // startPrefixDownload begins writing every object under prefix into a new
 // local directory, mirroring the key layout beneath the prefix.
 func startPrefixDownload(client adminClient, prefix, local string) *transfer {
-	ctx, cancel := context.WithCancel(context.Background())
-	t := &transfer{kind: transferPrefix, key: prefix, local: local, cancel: cancel}
-
-	go func() {
-		defer cancel()
-		t.finish(downloadTree(ctx, client, prefix, local, t))
-	}()
-	return t
+	return startTransfer(transferPrefix, prefix, local, func(t *transfer) error {
+		return downloadTree(context.Background(), client, prefix, local, t)
+	})
 }
 
 // downloadTree lists everything under prefix, writes each object into a
@@ -267,27 +254,19 @@ func fetchInto(ctx context.Context, client adminClient, key, path string, moved 
 
 // startUpload begins storing a local file under one object key.
 func startUpload(client adminClient, key, local string) *transfer {
-	ctx, cancel := context.WithCancel(context.Background())
-	t := &transfer{kind: transferUpload, key: key, local: local, cancel: cancel}
-
-	go func() {
-		defer cancel()
+	return startTransfer(transferUpload, key, local, func(t *transfer) error {
 		file, err := os.Open(local)
 		if err != nil {
-			t.finish(err)
-			return
+			return err
 		}
 		defer file.Close()
-
 		info, err := file.Stat()
 		if err != nil {
-			t.finish(err)
-			return
+			return err
 		}
 		t.total.Store(info.Size())
-		t.finish(client.UploadObject(ctx, key, &countingReader{r: file, moved: &t.moved}, info.Size()))
-	}()
-	return t
+		return client.UploadObject(context.Background(), key, &countingReader{r: file, moved: &t.moved}, info.Size())
+	})
 }
 
 // finish records the outcome and marks the transfer complete. err is written
@@ -348,7 +327,7 @@ func transferLine(t *transfer) string {
 		if objects == 0 {
 			return line + "listing..."
 		}
-		line += fmt.Sprintf("%s / %s objects   ", grouped(int(t.fetched.Load())), grouped(int(objects)))
+		line += fmt.Sprintf("%s / %s objects   ", humanize.Comma(t.fetched.Load()), humanize.Comma(objects))
 	}
 	if total <= 0 {
 		return line + humanize.Bytes(moved)

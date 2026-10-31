@@ -312,11 +312,6 @@ func (m *model) opsBack() (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// opsPaneView composes the pane's full-screen layout.
-func (m *model) opsPaneView() string {
-	return m.frame(m.opsHeaderView(), m.hintFooter(), textPane(m.opsMenuView()))
-}
-
 // opsHeaderView renders the title bar. The scope is named, so a menu opened
 // from a backend row cannot be read as the fleet-wide one.
 func (m *model) opsHeaderView() string {

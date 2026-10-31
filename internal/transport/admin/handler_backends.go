@@ -54,7 +54,7 @@ type backendChange struct {
 // A refused change, such as cordoning a backend that is already cordoned, is a
 // 400 with the generic failure message; the reason is logged.
 func (h *Handler) serveBackendChange(w http.ResponseWriter, r *http.Request, c *backendChange) {
-	name := r.PathValue("name")
+	name := r.PathValue(paramName)
 	if err := c.apply(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), c.failLog, slog.String("backend", name), "error", err)
 		httputil.WriteJSONError(w, http.StatusBadRequest, c.failMsg)
@@ -66,7 +66,7 @@ func (h *Handler) serveBackendChange(w http.ResponseWriter, r *http.Request, c *
 // handleStartDrain begins draining a backend.
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	h.serveBackendChange(w, r, &backendChange{
-		apply: h.states.StartDrain, failLog: "drain start failed", failMsg: errDrainOperationFailed,
+		apply: h.d.States.StartDrain, failLog: "drain start failed", failMsg: errDrainOperationFailed,
 		code: http.StatusAccepted, okStatus: "drain started",
 	})
 }
@@ -74,7 +74,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 // handleCordon stops new copies landing on a backend. It takes effect at once.
 func (h *Handler) handleCordon(w http.ResponseWriter, r *http.Request) {
 	h.serveBackendChange(w, r, &backendChange{
-		apply: h.states.Cordon, failLog: "cordon failed", failMsg: errCordonOperationFailed,
+		apply: h.d.States.Cordon, failLog: "cordon failed", failMsg: errCordonOperationFailed,
 		code: http.StatusOK, okStatus: "backend cordoned",
 	})
 }
@@ -83,28 +83,20 @@ func (h *Handler) handleCordon(w http.ResponseWriter, r *http.Request) {
 // carries on.
 func (h *Handler) handleUncordon(w http.ResponseWriter, r *http.Request) {
 	h.serveBackendChange(w, r, &backendChange{
-		apply: h.states.Uncordon, failLog: "uncordon failed", failMsg: errCordonOperationFailed,
+		apply: h.d.States.Uncordon, failLog: "uncordon failed", failMsg: errCordonOperationFailed,
 		code: http.StatusOK, okStatus: "backend uncordoned",
 	})
 }
 
 // handleDrainProgress returns the current state of a drain operation.
 func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	progress, err := h.states.GetDrainProgress(r.Context(), name)
+	name := r.PathValue(paramName)
+	progress, err := h.d.States.GetDrainProgress(r.Context(), name)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, errDrainOperationFailed)
+		httputil.InternalError(r.Context(), h.log, w, errDrainOperationFailed, err, slog.String("backend", name))
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, adminapi.DrainProgressResponse{
-		Active:           progress.Active,
-		State:            progress.State,
-		ObjectsRemaining: progress.ObjectsRemaining,
-		BytesRemaining:   progress.BytesRemaining,
-		ObjectsMoved:     progress.ObjectsMoved,
-		Error:            progress.Error,
-	})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.DrainProgressResponse(*progress))
 }
 
 // handleCancelDrain clears a backend's drain flags, stopping a drain in
@@ -112,7 +104,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 // cordoned.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	h.serveBackendChange(w, r, &backendChange{
-		apply: h.states.CancelDrain, failLog: "drain cancel failed", failMsg: errDrainOperationFailed,
+		apply: h.d.States.CancelDrain, failLog: "drain cancel failed", failMsg: errDrainOperationFailed,
 		code: http.StatusOK, okStatus: "drain cancelled",
 	})
 }
@@ -122,20 +114,15 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 // token, second call with confirm=<token> executes the purge.
 // Without purge, executes immediately (DB records only, S3 objects preserved).
 func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := r.PathValue(paramName)
 	purge := r.URL.Query().Get("purge") == "true"
 	confirmToken := r.URL.Query().Get("confirm")
 
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
-		if err := h.states.RemoveBackend(r.Context(), name, false, nil); err != nil {
-			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
-			httputil.WriteJSONError(w, http.StatusBadRequest, "remove failed")
-			return
-		}
-		httputil.WriteJSON(w, http.StatusOK, adminapi.BackendOperationResponse{
-			Status:  "backend removed",
-			Backend: name,
+		h.serveBackendChange(w, r, &backendChange{
+			apply: h.removeBackend(false), failLog: "remove backend failed", failMsg: "remove failed",
+			code: http.StatusOK, okStatus: "backend removed",
 		})
 		return
 	}
@@ -150,20 +137,15 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			h.streamRemovePurge(w, r, name)
 			return
 		}
-		if err := h.states.RemoveBackend(r.Context(), name, true, nil); err != nil {
-			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
-			httputil.WriteJSONError(w, http.StatusBadRequest, "purge failed")
-			return
-		}
-		httputil.WriteJSON(w, http.StatusOK, adminapi.BackendOperationResponse{
-			Status:  "backend purged",
-			Backend: name,
+		h.serveBackendChange(w, r, &backendChange{
+			apply: h.removeBackend(true), failLog: "purge backend failed", failMsg: "purge failed",
+			code: http.StatusOK, okStatus: "backend purged",
 		})
 		return
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
-	objectCount, totalBytes, err := h.stateStore.BackendObjectStats(r.Context(), name)
+	objectCount, totalBytes, err := h.d.StateStore.BackendObjectStats(r.Context(), name)
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "backend not found or stats unavailable")
 		return
@@ -180,6 +162,14 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// removeBackend is the backendChange that drops a backend's records, deleting
+// its objects too when purge is set.
+func (h *Handler) removeBackend(purge bool) func(context.Context, string) error {
+	return func(ctx context.Context, name string) error {
+		return h.d.States.RemoveBackend(ctx, name, purge, nil)
+	}
+}
+
 // streamRemovePurge runs a backend purge as an NDJSON step stream, one
 // "deleting <key>" line per object plus a terminal summary. Purge deletes
 // objects one at a time, so each step renders live (sequential=true): a prefix
@@ -193,7 +183,7 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 			}
 			obs(s)
 		}
-		if err := h.states.RemoveBackend(r.Context(), name, true, counting); err != nil {
+		if err := h.d.States.RemoveBackend(r.Context(), name, true, counting); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
 			return stepResult{}, err
 		}

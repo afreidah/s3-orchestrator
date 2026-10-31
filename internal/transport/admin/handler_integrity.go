@@ -37,7 +37,7 @@ import (
 // and backend query parameters. A pass counts the copies it read as checked and
 // the ones it could not decode as unreadable.
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
@@ -49,7 +49,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 		sequential: true,
 		failMsg:    "scrub failed",
 		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
-			return h.integrity.Scrub(ctx, batchSize, backend, obs)
+			return h.d.Integrity.Scrub(ctx, batchSize, backend, obs)
 		},
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.ScrubResponse{
@@ -73,9 +73,9 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 // counts, this reports a verdict per copy. Folding both onto one endpoint would
 // mean a response whose shape depends on whether a parameter was supplied.
 func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
+	key := r.URL.Query().Get(paramKey)
 
-	copies, err := h.integrity.VerifyKey(r.Context(), key)
+	copies, err := h.d.Integrity.VerifyKey(r.Context(), key)
 	switch {
 	case errors.Is(err, ops.ErrKeyRequired):
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
@@ -88,7 +88,7 @@ func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteJSONError(w, http.StatusConflict, reason)
 			return
 		}
-		h.internalError(r.Context(), w, "failed to verify object", err, slog.String("key", key))
+		httputil.InternalError(r.Context(), h.log, w, "failed to verify object", err, slog.String("key", key))
 		return
 	}
 
@@ -134,8 +134,8 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 // and backend.
 func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	batchSize := httputil.QueryPositiveInt(q.Get("batch_size"))
-	maxObjects := httputil.QueryPositiveInt(q.Get("max"))
+	batchSize := httputil.QueryPositiveInt(q.Get(paramBatchSize))
+	maxObjects := httputil.QueryPositiveInt(q.Get(paramMax))
 	pause := time.Duration(httputil.QueryPositiveInt(q.Get("delay_ms"))) * time.Millisecond
 	backend, ok := h.backendParam(w, r)
 	if !ok {
@@ -148,7 +148,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		sequential: true,
 		failMsg:    "backfill failed",
 		run: func(ctx context.Context, obs progress.Observer) (ops.BackfillResult, error) {
-			return h.integrity.BackfillChecksums(ctx, batchSize, maxObjects, pause, backend, obs)
+			return h.d.Integrity.BackfillChecksums(ctx, batchSize, maxObjects, pause, backend, obs)
 		},
 		body: func(o adminapi.Outcome, res ops.BackfillResult) any {
 			return adminapi.BackfillChecksumsResponse{
@@ -172,9 +172,9 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 // optional limit query parameter.
 func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
 	limit := httputil.QueryPositiveInt(r.URL.Query().Get("limit"))
-	res, err := h.integrity.ListUnreadable(r.Context(), limit)
+	res, err := h.d.Integrity.ListUnreadable(r.Context(), limit)
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to list unreadable copies", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to list unreadable copies", err)
 		return
 	}
 	resp := adminapi.UnreadableListResponse{Total: res.Total, Copies: make([]adminapi.UnreadableCopy, 0, len(res.Copies))}
@@ -190,14 +190,14 @@ func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
 // handlePurgeUnreadable deletes every copy that is encrypted with no key.
 // Accepts an optional batch_size query parameter.
 func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
 
 	h.servePass(w, r, passEndpoint[batch.Summary]{
 		op:         "purge-unreadable",
 		verb:       "purging",
 		sequential: true,
 		run: func(ctx context.Context, obs progress.Observer) (batch.Summary, error) {
-			return h.integrity.PurgeUnreadable(ctx, batchSize, obs), nil
+			return h.d.Integrity.PurgeUnreadable(ctx, batchSize, obs), nil
 		},
 		body: func(o adminapi.Outcome, res batch.Summary) any {
 			return adminapi.UnreadablePurgeResponse{Outcome: o, Purged: res.Succeeded, Failed: res.Failed}
@@ -216,9 +216,9 @@ func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) 
 // each backend, diffs against DB entries, imports untracked objects, and
 // removes stale entries. Use ?backend=name to scope to a single backend.
 func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
-	backendName := r.URL.Query().Get("backend")
+	backendName := r.URL.Query().Get(paramBackend)
 
-	if h.reconciler == nil {
+	if h.d.Reconciler == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "reconciler not configured")
 		return
 	}
@@ -231,7 +231,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		sequential: true,
 		failMsg:    "reconcile failed",
 		run: func(ctx context.Context, obs progress.Observer) (*worker.ReconcileResult, error) {
-			return h.reconciler.Reconcile(ctx, backendName, obs)
+			return h.d.Reconciler.Reconcile(ctx, backendName, obs)
 		},
 		body: func(o adminapi.Outcome, res *worker.ReconcileResult) any {
 			resp := adminapi.ReconcileResponse{Outcome: o}

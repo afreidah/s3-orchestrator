@@ -13,7 +13,6 @@
 package adminctl
 
 import (
-	"flag"
 	"fmt"
 	"net/http"
 
@@ -40,11 +39,10 @@ func cmdDecryptExisting(args []string, c *client) int {
 // current primary key, under the current primary key; the old keys must still
 // be configured for unwrapping.
 func cmdRotateEncryptionKey(args []string, c *client) int {
-	fs := flag.NewFlagSet("rotate-encryption-key", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("rotate-encryption-key")
 	oldKeyID := fs.String("old-key-id", "", "Key ID whose DEKs should be re-wrapped")
 	allStale := fs.Bool("all-stale", false, "Re-wrap every DEK not already under the current key")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 	if (*oldKeyID != "") == *allStale {

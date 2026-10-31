@@ -16,7 +16,6 @@ package adminctl
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,10 +72,9 @@ func renderConfig(w io.Writer, body []byte) error {
 // Downloads the flight-recorder ring buffer (a binary `go tool trace` file)
 // and writes it to disk. Returns 503 when the flight recorder is disabled.
 func cmdTraceSnapshot(args []string, c *client) int {
-	fs := flag.NewFlagSet("trace-snapshot", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("trace-snapshot")
 	out := fs.String("o", defaultTraceFile, "Output file for the trace snapshot")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 

@@ -29,6 +29,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -51,7 +52,6 @@ const (
 	csrfHeaderName    = "X-CSRF-Token"
 	sessionTTL        = 24 * time.Hour
 
-	contentTypeJSON      = "application/json"
 	contentTypeHTML      = "text/html; charset=utf-8"
 	headerContentType    = "Content-Type"
 	loginPath            = "/login"
@@ -106,29 +106,18 @@ type Deps struct {
 	Registry      func() *auth.BucketRegistry
 }
 
-// Handler serves the web UI dashboard.
+// Handler serves the web UI dashboard. d holds the dependencies New was given;
+// the remaining fields are derived from them or are the handler's own state.
 type Handler struct {
+	d              Deps
 	log            *slog.Logger
-	dashboardOps   DashboardOps
-	syncOps        BackendSyncer
-	objects        *ops.Objects
-	integrity      *ops.Integrity
-	replication    *ops.Replication
-	rebalance      *ops.Rebalance
-	expiry         *ops.Lifecycle
-	encryption     *ops.Encryption
-	compression    *ops.Compression
-	dbHealthy      func() bool
-	buckets        DeclaredBuckets
 	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
 	logs           http.HandlerFunc
-	loginThrottle  *httputil.LoginThrottle
 	prefix         string
 	sessionKey     []byte
 	forceSecure    bool
 	trustedProxies []*net.IPNet
-	registry       func() *auth.BucketRegistry
 	asyncOps       asyncOpTracker
 }
 
@@ -149,26 +138,16 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Compression", d.Compression)
 	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Cfg", d.Cfg)
+	must.NotNil("d.LoginThrottle", d.LoginThrottle)
+	must.NotNil("d.Registry", d.Registry)
 	h := &Handler{
+		d:              *d,
 		log:            slog.Default().With(logfmt.Component("ui")),
-		dashboardOps:   d.Dashboard,
-		syncOps:        d.Sync,
-		objects:        d.Objects,
-		integrity:      d.Integrity,
-		replication:    d.Replication,
-		rebalance:      d.Rebalance,
-		expiry:         d.Expiry,
-		encryption:     d.Encryption,
-		compression:    d.Compression,
-		dbHealthy:      d.DBHealthy,
-		buckets:        d.Buckets,
 		templates:      loadTemplates(),
 		logs:           admin.LogsHandler(d.LogBuffer),
-		loginThrottle:  d.LoginThrottle,
 		sessionKey:     deriveSessionKey(&d.Cfg.UI),
 		forceSecure:    d.Cfg.UI.ForceSecureCookies,
 		trustedProxies: httputil.ParseTrustedProxies(d.Cfg.RateLimit.TrustedProxies),
-		registry:       d.Registry,
 	}
 	h.cfg.Store(d.Cfg)
 	return h
@@ -192,28 +171,9 @@ func (h *Handler) UpdateConfig(cfg *config.Config) {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// clientIP extracts the real client IP from the request, respecting
-// X-Forwarded-For when the peer is a trusted proxy.
-func (h *Handler) clientIP(r *http.Request) string {
-	return httputil.ExtractClientIP(r, h.trustedProxies)
-}
-
-// validBucketPrefix checks whether the key starts with a declared virtual
-// bucket name, counting both the config file and the store so a bucket created
-// through the provisioning API is browsable here.
-func (h *Handler) validBucketPrefix(key string) bool {
-	return h.buckets.HasPrefix(key)
-}
-
 // validBackend checks whether the backend name exists in config.
 func (h *Handler) validBackend(name string) bool {
-	cfg := h.cfg.Load()
-	for i := range cfg.Backends {
-		if cfg.Backends[i].Name == name {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(h.cfg.Load().Backends, func(b config.BackendConfig) bool { return b.Name == name })
 }
 
 // setSecurityHeaders adds security headers to dashboard responses.

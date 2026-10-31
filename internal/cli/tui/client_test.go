@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
@@ -30,8 +31,8 @@ import (
 const testAccessKeyID = "AKIATUITEST"
 
 // testTarget points the client at addr with the test keypair.
-func testTarget(addr string) target {
-	return target{baseAddr: addr, accessKeyID: testAccessKeyID, secretKey: "tui-test-secret"}
+func testTarget(addr string) admintarget.Target {
+	return admintarget.Target{Addr: addr, AccessKeyID: testAccessKeyID, SecretKey: "tui-test-secret"}
 }
 
 // TestAPIClient_ListObjects_Success asserts the request shape and decoded page.

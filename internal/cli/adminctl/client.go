@@ -16,10 +16,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -112,14 +114,41 @@ func (c *client) request(method, path string, body []byte) ([]byte, int, int) {
 	return data, resp.StatusCode, 0
 }
 
-// withQuery appends an encoded query to a path, leaving the path alone when
-// nothing was set. Every query goes through it so a value carrying &, + or #
-// arrives as the value rather than changing what the server parses.
-func withQuery(path string, q url.Values) string {
-	if enc := q.Encode(); enc != "" {
-		return path + "?" + enc
+// flags starts a subcommand's flag set, reporting parse errors on stderr.
+func (c *client) flags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	return fs
+}
+
+// parse reads args into fs and refuses a run that leaves any of the required
+// flags empty, naming the first one missing. It reports whether the command
+// may go on.
+func (c *client) parse(fs *flag.FlagSet, args []string, required ...string) bool {
+	if fs.Parse(args) != nil {
+		return false
 	}
-	return path
+	for _, name := range required {
+		if fs.Lookup(name).Value.String() == "" {
+			fmt.Fprintf(c.stderr, "error: -%s is required\n", name)
+			return false
+		}
+	}
+	return true
+}
+
+// setIf sets key when value is set, so an unset flag sends nothing.
+func setIf(q url.Values, key, value string) {
+	if value != "" {
+		q.Set(key, value)
+	}
+}
+
+// setPositive sets key when n is above zero, so an unset count sends nothing.
+func setPositive(q url.Values, key string, n int) {
+	if n > 0 {
+		q.Set(key, strconv.Itoa(n))
+	}
 }
 
 // renderSuccess writes a successful response body. JSON mode pretty-prints the

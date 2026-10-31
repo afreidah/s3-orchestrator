@@ -11,9 +11,9 @@
 package adminctl
 
 import (
-	"flag"
 	"net/url"
-	"strconv"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 )
 
 // runBulkRewrite parses the shared flag set and posts one pass. -max stops
@@ -21,20 +21,15 @@ import (
 // because converted and ratio-declined copies leave the selection. -backend
 // limits the pass to one backend's copies.
 func runBulkRewrite(args []string, c *client, name, path string) int {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags(name)
 	maxObjects := fs.Int(flagMax, 0, "Stop after rewriting this many objects (0 = the whole fleet)")
 	backend := fs.String(flagBackend, "", usageBackend)
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 
 	q := url.Values{}
-	if *maxObjects > 0 {
-		q.Set(flagMax, strconv.Itoa(*maxObjects))
-	}
-	if *backend != "" {
-		q.Set(queryBackend, *backend)
-	}
-	return c.post(withQuery(path, q), nil)
+	setPositive(q, flagMax, *maxObjects)
+	setIf(q, queryBackend, *backend)
+	return c.post(adminclient.WithQuery(path, q), nil)
 }

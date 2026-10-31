@@ -115,9 +115,3 @@ func New(d *Deps) *Services {
 		}),
 	}
 }
-
-// UpdateConfig replaces the configuration every service reads. Called by the
-// reload hook after a successful SIGHUP.
-func (s *Services) UpdateConfig(cfg *config.Config) {
-	s.Config.UpdateConfig(cfg)
-}

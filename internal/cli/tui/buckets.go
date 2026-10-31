@@ -19,11 +19,9 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
-
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
@@ -33,11 +31,9 @@ import (
 
 // bucketsView holds the state of the buckets pane.
 type bucketsView struct {
-	list        sortTable[bucketEntry] // one entry per declared bucket, both sources
-	notices     []adminapi.Notice      // what the merge of the two sources found
-	loading     bool                   // a fetch is in flight
-	unavailable string                 // set when the endpoint reports the feature is not wired
-	err         error                  // last fetch error, if any
+	loadState
+	list    sortTable[bucketEntry] // one entry per declared bucket, both sources
+	notices []adminapi.Notice      // what the merge of the two sources found
 }
 
 // bucketEntry is one bucket with the identities that reach it, resolved
@@ -57,20 +53,10 @@ func newBucketsView() bucketsView {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// bucketsLoadedMsg carries a successfully loaded provisioning snapshot.
-type bucketsLoadedMsg struct {
-	resp *adminapi.ProvisioningResponse
-}
-
-// bucketsErrMsg carries a failed provisioning fetch.
-type bucketsErrMsg struct{ err error }
-
 // loadBuckets returns a command that fetches the provisioning snapshot off the
 // main loop.
 func (m *model) loadBuckets() tea.Cmd {
-	return fetchCmd(m.client.GetProvisioning,
-		func(r *adminapi.ProvisioningResponse) tea.Msg { return bucketsLoadedMsg{r} },
-		func(err error) tea.Msg { return bucketsErrMsg{err} })
+	return fetchCmd(m.client.GetProvisioning)
 }
 
 // -------------------------------------------------------------------------
@@ -85,34 +71,11 @@ func (m *model) applyBuckets(resp *adminapi.ProvisioningResponse) {
 	}
 	m.buckets.list.setItems(entries)
 	m.buckets.notices = resp.Notices
-	m.buckets.loading = false
-	m.buckets.unavailable = ""
-	m.buckets.err = nil
+	m.buckets.loaded()
 }
 
-// applyBucketsErr records a failed fetch, separating a deployment whose store
-// half is not wired from a real failure.
-func (m *model) applyBucketsErr(err error) {
-	m.buckets.loading = false
-	m.buckets.unavailable = adminclient.UnavailableReason(err)
-	m.buckets.err = nil
-	if m.buckets.unavailable == "" {
-		m.buckets.err = err
-	}
-}
-
-// handleBucketsKey applies pane keys (back, reload) and delegates cursor
-// movement to the table.
+// handleBucketsKey moves the cursor through the bucket table.
 func (m *model) handleBucketsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc", "left", "h":
-		return m.navBack()
-	case "r":
-		m.buckets.loading = !m.buckets.list.loaded()
-		cmd := m.fetch(pollBuckets)
-		return m, cmd
-	}
-
 	cmd := m.buckets.list.update(key)
 	return m, cmd
 }
@@ -158,21 +121,12 @@ func rowsFromBuckets(buckets []bucketEntry) []table.Row {
 		b := &buckets[i]
 		rows = append(rows, table.Row{
 			b.Name,
-			multipartCap(b.MaxMultipartUploads),
+			output.MultipartCap(b.MaxMultipartUploads),
 			b.Source,
 			strings.Join(b.reachedBy, ", "),
 		})
 	}
 	return rows
-}
-
-// multipartCap renders a bucket's multipart limit, spelling out that zero means
-// no cap rather than no uploads.
-func multipartCap(n int) string {
-	if n == 0 {
-		return "unlimited"
-	}
-	return strconv.Itoa(n)
 }
 
 // usersReaching names the identities holding a grant on a bucket and what each
@@ -201,11 +155,6 @@ func grantOn(u *adminapi.User, bucket string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// bucketsPaneView composes the pane's full-screen layout.
-func (m *model) bucketsPaneView() string {
-	return m.frame(m.bucketsHeaderView(), m.hintFooter(), m.bucketsBody()...)
 }
 
 // bucketsHeaderView renders the title bar with the bucket count and how many

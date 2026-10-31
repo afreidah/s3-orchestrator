@@ -138,7 +138,7 @@ func TestStream_JSONPassthrough(t *testing.T) {
 `
 	srv, _ := ndjsonServer(t, lines)
 	var stdout bytes.Buffer
-	code := CommandWithFormat("backfill-checksums", nil, srv.URL, testCreds, output.FormatJSON, &stdout, new(bytes.Buffer))
+	code := CommandWithFormat("backfill-checksums", nil, testTarget(srv.URL), output.FormatJSON, &stdout, new(bytes.Buffer))
 	if code != 0 {
 		t.Fatalf("exit = %d", code)
 	}

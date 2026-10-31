@@ -20,13 +20,13 @@ import (
 // handleTraceSnapshot streams the FlightRecorder ring buffer as a binary
 // trace file. The file is whatever `go tool trace` accepts.
 func (h *Handler) handleTraceSnapshot(w http.ResponseWriter, r *http.Request) {
-	if h.flightRec == nil {
+	if h.d.FlightRec == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "flight recorder is disabled (set debug.flight_recorder.enabled: true)")
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Type", httputil.MediaOctetStream)
 	w.Header().Set("Content-Disposition", `attachment; filename="trace.bin"`)
-	if _, err := h.flightRec.WriteTo(w); err != nil {
+	if _, err := h.d.FlightRec.WriteTo(w); err != nil {
 		// Headers are likely already flushed; log instead of writing a
 		// late JSON error that would corrupt the binary stream.
 		h.log.WarnContext(r.Context(), "flight recorder snapshot failed", "error", err)

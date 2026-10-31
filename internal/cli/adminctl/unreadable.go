@@ -10,34 +10,28 @@
 package adminctl
 
 import (
-	"flag"
 	"net/http"
 	"net/url"
-	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdUnreadable implements `s3-orchestrator admin unreadable [-limit=N]
 // [-execute] [-batch-size=N]`.
 func cmdUnreadable(args []string, c *client) int {
-	fs := flag.NewFlagSet("unreadable", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("unreadable")
 	execute := fs.Bool("execute", false, "Delete every unreadable copy (default: list them)")
 	limit := fs.Int("limit", 0, "Maximum copies to list")
 	batchSize := fs.Int(flagBatchSize, 0, "Copies purged per pass")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 	q := url.Values{}
 	if *execute {
-		if *batchSize > 0 {
-			q.Set(queryBatch, strconv.Itoa(*batchSize))
-		}
-		return c.stream(http.MethodPost, withQuery(adminapi.PathUnreadable, q))
+		setPositive(q, queryBatch, *batchSize)
+		return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathUnreadable, q))
 	}
-	if *limit > 0 {
-		q.Set("limit", strconv.Itoa(*limit))
-	}
-	return c.get(withQuery(adminapi.PathUnreadable, q), nil)
+	setPositive(q, "limit", *limit)
+	return c.get(adminclient.WithQuery(adminapi.PathUnreadable, q), nil)
 }

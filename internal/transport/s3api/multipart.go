@@ -65,16 +65,6 @@ type completeMultipartUploadResult struct {
 	ETag    string   `xml:"ETag"`
 }
 
-// copyPartResult is the XML response for UploadPartCopy. UploadPart answers
-// with a bare ETag header; the copy form is specified to return the ETag in a
-// document, which is what SDKs read the part's validator out of.
-type copyPartResult struct {
-	XMLName      xml.Name `xml:"CopyPartResult"`
-	Xmlns        string   `xml:"xmlns,attr"`
-	ETag         string   `xml:"ETag"`
-	LastModified string   `xml:"LastModified"`
-}
-
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
 	XMLName              xml.Name   `xml:"ListPartsResult"`
@@ -264,12 +254,7 @@ func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter
 		return writeStorageError(w, err, "Failed to copy part"), err
 	}
 
-	result := copyPartResult{
-		Xmlns:        s3XMLNS,
-		ETag:         etag,
-		LastModified: head.LastModified.UTC().Format(time.RFC3339),
-	}
-	return respondXML(w, result)
+	return respondCopy(w, "CopyPartResult", etag, head.LastModified)
 }
 
 // handleUploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=X.

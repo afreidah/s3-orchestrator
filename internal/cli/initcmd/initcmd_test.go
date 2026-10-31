@@ -13,6 +13,7 @@ package initcmd
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func TestScanDefault_ReturnsDefaultWhenEmpty(t *testing.T) {
 	}
 	for _, tt := range tests {
 		s := bufio.NewScanner(strings.NewReader(tt.input))
-		if got := scanDefault(s, tt.fallback); got != tt.want {
+		if got := scanDefault(s, io.Discard, "prompt: ", tt.fallback); got != tt.want {
 			t.Errorf("scanDefault(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}

@@ -41,17 +41,17 @@ const (
 // handleCleanupDLQ lists dead-lettered cleanups plus the total DLQ depth,
 // optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
-	backend := r.URL.Query().Get("backend")
+	backend := r.URL.Query().Get(paramBackend)
 	limit := httputil.QueryLimit(r.URL.Query().Get("limit"), defaultCleanupDLQLimit, maxCleanupDLQLimit)
 
-	depth, err := h.cleanup.CleanupDLQDepth(r.Context())
+	depth, err := h.d.Cleanup.CleanupDLQDepth(r.Context())
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to fetch cleanup dlq depth", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to fetch cleanup dlq depth", err)
 		return
 	}
-	items, err := h.cleanup.ListCleanupDLQ(r.Context(), backend, limit)
+	items, err := h.d.Cleanup.ListCleanupDLQ(r.Context(), backend, limit)
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to list cleanup dlq", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to list cleanup dlq", err)
 		return
 	}
 
@@ -64,11 +64,11 @@ func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
 // handleCleanupDLQRequeue moves dead-lettered rows back into cleanup_queue so
 // the worker retries them, optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQRequeue(w http.ResponseWriter, r *http.Request) {
-	backend := r.URL.Query().Get("backend")
+	backend := r.URL.Query().Get(paramBackend)
 
-	n, err := h.cleanup.RequeueCleanupDLQ(r.Context(), backend)
+	n, err := h.d.Cleanup.RequeueCleanupDLQ(r.Context(), backend)
 	if err != nil {
-		h.internalError(r.Context(), w, "failed to requeue cleanup dlq", err)
+		httputil.InternalError(r.Context(), h.log, w, "failed to requeue cleanup dlq", err)
 		return
 	}
 

@@ -101,17 +101,6 @@ type Server struct {
 	log           *slog.Logger // scoped to logfmt.Component("s3_server")
 }
 
-// logger returns the component-scoped logger, falling back to
-// slog.Default() when the server was constructed by a test that did
-// not set the log field. The handler chain still applies (ErrAttrHandler
-// + Component scoping comes from the runtime default).
-func (s *Server) logger() *slog.Logger {
-	if s.log == nil {
-		return slog.Default()
-	}
-	return s.log
-}
-
 // NewServer creates a Server with a stable start timestamp.
 func NewServer(objects ObjectOps, multipartMgr MultipartOps, maxObjectSize int64) *Server {
 	must.NotNil("objects", objects)
@@ -153,7 +142,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	user, streamMat, err := s.GetBucketAuth().Authenticate(r)
 	if err != nil {
-		s.rejectAuth(ctx, w, r, method, start, err)
+		s.rejectAuth(ctx, w, r, start, err)
 		return
 	}
 	// Set before any work happens, so every audit entry this request produces
@@ -171,16 +160,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	bucket, key, ok := parsePath(r.URL.Path)
 	if !ok {
-		s.rejectInvalidPath(ctx, w, r, method, start)
+		s.reject(ctx, w, r, start, &refusal{
+			status: http.StatusBadRequest, event: "s3.InvalidPath", code: "InvalidRequest", msg: "Invalid path format",
+		})
 		return
 	}
 	// Named before dispatch rather than reported after it. An authorization
 	// check has nowhere to sit if the operation is only known once the handler
 	// has already written the response.
 	act := Classify(r, key)
-	if !s.authorize(ctx, w, r, &authRequest{
-		method: method, start: start, user: user, bucket: bucket, act: act,
-	}) {
+	if !s.authorize(ctx, w, r, &authRequest{start: start, user: user, bucket: bucket, act: act}) {
 		return
 	}
 
@@ -196,20 +185,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	defer span.End()
 
-	rejectMethod := func(msg string) {
-		s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
-		audit.Log(ctx, "s3.MethodNotAllowed",
-			slog.String("method", method),
-			slog.String("path", r.URL.Path),
-			slog.String("client_addr", r.RemoteAddr),
-			slog.String("bucket", bucket),
-			slog.Int("status", http.StatusMethodNotAllowed),
-			slog.Duration("duration", time.Since(start)),
-		)
-		writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", msg)
-		observe.MarkSpanError(span, msg)
-	}
-
 	var res routed
 	if key == "" {
 		res, err = s.routeBucketRequest(ctx, w, r, act, bucket)
@@ -217,11 +192,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		res, err = s.routeObjectRequest(ctx, w, r, act, bucket, key, internalKey)
 	}
 	if !res.supported {
+		msg := "Method not supported"
 		if key == "" {
-			rejectMethod("Method not supported for bucket")
-		} else {
-			rejectMethod("Method not supported")
+			msg = "Method not supported for bucket"
 		}
+		s.reject(ctx, w, r, start, &refusal{
+			status: http.StatusMethodNotAllowed, event: "s3.MethodNotAllowed", code: "MethodNotAllowed", msg: msg,
+			attrs: []slog.Attr{slog.String("bucket", bucket)},
+		})
+		observe.MarkSpanError(span, msg)
 		return
 	}
 
@@ -251,24 +230,49 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// refusal is a request refused before it reaches a handler: the status and S3
+// error it answers with, and the audit event with the fields it records beyond
+// the request's own.
+type refusal struct {
+	status int
+	event  string
+	code   string
+	msg    string
+	attrs  []slog.Attr
+}
+
+// accessDenied is the refusal for event as a 403, the answer S3 gives whether
+// the credential failed or its grant did not reach.
+func accessDenied(event string, attrs ...slog.Attr) *refusal {
+	return &refusal{status: http.StatusForbidden, event: event, code: s3CodeAccessDenied, msg: "Access denied", attrs: attrs}
+}
+
+// reject records, audits and answers a refused request. Every refusal's audit
+// entry carries the method, path and client address first and the status and
+// duration last, so one query reads them all the same way.
+func (s *Server) reject(ctx context.Context, w http.ResponseWriter, r *http.Request, start time.Time, f *refusal) {
+	s.recordRequest(r.Method, f.status, start, 0, 0)
+	attrs := append([]slog.Attr{
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+		slog.String("client_addr", r.RemoteAddr),
+	}, f.attrs...)
+	audit.Log(ctx, f.event, append(attrs,
+		slog.Int("status", f.status),
+		slog.Duration("duration", time.Since(start)),
+	)...)
+	writeS3Error(w, f.status, f.code, f.msg)
+}
+
 // rejectAuth writes a 403 AccessDenied response after authentication
 // failure and emits the matching audit log.
-func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, err error) {
-	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
+func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.Request, start time.Time, err error) {
 	slog.LogAttrs(ctx, slog.LevelWarn, "S3 auth failure",
-		slog.String("method", method),
+		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),
 		slog.String("client_addr", r.RemoteAddr),
 		logfmt.Err(err))
-	audit.Log(ctx, "s3.AuthFailure",
-		slog.String("method", method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		logfmt.Err(err),
-		slog.Int("status", http.StatusForbidden),
-		slog.Duration("duration", time.Since(start)),
-	)
-	writeAccessDenied(w)
+	s.reject(ctx, w, r, start, accessDenied("s3.AuthFailure", logfmt.Err(err)))
 }
 
 // serveListBuckets handles the special-case GET / route, which enumerates every
@@ -296,47 +300,8 @@ func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r 
 	)
 }
 
-// rejectInvalidPath writes a 400 InvalidRequest for a path that does not
-// parse as bucket[/key].
-func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time) {
-	s.recordRequest(method, http.StatusBadRequest, start, 0, 0)
-	audit.Log(ctx, "s3.InvalidPath",
-		slog.String("method", method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.Int("status", http.StatusBadRequest),
-		slog.Duration("duration", time.Since(start)),
-	)
-	writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Invalid path format")
-}
-
-// rejectBucketDenied writes a 403 AccessDenied when the authenticated user holds
-// no grant on the bucket the path names.
-func (s *Server) rejectBucketDenied(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, user *auth.User, bucket string) {
-	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-	s.logger().WarnContext(ctx, "bucket not granted",
-		"method", method,
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-		"user", user.ID,
-		"requested", bucket,
-	)
-	audit.Log(ctx, "s3.BucketDenied",
-		slog.String("method", method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.String("requested_bucket", bucket),
-		slog.Int("status", http.StatusForbidden),
-		slog.Duration("duration", time.Since(start)),
-	)
-	writeAccessDenied(w)
-}
-
 // authRequest carries what an authorization decision reads about a request.
-// Bundled because the two refusals below need the same set and passing them
-// positionally at three call sites is where they get transposed.
 type authRequest struct {
-	method string
 	start  time.Time
 	user   *auth.User
 	bucket string
@@ -346,46 +311,39 @@ type authRequest struct {
 // authorize refuses a caller that does not reach the bucket, and one whose
 // grant does not carry what the operation needs. Reports whether the request
 // may proceed; the refusal is already written when it may not. The two cases
-// are refused and audited separately.
+// are refused and audited separately, the second recording the required and
+// held permissions.
 func (s *Server) authorize(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest) bool {
-	if !a.user.CanReach(a.bucket) {
-		s.rejectBucketDenied(ctx, w, r, a.method, a.start, a.user, a.bucket)
+	held, reached := a.user.Permissions(a.bucket)
+	if !reached {
+		s.log.WarnContext(ctx, "bucket not granted",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"client_addr", r.RemoteAddr,
+			"user", a.user.ID,
+			"requested", a.bucket,
+		)
+		s.reject(ctx, w, r, a.start, accessDenied("s3.BucketDenied", slog.String("requested_bucket", a.bucket)))
 		return false
 	}
-	if want := RequiredPermissions(a.act); !a.user.Can(a.bucket, want) {
-		s.rejectActionDenied(ctx, w, r, a, want)
+	if want := RequiredPermissions(a.act); !held.Has(want) {
+		s.log.WarnContext(ctx, "operation not permitted by grant",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"client_addr", r.RemoteAddr,
+			"user", a.user.ID,
+			"bucket", a.bucket,
+			"operation", string(a.act),
+		)
+		s.reject(ctx, w, r, a.start, accessDenied("s3.ActionDenied",
+			slog.String("bucket", a.bucket),
+			slog.String("operation", string(a.act)),
+			slog.String("required", want.String()),
+			slog.String("held", held.String()),
+		))
 		return false
 	}
 	return true
-}
-
-// rejectActionDenied writes a 403 for a caller that reaches the bucket but
-// whose grant does not carry what the operation needs. Its audit event is
-// separate from the bucket refusal and records the required and held
-// permissions.
-func (s *Server) rejectActionDenied(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest, want core.PermissionSet) {
-	held, _ := a.user.Permissions(a.bucket)
-	s.recordRequest(a.method, http.StatusForbidden, a.start, 0, 0)
-	s.logger().WarnContext(ctx, "operation not permitted by grant",
-		"method", a.method,
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-		"user", a.user.ID,
-		"bucket", a.bucket,
-		"operation", string(a.act),
-	)
-	audit.Log(ctx, "s3.ActionDenied",
-		slog.String("method", a.method),
-		slog.String("path", r.URL.Path),
-		slog.String("client_addr", r.RemoteAddr),
-		slog.String("bucket", a.bucket),
-		slog.String("operation", string(a.act)),
-		slog.String("required", want.String()),
-		slog.String("held", held.String()),
-		slog.Int("status", http.StatusForbidden),
-		slog.Duration("duration", time.Since(a.start)),
-	)
-	writeAccessDenied(w)
 }
 
 // routed is what a dispatcher reports about the request it handled: the

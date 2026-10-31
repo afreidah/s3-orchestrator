@@ -46,7 +46,7 @@ func TestOpen_ObjectInspectsDirDescends(t *testing.T) {
 	}
 	var sawLocations bool
 	for _, c := range batch {
-		if msg, isLoc := c().(locationsLoadedMsg); isLoc && msg.resp.Key == "file" {
+		if msg, isLoc := c().(loadedMsg[*adminapi.ObjectLocationsResponse]); isLoc && msg.resp.Key == "file" {
 			sawLocations = true
 		}
 	}
@@ -83,8 +83,8 @@ func TestApplyLocations(t *testing.T) {
 func TestLoadLocations_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadLocations("k")
-	if _, ok := cmd().(locationsErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want locationsErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.ObjectLocationsResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ObjectLocationsResponse]", cmd())
 	}
 }
 
@@ -92,7 +92,7 @@ func TestUpdate_LocationsMsgs(t *testing.T) {
 	t.Parallel()
 	// a loaded ledger folds into the inspector
 	m := initialModel(&fakeLister{})
-	next, _ := m.Update(locationsLoadedMsg{resp: &adminapi.ObjectLocationsResponse{
+	next, _ := m.Update(loadedMsg[*adminapi.ObjectLocationsResponse]{resp: &adminapi.ObjectLocationsResponse{
 		Key: "k", Locations: []adminapi.ObjectLocation{{Backend: "b1"}},
 	}})
 	if nm := next.(*model); len(nm.insp.locations) != 1 {
@@ -102,7 +102,7 @@ func TestUpdate_LocationsMsgs(t *testing.T) {
 	// a fetch error surfaces on the inspector, clearing loading
 	m = initialModel(&fakeLister{})
 	m.insp.loading = true
-	next, _ = m.Update(locationsErrMsg{err: errors.New("boom")})
+	next, _ = m.Update(loadErrMsg[*adminapi.ObjectLocationsResponse]{err: errors.New("boom")})
 	if nm := next.(*model); nm.insp.err == nil || nm.insp.loading {
 		t.Errorf("err: err=%v loading=%v", next.(*model).insp.err, next.(*model).insp.loading)
 	}

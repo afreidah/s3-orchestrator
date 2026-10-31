@@ -131,7 +131,7 @@ func TestStatus_JSONMode(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t)
 	var stdout bytes.Buffer
-	if code := CommandWithFormat("status", nil, srv.URL, testCreds, output.FormatJSON, &stdout, new(bytes.Buffer)); code != 0 {
+	if code := CommandWithFormat("status", nil, testTarget(srv.URL), output.FormatJSON, &stdout, new(bytes.Buffer)); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	// JSON mode preserves raw bytes (no humanizing, keys intact).

@@ -70,25 +70,25 @@ func TestConfigKeys_ReloadAndBack(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.section = sectionConfig
 
-	_, cmd := m.handleConfigKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	_, cmd := m.handlePaneKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	if !m.config.loading || cmd == nil {
 		t.Error("r did not start a reload")
 	}
-	if _, ok := cmd().(configLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want configLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.ConfigResponse]); !ok {
+		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.ConfigResponse]", cmd())
 	}
 
-	m.handleConfigKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus {
 		t.Error("esc did not return focus to the nav")
 	}
 }
 
-// TestLoadConfig_Error asserts a failed fetch becomes configErrMsg.
+// TestLoadConfig_Error asserts a failed fetch becomes loadErrMsg[*adminapi.ConfigResponse].
 func TestLoadConfig_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadConfig()
-	if _, ok := cmd().(configErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want configErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.ConfigResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ConfigResponse]", cmd())
 	}
 }

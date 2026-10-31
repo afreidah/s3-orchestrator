@@ -49,7 +49,7 @@ func (s dlqErrStore) RequeueCleanupDLQ(context.Context, string) (int64, error) {
 
 // handlerWithCleanup builds a minimal handler wired to the given cleanup store.
 func handlerWithCleanup(c core.CleanupStore) *Handler {
-	return &Handler{log: slog.Default(), cleanup: c}
+	return &Handler{log: slog.Default(), d: Deps{Cleanup: c}}
 }
 
 // TestHandleCleanupDLQ_ListReturnsTypedShape asserts the list endpoint answers

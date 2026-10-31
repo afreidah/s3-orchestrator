@@ -177,23 +177,18 @@ func mergeBuckets(v *View, cfgBuckets []config.BucketConfig, stored []core.Bucke
 				Kind:   NoticeBucketShadowed,
 				Detail: fmt.Sprintf("stored bucket %q is shadowed by a config bucket", b.Name),
 			})
-			v.Shadowed = append(v.Shadowed, Bucket{
-				Name:                b.Name,
-				MaxMultipartUploads: b.MaxMultipartUploads,
-				CORS:                b.CORS,
-				Source:              SourceStore,
-			})
+			v.Shadowed = append(v.Shadowed, storedBucket(b))
 			continue
 		}
 		declared[b.Name] = struct{}{}
-		v.Buckets = append(v.Buckets, Bucket{
-			Name:                b.Name,
-			MaxMultipartUploads: b.MaxMultipartUploads,
-			CORS:                b.CORS,
-			Source:              SourceStore,
-		})
+		v.Buckets = append(v.Buckets, storedBucket(b))
 	}
 	return declared
+}
+
+// storedBucket is a bucket the store declares, as the merged view carries it.
+func storedBucket(b *core.Bucket) Bucket {
+	return Bucket{Name: b.Name, MaxMultipartUploads: b.MaxMultipartUploads, CORS: b.CORS, Source: SourceStore}
 }
 
 // mergeConfigUsers turns each config-declared credential into a user reaching

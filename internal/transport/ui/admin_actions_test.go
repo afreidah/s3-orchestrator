@@ -308,76 +308,45 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 // -------------------------------------------------------------------------
-// Per-wrapper smoke coverage. Each handleAPI* wrapper is a thin shim over
-// startAdminAction (or writeAdminActionStatus) that closes over a fixed op
-// name and one operation. Driving every wrapper's guard paths keeps the
-// wrapper lines themselves covered; the runs themselves are exercised in
+// Per-action smoke coverage. Every action's trigger and poll come from
+// actionRoutes; driving each one's guard paths through the route table keeps
+// every table entry covered. The runs themselves are exercised in
 // admin_actions_integration_test.go.
 // -------------------------------------------------------------------------
 
-// TestAdminActionWrappers_IdleBeforeFirstRun asserts every status wrapper
-// reports "idle" before its operation has ever been started, which is what
-// the dashboard polls into on a fresh page load.
-func TestAdminActionWrappers_IdleBeforeFirstRun(t *testing.T) {
+// actionPaths is every async action's trigger path.
+var actionPaths = []string{
+	"/api/rebalance", "/api/clean-excess", "/api/lifecycle", "/api/replicate", "/api/scrub",
+	"/api/backfill-checksums", "/api/encrypt-existing", "/api/compress-existing", "/api/decompress-existing",
+}
+
+// TestAdminActions_IdleBeforeFirstRun asserts every status poll reports "idle"
+// before its operation has ever been started, which is what the dashboard
+// polls into on a fresh page load.
+func TestAdminActions_IdleBeforeFirstRun(t *testing.T) {
 	t.Parallel()
-
-	cases := []struct {
-		name        string
-		triggerPath string
-		statusPath  string
-		trigger     func(*Handler, http.ResponseWriter, *http.Request)
-		status      func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{"replicate", "/api/replicate", "/api/replicate/status",
-			(*Handler).handleAPIReplicate, (*Handler).handleAPIReplicateStatus},
-		{"scrub", "/api/scrub", "/api/scrub/status",
-			(*Handler).handleAPIScrub, (*Handler).handleAPIScrubStatus},
-		{"backfill-checksums", "/api/backfill-checksums", "/api/backfill-checksums/status",
-			(*Handler).handleAPIBackfillChecksums, (*Handler).handleAPIBackfillChecksumsStatus},
-		{"encrypt-existing", "/api/encrypt-existing", "/api/encrypt-existing/status",
-			(*Handler).handleAPIEncryptExisting, (*Handler).handleAPIEncryptExistingStatus},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, path := range actionPaths {
+		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 			h := &Handler{log: slog.Default()}
-
-			statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.statusPath, nil)
 			statusW := httptest.NewRecorder()
-			tc.status(h, statusW, statusReq)
-			body := decodeBody(t, statusW)
-			if body["status"] != "idle" {
+			serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path+"/status", nil))
+			if body := decodeBody(t, statusW); body["status"] != "idle" {
 				t.Errorf("status body = %v, want idle", body)
 			}
 		})
 	}
 }
 
-// TestAdminActionWrappers_MethodNotAllowed asserts every trigger wrapper
-// rejects non-POST requests before reaching the dispatcher's other
-// guards.
-func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
+// TestAdminActions_MethodNotAllowed asserts every trigger rejects non-POST
+// requests before reaching the dispatcher's other guards.
+func TestAdminActions_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-
-	cases := []struct {
-		name    string
-		path    string
-		trigger func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{"replicate", "/api/replicate", (*Handler).handleAPIReplicate},
-		{"scrub", "/api/scrub", (*Handler).handleAPIScrub},
-		{"backfill-checksums", "/api/backfill-checksums", (*Handler).handleAPIBackfillChecksums},
-		{"encrypt-existing", "/api/encrypt-existing", (*Handler).handleAPIEncryptExisting},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, path := range actionPaths {
+		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{log: slog.Default()}
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil)
 			w := httptest.NewRecorder()
-			tc.trigger(h, w, req)
+			serveRoute(&Handler{log: slog.Default()}, w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
 			if w.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 			}
@@ -392,7 +361,7 @@ func lifecycleHandler(t *testing.T, stub *uiExpiryStub) *Handler {
 	if stub != nil {
 		deps.Expiry = stub
 	}
-	return &Handler{log: slog.Default(), expiry: ops.NewLifecycle(deps)}
+	return &Handler{log: slog.Default(), d: Deps{Expiry: ops.NewLifecycle(deps)}}
 }
 
 // uiExpiryStub stands in for *expiry.Manager with a fixed outcome.
@@ -424,7 +393,7 @@ func TestHandleAPILifecycle_ReportsCountsThroughStatus(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
 	w := httptest.NewRecorder()
-	h.handleAPILifecycle(w, req)
+	serveRoute(h, w, req)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("trigger status = %d, want 202", w.Code)
 	}
@@ -435,7 +404,7 @@ func TestHandleAPILifecycle_ReportsCountsThroughStatus(t *testing.T) {
 	}
 
 	statusW := httptest.NewRecorder()
-	h.handleAPILifecycleStatus(statusW, httptest.NewRequestWithContext(
+	serveRoute(h, statusW, httptest.NewRequestWithContext(
 		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
 
 	got := decodeBody(t, statusW)
@@ -459,7 +428,7 @@ func TestHandleAPILifecycle_NoRulesSurfacesTheReason(t *testing.T) {
 	h := lifecycleHandler(t, &uiExpiryStub{})
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
-	h.handleAPILifecycle(httptest.NewRecorder(), req)
+	serveRoute(h, httptest.NewRecorder(), req)
 
 	res := waitForResult(t, h, opLifecycle)
 	if res.Skipped == "" {
@@ -467,7 +436,7 @@ func TestHandleAPILifecycle_NoRulesSurfacesTheReason(t *testing.T) {
 	}
 
 	statusW := httptest.NewRecorder()
-	h.handleAPILifecycleStatus(statusW, httptest.NewRequestWithContext(
+	serveRoute(h, statusW, httptest.NewRequestWithContext(
 		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
 
 	got := decodeBody(t, statusW)

@@ -45,7 +45,7 @@ func TestTraceSnapshot_Disabled(t *testing.T) {
 func TestTraceSnapshot_Success(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.flightRec = &fakeWriterTo{payload: []byte("trace-bytes")}
+	h.d.FlightRec = &fakeWriterTo{payload: []byte("trace-bytes")}
 	w := serveOn(t, h, http.MethodPost, "/admin/api/trace/snapshot")
 
 	if w.Code != http.StatusOK {
@@ -67,7 +67,7 @@ func TestTraceSnapshot_Success(t *testing.T) {
 func TestTraceSnapshot_WriteToError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.flightRec = &fakeWriterTo{err: errors.New("simulated WriteTo failure")}
+	h.d.FlightRec = &fakeWriterTo{err: errors.New("simulated WriteTo failure")}
 	w := serveOn(t, h, http.MethodPost, "/admin/api/trace/snapshot")
 
 	if w.Body.Len() != 0 {

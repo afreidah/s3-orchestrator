@@ -13,6 +13,7 @@ package output
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -91,6 +92,15 @@ func (c Ceiling) LimitText() string {
 		return NoLimit
 	}
 	return c.Format(c.Limit)
+}
+
+// MultipartCap renders a bucket's cap on concurrent multipart uploads, where
+// zero means it has none.
+func MultipartCap(n int) string {
+	if n == 0 {
+		return "unlimited"
+	}
+	return strconv.Itoa(n)
 }
 
 // Figures renders what has been used against the limit, as "used / limit".

@@ -85,25 +85,18 @@ func confirmOverwrite(configPath string, scanner *bufio.Scanner, out io.Writer) 
 // promptDatabase collects database driver + connection inputs.
 func promptDatabase(scanner *bufio.Scanner, out io.Writer, params *Params) {
 	fmt.Fprintln(out, "\n--- Database ---")
-	fmt.Fprint(out, "Database driver (sqlite/postgres) [sqlite]: ")
-	params.Driver = scanDefault(scanner, "sqlite")
+	params.Driver = scanDefault(scanner, out, "Database driver (sqlite/postgres) [sqlite]: ", "sqlite")
 
 	if params.Driver == "postgres" {
-		fmt.Fprint(out, "PostgreSQL host [localhost]: ")
-		params.DBHost = scanDefault(scanner, "localhost")
-		fmt.Fprint(out, "PostgreSQL port [5432]: ")
-		params.DBPort = scanDefault(scanner, "5432")
-		fmt.Fprint(out, "Database name [s3_orchestrator]: ")
-		params.DBName = scanDefault(scanner, "s3_orchestrator")
-		fmt.Fprint(out, "Database user [s3_orchestrator]: ")
-		params.DBUser = scanDefault(scanner, "s3_orchestrator")
-		fmt.Fprint(out, "Database password: ")
-		params.DBPassword = scanDefault(scanner, "")
+		params.DBHost = scanDefault(scanner, out, "PostgreSQL host [localhost]: ", "localhost")
+		params.DBPort = scanDefault(scanner, out, "PostgreSQL port [5432]: ", "5432")
+		params.DBName = scanDefault(scanner, out, "Database name [s3_orchestrator]: ", "s3_orchestrator")
+		params.DBUser = scanDefault(scanner, out, "Database user [s3_orchestrator]: ", "s3_orchestrator")
+		params.DBPassword = scanDefault(scanner, out, "Database password: ", "")
 		return
 	}
 	params.Driver = "sqlite"
-	fmt.Fprint(out, "SQLite database path [s3-orchestrator.db]: ")
-	params.DBPath = scanDefault(scanner, "s3-orchestrator.db")
+	params.DBPath = scanDefault(scanner, out, "SQLite database path [s3-orchestrator.db]: ", "s3-orchestrator.db")
 }
 
 // promptBackends collects one or more backend entries until the user
@@ -122,28 +115,18 @@ func promptBackends(scanner *bufio.Scanner, out io.Writer, params *Params) {
 // promptSingleBackend collects the fields for one backend entry.
 func promptSingleBackend(scanner *bufio.Scanner, out io.Writer) Backend {
 	var be Backend
-	fmt.Fprint(out, "Backend name: ")
 	be.Name = scanRequired(scanner, out, "Backend name: ")
-	fmt.Fprint(out, "S3 endpoint URL: ")
 	be.Endpoint = scanRequired(scanner, out, "S3 endpoint URL: ")
-	fmt.Fprint(out, "S3 bucket name: ")
 	be.Bucket = scanRequired(scanner, out, "S3 bucket name: ")
-	fmt.Fprint(out, "Access key ID: ")
 	be.AccessKeyID = scanRequired(scanner, out, "Access key ID: ")
-	fmt.Fprint(out, "Secret access key: ")
 	be.SecretAccessKey = scanRequired(scanner, out, "Secret access key: ")
-	fmt.Fprint(out, "Force path style? (yes for MinIO/OCI) [no]: ")
-	be.ForcePathStyle = strings.EqualFold(scanDefault(scanner, "no"), "yes")
+	be.ForcePathStyle = strings.EqualFold(scanDefault(scanner, out, "Force path style? (yes for MinIO/OCI) [no]: ", "no"), "yes")
 
 	fmt.Fprintln(out, "\nQuotas and limits (0 = unlimited):")
-	fmt.Fprint(out, "  Storage quota bytes [0]: ")
-	be.QuotaBytes = scanDefault(scanner, "0")
-	fmt.Fprint(out, "  Monthly API request limit [0]: ")
-	be.APIRequestLimit = scanDefault(scanner, "0")
-	fmt.Fprint(out, "  Monthly egress byte limit [0]: ")
-	be.EgressByteLimit = scanDefault(scanner, "0")
-	fmt.Fprint(out, "  Monthly ingress byte limit [0]: ")
-	be.IngressByteLimit = scanDefault(scanner, "0")
+	be.QuotaBytes = scanDefault(scanner, out, "  Storage quota bytes [0]: ", "0")
+	be.APIRequestLimit = scanDefault(scanner, out, "  Monthly API request limit [0]: ", "0")
+	be.EgressByteLimit = scanDefault(scanner, out, "  Monthly egress byte limit [0]: ", "0")
+	be.IngressByteLimit = scanDefault(scanner, out, "  Monthly ingress byte limit [0]: ", "0")
 	return be
 }
 
@@ -152,11 +135,8 @@ func promptBuckets(scanner *bufio.Scanner, out io.Writer, params *Params) {
 	fmt.Fprintln(out, "\n--- Virtual Bucket ---")
 	for {
 		var bkt Bucket
-		fmt.Fprint(out, "Bucket name: ")
 		bkt.Name = scanRequired(scanner, out, "Bucket name: ")
-		fmt.Fprint(out, "Client access key ID: ")
 		bkt.AccessKeyID = scanRequired(scanner, out, "Client access key ID: ")
-		fmt.Fprint(out, "Client secret access key: ")
 		bkt.SecretAccessKey = scanRequired(scanner, out, "Client secret access key: ")
 		params.Buckets = append(params.Buckets, bkt)
 		fmt.Fprint(out, "Add another bucket? [y/N] ")
@@ -290,8 +270,10 @@ func GenerateConfig(params *Params) (string, error) {
 // INPUT HELPERS
 // -------------------------------------------------------------------------
 
-// scanDefault reads a line from the scanner, returning defaultVal if empty.
-func scanDefault(scanner *bufio.Scanner, defaultVal string) string {
+// scanDefault prints prompt and reads a line from the scanner, returning
+// defaultVal if it is empty.
+func scanDefault(scanner *bufio.Scanner, out io.Writer, prompt, defaultVal string) string {
+	fmt.Fprint(out, prompt)
 	if scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
 		if text != "" {
@@ -301,16 +283,17 @@ func scanDefault(scanner *bufio.Scanner, defaultVal string) string {
 	return defaultVal
 }
 
-// scanRequired reads a line from the scanner, re-prompting until non-empty.
+// scanRequired prints prompt and reads a line from the scanner, prompting
+// again until it is non-empty.
 func scanRequired(scanner *bufio.Scanner, out io.Writer, prompt string) string {
 	for {
+		fmt.Fprint(out, prompt)
 		if scanner.Scan() {
 			text := strings.TrimSpace(scanner.Text())
 			if text != "" {
 				return text
 			}
 		}
-		fmt.Fprint(out, prompt)
 	}
 }
 

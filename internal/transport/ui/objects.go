@@ -13,22 +13,17 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
 // -------------------------------------------------------------------------
@@ -40,7 +35,7 @@ import (
 // below it, the prefix's bucket must grant list.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
-	if prefix != "" && !h.validBucketPrefix(prefix) {
+	if prefix != "" && !h.d.Buckets.HasPrefix(prefix) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
 		return
 	}
@@ -50,16 +45,13 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	startAfter := r.URL.Query().Get("startAfter")
 	maxKeys := httputil.QueryLimit(r.URL.Query().Get("maxKeys"), 200, 200)
 
-	result, err := h.dashboardOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
+	result, err := h.d.Dashboard.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list children")
+		httputil.InternalError(r.Context(), h.log, w, "failed to list children", err, "prefix", prefix)
 		return
 	}
 	if prefix == "" {
-		result.Entries = slices.DeleteFunc(result.Entries, func(e core.DirEntry) bool {
-			return !canList(r.Context(), strings.TrimSuffix(e.Name, "/"))
-		})
+		result.Entries = listable(r.Context(), result.Entries)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, result)
@@ -78,20 +70,16 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Key string `json:"key"`
 	}
-	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
 	if !h.authorizeKey(w, r, req.Key, core.PermDelete) {
 		return
 	}
+	defer observeDuration("DELETE", time.Now())
 
-	opStart := time.Now()
-	defer func() {
-		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
-	}()
-
-	if err := h.objects.Delete(r.Context(), req.Key); err != nil {
-		h.writeObjectError(w, r, err, "delete failed", req.Key)
+	if err := h.d.Objects.Delete(r.Context(), req.Key); err != nil {
+		httputil.WriteObjectError(w, r, h.log, err, "delete failed", req.Key)
 		return
 	}
 
@@ -107,21 +95,17 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Prefix string `json:"prefix"`
 	}
-	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
 	if !h.authorizeKey(w, r, req.Prefix, core.PermDelete) {
 		return
 	}
+	defer observeDuration("DELETE", time.Now())
 
-	opStart := time.Now()
-	defer func() {
-		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
-	}()
-
-	res, err := h.objects.DeletePrefix(r.Context(), req.Prefix, nil)
+	res, err := h.d.Objects.DeletePrefix(r.Context(), req.Prefix, nil)
 	if err != nil {
-		h.writeObjectError(w, r, err, "failed to list objects", req.Prefix)
+		httputil.WriteObjectError(w, r, h.log, err, "failed to list objects", req.Prefix)
 		return
 	}
 
@@ -163,15 +147,11 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	defer observeDuration("PUT", time.Now())
 
-	opStart := time.Now()
-	defer func() {
-		telemetry.RequestDuration.WithLabelValues("PUT").Observe(time.Since(opStart).Seconds())
-	}()
-
-	etag, err := h.objects.Put(r.Context(), key, file, header.Size, uploadContentType(header))
+	etag, err := h.d.Objects.Put(r.Context(), key, file, header.Size, uploadContentType(header))
 	if err != nil {
-		h.writeObjectError(w, r, err, "upload failed", key)
+		httputil.WriteObjectError(w, r, h.log, err, "upload failed", key)
 		return
 	}
 
@@ -182,7 +162,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 // to the filename extension when the browser sent nothing useful.
 func uploadContentType(header *multipart.FileHeader) string {
 	contentType := header.Header.Get(headerContentType)
-	if contentType == "" || contentType == "application/octet-stream" {
+	if contentType == "" || contentType == httputil.MediaOctetStream {
 		if ct := mime.TypeByExtension(filepath.Ext(header.Filename)); ct != "" {
 			return ct
 		}
@@ -201,34 +181,17 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.objects.Get(r.Context(), key)
+	result, err := h.d.Objects.Get(r.Context(), key)
 	if err != nil {
-		h.writeObjectError(w, r, err, "download failed", key)
+		httputil.WriteObjectError(w, r, h.log, err, "download failed", key)
 		return
 	}
 	defer result.Body.Close()
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(key)))
-	w.Header().Set(headerContentType, "application/octet-stream")
-	if result.Size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
-	}
-
-	_, _ = bufpool.Copy(w, result.Body)
+	_ = httputil.ServeAttachment(w, key, result.Size, result.Body)
 }
 
-// writeObjectError renders a failed object operation, keeping the rejection
-// reasons the dashboard shows distinct from a server fault.
-func (h *Handler) writeObjectError(w http.ResponseWriter, r *http.Request, err error, msg, key string) {
-	switch {
-	case errors.Is(err, ops.ErrKeyRequired),
-		errors.Is(err, ops.ErrPrefixRequired),
-		errors.Is(err, ops.ErrInvalidKey):
-		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ops.ErrNotFound):
-		httputil.WriteJSONError(w, http.StatusNotFound, "not found")
-	default:
-		h.log.ErrorContext(r.Context(), msg, "key", key, "error", err)
-		httputil.WriteJSONError(w, http.StatusInternalServerError, msg)
-	}
+// observeDuration records how long an object operation has taken since start.
+func observeDuration(method string, start time.Time) {
+	telemetry.RequestDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 }

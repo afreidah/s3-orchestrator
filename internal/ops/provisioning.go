@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -117,11 +118,8 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if hasStoredBucket(&view, b.Name) {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
 	}
-	// Rejected here rather than at assembly: a rule the matcher cannot read
-	// would otherwise store cleanly and then fail every registry rebuild,
-	// including the one a reload runs, taking the fleet's reloads down.
-	if errs := config.ValidateCORS(b.CORS); len(errs) > 0 {
-		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
+	if err := validateCORS(b.CORS); err != nil {
+		return err
 	}
 	if err := p.store.CreateBucket(ctx, b); err != nil {
 		return err
@@ -144,10 +142,8 @@ func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
 	if err := requireStoredBucket(&view, b.Name); err != nil {
 		return err
 	}
-	// Rejected for the same reason create rejects it: a rule the matcher cannot
-	// read stores cleanly and then fails every registry rebuild afterwards.
-	if errs := config.ValidateCORS(b.CORS); len(errs) > 0 {
-		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
+	if err := validateCORS(b.CORS); err != nil {
+		return err
 	}
 	if err := p.store.UpdateBucket(ctx, b); err != nil {
 		return err
@@ -381,18 +377,8 @@ func (p *Provisioning) DeleteCredential(ctx context.Context, accessKeyID string)
 // CreateGrant gives a user access to one resource: a bucket, a backend, or the
 // instance itself. The bucket may be declared in config or in the store.
 func (p *Provisioning) CreateGrant(ctx context.Context, userID string, resource core.Resource, perms core.PermissionSet) error {
-	if err := p.checkGrant(ctx, userID, resource, perms); err != nil {
-		return err
-	}
-	grant := core.Grant{UserID: userID, Resource: resource, Permissions: perms}
-	if err := p.store.CreateGrant(ctx, &grant); err != nil {
-		return err
-	}
-	audit.Log(ctx, "provisioning.GrantCreated",
-		slog.String("user", userID),
-		slog.String("resource", resource.String()),
-		slog.String("permissions", perms.String()))
-	return p.republish(ctx)
+	return p.writeGrant(ctx, &core.Grant{UserID: userID, Resource: resource, Permissions: perms},
+		p.store.CreateGrant, "provisioning.GrantCreated")
 }
 
 // SetGrant declares exactly what a user reaches on one resource, writing the
@@ -402,17 +388,25 @@ func (p *Provisioning) CreateGrant(ctx context.Context, userID string, resource 
 func (p *Provisioning) SetGrant(
 	ctx context.Context, userID string, resource core.Resource, perms core.PermissionSet,
 ) error {
-	if err := p.checkGrant(ctx, userID, resource, perms); err != nil {
+	return p.writeGrant(ctx, &core.Grant{UserID: userID, Resource: resource, Permissions: perms},
+		p.store.SetGrant, "provisioning.GrantSet")
+}
+
+// writeGrant checks a grant against every rule one has to satisfy, writes it
+// through write, and audits it as event.
+func (p *Provisioning) writeGrant(
+	ctx context.Context, g *core.Grant, write func(context.Context, *core.Grant) error, event string,
+) error {
+	if err := p.checkGrant(ctx, g.UserID, g.Resource, g.Permissions); err != nil {
 		return err
 	}
-	grant := core.Grant{UserID: userID, Resource: resource, Permissions: perms}
-	if err := p.store.SetGrant(ctx, &grant); err != nil {
+	if err := write(ctx, g); err != nil {
 		return err
 	}
-	audit.Log(ctx, "provisioning.GrantSet",
-		slog.String("user", userID),
-		slog.String("resource", resource.String()),
-		slog.String("permissions", perms.String()))
+	audit.Log(ctx, event,
+		slog.String("user", g.UserID),
+		slog.String("resource", g.Resource.String()),
+		slog.String("permissions", g.Permissions.String()))
 	return p.republish(ctx)
 }
 
@@ -484,11 +478,8 @@ func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) e
 		if r.IsWildcard() {
 			return nil
 		}
-		backends := p.config.Load().Backends
-		for i := range backends {
-			if backends[i].Name == r.Name {
-				return nil
-			}
+		if slices.ContainsFunc(p.config.Load().Backends, func(b config.BackendConfig) bool { return b.Name == r.Name }) {
+			return nil
 		}
 		return fmt.Errorf("%w: %q", ErrBackendNotFound, r.Name)
 	default:
@@ -525,14 +516,30 @@ func plural(n int64, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// findBucket returns the merged bucket with a name.
-func findBucket(buckets []provisioning.Bucket, name string) (provisioning.Bucket, bool) {
-	for i := range buckets {
-		if buckets[i].Name == name {
-			return buckets[i], true
+// validateCORS refuses a bucket's rules before they are stored, rather than at
+// assembly: a rule the matcher cannot read would otherwise store cleanly and
+// then fail every registry rebuild, including the one a reload runs.
+func validateCORS(rules []config.CORSRule) error {
+	if errs := config.ValidateCORS(rules); len(errs) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
+	}
+	return nil
+}
+
+// find returns the first element match accepts.
+func find[T any](s []T, match func(*T) bool) (T, bool) {
+	for i := range s {
+		if match(&s[i]) {
+			return s[i], true
 		}
 	}
-	return provisioning.Bucket{}, false
+	var zero T
+	return zero, false
+}
+
+// findBucket returns the merged bucket with a name.
+func findBucket(buckets []provisioning.Bucket, name string) (provisioning.Bucket, bool) {
+	return find(buckets, func(b *provisioning.Bucket) bool { return b.Name == name })
 }
 
 // hasStoredBucket reports whether the store holds a row for a name, whether or
@@ -573,22 +580,12 @@ func storedUser(v *provisioning.View, id string) (provisioning.User, error) {
 
 // findUser returns the merged user with an id.
 func findUser(users []provisioning.User, id string) (provisioning.User, bool) {
-	for i := range users {
-		if users[i].ID == id {
-			return users[i], true
-		}
-	}
-	return provisioning.User{}, false
+	return find(users, func(u *provisioning.User) bool { return u.ID == id })
 }
 
 // findCredential returns the merged credential with an access key.
 func findCredential(creds []provisioning.Credential, accessKeyID string) (provisioning.Credential, bool) {
-	for i := range creds {
-		if creds[i].AccessKeyID == accessKeyID {
-			return creds[i], true
-		}
-	}
-	return provisioning.Credential{}, false
+	return find(creds, func(c *provisioning.Credential) bool { return c.AccessKeyID == accessKeyID })
 }
 
 // countCredentials counts the merged credentials belonging to a user.
@@ -604,7 +601,7 @@ func countCredentials(creds []provisioning.Credential, userID string) int {
 
 // mintKeypair draws a fresh access key and secret.
 func mintKeypair() (accessKey, secret string, err error) {
-	if accessKey, err = mintAccessKey(); err != nil {
+	if accessKey, err = mintAccessKey("access key"); err != nil {
 		return "", "", err
 	}
 	raw := make([]byte, secretBytes)
@@ -615,11 +612,11 @@ func mintKeypair() (accessKey, secret string, err error) {
 }
 
 // mintAccessKey draws an access key in the uppercase alphanumeric form S3
-// clients expect to see one in.
-func mintAccessKey() (string, error) {
+// clients expect to see one in. what names the value in the error.
+func mintAccessKey(what string) (string, error) {
 	raw := make([]byte, accessKeyBytes)
 	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate access key: %w", err)
+		return "", fmt.Errorf("generate %s: %w", what, err)
 	}
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw), nil
 }
@@ -627,10 +624,9 @@ func mintAccessKey() (string, error) {
 // mintID draws an opaque identifier under a kind prefix, so a value that turns
 // up in a log or an audit record says what it names.
 func mintID(kind string) (string, error) {
-	raw := make([]byte, accessKeyBytes)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate %s id: %w", kind, err)
+	enc, err := mintAccessKey(kind + " id")
+	if err != nil {
+		return "", err
 	}
-	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
 	return kind + "-" + strings.ToLower(enc), nil
 }

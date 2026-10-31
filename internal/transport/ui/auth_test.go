@@ -37,7 +37,7 @@ func TestResolveLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
-	h := &Handler{registry: func() *auth.BucketRegistry { return registry }}
+	h := &Handler{d: Deps{Registry: func() *auth.BucketRegistry { return registry }}}
 
 	for _, tc := range []struct {
 		name   string
@@ -72,12 +72,7 @@ func TestResolveLogin(t *testing.T) {
 func TestResolveLogin_WithoutARegistry(t *testing.T) {
 	t.Parallel()
 
-	h := &Handler{}
-	if _, ok := h.resolveLogin("AKIAROOT", "root-secret"); ok {
-		t.Error("a credential authenticated with no registry to check it against")
-	}
-
-	h = &Handler{registry: func() *auth.BucketRegistry { return nil }}
+	h := &Handler{d: Deps{Registry: func() *auth.BucketRegistry { return nil }}}
 	if _, ok := h.resolveLogin("AKIAROOT", "root-secret"); ok {
 		t.Error("a credential authenticated against a nil registry")
 	}

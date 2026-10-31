@@ -32,7 +32,7 @@ import (
 func sharedHandler(t *testing.T, mem *sharedstatetest.Memory, bWorkers []adminapi.WorkerHealth) *Handler {
 	t.Helper()
 	h := newTestHandler(t)
-	h.instance = adminapi.InstanceStatus{ID: "a", Mode: "all"}
+	h.d.Instance = adminapi.InstanceStatus{ID: "a", Mode: "all"}
 	h.instances = h.instanceRoster(sharedstate.New(mem, "a"))
 	other, err := json.Marshal(adminapi.InstanceReport{
 		Instance: adminapi.InstanceStatus{ID: "b", Mode: "worker"},
@@ -92,7 +92,7 @@ func TestHandleWorkers_TakesTheLatestTickAcrossInstances(t *testing.T) {
 		{Name: "scrub", LastSuccess: older},
 		{Name: "reconcile", LastSuccess: newer},
 	})
-	h.workerHealth = func() []adminapi.WorkerHealth {
+	h.d.WorkerHealth = func() []adminapi.WorkerHealth {
 		return []adminapi.WorkerHealth{
 			{Name: "rebalance", LastSuccess: older},
 			{Name: "scrub", LastSuccess: newer},
@@ -129,7 +129,7 @@ func TestHandleWorkers_ServesOwnWhenStoreFails(t *testing.T) {
 	t.Parallel()
 	mem := sharedstatetest.NewMemory()
 	h := sharedHandler(t, mem, nil)
-	h.workerHealth = func() []adminapi.WorkerHealth { return []adminapi.WorkerHealth{{Name: "scrub"}} }
+	h.d.WorkerHealth = func() []adminapi.WorkerHealth { return []adminapi.WorkerHealth{{Name: "scrub"}} }
 	mem.Fail(context.DeadlineExceeded)
 	w := serveOn(t, h, http.MethodGet, adminapi.PathWorkers)
 
@@ -149,7 +149,7 @@ func TestHandleCacheFlush_AnnouncedToOtherInstances(t *testing.T) {
 	mem := sharedstatetest.NewMemory()
 	h := newTestHandlerWithCache(t)
 	h.cacheTopic = cache.InvalidationTopic(sharedstate.New(mem, "a"))
-	h.objectCache.PutBytes("k", []byte("x"), cache.EntryMeta{})
+	h.d.ObjectCache.PutBytes("k", []byte("x"), cache.EntryMeta{})
 
 	got := make(chan cache.Invalidation, 1)
 	ready := make(chan struct{})
@@ -171,7 +171,7 @@ func TestHandleCacheFlush_AnnouncedToOtherInstances(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	if h.objectCache.Stats().Entries != 0 {
+	if h.d.ObjectCache.Stats().Entries != 0 {
 		t.Error("this instance's cache not emptied")
 	}
 	select {

@@ -39,11 +39,11 @@ const maxObjectTagsBody = 64 << 10
 
 // handleGetObjectTags returns one object's tag set.
 func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
-	tags, err := h.objects.Tags(r.Context(), key)
+	tags, err := h.d.Objects.Tags(r.Context(), key)
 	if err != nil {
-		h.writeObjectError(w, r, err, "failed to read object tags", key)
+		httputil.WriteObjectError(w, r, h.log, err, "failed to read object tags", key)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {
 // handlePutObjectTags replaces one object's whole tag set. An empty list
 // leaves the object untagged, which is the same outcome as a delete.
 func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
 	var req adminapi.ObjectTagsRequest
 	body := http.MaxBytesReader(w, r.Body, maxObjectTagsBody)
@@ -63,7 +63,7 @@ func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.objects.SetTags(r.Context(), key, adminapi.CoreTags(req.Tags)); err != nil {
+	if err := h.d.Objects.SetTags(r.Context(), key, adminapi.CoreTags(req.Tags)); err != nil {
 		h.writeObjectTagError(w, r, err, key)
 		return
 	}
@@ -73,9 +73,9 @@ func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteObjectTags clears one object's tag set.
 func (h *Handler) handleDeleteObjectTags(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := r.PathValue(paramKey)
 
-	if err := h.objects.DeleteTags(r.Context(), key); err != nil {
+	if err := h.d.Objects.DeleteTags(r.Context(), key); err != nil {
 		h.writeObjectTagError(w, r, err, key)
 		return
 	}
@@ -93,5 +93,5 @@ func (h *Handler) writeObjectTagError(w http.ResponseWriter, r *http.Request, er
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.writeObjectError(w, r, err, "failed to write object tags", key)
+	httputil.WriteObjectError(w, r, h.log, err, "failed to write object tags", key)
 }

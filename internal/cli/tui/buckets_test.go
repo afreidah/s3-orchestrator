@@ -64,7 +64,7 @@ func TestBucketsTable_MarksTheSource(t *testing.T) {
 	t.Parallel()
 	m := bucketsModel(t)
 
-	got := m.bucketsPaneView()
+	got := m.contentView()
 	for _, want := range []string{"from-config", "config", "from-store", "store"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("table missing %q:\n%s", want, got)
@@ -87,19 +87,6 @@ func TestBucketsTable_ShowsWhoReachesEach(t *testing.T) {
 	}
 	if rows[1][3] != "ci" {
 		t.Errorf("from-store reached by %q, want ci", rows[1][3])
-	}
-}
-
-// TestBucketsTable_MultipartCap verifies zero renders as unlimited rather than
-// as a bucket that accepts no multipart uploads.
-func TestBucketsTable_MultipartCap(t *testing.T) {
-	t.Parallel()
-
-	if got := multipartCap(0); got != "unlimited" {
-		t.Errorf("multipartCap(0) = %q, want unlimited", got)
-	}
-	if got := multipartCap(4); got != "4" {
-		t.Errorf("multipartCap(4) = %q, want 4", got)
 	}
 }
 
@@ -153,7 +140,7 @@ func TestBucketsBody_RendersNotices(t *testing.T) {
 	m := bucketsModel(t)
 	m.buckets.notices = []adminapi.Notice{{Kind: "dangling_grant", Detail: "grant names bucket \"gone\""}}
 
-	got := m.bucketsPaneView()
+	got := m.contentView()
 	if !strings.Contains(got, "dangling_grant") || !strings.Contains(got, "gone") {
 		t.Errorf("body swallowed the notice:\n%s", got)
 	}
@@ -165,7 +152,7 @@ func TestBucketsPaneView_Renders(t *testing.T) {
 	t.Parallel()
 	m := bucketsModel(t)
 
-	got := m.bucketsPaneView()
+	got := m.contentView()
 	for _, want := range []string{"buckets", "from-store", "reload"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("pane missing %q:\n%s", want, got)
@@ -184,18 +171,18 @@ func TestHandleBucketsKey_BackAndReload(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.section = sectionBuckets
 
-	m.handleBucketsKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handlePaneKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !m.navFocus || m.navCursor != int(sectionBuckets) {
 		t.Errorf("after esc: navFocus=%v cursor=%d", m.navFocus, m.navCursor)
 	}
 
 	m.navFocus = false
-	_, cmd := m.handleBucketsKey(key("r"))
+	_, cmd := m.handlePaneKey(key("r"))
 	if cmd == nil {
 		t.Fatal("reload returned no command")
 	}
-	if _, ok := cmd().(bucketsLoadedMsg); !ok {
-		t.Errorf("reload result = %#v, want bucketsLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.ProvisioningResponse]); !ok {
+		t.Errorf("reload result = %#v, want loadedMsg[*adminapi.ProvisioningResponse]", cmd())
 	}
 }
 
@@ -213,8 +200,8 @@ func TestSelectSection_Buckets(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("entering the section issued no fetch")
 	}
-	if _, ok := cmd().(bucketsLoadedMsg); !ok {
-		t.Errorf("fetch result = %#v, want bucketsLoadedMsg", cmd())
+	if _, ok := cmd().(loadedMsg[*adminapi.ProvisioningResponse]); !ok {
+		t.Errorf("fetch result = %#v, want loadedMsg[*adminapi.ProvisioningResponse]", cmd())
 	}
 }
 
@@ -223,8 +210,8 @@ func TestSelectSection_Buckets(t *testing.T) {
 func TestLoadBuckets_Error(t *testing.T) {
 	t.Parallel()
 	cmd := initialModel(errLister{}).loadBuckets()
-	if _, ok := cmd().(bucketsErrMsg); !ok {
-		t.Errorf("cmd result = %#v, want bucketsErrMsg", cmd())
+	if _, ok := cmd().(loadErrMsg[*adminapi.ProvisioningResponse]); !ok {
+		t.Errorf("cmd result = %#v, want loadErrMsg[*adminapi.ProvisioningResponse]", cmd())
 	}
 }
 
@@ -235,7 +222,7 @@ func TestApplyBucketsErr_SeparatesUnavailable(t *testing.T) {
 	t.Parallel()
 
 	m := initialModel(&fakeLister{})
-	m.applyBucketsErr(&adminclient.Error{Status: http.StatusServiceUnavailable, Body: `{"error":"not wired"}`})
+	m.buckets.failed(&adminclient.Error{Status: http.StatusServiceUnavailable, Body: `{"error":"not wired"}`})
 	if m.buckets.unavailable == "" {
 		t.Error("a 503 was recorded as an error rather than a notice")
 	}
@@ -244,7 +231,7 @@ func TestApplyBucketsErr_SeparatesUnavailable(t *testing.T) {
 	}
 
 	m = initialModel(&fakeLister{})
-	m.applyBucketsErr(errors.New("connection refused"))
+	m.buckets.failed(errors.New("connection refused"))
 	if m.buckets.err == nil {
 		t.Error("a transport failure was swallowed as a notice")
 	}

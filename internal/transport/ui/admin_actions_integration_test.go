@@ -114,15 +114,14 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 func newActionsHandler(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Workers)) *Handler {
 	t.Helper()
 	svc := newOpsForTest(t, opts...)
-	return &Handler{
-		log:         slog.Default(),
-		objects:     svc.Objects,
-		integrity:   svc.Integrity,
-		replication: svc.Replication,
-		rebalance:   svc.Rebalance,
-		encryption:  svc.Encryption,
-		compression: svc.Compression,
-	}
+	return &Handler{log: slog.Default(), d: Deps{
+		Objects:     svc.Objects,
+		Integrity:   svc.Integrity,
+		Replication: svc.Replication,
+		Rebalance:   svc.Rebalance,
+		Encryption:  svc.Encryption,
+		Compression: svc.Compression,
+	}}
 }
 
 // -------------------------------------------------------------------------
@@ -140,7 +139,7 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 
 	triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	triggerW := httptest.NewRecorder()
-	h.handleAPIReplicate(triggerW, triggerReq)
+	serveRoute(h, triggerW, triggerReq)
 	if triggerW.Code != http.StatusAccepted {
 		t.Fatalf("trigger status = %d, want %d", triggerW.Code, http.StatusAccepted)
 	}
@@ -155,7 +154,7 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 
 	statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate/status", nil)
 	statusW := httptest.NewRecorder()
-	h.handleAPIReplicateStatus(statusW, statusReq)
+	serveRoute(h, statusW, statusReq)
 	body := decodeBody(t, statusW)
 	if body["status"] != "done" {
 		t.Errorf("status body = %v, want status=done", body)
@@ -179,14 +178,13 @@ func TestHandleAPIDownload_StreamsObject(t *testing.T) {
 			},
 		}, nil).Times(1)
 
-	h := &Handler{
-		log: slog.Default(),
-		objects: ops.NewObjects(ops.ObjectsDeps{
+	h := &Handler{log: slog.Default(), d: Deps{
+		Objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 		}),
-	}
+	}}
 
 	reg, err := auth.NewBucketRegistry(&provisioning.View{Users: []provisioning.User{{
 		ID: "reader", Name: "reader", Grants: map[string]core.PermissionSet{"test-bucket": core.PermRead},
@@ -229,17 +227,16 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
 
-	h := &Handler{
-		log: slog.Default(),
-		encryption: ops.NewEncryption(ops.EncryptionDeps{
+	h := &Handler{log: slog.Default(), d: Deps{
+		Encryption: ops.NewEncryption(ops.EncryptionDeps{
 			Encryptor: enc,
 			Store:     store,
 			Mover:     opstest.NewMockMover(gomock.NewController(t)),
 		}),
-	}
+	}}
 
 	w := httptest.NewRecorder()
-	h.handleAPIEncryptExisting(w, httptest.NewRequestWithContext(context.Background(),
+	serveRoute(h, w, httptest.NewRequestWithContext(context.Background(),
 		http.MethodPost, "/api/encrypt-existing", nil))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
@@ -257,28 +254,20 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		opName  string
-		trigger func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{"scrub", (*Handler).handleAPIScrub},
-		{"backfill-checksums", (*Handler).handleAPIBackfillChecksums},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.opName, func(t *testing.T) {
+	for _, opName := range []string{"scrub", "backfill-checksums"} {
+		t.Run(opName, func(t *testing.T) {
 			t.Parallel()
 			h := newActionsHandler(t, func(st *proxytest.Stack, _ *proxytest.Workers) {
 				st.IntegrityCfg.Store(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
 			})
 
 			w := httptest.NewRecorder()
-			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+tc.opName, nil))
+			serveRoute(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+opName, nil))
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("trigger status = %d, want 202", w.Code)
 			}
 
-			res := waitForResult(t, h, tc.opName)
+			res := waitForResult(t, h, opName)
 			if res.Error != "" || res.Skipped != "" {
 				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 			}
@@ -295,7 +284,7 @@ func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	h.handleAPICleanExcess(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/clean-excess", nil))
+	serveRoute(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/clean-excess", nil))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("trigger status = %d, want 202; body=%s", w.Code, w.Body.String())
 	}
@@ -360,28 +349,18 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 		opName    string
 		resultKey string
 		wantCount float64
-		trigger   func(*Handler, http.ResponseWriter, *http.Request)
-		status    func(*Handler, http.ResponseWriter, *http.Request)
 	}{
-		{
-			name: "replicate", opName: "replicate", resultKey: "copies_created", wantCount: 2,
-			trigger: (*Handler).handleAPIReplicate,
-			status:  func(h *Handler, w http.ResponseWriter, r *http.Request) { h.handleAPIReplicateStatus(w, r) },
-		},
-		{
-			name: "clean-excess", opName: opCleanExcess, resultKey: "removed", wantCount: 5,
-			trigger: (*Handler).handleAPICleanExcess,
-			status:  func(h *Handler, w http.ResponseWriter, r *http.Request) { h.handleAPICleanExcessStatus(w, r) },
-		},
+		{name: "replicate", opName: "replicate", resultKey: "copies_created", wantCount: 2},
+		{name: "clean-excess", opName: opCleanExcess, resultKey: "removed", wantCount: 5},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{log: slog.Default(), replication: partialReplication(t, 2, 5, 3)}
+			h := &Handler{log: slog.Default(), d: Deps{Replication: partialReplication(t, 2, 5, 3)}}
 
 			w := httptest.NewRecorder()
-			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+tc.name, nil))
+			serveRoute(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+tc.name, nil))
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("trigger status = %d, want 202; body=%s", w.Code, w.Body.String())
 			}
@@ -392,7 +371,7 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 			}
 
 			statusW := httptest.NewRecorder()
-			tc.status(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/"+tc.name+"/status", nil))
+			serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/"+tc.name+"/status", nil))
 			body := decodeBody(t, statusW)
 			if body[tc.resultKey] != tc.wantCount {
 				t.Errorf("%s = %v, want %v", tc.resultKey, body[tc.resultKey], tc.wantCount)
@@ -404,57 +383,35 @@ func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
 	}
 }
 
-// TestAdminActionWrappers_RouteIntoAdmin asserts that each trigger
-// wrapper actually invokes its admin counterpart through the real
-// goroutine path and surfaces the skipped reason on the status endpoint.
-func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
+// TestAdminActions_RouteIntoAdmin asserts that each trigger actually invokes
+// its admin counterpart through the real goroutine path and surfaces the
+// skipped reason on the status endpoint.
+func TestAdminActions_RouteIntoAdmin(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		opName      string
-		triggerPath string
-		statusPath  string
-		trigger     func(*Handler, http.ResponseWriter, *http.Request)
-		status      func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{"replicate", "/api/replicate", "/api/replicate/status",
-			(*Handler).handleAPIReplicate, (*Handler).handleAPIReplicateStatus},
-		{"scrub", "/api/scrub", "/api/scrub/status",
-			(*Handler).handleAPIScrub, (*Handler).handleAPIScrubStatus},
-		{"backfill-checksums", "/api/backfill-checksums", "/api/backfill-checksums/status",
-			(*Handler).handleAPIBackfillChecksums, (*Handler).handleAPIBackfillChecksumsStatus},
-		{"encrypt-existing", "/api/encrypt-existing", "/api/encrypt-existing/status",
-			(*Handler).handleAPIEncryptExisting, (*Handler).handleAPIEncryptExistingStatus},
-		{"compress-existing", "/api/compress-existing", "/api/compress-existing/status",
-			(*Handler).handleAPICompressExisting, (*Handler).handleAPICompressExistingStatus},
-		{"decompress-existing", "/api/decompress-existing", "/api/decompress-existing/status",
-			(*Handler).handleAPIDecompressExisting, (*Handler).handleAPIDecompressExistingStatus},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.opName, func(t *testing.T) {
+	for _, opName := range []string{
+		"replicate", "scrub", "backfill-checksums", "encrypt-existing", "compress-existing", "decompress-existing",
+	} {
+		t.Run(opName, func(t *testing.T) {
 			t.Parallel()
 			h := newActionsHandler(t)
 
-			triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.triggerPath, nil)
 			triggerW := httptest.NewRecorder()
-			tc.trigger(h, triggerW, triggerReq)
+			serveRoute(h, triggerW, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+opName, nil))
 			if triggerW.Code != http.StatusAccepted {
 				t.Fatalf("trigger status = %d, want %d (body=%s)",
 					triggerW.Code, http.StatusAccepted, triggerW.Body.String())
 			}
 
-			res := waitForResult(t, h, tc.opName)
+			res := waitForResult(t, h, opName)
 			if res.Skipped == "" {
-				t.Errorf("op %q result has empty Skipped reason; want non-empty", tc.opName)
+				t.Errorf("op %q result has empty Skipped reason; want non-empty", opName)
 			}
 
-			statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.statusPath, nil)
 			statusW := httptest.NewRecorder()
-			tc.status(h, statusW, statusReq)
-			body := decodeBody(t, statusW)
-			if body["status"] != "skipped" {
-				t.Errorf("op %q status body = %v, want status=skipped", tc.opName, body)
+			serveRoute(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/"+opName+"/status", nil))
+			if body := decodeBody(t, statusW); body["status"] != "skipped" {
+				t.Errorf("op %q status body = %v, want status=skipped", opName, body)
 			}
 		})
 	}
@@ -475,34 +432,25 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 	}
 	t.Cleanup(codec.Close)
 
-	cases := []struct {
-		opName  string
-		path    string
-		trigger func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{"compress-existing", "/api/compress-existing", (*Handler).handleAPICompressExisting},
-		{"decompress-existing", "/api/decompress-existing", (*Handler).handleAPIDecompressExisting},
-	}
-	for _, tc := range cases {
-		t.Run(tc.opName, func(t *testing.T) {
+	for _, opName := range []string{"compress-existing", "decompress-existing"} {
+		t.Run(opName, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{
-				log: slog.Default(),
-				compression: ops.NewCompression(&ops.CompressionDeps{
+			h := &Handler{log: slog.Default(), d: Deps{
+				Compression: ops.NewCompression(&ops.CompressionDeps{
 					Codec:  codec,
 					Config: config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 					Store:  store,
 					Mover:  opstest.NewMockMover(gomock.NewController(t)),
 				}),
-			}
+			}}
 
 			w := httptest.NewRecorder()
-			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.path, nil))
+			serveRoute(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+opName, nil))
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
 			}
 
-			res := waitForResult(t, h, tc.opName)
+			res := waitForResult(t, h, opName)
 			if res.Error != "" || res.Skipped != "" {
 				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 			}

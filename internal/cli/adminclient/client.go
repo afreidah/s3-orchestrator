@@ -148,7 +148,7 @@ func (c *Client) Upload(
 	size int64,
 	contentType string,
 ) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+queryOf(q), body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+WithQuery(path, q), body)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func (c *Client) send(
 	if payload != nil {
 		body = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+queryOf(q), body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+WithQuery(path, q), body)
 	if err != nil {
 		return nil, err
 	}
@@ -199,12 +199,12 @@ func (c *Client) send(
 	return httpClient.Do(req)
 }
 
-// queryOf renders a query string, including the leading "?" only when there is
-// something to encode, so paths without parameters stay byte-identical to what
-// the caller passed.
-func queryOf(q url.Values) string {
-	if len(q) == 0 {
-		return ""
+// WithQuery appends an encoded query to a path, leaving the path alone when
+// nothing was set. Every query goes through it so a value carrying &, + or #
+// arrives as the value rather than changing what the server parses.
+func WithQuery(path string, q url.Values) string {
+	if enc := q.Encode(); enc != "" {
+		return path + "?" + enc
 	}
-	return "?" + q.Encode()
+	return path
 }

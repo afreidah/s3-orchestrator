@@ -39,12 +39,33 @@ var errIfNoneMatchExists = errors.New("If-None-Match: * precondition failed: obj
 // XML TYPES
 // -------------------------------------------------------------------------
 
-// copyObjectResult is the XML response for CopyObject.
-type copyObjectResult struct {
-	XMLName      xml.Name `xml:"CopyObjectResult"`
-	Xmlns        string   `xml:"xmlns,attr"`
-	ETag         string   `xml:"ETag"`
-	LastModified string   `xml:"LastModified"`
+// copyResult is the XML response for CopyObject and UploadPartCopy, which
+// differ only in the root element XMLName carries. UploadPart answers with a
+// bare ETag header; the copy forms return the ETag in a document, which is
+// what SDKs read the validator out of.
+type copyResult struct {
+	XMLName      xml.Name
+	Xmlns        string `xml:"xmlns,attr"`
+	ETag         string `xml:"ETag"`
+	LastModified string `xml:"LastModified"`
+}
+
+// respondCopy writes the copy response rooted at root.
+func respondCopy(w http.ResponseWriter, root, etag string, modified time.Time) (int, error) {
+	return respondXML(w, copyResult{
+		XMLName:      xml.Name{Local: root},
+		Xmlns:        s3XMLNS,
+		ETag:         etag,
+		LastModified: modified.UTC().Format(time.RFC3339),
+	})
+}
+
+// annotateObject records the object's size and content type on the request span.
+func annotateObject(ctx context.Context, size int64, contentType string) {
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.AttrObjectSize.Int64(size),
+		telemetry.AttrContentType.String(contentType),
+	)
 }
 
 // deleteObjectsRequest is the XML request body for DeleteObjects.
@@ -129,11 +150,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return writeTaggingError(w, err), err
 	}
 
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		telemetry.AttrObjectSize.Int64(r.ContentLength),
-		telemetry.AttrContentType.String(contentType),
-	)
+	annotateObject(ctx, r.ContentLength, contentType)
 
 	etag, err := s.Objects.PutObject(ctx, &object.PutObjectRequest{
 		Key:         key,
@@ -169,12 +186,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		return writeStorageError(w, err, "Failed to retrieve object"), 0, err
 	}
 	defer func() { _ = result.Body.Close() }()
-
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		telemetry.AttrObjectSize.Int64(result.Size),
-		telemetry.AttrContentType.String(result.ContentType),
-	)
+	annotateObject(ctx, result.Size, result.ContentType)
 
 	// Validators go out before the conditional check so a 304 carries the
 	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
@@ -250,12 +262,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
 	}
-
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		telemetry.AttrObjectSize.Int64(result.Size),
-		telemetry.AttrContentType.String(result.ContentType),
-	)
+	annotateObject(ctx, result.Size, result.ContentType)
 
 	setObjectHeaders(w, result.ContentType, result.Metadata, result.TagCount)
 	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
@@ -331,13 +338,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 		return writeStorageError(w, err, "Failed to copy object"), err
 	}
 
-	result := copyObjectResult{
-		Xmlns:        s3XMLNS,
-		ETag:         etag,
-		LastModified: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	return respondXML(w, result)
+	return respondCopy(w, "CopyObjectResult", etag, time.Now())
 }
 
 // handleDeleteObjects processes POST /{bucket}?delete requests. Deletes up to

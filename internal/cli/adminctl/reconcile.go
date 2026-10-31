@@ -10,24 +10,21 @@
 package adminctl
 
 import (
-	"flag"
 	"net/http"
 	"net/url"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdReconcile implements `s3-orchestrator admin reconcile [-backend=NAME]`.
 func cmdReconcile(args []string, c *client) int {
-	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("reconcile")
 	backendName := fs.String(flagBackend, "", "Scope reconcile to a single backend (default: all)")
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 	q := url.Values{}
-	if *backendName != "" {
-		q.Set(queryBackend, *backendName)
-	}
-	return c.stream(http.MethodPost, withQuery(adminapi.PathReconcile, q))
+	setIf(q, queryBackend, *backendName)
+	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathReconcile, q))
 }

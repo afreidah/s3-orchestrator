@@ -81,7 +81,7 @@ func bulkRewriteOutcome(res ops.BulkRewriteResult) adminapi.BulkRewriteOutcome {
 // handleCompressExisting encodes every copy currently stored verbatim.
 func (h *Handler) handleCompressExisting(w http.ResponseWriter, r *http.Request) {
 	h.handleBulkRewrite(w, r, "compress-existing", "compressing", "failed to list uncompressed objects",
-		h.compression.CompressExisting, func(res ops.BulkRewriteResult) any {
+		h.d.Compression.CompressExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.CompressExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Compressed:         res.Succeeded,
@@ -93,7 +93,7 @@ func (h *Handler) handleCompressExisting(w http.ResponseWriter, r *http.Request)
 // client wrote.
 func (h *Handler) handleDecompressExisting(w http.ResponseWriter, r *http.Request) {
 	h.handleBulkRewrite(w, r, "decompress-existing", "decompressing", "failed to list compressed objects",
-		h.compression.DecompressExisting, func(res ops.BulkRewriteResult) any {
+		h.d.Compression.DecompressExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.DecompressExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Decompressed:       res.Succeeded,
@@ -104,7 +104,7 @@ func (h *Handler) handleDecompressExisting(w http.ResponseWriter, r *http.Reques
 // handleEncryptExisting rewrites every plaintext copy as ciphertext.
 func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
 	h.handleBulkRewrite(w, r, "encrypt-existing", "encrypting", "failed to list unencrypted objects",
-		h.encryption.EncryptExisting, func(res ops.BulkRewriteResult) any {
+		h.d.Encryption.EncryptExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.EncryptExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Encrypted:          res.Succeeded,
@@ -116,7 +116,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 // must still be configured, since the key provider is what unwraps each DEK.
 func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) {
 	h.handleBulkRewrite(w, r, "decrypt-existing", "decrypting", "failed to list encrypted objects",
-		h.encryption.DecryptExisting, func(res ops.BulkRewriteResult) any {
+		h.d.Encryption.DecryptExisting, func(res ops.BulkRewriteResult) any {
 			return adminapi.DecryptExistingResponse{
 				BulkRewriteOutcome: bulkRewriteOutcome(res),
 				Decrypted:          res.Succeeded,

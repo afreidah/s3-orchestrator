@@ -12,38 +12,31 @@
 package adminctl
 
 import (
-	"flag"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdBackfillChecksums implements `s3-orchestrator admin backfill-checksums
 // [-batch-size=N] [-max=N] [-delay-ms=N]`.
 func cmdBackfillChecksums(args []string, c *client) int {
-	fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
+	fs := c.flags("backfill-checksums")
 	batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
-	maxObjects := fs.Int("max", 0, "Cap objects processed this run (0 = drain entire backlog)")
+	maxObjects := fs.Int(flagMax, 0, "Cap objects processed this run (0 = drain entire backlog)")
 	delayMs := fs.Int("delay-ms", 0, "Pause between batches in milliseconds (rate-limits backend reads)")
 	backend := fs.String(flagBackend, "", usageBackend)
-	if err := fs.Parse(args); err != nil {
+	if !c.parse(fs, args) {
 		return 1
 	}
 	q := url.Values{}
 	if *batchSize != 100 {
 		q.Set(queryBatch, strconv.Itoa(*batchSize))
 	}
-	if *maxObjects > 0 {
-		q.Set("max", strconv.Itoa(*maxObjects))
-	}
-	if *delayMs > 0 {
-		q.Set("delay_ms", strconv.Itoa(*delayMs))
-	}
-	if *backend != "" {
-		q.Set(queryBackend, *backend)
-	}
-	return c.stream(http.MethodPost, withQuery(adminapi.PathBackfillChecksums, q))
+	setPositive(q, flagMax, *maxObjects)
+	setPositive(q, "delay_ms", *delayMs)
+	setIf(q, queryBackend, *backend)
+	return c.stream(http.MethodPost, adminclient.WithQuery(adminapi.PathBackfillChecksums, q))
 }
