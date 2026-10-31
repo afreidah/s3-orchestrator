@@ -205,15 +205,7 @@ func multipartPartFromRow(r *db.ListPartsRow) core.MultipartPart {
 // caller passes a per-row converter; the loop wiring + error
 // handling lives here so the per-query bodies stay one-liners.
 func collectMultipartUploads[T any](rows []T, conv func(*T) *multipartRow) ([]core.MultipartUpload, error) {
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i := range rows {
-		mu, err := toMultipartUpload(conv(&rows[i]))
-		if err != nil {
-			return nil, err
-		}
-		uploads[i] = mu
-	}
-	return uploads, nil
+	return mapSliceErr(rows, func(r *T) (core.MultipartUpload, error) { return toMultipartUpload(conv(r)) })
 }
 
 // ScanMultipartUploads returns up to limit uploads matching filter after

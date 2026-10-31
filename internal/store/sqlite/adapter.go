@@ -65,15 +65,19 @@ func (a *sqliteTxAdapter) AcquireKeyLock(_ context.Context, _ string) error {
 // intent. Inside a writer-serialized tx, presence is the same guarantee
 // Postgres gets from SELECT FOR UPDATE.
 func (a *sqliteTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, error) {
-	var probe string
-	err := a.q.QueryRowContext(ctx,
-		`SELECT intent_id FROM pending_objects WHERE intent_id = ?`, intentID,
-	).Scan(&probe)
+	return a.exists(ctx, "claim pending", `SELECT 1 FROM pending_objects WHERE intent_id = ?`, intentID)
+}
+
+// exists reports whether query selects a row, wrapping a failure as
+// "what: err".
+func (a *sqliteTxAdapter) exists(ctx context.Context, what, query string, args ...any) (bool, error) {
+	var probe int
+	err := a.q.QueryRowContext(ctx, query, args...).Scan(&probe)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("claim pending: %w", err)
+		return false, fmt.Errorf("%s: %w", what, err)
 	}
 	return true, nil
 }
@@ -106,23 +110,18 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	if len(cleared) == 0 {
 		return nil, nil
 	}
-	if _, err := a.q.ExecContext(ctx,
+	if err := a.exec(ctx, "clear pending intents for key",
 		`DELETE FROM pending_objects
 		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
 		objectKey, keepJSON); err != nil {
-		return nil, fmt.Errorf("clear pending intents for key: %w", err)
+		return nil, err
 	}
 	return cleared, nil
 }
 
 // DeletePending removes a pending intent.
 func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) error {
-	if _, err := a.q.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE intent_id = ?`, intentID,
-	); err != nil {
-		return fmt.Errorf("delete pending object: %w", err)
-	}
-	return nil
+	return a.exec(ctx, "delete pending object", `DELETE FROM pending_objects WHERE intent_id = ?`, intentID)
 }
 
 // -------------------------------------------------------------------------
@@ -187,12 +186,9 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 	if len(keys) == 0 {
 		return nil
 	}
-	if _, err := a.q.ExecContext(ctx, `
+	return a.exec(ctx, "delete objects by keys", `
 		DELETE FROM object_locations
-		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys)); err != nil {
-		return fmt.Errorf("delete objects by keys: %w", err)
-	}
-	return nil
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(keys))
 }
 
 // InsertObjectLocation writes a new object_locations row carrying every column
@@ -206,7 +202,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		created = formatTime(loc.CreatedAt)
 	}
 	form := loc.Recorded()
-	if _, err := a.q.ExecContext(ctx,
+	return a.exec(ctx, "insert object location",
 		`INSERT INTO object_locations
 		   (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		    key_id, plaintext_size, content_hash,
@@ -215,46 +211,28 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		    etag, content_type, user_metadata,
 		    managed, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		loc.ObjectKey, loc.BackendName, loc.StorageKey, loc.SizeBytes, boolToInt(form.Encrypted),
+		loc.ObjectKey, loc.BackendName, loc.StorageKey, loc.SizeBytes, form.Encrypted,
 		form.EncryptionKey,
 		nullableString(form.KeyID), nullableInt64(form.PlaintextSize), nullableString(form.ContentHash),
 		nullableString(form.CompressionAlgorithm), nullableString(form.CompressionLevel),
 		nullableInt64(int64(form.CompressionFormatVersion)), nullableInt64(form.LogicalSize),
 		nullableInt64(loc.CompressionProbeSize), nullableString(loc.CompressionProbeLevel),
 		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
-		boolToInt(!loc.Unmanaged),
+		!loc.Unmanaged,
 		created,
-	); err != nil {
-		return fmt.Errorf("insert object location: %w", err)
-	}
-	return nil
+	)
 }
 
 // DeleteObjectCopies removes every object_locations row for the key.
 func (a *sqliteTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey string) error {
-	if _, err := a.q.ExecContext(ctx,
-		`DELETE FROM object_locations WHERE object_key = ?`, objectKey,
-	); err != nil {
-		return fmt.Errorf("delete object copies: %w", err)
-	}
-	return nil
+	return a.exec(ctx, "delete object copies", `DELETE FROM object_locations WHERE object_key = ?`, objectKey)
 }
 
 // objectExistsOnBackend reports whether (key, backend) is in
 // object_locations.
 func (a *sqliteTxAdapter) objectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error) {
-	var probe int
-	err := a.q.QueryRowContext(ctx,
-		`SELECT 1 FROM object_locations WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backend,
-	).Scan(&probe)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("check object on backend: %w", err)
-	}
-	return true, nil
+	return a.exists(ctx, "check object on backend",
+		`SELECT 1 FROM object_locations WHERE object_key = ? AND backend_name = ?`, objectKey, backend)
 }
 
 // LockObjectOnBackend reads the (key, backend) row whole inside the
@@ -318,13 +296,8 @@ func (a *sqliteTxAdapter) ListedPathStates(ctx context.Context, backend string, 
 
 // DeleteObjectFromBackend removes the single (key, backend) row.
 func (a *sqliteTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error {
-	if _, err := a.q.ExecContext(ctx,
-		`DELETE FROM object_locations WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backend,
-	); err != nil {
-		return fmt.Errorf("delete object from backend: %w", err)
-	}
-	return nil
+	return a.exec(ctx, "delete object from backend",
+		`DELETE FROM object_locations WHERE object_key = ? AND backend_name = ?`, objectKey, backend)
 }
 
 // UpdateCopyMetadata writes a patch to the copy loc names: a NULL argument
@@ -338,7 +311,7 @@ func (a *sqliteTxAdapter) UpdateCopyMetadata(ctx context.Context, loc *core.Obje
 		probeSize = sql.NullInt64{Int64: p.Probe.Size, Valid: true}
 		probeLevel = sql.NullString{String: p.Probe.Level, Valid: true}
 	}
-	res, err := a.q.ExecContext(ctx,
+	changed, err := a.execChanged(ctx, "update copy metadata",
 		`UPDATE object_locations
 		 SET encryption_key          = COALESCE(?, encryption_key),
 		     key_id                  = COALESCE(?, key_id),
@@ -351,17 +324,10 @@ func (a *sqliteTxAdapter) UpdateCopyMetadata(ctx context.Context, loc *core.Obje
 		p.Scrubbed, now(), probeSize, probeLevel,
 		loc.ObjectKey, loc.BackendName, loc.StorageKey,
 	)
-	if err != nil {
-		return fmt.Errorf("update copy metadata: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update copy metadata: %w", err)
-	}
-	if n == 0 {
+	if err == nil && !changed {
 		return core.ErrCopyChanged
 	}
-	return nil
+	return err
 }
 
 // -------------------------------------------------------------------------
@@ -370,23 +336,13 @@ func (a *sqliteTxAdapter) UpdateCopyMetadata(ctx context.Context, loc *core.Obje
 
 // InsertObjectTag adds one tag row for an object.
 func (a *sqliteTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error {
-	if _, err := a.q.ExecContext(ctx,
-		`INSERT INTO object_tags (object_key, tag_key, tag_value) VALUES (?, ?, ?)`,
-		objectKey, tagKey, tagValue,
-	); err != nil {
-		return fmt.Errorf("insert object tag: %w", err)
-	}
-	return nil
+	return a.exec(ctx, "insert object tag",
+		`INSERT INTO object_tags (object_key, tag_key, tag_value) VALUES (?, ?, ?)`, objectKey, tagKey, tagValue)
 }
 
 // DeleteObjectTags removes every tag row for one object key.
 func (a *sqliteTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
-	if _, err := a.q.ExecContext(ctx,
-		`DELETE FROM object_tags WHERE object_key = ?`, objectKey,
-	); err != nil {
-		return fmt.Errorf("delete object tags: %w", err)
-	}
-	return nil
+	return a.exec(ctx, "delete object tags", `DELETE FROM object_tags WHERE object_key = ?`, objectKey)
 }
 
 // DeleteObjectTagsForKeys removes every tag row for any of the given keys,
@@ -397,12 +353,9 @@ func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKey
 	if len(objectKeys) == 0 {
 		return nil
 	}
-	if _, err := a.q.ExecContext(ctx, `
+	return a.exec(ctx, "delete object tags for keys", `
 		DELETE FROM object_tags
-		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys)); err != nil {
-		return fmt.Errorf("delete object tags for keys: %w", err)
-	}
-	return nil
+		WHERE object_key IN (SELECT value FROM json_each(?))`, jsonList(objectKeys))
 }
 
 // InsertObjectLocationIfNotExists inserts a row only if one does not
@@ -433,12 +386,11 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
 	claimedAt := time.Now()
 	stamp := formatTime(claimedAt)
-	path := core.StoragePath(c.ObjectKey, c.StorageKey)
 	res, err := a.q.ExecContext(ctx,
 		`INSERT INTO cleanup_queue
 		   (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry, claimed_at, claimed_by)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.BackendName, c.ObjectKey, path, c.Reason, c.SizeBytes,
+		c.BackendName, c.ObjectKey, c.StorageKey, c.Reason, c.SizeBytes,
 		stamp, stamp, stamp, nullableString(a.instanceID),
 	)
 	if err != nil {
@@ -452,7 +404,7 @@ func (a *sqliteTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequ
 		ID:          id,
 		BackendName: c.BackendName,
 		ObjectKey:   c.ObjectKey,
-		StorageKey:  path,
+		StorageKey:  c.StorageKey,
 		Reason:      c.Reason,
 		SizeBytes:   c.SizeBytes,
 		Claim:       &core.CleanupClaim{At: claimedAt, By: a.instanceID},
@@ -474,6 +426,15 @@ func (a *sqliteTxAdapter) execChanged(ctx context.Context, what, query string, a
 	return n > 0, nil
 }
 
+// exec runs a write whose row count does not matter, wrapping a failure as
+// "what: err".
+func (a *sqliteTxAdapter) exec(ctx context.Context, what, query string, args ...any) error {
+	if _, err := a.q.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
 // -------------------------------------------------------------------------
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
@@ -483,15 +444,12 @@ func (a *sqliteTxAdapter) execChanged(ctx context.Context, what, query string, a
 // backend's stripes up front. No clamp: a stripe is signed, and the total it
 // contributes to is what gets clamped when read.
 func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
-	if _, err := a.q.ExecContext(ctx, `
+	return a.exec(ctx, "adjust quota stripe for "+backendName, `
 		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
 		VALUES (?, ?, ?)
 		ON CONFLICT (backend_name, stripe_id) DO UPDATE
 		SET bytes_used = bytes_used + excluded.bytes_used`,
-		backendName, stripe, delta); err != nil {
-		return fmt.Errorf("adjust quota stripe for %s: %w", backendName, err)
-	}
-	return nil
+		backendName, stripe, delta)
 }
 
 // AcquireBackendLock is a no-op on SQLite: the engine serializes writers, so a
@@ -540,8 +498,8 @@ func (a *sqliteTxAdapter) DeleteMultipartUpload(ctx context.Context, uploadID st
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.q.ExecContext(ctx, `DELETE FROM multipart_uploads WHERE upload_id = ?`, uploadID); err != nil {
-		return nil, fmt.Errorf("delete multipart upload: %w", err)
+	if err := a.exec(ctx, "delete multipart upload", `DELETE FROM multipart_uploads WHERE upload_id = ?`, uploadID); err != nil {
+		return nil, err
 	}
 	return parts, nil
 }
@@ -573,7 +531,7 @@ func (a *sqliteTxAdapter) UpsertPart(ctx context.Context, p *core.RecordPartPara
 		keyID = &p.Form.KeyID
 		plaintextSize = &p.Form.PlaintextSize
 	}
-	if _, err := a.q.ExecContext(ctx,
+	if err := a.exec(ctx, "record part",
 		`INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, storage_key, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (upload_id, part_number) DO UPDATE SET
@@ -589,7 +547,7 @@ func (a *sqliteTxAdapter) UpsertPart(ctx context.Context, p *core.RecordPartPara
 		p.UploadID, p.PartNumber, p.ETag, nullableString(p.PlaintextETag), p.SizeBytes,
 		encrypted, encryptionKey, keyID, plaintextSize, nullableString(p.Intent.StorageKey), now(),
 	); err != nil {
-		return nil, fmt.Errorf("record part: %w", err)
+		return nil, err
 	}
 	if len(prev) == 0 {
 		return nil, nil

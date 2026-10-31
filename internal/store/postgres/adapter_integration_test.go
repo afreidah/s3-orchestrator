@@ -694,23 +694,6 @@ func TestPgAdapter_InsertCleanup_NoInstanceClaimsWithEmptyBy(t *testing.T) {
 	}
 }
 
-// TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey verifies a copy
-// stored at the object's own key is queued at that key.
-func TestPgAdapter_InsertCleanup_EmptyStorageKeyUsesObjectKey(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	key := uniqueKey(t, "k")
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		item, err := a.InsertCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, Reason: "test", SizeBytes: 1})
-		if err != nil {
-			t.Fatalf("InsertCleanup: %v", err)
-		}
-		if row := txCleanupRow(t, a, item.ID); row.StorageKey != key || item.StorageKey != key {
-			t.Errorf("StorageKey = stored %q, returned %q; want the object key %q", row.StorageKey, item.StorageKey, key)
-		}
-	})
-}
-
 // -------------------------------------------------------------------------
 // MULTIPART TX
 // -------------------------------------------------------------------------

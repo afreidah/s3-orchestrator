@@ -134,14 +134,6 @@ func deref[T any](p *T) T {
 	return *p
 }
 
-// boolToInt renders a Go bool as the 0/1 integer SQLite stores booleans as.
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // jsonList renders a string list as the JSON array json_each expands, so a
 // query takes a whole list as one fixed parameter. An empty or nil list is
 // "[]", since json_each reads "null" as a single NULL element.
@@ -195,6 +187,11 @@ func (s *Store) countRows(ctx context.Context, what, query string, args ...any) 
 // changed any row; see sqliteTxAdapter.execChanged.
 func (s *Store) execChanged(ctx context.Context, what, query string, args ...any) (bool, error) {
 	return s.direct().execChanged(ctx, what, query, args...)
+}
+
+// exec runs a write outside any transaction; see sqliteTxAdapter.exec.
+func (s *Store) exec(ctx context.Context, what, query string, args ...any) error {
+	return s.direct().exec(ctx, what, query, args...)
 }
 
 // collectMap is collectRows for the queries that come back keyed - one row per

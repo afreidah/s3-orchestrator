@@ -28,9 +28,6 @@ import (
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	if maxKeys <= 0 {
-		maxKeys = 200
-	}
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	stats, err := queryDirectoryStats(ctx, s, prefix, escapedPrefix)

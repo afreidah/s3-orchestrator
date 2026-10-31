@@ -15,7 +15,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -131,9 +132,7 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
 	}
-	defer rows.Close()
-
-	objects, err := scanListedObjectLocations(rows)
+	objects, err := scanSlimObjectLocations(rows, true)
 	if err != nil {
 		return nil, err
 	}
@@ -143,15 +142,10 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 // CountObjectsByPrefix returns how many distinct keys live under a prefix,
 // which is what answers whether a bucket still holds anything.
 func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
-	var n int64
-	err := s.db.QueryRowContext(ctx, `
+	return s.countRows(ctx, "objects by prefix", `
 		SELECT COUNT(DISTINCT object_key)
 		FROM object_locations
-		WHERE object_key LIKE ? || '%' ESCAPE '\'`, likeEscaper.Replace(prefix)).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count objects by prefix: %w", err)
-	}
-	return n, nil
+		WHERE object_key LIKE ? || '%' ESCAPE '\'`, likeEscaper.Replace(prefix))
 }
 
 // listDelimited groups a delimiter listing inside SQLite with a recursive CTE
@@ -223,8 +217,6 @@ func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
 	}
-	defer rows.Close()
-
 	entries, err := scanDelimitedEntries(rows)
 	if err != nil {
 		return nil, err
@@ -237,19 +229,18 @@ func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter
 func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 	return collectRows(rows, "delimited entries", func(rows *sql.Rows) (core.DelimitedEntry, error) {
 		var (
+			e         core.DelimitedEntry
 			key       string
-			isPrefix  int
 			commonPfx sql.NullString
-			skipBound string
 			backend   sql.NullString
 			sizeBytes sql.NullInt64
 			createdAt sql.NullString
 			etag      sql.NullString
 		)
-		if err := rows.Scan(&key, &isPrefix, &commonPfx, &skipBound, &backend, &sizeBytes, &createdAt, &etag); err != nil {
+		if err := rows.Scan(&key, &e.IsPrefix, &commonPfx, &e.SkipBound, &backend, &sizeBytes, &createdAt, &etag); err != nil {
 			return core.DelimitedEntry{}, fmt.Errorf("failed to scan delimited entry: %w", err)
 		}
-		e := core.DelimitedEntry{IsPrefix: isPrefix != 0, CommonPrefix: commonPfx.String, SkipBound: skipBound}
+		e.CommonPrefix = commonPfx.String
 		if !e.IsPrefix {
 			e.Leaf.ObjectKey = key
 			e.Leaf.BackendName = backend.String
@@ -275,8 +266,9 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
 	args := []any{likeEscaper.Replace(q.Prefix), q.After, formatTime(q.Cutoff)}
 
+	// Sorted keys keep the generated SQL and its arguments identical run to run.
 	var tagFilter strings.Builder
-	for _, key := range sortedTagKeys(q.Tags) {
+	for _, key := range slices.Sorted(maps.Keys(q.Tags)) {
 		tagFilter.WriteString(`
 			  AND EXISTS (SELECT 1 FROM object_tags t
 			              WHERE t.object_key = object_locations.object_key
@@ -302,21 +294,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
 	}
-	defer rows.Close()
-
-	return scanSlimObjectLocations(rows)
-}
-
-// sortedTagKeys orders a tag filter's keys so the generated SQL and its
-// arguments are identical run to run, which keeps the statement cacheable and
-// a failure reproducible.
-func sortedTagKeys(tags map[string]string) []string {
-	keys := make([]string, 0, len(tags))
-	for k := range tags {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return scanSlimObjectLocations(rows, false)
 }
 
 // ListObjectsByBackend returns up to limit managed objects on a backend after
@@ -333,9 +311,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
 	}
-	defer rows.Close()
-
-	return scanSlimObjectLocations(rows)
+	return scanSlimObjectLocations(rows, false)
 }
 
 // ListObjectsByBackendKeyAsc returns rows for a backend in ascending
@@ -352,39 +328,13 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 	if err != nil {
 		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
 	}
-	defer rows.Close()
-
-	return scanSlimObjectLocations(rows)
+	return scanSlimObjectLocations(rows, false)
 }
 
 // ListedPathStates reports what the ledger says about paths the backend
 // listed, in one query for a whole listing page.
 func (s *Store) ListedPathStates(ctx context.Context, backend string, paths []string) (map[string]core.PathState, error) {
 	return s.direct().ListedPathStates(ctx, backend, paths)
-}
-
-// scanListedObjectLocations scans a listing row, which carries the ETag on top
-// of the slim columns because a Contents entry reports one. NULL leaves the
-// entry without an identity, which is what an object that has not learned its
-// ETag yet has.
-func scanListedObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
-	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
-		var (
-			loc       core.ObjectLocation
-			createdAt string
-			etag      sql.NullString
-		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &createdAt, &etag); err != nil {
-			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
-		}
-		var parseErr error
-		loc.CreatedAt, parseErr = parseTime(createdAt)
-		if parseErr != nil {
-			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
-		}
-		loc.Identity = listedIdentity(etag)
-		return loc, nil
-	})
 }
 
 // listedIdentity builds the identity a listing row carries: the ETag alone,
@@ -396,24 +346,29 @@ func listedIdentity(etag sql.NullString) *core.ObjectIdentity {
 	return &core.ObjectIdentity{ETag: etag.String}
 }
 
-// scanSlimObjectLocations consumes a *sql.Rows holding the slim
-// (object_key, backend_name, storage_key, size_bytes, created_at) projection used by
-// ListObjectsByBackend and its key-ordered twin. Centralizes the per-row scan
-// and timestamp parse so those callers don't carry parallel loop bodies.
-func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
+// scanSlimObjectLocations consumes rows holding the slim (object_key,
+// backend_name, storage_key, size_bytes, created_at) projection. A listing
+// selects the ETag after it, because a Contents entry reports one; NULL leaves
+// the entry without an identity, as for an object that has not learned it yet.
+func scanSlimObjectLocations(rows *sql.Rows, withETag bool) ([]core.ObjectLocation, error) {
 	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
 		var (
 			loc       core.ObjectLocation
 			createdAt string
+			etag      sql.NullString
 		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &createdAt); err != nil {
+		dest := []any{&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &createdAt}
+		if withETag {
+			dest = append(dest, &etag)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
-		var parseErr error
-		loc.CreatedAt, parseErr = parseTime(createdAt)
-		if parseErr != nil {
-			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+		var err error
+		if loc.CreatedAt, err = parseTime(createdAt); err != nil {
+			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
+		loc.Identity = listedIdentity(etag)
 		return loc, nil
 	})
 }

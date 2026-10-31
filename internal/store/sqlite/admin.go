@@ -24,15 +24,11 @@ import (
 
 // InsertNotification enqueues a notification for delivery.
 func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error {
-	_, err := s.db.ExecContext(ctx, `
+	return s.exec(ctx, "insert notification", `
 		INSERT INTO notification_outbox (event_type, payload, endpoint_url, created_at, next_retry, attempts)
 		VALUES (?, ?, ?, ?, ?, 0)`,
 		eventType, payload, endpointURL, now(), now(),
 	)
-	if err != nil {
-		return fmt.Errorf("insert notification: %w", err)
-	}
-	return nil
 }
 
 // GetPendingNotifications returns notifications ready for delivery, ordered
@@ -68,25 +64,17 @@ func (s *Store) NotificationQueueDepth(ctx context.Context) (int64, error) {
 // CompleteNotification removes a successfully delivered notification from the
 // outbox.
 func (s *Store) CompleteNotification(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM notification_outbox WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("complete notification: %w", err)
-	}
-	return nil
+	return s.exec(ctx, "complete notification", `DELETE FROM notification_outbox WHERE id = ?`, id)
 }
 
 // RetryNotification increments the attempt counter and schedules the next
 // retry at an absolute time computed from the backoff duration.
 func (s *Store) RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
 	nextRetry := formatTime(time.Now().Add(backoff))
-	_, err := s.db.ExecContext(ctx, `
+	return s.exec(ctx, "retry notification", `
 		UPDATE notification_outbox
 		SET attempts = attempts + 1, next_retry = ?, last_error = ?
 		WHERE id = ?`,
 		nextRetry, lastError, id,
 	)
-	if err != nil {
-		return fmt.Errorf("retry notification: %w", err)
-	}
-	return nil
 }

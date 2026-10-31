@@ -111,6 +111,19 @@ func mapSlice[I, O any](in []I, fn func(*I) O) []O {
 	return out
 }
 
+// mapSliceErr is mapSlice for a converter that can fail; the first failure is
+// returned.
+func mapSliceErr[I, O any](in []I, fn func(*I) (O, error)) ([]O, error) {
+	out := make([]O, len(in))
+	for i := range in {
+		var err error
+		if out[i], err = fn(&in[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // totalsByBackend folds a per-backend result set into the map its caller
 // returns, so each caller states only which columns carry the name and the
 // total.
@@ -171,13 +184,18 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 		Managed:                  !loc.Unmanaged,
 		CreatedAt:                pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
 	}
-	if id := loc.Identity; id != nil {
-		params.Etag = strPtr(id.ETag)
-		params.ContentType = strPtr(id.ContentType)
-		// A marshal failure would mean a map[string]string that cannot be
-		// JSON, which does not exist; the column stays NULL rather than
-		// failing a write over metadata a later read can re-learn.
-		params.UserMetadata, _ = core.EncodeUserMetadata(id.UserMetadata)
-	}
+	params.Etag, params.ContentType, params.UserMetadata = identityColumns(loc.Identity)
 	return params
+}
+
+// identityColumns renders an optional identity as its three columns; nil
+// writes NULL to all three. A marshal failure would mean a map[string]string
+// that cannot be JSON, which does not exist, so the metadata column stays NULL
+// rather than failing a write over metadata a later read can re-learn.
+func identityColumns(id *core.ObjectIdentity) (etag, contentType *string, userMetadata []byte) {
+	if id == nil {
+		return nil, nil, nil
+	}
+	userMetadata, _ = core.EncodeUserMetadata(id.UserMetadata)
+	return strPtr(id.ETag), strPtr(id.ContentType), userMetadata
 }

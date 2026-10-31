@@ -65,7 +65,7 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 		uploadID,
 	)
 	var tagging sql.NullString
-	mu, err := scanMultipartUploadRow(taggedRowScanner{row: row, tagging: &tagging})
+	mu, err := scanMultipartUploadRow(row, &tagging)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, core.ErrMultipartUploadNotFound
 	}
@@ -102,12 +102,8 @@ func (s *Store) RenewMultipartCompletion(ctx context.Context, uploadID string) (
 // EndMultipartCompletion clears the upload's completion mark, so a completion
 // that failed leaves the upload open to parts, aborts and a retry.
 func (s *Store) EndMultipartCompletion(ctx context.Context, uploadID string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE multipart_uploads SET completion_heartbeat_at = NULL WHERE upload_id = ?`, uploadID,
-	); err != nil {
-		return fmt.Errorf("failed to end multipart completion: %w", err)
-	}
-	return nil
+	return s.exec(ctx, "failed to end multipart completion",
+		`UPDATE multipart_uploads SET completion_heartbeat_at = NULL WHERE upload_id = ?`, uploadID)
 }
 
 // -------------------------------------------------------------------------
@@ -228,8 +224,6 @@ func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartU
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan multipart uploads: %w", err)
 	}
-	defer rows.Close()
-
 	return scanMultipartUploads(rows)
 }
 
@@ -258,23 +252,11 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// taggedRowScanner adapts a row carrying one extra trailing tagging column onto
-// scanMultipartUploadRow.
-type taggedRowScanner struct {
-	row     rowScanner
-	tagging *sql.NullString
-}
-
-// Scan appends the extra destination the wrapped row was selected with.
-func (t taggedRowScanner) Scan(dest ...any) error {
-	return t.row.Scan(append(dest, t.tagging)...)
-}
-
 // scanMultipartUploadRow scans the standard multipart_uploads column set
-// (upload_id, object_key, backend_name, content_type, metadata, created_at).
-// It returns sql.ErrNoRows untouched so single-row callers can map it to a
-// sentinel.
-func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
+// (upload_id, object_key, backend_name, content_type, metadata, created_at),
+// then extra for any column a caller selected after it. It returns
+// sql.ErrNoRows untouched so single-row callers can map it to a sentinel.
+func scanMultipartUploadRow(s rowScanner, extra ...any) (core.MultipartUpload, error) {
 	var (
 		mu            core.MultipartUpload
 		contentType   sql.NullString
@@ -283,7 +265,8 @@ func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 		keyID         sql.NullString
 		createdAt     string
 	)
-	if err := s.Scan(&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &encryptionKey, &keyID, &createdAt); err != nil {
+	dest := []any{&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &encryptionKey, &keyID, &createdAt}
+	if err := s.Scan(append(dest, extra...)...); err != nil {
 		return core.MultipartUpload{}, err
 	}
 	mu.ContentType = nullStringValue(contentType)

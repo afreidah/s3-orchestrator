@@ -56,23 +56,13 @@ type RecordObjectRequest struct {
 	Placing  []ObjectCopy
 }
 
-// keepIntents names the intents the commit must not clear: the ones belonging
-// to this write's own uploads still in flight.
-func (r *RecordObjectRequest) keepIntents() []string {
-	ids := make([]string, 0, len(r.Placing))
-	for i := range r.Placing {
-		ids = append(ids, r.Placing[i].IntentID)
-	}
-	return ids
-}
-
-// committedIntents names the intents this write is honouring: one per copy it
-// is recording. They are cleared with the rest, having served their purpose,
-// but their bytes are the object and must not be handed to orphan cleanup.
-func (r *RecordObjectRequest) committedIntents() []string {
-	ids := make([]string, 0, len(r.Copies))
-	for i := range r.Copies {
-		ids = append(ids, r.Copies[i].IntentID)
+// intentIDs names the intents a set of copies resolves. For Copies those are
+// the intents the write is honouring, cleared with the rest but holding the
+// object's bytes; for Placing, the ones the commit must not clear.
+func intentIDs(copies []ObjectCopy) []string {
+	ids := make([]string, len(copies))
+	for i := range copies {
+		ids[i] = copies[i].IntentID
 	}
 	return ids
 }
@@ -99,10 +89,8 @@ func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]Cl
 // displaces are charged to the key's quota stripe inside the transaction, so
 // the counter commits or rolls back with the rows.
 func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]CleanupItem, error) {
-	if err := tx.AcquireKeyLock(ctx, req.Key); err != nil {
-		return nil, err
-	}
-	held, err := intentsHeld(ctx, tx, req.committedIntents())
+	committed := intentIDs(req.Copies)
+	held, err := keyIntentsHeld(ctx, tx, req.Key, committed...)
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +121,22 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return nil, err
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.keepIntents(), req.committedIntents())
+	superseded, err := clearSupersededIntents(ctx, tx, req.Key, intentIDs(req.Placing), committed)
 	if err != nil {
 		return nil, err
 	}
 	return enqueueRemoved(ctx, tx, req.Key, CleanupReasonOverwritten, append(displaced, superseded...))
+}
+
+// keyIntentsHeld takes the key's lock, then reports whether every intent still
+// exists. The lock comes first: a write takes it and then deletes the key's
+// intent rows, so claiming first would leave two transactions each holding
+// what the other is waiting for.
+func keyIntentsHeld(ctx context.Context, tx TxAdapter, key string, intentIDs ...string) (bool, error) {
+	if err := tx.AcquireKeyLock(ctx, key); err != nil {
+		return false, err
+	}
+	return intentsHeld(ctx, tx, intentIDs)
 }
 
 // intentsHeld reports whether every intent the write is committing still
@@ -444,10 +443,7 @@ func (o TxOps) PlaceCopy(ctx context.Context, p *Placement) (int64, []CleanupIte
 // intent, for a move remove the source, and insert.
 func placeCopyTx(ctx context.Context, tx TxAdapter, p *Placement) (placeOutcome, error) {
 	key := p.Source.ObjectKey
-	if err := tx.AcquireKeyLock(ctx, key); err != nil {
-		return placeOutcome{}, err
-	}
-	held, err := intentsHeld(ctx, tx, []string{p.Intent.IntentID})
+	held, err := keyIntentsHeld(ctx, tx, key, p.Intent.IntentID)
 	if err != nil {
 		return placeOutcome{}, err
 	}

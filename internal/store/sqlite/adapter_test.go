@@ -465,35 +465,6 @@ func TestAdapter_InsertObjectLocationIfNotExists_SkipsWhenPresent(t *testing.T) 
 // CLEANUP TX
 // -------------------------------------------------------------------------
 
-// TestAdapter_InsertCleanup_DefaultsPathToObjectKey verifies a request
-// with no storage key queues the object key as the path, the location of a
-// copy written before each write had its own path.
-func TestAdapter_InsertCleanup_DefaultsPathToObjectKey(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		item, err := a.InsertCleanup(ctx, &core.CleanupRequest{
-			BackendName: "backend-a", ObjectKey: "bucket/legacy", Reason: "test", SizeBytes: 1,
-		})
-		if err != nil {
-			t.Fatalf("InsertCleanup: %v", err)
-		}
-		if item.StorageKey != "bucket/legacy" {
-			t.Errorf("returned storage key = %q, want the object key", item.StorageKey)
-		}
-		var stored string
-		if err := a.q.QueryRowContext(ctx,
-			`SELECT storage_key FROM cleanup_queue WHERE id = ?`, item.ID,
-		).Scan(&stored); err != nil {
-			t.Fatalf("read storage_key: %v", err)
-		}
-		if stored != "bucket/legacy" {
-			t.Errorf("stored storage key = %q, want the object key", stored)
-		}
-	})
-}
-
 // TestAdapter_InsertCleanup_ReturnsStampedClaim verifies the returned item
 // carries the request's fields and the claim the row was stamped with, so a
 // settle from that item matches the stored text exactly.

@@ -47,7 +47,7 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 		   AND (c.flags & ~?) = 0
 		   AND (c.available_bytes IS NULL OR c.available_bytes >= ?)`,
 		p.IntentID, p.ObjectKey, core.StoragePath(p.ObjectKey, p.StorageKey), p.BackendName, p.SizeBytes,
-		boolToInt(p.Encrypted), p.EncryptionKey, nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash),
+		p.Encrypted, p.EncryptionKey, nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash),
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),

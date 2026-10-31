@@ -290,11 +290,10 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 // InsertCleanup queues c's bytes for deletion, claimed by this instance, and
 // returns the row with the claim it was stamped with.
 func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest) (core.CleanupItem, error) {
-	path := core.StoragePath(c.ObjectKey, c.StorageKey)
 	row, err := a.q.InsertCleanup(ctx, db.InsertCleanupParams{
 		BackendName: c.BackendName,
 		ObjectKey:   c.ObjectKey,
-		StorageKey:  path,
+		StorageKey:  c.StorageKey,
 		Reason:      c.Reason,
 		SizeBytes:   c.SizeBytes,
 		ClaimedBy:   strPtr(a.instanceID),
@@ -306,7 +305,7 @@ func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest)
 		ID:          row.ID,
 		BackendName: c.BackendName,
 		ObjectKey:   c.ObjectKey,
-		StorageKey:  path,
+		StorageKey:  c.StorageKey,
 		Reason:      c.Reason,
 		SizeBytes:   c.SizeBytes,
 		Claim:       &core.CleanupClaim{At: row.ClaimedAt.Time, By: a.instanceID},
