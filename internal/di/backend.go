@@ -14,7 +14,6 @@
 package di
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -215,14 +214,7 @@ func ProvideCodec(i do.Injector) (*compression.Codec, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := compression.NewCodecForLevel(
-		cmp.Or(cfg.Compression.Level, config.DefaultCompressionLevel),
-		cmp.Or(cfg.Compression.ChunkSize, config.DefaultCompressionChunkSize),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
+	return compression.NewCodecForLevel(cfg.Compression.Level, cfg.Compression.ChunkSize)
 }
 
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
@@ -340,6 +332,7 @@ type writePathDeps struct {
 	coord        *writepath.Coordinator
 	stores       metadataStore
 	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	codec        *compression.Codec
 	enc          *encryption.Encryptor
 }
 
@@ -355,6 +348,7 @@ func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
 		coord:        r.Resolve[*writepath.Coordinator](),
 		stores:       r.Resolve[metadataStore](),
 		integrityCfg: r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](),
+		codec:        r.Resolve[*compression.Codec](),
 	}
 	if r.err != nil {
 		return nil, r.err
@@ -376,10 +370,6 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	codec, err := do.Invoke[*compression.Codec](i)
-	if err != nil {
-		return nil, err
-	}
 	// dekCacheTTL pegs how long cached unwrapped DEKs live so UploadPart
 	// need not re-unwrap the upload-level DEK on every part.
 	const dekCacheTTL = time.Hour
@@ -388,7 +378,7 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 		Coord:              d.coord,
 		Stores:             d.stores,
 		Encryptor:          d.enc,
-		Codec:              codec,
+		Codec:              d.codec,
 		Compression:        d.cfg.Compression,
 		DEKCacheTTL:        dekCacheTTL,
 		IntegrityCfg:       d.integrityCfg,
@@ -475,17 +465,11 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	codec, err := do.Invoke[*compression.Codec](i)
-	if err != nil {
-		return nil, err
-	}
-	dbBreaker, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	detached, err := do.Invoke[*writepath.DetachedUploads](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	dbBreaker := r.Resolve[*breaker.CircuitBreaker]()
+	detached := r.Resolve[*writepath.DetachedUploads]()
+	if r.err != nil {
+		return nil, r.err
 	}
 	cb := &d.cfg.CircuitBreaker
 	objectManager := object.New(&object.Deps{
@@ -493,10 +477,10 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		Coord:                        d.coord,
 		Stores:                       d.stores,
 		Encryptor:                    d.enc,
-		Codec:                        codec,
+		Codec:                        d.codec,
 		Compression:                  d.cfg.Compression,
 		LocationCache:                object.NewLocationCache(cb.CacheTTL),
-		ObjectCache:                  resolveOptionalCache(i),
+		ObjectCache:                  Optional[objcache.ObjectCache](i).Value,
 		ParallelBroadcast:            cb.ParallelBroadcast,
 		CopiesPerWrite:               d.cfg.CopiesPerWrite(),
 		Detached:                     detached,
@@ -562,12 +546,9 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 	r := newResolver(i)
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
+	codec := r.Resolve[*compression.Codec]()
 	if r.err != nil {
 		return nil, r.err
-	}
-	codec, err := do.Invoke[*compression.Codec](i)
-	if err != nil {
-		return nil, err
 	}
 	return reconcile.NewManager(&reconcile.Deps{
 		Backends: rt,

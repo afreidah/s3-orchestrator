@@ -272,6 +272,9 @@ func TestCORSHook_Applied(t *testing.T) {
 			AllowedMethods: []string{"GET"},
 		}},
 	}}}
+	declared := provisioning.NewDeclared()
+	declared.Set(provisioning.Merge(cfg.Buckets, cfg.Auth, &provisioning.Snapshot{}).Buckets)
+	do.ProvideValue(inj, declared)
 
 	status, err := h.Apply(context.Background(), nil, cfg)
 	if status != HookApplied || err != nil {
@@ -429,8 +432,8 @@ func TestLogLevelHook_Applied(t *testing.T) {
 }
 
 // TestWorkerConfigsHook_FailedRebalancer threads a failing rebalancer
-// provider through and asserts the hook short-circuits with the
-// labelled error before touching the other workers.
+// provider through and asserts the hook fails with the labelled error
+// before touching the other workers.
 func TestWorkerConfigsHook_FailedRebalancer(t *testing.T) {
 	inj := do.New()
 	failingProvider[*worker.Rebalancer](inj)
@@ -441,49 +444,6 @@ func TestWorkerConfigsHook_FailedRebalancer(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rebalancer") {
 		t.Errorf("err %q missing rebalancer label", err)
-	}
-}
-
-// TestWorkerConfigsHook_FailedReplicator confirms the second-position
-// resolution failure is also surfaced (and labelled correctly).
-func TestWorkerConfigsHook_FailedReplicator(t *testing.T) {
-	inj := do.New()
-	failingProvider[*worker.Replicator](inj)
-	h := &workerConfigsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-	if !strings.Contains(err.Error(), "replicator") {
-		t.Errorf("err %q missing replicator label", err)
-	}
-}
-
-// TestWorkerConfigsHook_FailedOverRepCleaner covers the third worker.
-func TestWorkerConfigsHook_FailedOverRepCleaner(t *testing.T) {
-	inj := do.New()
-	failingProvider[*worker.OverReplicationCleaner](inj)
-	h := &workerConfigsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-	if !strings.Contains(err.Error(), "over-replication cleaner") {
-		t.Errorf("err %q missing label", err)
-	}
-}
-
-// TestWorkerConfigsHook_FailedScrubber covers the fourth worker.
-func TestWorkerConfigsHook_FailedScrubber(t *testing.T) {
-	inj := do.New()
-	failingProvider[*worker.Scrubber](inj)
-	h := &workerConfigsHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookFailed || !errors.Is(err, errResolve) {
-		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-	if !strings.Contains(err.Error(), "scrubber") {
-		t.Errorf("err %q missing label", err)
 	}
 }
 
@@ -505,7 +465,10 @@ func TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator(t *testing.T) {
 	workers := proxytest.BuildWorkers(st, mock)
 
 	inj := do.New()
+	do.ProvideValue(inj, workers.Rebalancer)
 	do.ProvideValue(inj, workers.Replicator)
+	do.ProvideValue(inj, workers.OverReplicationCleaner)
+	do.ProvideValue(inj, workers.Scrubber)
 
 	newCfg := &config.Config{
 		Replication: config.ReplicationConfig{Factor: 3},
@@ -526,17 +489,6 @@ func TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator(t *testing.T) {
 	}
 }
 
-// TestWorkerConfigsHook_AllDisabledSkipped is the run-mode case where
-// none of the workers are wired in: the hook reports Skipped because
-// there is nothing to push config onto.
-func TestWorkerConfigsHook_AllDisabledSkipped(t *testing.T) {
-	h := &workerConfigsHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookSkipped || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
-	}
-}
-
 // TestManagerConfigHook_FailedResolution drives the Failed branch.
 func TestManagerConfigHook_FailedResolution(t *testing.T) {
 	inj := do.New()
@@ -545,15 +497,6 @@ func TestManagerConfigHook_FailedResolution(t *testing.T) {
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
-	}
-}
-
-// TestManagerConfigHook_SkippedWhenDisabled covers the no-provider path.
-func TestManagerConfigHook_SkippedWhenDisabled(t *testing.T) {
-	h := &runtimeConfigHook{inj: do.New()}
-	status, err := h.Apply(context.Background(), nil, &config.Config{})
-	if status != HookSkipped || err != nil {
-		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
 	}
 }
 

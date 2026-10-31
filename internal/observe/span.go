@@ -78,8 +78,7 @@ func Run[R any](ctx context.Context, op Op, fn func(context.Context) (R, error))
 			op.Recorder(op.Name, start, err)
 		}
 		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			span.RecordError(err)
+			RecordSpanError(span, err)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}

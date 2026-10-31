@@ -58,11 +58,8 @@ const (
 // counters, and the store applies a staged shared batch at most once whichever
 // instance finds it.
 type usageFlushService struct {
-	flusher usageFlushOps
-	tracker nearLimitReporter
-	fleet   quotaMetricsRefresher
-	states  backendStateRefresher
-	log     *slog.Logger
+	UsageFlushDeps
+	log *slog.Logger
 }
 
 // UsageFlushDeps groups what the flush tick draws on: the usage service that
@@ -83,19 +80,13 @@ func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
 	must.NotNil("d.Tracker", d.Tracker)
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.States", d.States)
-	return &usageFlushService{
-		flusher: d.Flusher,
-		tracker: d.Tracker,
-		fleet:   d.Fleet,
-		states:  d.States,
-		log:     tickrunner.ComponentLogger("usage_flush"),
-	}
+	return &usageFlushService{UsageFlushDeps: *d, log: tickrunner.ComponentLogger("usage_flush")}
 }
 
 // Run periodically flushes in-memory usage counters and adapts the tick
 // interval toward FastInterval when a backend nears its limits.
 func (s *usageFlushService) Run(ctx context.Context) error {
-	cfg := s.flusher.Config()
+	cfg := s.Flusher.Config()
 	interval := defaultUsageFlushInterval
 	if cfg != nil {
 		interval = cfg.Interval
@@ -121,12 +112,12 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 // adaptive fast-path changes the target interval, and returns the interval now
 // in effect (unchanged when nothing moved).
 func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Ticker, current time.Duration) time.Duration {
-	cfg := s.flusher.Config()
+	cfg := s.Flusher.Config()
 	if cfg == nil {
 		return current
 	}
 	target := cfg.Interval
-	if cfg.AdaptiveEnabled && s.tracker.NearLimit(cfg.AdaptiveThreshold) {
+	if cfg.AdaptiveEnabled && s.Tracker.NearLimit(cfg.AdaptiveThreshold) {
 		target = cfg.FastInterval
 	}
 	if target == current {
@@ -144,36 +135,36 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 // snapshot itself is computed by the fleet snapshot service on its own
 // cadence.
 func (s *usageFlushService) flushTick(ctx context.Context) {
-	if err := s.flusher.RefreshQuotaBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "quota baseline refresh failed", "error", err)
-	}
-	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
-	}
-	if s.flusher.RedisCounterConfigured() {
+	s.logUnlessDBDown(ctx, "quota baseline refresh failed", s.Flusher.RefreshQuotaBaselines(ctx))
+	s.logUnlessDBDown(ctx, "counter flush failed", s.Flusher.FlushUsage(ctx))
+	if s.Flusher.RedisCounterConfigured() {
 		s.loadFleetState(ctx)
 	}
 
 	// After the flush, so the baseline includes what it wrote.
-	if err := s.fleet.RefreshUsageBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "usage baseline refresh failed", "error", err)
-	}
+	s.logUnlessDBDown(ctx, "usage baseline refresh failed", s.Fleet.RefreshUsageBaselines(ctx))
 
 	// This service runs on every instance in every mode, while the drain
 	// worker that also refreshes the cache runs on one instance at a time.
 	// A stale cache only costs ranking: admission reads the records itself.
-	if err := s.states.Refresh(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "backend state refresh failed", "error", err)
+	s.logUnlessDBDown(ctx, "backend state refresh failed", s.States.Refresh(ctx))
+}
+
+// logUnlessDBDown logs a failed tick step. A database outage is skipped: the
+// breaker already reports it, and every step would repeat it each tick.
+func (s *usageFlushService) logUnlessDBDown(ctx context.Context, msg string, err error) {
+	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, msg, "error", err)
 	}
 }
 
 // loadFleetState loads the fleet snapshot and the worker gauges, which their
 // own lock holders published and which need not be this instance.
 func (s *usageFlushService) loadFleetState(ctx context.Context) {
-	if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
+	if err := s.Fleet.LoadFleetMetrics(ctx); err != nil {
 		s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
 	}
-	if err := s.fleet.LoadWorkerGauges(ctx); err != nil {
+	if err := s.Fleet.LoadWorkerGauges(ctx); err != nil {
 		s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
 	}
 }

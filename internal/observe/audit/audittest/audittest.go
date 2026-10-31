@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -49,24 +50,15 @@ func Capture(t testing.TB, body func()) []Entry {
 
 // Named returns the entries whose event is name.
 func Named(entries []Entry, name string) []Entry {
-	var out []Entry
-	for _, e := range entries {
-		if e["event"] == name {
-			out = append(out, e)
-		}
-	}
-	return out
+	return slices.DeleteFunc(slices.Clone(entries), func(e Entry) bool { return e["event"] != name })
 }
 
 // WithPrefix returns the entries whose event starts with prefix.
 func WithPrefix(entries []Entry, prefix string) []Entry {
-	var out []Entry
-	for _, e := range entries {
-		if ev, _ := e["event"].(string); strings.HasPrefix(ev, prefix) {
-			out = append(out, e)
-		}
-	}
-	return out
+	return slices.DeleteFunc(slices.Clone(entries), func(e Entry) bool {
+		ev, _ := e["event"].(string)
+		return !strings.HasPrefix(ev, prefix)
+	})
 }
 
 // lockedBuffer is a bytes.Buffer safe for the concurrent writes of code that

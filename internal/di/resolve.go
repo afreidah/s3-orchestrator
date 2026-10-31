@@ -32,27 +32,23 @@ func newResolver(i do.Injector) *resolver { return &resolver{inj: i} }
 // Resolve pulls T, or returns the zero value if the resolver has already failed.
 // The first failure is retained on the resolver for the caller to check.
 func (r *resolver) Resolve[T any]() T {
-	if r.err != nil {
-		var zero T
-		return zero
-	}
-	v, err := do.Invoke[T](r.inj)
-	if err != nil {
-		r.err = err
-	}
-	return v // already the zero value when err != nil
+	return r.ResolveNamed[T]("")
 }
 
 // ResolveNamed resolves T like Resolve, but on the first failure wraps the
 // error as "resolve <name>: %w" so a missing provider points at the right
-// dependency. Later calls short-circuit once the resolver has failed.
+// dependency. An empty name keeps the error unwrapped.
 func (r *resolver) ResolveNamed[T any](name string) T {
 	if r.err != nil {
 		var zero T
 		return zero
 	}
 	v, err := do.Invoke[T](r.inj)
-	if err != nil {
+	switch {
+	case err == nil:
+	case name == "":
+		r.err = err
+	default:
 		r.err = fmt.Errorf("resolve %s: %w", name, err)
 	}
 	return v // already the zero value when err != nil

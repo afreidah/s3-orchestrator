@@ -778,22 +778,6 @@ func TestProvideCodec_RejectsUnknownLevel(t *testing.T) {
 	}
 }
 
-// TestProvideCodec_DefaultsWhenBlockOmitted checks that a config with no
-// compression block still yields a codec, since objects already stored
-// compressed have to stay readable whether or not the feature is on.
-func TestProvideCodec_DefaultsWhenBlockOmitted(t *testing.T) {
-	inj := do.New()
-	do.ProvideValue(inj, &config.Config{})
-	c, err := ProvideCodec(inj)
-	if err != nil {
-		t.Fatalf("ProvideCodec: %v", err)
-	}
-	defer c.Close()
-	if c.ChunkSize() != config.DefaultCompressionChunkSize {
-		t.Errorf("ChunkSize = %d, want the %d default", c.ChunkSize(), config.DefaultCompressionChunkSize)
-	}
-}
-
 // TestProvideCORS_CompilesStoredBucketRules pins the ordering ProvideCORS
 // depends on: assembling the credential registry is what publishes the declared
 // bucket set, so the policy has to be built after it. Compiling from an

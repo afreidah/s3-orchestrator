@@ -13,31 +13,16 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
 // AuthStreamingRequestsTotal counts streaming-payload requests received,
 // labeled by AWS streaming variant. Incremented at the moment the
 // transport layer wraps the request body in a chunk-validating reader.
-var AuthStreamingRequestsTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_auth_streaming_requests_total",
-		Help: "Total streaming-payload SigV4 requests received, by AWS streaming variant.",
-	},
-	[]string{"variant"},
-)
+var AuthStreamingRequestsTotal = counterVec("s3o_auth_streaming_requests_total",
+	"Total streaming-payload SigV4 requests received, by AWS streaming variant.", "variant")
 
 // AuthStreamingRejectionsTotal counts streaming-payload requests
 // rejected due to a chunk- or trailer-validation failure, labeled by
 // reason. Reasons map 1:1 to the auth.Err* sentinels so dashboards can
 // distinguish a tampered body (chunk_signature_mismatch) from a
 // malformed framing attempt (chunk_malformed).
-var AuthStreamingRejectionsTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "s3o_auth_streaming_rejections_total",
-		Help: "Total streaming-payload requests rejected mid-stream, by reason.",
-	},
-	[]string{"reason"},
-)
+var AuthStreamingRejectionsTotal = counterVec("s3o_auth_streaming_rejections_total",
+	"Total streaming-payload requests rejected mid-stream, by reason.", "reason")

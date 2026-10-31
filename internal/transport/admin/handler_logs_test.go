@@ -12,6 +12,7 @@ package admin
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -57,9 +58,9 @@ func messages(resp adminapi.LogsResponse) []string {
 func TestLogsHandler_ReturnsEntriesWithComponent(t *testing.T) {
 	t.Parallel()
 	resp := getLogs(t, fakeLogReader{entries: []telemetry.LogEntry{
-		{Time: time.Now(), Level: "INFO", Message: "replicated", Attrs: map[string]any{"component": "replicator", "key": "foo"}},
-		{Time: time.Now(), Level: "WARN", Message: "slow", Attrs: nil},
-		{Time: time.Now(), Level: "INFO", Message: "tick", Attrs: map[string]any{"component": "scrubber"}},
+		{Time: time.Now(), Level: slog.LevelInfo, Message: "replicated", Attrs: map[string]any{"component": "replicator", "key": "foo"}},
+		{Time: time.Now(), Level: slog.LevelWarn, Message: "slow", Attrs: nil},
+		{Time: time.Now(), Level: slog.LevelInfo, Message: "tick", Attrs: map[string]any{"component": "scrubber"}},
 	}}, "level=INFO&limit=50")
 
 	if len(resp.Entries) != 3 {
@@ -89,10 +90,10 @@ func TestLogsHandler_Filters(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	buf := telemetry.NewLogBuffer()
-	buf.Add(telemetry.LogEntry{Time: now.Add(-time.Hour), Level: "DEBUG", Message: "old-debug", Attrs: map[string]any{"component": "server"}})
-	buf.Add(telemetry.LogEntry{Time: now.Add(-time.Hour), Level: "WARN", Message: "old-warn", Attrs: map[string]any{"component": "storage"}})
-	buf.Add(telemetry.LogEntry{Time: now, Level: "INFO", Message: "new-info", Attrs: map[string]any{"component": "server"}})
-	buf.Add(telemetry.LogEntry{Time: now, Level: "ERROR", Message: "new-error", Attrs: map[string]any{"component": "storage"}})
+	buf.Add(telemetry.LogEntry{Time: now.Add(-time.Hour), Level: slog.LevelDebug, Message: "old-debug", Attrs: map[string]any{"component": "server"}})
+	buf.Add(telemetry.LogEntry{Time: now.Add(-time.Hour), Level: slog.LevelWarn, Message: "old-warn", Attrs: map[string]any{"component": "storage"}})
+	buf.Add(telemetry.LogEntry{Time: now, Level: slog.LevelInfo, Message: "new-info", Attrs: map[string]any{"component": "server"}})
+	buf.Add(telemetry.LogEntry{Time: now, Level: slog.LevelError, Message: "new-error", Attrs: map[string]any{"component": "storage"}})
 
 	cutoff := now.Add(-10 * time.Minute).Format(time.RFC3339)
 	for name, tc := range map[string]struct {
@@ -129,7 +130,7 @@ func TestLogsHandler_LimitKeepsNewest(t *testing.T) {
 	buf := telemetry.NewLogBuffer()
 	start := time.Now()
 	for i := range 10 {
-		buf.Add(telemetry.LogEntry{Time: start.Add(time.Duration(i) * time.Second), Level: "INFO", Message: string(rune('a' + i))})
+		buf.Add(telemetry.LogEntry{Time: start.Add(time.Duration(i) * time.Second), Level: slog.LevelInfo, Message: string(rune('a' + i))})
 	}
 
 	cut := getLogs(t, buf, "limit=3")

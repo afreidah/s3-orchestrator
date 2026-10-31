@@ -9,19 +9,5 @@
 
 package telemetry
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-)
-
-// Audit log emission metrics.
-var (
-	// AuditEventsTotal counts audit log entries by event type.
-	AuditEventsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_audit_events_total",
-			Help: "Total number of audit log entries emitted",
-		},
-		[]string{"event"},
-	)
-)
+// AuditEventsTotal counts audit log entries by event type.
+var AuditEventsTotal = counterVec("s3o_audit_events_total", "Total number of audit log entries emitted", "event")

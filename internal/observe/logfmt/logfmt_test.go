@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -102,120 +101,29 @@ func TestOutcomeAndComponent_KeysAreCanonical(t *testing.T) {
 	}
 }
 
-// TestErrAttrHandler_StringifiesRawError pins the bug-fix contract: a
-// raw error passed via slog's key-value form lands as a string in the
-// JSON output rather than the empty-object the default handler would
-// produce. This is the production fix the codemod previously achieved
-// per call site; the handler now does it uniformly.
-func TestErrAttrHandler_StringifiesRawError(t *testing.T) {
+// TestTransformAttr covers each value kind: an error, including one nested
+// in a group, becomes its Error() string; anything else, including an
+// interface-nil error, passes through unchanged.
+func TestTransformAttr(t *testing.T) {
 	t.Parallel()
-
-	mkErr := func(s string) error { return &opaqueErrType{msg: s} }
-
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, nil)
-	logger := slog.New(logfmt.NewErrAttrHandler(inner))
-
-	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
-		slog.Any("error", mkErr("vault token expired")),
-	)
-
-	var entry map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
-		t.Fatalf("decode: %v", err)
+	var nilErr error
+	cases := []struct {
+		name string
+		in   slog.Attr
+		want slog.Attr
+	}{
+		{"error", slog.Any("error", &errOpaque{inner: "boom"}), slog.String("error", "boom")},
+		{"non-error", slog.Int("status", 503), slog.Int("status", 503)},
+		{"interface-nil error", slog.Any("error", nilErr), slog.Any("error", nilErr)},
+		{
+			"group",
+			slog.Group("ctx", slog.Any("error", &errOpaque{inner: "nested"}), slog.String("k", "v")),
+			slog.Group("ctx", slog.String("error", "nested"), slog.String("k", "v")),
+		},
 	}
-	if got, _ := entry["error"].(string); got != "vault token expired" {
-		t.Errorf("error = %v, want vault token expired", entry["error"])
-	}
-}
-
-// opaqueErrType is the kind of error that pre-handler code path would
-// have rendered as {} via encoding/json.
-type opaqueErrType struct{ msg string }
-
-func (e *opaqueErrType) Error() string { return e.msg }
-
-// TestErrAttrHandler_PreservesNonErrorAttrs verifies that non-error
-// values pass through unchanged.
-func TestErrAttrHandler_PreservesNonErrorAttrs(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, nil)
-	logger := slog.New(logfmt.NewErrAttrHandler(inner))
-
-	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
-		slog.String("backend", "e2"),
-		slog.Int("status", 503),
-	)
-
-	if !strings.Contains(buf.String(), `"backend":"e2"`) {
-		t.Errorf("missing backend attr: %s", buf.String())
-	}
-	if !strings.Contains(buf.String(), `"status":503`) {
-		t.Errorf("missing status attr: %s", buf.String())
-	}
-}
-
-// TestErrAttrHandler_RecursesIntoGroups verifies group attributes are
-// walked so an error nested under a group still renders as a string.
-func TestErrAttrHandler_RecursesIntoGroups(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, nil)
-	logger := slog.New(logfmt.NewErrAttrHandler(inner))
-
-	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
-		slog.Group("ctx",
-			slog.Any("error", &opaqueErrType{msg: "nested boom"}),
-		),
-	)
-
-	if !strings.Contains(buf.String(), `"error":"nested boom"`) {
-		t.Errorf("group recursion failed: %s", buf.String())
-	}
-}
-
-// TestErrAttrHandler_WithAttrsForwards verifies that errors passed via
-// logger.With(...) are stringified the same way as record-time attrs.
-func TestErrAttrHandler_WithAttrsForwards(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, nil)
-	logger := slog.New(logfmt.NewErrAttrHandler(inner))
-	scoped := logger.With("error", &opaqueErrType{msg: "scoped boom"})
-	scoped.LogAttrs(context.Background(), slog.LevelInfo, "probe")
-
-	if !strings.Contains(buf.String(), `"error":"scoped boom"`) {
-		t.Errorf("With(...) attr not stringified: %s", buf.String())
-	}
-}
-
-// TestErrAttrHandler_EnabledForwards confirms the Enabled delegation.
-func TestErrAttrHandler_EnabledForwards(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
-	h := logfmt.NewErrAttrHandler(inner)
-	if h.Enabled(context.Background(), slog.LevelDebug) {
-		t.Error("Debug should be disabled when inner level is Warn")
-	}
-	if !h.Enabled(context.Background(), slog.LevelError) {
-		t.Error("Error should be enabled when inner level is Warn")
-	}
-}
-
-// TestErrAttrHandler_WithGroupForwards confirms group-name pass-through.
-func TestErrAttrHandler_WithGroupForwards(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	inner := slog.NewJSONHandler(&buf, nil)
-	h := logfmt.NewErrAttrHandler(inner)
-	scoped := slog.New(h.WithGroup("ctx"))
-	scoped.LogAttrs(context.Background(), slog.LevelInfo, "probe", slog.String("k", "v"))
-	if !strings.Contains(buf.String(), `"ctx":{"k":"v"}`) {
-		t.Errorf("group not applied: %s", buf.String())
+	for _, tc := range cases {
+		if got := logfmt.TransformAttr(tc.in); !got.Equal(tc.want) {
+			t.Errorf("%s: TransformAttr = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
