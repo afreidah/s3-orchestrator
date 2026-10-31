@@ -112,17 +112,15 @@ func newFleet(
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil)
 	timeout := cmp.Or(opts.BackendTimeout, fleetTimeout)
 	rt := infra.New(&infra.Config{
-		Backends:        backends,
-		Order:           names,
-		BackendTimeout:  timeout,
-		Usage:           usage,
-		Quota:           newFleetQuota(names, opts.QuotaBaselines),
-		RoutingStrategy: config.RoutingPack,
-		AdmissionSem:    opts.AdmissionSem,
+		Backends:         backends,
+		Order:            names,
+		BackendTimeout:   timeout,
+		Usage:            usage,
+		Quota:            newFleetQuota(names, opts.QuotaBaselines),
+		RoutingStrategy:  config.RoutingPack,
+		AdmissionSem:     opts.AdmissionSem,
+		MetricsCollector: metrics.New(&metrics.CollectorDeps{Store: store, Usage: usage}),
 	})
-	rt.SetMetricsCollector(metrics.New(&metrics.CollectorDeps{
-		Store: store, Usage: usage,
-	}))
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	mp := New(&Deps{

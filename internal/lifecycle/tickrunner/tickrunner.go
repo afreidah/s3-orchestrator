@@ -118,17 +118,7 @@ type Config struct {
 //
 //nolint:gocritic // hugeParam: Config is a value struct by design; copying it once at construction is fine and the call sites read better than a pointer.
 func New(cfg Config) *Service {
-	return &Service{
-		locker:    cfg.Locker,
-		interval:  cfg.Interval,
-		lockID:    cfg.LockID,
-		name:      cfg.Name,
-		log:       cfg.Log,
-		shouldRun: cfg.ShouldRun,
-		startup:   cfg.Startup,
-		work:      cfg.Work,
-		onError:   cfg.OnError,
-	}
+	return &Service{cfg: cfg}
 }
 
 // -------------------------------------------------------------------------
@@ -140,17 +130,7 @@ func New(cfg Config) *Service {
 // and context cancellation. Health state is recorded after each tick for the
 // admin endpoint and Prometheus staleness alerts.
 type Service struct {
-	locker   AdvisoryLocker
-	interval time.Duration
-	lockID   int64
-	name     string
-	log      *slog.Logger
-
-	shouldRun func() bool
-	startup   func(ctx context.Context) error
-	work      func(ctx context.Context) error
-	onError   func(err error)
-
+	cfg      Config
 	healthMu sync.Mutex
 	health   lifecycle.WorkerHealth
 }
@@ -162,33 +142,33 @@ type Service struct {
 // Tick runs one iteration under the same lock, audit and health recording Run
 // uses.
 func (s *Service) Tick(ctx context.Context) {
-	s.runOnce(ctx, s.work)
+	s.runOnce(ctx, s.cfg.Work)
 }
 
 // Run implements lifecycle.Runner with a jittered first tick to
 // prevent thundering herd on the advisory lock at startup.
 func (s *Service) Run(ctx context.Context) error {
-	if s.startup != nil {
-		s.runOnce(ctx, s.startup)
+	if s.cfg.Startup != nil {
+		s.runOnce(ctx, s.cfg.Startup)
 	}
 
-	jitter := rand.N(s.interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
+	jitter := rand.N(s.cfg.Interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
 	select {
 	case <-time.After(jitter):
 	case <-ctx.Done():
 		return nil
 	}
 
-	ticker := time.NewTicker(s.interval)
+	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			if s.shouldRun != nil && !s.shouldRun() {
+			if s.cfg.ShouldRun != nil && !s.cfg.ShouldRun() {
 				s.recordSkip()
 				continue
 			}
-			s.runOnce(ctx, s.work)
+			s.runOnce(ctx, s.cfg.Work)
 		case <-ctx.Done():
 			return nil
 		}
@@ -206,7 +186,7 @@ func (s *Service) Run(ctx context.Context) error {
 func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) error) {
 	tickCtx := audit.WithRequestID(ctx, audit.NewID())
 	var workErr error
-	acquired, lockErr := s.locker.WithAdvisoryLock(tickCtx, s.lockID,
+	acquired, lockErr := s.cfg.Locker.WithAdvisoryLock(tickCtx, s.cfg.LockID,
 		func(lockCtx context.Context) error {
 			workErr = fn(lockCtx)
 			return nil
@@ -214,17 +194,17 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 
 	switch {
 	case lockErr != nil && !errors.Is(lockErr, core.ErrDBUnavailable):
-		if s.onError != nil {
-			s.onError(lockErr)
+		if s.cfg.OnError != nil {
+			s.cfg.OnError(lockErr)
 		} else {
-			s.log.ErrorContext(ctx, "tick failed", "error", lockErr)
+			s.cfg.Log.ErrorContext(ctx, "tick failed", "error", lockErr)
 		}
 		s.recordHealth(false, fmt.Errorf("advisory lock: %w", lockErr))
 	case !acquired:
-		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
+		s.cfg.Log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 		s.recordSkip()
 	case workErr != nil:
-		s.log.ErrorContext(ctx, "pass failed", "error", workErr)
+		s.cfg.Log.ErrorContext(ctx, "pass failed", "error", workErr)
 		s.recordHealth(false, workErr)
 	default:
 		s.recordHealth(true, nil)
@@ -234,7 +214,7 @@ func (s *Service) runOnce(ctx context.Context, fn func(ctx context.Context) erro
 // recordSkip counts a tick that did no work and is not a failure: the lock was
 // held elsewhere, or ShouldRun declined it. Health is left as it was.
 func (s *Service) recordSkip() {
-	telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
+	telemetry.WorkerTicksTotal.WithLabelValues(s.cfg.Name, "skipped").Inc()
 }
 
 // recordHealth updates the per-service health state plus the worker
@@ -259,12 +239,12 @@ func (s *Service) recordHealth(success bool, err error) {
 	s.healthMu.Unlock()
 
 	if success {
-		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "success").Inc()
-		telemetry.WorkerLastSuccessTimestampSeconds.WithLabelValues(s.name).Set(float64(now.Unix()))
-		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.name).Set(0)
+		telemetry.WorkerTicksTotal.WithLabelValues(s.cfg.Name, "success").Inc()
+		telemetry.WorkerLastSuccessTimestampSeconds.WithLabelValues(s.cfg.Name).Set(float64(now.Unix()))
+		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.cfg.Name).Set(0)
 	} else {
-		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "error").Inc()
-		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.name).Set(float64(failures))
+		telemetry.WorkerTicksTotal.WithLabelValues(s.cfg.Name, "error").Inc()
+		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.cfg.Name).Set(float64(failures))
 	}
 }
 
@@ -273,17 +253,17 @@ func (s *Service) recordHealth(success bool, err error) {
 // -------------------------------------------------------------------------
 
 // Name returns the service's snake_case component slug.
-func (s *Service) Name() string { return s.name }
+func (s *Service) Name() string { return s.cfg.Name }
 
 // LockID returns the advisory-lock identifier this service holds per
 // tick. Exposed so DI invariant tests can pin "no two services share
 // a lock ID."
-func (s *Service) LockID() int64 { return s.lockID }
+func (s *Service) LockID() int64 { return s.cfg.LockID }
 
 // Interval returns the configured tick period. Exposed so DI
 // invariant tests can pin "no interval is zero or pathologically
 // large."
-func (s *Service) Interval() time.Duration { return s.interval }
+func (s *Service) Interval() time.Duration { return s.cfg.Interval }
 
 // Health implements lifecycle.HealthReporter. Returns a snapshot of
 // the service's last tick outcomes plus its registered name so the
@@ -292,6 +272,6 @@ func (s *Service) Health() lifecycle.WorkerHealth {
 	s.healthMu.Lock()
 	defer s.healthMu.Unlock()
 	h := s.health
-	h.Name = s.name
+	h.Name = s.cfg.Name
 	return h
 }

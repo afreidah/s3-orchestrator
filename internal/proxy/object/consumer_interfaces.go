@@ -41,11 +41,11 @@ type Runtime interface {
 }
 
 // RangeFetchRuntime is what a single ranged GET needs: the timed call plus the
-// two meters it is charged against. Split out because a compressed read issues
-// one per frame it touches, and the fetcher doing so needs nothing else.
+// recorder it is checked and charged against. Split out because a compressed
+// read issues one per frame it touches, and the fetcher doing so needs nothing
+// else.
 type RangeFetchRuntime interface {
 	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
-	Usage() *counter.UsageTracker
 	Acct() *accounting.Recorder
 }
 

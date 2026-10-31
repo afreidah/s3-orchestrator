@@ -334,11 +334,7 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 			if err != nil {
 				return "", fmt.Errorf("put object failed: %w", err)
 			}
-			etag := ""
-			if result.ETag != nil {
-				etag = *result.ETag
-			}
-			return etag, nil
+			return aws.ToString(result.ETag), nil
 		})
 }
 
@@ -370,55 +366,38 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 		})
 }
 
-// objectAttrs holds the object-metadata fields shared by the GetObject and
-// HeadObject SDK responses after nil-pointer unwrapping.
-type objectAttrs struct {
-	Size         int64
-	ContentType  string
-	ETag         string
-	LastModified time.Time
-	Metadata     map[string]string
-}
-
-// objectAttrsFromSDK unwraps the nil-able metadata fields common to the
-// GetObject and HeadObject SDK outputs, defaulting ContentType to
+// headResultFromSDK unwraps the nil-able metadata fields the GetObject and
+// HeadObject SDK outputs share, defaulting ContentType to
 // application/octet-stream when the backend omits it.
-func objectAttrsFromSDK(contentLength *int64, contentType, etag *string, lastModified *time.Time, metadata map[string]string) objectAttrs {
-	attrs := objectAttrs{ContentType: "application/octet-stream"}
-	if contentLength != nil {
-		attrs.Size = *contentLength
+func headResultFromSDK(contentLength *int64, contentType, etag *string, lastModified *time.Time, metadata map[string]string) HeadObjectResult {
+	h := HeadObjectResult{
+		Size:         aws.ToInt64(contentLength),
+		ContentType:  "application/octet-stream",
+		ETag:         aws.ToString(etag),
+		LastModified: aws.ToTime(lastModified),
 	}
 	if contentType != nil {
-		attrs.ContentType = *contentType
-	}
-	if etag != nil {
-		attrs.ETag = *etag
-	}
-	if lastModified != nil {
-		attrs.LastModified = *lastModified
+		h.ContentType = *contentType
 	}
 	if len(metadata) > 0 {
-		attrs.Metadata = metadata
+		h.Metadata = metadata
 	}
-	return attrs
+	return h
 }
 
 // mapGetObjectResult normalises an SDK GetObjectOutput into the
 // package-local GetObjectResult.
 func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
-	a := objectAttrsFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
-	out := &GetObjectResult{
+	h := headResultFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
+	return &GetObjectResult{
 		Body:         result.Body,
-		Size:         a.Size,
-		ContentType:  a.ContentType,
-		ETag:         a.ETag,
-		LastModified: a.LastModified,
-		Metadata:     a.Metadata,
+		Size:         h.Size,
+		ContentType:  h.ContentType,
+		ETag:         h.ETag,
+		ContentRange: aws.ToString(result.ContentRange),
+		LastModified: h.LastModified,
+		Metadata:     h.Metadata,
 	}
-	if result.ContentRange != nil {
-		out.ContentRange = *result.ContentRange
-	}
-	return out
 }
 
 // HeadObject retrieves object metadata without the body.
@@ -433,14 +412,8 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 				return nil, fmt.Errorf("head object failed: %w", err)
 			}
 
-			a := objectAttrsFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
-			return &HeadObjectResult{
-				Size:         a.Size,
-				ContentType:  a.ContentType,
-				ETag:         a.ETag,
-				LastModified: a.LastModified,
-				Metadata:     a.Metadata,
-			}, nil
+			h := headResultFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
+			return &h, nil
 		})
 }
 
@@ -556,11 +529,10 @@ func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType 
 				}
 				return "", fmt.Errorf("copy object failed: %w", err)
 			}
-			etag := ""
-			if result.CopyObjectResult != nil && result.CopyObjectResult.ETag != nil {
-				etag = *result.CopyObjectResult.ETag
+			if result.CopyObjectResult == nil {
+				return "", nil
 			}
-			return etag, nil
+			return aws.ToString(result.CopyObjectResult.ETag), nil
 		})
 }
 
@@ -630,22 +602,15 @@ func listObjectsInput(bucket, prefix string) *s3.ListObjectsV2Input {
 func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
 	objects := make([]ListedObject, 0, len(page.Contents))
 	for _, obj := range page.Contents {
-		key := ""
-		if obj.Key != nil {
-			key = *obj.Key
-		}
+		key := aws.ToString(obj.Key)
 		if key == probeKey {
 			continue
 		}
-		size := int64(0)
-		if obj.Size != nil {
-			size = *obj.Size
-		}
-		var lastModified time.Time
-		if obj.LastModified != nil {
-			lastModified = *obj.LastModified
-		}
-		objects = append(objects, ListedObject{Key: key, SizeBytes: size, LastModified: lastModified})
+		objects = append(objects, ListedObject{
+			Key:          key,
+			SizeBytes:    aws.ToInt64(obj.Size),
+			LastModified: aws.ToTime(obj.LastModified),
+		})
 	}
 	return objects
 }

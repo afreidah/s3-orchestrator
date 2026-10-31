@@ -65,3 +65,13 @@ func IdentityFromColumns(etag, contentType string, userMetadata []byte) (*Object
 	}
 	return &ObjectIdentity{ETag: etag, ContentType: contentType, UserMetadata: meta}, nil
 }
+
+// NewObjectIdentity builds the identity a write or a backend answer settles.
+// Nil metadata becomes an empty map, since a present identity with no
+// metadata is a real answer rather than an unknown one.
+func NewObjectIdentity(etag, contentType string, userMetadata map[string]string) *ObjectIdentity {
+	if userMetadata == nil {
+		userMetadata = map[string]string{}
+	}
+	return &ObjectIdentity{ETag: etag, ContentType: contentType, UserMetadata: userMetadata}
+}

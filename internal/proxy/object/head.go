@@ -40,7 +40,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	result, backendName, err := o.failover.Read(ctx, "HeadObject", key, locs, lookupErr,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
-			if !o.core.Usage().WithinLimits(beName, s3op.HeadObject, 0, 0) {
+			if !o.core.Acct().Allow(beName, s3op.HeadObject, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
 			loc, err := o.readLocation(ctx, backend, beName, key, loc)
@@ -146,13 +146,7 @@ func (o *Manager) recordHeadIdentity(ctx context.Context, r *s3be.HeadObjectResu
 	if answered == nil {
 		return
 	}
-	id := &core.ObjectIdentity{
-		ContentType:  r.ContentType,
-		UserMetadata: r.Metadata,
-	}
-	if id.UserMetadata == nil {
-		id.UserMetadata = map[string]string{}
-	}
+	id := core.NewObjectIdentity("", r.ContentType, r.Metadata)
 	if storedBytesAreClientBytes(locs) {
 		id.ETag = r.ETag
 	}

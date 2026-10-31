@@ -91,7 +91,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 	// on the target would miss the replica or hash a different object.
 	replica := source.CopyAt(target, targetStorageKey)
 
-	if !r.ops.Usage().WithinLimits(target, s3op.GetObject, replica.SizeBytes, 0) {
+	if !r.ops.Acct().Allow(target, s3op.GetObject, replica.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		r.log.WarnContext(ctx, "replica verification declined by usage limits",
 			"key", source.ObjectKey, "target", target, "size", replica.SizeBytes)

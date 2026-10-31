@@ -383,24 +383,15 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey st
 		return nil, err
 	}
 
-	// Prefer sources serving reads. Sort a clone, since ReplicateObject reuses
-	// the caller's slice across attempts.
-	ordered := slices.Clone(copies)
-	slices.SortStableFunc(ordered, func(a, b core.ObjectLocation) int {
-		return cmpHealthFirst(r.servesReads(a.BackendName), r.servesReads(b.BackendName))
-	})
-
 	// Drop sources refusing reads so a copy never starts against a backend
-	// known to refuse it. Fall back to the full set when none serves reads,
-	// so the object still gets an attempt.
-	candidates := make([]core.ObjectLocation, 0, len(ordered))
-	for i := range ordered {
-		if r.servesReads(ordered[i].BackendName) {
-			candidates = append(candidates, ordered[i])
-		}
-	}
+	// known to refuse it. Fall back to every copy when none serves reads, so
+	// the object still gets an attempt. Both work on a clone, since
+	// ReplicateObject reuses the caller's slice across attempts.
+	candidates := slices.DeleteFunc(slices.Clone(copies), func(c core.ObjectLocation) bool {
+		return !r.servesReads(c.BackendName)
+	})
 	if len(candidates) == 0 {
-		candidates = ordered
+		candidates = slices.Clone(copies)
 	}
 
 	for i := range candidates {
@@ -414,19 +405,6 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey st
 	}
 
 	return nil, fmt.Errorf("all source copies failed for key %s", key)
-}
-
-// cmpHealthFirst orders two health flags so true (healthy) sorts
-// before false (unhealthy).
-func cmpHealthFirst(aOK, bOK bool) int {
-	switch {
-	case aOK == bOK:
-		return 0
-	case aOK:
-		return -1
-	default:
-		return 1
-	}
 }
 
 // tryCopyFrom attempts a stream-copy from one source location to the target.

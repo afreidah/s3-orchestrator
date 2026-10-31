@@ -431,17 +431,6 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	// backend_quotas, which it does before the listener accepts a request.
 	quota := counter.NewQuotaTracker()
 
-	rt := infra.New(&infra.Config{
-		Backends:        br.Backends,
-		Order:           br.Order,
-		BackendTimeout:  cfg.Server.BackendTimeout,
-		Usage:           usage,
-		Quota:           quota,
-		RoutingStrategy: cfg.RoutingStrategy,
-		Profiles:        br.Profiles,
-		AdmissionSem:    admissionSemFor(&cfg.Server),
-		Log:             slog.Default().With(logfmt.Component("backend_manager")),
-	})
 	collector := metrics.New(&metrics.CollectorDeps{
 		Store:             metricsDeps,
 		Usage:             usage,
@@ -449,11 +438,21 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Shared:            shared,
 		FleetInterval:     cfg.Telemetry.Metrics.FleetInterval,
 	})
-	rt.SetMetricsCollector(collector)
 	// Register the collector so the admin handler can serve its replication
 	// snapshot from a cheap /admin/api/replication read.
 	do.ProvideValue(i, collector)
-	return rt, nil
+	return infra.New(&infra.Config{
+		Backends:         br.Backends,
+		Order:            br.Order,
+		BackendTimeout:   cfg.Server.BackendTimeout,
+		Usage:            usage,
+		Quota:            quota,
+		RoutingStrategy:  cfg.RoutingStrategy,
+		Profiles:         br.Profiles,
+		MetricsCollector: collector,
+		AdmissionSem:     admissionSemFor(&cfg.Server),
+		Log:              slog.Default().With(logfmt.Component("backend_manager")),
+	}), nil
 }
 
 // ProvideObjectManager builds the object CRUD / read-failover manager, which
