@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
 )
 
 // -------------------------------------------------------------------------
@@ -86,7 +87,7 @@ func TestAudit_RejectedRequestNamesNoUser(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		signRequestAs(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
+		sigv4test.Sign(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
 		resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 		if err != nil {
 			t.Fatal(err)

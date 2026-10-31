@@ -15,53 +15,20 @@ package auth
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// benchSignedRequest constructs a valid SigV4-signed request for benchmarking.
-func benchSignedRequest(accessKey, secret string) *http.Request {
-	amzDate := time.Now().UTC().Format("20060102T150405Z")
-	dateStamp := amzDate[:8]
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-	r.Header.Set("X-Amz-Date", amzDate)
-	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-	r.Host = "localhost"
-
-	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-	credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	r.Header.Set("Authorization",
-		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
-			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
-			", Signature="+signature)
-
-	return r
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
-
 // BenchmarkVerifySigV4 measures the verify sig v4 behaviour described by the test name.
 func BenchmarkVerifySigV4(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
-	r := benchSignedRequest(accessKey, secret)
+	r := signRequest(b, http.MethodGet, "/bucket/key", accessKey, secret)
 
 	b.ResetTimer()
 	for b.Loop() {
@@ -107,7 +74,7 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 		}},
 	}
 	br := mustBucketRegistry(b, buckets)
-	r := benchSignedRequest(accessKey, secret)
+	r := signRequest(b, http.MethodGet, "/bucket/key", accessKey, secret)
 
 	b.ResetTimer()
 	for b.Loop() {
@@ -131,26 +98,11 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
-			r := benchSignedRequest(accessKey, secret)
-			q := r.URL.Query()
+			q := url.Values{}
 			for i := range tc.params {
 				q.Set(fmt.Sprintf("param%d", i), fmt.Sprintf("value%d", i))
 			}
-			r.URL.RawQuery = q.Encode()
-
-			// Re-sign with the query params included
-			amzDate := r.Header.Get("X-Amz-Date")
-			dateStamp := amzDate[:8]
-			signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-			canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-			credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
-			stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
-			signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-			signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-			r.Header.Set("Authorization",
-				"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
-					", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
-					", Signature="+signature)
+			r := signRequest(b, http.MethodGet, "/bucket/key?"+q.Encode(), accessKey, secret)
 
 			b.ResetTimer()
 			for b.Loop() {
@@ -171,45 +123,9 @@ func BenchmarkBuildCanonicalRequest(b *testing.B) {
 	signedHeaders := []string{"content-type", "host", "x-amz-content-sha256", "x-amz-date"}
 
 	for b.Loop() {
-		buildCanonicalRequest(r, signedHeaders)
+		(&sigV4Claim{}).canonicalRequest(r, signedHeaders)
 	}
 }
-
-// -------------------------------------------------------------------------
-// INTERNALS
-// -------------------------------------------------------------------------
-
-// benchPresignedRequest constructs a valid presigned URL request for benchmarking.
-func benchPresignedRequest(accessKey, secret string) *http.Request {
-	amzDate := time.Now().UTC().Format("20060102T150405Z")
-	dateStamp := amzDate[:8]
-	credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-	r.Host = "localhost"
-
-	q := r.URL.Query()
-	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
-	q.Set("X-Amz-Date", amzDate)
-	q.Set("X-Amz-Expires", "300")
-	q.Set("X-Amz-SignedHeaders", "host")
-	r.URL.RawQuery = q.Encode()
-
-	canonicalRequest := buildPresignedCanonicalRequest(r, []string{"host"})
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, hashSHA256([]byte(canonicalRequest)))
-	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	q.Set("X-Amz-Signature", signature)
-	r.URL.RawQuery = q.Encode()
-
-	return r
-}
-
-// -------------------------------------------------------------------------
-// PUBLIC API
-// -------------------------------------------------------------------------
 
 // BenchmarkVerifyPresignedSigV4 measures the verify presigned sig v4 path by exercising br.AuthenticateAndResolveBucket.
 func BenchmarkVerifyPresignedSigV4(b *testing.B) {
@@ -222,7 +138,7 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 		}},
 	}
 	br := mustBucketRegistry(b, buckets)
-	r := benchPresignedRequest(accessKey, secret)
+	r := presignRequest(b, "/bucket/key", accessKey, secret, "300", time.Now())
 
 	b.ResetTimer()
 	for b.Loop() {

@@ -29,6 +29,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/sigv4test"
 
 	"go.uber.org/mock/gomock"
 	// serverMockBackend implements storage.ObjectBackend for server handler tests.
@@ -1203,7 +1204,7 @@ func TestAuth_BadCredentials(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	signRequestAs(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
+	sigv4test.Sign(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
