@@ -196,7 +196,7 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resource := core.Resource{Kind: core.ParseResourceKind(req.Kind), Name: req.Name}
-	perms, err := core.ParsePermissions(resource.Kind, strings.Join(req.Permissions, ","))
+	perms, err := core.ParsePermissions(req.Permissions)
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -219,7 +219,7 @@ func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, resource := grantTarget(r)
-	perms, err := core.ParsePermissions(resource.Kind, strings.Join(req.Permissions, ","))
+	perms, err := core.ParsePermissions(req.Permissions)
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -277,7 +277,7 @@ func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg 
 		errors.Is(err, ops.ErrNoPermissions),
 		errors.Is(err, ops.ErrInvalidResource),
 		errors.Is(err, ops.ErrKeypairIncomplete),
-		errors.Is(err, ops.ErrInvalidCORS):
+		errors.Is(err, ops.ErrInvalidBucket):
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ops.ErrBucketNotFound),
 		errors.Is(err, ops.ErrBackendNotFound),

@@ -176,6 +176,31 @@ func TestTree_ListsOnlyListableBuckets(t *testing.T) {
 	}
 }
 
+// TestAPIDashboard_ListsOnlyListableBuckets verifies the dashboard JSON's root
+// holds the buckets the user may list, an empty declared one included, and none
+// of the buckets they may not.
+func TestAPIDashboard_ListsOnlyListableBuckets(t *testing.T) {
+	t.Parallel()
+	mux, _ := grantedHandler(t)
+	_, cookies := signIn(t, mux, viewKey, viewSecret)
+
+	w := send(t, mux, cookies, http.MethodGet, "/ui/api/dashboard", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/dashboard = %d, want 200", w.Code)
+	}
+	var got struct{ TopLevelEntries core.DirectoryListResult }
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+	var names []string
+	for _, e := range got.TopLevelEntries.Entries {
+		names = append(names, e.Name)
+	}
+	if len(names) != 1 || names[0] != "test-bucket/" {
+		t.Errorf("dashboard root = %q, want only the viewer's listable test-bucket/", names)
+	}
+}
+
 // TestSession_EndsWhenKeyIsRevoked verifies removing the credential a session
 // signed in with ends the session on its next request.
 func TestSession_EndsWhenKeyIsRevoked(t *testing.T) {

@@ -108,8 +108,8 @@ func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
 // until the config entry is removed, which lets a bucket move out of config
 // without a gap. Only a second store row is refused.
 func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
-	if b.Name == "" {
-		return ErrNameRequired
+	if err := validateBucket(b); err != nil {
+		return err
 	}
 	view, err := p.View(ctx)
 	if err != nil {
@@ -117,9 +117,6 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	}
 	if hasStoredBucket(&view, b.Name) {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
-	}
-	if err := validateCORS(b.CORS); err != nil {
-		return err
 	}
 	if err := p.store.CreateBucket(ctx, b); err != nil {
 		return err
@@ -132,17 +129,14 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 // stored under it alone. The bucket is replaced, not merged, so an empty CORS
 // set removes the rules it had.
 func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
-	if b.Name == "" {
-		return ErrNameRequired
+	if err := validateBucket(b); err != nil {
+		return err
 	}
 	view, err := p.View(ctx)
 	if err != nil {
 		return err
 	}
 	if err := requireStoredBucket(&view, b.Name); err != nil {
-		return err
-	}
-	if err := validateCORS(b.CORS); err != nil {
 		return err
 	}
 	if err := p.store.UpdateBucket(ctx, b); err != nil {
@@ -375,8 +369,12 @@ func (p *Provisioning) DeleteCredential(ctx context.Context, accessKeyID string)
 // -------------------------------------------------------------------------
 
 // CreateGrant gives a user access to one resource: a bucket, a backend, or the
-// instance itself. The bucket may be declared in config or in the store.
+// instance itself. The bucket may be declared in config or in the store. No
+// permissions means every permission valid on the resource's kind.
 func (p *Provisioning) CreateGrant(ctx context.Context, userID string, resource core.Resource, perms core.PermissionSet) error {
+	if perms == 0 {
+		perms = core.ValidOn(resource.Kind)
+	}
 	return p.writeGrant(ctx, &core.Grant{UserID: userID, Resource: resource, Permissions: perms},
 		p.store.CreateGrant, "provisioning.GrantCreated")
 }
@@ -516,12 +514,13 @@ func plural(n int64, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// validateCORS refuses a bucket's rules before they are stored, rather than at
-// assembly: a rule the matcher cannot read would otherwise store cleanly and
-// then fail every registry rebuild, including the one a reload runs.
-func validateCORS(rules []config.CORSRule) error {
-	if errs := config.ValidateCORS(rules); len(errs) > 0 {
-		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
+// validateBucket refuses a bucket config would refuse before it is stored,
+// rather than at assembly: a CORS rule the matcher cannot read would otherwise
+// store cleanly and then fail every registry rebuild, including a reload's.
+func validateBucket(b *core.Bucket) error {
+	bkt := config.BucketConfig{Name: b.Name, MaxMultipartUploads: b.MaxMultipartUploads, CORS: b.CORS}
+	if errs := config.ValidateBucket(&bkt); len(errs) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidBucket, errors.Join(errs...))
 	}
 	return nil
 }

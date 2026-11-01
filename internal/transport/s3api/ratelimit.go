@@ -4,7 +4,8 @@
 // Author: Alex Freidah
 //
 // Per-IP token bucket rate limiter with automatic cleanup of stale entries.
-// When enabled, requests exceeding the configured rate receive 429 SlowDown.
+// When enabled, requests exceeding the configured rate receive a 429 SlowDown
+// in the error format of the surface they reached.
 // Supports X-Forwarded-For for accurate IP extraction behind trusted reverse
 // proxies. When trusted_proxies is configured, only requests arriving from a
 // trusted proxy CIDR will have their X-Forwarded-For header inspected; all
@@ -151,23 +152,28 @@ func (rl *RateLimiter) cleanup(maxAge time.Duration) {
 // MIDDLEWARE AND IP EXTRACTION
 // -------------------------------------------------------------------------
 
-// Middleware wraps an http.Handler with per-IP rate limiting.
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := rl.extractIP(r)
-		if !rl.Allow(ip) {
-			telemetry.RateLimitRejectionsTotal.Inc()
-			audit.Log(r.Context(), "s3.RateLimitRejected",
-				slog.String("client_ip", ip),
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-			)
-			w.Header().Set("Retry-After", "1")
-			writeS3Error(w, http.StatusTooManyRequests, "SlowDown", "Rate limit exceeded")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// Middleware returns per-IP rate limiting for one surface. A refused request
+// is answered through writeErr, in the format that surface's clients read, and
+// audited as route.RateLimitRejected, where route is "s3" or "admin".
+func (rl *RateLimiter) Middleware(route string, writeErr httputil.ErrorWriter) func(http.Handler) http.Handler {
+	event := route + ".RateLimitRejected"
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := rl.extractIP(r)
+			if !rl.Allow(ip) {
+				telemetry.RateLimitRejectionsTotal.Inc()
+				audit.Log(r.Context(), event,
+					slog.String("client_ip", ip),
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+				)
+				w.Header().Set("Retry-After", "1")
+				writeErr(w, http.StatusTooManyRequests, "SlowDown", "Rate limit exceeded")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // extractIP gets the client IP from the request, trusting X-Forwarded-For only

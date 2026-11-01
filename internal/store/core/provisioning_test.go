@@ -91,6 +91,31 @@ func TestGrantFromColumns_ParsesKindAndPermissions(t *testing.T) {
 	}
 }
 
+// TestGrantFromColumns_EmptyDependsOnKind verifies a row recording no
+// permissions carries every data-plane permission on a bucket, since such rows
+// predate permissions, and nothing on any other kind.
+func TestGrantFromColumns_EmptyDependsOnKind(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		kind, perms string
+		want        PermissionSet
+	}{
+		{"bucket", "", PermAll},
+		{"bucket", " , ", PermAll},
+		{"backend", "", 0},
+		{"instance", "", 0},
+	} {
+		g, err := GrantFromColumns("u1", tc.kind, "x", tc.perms, time.Now())
+		if err != nil {
+			t.Fatalf("GrantFromColumns(%s, %q): %v", tc.kind, tc.perms, err)
+		}
+		if g.Permissions != tc.want {
+			t.Errorf("GrantFromColumns(%s, %q) = %q, want %q", tc.kind, tc.perms, g.Permissions, tc.want)
+		}
+	}
+}
+
 // TestGrantFromColumns_RejectsUnknownPermission verifies a stored value nothing
 // recognises fails the read rather than resolving to some set.
 func TestGrantFromColumns_RejectsUnknownPermission(t *testing.T) {

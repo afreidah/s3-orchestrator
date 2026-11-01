@@ -196,7 +196,11 @@ reaches on one resource, writing the grant when it is absent and replacing its
 permissions when it is not. It takes the same `kind` query parameter the delete
 route does. Being an upsert is what lets a caller state access without first
 asking whether it is already there, and replacing in place is what keeps a
-narrowing from leaving a window where the client reaches nothing.
+narrowing from leaving a window where the client reaches nothing. A `PUT` naming
+no permissions is refused with `400`, while a `POST` to
+`/admin/api/provisioning/grants` naming none carries every permission valid on
+the resource's kind: the data-plane set on a bucket, `admin-all` on a backend or
+the instance.
 
 `PATCH /admin/api/provisioning/users/{id}` changes the name an identity is read
 by. The ID does not move, because credentials and grants reference it. This is

@@ -3,13 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// Server-side rendered HTML dashboard plus its JSON twin. The HTML
-// renderer composes the page from the same dashboard data the API
-// returns, then folds in the configuration summary the template needs
-// to decide which admin-action buttons to render and ensures every
-// configured bucket shows up as a top-level directory even when empty.
-// Interactive form controls in the template carry aria-labels so the
-// rendered page passes accessibility checks.
+// Server-side rendered HTML dashboard plus its JSON twin. Both start from the
+// same dashboard data, with the object tree's root cut to the buckets the user
+// may list and every declared one shown even when empty. The HTML renderer then
+// folds in the configuration summary the template needs to decide which
+// admin-action buttons to render. Interactive form controls in the template
+// carry aria-labels so the rendered page passes accessibility checks.
 // -------------------------------------------------------------------------------
 
 package ui
@@ -99,7 +98,7 @@ type integrityStats struct {
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	data, err := h.d.Dashboard.GetData(r.Context())
+	data, buckets, err := h.dashboardData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -107,25 +106,6 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.d.Config.Load()
-	bucketNames := h.d.Buckets.Names()
-
-	// Ensure every declared bucket, from the config file or the store, appears
-	// as a top-level directory in the object tree, even when it has no files
-	// yet.
-	existing := make(map[string]bool, len(data.TopLevelEntries.Entries))
-	for _, e := range data.TopLevelEntries.Entries {
-		existing[e.Name] = true
-	}
-	for _, name := range bucketNames {
-		dirName := name + "/"
-		if !existing[dirName] {
-			data.TopLevelEntries.Entries = append(data.TopLevelEntries.Entries, core.DirEntry{
-				Name:  dirName,
-				IsDir: true,
-			})
-		}
-	}
-	data.TopLevelEntries.Entries = listable(r.Context(), data.TopLevelEntries.Entries)
 
 	var totalUsed, totalLimit, totalOrphan int64
 	unlimited := false
@@ -145,7 +125,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Version:          telemetry.Version,
 		DBHealthy:        h.d.DBHealthy(),
 		Data:             data,
-		Buckets:          bucketNames,
+		Buckets:          buckets,
 		TotalBytesUsed:   totalUsed,
 		TotalBytesLimit:  totalLimit,
 		TotalOrphanBytes: totalOrphan,
@@ -179,13 +159,33 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDashboard returns dashboard data as JSON.
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
-	data, err := h.d.Dashboard.GetData(r.Context())
+	data, _, err := h.dashboardData(r.Context())
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to load data", err)
 		return
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, data)
+}
+
+// dashboardData loads the dashboard figures with the root of the object tree
+// cut to the buckets this user may list, each declared one shown even when it
+// holds nothing yet, and returns those bucket names for the page's pickers.
+func (h *Handler) dashboardData(ctx context.Context) (*dashboard.Data, []string, error) {
+	data, err := h.d.Dashboard.GetData(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	buckets := slices.DeleteFunc(h.d.Buckets.Names(), func(name string) bool { return !canList(ctx, name) })
+
+	root := listable(ctx, data.TopLevelEntries.Entries)
+	for _, name := range buckets {
+		if !slices.ContainsFunc(root, func(e core.DirEntry) bool { return e.Name == name+"/" }) {
+			root = append(root, core.DirEntry{Name: name + "/", IsDir: true})
+		}
+	}
+	data.TopLevelEntries.Entries = root
+	return data, buckets, nil
 }
 
 // listable keeps the root entries naming a bucket this user may list, the one

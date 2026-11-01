@@ -121,7 +121,7 @@ window.s3oDiagram = {
     R429: {
       title: '429 SlowDown',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Per-IP rate limit exceeded. The token bucket for this client IP is empty.</p><p>Response: <code>429 Too Many Requests</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3o_rate_limit_rejections_total</p>'
+      body: '<p>Per-IP rate limit exceeded. The token bucket for this client IP is empty.</p><p>Response: <code>429 Too Many Requests</code> with <code>Retry-After: 1</code> and an S3 XML <code>SlowDown</code> body, audited as <code>s3.RateLimitRejected</code>.</p><p>The admin API shares the limiter and its per-IP buckets, and answers its own refusals as a JSON error, audited as <code>admin.RateLimitRejected</code>.</p><p class="ac-metric">Metric: s3o_rate_limit_rejections_total</p>'
     },
     AUTH: {
       title: 'SigV4 / Presigned Auth',

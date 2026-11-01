@@ -456,6 +456,7 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
+	h.d.BackendNames = func() []string { return []string{"b1"} }
 	h.d.Reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
 
 	w := httptest.NewRecorder()

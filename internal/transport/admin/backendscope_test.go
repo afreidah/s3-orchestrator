@@ -37,6 +37,7 @@ func TestBackendParam_UnknownNameIsRefused(t *testing.T) {
 		"/admin/api/decompress-existing",
 		"/admin/api/backfill-checksums",
 		"/admin/api/scrub",
+		"/admin/api/reconcile",
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()

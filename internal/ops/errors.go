@@ -82,7 +82,7 @@ var (
 	ErrCredentialExists   = errors.New("access key is already claimed")
 	ErrKeypairIncomplete  = errors.New(
 		"access_key_id and secret_access_key must both be supplied, or both omitted to mint one")
-	ErrInvalidCORS     = errors.New("bucket cors rules are not valid")
+	ErrInvalidBucket   = errors.New("bucket is not valid")
 	ErrNoPermissions   = errors.New("a grant must carry at least one permission")
 	ErrBackendNotFound = errors.New("backend not found")
 	ErrInvalidResource = errors.New("grant resource is not valid")

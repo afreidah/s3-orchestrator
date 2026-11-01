@@ -15,6 +15,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -99,6 +100,15 @@ func newSeenCredentials() *seenCredentials {
 	}
 }
 
+// ValidateBucket checks a bucket outside a config file, for the provisioning
+// API, which accepts the same fields over the wire and has to refuse what config
+// would before it reaches the store. Credentials are not checked, since API
+// buckets carry none. Messages are prefixed as the bucket's own rather than by
+// config path, since the caller has no file to point at.
+func ValidateBucket(bkt *BucketConfig) []error {
+	return validateBucketFields("bucket", bkt)
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
@@ -107,28 +117,36 @@ func newSeenCredentials() *seenCredentials {
 // list so duplicates are detected across bucket boundaries.
 func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials) []error {
 	prefix := fmt.Sprintf("buckets[%d]", idx)
-	var errs []error
+	errs := validateBucketFields(prefix, bkt)
 
+	if seen.names[bkt.Name] {
+		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
+	}
+	seen.names[bkt.Name] = true
+
+	if len(bkt.Credentials) == 0 {
+		errs = append(errs, prefixed(prefix, ErrNoCredential))
+	}
+	for j := range bkt.Credentials {
+		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seen)...)
+	}
+	return errs
+}
+
+// validateBucketFields checks what a bucket carries apart from its credentials
+// and its uniqueness among the others, which is all a bucket created over the
+// provisioning API has. The upload limit is bounded above by the store column
+// it is written to.
+func validateBucketFields(prefix string, bkt *BucketConfig) []error {
+	var errs []error
 	if bkt.Name == "" {
 		errs = append(errs, prefixed(prefix, ErrBucketNameRequired))
 	}
 	if strings.Contains(bkt.Name, "/") {
 		errs = append(errs, prefixed(prefix, ErrBucketNameHasSlash))
 	}
-	if seen.names[bkt.Name] {
-		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
-	}
-	seen.names[bkt.Name] = true
-
-	if bkt.MaxMultipartUploads < 0 {
-		errs = append(errs, prefixed(prefix, ErrNegativeMaxUploads))
-	}
-	if len(bkt.Credentials) == 0 {
-		errs = append(errs, prefixed(prefix, ErrNoCredential))
-	}
-
-	for j := range bkt.Credentials {
-		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seen)...)
+	if bkt.MaxMultipartUploads < 0 || bkt.MaxMultipartUploads > math.MaxInt32 {
+		errs = append(errs, prefixed(prefix, ErrMaxUploadsRange))
 	}
 	for j := range bkt.CORS {
 		errs = append(errs, validateCORSRule(prefix, j, &bkt.CORS[j])...)
@@ -169,19 +187,6 @@ func validateCORSRule(bucketPrefix string, idx int, rule *CORSRule) []error {
 
 	if rule.MaxAge < 0 {
 		errs = append(errs, prefixed(prefix, ErrCORSNegativeMaxAge))
-	}
-	return errs
-}
-
-// ValidateCORS checks a bucket's rule set outside a config file, for the
-// provisioning API, which accepts the same shapes over the wire and has to
-// refuse a rule the matcher cannot read before it reaches the store. Messages
-// are prefixed as the bucket's own rules rather than by config path, since the
-// caller has no file to point at.
-func ValidateCORS(rules []CORSRule) []error {
-	var errs []error
-	for i := range rules {
-		errs = append(errs, validateCORSRule("bucket", i, &rules[i])...)
 	}
 	return errs
 }

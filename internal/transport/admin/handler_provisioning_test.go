@@ -481,6 +481,26 @@ func TestHandleCreateGrant(t *testing.T) {
 	}
 }
 
+// TestHandleSetGrant_NoPermissionsIsRefused verifies declaring a bucket grant
+// with no permissions is a 400 that writes nothing, rather than a grant of every
+// permission.
+func TestHandleSetGrant_NoPermissionsIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	provisioningWith(t, h, []config.BucketConfig{{Name: "photos"}},
+		&provRows{users: []core.User{{ID: "u1", Name: "ci"}}})
+
+	req := jsonRequest(t, http.MethodPut, "/admin/api/provisioning/grants/u1/photos", adminapi.SetGrantRequest{})
+	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleSetGrant(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleDeleteGrant verifies the withdrawal names both sides from the path.
 func TestHandleDeleteGrant(t *testing.T) {
 	t.Parallel()
@@ -565,6 +585,7 @@ func TestProvisioningError_StatusMapping(t *testing.T) {
 	}{
 		{"name required", ops.ErrNameRequired, http.StatusBadRequest},
 		{"user required", ops.ErrUserRequired, http.StatusBadRequest},
+		{"invalid bucket", ops.ErrInvalidBucket, http.StatusBadRequest},
 		{"bucket missing", ops.ErrBucketNotFound, http.StatusNotFound},
 		{"user missing", ops.ErrUserNotFound, http.StatusNotFound},
 		{"credential missing", ops.ErrCredentialNotFound, http.StatusNotFound},
