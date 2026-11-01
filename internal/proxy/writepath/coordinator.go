@@ -228,7 +228,7 @@ func (w *Coordinator) Discard(ctx context.Context, p *core.PendingObject, reason
 	cleanup, err := w.stores.DiscardPending(ctx, p, reason)
 	if err != nil {
 		w.log.ErrorContext(ctx, "discard of an unrecorded upload failed; intent left for reaper",
-			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
+			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, "error", err)
 		return
 	}
 	w.Settle(ctx, cleanup)
@@ -336,7 +336,7 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 		// The intent stays, so the reaper resolves the copy on a later tick -
 		// discarding its bytes, since an extra copy is never promoted.
 		w.log.ErrorContext(ctx, "commit of a further copy failed; intent left for reaper",
-			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
+			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, "error", err)
 		w.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyFailed).Inc()
 		return false, err

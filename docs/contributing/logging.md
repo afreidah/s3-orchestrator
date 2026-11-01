@@ -61,7 +61,7 @@ r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",
     "backend", p.BackendName,
     "key", p.ObjectKey,
     "intent_id", p.IntentID,
-    logfmt.Err(err),
+    "error", err,
 )
 ```
 

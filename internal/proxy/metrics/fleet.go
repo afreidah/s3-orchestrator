@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -92,7 +91,7 @@ func (mc *Collector) LoadFleetMetrics(ctx context.Context) error {
 func (mc *Collector) RefreshFleetIfStale(ctx context.Context) error {
 	snap, err := mc.loadPublished(ctx)
 	if err != nil {
-		mc.log.WarnContext(ctx, "fleet snapshot load failed, recomputing", logfmt.Err(err))
+		mc.log.WarnContext(ctx, "fleet snapshot load failed, recomputing", "error", err)
 	}
 	if snap != nil && time.Since(snap.ComputedAt) < mc.fleetInterval/2 {
 		mc.applyFleet(snap)
@@ -163,7 +162,7 @@ func (mc *Collector) refreshFleet(ctx context.Context, stats map[string]core.Quo
 // that reached them.
 func (mc *Collector) publishFleet(ctx context.Context, snap *FleetSnapshot) {
 	if err := mc.fleetValue().Put(ctx, snap); err != nil {
-		mc.log.WarnContext(ctx, "failed to publish fleet snapshot", logfmt.Err(err))
+		mc.log.WarnContext(ctx, "failed to publish fleet snapshot", "error", err)
 	}
 }
 
@@ -178,13 +177,13 @@ func (mc *Collector) computeFleet(ctx context.Context, stats map[string]core.Quo
 	// Counted here rather than from the dashboard so the figures keep moving
 	// on a deployment that scrapes Prometheus and never opens the web UI.
 	if ledger, err := mc.store.LedgerStats(ctx); err != nil {
-		mc.log.ErrorContext(ctx, "failed to read ledger stats", logfmt.Err(err))
+		mc.log.ErrorContext(ctx, "failed to read ledger stats", "error", err)
 	} else {
 		snap.Ledger = ledger
 	}
 
 	if multipart, err := mc.store.GetActiveMultipartCounts(ctx); err != nil {
-		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", logfmt.Err(err))
+		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
 	} else {
 		snap.Multipart = multipart
 	}
@@ -210,7 +209,7 @@ func (mc *Collector) computeReplication(ctx context.Context) *ReplicationSnapsho
 
 	backlog, err := mc.store.CountReplicationBacklog(ctx, factor)
 	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to count replication backlog", logfmt.Err(err))
+		mc.log.ErrorContext(ctx, "failed to count replication backlog", "error", err)
 		return nil
 	}
 	return &ReplicationSnapshot{

@@ -32,9 +32,8 @@ const (
 )
 
 // Err returns a slog.Attr carrying err.Error() under the canonical "error"
-// key. Returns an empty Attr (which slog drops) when err is nil so callers
-// can use it unconditionally. Prefer it over passing the raw error, which
-// slog's JSON handler can serialize as {}.
+// key, or an empty Attr (which slog drops) when err is nil. Use it in
+// typed-attr calls and where err may be nil; elsewhere pass "error", err.
 func Err(err error) slog.Attr {
 	if err == nil {
 		return slog.Attr{}

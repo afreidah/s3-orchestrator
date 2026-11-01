@@ -664,7 +664,7 @@ func (mp *Manager) withCompletionMark(ctx context.Context, uploadID string, comp
 	cancel(nil)
 	<-renewed
 	if endErr := mp.stores.EndMultipartCompletion(context.WithoutCancel(ctx), uploadID); endErr != nil {
-		mp.log.WarnContext(ctx, "failed to clear multipart completion mark", "upload_id", uploadID, logfmt.Err(endErr))
+		mp.log.WarnContext(ctx, "failed to clear multipart completion mark", "upload_id", uploadID, "error", endErr)
 	}
 	return etag, err
 }

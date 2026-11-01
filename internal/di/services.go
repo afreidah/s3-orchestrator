@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -265,7 +264,7 @@ func newProvisioningWatcher(shared *sharedstate.Shared, apply func(ctx context.C
 	log := tickrunner.ComponentLogger("provisioning_watch")
 	rebuild := func(ctx context.Context) {
 		if err := apply(ctx); err != nil {
-			log.ErrorContext(ctx, "provisioning rebuild failed", logfmt.Err(err))
+			log.ErrorContext(ctx, "provisioning rebuild failed", "error", err)
 		}
 	}
 	return newTopicWatcher(provisioningTopic(shared), func(ctx context.Context, _ struct{}) { rebuild(ctx) }, rebuild)

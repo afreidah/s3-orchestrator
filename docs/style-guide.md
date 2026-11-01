@@ -1082,16 +1082,18 @@ r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",
     "backend", p.BackendName,
     "key", p.ObjectKey,
     "intent_id", p.IntentID,
-    logfmt.Err(err),
+    "error", err,
 )
 ```
 
 Three rules every call site must follow:
 
-1. **Always render errors through `logfmt.Err`.** Passing `"error", err`
-   directly serialises the error struct as `{}` in the JSON handler,
-   which JS log viewers render as `[object Object]`, hiding the actual
-   failure mode from operators.
+1. **Pass errors as `"error", err`.** The runtime's handler chain renders
+   any error value as its `Error()` string before the record reaches the
+   JSON handler and the log buffer the UI reads. Use `logfmt.Err(err)`
+   only in typed-attr calls (`slog.LogAttrs`, `audit.Log`), where the
+   bare pair does not compile, or where `err` may be nil and the
+   attribute should be dropped. See `docs/contributing/logging.md`.
 2. **Component is an attribute, not a message prefix.** Messages are
    plain English ("HEAD probe failed"), not "Pending reaper: HEAD
    probe failed". The `component` attr added by the scoped logger

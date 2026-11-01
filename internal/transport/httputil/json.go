@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
@@ -61,7 +60,7 @@ func WriteJSONError(w http.ResponseWriter, status int, msg string) {
 // InternalError logs err under msg with attrs and answers 500 with msg, so the
 // client sees the operator-facing message and the log keeps the cause.
 func InternalError(ctx context.Context, log *slog.Logger, w http.ResponseWriter, msg string, err error, attrs ...any) {
-	log.ErrorContext(ctx, msg, append([]any{logfmt.Err(err)}, attrs...)...)
+	log.ErrorContext(ctx, msg, append([]any{"error", err}, attrs...)...)
 	WriteJSONError(w, http.StatusInternalServerError, msg)
 }
 

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -275,7 +274,7 @@ func (f *copyFanout) uploadFailed(ctx context.Context, out uploadOutcome) {
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(writepath.WriteCopyFailed).Inc()
 	f.mgr.log.WarnContext(ctx, "a copy of the write failed on its backend",
 		"key", f.req.Key, "backend", out.intent.BackendName,
-		"intent_id", out.intent.IntentID, logfmt.Err(out.err))
+		"intent_id", out.intent.IntentID, "error", out.err)
 }
 
 // leaveForReaper gives up on a copy that uploaded successfully but has nothing
