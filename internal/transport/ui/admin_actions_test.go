@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
 
@@ -120,6 +121,44 @@ func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
 	want := adminActionCounts{Count: 7, Failed: 1, Total: 8}
 	if res.Counts != want {
 		t.Errorf("result.Counts = %+v, want %+v", res.Counts, want)
+	}
+}
+
+// TestBulkRewriteOp_PublishesTallyAndRefusesBadMax asserts a bulk-rewrite status
+// carries every count the pass reported, changed included, and that a malformed
+// max is refused before the pass starts rather than widening it to the fleet.
+func TestBulkRewriteOp_PublishesTallyAndRefusesBadMax(t *testing.T) {
+	t.Parallel()
+	pass := func(context.Context, int) (ops.BulkRewriteResult, error) {
+		return ops.BulkRewriteResult{Succeeded: 3, Skipped: 1, Changed: 2, Failed: 1, Total: 7}, nil
+	}
+	render := func(s adminActionState, count int, tally adminapi.BulkRewriteTally) compressExistingStatus {
+		return compressExistingStatus{adminActionState: s, Compressed: count, BulkRewriteTally: tally}
+	}
+	request := func(target string) *http.Request {
+		return httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, nil)
+	}
+
+	op := bulkRewriteOp("compress-existing", request("/api/compress-existing?max=5"), pass, render)
+	counts, err := op.run(t.Context())
+	if err != nil || op.invalid != nil {
+		t.Fatalf("run err = %v, invalid = %v", err, op.invalid)
+	}
+	got := op.render(adminActionState{Status: "done"}, counts)
+	want := adminapi.BulkRewriteTally{Skipped: 1, Changed: 2, Failed: 1, Total: 7}
+	if got.Compressed != 3 || got.BulkRewriteTally != want {
+		t.Errorf("status = %+v, want compressed 3 and tally %+v", got, want)
+	}
+
+	bad := request("/api/compress-existing?max=1O")
+	w := httptest.NewRecorder()
+	h := &Handler{log: slog.Default()}
+	h.startAdminAction(w, bad, bulkRewriteOp("compress-existing", bad, pass, render))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed max: status = %d, want 400", w.Code)
+	}
+	if _, running := h.asyncOps.Status("compress-existing"); running {
+		t.Error("malformed max started the pass")
 	}
 }
 

@@ -56,8 +56,8 @@ jobs:
             package: ./internal/transport/s3api/
           - target: FuzzParsePlaintextRange
             package: ./internal/proxy/object/
-          - target: FuzzParseListingCount
-            package: ./internal/transport/s3api/
+          - target: FuzzQueryCount
+            package: ./internal/transport/httputil/
           - target: FuzzParseHeader
             package: ./internal/encryption/
           - target: FuzzCiphertextRange

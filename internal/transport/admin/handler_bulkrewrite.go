@@ -44,7 +44,10 @@ type bulkRewritePass func(context.Context, progress.Observer, int, string) (ops.
 // endpoint's own response type, since each names its success count differently
 // on the wire.
 func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, op, verb, listErrMsg string, run bulkRewritePass, body func(ops.BulkRewriteResult) any) {
-	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
+	maxObjects, ok := httputil.RequireQueryCount(w, r, paramMax, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
@@ -70,12 +73,13 @@ func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, op, 
 // bulkRewriteOutcome is the part of the response that does not vary between the
 // four passes.
 func bulkRewriteOutcome(res ops.BulkRewriteResult) adminapi.BulkRewriteOutcome {
-	return adminapi.BulkRewriteOutcome{
-		Status:  statusComplete,
-		Skipped: res.Skipped,
-		Failed:  res.Failed,
-		Total:   res.Total,
-	}
+	return adminapi.BulkRewriteOutcome{Status: statusComplete, BulkRewriteTally: BulkRewriteTally(res)}
+}
+
+// BulkRewriteTally converts a pass result to the counts every bulk rewrite
+// reports, so the admin API and the dashboard publish the same partition.
+func BulkRewriteTally(res ops.BulkRewriteResult) adminapi.BulkRewriteTally {
+	return adminapi.BulkRewriteTally{Skipped: res.Skipped, Changed: res.Changed, Failed: res.Failed, Total: res.Total}
 }
 
 // handleCompressExisting encodes every copy currently stored verbatim.

@@ -94,13 +94,14 @@ func ServeAttachment(w http.ResponseWriter, name string, size int64, body io.Rea
 	return err
 }
 
-// DecodeJSONBody applies a maxBytes read cap to the request body and
-// decodes it into dst. Returns true on success; on failure it writes a
-// 400 JSON error response and returns false so the caller can return
-// early without duplicating the response boilerplate.
+// DecodeJSONBody applies a maxBytes read cap to the request body and decodes
+// exactly one JSON value into dst, refusing anything but whitespace after it.
+// On failure it writes a 400 JSON error and returns false so the caller can
+// return early.
 func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(dst); err != nil || !errors.Is(dec.Decode(&struct{}{}), io.EOF) {
 		WriteJSONError(w, http.StatusBadRequest, ErrInvalidRequestBody)
 		return false
 	}

@@ -486,17 +486,19 @@ func boolDefault(p *bool, def bool) bool {
 }
 
 // ParseLogLevel maps a log level name, in any case, to a slog.Level. An empty
-// or unrecognized name yields slog.LevelInfo, so a log query that names no
-// level withholds DEBUG entries until asked for them.
-func ParseLogLevel(s string) slog.Level {
+// name is info, so a log query that names no level withholds DEBUG entries;
+// any other unknown name is an ErrInvalidLogLevel.
+func ParseLogLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(s) {
 	case "debug":
-		return slog.LevelDebug
+		return slog.LevelDebug, nil
+	case "", "info":
+		return slog.LevelInfo, nil
 	case "warn":
-		return slog.LevelWarn
+		return slog.LevelWarn, nil
 	case "error":
-		return slog.LevelError
+		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo
+		return slog.LevelInfo, fmt.Errorf("%w: %q (want one of debug, info, warn, error)", ErrInvalidLogLevel, s)
 	}
 }

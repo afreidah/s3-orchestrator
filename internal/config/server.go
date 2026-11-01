@@ -83,10 +83,8 @@ func (s *ServerConfig) validateBasics() []error {
 		errs = append(errs, fmt.Errorf("server.listen_addr is required"))
 	}
 	s.LogLevel = cmp.Or(s.LogLevel, "info")
-	switch s.LogLevel {
-	case "debug", "info", "warn", "error":
-	default:
-		errs = append(errs, fmt.Errorf("%w: %q (want one of debug, info, warn, error)", ErrInvalidLogLevel, s.LogLevel))
+	if _, err := ParseLogLevel(s.LogLevel); err != nil {
+		errs = append(errs, err)
 	}
 	s.MaxObjectSize = cmp.Or(s.MaxObjectSize, 5*1024*1024*1024) // 5 GB
 	errs = append(errs, s.validateSpillDir()...)

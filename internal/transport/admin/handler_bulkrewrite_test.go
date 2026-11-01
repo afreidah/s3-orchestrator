@@ -229,6 +229,30 @@ func TestEncryptExisting_EmptyFleet(t *testing.T) {
 	}
 }
 
+// TestBulkRewriteOutcome_CarriesEveryCount asserts the outcome publishes each
+// count the pass tallied, changed included.
+func TestBulkRewriteOutcome_CarriesEveryCount(t *testing.T) {
+	t.Parallel()
+	got := bulkRewriteOutcome(ops.BulkRewriteResult{Succeeded: 3, Skipped: 1, Changed: 2, Failed: 1, Total: 7})
+	want := adminapi.BulkRewriteOutcome{Status: statusComplete,
+		BulkRewriteTally: adminapi.BulkRewriteTally{Skipped: 1, Changed: 2, Failed: 1, Total: 7}}
+	if got != want {
+		t.Errorf("outcome = %+v, want %+v", got, want)
+	}
+}
+
+// TestBulkRewrite_MalformedMaxRefused asserts a max that is not a count is
+// answered 400 rather than read as absent, which would rewrite the whole fleet.
+func TestBulkRewrite_MalformedMaxRefused(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler(t)
+	encryptionWith(t, h, testEncryptor(t), emptyEncryptionStore(t))
+
+	if w := postBulkRewrite(t, h, "/admin/api/encrypt-existing?max=1O"); w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestDecryptExisting_EmptyFleet covers the reverse endpoint's wire shape.
 func TestDecryptExisting_EmptyFleet(t *testing.T) {
 	t.Parallel()

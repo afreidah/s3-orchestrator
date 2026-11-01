@@ -145,3 +145,7 @@ const (
 	statusSkipped  = "skipped"
 	statusComplete = "complete"
 )
+
+// maxSmallBody caps a request body that carries names, tags or a CORS rule
+// set, never data. Ten tags at their maximum lengths is a few kilobytes.
+const maxSmallBody = 64 << 10

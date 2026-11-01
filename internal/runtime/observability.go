@@ -38,7 +38,8 @@ type Observability struct {
 // The provided logLevel is wired into the slog handler so reload-time
 // log level changes take effect on subsequent log calls.
 func startObservability(cfg *config.Config, stdout io.Writer, logLevel *slog.LevelVar) (*Observability, error) {
-	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
+	level, _ := config.ParseLogLevel(cfg.Server.LogLevel)
+	logLevel.Set(level)
 
 	logBuffer := telemetry.NewLogBuffer()
 	slog.SetDefault(slog.New(telemetry.NewLogHandler(stdout, logLevel, logBuffer)))

@@ -77,7 +77,8 @@ func writeYAML(t *testing.T, content string) string {
 // resolution. Returns the injector and a cleanup func.
 func resolvedInjector(t *testing.T, cfg *config.Config, logLevel *slog.LevelVar) (do.Injector, func()) {
 	t.Helper()
-	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
+	level, _ := config.ParseLogLevel(cfg.Server.LogLevel)
+	logLevel.Set(level)
 	logBuffer := telemetry.NewLogBuffer()
 	slog.SetDefault(slog.New(telemetry.NewLogHandler(io.Discard, logLevel, logBuffer)))
 

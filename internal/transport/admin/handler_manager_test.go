@@ -733,22 +733,6 @@ func TestHandleConfig(t *testing.T) {
 	}
 }
 
-// TestHandleLogLevel_PutInvalidBody covers the JSON-decode error
-// branch in handleLogLevel.
-func TestHandleLogLevel_PutInvalidBody(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(t, http.MethodPut, "/admin/api/log-level", `not json`))
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
-	}
-}
-
 // TestHandleDrainProgress_InactiveShape pins the drain-progress wire shape for
 // a backend that is not draining. The handler converts DrainProgress at its
 // boundary, so this is what keeps an internal field rename from reaching the

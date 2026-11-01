@@ -29,7 +29,7 @@ auth:
 
 That is an ordinary identity holding every permission on every resource, not a special case in the request path. Issue narrower credentials through the provisioning API and grant them what they need.
 
-Requests without a valid signature get `401` with a JSON body. JSON request bodies are capped at 1 MB, and at 64 KiB for provisioning and object tags.
+Requests without a valid signature get `401` with a JSON body. JSON request bodies are capped at 1 MB, and at 64 KiB for provisioning and object tags, and must hold exactly one JSON value. A malformed query parameter - a count such as `max`, `batch_size`, `delay_ms` or `limit` that is not an integer between 0 and 2147483647, an unknown log `level`, or a log `since` or `before` that is not RFC3339 - answers `400` rather than being read as absent.
 
 ## Authorization
 
@@ -108,7 +108,7 @@ A `mismatch` is acted on, not just reported: the bad copy is discarded and repli
 
 `/admin/api/objects` covers the object namespace itself: `GET` browses a page of it or streams one object down, `PUT` stores one, `DELETE` removes a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client, and they are what the [TUI object browser](cli.md#tui) and `s3-orchestrator admin` drive.
 
-Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. Uploads are capped at 512 MiB; a larger one is refused before it reaches a backend.
+Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. An upload must declare its `Content-Length`, which may be zero, and is capped at 512 MiB; a larger one is refused before it reaches a backend.
 
 `GET /admin/api/objects` browses hierarchically by default: omit `delimiter` and keys are grouped into directories, which is what a file browser wants. Send `delimiter=` explicitly - present but empty - and the listing is flat, every key under the prefix in one stream. That is what a caller counting or sweeping a subtree needs, and it is how the TUI knows how many objects a prefix delete is about to remove before it asks.
 
@@ -126,7 +126,7 @@ s3-orchestrator admin object-tags -key photos/report.pdf
 # {"tags":[{"key":"team","value":"infra"}]}
 ```
 
-`PUT` replaces the whole set rather than merging into it, matching `PutObjectTagging`. An empty list leaves the object untagged, which is the same outcome as `DELETE`. An untagged object reads back as `{"tags":[]}` rather than `null`.
+`PUT` replaces the whole set rather than merging into it, matching `PutObjectTagging`. An empty list leaves the object untagged, which is the same outcome as `DELETE`. Every response lists the set ordered by key, so a `PUT` answers with what a later read returns. An untagged object reads back as `{"tags":[]}` rather than `null`.
 
 A key holding no copies is refused with `404`: tags belong to an object, so there is nothing to attach them to. Exceeding a tag limit answers `400` with a message naming the measurement that broke it. Request bodies are capped at 64 KiB, far above the few kilobytes ten maximum-length tags occupy.
 

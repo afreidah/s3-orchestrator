@@ -12,6 +12,8 @@
 package admin
 
 import (
+	"cmp"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -46,7 +48,11 @@ func LogsHandler(logs LogReader) http.HandlerFunc {
 			httputil.WriteJSONError(w, http.StatusServiceUnavailable, "log buffer not available")
 			return
 		}
-		opts := logQueryOpts(r.URL.Query())
+		opts, err := logQueryOpts(r.URL.Query())
+		if err != nil {
+			httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		limit := opts.Limit
 		// Fetch one past the limit so a cut page can say older entries exist.
 		opts.Limit++
@@ -62,25 +68,34 @@ func LogsHandler(logs LogReader) http.HandlerFunc {
 	}
 }
 
-// logQueryOpts parses the logs query parameters into buffer query options.
-func logQueryOpts(q url.Values) telemetry.LogQueryOpts {
+// logQueryOpts parses the logs query parameters into buffer query options,
+// refusing a malformed value rather than widening the query by dropping it.
+func logQueryOpts(q url.Values) (telemetry.LogQueryOpts, error) {
+	level, levelErr := config.ParseLogLevel(q.Get("level"))
+	since, sinceErr := parseLogTimestamp(q, "since")
+	before, beforeErr := parseLogTimestamp(q, "before")
+	limit, limitErr := httputil.QueryCount(q, "limit", defaultLogLimit, maxLogLimit)
 	return telemetry.LogQueryOpts{
-		MinLevel:  config.ParseLogLevel(q.Get("level")),
-		Since:     parseLogTimestamp(q.Get("since")),
-		Before:    parseLogTimestamp(q.Get("before")),
+		MinLevel:  level,
+		Since:     since,
+		Before:    before,
 		Component: q.Get("component"),
-		Limit:     httputil.QueryLimit(q.Get("limit"), defaultLogLimit, maxLogLimit),
-	}
+		Limit:     limit,
+	}, cmp.Or(levelErr, sinceErr, beforeErr, limitErr)
 }
 
-// parseLogTimestamp parses an RFC3339 timestamp. Empty or unparseable input
+// parseLogTimestamp parses the RFC3339 timestamp in param. An absent value
 // returns the zero time, which the log buffer treats as no bound.
-func parseLogTimestamp(s string) time.Time {
+func parseLogTimestamp(q url.Values, param string) (time.Time, error) {
+	s := q.Get(param)
+	if s == "" {
+		return time.Time{}, nil
+	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, fmt.Errorf("%s must be an RFC3339 timestamp", param)
 	}
-	return t
+	return t, nil
 }
 
 // logEntries maps buffer records onto the shared wire type, lifting the

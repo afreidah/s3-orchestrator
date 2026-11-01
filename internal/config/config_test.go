@@ -3093,8 +3093,8 @@ func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
 }
 
 // TestParseLogLevel covers the name-to-level mapping config, the admin API and
-// the log query all share: any case is accepted, and an empty or unknown name
-// is Info.
+// the log query all share: any case is accepted, an empty name is Info, and an
+// unknown name is refused.
 func TestParseLogLevel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3107,13 +3107,15 @@ func TestParseLogLevel(t *testing.T) {
 		{"Warn", slog.LevelWarn},
 		{"ERROR", slog.LevelError},
 		{"", slog.LevelInfo},
-		{"unknown", slog.LevelInfo},
 	}
 	for _, tt := range tests {
-		got := ParseLogLevel(tt.input)
-		if got != tt.want {
-			t.Errorf("ParseLogLevel(%q) = %v, want %v", tt.input, got, tt.want)
+		got, err := ParseLogLevel(tt.input)
+		if err != nil || got != tt.want {
+			t.Errorf("ParseLogLevel(%q) = %v, %v, want %v", tt.input, got, err, tt.want)
 		}
+	}
+	if _, err := ParseLogLevel("unknown"); !errors.Is(err, ErrInvalidLogLevel) {
+		t.Errorf("ParseLogLevel(unknown) err = %v, want ErrInvalidLogLevel", err)
 	}
 }
 

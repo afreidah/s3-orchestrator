@@ -27,6 +27,29 @@ import (
 )
 
 // -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
+// deleteResponse answers a single-object delete.
+type deleteResponse struct {
+	OK bool `json:"ok"`
+}
+
+// deletePrefixResponse answers a prefix delete. A partial failure carries Error
+// and leaves OK unset; Deleted is reported either way.
+type deletePrefixResponse struct {
+	OK      bool   `json:"ok,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Deleted int    `json:"deleted"`
+}
+
+// uploadResponse answers an upload with the stored object's ETag.
+type uploadResponse struct {
+	OK   bool   `json:"ok"`
+	ETag string `json:"etag"`
+}
+
+// -------------------------------------------------------------------------
 // BROWSING
 // -------------------------------------------------------------------------
 
@@ -43,7 +66,10 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startAfter := r.URL.Query().Get("startAfter")
-	maxKeys := httputil.QueryLimit(r.URL.Query().Get("maxKeys"), 200, 200)
+	maxKeys, ok := httputil.RequireQueryCount(w, r, "maxKeys", 200, 200)
+	if !ok {
+		return
+	}
 
 	result, err := h.d.Dashboard.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
@@ -83,7 +109,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	httputil.WriteJSON(w, http.StatusOK, deleteResponse{OK: true})
 }
 
 // handleAPIDeletePrefix deletes all objects under a given key prefix.
@@ -110,14 +136,14 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if res.Failed > 0 {
-		httputil.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   fmt.Sprintf("%d of %d deletes failed", res.Failed, res.Total),
-			"deleted": res.Deleted,
+		httputil.WriteJSON(w, http.StatusInternalServerError, deletePrefixResponse{
+			Error:   fmt.Sprintf("%d of %d deletes failed", res.Failed, res.Total),
+			Deleted: res.Deleted,
 		})
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": res.Deleted})
+	httputil.WriteJSON(w, http.StatusOK, deletePrefixResponse{OK: true, Deleted: res.Deleted})
 }
 
 // -------------------------------------------------------------------------
@@ -155,7 +181,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": etag})
+	httputil.WriteJSON(w, http.StatusOK, uploadResponse{OK: true, ETag: etag})
 }
 
 // uploadContentType resolves the type to store an upload under, falling back

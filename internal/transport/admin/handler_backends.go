@@ -191,7 +191,7 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 			return purged, nil
 		},
 		body: func(_ adminapi.Outcome, purged int) any {
-			return map[string]any{"backend": name, "purged": purged}
+			return adminapi.BackendPurgeResult{Backend: name, Purged: purged}
 		},
 		summary: func(purged int) (int, string) {
 			return purged, fmt.Sprintf("purged %d objects from backend %q", purged, name)

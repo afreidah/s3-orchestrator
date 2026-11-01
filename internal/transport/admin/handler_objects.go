@@ -89,7 +89,7 @@ func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue(paramKey)
 
-	if r.ContentLength <= 0 {
+	if r.ContentLength < 0 {
 		httputil.WriteJSONError(w, http.StatusLengthRequired, "content-length is required")
 		return
 	}

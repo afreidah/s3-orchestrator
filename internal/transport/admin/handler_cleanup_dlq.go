@@ -42,7 +42,10 @@ const (
 // optionally scoped to one backend via ?backend=NAME.
 func (h *Handler) handleCleanupDLQ(w http.ResponseWriter, r *http.Request) {
 	backend := r.URL.Query().Get(paramBackend)
-	limit := httputil.QueryLimit(r.URL.Query().Get("limit"), defaultCleanupDLQLimit, maxCleanupDLQLimit)
+	limit, ok := httputil.RequireQueryCount(w, r, "limit", defaultCleanupDLQLimit, maxCleanupDLQLimit)
+	if !ok {
+		return
+	}
 
 	depth, err := h.d.Cleanup.CleanupDLQDepth(r.Context())
 	if err != nil {

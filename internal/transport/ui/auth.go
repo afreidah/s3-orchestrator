@@ -18,8 +18,6 @@ package ui
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -85,51 +83,42 @@ func (h *Handler) validCSRFToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) == 1
 }
 
-// createSession sets an HMAC-signed session cookie and a CSRF token cookie.
-// The session names the user and the access key that proved it, so each later
-// request can check the key still belongs to that user.
+// createSession sets an HMAC-signed session cookie and a random CSRF token
+// cookie. The session names the user and the access key that proved it, so
+// each later request can check the key still belongs to that user.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID, accessKey string) {
 	value := httputil.SignToken(h.sessionKey, userID+"|"+accessKey, time.Now().Add(sessionTTL))
+	h.setSessionCookies(w, r, value, rand.Text(), int(sessionTTL.Seconds()))
+}
+
+// setSessionCookies writes the session and CSRF cookies with maxAge; a login
+// passes their values and a logout passes empty ones and -1 to clear them. The
+// CSRF cookie is readable by JavaScript, which sends it as X-CSRF-Token.
+func (h *Handler) setSessionCookies(w http.ResponseWriter, r *http.Request, session, csrf string, maxAge int) {
 	// Secure is not forced on: browsers drop a Secure cookie set over plain
 	// HTTP, which would break login. forceSecure opts in; otherwise
 	// IsTLSRequest infers TLS, trusting X-Forwarded-Proto only from trusted
-	// proxies.
+	// proxies. A clearing write must derive the same value, or the browser
+	// will not match it against the cookie it holds.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
-
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:     sessionCookieName,
-		Value:    value,
+		Value:    session,
 		Path:     h.prefix + "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		Secure:   secure,
-		MaxAge:   int(sessionTTL.Seconds()),
+		MaxAge:   maxAge,
 	})
-
-	// CSRF token: readable by JavaScript (not HttpOnly) for double-submit pattern.
-	csrfToken, err := generateCSRFToken()
-	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:     csrfCookieName,
-		Value:    csrfToken,
+		Value:    csrf,
 		Path:     h.prefix + "/",
-		HttpOnly: false, // JS must read this to send as X-CSRF-Token header
+		HttpOnly: false,
 		SameSite: http.SameSiteStrictMode,
 		Secure:   secure,
-		MaxAge:   int(sessionTTL.Seconds()),
+		MaxAge:   maxAge,
 	})
-}
-
-// generateCSRFToken returns a random hex string for CSRF protection.
-func generateCSRFToken() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 // sessionUser resolves the request's session cookie to the user it signed in
@@ -270,26 +259,6 @@ func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, statu
 
 // handleLogout clears the session and CSRF cookies and redirects to login.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	// Secure must remain dynamic; see createSession for the rationale.
-	// The clear-cookie write must use the same Secure value the original
-	// SetCookie used, otherwise the browser will not match the cookie
-	// against the deletion request and will leave the original in place.
-	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     h.prefix + "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-		Secure:   secure,
-	})
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
-		Name:   csrfCookieName,
-		Value:  "",
-		Path:   h.prefix + "/",
-		MaxAge: -1,
-		Secure: secure,
-	})
+	h.setSessionCookies(w, r, "", "", -1)
 	http.Redirect(w, r, h.prefix+loginPath, http.StatusSeeOther)
 }

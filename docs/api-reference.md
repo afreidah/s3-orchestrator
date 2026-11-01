@@ -27,7 +27,7 @@ State-changing (`POST`) requests must also send an `X-CSRF-Token` header whose v
 
 Admin endpoints take a signed request rather than a session; see [Admin API](../admin-api/#authentication).
 
-JSON request bodies on admin and UI endpoints are limited to 1 MB, except provisioning and object-tag bodies, which are limited to 64 KiB.
+JSON request bodies on admin and UI endpoints are limited to 1 MB, except provisioning and object-tag bodies, which are limited to 64 KiB. A body must hold exactly one JSON value; anything after it other than whitespace is refused with 400. A count query parameter that is not an integer between 0 and 2147483647 is refused with 400 rather than read as absent.
 
 Two S3 operations carry an XML request body, and both are capped above the largest request the S3 API permits: multi-object delete at 4 MB and CompleteMultipartUpload at 2 MB. Exceeding the cap returns `413 MaxMessageLengthExceeded` rather than a parse error, and a body containing anything after its first XML document is rejected as `400 MalformedXML` rather than having the remainder silently ignored.
 
@@ -80,7 +80,7 @@ Returns children of a directory prefix for the lazy-loaded file browser.
 |-----------|----------|-------------|
 | `prefix` | No | Directory prefix to list (e.g., `my-bucket/photos/`). Empty returns top-level entries. |
 | `startAfter` | No | Cursor for pagination (value of `nextCursor` from previous response) |
-| `maxKeys` | No | Maximum entries to return (1-200, default: 200) |
+| `maxKeys` | No | Maximum entries to return (0-200, larger values are capped; default: 200) |
 
 **Response:**
 
@@ -103,11 +103,13 @@ Returns buffered log entries from the in-memory ring buffer (last 5,000 entries)
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `level` | No | Minimum severity: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
+| `level` | No | Minimum severity, in any case: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
 | `since` | No | RFC3339 timestamp -- only return entries at or after this time |
 | `before` | No | RFC3339 timestamp -- only return entries before this time |
 | `component` | No | Filter by `component` attribute value |
 | `limit` | No | Maximum entries to return, keeping the most recent (default 200, max 1000) |
+
+An unknown `level`, a `since` or `before` that is not RFC3339, or a `limit` that is not a count is refused with 400.
 
 **Response:**
 
@@ -275,7 +277,7 @@ Returns the status of the most recent cleanup operation.
 
 ### Other background actions
 
-The dashboard's other actions take the same shape: `POST` starts the run and answers 202, a second `POST` while it runs answers 409, and `GET .../status` reports `running`, `done`, `skipped`, `error` or `idle`. They are `/ui/api/lifecycle`, `/ui/api/replicate`, `/ui/api/scrub`, `/ui/api/backfill-checksums`, `/ui/api/encrypt-existing`, `/ui/api/compress-existing` and `/ui/api/decompress-existing`, each with its `/status` route.
+The dashboard's other actions take the same shape: `POST` starts the run and answers 202, a second `POST` while it runs answers 409, and `GET .../status` reports `running`, `done`, `skipped`, `error` or `idle`. They are `/ui/api/lifecycle`, `/ui/api/replicate`, `/ui/api/scrub`, `/ui/api/backfill-checksums`, `/ui/api/encrypt-existing`, `/ui/api/compress-existing` and `/ui/api/decompress-existing`, each with its `/status` route. The three conversions take an optional `max` query parameter capping how many copies the run rewrites, and their finished status carries `skipped`, `changed`, `failed` and `total` beside the count.
 
 ### POST /ui/api/sync
 
@@ -318,7 +320,7 @@ Common HTTP status codes:
 
 | Code | Meaning |
 |------|---------|
-| 400 | Bad request (missing required parameters, invalid JSON) |
+| 400 | Bad request (missing or malformed parameters, invalid JSON) |
 | 401 | No valid session |
 | 403 | CSRF token missing, or the grant does not carry the route's permission |
 | 405 | Method not allowed |

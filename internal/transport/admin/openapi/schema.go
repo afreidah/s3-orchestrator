@@ -163,7 +163,7 @@ func addField(field *reflect.StructField, owner reflect.Type, props map[string]a
 	if !field.IsExported() {
 		return nil
 	}
-	name, opts := parseJSONTag(field)
+	name, omittable := parseJSONTag(field)
 	if name == "-" {
 		return nil
 	}
@@ -186,9 +186,9 @@ func addField(field *reflect.StructField, owner reflect.Type, props map[string]a
 	}
 	props[name] = schema
 
-	// A field is required when it always appears: not omitempty, and not a
-	// pointer whose nil is the way the handler omits it.
-	if !opts.omitempty && field.Type.Kind() != reflect.Pointer {
+	// A field is required when it always appears: not omitempty or omitzero,
+	// and not a pointer whose nil is the way the handler omits it.
+	if !omittable && field.Type.Kind() != reflect.Pointer {
 		*required = append(*required, name)
 	}
 	return nil
@@ -205,27 +205,23 @@ func mergeObject(props map[string]any, required *[]string, embedded map[string]a
 	}
 }
 
-// jsonOpts is the subset of encoding/json tag options that changes the schema.
-type jsonOpts struct{ omitempty bool }
-
-// parseJSONTag splits a field's json tag into its name and the options that
-// matter here.
-func parseJSONTag(f *reflect.StructField) (string, jsonOpts) {
+// parseJSONTag splits a field's json tag into its name and whether encoding/json
+// may leave the field out, which omitempty and omitzero both allow.
+func parseJSONTag(f *reflect.StructField) (name string, omittable bool) {
 	tag, ok := f.Tag.Lookup("json")
 	if !ok {
 		if f.Anonymous {
-			return "", jsonOpts{}
+			return "", false
 		}
-		return f.Name, jsonOpts{}
+		return f.Name, false
 	}
-	parts := strings.Split(tag, ",")
-	var opts jsonOpts
-	for _, p := range parts[1:] {
-		if p == "omitempty" {
-			opts.omitempty = true
+	name, opts, _ := strings.Cut(tag, ",")
+	for opt := range strings.SplitSeq(opts, ",") {
+		if opt == "omitempty" || opt == "omitzero" {
+			omittable = true
 		}
 	}
-	return parts[0], opts
+	return name, omittable
 }
 
 // deref returns the element type of a pointer, or t unchanged.

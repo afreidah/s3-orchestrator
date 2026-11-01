@@ -2564,10 +2564,8 @@ components:
                     type: integer
             required:
                 - kind
-                - budget
                 - used
                 - limit
-                - operations
             type: object
         UsageReconcileResponse:
             properties:

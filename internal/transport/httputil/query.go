@@ -3,32 +3,51 @@
 //
 // Author: Alex Freidah
 //
-// Shared parsing for the optional numeric query parameters the admin surfaces
-// take (batch_size, max, delay_ms). Every one of them means "leave it to the
-// server" when absent, so they collapse malformed and missing to the same zero
-// rather than rejecting the request: an operator who mistypes a cap gets the
-// documented default, not a 400 halfway through a maintenance window.
+// Shared parsing for the optional count parameters every surface takes: S3's
+// paging parameters and the admin and dashboard caps (batch_size, max,
+// delay_ms, limit). Absent means the default, and a malformed value is refused
+// rather than treated as absent, because the default for a cap like max is the
+// whole fleet and a typo must not widen a run.
 // -------------------------------------------------------------------------------
 
 package httputil
 
-import "strconv"
+import (
+	"fmt"
+	"math"
+	"net/http"
+	"net/url"
+	"strconv"
+)
 
-// QueryPositiveInt parses a query value as a positive int, returning 0 for
-// anything absent, unparseable, or not positive.
-func QueryPositiveInt(v string) int {
-	if n, err := strconv.ParseInt(v, 10, 32); err == nil && n > 0 {
-		return int(n)
+// NoCeiling is the ceiling for a count parameter that takes any value up to
+// the largest one QueryCount accepts.
+const NoCeiling = math.MaxInt32
+
+// QueryCount reads a count parameter the way S3 reads its paging parameters:
+// absent or empty means def, a value above ceiling is capped to it, and
+// anything that is not an integer between 0 and 2147483647 is refused. The
+// error is the message a 400 response carries.
+func QueryCount(q url.Values, param string, def, ceiling int) (int, error) {
+	s := q.Get(param)
+	if s == "" {
+		return def, nil
 	}
-	return 0
+	v, err := strconv.ParseInt(s, 10, 32)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("Argument %s must be an integer between 0 and 2147483647", param) //nolint:staticcheck // ST1005: S3's own message, capitalised as S3 returns it
+	}
+	return min(int(v), ceiling), nil
 }
 
-// QueryLimit parses a page limit, falling back to def when the value is absent
-// or not a positive int, and clamping to maxLimit.
-func QueryLimit(v string, def, maxLimit int) int {
-	n := QueryPositiveInt(v)
-	if n == 0 {
-		return def
+// RequireQueryCount reads a count parameter with QueryCount. On a malformed
+// value it writes a 400 JSON error and returns false so the caller can return
+// early.
+func RequireQueryCount(w http.ResponseWriter, r *http.Request, param string, def, ceiling int) (int, bool) {
+	n, err := QueryCount(r.URL.Query(), param, def, ceiling)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return 0, false
 	}
-	return min(n, maxLimit)
+	return n, true
 }

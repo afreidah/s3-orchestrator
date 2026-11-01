@@ -122,19 +122,19 @@ func TestAdminGetObjectTags_MissingObject(t *testing.T) {
 }
 
 // TestAdminPutObjectTags_ReplacesSet verifies the decoded set reaches the
-// store and is echoed back.
+// store and is echoed back ordered by key, as a read of it would report.
 func TestAdminPutObjectTags_ReplacesSet(t *testing.T) {
 	api, mux := newObjectsHandlerWithAPI(t)
 	api.EXPECT().PutObjectTags(gomock.Any(), "bucket/k",
-		[]core.Tag{{Key: "a", Value: "1"}}).Return(nil)
+		[]core.Tag{{Key: "b", Value: "2"}, {Key: "a", Value: "1"}}).Return(nil)
 
 	code, body := tagsRequest(t, mux, http.MethodPut, "bucket/k",
-		`{"tags":[{"key":"a","value":"1"}]}`)
+		`{"tags":[{"key":"b","value":"2"},{"key":"a","value":"1"}]}`)
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", code, body)
 	}
-	if !strings.Contains(body, `"key":"a"`) {
-		t.Errorf("expected the set echoed, got %s", body)
+	if !strings.Contains(body, `"tags":[{"key":"a","value":"1"},{"key":"b","value":"2"}]`) {
+		t.Errorf("expected the set echoed in key order, got %s", body)
 	}
 }
 
@@ -152,14 +152,16 @@ func TestAdminPutObjectTags_ValidationRefusal(t *testing.T) {
 	}
 }
 
-// TestAdminPutObjectTags_MalformedBody verifies a body that is not a tag set
-// is refused before anything reaches the store.
+// TestAdminPutObjectTags_MalformedBody verifies a body that is not exactly one
+// tag set is refused before anything reaches the store.
 func TestAdminPutObjectTags_MalformedBody(t *testing.T) {
 	_, mux := newObjectsHandlerWithAPI(t)
 
-	code, body := tagsRequest(t, mux, http.MethodPut, "bucket/k", "not json")
-	if code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400: %s", code, body)
+	for _, in := range []string{"not json", `{"tags":[]} {"tags":[]}`} {
+		code, body := tagsRequest(t, mux, http.MethodPut, "bucket/k", in)
+		if code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want 400: %s", in, code, body)
+		}
 	}
 }
 

@@ -100,13 +100,13 @@ func TestLogsHandler_Filters(t *testing.T) {
 		query url.Values
 		want  []string
 	}{
-		"default level hides debug":    {url.Values{}, []string{"old-warn", "new-info", "new-error"}},
-		"debug shows all":              {url.Values{"level": {"DEBUG"}}, []string{"old-debug", "old-warn", "new-info", "new-error"}},
-		"warn floor":                   {url.Values{"level": {"WARN"}}, []string{"old-warn", "new-error"}},
-		"since":                        {url.Values{"since": {cutoff}}, []string{"new-info", "new-error"}},
-		"before":                       {url.Values{"before": {cutoff}}, []string{"old-warn"}},
-		"component":                    {url.Values{"level": {"DEBUG"}, "component": {"server"}}, []string{"old-debug", "new-info"}},
-		"unparseable time is no bound": {url.Values{"since": {"yesterday"}}, []string{"old-warn", "new-info", "new-error"}},
+		"default level hides debug": {url.Values{}, []string{"old-warn", "new-info", "new-error"}},
+		"debug shows all":           {url.Values{"level": {"DEBUG"}}, []string{"old-debug", "old-warn", "new-info", "new-error"}},
+		"warn floor":                {url.Values{"level": {"WARN"}}, []string{"old-warn", "new-error"}},
+		"since":                     {url.Values{"since": {cutoff}}, []string{"new-info", "new-error"}},
+		"before":                    {url.Values{"before": {cutoff}}, []string{"old-warn"}},
+		"component":                 {url.Values{"level": {"DEBUG"}, "component": {"server"}}, []string{"old-debug", "new-info"}},
+		"fractional seconds":        {url.Values{"before": {now.Add(-10 * time.Minute).Format(time.RFC3339Nano)}}, []string{"old-warn"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -120,6 +120,19 @@ func TestLogsHandler_Filters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLogsHandler_MalformedQueryRefused asserts a malformed filter answers 400
+// rather than being dropped, which would widen the query.
+func TestLogsHandler_MalformedQueryRefused(t *testing.T) {
+	t.Parallel()
+	for _, query := range []string{"level=verbose", "since=yesterday", "before=1700000000", "limit=ten"} {
+		w := httptest.NewRecorder()
+		LogsHandler(telemetry.NewLogBuffer())(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/logs?"+query, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400; body=%s", query, w.Code, w.Body.String())
+		}
 	}
 }
 

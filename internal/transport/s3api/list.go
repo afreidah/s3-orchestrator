@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -135,7 +136,7 @@ func buildListContents(objects []core.ObjectLocation, prefixes []string, prefixL
 // returns the page after the client's startAfter key. A failure has already
 // been written to w, and the returned status is what the handler reports.
 func (s *Server) listBucket(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, startAfter string) (*listPage, int, error) {
-	maxKeys, err := parseListingCount(r, "max-keys", listingPageLimit, listingPageLimit)
+	maxKeys, err := httputil.QueryCount(r.URL.Query(), "max-keys", listingPageLimit, listingPageLimit)
 	if err != nil {
 		status, err := invalidArgument(w, err)
 		return nil, status, err

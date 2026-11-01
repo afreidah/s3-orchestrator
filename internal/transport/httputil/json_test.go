@@ -70,13 +70,30 @@ func TestWriteJSONError(t *testing.T) {
 	}
 }
 
-// TestDecodeJSONBody covers happy path, invalid JSON, and over-cap bodies.
+// TestDecodeJSONBody_RefusesMalformed covers invalid JSON and a body carrying
+// anything after its first value.
+func TestDecodeJSONBody_RefusesMalformed(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{not json`, `{"a":1} {"a":2}`, `{"a":1} trailing`} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		var dst map[string]any
+		if httputil.DecodeJSONBody(w, req, &dst, 1<<10) {
+			t.Errorf("%q: DecodeJSONBody returned true", body)
+		}
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want 400", body, w.Code)
+		}
+	}
+}
+
+// TestDecodeJSONBody covers the happy path and over-cap bodies.
 func TestDecodeJSONBody(t *testing.T) {
 	t.Parallel()
 
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(`{"name":"alice"}`))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader("{\"name\":\"alice\"}\n"))
 		w := httptest.NewRecorder()
 		var dst struct {
 			Name string `json:"name"`
@@ -86,19 +103,6 @@ func TestDecodeJSONBody(t *testing.T) {
 		}
 		if dst.Name != "alice" {
 			t.Errorf("Name = %q, want alice", dst.Name)
-		}
-	})
-
-	t.Run("invalid JSON returns 400", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(`{not json`))
-		w := httptest.NewRecorder()
-		var dst map[string]any
-		if httputil.DecodeJSONBody(w, req, &dst, 1<<10) {
-			t.Fatalf("DecodeJSONBody returned true on invalid JSON")
-		}
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", w.Code)
 		}
 	})
 
