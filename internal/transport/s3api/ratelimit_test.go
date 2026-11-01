@@ -13,12 +13,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit/audittest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -66,7 +68,7 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := rl.Middleware(ok)
+	handler := rl.Middleware("s3", WriteS3Error)(ok)
 
 	// First request succeeds
 	rec := httptest.NewRecorder()
@@ -102,7 +104,7 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := rl.Middleware(ok)
+	handler := rl.Middleware("s3", WriteS3Error)(ok)
 
 	before := testutil.ToFloat64(telemetry.RateLimitRejectionsTotal)
 
@@ -125,6 +127,42 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 	after := testutil.ToFloat64(telemetry.RateLimitRejectionsTotal)
 	if after <= before {
 		t.Errorf("RateLimitRejectionsTotal did not increment: before=%v, after=%v", before, after)
+	}
+}
+
+// TestRateLimiter_RefusesInTheSurfacesFormat verifies a refusal is written by
+// the error writer of the surface it wraps and audited under that surface's
+// route, so an admin client reads JSON rather than an S3 XML body. Not
+// parallel: it captures the global logger.
+func TestRateLimiter_RefusesInTheSurfacesFormat(t *testing.T) {
+	rl := NewRateLimiter(config.RateLimitConfig{Enabled: true, RequestsPerSec: 1, Burst: 1})
+	defer rl.Close()
+	writeJSON := func(w http.ResponseWriter, status int, _, message string) {
+		httputil.WriteJSONError(w, status, message)
+	}
+	handler := rl.Middleware("admin", writeJSON)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	var rec *httptest.ResponseRecorder
+	entries := audittest.Capture(t, func() {
+		for range 2 {
+			rec = httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil)
+			req.RemoteAddr = "10.0.0.7:12345"
+			handler.ServeHTTP(rec, req)
+		}
+	})
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request: got %d, want 429", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want the admin surface's JSON", ct)
+	}
+	if n := len(audittest.Named(entries, "admin.RateLimitRejected")); n != 1 {
+		t.Errorf("admin.RateLimitRejected entries = %d, want 1", n)
+	}
+	if n := len(audittest.WithPrefix(entries, "s3.")); n != 0 {
+		t.Errorf("an admin refusal was audited as an S3 event %d time(s)", n)
 	}
 }
 

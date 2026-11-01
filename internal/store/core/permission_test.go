@@ -11,7 +11,10 @@
 
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestPermissionSet_BitsAreDistinct pins that every permission occupies its own
 // bit. Two sharing one would make granting either grant both.
@@ -70,7 +73,7 @@ func TestPermissions_RoundTrip(t *testing.T) {
 		PermAll,
 		PermTags | PermDelete,
 	} {
-		got, err := ParsePermissions(ResourceBucket, set.String())
+		got, err := ParsePermissions(strings.Split(set.String(), ","))
 		if err != nil {
 			t.Fatalf("ParsePermissions(%q): %v", set.String(), err)
 		}
@@ -80,36 +83,33 @@ func TestPermissions_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestParsePermissions verifies the forms a stored value or an API request may
-// arrive in.
+// TestParsePermissions verifies the forms a request's or a stored value's names
+// may arrive in, and that no names is the empty set on every kind.
 func TestParsePermissions(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		name string
-		kind ResourceKind
-		in   string
+		in   []string
 		want PermissionSet
 	}{
-		{"empty is every permission", ResourceBucket, "", PermAll},
-		{"whitespace is every permission", ResourceBucket, "   ", PermAll},
-		{"all is every permission", ResourceBucket, "all", PermAll},
-		{"single", ResourceBucket, "read", PermRead},
-		{"several", ResourceBucket, "read,write", PermRead | PermWrite},
-		{"spaces are trimmed", ResourceBucket, " read , write ", PermRead | PermWrite},
-		{"case is ignored", ResourceBucket, "READ,Write", PermRead | PermWrite},
-		{"repeats collapse", ResourceBucket, "read,read", PermRead},
-		{"empty fields are skipped", ResourceBucket, "read,,write", PermRead | PermWrite},
-		{"hyphenated name", ResourceBucket, "list-buckets", PermListBuckets},
-		{"all alongside a name", ResourceBucket, "all,read", PermAll},
-		{"admin-all is every admin permission", ResourceBackend, "admin-all", PermAdminAll},
-		{"admin names", ResourceOrchestrator, "admin-read,admin-logs", PermAdminRead | PermAdminLogs},
-		{"empty on a backend is nothing", ResourceBackend, "", 0},
-		{"empty on the instance is nothing", ResourceOrchestrator, "", 0},
+		{"no names is nothing", nil, 0},
+		{"blank names are nothing", []string{"", "   "}, 0},
+		{"all is every permission", []string{"all"}, PermAll},
+		{"single", []string{"read"}, PermRead},
+		{"several", []string{"read", "write"}, PermRead | PermWrite},
+		{"spaces are trimmed", []string{" read ", " write "}, PermRead | PermWrite},
+		{"case is ignored", []string{"READ", "Write"}, PermRead | PermWrite},
+		{"repeats collapse", []string{"read", "read"}, PermRead},
+		{"blank names are skipped", []string{"read", "", "write"}, PermRead | PermWrite},
+		{"hyphenated name", []string{"list-buckets"}, PermListBuckets},
+		{"all alongside a name", []string{"all", "read"}, PermAll},
+		{"admin-all is every admin permission", []string{"admin-all"}, PermAdminAll},
+		{"admin names", []string{"admin-read", "admin-logs"}, PermAdminRead | PermAdminLogs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := ParsePermissions(tc.kind, tc.in)
+			got, err := ParsePermissions(tc.in)
 			if err != nil {
 				t.Fatalf("ParsePermissions(%q): %v", tc.in, err)
 			}
@@ -126,8 +126,8 @@ func TestParsePermissions(t *testing.T) {
 func TestParsePermissions_RejectsUnknown(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{"admin", "read,admin", "readwrite", "list_buckets"} {
-		if _, err := ParsePermissions(ResourceBucket, in); err == nil {
+	for _, in := range [][]string{{"admin"}, {"read", "admin"}, {"readwrite"}, {"list_buckets"}} {
+		if _, err := ParsePermissions(in); err == nil {
 			t.Errorf("ParsePermissions(%q) accepted an unknown permission", in)
 		}
 	}

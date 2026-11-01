@@ -233,10 +233,13 @@ func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) 
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on
 // each backend, diffs against DB entries, imports untracked objects, and
-// removes stale entries. Use ?backend=name to scope to a single backend.
+// removes stale entries. Use ?backend=name to scope to a single backend; a name
+// the fleet does not hold is a 400.
 func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
-	backendName := r.URL.Query().Get(paramBackend)
-
+	backendName, ok := h.backendParam(w, r)
+	if !ok {
+		return
+	}
 	if h.d.Reconciler == nil {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "reconciler not configured")
 		return

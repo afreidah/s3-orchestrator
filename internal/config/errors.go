@@ -66,7 +66,7 @@ var (
 	ErrNoCredential        = errors.New("at least one credential is required")
 	ErrInvalidCredential   = errors.New("must have both access_key_id and secret_access_key")
 	ErrDuplicateCredential = errors.New("duplicate access_key_id")
-	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
+	ErrMaxUploadsRange     = errors.New("max_multipart_uploads must be between 0 and 2147483647")
 )
 
 // Bucket CORS validation errors. An origin pattern accepts at most one '*'

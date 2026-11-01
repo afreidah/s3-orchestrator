@@ -15,6 +15,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -154,14 +155,36 @@ func TestProvisioning_CreateBucket(t *testing.T) {
 	}
 }
 
-// TestProvisioning_CreateBucketRejectsEmptyName verifies a bucket with no name
-// never reaches the store.
-func TestProvisioning_CreateBucketRejectsEmptyName(t *testing.T) {
+// TestProvisioning_BucketWritesRefuseWhatConfigWould verifies creating or
+// updating a bucket refuses, before the store is touched, every bucket the
+// config file would refuse, and an upload limit the store column cannot hold.
+func TestProvisioning_BucketWritesRefuseWhatConfigWould(t *testing.T) {
 	t.Parallel()
 
-	f := newProvFixture(t, nil, &provStore{})
-	if err := f.svc.CreateBucket(context.Background(), &core.Bucket{}); !errors.Is(err, ErrNameRequired) {
-		t.Fatalf("err = %v, want ErrNameRequired", err)
+	for _, tc := range []struct {
+		name   string
+		bucket core.Bucket
+		want   error
+	}{
+		{"no name", core.Bucket{}, config.ErrBucketNameRequired},
+		{"a slash in the name", core.Bucket{Name: "photos/2026"}, config.ErrBucketNameHasSlash},
+		{"a negative upload limit", core.Bucket{Name: "photos", MaxMultipartUploads: -1}, config.ErrMaxUploadsRange},
+		{"an upload limit past int32", core.Bucket{Name: "photos", MaxMultipartUploads: math.MaxInt32 + 1}, config.ErrMaxUploadsRange},
+		{"a CORS rule with no origin", core.Bucket{Name: "photos", CORS: []config.CORSRule{{AllowedMethods: []string{"GET"}}}}, config.ErrCORSNoOrigins},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
+			for op, write := range map[string]func(context.Context, *core.Bucket) error{
+				"create": f.svc.CreateBucket,
+				"update": f.svc.UpdateBucket,
+			} {
+				err := write(context.Background(), &tc.bucket)
+				if !errors.Is(err, ErrInvalidBucket) || !errors.Is(err, tc.want) {
+					t.Errorf("%s: err = %v, want ErrInvalidBucket carrying %v", op, err, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -252,17 +275,6 @@ func TestProvisioning_UpdateBucketReplaces(t *testing.T) {
 	}
 }
 
-// TestProvisioning_UpdateBucketRejectsEmptyName verifies a bucket with no name
-// never reaches the store.
-func TestProvisioning_UpdateBucketRejectsEmptyName(t *testing.T) {
-	t.Parallel()
-
-	f := newProvFixture(t, nil, &provStore{})
-	if err := f.svc.UpdateBucket(context.Background(), &core.Bucket{}); !errors.Is(err, ErrNameRequired) {
-		t.Fatalf("err = %v, want ErrNameRequired", err)
-	}
-}
-
 // TestProvisioning_UpdateBucketRejectsUnknown verifies a name nothing declares
 // is reported as missing rather than quietly creating one.
 func TestProvisioning_UpdateBucketRejectsUnknown(t *testing.T) {
@@ -323,22 +335,6 @@ func TestProvisioning_DeleteBucketReachesShadowedRow(t *testing.T) {
 	// No CountObjectsByPrefix expectation: reaching for one is the failure.
 	if err := f.svc.DeleteBucket(context.Background(), "photos"); err != nil {
 		t.Fatalf("DeleteBucket: %v", err)
-	}
-}
-
-// TestProvisioning_UpdateBucketRejectsInvalidCORS verifies a rule the matcher
-// cannot read is refused here rather than stored and left to fail every later
-// registry rebuild.
-func TestProvisioning_UpdateBucketRejectsInvalidCORS(t *testing.T) {
-	t.Parallel()
-
-	f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
-	b := core.Bucket{
-		Name: "photos",
-		CORS: []config.CORSRule{{AllowedMethods: []string{"GET"}}},
-	}
-	if err := f.svc.UpdateBucket(context.Background(), &b); !errors.Is(err, ErrInvalidCORS) {
-		t.Fatalf("err = %v, want ErrInvalidCORS", err)
 	}
 }
 
@@ -917,18 +913,43 @@ func TestProvisioning_CreateGrantStoresPermissions(t *testing.T) {
 	}
 }
 
-// TestProvisioning_CreateGrantRejectsEmptyPermissions verifies a grant carrying
-// nothing is refused. It would reach the bucket and be denied every operation,
-// which is a grant that does nothing but look like one.
-func TestProvisioning_CreateGrantRejectsEmptyPermissions(t *testing.T) {
+// TestProvisioning_CreateGrantWithoutPermissionsCarriesTheKindsSet verifies a
+// grant created naming no permissions is stored with every permission valid on
+// its resource's kind, the data-plane set on a bucket and the admin set on a
+// backend or the instance.
+func TestProvisioning_CreateGrantWithoutPermissionsCarriesTheKindsSet(t *testing.T) {
 	t.Parallel()
 
-	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}},
-		&provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+	cfg := &config.Config{
+		Buckets:  []config.BucketConfig{{Name: "photos"}},
+		Backends: []config.BackendConfig{{Name: "b1"}},
+	}
+	for _, tc := range []struct {
+		resource core.Resource
+		want     core.PermissionSet
+	}{
+		{core.BucketResource("photos"), core.PermAll},
+		{core.Resource{Kind: core.ResourceBackend, Name: "b1"}, core.PermAdminAll},
+		{core.Resource{Kind: core.ResourceOrchestrator}, core.PermAdminAll},
+	} {
+		t.Run(tc.resource.String(), func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixtureCfg(t, cfg, &provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+			var stored core.Grant
+			f.store.EXPECT().CreateGrant(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, g *core.Grant) error {
+					stored = *g
+					return nil
+				})
+			f.expectRepublish()
 
-	err := f.svc.CreateGrant(context.Background(), "u1", core.BucketResource("photos"), 0)
-	if !errors.Is(err, ErrNoPermissions) {
-		t.Fatalf("err = %v, want ErrNoPermissions", err)
+			if err := f.svc.CreateGrant(context.Background(), "u1", tc.resource, 0); err != nil {
+				t.Fatalf("CreateGrant: %v", err)
+			}
+			if stored.Permissions != tc.want {
+				t.Errorf("stored permissions = %q, want %q", stored.Permissions, tc.want)
+			}
+		})
 	}
 }
 

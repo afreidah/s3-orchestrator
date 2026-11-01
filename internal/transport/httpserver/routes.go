@@ -42,7 +42,7 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector) error {
 	adminHandler.Register(adminMux)
 	// Wraps the rate limiter too, so a panic anywhere in the admin chain
 	// returns a JSON 500 with a request id instead of a reset connection.
-	adminHTTP := httputil.PanicRecover("admin", adminPanicWriter)(withRateLimit(inj, "admin API", adminMux))
+	adminHTTP := httputil.PanicRecover("admin", adminErrorWriter)(withRateLimit(inj, "admin", adminErrorWriter, adminMux))
 	mux.Handle("/admin/", adminHTTP)
 	slog.InfoContext(context.Background(), "admin API enabled",
 		logfmt.Component("httpserver"),
@@ -51,19 +51,20 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector) error {
 	return nil
 }
 
-// withRateLimit wraps h in the per-IP rate limiter when one resolves. A failed
-// resolution is logged and leaves the surface unlimited rather than failing
-// startup.
-func withRateLimit(inj do.Injector, surface string, h http.Handler) http.Handler {
+// withRateLimit wraps h in the per-IP rate limiter when one resolves, refusing
+// through writeErr in the surface's own error format. A failed resolution is
+// logged and leaves the surface unlimited rather than failing startup.
+func withRateLimit(inj do.Injector, route string, writeErr httputil.ErrorWriter, h http.Handler) http.Handler {
 	rlRes := di.Optional[*s3api.RateLimiter](inj)
 	if rlRes.Failed() {
 		slog.WarnContext(context.Background(),
-			"rate limiter resolution failed; "+surface+" will run without rate limiting",
+			"rate limiter resolution failed; the surface will run without rate limiting",
 			logfmt.Component("httpserver"),
+			"route", route,
 			"error", rlRes.Err)
 	}
 	if rl := rlRes.Value; rl != nil {
-		return rl.Middleware(h)
+		return rl.Middleware(route, writeErr)(h)
 	}
 	return h
 }
@@ -119,7 +120,7 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		return fmt.Errorf("initialize CORS policy: %w", err)
 	}
 
-	s3Handler := withRateLimit(inj, "S3 surface", corsPolicy.Middleware(s3Server))
+	s3Handler := withRateLimit(inj, "s3", s3api.WriteS3Error, corsPolicy.Middleware(s3Server))
 
 	limits := s3api.AdmissionLimits{
 		ShedThreshold: cfg.Server.LoadShedThreshold,
@@ -152,10 +153,11 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 }
 
 // -------------------------------------------------------------------------
-// PANIC-RECOVERY WRITERS
+// ERROR WRITERS
 // -------------------------------------------------------------------------
 
-// adminPanicWriter writes the admin surface's panic response as a JSON error.
-func adminPanicWriter(w http.ResponseWriter, status int, _ string, message string) {
+// adminErrorWriter writes the admin surface's middleware refusals and panic
+// responses as the JSON error its clients parse.
+func adminErrorWriter(w http.ResponseWriter, status int, _ string, message string) {
 	httputil.WriteJSONError(w, status, message)
 }

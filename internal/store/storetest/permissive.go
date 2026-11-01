@@ -87,7 +87,7 @@ func Permissive(m *MockMetadataStore) {
 		func(context.Context, *core.PendingObject, core.BackendFlags) (bool, error) { return true, nil },
 	)).AnyTimes()
 	r.ListCleanupDLQ(a, a, a).Return(nil, nil).AnyTimes()
-	r.ListDirectoryChildren(a, a, a, a).Return(nil, nil).AnyTimes()
+	r.ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	r.ListExpiredObjects(a, a).Return(nil, nil).AnyTimes()
 	r.ListMultipartUploads(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjects(a, a, a, a, a).Return(&core.ListObjectsResult{}, nil).AnyTimes()

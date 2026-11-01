@@ -73,7 +73,7 @@ func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	}
 	if err := s.queries.CreateBucket(ctx, db.CreateBucketParams{
 		Name:                b.Name,
-		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config validation
+		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
 		Cors:                cors,
 	}); err != nil {
 		return fmt.Errorf("create bucket %s: %w", b.Name, err)
@@ -136,7 +136,7 @@ func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
 	}
 	if err := s.queries.UpdateBucket(ctx, db.UpdateBucketParams{
 		Name:                b.Name,
-		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config validation
+		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config.ValidateBucket
 		Cors:                cors,
 	}); err != nil {
 		return fmt.Errorf("update bucket %s: %w", b.Name, err)

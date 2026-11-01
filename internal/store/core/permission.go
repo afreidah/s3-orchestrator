@@ -140,17 +140,13 @@ func (p PermissionSet) Names() []string {
 	return permissionNames.Names(p)
 }
 
-// ParsePermissions reads the stored form for a grant on the given resource. An
-// empty value is PermAll on a bucket grant, since such rows predate
-// permissions, and nothing on any other kind. An unrecognised name is an error.
-func ParsePermissions(kind ResourceKind, s string) (PermissionSet, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return emptyPermissions(kind), nil
-	}
-
+// ParsePermissions reads permission names as a request lists them or a stored
+// value holds them once split. Names are trimmed and case-folded, blank ones are
+// skipped, and an unrecognised one is an error. No names is the empty set, and
+// what that means is the caller's to decide.
+func ParsePermissions(names []string) (PermissionSet, error) {
 	var out PermissionSet
-	for field := range strings.SplitSeq(s, ",") {
+	for _, field := range names {
 		name := strings.ToLower(strings.TrimSpace(field))
 		if name == "" {
 			continue
@@ -170,13 +166,11 @@ func ParsePermissions(kind ResourceKind, s string) (PermissionSet, error) {
 		}
 		out |= bit
 	}
-	if out == 0 {
-		return emptyPermissions(kind), nil
-	}
 	return out, nil
 }
 
-// emptyPermissions is what a grant recording nothing carries.
+// emptyPermissions is what a stored grant recording nothing carries: PermAll on
+// a bucket, since such rows predate permissions, and nothing on any other kind.
 func emptyPermissions(kind ResourceKind) PermissionSet {
 	if kind == ResourceBucket {
 		return PermAll

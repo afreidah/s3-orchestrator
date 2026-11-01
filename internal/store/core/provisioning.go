@@ -14,6 +14,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -164,11 +165,12 @@ func DecodeCORS(b []byte) ([]config.CORSRule, error) {
 // back to none would refuse a caller the operator authorized.
 func GrantFromColumns(userID, kind, name, perms string, createdAt time.Time) (Grant, error) {
 	resource := Resource{Kind: ParseResourceKind(kind), Name: name}
-	// The empty stored value means different things on the two planes, so the
-	// resource kind is passed to the parse.
-	permissions, err := ParsePermissions(resource.Kind, perms)
+	permissions, err := ParsePermissions(strings.Split(perms, ","))
 	if err != nil {
 		return Grant{}, fmt.Errorf("grant %s -> %s: %w", userID, resource, err)
+	}
+	if permissions == 0 {
+		permissions = emptyPermissions(resource.Kind)
 	}
 	return Grant{
 		UserID:      userID,

@@ -64,6 +64,14 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.179.x (current)
 
+**Grant permissions, dashboard buckets, admin throttling and provisioning checks ([#1850](https://github.com/afreidah/s3-orchestrator/issues/1850), v0.179.1)**
+
+- `PUT /admin/api/provisioning/grants/{id}/{name}` naming no permissions answers `400`. On a bucket it used to write a grant carrying every permission. `POST /admin/api/provisioning/grants` naming none on a backend or the instance now writes `admin-all`, as the request documents; it used to be refused. A bucket grant created that way still carries every data-plane permission.
+- `/ui/api/dashboard` lists only the buckets the signed-in user may list, as the page and the tree already did. The page's bucket pickers and configuration summary are cut to the same set.
+- A throttled admin API call answers `429` with a JSON error and is audited as `admin.RateLimitRejected`. It used to get an S3 XML `SlowDown` body and an `s3.RateLimitRejected` entry. S3 refusals are unchanged.
+- `POST /admin/api/reconcile?backend=` naming a backend this instance does not serve answers `400`, as scrub and the conversion passes do. It used to fail inside the pass with `500`.
+- The provisioning API refuses a bucket name containing `/` and a `max_multipart_uploads` below 0 or above 2147483647 with `400`, as the config file does. The config file now refuses the same upper bound. An invalid CORS rule's message now reads `bucket is not valid` rather than `bucket cors rules are not valid`.
+
 **Write-path statuses, promoted tags, usage charges and cycle events ([#1851](https://github.com/afreidah/s3-orchestrator/issues/1851), v0.179.0)**
 
 Both engines apply a migration on startup that adds a nullable `tagging` column to `pending_objects` (PostgreSQL 48, SQLite 35). A write the pending reaper finishes now carries the tags it was sent with; it used to keep the tags of the object it replaced.
