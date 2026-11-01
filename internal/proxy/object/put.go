@@ -70,10 +70,11 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	// buffered. A compressed write is checked after encoding, because judging
 	// it on the logical size would reject a write that fits.
 	compress := storedform.ShouldCompress(&o.compression, o.codec, size)
-	eligible := []string{}
+	var eligible []string
+	var err error
 	if !compress {
-		if eligible = o.core.EligibleForWrite(s3op.PutObject, 0, o.physicalSize(size)); len(eligible) == 0 {
-			return "", writepath.RejectForUsage(span, operation)
+		if eligible, err = o.coord.WriteTargets(span, operation, o.physicalSize(size)); err != nil {
+			return "", err
 		}
 	}
 
@@ -84,8 +85,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	defer plan.cleanup()
 
 	if compress {
-		if eligible = o.core.EligibleForWrite(s3op.PutObject, 0, plan.uploadSize); len(eligible) == 0 {
-			return "", writepath.RejectForUsage(span, operation)
+		if eligible, err = o.coord.WriteTargets(span, operation, plan.uploadSize); err != nil {
+			return "", err
 		}
 	}
 
@@ -310,25 +311,22 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// bytes admission counts against the backend, so the insert that writes it
 	// decides whether the backend has room. Ranking only proposes an order.
 	identity := putIdentity(plan.etagDigest, req)
-	intent := writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity)
-	backendName, err := o.coord.ClaimWriteTarget(ctx, intent, eligible)
-	if err != nil {
-		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
+	intent := writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity, req.Tags)
+	if err := o.coord.ClaimWriteTarget(ctx, span, operation, intent, eligible); err != nil {
+		return putAttemptResult{fatalErr: err}
 	}
+	backendName := intent.BackendName
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
 	if err := o.uploadCopy(ctx, req, plan, intent); err != nil {
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, operation, &core.RecordObjectRequest{
 		Key: req.Key, Size: plan.uploadSize, Form: plan.form, Identity: identity, Tags: req.Tags,
 		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intent.IntentID, StorageKey: intent.StorageKey}},
 	}); err != nil {
-		// Classified like the placement failure above: with placement decided in
-		// memory, the commit is now where a database outage first shows up, and
-		// it owes the client the same 503 the old placement query gave it.
-		return putAttemptResult{backend: backendName, fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
+		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	// The ETag the client is told is the one recorded, not the one the backend
 	// returned: with compression or encryption on those differ, and a later
@@ -350,11 +348,10 @@ func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
 const reasonWriteTargetRefused = "write_target_refused"
 
 // refuseWriteTarget abandons an upload that landed on a backend which stopped
-// accepting writes before the commit: it charges the PUT that succeeded, then
-// drops the intent and settles the cleanup of its bytes.
+// accepting writes before the commit: it drops the intent and settles the
+// cleanup of its bytes.
 func (o *Manager) refuseWriteTarget(ctx context.Context, p *core.PendingObject) {
 	telemetry.WriteTargetRefusedTotal.Inc()
-	o.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 	o.coord.Discard(ctx, p, reasonWriteTargetRefused)
 }
 

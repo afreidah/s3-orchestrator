@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -474,13 +475,7 @@ func TestCBBackend_RefusedGaugeFollowsServed(t *testing.T) {
 // event: a GET refusal names GetObject, and an unreachable backend names all.
 // Not parallel, since the event emitter is process-wide.
 func TestCBBackend_EventsNameTheCall(t *testing.T) {
-	var calls []any
-	event.SetEmitter(func(ev event.Event) {
-		if ev.Subject == "event-backend" && ev.Type == event.BackendCircuitOpened {
-			calls = append(calls, ev.Data["call"])
-		}
-	})
-	defer event.SetEmitter(nil)
+	published := eventtest.Record(t)
 
 	mock := newMockBackend()
 	mock.getErr = &httpError{code: 403}
@@ -489,6 +484,12 @@ func TestCBBackend_EventsNameTheCall(t *testing.T) {
 	_, _ = cb.GetObject(context.Background(), "key", "")
 	_, _ = cb.HeadObject(context.Background(), "key")
 
+	var calls []any
+	for _, ev := range eventtest.OfType(published(), event.BackendCircuitOpened) {
+		if ev.Subject == "event-backend" {
+			calls = append(calls, ev.Data["call"])
+		}
+	}
 	if want := []any{"GetObject", backendBreakerCall}; !slices.Equal(calls, want) {
 		t.Errorf("opened events named %v, want %v", calls, want)
 	}

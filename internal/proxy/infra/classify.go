@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Maps store errors from the write path to the S3 errors a client sees, and
-// records them on the tracing span.
+// Translates write-path store errors into the S3 errors a client is answered
+// with, and marks the span so traces show why a write was refused.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -23,15 +24,15 @@ import (
 // S3-compatible errors and updates the tracing span. Increments the
 // per-operation degraded-write-rejections counter when the failure is a
 // DB-unavailable signal.
-func (c *BackendRuntime) ClassifyWriteError(span trace.Span, operation string, err error) error {
-	if errors.Is(err, core.ErrDBUnavailable) {
+func (c *BackendRuntime) ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error {
+	switch {
+	case errors.Is(err, core.ErrDBUnavailable):
 		observe.MarkSpanError(span, "database unavailable")
-		telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
+		telemetry.DegradedWriteRejectionsTotal.WithLabelValues(op.String()).Inc()
 		return core.ErrServiceUnavailable
-	}
-	if errors.Is(err, core.ErrNoSpaceAvailable) {
+	case errors.Is(err, core.ErrInsufficientStorage):
 		observe.MarkSpanError(span, "insufficient storage")
-		return core.ErrInsufficientStorage
+		return err
 	}
 	observe.RecordSpanError(span, err)
 	return err

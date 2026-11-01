@@ -62,7 +62,18 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.178.x (current)
+### v0.179.x (current)
+
+**Write-path statuses, promoted tags, usage charges and cycle events ([#1851](https://github.com/afreidah/s3-orchestrator/issues/1851), v0.179.0)**
+
+Both engines apply a migration on startup that adds a nullable `tagging` column to `pending_objects` (PostgreSQL 48, SQLite 35). A write the pending reaper finishes now carries the tags it was sent with; it used to keep the tags of the object it replaced.
+
+- CompleteMultipartUpload answers `507 InsufficientStorage` when its backend has no room and `503 ServiceUnavailable` during a database outage, and CopyObject's commit answers 503 during an outage; both used to answer `502 InternalError`. Both now count in `s3o_degraded_write_rejections_total`.
+- Every backend call is charged where it is sent. A PUT is charged its ingress once the bytes land, whether or not the write is recorded afterwards; a failed commit used to be charged as a call without bytes. Native CopyObject, copy-source and probe HEADs, failed copy and assembly PUTs, and failed part reads are now charged; they used to go uncharged. Usage limits can therefore be reached slightly sooner than before.
+- `replication.completed`, `rebalance.completed` and `lifecycle.completed` are published from scheduled cycles as well as operator runs, and only when the cycle copied, moved, deleted or failed something. Scheduled replication and rebalance cycles used to publish nothing, and an operator run that did nothing used to publish anyway.
+- Invalidating a key through `DELETE /admin/api/cache/keys/{key}` no longer drops a different object whose key starts with it and an exclamation mark, such as `photo.jpg!backup` beside `photo.jpg`.
+
+### v0.178.x
 
 **Helm chart and Nomad pack published with each release, memory limit from the container ([#1440](https://github.com/afreidah/s3-orchestrator/issues/1440), v0.178.0)**
 

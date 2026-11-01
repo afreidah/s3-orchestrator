@@ -119,6 +119,9 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{35, func() {
+			exec("drop pending_objects.tagging", `ALTER TABLE pending_objects DROP COLUMN tagging`)
+		}},
 		{34, func() {
 			for _, table := range []string{"backend_usage", "backend_request_usage"} {
 				exec("drop the "+table+" bucket index", `DROP INDEX IF EXISTS idx_`+table+`_bucket_start`)

@@ -157,11 +157,10 @@ func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
 }
 
 // Invalidate removes every entry stored for one object key: the entry under
-// the bare key and those under the key plus internalkey.WriteSeparator, which
-// is where each write of the key stores its bytes.
+// the bare key and those under its per-write paths, leaving a different object
+// that only shares the prefix, such as "photo.jpg!backup" beside "photo.jpg".
 func (c *MemoryCache) Invalidate(key string) {
-	copies := key + internalkey.WriteSeparator
-	c.removeMatching(func(k string) bool { return k == key || strings.HasPrefix(k, copies) })
+	c.removeMatching(func(k string) bool { return internalkey.IsCopyOf(key, k) })
 }
 
 // InvalidatePrefix removes every entry whose key starts with prefix and

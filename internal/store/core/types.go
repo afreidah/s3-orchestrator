@@ -220,7 +220,9 @@ const (
 // commit so a DB outage between PUT and RecordObject cannot silently
 // destroy the prior copy of an overwritten key. StorageKey, minted from the key
 // and the intent id, is recorded up front so every resolver addresses exactly
-// the bytes this write placed.
+// the bytes this write placed. Tags is the set the write carried, so an object
+// the reaper promotes is tagged as the client asked rather than keeping the
+// set of the object it replaced.
 type PendingObject struct {
 	StoredForm
 	IntentID    string
@@ -229,6 +231,7 @@ type PendingObject struct {
 	BackendName string
 	SizeBytes   int64
 	Identity    *ObjectIdentity
+	Tags        []Tag
 	CreatedAt   time.Time
 	Role        PendingRole
 }

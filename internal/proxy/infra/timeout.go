@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// Backend Runtime - Per-Operation Backend Timeouts
+// Backend Runtime - Timed and Charged Backend Calls
 //
 // Author: Alex Freidah
 //
 // Applies the configured per-backend-operation timeout to a context
-// (honouring a tighter parent deadline) and hosts the composite operations
-// that pair it with a backend RPC, so the timeout plumbing lives in one place
-// instead of at every backend call site.
+// (honouring a tighter parent deadline) and hosts the GET, HEAD, PUT and
+// stream copy that pair it with a backend RPC. Each charges the call where it
+// is sent, so no call site carries the timeout plumbing or the accounting rule.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -38,27 +38,47 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 	return context.WithTimeout(ctx, c.backendTimeout)
 }
 
-// GetWithTimeout issues a GET against be with the configured backend timeout.
-// On success it returns the cancel func instead of deferring it, because the
-// caller owns the body: defer it next to Body.Close, or pass it to
-// ioutilx.WithCancel when streaming. On error the context is already released.
-func (c *BackendRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+// Get issues a GET against the named backend under the configured timeout and
+// charges a call that fails. A successful GET's egress is the caller's to
+// charge, since only the reader knows how many bytes it took. On success it
+// returns the cancel func instead of deferring it, because the caller owns the
+// body: defer it next to Body.Close, or pass it to ioutilx.WithCancel when
+// streaming. On error the context is already released.
+func (c *BackendRuntime) Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
 	gctx, gcancel := c.WithTimeout(ctx)
 	result, err := be.GetObject(gctx, key, rangeHeader)
 	if err != nil {
 		gcancel()
+		c.Acct().APICall(ctx, s3op.GetObject, name)
 		return nil, nil, err
 	}
 	return result, gcancel, nil
 }
 
-// HeadWithTimeout issues a HEAD against be with the configured backend timeout.
-// HEAD carries no body, so the timeout context is fully released before
-// returning.
-func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
+// Head issues a HEAD against the named backend under the configured timeout
+// and charges it whatever the outcome. HEAD carries no body, so the timeout
+// context is fully released before returning.
+func (c *BackendRuntime) Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
 	hctx, hcancel := c.WithTimeout(ctx)
 	defer hcancel()
-	return be.HeadObject(hctx, key)
+	result, err := be.HeadObject(hctx, key)
+	c.Acct().APICall(ctx, s3op.HeadObject, name)
+	return result, err
+}
+
+// Put writes req under the configured timeout and charges it as op: a failed
+// call as one API call, a successful one with the ingress of the bytes that
+// landed, whether or not the write that sent them is recorded afterwards.
+func (c *BackendRuntime) Put(ctx context.Context, op s3op.Operation, req *backend.PutRequest) (string, error) {
+	pctx, pcancel := c.WithTimeout(ctx)
+	defer pcancel()
+	etag, err := req.Dst.Backend.PutObject(pctx, req.Key, req.Body, req.Size, req.ContentType, req.Metadata)
+	if err != nil {
+		c.Acct().APICall(ctx, op, req.Dst.Name)
+		return "", err
+	}
+	c.Acct().Ingress(ctx, op, req.Dst.Name, req.Size)
+	return etag, nil
 }
 
 // StreamCopy reads an object from the request's source and writes it to its
@@ -90,13 +110,11 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 		}
 	}
 
-	rctx, rcancel := c.WithTimeout(ctx)
-	defer rcancel()
-	result, err := src.Backend.GetObject(rctx, req.SrcKey, "")
+	result, rcancel, err := c.Get(ctx, src.Name, src.Backend, req.SrcKey, "")
 	if err != nil {
-		c.Acct().APICall(ctx, s3op.GetObject, src.Name)
 		return 0, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
+	defer rcancel()
 	defer func() { _ = result.Body.Close() }()
 	c.Acct().Egress(ctx, s3op.GetObject, src.Name, result.Size)
 
@@ -109,18 +127,16 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, req *backend.CopyReques
 		return 0, &backend.CopyError{Phase: backend.CopyPhaseTransform, Err: err}
 	}
 	defer release()
-	wctx, wcancel := c.WithTimeout(ctx)
-	defer wcancel()
-	_, err = dst.Backend.PutObject(wctx, req.DstKey, body, size, result.ContentType, result.Metadata)
-	if err != nil {
-		c.Acct().APICall(ctx, s3op.PutObject, dst.Name)
+	if _, err := c.Put(ctx, s3op.PutObject, &backend.PutRequest{
+		Dst: dst, Key: req.DstKey, Body: body, Size: size,
+		ContentType: result.ContentType, Metadata: result.Metadata,
+	}); err != nil {
 		phase := backend.CopyPhaseWrite
 		if tracked.readErr != nil {
 			phase = backend.CopyPhaseRead
 		}
 		return 0, &backend.CopyError{Phase: phase, Err: err}
 	}
-	c.Acct().Ingress(ctx, s3op.PutObject, dst.Name, size)
 	return size, nil
 }
 

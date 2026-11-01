@@ -83,6 +83,8 @@ func (m *Manager) logger() *slog.Logger {
 // ProcessRules evaluates every rule and deletes the objects each one expires,
 // returning the tally across all rules: Succeeded counts the objects deleted.
 // obs receives one bracketed step per object and is nil on the scheduled tick.
+// A sweep that attempted a delete publishes LifecycleCompleted, whether a tick
+// or an operator ran it.
 func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) batch.Summary {
 	batchSize := batchSizeFor(m.Config())
 
@@ -95,6 +97,13 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 	var total batch.Summary
 	for _, rule := range rules {
 		total = total.Plus(m.applyRule(ctx, rule, batchSize, obs))
+	}
+	if total.Attempted > 0 {
+		m.logger().InfoContext(ctx, "expiration completed", "deleted", total.Succeeded, "failed", total.Failed)
+		event.Publish(event.LifecycleCompleted, "", map[string]any{
+			"deleted": total.Succeeded,
+			"failed":  total.Failed,
+		})
 	}
 	return total
 }
@@ -140,6 +149,7 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 	if stop == batch.Errored {
 		m.logger().ErrorContext(ctx, "failed to list expired objects",
 			slog.String("prefix", rule.Prefix), "error", err)
+		total.Attempted++
 		total.Failed++
 	}
 	return total

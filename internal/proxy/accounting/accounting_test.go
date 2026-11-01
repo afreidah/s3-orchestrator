@@ -195,13 +195,13 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 	rec.APICall(ctx, s3op.ListObjects, "b1")                            // class_b
 	rec.Egress(ctx, s3op.GetObject, "b1", 500)                          // class_b
 	rec.Ingress(ctx, s3op.UploadPart, "b1", 700)                        // class_a
-	rec.PutSuccess(ctx, s3op.PutObject, "b1", 900, time.Now())          // class_a + metric
+	rec.Ingress(ctx, s3op.PutObject, "b1", 900)                         // class_a
 	rec.Operation(s3op.PutObject, "b1", time.Now(), errors.New("boom")) // metric only
 
 	var all core.Usage
 	cb.Load("b1", time.Time{}, &all)
 	if got := all.Pools["class_a"]; got != 2 {
-		t.Errorf("class_a = %d, want 2 (Ingress, PutSuccess)", got)
+		t.Errorf("class_a = %d, want 2 (both Ingress calls)", got)
 	}
 	if got := all.Pools["class_b"]; got != 2 {
 		t.Errorf("class_b = %d, want 2 (APICall, Egress)", got)
@@ -214,11 +214,11 @@ func TestRecordMethods_ChargeTheOperationsPools(t *testing.T) {
 		t.Errorf("bytes = %d egress / %d ingress, want 500 / 1600", all.EgressBytes, all.IngressBytes)
 	}
 
-	// PutSuccess and Operation emit the operation metric; the bare charges do
-	// not, which is what keeps a failover attempt from logging a second
-	// observation for one client operation.
-	if len(ops) != 2 {
-		t.Errorf("operation metric emitted %d times (%v), want 2", len(ops), ops)
+	// Only Operation emits the operation metric; the charges do not, which is
+	// what keeps a failover attempt from logging a second observation for one
+	// client operation.
+	if len(ops) != 1 {
+		t.Errorf("operation metric emitted %d times (%v), want 1", len(ops), ops)
 	}
 }
 

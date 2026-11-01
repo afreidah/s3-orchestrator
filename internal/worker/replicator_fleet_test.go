@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -313,7 +314,8 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b3")
+	replica := internalkey.StorageKey("key1", "0123456789abcdef0123456789abcdef")
+	source, err := w.CopyToReplica(context.Background(), "key1", replica, copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}

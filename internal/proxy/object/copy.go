@@ -52,7 +52,7 @@ func (o *Manager) headSourceForCopy(
 		if !ok {
 			continue
 		}
-		headResult, err := o.core.HeadWithTimeout(ctx, be, core.StoragePath(sourceKey, locations[i].StorageKey))
+		headResult, err := o.core.Head(ctx, locations[i].BackendName, be, core.StoragePath(sourceKey, locations[i].StorageKey))
 		if err != nil {
 			continue
 		}
@@ -94,7 +94,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
-		return "", o.core.ClassifyWriteError(span, operation.String(), err)
+		return "", o.core.ClassifyWriteError(span, operation, err)
 	}
 
 	size, contentType, metadata, srcForm, ok := o.headSourceForCopy(ctx, sourceKey, locations)
@@ -114,11 +114,11 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// The copy claims its destination the way a PUT does, so the intent holds
 	// the bytes against the backend and gives a failed commit something the
 	// reaper can resolve. A native attempt that falls back claims nothing new.
-	intent := writepath.NewPendingIntent(destKey, size, srcForm, srcIdentity)
-	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, intent)
-	if err != nil {
+	intent := writepath.NewPendingIntent(destKey, size, srcForm, srcIdentity, tags)
+	if err := o.coord.SelectWriteTarget(ctx, span, operation, intent); err != nil {
 		return "", err
 	}
+	destBackendName := intent.BackendName
 	intentID := intent.IntentID
 	destBackend, err := o.core.GetBackend(destBackendName)
 	if err != nil {
@@ -163,9 +163,10 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	}
 	defer src.cleanup()
 
-	wctx, wcancel := o.core.WithTimeout(ctx)
-	defer wcancel()
-	etag, err := destBackend.PutObject(wctx, intent.StorageKey, src.body, size, contentType, metadata)
+	etag, err := o.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
+		Dst: s3be.Endpoint{Name: destBackendName, Backend: destBackend}, Key: intent.StorageKey,
+		Body: src.body, Size: size, ContentType: contentType, Metadata: metadata,
+	})
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to write destination: %w", err)
@@ -267,12 +268,13 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 	cctx, ccancel := o.core.WithTimeout(ctx)
 	defer ccancel()
 	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.destStorageKey, req.contentType, req.metadata)
+	if errors.Is(err, s3be.ErrCopyNotSupported) {
+		return "", false, nil
+	}
+	o.core.Acct().APICall(ctx, s3op.CopyObject, req.destBackendName)
 	if err == nil {
 		etag, err = o.finalizeCopy(ctx, req, etag, true)
 		return etag, true, err
-	}
-	if errors.Is(err, s3be.ErrCopyNotSupported) {
-		return "", false, nil
 	}
 	// Ambiguous failure: probe the destination via HEAD. If the
 	// destination exists with the expected size, the copy completed
@@ -292,7 +294,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *copyContext) (string, 
 // destination exists with the expected size, and ("", false) otherwise so the
 // caller falls back. HEAD errors other than 404 are logged as warnings.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *copyContext, origErr error) (string, bool) {
-	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destStorageKey)
+	head, headErr := o.core.Head(ctx, req.destBackendName, req.destBackend, req.destStorageKey)
 	base := []any{
 		"source_key", req.sourceKey,
 		"dest_key", req.destKey,

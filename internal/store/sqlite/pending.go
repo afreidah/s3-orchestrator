@@ -40,8 +40,8 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 		    encrypted, encryption_key, key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
 		    etag, content_type, user_metadata,
-		    created_at, role)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		    created_at, role, tagging)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity c
 		 WHERE c.backend_name = ?
 		   AND (c.flags & ~?) = 0
@@ -51,7 +51,7 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
-		now(), string(p.RoleOrDefault()),
+		now(), string(p.RoleOrDefault()), nullableString(core.EncodeTags(p.Tags)),
 		p.BackendName, accepts, p.SizeBytes,
 	)
 }
@@ -70,7 +70,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		        encrypted, encryption_key, key_id, plaintext_size,
 		        content_hash, compression_algorithm, compression_level,
 		        compression_format_version, logical_size, created_at,
-		        etag, content_type, user_metadata, role
+		        etag, content_type, user_metadata, role, tagging
 		   FROM pending_objects
 		  WHERE created_at <= ?
 		  ORDER BY created_at ASC
@@ -89,15 +89,19 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 			contentType  sql.NullString
 			userMetadata sql.NullString
 			role         string
+			tagging      sql.NullString
 		)
 		dest := append([]any{&p.IntentID, &p.ObjectKey, &p.StorageKey, &p.BackendName, &p.SizeBytes},
 			form.scanDest(&p.StoredForm)...)
-		if err := rows.Scan(append(dest, &createdAt, &etag, &contentType, &userMetadata, &role)...); err != nil {
+		if err := rows.Scan(append(dest, &createdAt, &etag, &contentType, &userMetadata, &role, &tagging)...); err != nil {
 			return core.PendingObject{}, fmt.Errorf("scan pending row: %w", err)
 		}
 		form.apply(&p.StoredForm)
 		p.Role = core.PendingRole(role)
 		p.Identity = identityFromColumns(etag, contentType, userMetadata)
+		// Validated when the write was admitted; a set that will not decode is
+		// promoted as none rather than stalling the reaper on one row.
+		p.Tags, _ = core.DecodeTags(nullStringValue(tagging))
 		var err error
 		if p.CreatedAt, err = parseTime(createdAt); err != nil {
 			return core.PendingObject{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)

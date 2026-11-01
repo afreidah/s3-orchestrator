@@ -87,7 +87,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: expectedHash},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: 11,
 	}, func() {}, nil)
@@ -113,7 +113,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/key1", reasonScrubFailed, int64(11)))
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
 		Size: 11,
 	}, func() {}, nil)
@@ -155,7 +155,7 @@ func TestScrub_BackendError(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("backend down"))
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("backend down"))
 
 	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
@@ -193,7 +193,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(body))},
 	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
 	}, func() {}, nil)
@@ -220,7 +220,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
 	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
 	}, func() {}, nil)
@@ -248,7 +248,7 @@ func TestBackfill_ReplacedCopyIsSkipped(t *testing.T) {
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body))},
 	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
 	}, func() {}, nil)
@@ -272,7 +272,7 @@ func TestBackfill_BackendError(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
 	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("timeout"))
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("timeout"))
 
 	backfillSum := s.HashCopies(context.Background(), locs, nil)
 	processed := backfillSum.Succeeded
@@ -393,7 +393,7 @@ func TestScrub_RefusesEnvelopeOnPlainRow(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(ciphertext)), ContentHash: hashString(ciphertext)},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(ciphertext)),
 		Size: int64(len(ciphertext)),
 	}, func() {}, nil)
@@ -420,7 +420,7 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(ciphertext))},
 	})
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(ciphertext)),
 		Size: int64(len(ciphertext)),
 	}, func() {}, nil)
@@ -551,7 +551,7 @@ func TestScrub_DiscardedCopyDropsItsLocation(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	pl.EXPECT().Settle(gomock.Any(), cleanupOf("b1", "bucket/key1", reasonScrubFailed, int64(11)))
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,
 	}, func() {}, nil)
@@ -575,7 +575,7 @@ func TestScrub_StampsEveryAttempt(t *testing.T) {
 		{ObjectKey: "bucket/unreadable", BackendName: "b1", SizeBytes: 11, ContentHash: "abc"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/unreadable", "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/unreadable", "").
 		Return(nil, func() {}, errors.New("backend down"))
 
 	s.Scrub(context.Background(), 10, "", nil)
@@ -624,7 +624,7 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 	ms.ledgerErr = errors.New("coverage query failed")
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,
 	}, func() {}, nil)
@@ -649,7 +649,7 @@ func TestScrub_UnreadableCopyIsCountedAndLabelled(t *testing.T) {
 		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/gone", "").
 		Return(nil, nil, errors.New("no such key"))
 
 	var statuses []string
@@ -690,7 +690,7 @@ func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
 		{ObjectKey: "bucket/rotted", BackendName: "b1", SizeBytes: 5, ContentHash: "not-the-hash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).AnyTimes()
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/rotted", "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/rotted", "").
 		Return(&backend.GetObjectResult{
 			Body: io.NopCloser(strings.NewReader("hello")),
 			Size: 5,
@@ -728,7 +728,7 @@ func TestScrubCycle_LogsAPassOfOnlyUnreadableCopies(t *testing.T) {
 		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/gone", "").
 		Return(nil, nil, errors.New("no such key"))
 
 	var buf bytes.Buffer
@@ -990,8 +990,8 @@ func TestScrubKey_ReportsEachCopySeparately(t *testing.T) {
 		{ObjectKey: "bucket/k", BackendName: "b2", SizeBytes: 11, ContentHash: "not-the-hash"},
 	}
 	ops.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/k", "").DoAndReturn(
-		func(_ context.Context, _ backend.ObjectBackend, _, _ string) (*backend.GetObjectResult, context.CancelFunc, error) {
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k", "").DoAndReturn(
+		func(_ context.Context, _ string, _ backend.ObjectBackend, _, _ string) (*backend.GetObjectResult, context.CancelFunc, error) {
 			return &backend.GetObjectResult{
 				Body: io.NopCloser(strings.NewReader(body)),
 				Size: 11,
@@ -1054,7 +1054,7 @@ func TestScrubKey_UnreadableCopyIsDistinctFromMismatch(t *testing.T) {
 		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "abc"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).AnyTimes()
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/gone", "").
 		Return(nil, nil, errors.New("no such key")).AnyTimes()
 
 	results, err := s.ScrubKey(context.Background(), "bucket/gone")
@@ -1093,8 +1093,8 @@ func TestScrubKey_AdmitsLikeAClientRead(t *testing.T) {
 			tracker.SetBaselines(map[string]core.Usage{"b1": {UsageStat: core.UsageStat{EgressBytes: tc.spent}}})
 			expectUsage(ops, tracker)
 			ops.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
-			ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/k", "").DoAndReturn(
-				func(_ context.Context, _ backend.ObjectBackend, _, _ string) (*backend.GetObjectResult, context.CancelFunc, error) {
+			ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/k", "").DoAndReturn(
+				func(_ context.Context, _ string, _ backend.ObjectBackend, _, _ string) (*backend.GetObjectResult, context.CancelFunc, error) {
 					return &backend.GetObjectResult{Body: io.NopCloser(strings.NewReader("hello world")), Size: 11},
 						context.CancelFunc(func() {}), nil
 				}).AnyTimes()
@@ -1175,7 +1175,7 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 
 	// Neither the backend nor a read is ever reached for a declined copy.
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/big", BackendName: "b1", SizeBytes: 4096, ContentHash: hashString("x")},

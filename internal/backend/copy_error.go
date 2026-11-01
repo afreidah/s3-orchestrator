@@ -14,35 +14,9 @@
 package backend
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 )
-
-// CopyEndpoint pairs a backend client with the name its usage is charged to,
-// so a stream copy can check egress on one backend and ingress on the other at
-// the point the bytes move.
-type CopyEndpoint struct {
-	Name    string
-	Backend ObjectBackend
-}
-
-// CopyRequest is one backend-to-backend copy: read SrcKey from Src and write
-// DstKey on Dst. SizeEstimate is what both legs are admitted against before
-// any byte moves. Transform, when set, rewrites the bytes between the legs;
-// nil copies them verbatim.
-type CopyRequest struct {
-	Src, Dst       CopyEndpoint
-	SrcKey, DstKey string
-	SizeEstimate   int64
-	Transform      CopyTransform
-}
-
-// CopyTransform turns the object a copy read into the bytes it writes,
-// returning the body, its size and a release for anything it buffered. The
-// release runs once the write is done, whatever its outcome.
-type CopyTransform func(ctx context.Context, src *GetObjectResult) (body io.Reader, size int64, release func(), err error)
 
 // CopyPhase identifies which leg of a stream copy failed.
 type CopyPhase string

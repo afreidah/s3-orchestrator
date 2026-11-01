@@ -368,9 +368,8 @@ func (m *InMemory) Has(key string) bool {
 func (m *InMemory) HasCopyOf(objectKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	prefix := internalkey.StorageKey(objectKey, "")
 	for key := range m.Objects {
-		if key == objectKey || strings.HasPrefix(key, prefix) {
+		if internalkey.IsCopyOf(objectKey, key) {
 			return true
 		}
 	}
@@ -387,9 +386,8 @@ func (m *InMemory) CopyOf(objectKey string) (Object, bool) {
 	if obj, ok := m.Objects[objectKey]; ok {
 		return obj, true
 	}
-	prefix := internalkey.StorageKey(objectKey, "")
 	for key, obj := range m.Objects {
-		if strings.HasPrefix(key, prefix) {
+		if internalkey.IsCopyOf(objectKey, key) {
 			return obj, true
 		}
 	}
@@ -405,9 +403,8 @@ func (m *InMemory) PathOf(objectKey string) string {
 	if _, ok := m.Objects[objectKey]; ok {
 		return objectKey
 	}
-	prefix := internalkey.StorageKey(objectKey, "")
 	for key := range m.Objects {
-		if strings.HasPrefix(key, prefix) {
+		if internalkey.IsCopyOf(objectKey, key) {
 			return key
 		}
 	}

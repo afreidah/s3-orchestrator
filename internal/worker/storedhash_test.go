@@ -79,7 +79,7 @@ func serveStored(t *testing.T, ops *MockOps, stored []byte) {
 	be := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().GetBackend("b1").Return(be, nil).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().GetWithTimeout(gomock.Any(), be, gomock.Any(), "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), be, gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil).AnyTimes()

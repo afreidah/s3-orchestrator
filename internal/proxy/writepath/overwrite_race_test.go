@@ -27,11 +27,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/sqlite"
-
-	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // -------------------------------------------------------------------------
@@ -100,13 +98,13 @@ func startWrite(t *testing.T, coord *Coordinator, body string) *write {
 	payload := []byte(body)
 
 	w := &write{body: payload}
-	w.primary = NewPendingIntent(raceKey, int64(len(payload)), nil, nil)
-	if _, err := coord.ClaimWriteTarget(ctx, w.primary, []string{fastBackend}); err != nil {
+	w.primary = NewPendingIntent(raceKey, int64(len(payload)), nil, nil, nil)
+	if err := coord.ClaimWriteTarget(ctx, testSpan(t), s3op.PutObject, w.primary, []string{fastBackend}); err != nil {
 		t.Fatalf("claim the primary copy: %v", err)
 	}
-	w.companion = NewPendingIntent(raceKey, int64(len(payload)), nil, nil)
+	w.companion = NewPendingIntent(raceKey, int64(len(payload)), nil, nil, nil)
 	w.companion.Role = core.PendingRoleCompanion
-	if _, err := coord.ClaimWriteCopies(ctx, []*core.PendingObject{w.companion}, []string{slowBackend}); err != nil {
+	if _, err := coord.ClaimWriteCopies(ctx, testSpan(t), s3op.PutObject, []*core.PendingObject{w.companion}, []string{slowBackend}); err != nil {
 		t.Fatalf("claim the companion copy: %v", err)
 	}
 	return w
@@ -126,7 +124,7 @@ func landCompanion(t *testing.T, slow *backendtest.InMemory, w *write) {
 // companion as still in flight so the commit keeps its intent.
 func commitPrimary(t *testing.T, coord *Coordinator, w *write) {
 	t.Helper()
-	if err := coord.RecordObjectAndPromoteIntent(context.Background(), noopSpan(), &core.RecordObjectRequest{
+	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), s3op.PutObject, &core.RecordObjectRequest{
 		Key:  raceKey,
 		Size: int64(len(w.body)),
 		Copies: []core.ObjectCopy{{
@@ -260,13 +258,6 @@ func TestOverwriteRace_OverwriteDoesNotMutateInPlace(t *testing.T) {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// noopSpan is the span the commit helpers report on. These tests assert on the
-// store and the backend, so the span only has to exist.
-func noopSpan() trace.Span {
-	_, span := noop.NewTracerProvider().Tracer("overwrite-race").Start(context.Background(), "commit")
-	return span
-}
 
 // copyOn finds the copy recorded on one backend.
 func copyOn(locs []core.ObjectLocation, backendName string) (core.ObjectLocation, bool) {

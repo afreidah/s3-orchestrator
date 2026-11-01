@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -118,7 +119,8 @@ type RebalanceSummary struct {
 
 // Rebalance moves objects between backends to optimize space distribution.
 // observer, when non-nil, receives a step per planned move so a streaming
-// caller can report progress as the cycle runs.
+// caller can report progress as the cycle runs. A cycle that attempted a move
+// publishes RebalanceCompleted, whether a tick or an operator ran it.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
 	return runOpsCycle(ctx, audit.WorkloadRebalance, func(ctx context.Context) (RebalanceSummary, error) {
 		audit.Log(ctx, "rebalance.start",
@@ -162,6 +164,9 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency, observer)
 		r.publishPending(ctx, 0)
+		if sum.Attempted > 0 {
+			event.Publish(event.RebalanceCompleted, "", map[string]any{"moved": sum.Succeeded})
+		}
 		return RebalanceSummary{Summary: sum}, nil
 	})
 }

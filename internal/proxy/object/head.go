@@ -56,9 +56,8 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 				return fail, fmt.Errorf("backend %s: %w", beName, err)
 			}
 
-			r, err := o.core.HeadWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey))
+			r, err := o.core.Head(ctx, beName, backend, core.StoragePath(key, loc.StorageKey))
 			if err != nil {
-				o.core.Acct().APICall(ctx, s3op.HeadObject, beName) // API call was made even on failure
 				return fail, err
 			}
 
@@ -83,7 +82,6 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	if err != nil {
 		return nil, err
 	}
-	o.core.Acct().APICall(ctx, s3op.HeadObject, backendName)
 
 	// Record what the backend reported on every copy of the key. The ETag is
 	// adopted only when the stored bytes are the client's bytes; for a

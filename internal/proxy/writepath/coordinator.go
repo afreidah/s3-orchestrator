@@ -89,20 +89,32 @@ func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 // ROUTING
 // -------------------------------------------------------------------------
 
+// WriteTargets returns the backends a write of size may land on within their
+// usage limits, or the error the write is answered with when none can.
+func (w *Coordinator) WriteTargets(span trace.Span, op s3op.Operation, size int64) ([]string, error) {
+	eligible := w.core.EligibleForWrite(op, 0, size)
+	if len(eligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(op.String(), "write").Inc()
+		observe.MarkSpanError(span, "usage limits exceeded on all backends")
+		return nil, core.ErrInsufficientStorage
+	}
+	return eligible, nil
+}
+
 // ClaimWriteTarget picks the target backend for a write using the configured
-// routing strategy and claims the bytes on it with the write's intent. "pack"
-// takes the first eligible backend with room, "spread" the least utilized one.
-// Returns ErrNoSpaceAvailable when no candidate has room.
-func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error) {
-	name, err := w.claimFirst(eligible, func(name string) (bool, error) {
+// routing strategy and claims the bytes on it with the write's intent, setting
+// p.BackendName. "pack" takes the first eligible backend with room, "spread"
+// the least utilized one. Returns the classified error, ErrInsufficientStorage
+// when no candidate has room.
+func (w *Coordinator) ClaimWriteTarget(ctx context.Context, span trace.Span, op s3op.Operation, p *core.PendingObject, eligible []string) error {
+	if err := w.claim(span, op, eligible, func(name string) (bool, error) {
 		p.BackendName = name
 		return w.stores.InsertPendingIfFits(ctx, p, core.AcceptForWrite)
-	})
-	if err != nil {
-		return "", err
+	}); err != nil {
+		return err
 	}
 	w.noteClaim(p)
-	return name, nil
+	return nil
 }
 
 // noteClaim tells the ranking what this instance just placed, or every write
@@ -113,35 +125,36 @@ func (w *Coordinator) noteClaim(p *core.PendingObject) {
 	telemetry.PendingIntentsEnqueuedTotal.Inc()
 }
 
-// claimFirst walks the eligible backends in routing order and returns the first
-// whose conditional insert accepts.
+// claim walks the eligible backends in routing order until one's conditional
+// insert, run by try, accepts.
 //
 // The order comes from a possibly stale snapshot; room is decided by the insert
-// against live rows. A declined candidate is skipped. Returns
-// ErrNoSpaceAvailable when none accepts, and stops on a database error.
-func (w *Coordinator) claimFirst(eligible []string, try func(name string) (bool, error)) (string, error) {
+// against live rows. A declined candidate is skipped. Returns the classified
+// error: ErrInsufficientStorage when none accepts, or the database error that
+// stopped the walk.
+func (w *Coordinator) claim(span trace.Span, op s3op.Operation, eligible []string, try func(name string) (bool, error)) error {
 	for _, name := range w.rankForWrite(eligible) {
 		ok, err := try(name)
 		if err != nil {
-			return "", fmt.Errorf("claim write target: %w", err)
+			return w.core.ClassifyWriteError(span, op, fmt.Errorf("claim write target: %w", err))
 		}
 		if ok {
-			return name, nil
+			return nil
 		}
 		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
 	}
-	return "", core.ErrNoSpaceAvailable
+	return w.core.ClassifyWriteError(span, op, core.ErrInsufficientStorage)
 }
 
 // ClaimWriteCopies claims a distinct backend for each intent in one
 // transaction, using the same conditional insert a single-copy write uses, and
 // returns the intents that got one, in claim order, with BackendName set.
 // Claiming fewer than asked is not an error, since the replicator makes up the
-// rest; only claiming none fails.
-func (w *Coordinator) ClaimWriteCopies(ctx context.Context, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error) {
+// rest; only claiming none fails, with the classified error.
+func (w *Coordinator) ClaimWriteCopies(ctx context.Context, span trace.Span, op s3op.Operation, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error) {
 	claims, err := w.stores.ClaimPendingCopies(ctx, intents, w.rankForWrite(eligible), core.AcceptForWrite)
 	if err != nil {
-		return nil, fmt.Errorf("claim write targets: %w", err)
+		return nil, w.core.ClassifyWriteError(span, op, fmt.Errorf("claim write targets: %w", err))
 	}
 	for _, name := range claims.Declined {
 		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
@@ -150,7 +163,7 @@ func (w *Coordinator) ClaimWriteCopies(ctx context.Context, intents []*core.Pend
 		w.noteClaim(p)
 	}
 	if len(claims.Claimed) == 0 {
-		return nil, core.ErrNoSpaceAvailable
+		return nil, w.core.ClassifyWriteError(span, op, core.ErrInsufficientStorage)
 	}
 	return claims.Claimed, nil
 }
@@ -166,29 +179,17 @@ func (w *Coordinator) rankForWrite(eligible []string) []string {
 	return w.core.Quota().RankByUtilization(eligible)
 }
 
-// RejectForUsage records a write turned away because no backend had room
-// within its usage limits, and returns the error the write surfaces for it.
-func RejectForUsage(span trace.Span, operation s3op.Operation) error {
-	telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
-	observe.MarkSpanError(span, "usage limits exceeded on all backends")
-	return core.ErrInsufficientStorage
-}
-
 // SelectWriteTarget picks a backend for a write and claims it with the pending
-// intent p. Returns ErrInsufficientStorage when no backend can accept the
-// write, or the classified selection error. The caller owns the intent from
-// here: the transaction that records the object clears it, and any path that
-// gives up leaves it for the reaper.
-func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, p *core.PendingObject) (string, error) {
-	eligible := w.core.EligibleForWrite(operation, 0, p.SizeBytes)
-	if len(eligible) == 0 {
-		return "", RejectForUsage(span, operation)
-	}
-	name, err := w.ClaimWriteTarget(ctx, p, eligible)
+// intent p, setting p.BackendName. Returns ErrInsufficientStorage when no
+// backend can accept the write, or the classified selection error. The caller
+// owns the intent from here: the transaction that records the object clears
+// it, and any path that gives up leaves it for the reaper.
+func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op s3op.Operation, p *core.PendingObject) error {
+	eligible, err := w.WriteTargets(span, op, p.SizeBytes)
 	if err != nil {
-		return "", w.core.ClassifyWriteError(span, operation.String(), err)
+		return err
 	}
-	return name, nil
+	return w.ClaimWriteTarget(ctx, span, op, p, eligible)
 }
 
 // -------------------------------------------------------------------------
@@ -238,15 +239,17 @@ func (w *Coordinator) Discard(ctx context.Context, p *core.PendingObject, reason
 // fills in the backend, since the same insert checks room. Admission subtracts
 // held intents from headroom, so in-progress bytes count for every instance.
 //
-// size is what lands on the backend and id is the identity a reaper-promoted
-// object answers HEAD with. The intent id also names the copy's own storage
-// path, so cleaning it up can only remove this intent's bytes.
-func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.ObjectIdentity) *core.PendingObject {
+// size is what lands on the backend, and id and tags are the identity and tag
+// set a reaper-promoted object answers with. The intent id also names the
+// copy's own storage path, so cleaning it up can only remove this intent's
+// bytes.
+func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.ObjectIdentity, tags []core.Tag) *core.PendingObject {
 	p := &core.PendingObject{
 		IntentID:  audit.NewID(),
 		ObjectKey: key,
 		SizeBytes: size,
 		Identity:  id,
+		Tags:      tags,
 	}
 	p.StorageKey = internalkey.StorageKey(key, p.IntentID)
 	if form != nil {
@@ -260,7 +263,7 @@ func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.Ob
 // discards its bytes unless a recorded copy already sits at its path. size is
 // what the copy will land on the backend and form how those bytes are stored.
 func NewCopyIntent(key, target string, size int64, form *core.StoredForm) *core.PendingObject {
-	p := NewPendingIntent(key, size, form, nil)
+	p := NewPendingIntent(key, size, form, nil, nil)
 	p.BackendName = target
 	p.Role = core.PendingRoleCompanion
 	return p
@@ -294,8 +297,8 @@ func (w *Coordinator) Place(ctx context.Context, p *core.Placement) (int64, erro
 // RecordObjectAndPromoteIntent commits the object location, updates quota, and
 // clears the pending intent in one transaction. On failure the intent and the
 // backend bytes are left for the pending reaper, which HEADs the backend and
-// either promotes or removes the intent.
-func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
+// either promotes or removes the intent, and the error is classified for op.
+func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, op s3op.Operation, req *core.RecordObjectRequest) error {
 	backendName, err := soleBackend(req)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -313,12 +316,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// removal - settles what they are worth.
 		w.log.ErrorContext(ctx, "recordObject failed; intent left for reaper",
 			"key", req.Key, "backend", backendName, "intent_id", intentID, "error", err)
-		// The successful PUT against the backend still consumed an API
-		// call. The success-path usage record runs only when this returns
-		// nil, so account for it here.
-		w.core.Acct().APICall(ctx, s3op.PutObject, backendName)
-		observe.RecordSpanError(span, err)
-		return fmt.Errorf("failed to record object: %w", err)
+		return w.core.ClassifyWriteError(span, op, fmt.Errorf("failed to record object: %w", err))
 	}
 	w.settleDisplaced(ctx, req.Key, backendName, cleanup)
 	return nil
@@ -337,18 +335,15 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 		// discarding its bytes, since an extra copy is never promoted.
 		w.log.ErrorContext(ctx, "commit of a further copy failed; intent left for reaper",
 			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, "error", err)
-		w.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyFailed).Inc()
 		return false, err
 	}
 	if result == core.CompanionCopyCommitted {
-		w.core.Acct().Ingress(ctx, s3op.PutObject, p.BackendName, p.SizeBytes)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyCommitted).Inc()
 		return true, nil
 	}
 	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
-	w.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
 	w.Settle(ctx, cleanup)
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
 	return false, nil
@@ -440,8 +435,8 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	}
 	intent := NewCopyIntent(key, req.DestName, req.Source.SizeBytes, &req.Source.StoredForm)
 	copyReq := &backend.CopyRequest{
-		Src:          backend.CopyEndpoint{Name: srcName, Backend: src},
-		Dst:          backend.CopyEndpoint{Name: req.DestName, Backend: dest},
+		Src:          backend.Endpoint{Name: srcName, Backend: src},
+		Dst:          backend.Endpoint{Name: req.DestName, Backend: dest},
 		SrcKey:       core.StoragePath(key, req.Source.StorageKey),
 		DstKey:       intent.StorageKey,
 		SizeEstimate: req.Source.SizeBytes,
@@ -492,19 +487,15 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 // No bytes are claimed, since each part is counted by its own multipart_parts
 // row as it arrives. The insert still decides, so a draining backend declines
 // the upload and the next candidate is tried.
-func (w *Coordinator) ClaimUploadTarget(ctx context.Context, span trace.Span, operation s3op.Operation, params *core.CreateMultipartUploadParams) (string, error) {
-	eligible := w.core.EligibleForWrite(operation, 0, 0)
-	if len(eligible) == 0 {
-		return "", RejectForUsage(span, operation)
+func (w *Coordinator) ClaimUploadTarget(ctx context.Context, span trace.Span, op s3op.Operation, params *core.CreateMultipartUploadParams) error {
+	eligible, err := w.WriteTargets(span, op, 0)
+	if err != nil {
+		return err
 	}
-	name, err := w.claimFirst(eligible, func(name string) (bool, error) {
+	return w.claim(span, op, eligible, func(name string) (bool, error) {
 		params.BackendName = name
 		return w.stores.CreateMultipartUpload(ctx, params)
 	})
-	if err != nil {
-		return "", w.core.ClassifyWriteError(span, operation.String(), err)
-	}
-	return name, nil
 }
 
 // RankReplicaTargets orders the destinations a replication copy may go to,

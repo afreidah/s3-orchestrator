@@ -695,6 +695,18 @@ func TestStoreInt_ClaimPendingCopies(t *testing.T) {
 	storetest.CheckCopyClaims(t, s, full, roomy, spare)
 }
 
+// TestStoreInt_PromotionAppliesTheWritesTags verifies a reaper-promoted write
+// carries the tags it was sent with, not those of the object it replaced.
+func TestStoreInt_PromotionAppliesTheWritesTags(t *testing.T) {
+	s := adapterPgStore(t)
+	backend := uniqueKey(t, "tags")
+	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{{Name: backend, QuotaBytes: 1 << 30}}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	t.Cleanup(func() { _ = s.DeleteBackendData(context.Background(), backend) })
+	storetest.CheckPromotedTags(t, s, backend)
+}
+
 // TestStoreInt_DeleteMultipartUpload_QueuesEveryPart verifies removing an
 // upload queues each part's bytes at its own path under the caller's reason,
 // and a second removal queues nothing.

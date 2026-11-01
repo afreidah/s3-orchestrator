@@ -18,7 +18,6 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -92,7 +91,6 @@ func (r *Rebalance) Run(ctx context.Context, observer progress.Observer) (batch.
 		r.log.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", mErr)
 	}
 
-	event.Publish(event.RebalanceCompleted, "", map[string]any{"moved": sum.Succeeded})
 	r.log.InfoContext(ctx, "rebalance completed", "moved", sum.Succeeded)
 	return sum.Summary, nil
 }

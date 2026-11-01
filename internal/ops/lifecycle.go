@@ -14,11 +14,8 @@ package ops
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -33,7 +30,6 @@ type LifecycleDeps struct {
 // Lifecycle serves the on-demand expiration sweep shared by the admin API and
 // the web UI.
 type Lifecycle struct {
-	log    *slog.Logger
 	expiry RuleProcessor
 	cfg    *config.Live
 }
@@ -42,11 +38,7 @@ type Lifecycle struct {
 // manager is not wired, which Run reports as unavailable.
 func NewLifecycle(d LifecycleDeps) *Lifecycle {
 	must.NotNil("d.Config", d.Config)
-	return &Lifecycle{
-		log:    slog.Default().With(logfmt.Component("ops")),
-		expiry: d.Expiry,
-		cfg:    d.Config,
-	}
+	return &Lifecycle{expiry: d.Expiry, cfg: d.Config}
 }
 
 // Run applies every configured rule once and reports its tally; Succeeded
@@ -65,12 +57,5 @@ func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (batch.
 		return batch.Summary{}, Skip("no lifecycle rules are configured")
 	}
 
-	sum := l.expiry.ProcessRules(ctx, rules, observer)
-
-	event.Publish(event.LifecycleCompleted, "", map[string]any{
-		"deleted": sum.Succeeded,
-		"failed":  sum.Failed,
-	})
-	l.log.InfoContext(ctx, "expiration completed", "deleted", sum.Succeeded, "failed", sum.Failed)
-	return sum, nil
+	return l.expiry.ProcessRules(ctx, rules, observer), nil
 }

@@ -65,8 +65,9 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 }
 
 // commitPromotion finalises a non-superseded intent: clears prior copies,
-// inserts the new object_location row, charges the bytes that moved, and
-// deletes the pending row in the same transaction.
+// inserts the new object_location row, replaces the key's tags with the set the
+// write carried, charges the bytes that moved, and deletes the pending row in
+// the same transaction.
 func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	deltas := make(quotaDeltas, len(existing)+1)
 	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, existing, deltas)
@@ -74,6 +75,9 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 		return promoteOutcome{}, err
 	}
 	if err := recordIntent(ctx, tx, p, deltas); err != nil {
+		return promoteOutcome{}, err
+	}
+	if err := replaceObjectTagsTx(ctx, tx, p.ObjectKey, p.Tags); err != nil {
 		return promoteOutcome{}, err
 	}
 	cleanup, err := enqueueRemoved(ctx, tx, p.ObjectKey, CleanupReasonOverwritten, displaced)

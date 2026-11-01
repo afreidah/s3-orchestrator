@@ -171,7 +171,7 @@ window.s3oDiagram = {
     DBCB: {
       title: 'DB Circuit Breaker',
       badge: 'storage', badgeText: 'resilience',
-      body: '<p>Circuit breaker wrapping the metadata store. Detects DB outages and returns <code>ErrDBUnavailable</code> sentinel.</p><p>When open, reads fall back to <b>broadcast reads</b>: the backends are tried in turn (in parallel when <code>circuit_breaker.parallel_broadcast</code> is on) and the first successful response is returned. Writes return 503. <code>circuit_breaker.degraded_reads_enabled: false</code> turns the fallback off so reads fail fast too.</p><p>Only actual DB errors trip the breaker; application-level errors (ErrNoSpaceAvailable, S3Error) are excluded.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Circuit breaker wrapping the metadata store. Detects DB outages and returns <code>ErrDBUnavailable</code> sentinel.</p><p>When open, reads fall back to <b>broadcast reads</b>: the backends are tried in turn (in parallel when <code>circuit_breaker.parallel_broadcast</code> is on) and the first successful response is returned. Writes return 503. <code>circuit_breaker.degraded_reads_enabled: false</code> turns the fallback off so reads fail fast too.</p><p>Only actual DB errors trip the breaker; application-level errors (S3Error) are excluded.</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     PG: {
       title: 'Metadata store (PostgreSQL or SQLite)',

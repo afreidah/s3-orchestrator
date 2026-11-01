@@ -24,7 +24,7 @@ INSERT INTO pending_objects (
     intent_id, object_key, storage_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,
     compression_algorithm, compression_level, compression_format_version, logical_size,
-    etag, content_type, user_metadata, role
+    etag, content_type, user_metadata, role, tagging
 )
 -- backend_name and size_bytes are cast explicitly because they appear both
 -- here and in the headroom test below. A bare parameter in a SELECT list takes
@@ -34,7 +34,7 @@ INSERT INTO pending_objects (
 SELECT @intent_id, @object_key, @storage_key, @backend_name::text, @size_bytes::bigint,
        @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash,
        @compression_algorithm, @compression_level, @compression_format_version, @logical_size,
-       @etag, @content_type, @user_metadata, @role
+       @etag, @content_type, @user_metadata, @role, sqlc.narg('tagging')::text
 FROM backend_capacity c
 WHERE c.backend_name = @backend_name::text
   AND (c.flags & ~(@accepts::bigint)) = 0
@@ -61,12 +61,13 @@ DELETE FROM pending_objects WHERE intent_id = $1;
 -- Return pending intents older than @older_than for reaper resolution.
 -- Bounded by @max_keys per call so a backlog cannot starve other queries.
 -- Column order follows the table so sqlc projects the row onto the shared
--- pending_objects model rather than minting a query-specific struct; storage_key
--- is last because that is where the migration added it.
+-- pending_objects model rather than minting a query-specific struct;
+-- storage_key and tagging are last because that is where their migrations
+-- added them.
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role, storage_key
+       etag, content_type, user_metadata, role, storage_key, tagging
 FROM pending_objects
 WHERE created_at <= @older_than
 ORDER BY created_at ASC
@@ -84,12 +85,13 @@ DELETE FROM pending_objects WHERE backend_name = $1;
 -- instance already resolved this intent (deleted the row); the caller
 -- treats that as a benign no-op.
 -- Column order follows the table so sqlc projects the row onto the shared
--- pending_objects model rather than minting a query-specific struct; storage_key
--- is last because that is where the migration added it.
+-- pending_objects model rather than minting a query-specific struct;
+-- storage_key and tagging are last because that is where their migrations
+-- added them.
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role, storage_key
+       etag, content_type, user_metadata, role, storage_key, tagging
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE;

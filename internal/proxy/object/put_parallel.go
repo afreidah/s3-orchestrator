@@ -20,6 +20,7 @@ import (
 	"errors"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -95,10 +96,10 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 		return "", errFanoutUnavailable
 	}
 
-	claimed, err := o.coord.ClaimWriteCopies(ctx, o.copyIntents(req, plan), eligible)
+	claimed, err := o.coord.ClaimWriteCopies(ctx, span, operation, o.copyIntents(req, plan), eligible)
 	if err != nil {
 		release()
-		return "", o.core.ClassifyWriteError(span, operation.String(), err)
+		return "", err
 	}
 	span.SetAttributes(telemetry.AttrCopiesClaimed.Int(len(claimed)))
 
@@ -142,7 +143,7 @@ func (o *Manager) copyIntents(req *PutObjectRequest, plan *putPlan) []*core.Pend
 	identity := putIdentity(plan.etagDigest, req)
 	intents := make([]*core.PendingObject, o.copiesPerWrite)
 	for i := range intents {
-		intents[i] = writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity)
+		intents[i] = writepath.NewPendingIntent(req.Key, plan.uploadSize, plan.form, identity, req.Tags)
 		if i > 0 {
 			intents[i].Role = core.PendingRoleCompanion
 		}
@@ -174,11 +175,10 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 	if err != nil {
 		return err
 	}
-	bctx, bcancel := o.core.WithTimeout(ctx)
-	_, err = be.PutObject(bctx, p.StorageKey, plan.body.Reader(), plan.uploadSize, req.ContentType, req.Metadata)
-	bcancel()
-	if err != nil {
-		o.core.Acct().APICall(ctx, s3op.PutObject, p.BackendName)
+	if _, err := o.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
+		Dst: s3be.Endpoint{Name: p.BackendName, Backend: be}, Key: p.StorageKey,
+		Body: plan.body.Reader(), Size: plan.uploadSize, ContentType: req.ContentType, Metadata: req.Metadata,
+	}); err != nil {
 		return err
 	}
 	if !o.core.BackendFlags(p.BackendName).AcceptedBy(core.AcceptForWrite) {
@@ -246,7 +246,7 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 // are safe from this commit's displacement because each sits at its own
 // intent's path.
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
-	err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
+	err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, s3op.PutObject, &core.RecordObjectRequest{
 		Key:      f.req.Key,
 		Size:     f.plan.uploadSize,
 		Form:     f.plan.form,
@@ -256,7 +256,7 @@ func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *co
 		Placing:  placingCopies(live),
 	})
 	if err != nil {
-		f.settle(writeOutcome{err: f.mgr.core.ClassifyWriteError(span, s3op.PutObject.String(), err)})
+		f.settle(writeOutcome{err: err})
 		return err
 	}
 	// Not counted as a placed copy: this one is the object, and the metric

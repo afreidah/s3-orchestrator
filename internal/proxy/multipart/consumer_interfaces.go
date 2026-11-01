@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
 // Codec is the compression surface assembly uses: the assembled stream is
@@ -31,7 +32,8 @@ type Codec interface {
 // Runtime is the subset of *infra.BackendRuntime the multipart Manager needs.
 type Runtime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
-	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	ClassifyWriteError(span trace.Span, operation string, err error) error
+	Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	Put(ctx context.Context, op s3op.Operation, req *backend.PutRequest) (string, error)
+	ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error
 	Acct() *accounting.Recorder
 }

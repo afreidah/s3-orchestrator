@@ -82,7 +82,7 @@ func (o *Manager) tryMaterializeFromLocation(
 	// The backend timeout covers the body drain inside materialize.New too:
 	// cancel only fires on function return, by which point the body has been
 	// fully materialized.
-	result, cancel, err := o.core.GetWithTimeout(ctx, be, storageKey, "")
+	result, cancel, err := o.core.Get(ctx, backendName, be, storageKey, "")
 	if err != nil {
 		return nil, err
 	}
@@ -91,8 +91,10 @@ func (o *Manager) tryMaterializeFromLocation(
 
 	mb, err := materialize.New(result.Body, size, nil)
 	if err != nil {
+		o.core.Acct().APICall(ctx, s3op.GetObject, backendName)
 		return nil, err
 	}
+	o.core.Acct().Egress(ctx, s3op.GetObject, backendName, size)
 	return &materializedSource{
 		body:          mb.Reader(),
 		sourceBackend: backendName,

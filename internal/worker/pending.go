@@ -23,7 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -178,11 +177,10 @@ const (
 )
 
 // probeBackend HEADs the intent's own storage path on the destination and
-// classifies the result, so a 200 means this write's bytes are there. It
-// records one API call whatever the outcome.
+// classifies the result, so a 200 means this write's bytes are there. The
+// runtime charges the HEAD whatever the outcome.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
-	_, err := r.deps.HeadWithTimeout(ctx, be, core.StoragePath(p.ObjectKey, p.StorageKey))
-	r.deps.Acct().APICall(ctx, s3op.HeadObject, p.BackendName)
+	_, err := r.deps.Head(ctx, p.BackendName, be, core.StoragePath(p.ObjectKey, p.StorageKey))
 
 	switch {
 	case err == nil:

@@ -52,7 +52,6 @@ func (e *S3Error) Error() string {
 // rather than recorded. ErrInvalidRange covers a range that addresses no byte,
 // such as a suffix range on an empty object.
 var (
-	ErrNoSpaceAvailable       = errors.New("no backend has sufficient quota")
 	ErrDBUnavailable          = errors.New("database unavailable")
 	ErrCopyHoldsOnlyDEK       = errors.New("copy holds the only usable encryption key for this object")
 	ErrEncryptionFlagMismatch = errors.New("stored bytes disagree with the object's encryption flag")

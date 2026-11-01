@@ -69,7 +69,7 @@ func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beNam
 // at the first key past them. The newest match wins. With no match it returns
 // the bare key, so the read that follows 404s as it would anyway.
 func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName, key string) (string, int64, error) {
-	copies := key + internalkey.WriteSeparator
+	copies := internalkey.CopyPrefix(key)
 	newest, size, newestAt, found := key, int64(0), time.Time{}, false
 	err := be.ListObjects(ctx, key, func(page []s3be.ListedObject) error {
 		for i := range page {
@@ -77,7 +77,7 @@ func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName,
 			if listed > copies && !strings.HasPrefix(listed, copies) {
 				return s3be.ErrStopListing
 			}
-			if listed != key && !isPerWritePath(key, listed) {
+			if !internalkey.IsCopyOf(key, listed) {
 				continue
 			}
 			if !found || page[i].LastModified.After(newestAt) {
@@ -88,27 +88,6 @@ func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName,
 	})
 	o.core.Acct().APICall(ctx, s3op.ListObjectsV2, beName)
 	return newest, size, err
-}
-
-// writeIDLength is the number of characters after the "!" in a copy's path:
-// a random 16-byte id written as 32 lowercase hex characters.
-const writeIDLength = 32
-
-// isPerWritePath reports whether a listed key is a stored copy of key rather
-// than a different object sharing its prefix, such as a client's
-// "photo.jpg!backup". A copy's path is the key, "!", then exactly 32 lowercase
-// hex characters.
-func isPerWritePath(key, listed string) bool {
-	id, ok := strings.CutPrefix(listed, key+internalkey.WriteSeparator)
-	if !ok || len(id) != writeIDLength {
-		return false
-	}
-	for _, c := range id {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // resolveLastModified prefers the stored write time, which is the same on every

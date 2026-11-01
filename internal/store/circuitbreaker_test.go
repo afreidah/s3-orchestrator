@@ -43,7 +43,7 @@ func TestUnavailable_CountsOnlyAvailabilityFailures(t *testing.T) {
 		{"caller deadline", fmt.Errorf("query: %w", context.DeadlineExceeded), false},
 		{"sql no rows", sql.ErrNoRows, false},
 		{"pgx no rows", pgx.ErrNoRows, false},
-		{"no space", core.ErrNoSpaceAvailable, false},
+		{"no space", core.ErrInsufficientStorage, false},
 		{"s3 error", &core.S3Error{StatusCode: 404, Code: "NoSuchKey"}, false},
 		{"duplicate key", errDuplicateKey, false},
 		{"connection refused", errors.New("dial tcp 10.0.0.5:5432: connect: connection refused"), true},

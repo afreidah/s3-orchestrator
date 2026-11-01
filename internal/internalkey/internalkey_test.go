@@ -51,3 +51,27 @@ func TestPrefix(t *testing.T) {
 		t.Errorf("Prefix(\"alpha\") = %q, want \"alpha/\"", got)
 	}
 }
+
+// TestIsCopyOf verifies the bare key and its per-write paths are copies, and a
+// different object sharing the prefix is not.
+func TestIsCopyOf(t *testing.T) {
+	t.Parallel()
+	const id = "0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"b/photo.jpg", true},
+		{StorageKey("b/photo.jpg", id), true},
+		{"b/photo.jpg!backup", false},
+		{StorageKey("b/photo.jpg", "0123456789ABCDEF0123456789ABCDEF"), false},
+		{StorageKey("b/photo.jpg", id[:31]), false},
+		{StorageKey("b/photo.jpg!backup", id), false},
+		{"b/photo.jpg2", false},
+	}
+	for _, c := range cases {
+		if got := IsCopyOf("b/photo.jpg", c.path); got != c.want {
+			t.Errorf("IsCopyOf(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

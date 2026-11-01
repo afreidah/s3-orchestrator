@@ -83,7 +83,7 @@ var uiAPIRoutes = slices.Concat(
 			"object.ListObjects (ledger only) + DeleteObject per key -> infra.deleteBatch Acct().APICall (DeleteObjects)",
 			onBucket, core.PermDelete},
 		{"/api/upload", func(h *Handler) http.HandlerFunc { return h.handleAPIUpload }, quotaTrackingTracked,
-			"object.PutObject -> mutation_finalize.go Acct().PutSuccess (1 API + ingress)",
+			"object.PutObject -> infra.Put Acct().Ingress (1 API + ingress)",
 			onBucket, core.PermWrite},
 		{"/api/download", func(h *Handler) http.HandlerFunc { return h.handleAPIDownload }, quotaTrackingTracked,
 			"object.GetObject -> get.go meteredGet + Acct().Egress (1 API + egress)",

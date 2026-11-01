@@ -87,7 +87,7 @@ const replicaPath = "bucket/key1!replica"
 func expectReadBack(ops *MockOps, target string, body []byte) {
 	be := backendtest.NewMockObjectBackend(gomock.NewController(&testing.T{}))
 	ops.EXPECT().GetBackend(target).Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), be, replicaPath, "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), be, replicaPath, "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(body)),
 		Size: int64(len(body)),
 	}, func() {}, nil)
@@ -118,7 +118,7 @@ func TestVerifyReplica_GateTable(t *testing.T) {
 			r, ops, _, _ := verifyingReplicator(t, tc.cfg)
 			// A gate that lets anything through would have to read the copy.
 			ops.EXPECT().GetBackend(gomock.Any()).Times(0)
-			ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 			got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 			if got != replicaNotChecked {
@@ -174,7 +174,7 @@ func TestVerifyReplica_NoStoredHashKeepsTheCopy(t *testing.T) {
 	// Reading the copy would spend egress to produce a digest with nothing to
 	// judge it by, so no read is attempted.
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(""))
 	if got != replicaUnverified {
@@ -191,7 +191,7 @@ func TestVerifyReplica_UnreadableCopyIsKept(t *testing.T) {
 	r, ops, _, _ := verifyingReplicator(t, &config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 	be := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().GetBackend("b2").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), be, replicaPath, "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), be, replicaPath, "").
 		Return(nil, nil, errors.New("not found yet"))
 
 	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
@@ -216,7 +216,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	tracker.SetBaselines(map[string]core.Usage{"b2": {UsageStat: core.UsageStat{EgressBytes: 99}}})
 	ops.EXPECT().Acct().Return(accounting.New(tracker, func(string, string, time.Time, error) {})).AnyTimes()
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	r := newTestReplicator(ops, NewMockPlacement(ctrl), ms)
 	r.integrity = verifyOnReplicate
@@ -349,7 +349,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 	ops.EXPECT().GetBackend(target).Return(dstBe, nil).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), copyReq{srcKey: "bucket/key1!source"}).
 		Return(int64(0), nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Any(), "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), dstBe, gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(readBack)),
 		Size: int64(len(readBack)),
 	}, func() {}, nil)
@@ -399,7 +399,7 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 			wrote = req.DstKey
 			return 0, nil
 		})
-	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Cond(func(key string) bool { return key == wrote }), "").
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), dstBe, gomock.Cond(func(key string) bool { return key == wrote }), "").
 		Return(&backend.GetObjectResult{
 			Body: io.NopCloser(bytes.NewReader([]byte("wrong bytes"))),
 			Size: 11,
@@ -445,7 +445,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
 	// No read-back: the source carries no hash, so there is nothing to check.
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	copies := []core.ObjectLocation{*sourceRow("")}
 	out := r.ReplicateObject(context.Background(), "bucket/key1", copies, 1)

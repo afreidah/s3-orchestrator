@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
@@ -275,24 +276,6 @@ func recordAudit(t *testing.T) func() []string {
 	}
 }
 
-// recordEvents captures every published event until the test ends.
-func recordEvents(t *testing.T) func() []event.Event {
-	t.Helper()
-	var mu sync.Mutex
-	var published []event.Event
-	event.SetEmitter(func(ev event.Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		published = append(published, ev)
-	})
-	t.Cleanup(func() { event.SetEmitter(nil) })
-	return func() []event.Event {
-		mu.Lock()
-		defer mu.Unlock()
-		return slices.Clone(published)
-	}
-}
-
 // -------------------------------------------------------------------------
 // BACKOFF
 // -------------------------------------------------------------------------
@@ -473,7 +456,7 @@ func TestSettle_RetryCountsOnce(t *testing.T) {
 // moved to the DLQ, counted, audited and published as an event.
 func TestSettle_ExhaustedPublishesAndCounts(t *testing.T) {
 	const dlqBackend = "dlq-published"
-	published := recordEvents(t)
+	published := eventtest.Record(t)
 	events := recordAudit(t)
 	d, s := newFakeDeleter(dlqBackend), newFakeStore()
 	before, beforeDLQ := statusCounts(), dlqEnqueued(dlqBackend)

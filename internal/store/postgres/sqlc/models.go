@@ -202,6 +202,7 @@ type PendingObject struct {
 	UserMetadata             []byte
 	Role                     string
 	StorageKey               string
+	Tagging                  *string
 }
 
 type UsageFlush struct {

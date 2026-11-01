@@ -70,7 +70,7 @@ func isDBErrorForTest(err error) bool {
 	if err == nil {
 		return false
 	}
-	return !errors.Is(err, core.ErrObjectNotFound) && !errors.Is(err, core.ErrNoSpaceAvailable)
+	return !errors.Is(err, core.ErrObjectNotFound) && !errors.Is(err, core.ErrInsufficientStorage)
 }
 
 func TestWrapDBTX_NilCBReturnsInner(t *testing.T) {

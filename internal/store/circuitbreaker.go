@@ -16,8 +16,6 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -41,18 +39,17 @@ func NewDatabaseBreaker(cfg config.CircuitBreakerConfig, requestError func(error
 }
 
 // unavailable reports whether err says the database cannot serve. A cancelled
-// or expired context is the caller giving up, the no-rows sentinels and the
-// application signals (S3Error, ErrNoSpaceAvailable) are answers, and
-// requestError covers the database refusing one request: none of them count.
-// Anything else, a broken connection above all, does. INSERT ... ON CONFLICT
-// DO NOTHING RETURNING reports ErrNoRows whenever the row already existed,
-// which is an idempotent success.
+// or expired context is the caller giving up, no-rows (pgx's sentinel wraps
+// sql.ErrNoRows) and an S3Error are answers, and requestError covers the
+// database refusing one request: none of them count. Anything else, a broken
+// connection above all, does. INSERT ... ON CONFLICT DO NOTHING RETURNING
+// reports no rows whenever the row already existed, which is an idempotent
+// success.
 func unavailable(err error, requestError func(error) bool) bool {
 	switch {
 	case err == nil,
 		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
-		errors.Is(err, sql.ErrNoRows), errors.Is(err, pgx.ErrNoRows),
-		errors.Is(err, core.ErrNoSpaceAvailable):
+		errors.Is(err, sql.ErrNoRows):
 		return false
 	}
 	if _, ok := errors.AsType[*core.S3Error](err); ok {

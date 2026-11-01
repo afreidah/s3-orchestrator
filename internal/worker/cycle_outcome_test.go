@@ -28,6 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -200,8 +202,10 @@ func TestReplicate_ReportsCycleOutcome(t *testing.T) {
 }
 
 // TestReplicate_EmptyCycleIsNotSuccess asserts a cycle with nothing to do says
-// so, rather than claiming it replicated something.
+// so, rather than claiming it replicated something, and publishes no
+// completion event.
 func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
+	published := eventtest.Record(t)
 	f := newReplicaFleet(t, &mockMetadataStore{}, "b1", "b2")
 
 	wantCycleLabel(t, audit.WorkloadReplication, batch.OutcomeEmpty, func() {
@@ -213,6 +217,9 @@ func TestReplicate_EmptyCycleIsNotSuccess(t *testing.T) {
 			t.Errorf("CopiesCreated = %d, want 0", sum.CopiesCreated)
 		}
 	})
+	if got := eventtest.OfType(published(), event.ReplicationCompleted); len(got) != 0 {
+		t.Errorf("an empty cycle published %+v", got)
+	}
 }
 
 // TestReplicate_QueryFailureReportsError asserts a cycle that never got a batch
@@ -253,8 +260,10 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 // TestReplicate_SummaryCountsObjectsAndCopies asserts the two counts a cycle
 // reports mean different things. One object needing two copies is one
 // successful item and two copies created; conflating them would report the
-// fleet did half the work it did.
+// fleet did half the work it did. The cycle publishes one completion event
+// carrying the copies, whether a tick or an operator ran it.
 func TestReplicate_SummaryCountsObjectsAndCopies(t *testing.T) {
+	published := eventtest.Record(t)
 	store := &mockMetadataStore{
 		underReplicated: []core.ObjectLocation{copyOn("key1", "b1")},
 		placeCopySize:   100,
@@ -271,6 +280,10 @@ func TestReplicate_SummaryCountsObjectsAndCopies(t *testing.T) {
 	}
 	if sum.Planned != 1 || sum.Succeeded != 1 || sum.Failed != 0 {
 		t.Errorf("tally = %+v, want one planned object that succeeded", sum.Summary)
+	}
+	got := eventtest.OfType(published(), event.ReplicationCompleted)
+	if len(got) != 1 || got[0].Data["copies_created"] != 2 || got[0].Data["objects_failed"] != 0 {
+		t.Errorf("published %+v, want one ReplicationCompleted with 2 copies created", got)
 	}
 }
 
@@ -512,25 +525,33 @@ func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 
 // TestRebalance_ReportsCycleOutcome asserts a rebalance cycle labels its
 // runs-total by whether the planned moves landed. A cycle whose every move
-// failed used to report the same label as one that moved everything.
+// failed used to report the same label as one that moved everything. Either
+// way the cycle attempted moves, so it publishes one completion event naming
+// what it moved.
 func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 	cases := []struct {
-		name    string
-		moveErr error
-		want    string
+		name      string
+		moveErr   error
+		want      string
+		wantMoved int
 	}{
-		{name: "moves landed", want: batch.OutcomeSuccess},
+		{name: "moves landed", want: batch.OutcomeSuccess, wantMoved: 1},
 		{name: "every move failed", moveErr: errors.New("stream copy: timeout"), want: batch.OutcomeFailed},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			published := eventtest.Record(t)
 			r := newRebalanceFleet(t, tc.moveErr)
 			wantCycleLabel(t, audit.WorkloadRebalance, tc.want, func() {
 				if _, err := r.Rebalance(context.Background(), spreadConfig, nil); err != nil {
 					t.Fatalf("Rebalance: %v", err)
 				}
 			})
+			got := eventtest.OfType(published(), event.RebalanceCompleted)
+			if len(got) != 1 || got[0].Data["moved"] != tc.wantMoved {
+				t.Errorf("published %+v, want one RebalanceCompleted with %d moved", got, tc.wantMoved)
+			}
 		})
 	}
 }
