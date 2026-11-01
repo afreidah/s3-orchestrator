@@ -45,7 +45,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return o.core.ClassifyWriteError(span, operation.String(), err)
+		return o.core.ClassifyWriteError(span, operation, err)
 	}
 	// Credited by the same transaction that removed the rows, so a write racing
 	// this delete sees the room the moment the ledger stops claiming the bytes.
@@ -97,7 +97,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.core.ClassifyWriteError(span, operation.String(), err)
+		classified := o.core.ClassifyWriteError(span, operation, err)
 		for i := range results {
 			results[i].Err = classified
 		}

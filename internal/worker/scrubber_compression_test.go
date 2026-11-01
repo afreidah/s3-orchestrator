@@ -97,7 +97,7 @@ func TestScrub_CompressedObjectVerifies(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)
@@ -129,7 +129,7 @@ func TestScrub_CompressedObjectHashBackfill(t *testing.T) {
 	locs := withPaths([]core.ObjectLocation{row})
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)
@@ -157,7 +157,7 @@ func TestScrub_CompressedWithoutCodecDoesNotJudge(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)
@@ -193,7 +193,7 @@ func TestScrub_UndecodableCopyIsNotCorrupt(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString("whatever"), 64)}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(make([]byte, 64))),
 		Size: 64,
 	}, func() {}, nil)
@@ -222,7 +222,7 @@ func TestScrub_CompressedConfigDisabledStillVerifies(t *testing.T) {
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)

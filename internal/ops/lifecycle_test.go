@@ -5,8 +5,7 @@
 //
 // The on-demand expiration sweep. Its whole purpose is telling three states
 // apart - the rule matched and deleted, the rule ran and matched nothing, and
-// there is no rule at all - so each is pinned here, along with the event a
-// completed sweep publishes.
+// there is no rule at all - so each is pinned here.
 // -------------------------------------------------------------------------------
 
 package ops
@@ -17,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/batch"
 )
@@ -63,26 +61,14 @@ func rules() config.LifecycleConfig {
 	return config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}}
 }
 
-// captureEvents installs an emitter for one test and returns the slice it fills.
-// Not parallel-safe: the emitter is process-global.
-func captureEvents(t *testing.T) *[]event.Event {
-	t.Helper()
-	var got []event.Event
-	event.SetEmitter(func(ev event.Event) { got = append(got, ev) })
-	t.Cleanup(func() { event.SetEmitter(nil) })
-	return &got
-}
-
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
 // TestLifecycleRun_ReportsWhatItDeleted covers the answer an operator is after,
 // and that the configured rules are what actually reach the sweep.
-//
-// Not parallel: asserts on the process-global event emitter.
 func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
-	emitted := captureEvents(t)
+	t.Parallel()
 	stub := &lifecycleStub{deleted: 12, failed: 2}
 
 	res, err := lifecycleOver(stub, rules()).Run(context.Background(), func(progress.Step) {})
@@ -102,15 +88,6 @@ func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 	}
 	if len(stub.gotRules) != 1 || stub.gotRules[0].Prefix != "tmp/" {
 		t.Errorf("rules = %+v, want the configured ruleset", stub.gotRules)
-	}
-
-	// The scheduled tick publishes lifecycle.completed; a manual sweep is the
-	// same work and has to look the same to anything subscribed.
-	if len(*emitted) != 1 || (*emitted)[0].Type != event.LifecycleCompleted {
-		t.Fatalf("emitted = %+v, want one %s event", *emitted, event.LifecycleCompleted)
-	}
-	if (*emitted)[0].Data["deleted"] != 12 || (*emitted)[0].Data["failed"] != 2 {
-		t.Errorf("event data = %v, want the sweep's counts", (*emitted)[0].Data)
 	}
 }
 

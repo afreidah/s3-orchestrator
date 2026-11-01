@@ -203,16 +203,15 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 // meteredGet issues one backend GET under the backend's usage limits. It
 // declines before the call when the backend is already over a limit, and after
 // it when the bytes the backend sent would put it over, closing that response.
-// A failed or declined call is charged as an API call; the caller charges the
-// egress of a response it keeps, from WireBytes. On success the caller owns
-// the body and the timeout cancel.
+// A failed call is charged by the runtime and a declined response here as an
+// API call; the caller charges the egress of a response it keeps, from
+// WireBytes. On success the caller owns the body and the timeout cancel.
 func meteredGet(ctx context.Context, rt RangeFetchRuntime, be s3be.ObjectBackend, beName, path, rangeHeader string) (*s3be.GetObjectResult, context.CancelFunc, error) {
 	if !rt.Acct().Allow(beName, s3op.GetObject, 0, 0) {
 		return nil, nil, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
-	r, cancel, err := rt.GetWithTimeout(ctx, be, path, rangeHeader)
+	r, cancel, err := rt.Get(ctx, beName, be, path, rangeHeader)
 	if err != nil {
-		rt.Acct().APICall(ctx, s3op.GetObject, beName)
 		return nil, nil, err
 	}
 	if !rt.Acct().Allow(beName, s3op.GetObject, r.WireBytes(), 0) {

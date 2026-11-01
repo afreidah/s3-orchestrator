@@ -15,10 +15,11 @@
 //
 // Every charge goes to the context's workload (audit.WithWorkload).
 //
-// Methods are named by intent (APICall, Ingress, Egress), and PutSuccess
-// bundles the Operation + bytes pair so the matching pair cannot drift. Held by
-// every storage subsystem and worker through the consumer-declared Acct()
-// contract.
+// Methods are named by intent (APICall, Ingress, Egress). The backend
+// runtime's Get, Head, Put and Delete charge each call where it is sent; the
+// recorder is called directly only for the egress a reader charges once it
+// knows how many bytes it took. Held by every storage subsystem and worker
+// through the consumer-declared Acct() contract.
 // -------------------------------------------------------------------------------
 
 package accounting
@@ -97,15 +98,4 @@ func (r *Recorder) Ingress(ctx context.Context, op s3op.Operation, backend strin
 // APICall so a failure path can charge the call without a success observation.
 func (r *Recorder) Operation(op s3op.Operation, backend string, start time.Time, err error) {
 	r.recordOp(op.String(), backend, start, err)
-}
-
-// -------------------------------------------------------------------------
-// COMBOS
-// -------------------------------------------------------------------------
-
-// PutSuccess is the canonical "PUT succeeded" pair: emit the per-op
-// metric with a nil error and credit one API call + ingress bytes.
-func (r *Recorder) PutSuccess(ctx context.Context, op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
-	r.recordOp(op.String(), backend, start, nil)
-	r.usage.Record(ctx, backend, op, 0, sizeBytes)
 }

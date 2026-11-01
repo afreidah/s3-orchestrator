@@ -180,7 +180,7 @@ window.s3oDiagram = {
     FETCH: {
       title: 'Backend GetObject',
       badge: 'process', badgeText: 'fetch',
-      body: '<p>Calls the backend\'s <code>GetObject</code> through the circuit breaker wrapper, on the copy\'s own storage path.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The call is made through <code>o.core.GetWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey), actualRange)</code>, which applies a per-backend deadline from <code>backend_timeout</code> config.</p>'
+      body: '<p>Calls the backend\'s <code>GetObject</code> through the circuit breaker wrapper, on the copy\'s own storage path.</p><p>For <b>encrypted objects with a Range header</b>, the plaintext range is first translated to ciphertext chunk offsets via <code>encryption.CiphertextRange()</code>. Whole ciphertext chunks are fetched (each has its own GCM auth tag), and only the requested plaintext bytes are returned after decryption.</p><p>The call is made through <code>o.core.Get(ctx, name, backend, core.StoragePath(key, loc.StorageKey), actualRange)</code>, which applies a per-backend deadline from <code>backend_timeout</code> config and charges the call to the backend if it fails; the egress of a response that is kept is charged from the bytes the read took.</p>'
     },
     CB: {
       title: 'Circuit Breaker',

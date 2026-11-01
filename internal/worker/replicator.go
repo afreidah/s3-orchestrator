@@ -111,11 +111,19 @@ type ReplicationSummary struct {
 
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. observer, when non-nil, receives a
-// start and end step per object replicated.
+// start and end step per object replicated. A cycle that attempted anything
+// publishes ReplicationCompleted, whether a tick or an operator ran it.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
-	return runOpsCycle(ctx, audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
+	sum, err := runOpsCycle(ctx, audit.WorkloadReplication, func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
+	if err == nil && sum.Attempted > 0 {
+		event.Publish(event.ReplicationCompleted, "", map[string]any{
+			"copies_created": sum.CopiesCreated,
+			"objects_failed": sum.Failed,
+		})
+	}
+	return sum, err
 }
 
 // AuditAttrs adds the copies created to the tally's attributes.
@@ -416,8 +424,8 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 	// so a source out of egress falls through to the next candidate and a
 	// full destination is terminal, as with an I/O failure.
 	_, err := r.ops.StreamCopy(ctx, &backend.CopyRequest{
-		Src:          backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend},
-		Dst:          backend.CopyEndpoint{Name: target, Backend: targetBackend},
+		Src:          backend.Endpoint{Name: loc.BackendName, Backend: srcBackend},
+		Dst:          backend.Endpoint{Name: target, Backend: targetBackend},
 		SrcKey:       core.StoragePath(key, loc.StorageKey),
 		DstKey:       targetStorageKey,
 		SizeEstimate: loc.SizeBytes,

@@ -278,8 +278,8 @@ func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Fatalf("expected core.ErrNoSpaceAvailable, got %v", err)
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Fatalf("expected core.ErrInsufficientStorage (507), got %v", err)
 	}
 	if be.HasCopyOf("multi/key") {
 		t.Error("assembled object was written to a backend that declined it")

@@ -19,6 +19,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 )
 
 // -------------------------------------------------------------------------
@@ -201,28 +203,32 @@ func TestMemoryCache_Invalidate(t *testing.T) {
 
 // TestMemoryCache_InvalidateDropsEveryStoragePath verifies invalidating an
 // object key drops the bare key and every write's storage path under it, and
-// leaves keys that only share a prefix with it alone.
+// leaves keys that only share a prefix with it alone, including a different
+// client object named "key!backup".
 func TestMemoryCache_InvalidateDropsEveryStoragePath(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
-	for _, k := range []string{"key", "key!w1", "key!w2", "key2", "keyX!w1", "other!key"} {
+	w1 := internalkey.StorageKey("key", "0123456789abcdef0123456789abcdef")
+	w2 := internalkey.StorageKey("key", "fedcba9876543210fedcba9876543210")
+	others := []string{"key2", internalkey.StorageKey("keyX", "0123456789abcdef0123456789abcdef"), "other!key", "key!backup"}
+	for _, k := range append([]string{"key", w1, w2}, others...) {
 		admitAndPut(t, c, k, []byte("data"), EntryMeta{})
 	}
 
 	c.Invalidate("key")
 
-	for _, k := range []string{"key", "key!w1", "key!w2"} {
+	for _, k := range []string{"key", w1, w2} {
 		if _, ok := c.Get(k); ok {
 			t.Errorf("%q survived invalidating its object key", k)
 		}
 	}
-	for _, k := range []string{"key2", "keyX!w1", "other!key"} {
+	for _, k := range others {
 		if _, ok := c.Get(k); !ok {
 			t.Errorf("%q was dropped, but belongs to another object", k)
 		}
 	}
-	if got := c.Stats().Entries; got != 3 {
-		t.Errorf("entries = %d, want 3", got)
+	if got := c.Stats().Entries; got != len(others) {
+		t.Errorf("entries = %d, want %d", got, len(others))
 	}
 }
 

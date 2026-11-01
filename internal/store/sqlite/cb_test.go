@@ -42,7 +42,7 @@ func isDBErrorForTest(err error) bool {
 	if err == nil {
 		return false
 	}
-	return !errors.Is(err, core.ErrObjectNotFound) && !errors.Is(err, core.ErrNoSpaceAvailable)
+	return !errors.Is(err, core.ErrObjectNotFound) && !errors.Is(err, core.ErrInsufficientStorage)
 }
 
 // openMemDB opens an empty in-memory sqlite for tests that need a real

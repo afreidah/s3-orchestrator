@@ -25,14 +25,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // twoIntents builds the intents one write of size bytes would claim for its
 // copies, which the coordinator fills the backend in.
 func twoIntents(key string, size int64) []*core.PendingObject {
-	primary := NewPendingIntent(key, size, nil, nil)
-	companion := NewPendingIntent(key, size, nil, nil)
+	primary := NewPendingIntent(key, size, nil, nil, nil)
+	companion := NewPendingIntent(key, size, nil, nil, nil)
 	companion.Role = core.PendingRoleCompanion
 	return []*core.PendingObject{primary, companion}
 }
@@ -73,7 +74,7 @@ func TestClaimWriteCopies_ReturnsWhatTheStoreClaimed(t *testing.T) {
 	expectCopyClaims(store, 2, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2", "b3"})
+	got, err := coord.ClaimWriteCopies(context.Background(), testSpan(t), s3op.PutObject, twoIntents("k", 4096), []string{"b1", "b2", "b3"})
 	if err != nil {
 		t.Fatalf("ClaimWriteCopies: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestClaimWriteCopies_FewerBackendsThanCopies(t *testing.T) {
 	expectCopyClaims(store, 1, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2"})
+	got, err := coord.ClaimWriteCopies(context.Background(), testSpan(t), s3op.PutObject, twoIntents("k", 4096), []string{"b1", "b2"})
 	if err != nil {
 		t.Fatalf("ClaimWriteCopies: %v", err)
 	}
@@ -119,9 +120,9 @@ func TestClaimWriteCopies_NoCandidateFits(t *testing.T) {
 	expectCopyClaims(store, 0, &ranked, &accepts)
 	coord := newCoordinatorWithStore(store)
 
-	if _, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096),
-		[]string{"b1", "b2"}); !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
+	if _, err := coord.ClaimWriteCopies(context.Background(), testSpan(t), s3op.PutObject, twoIntents("k", 4096),
+		[]string{"b1", "b2"}); !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Errorf("err = %v, want ErrInsufficientStorage", err)
 	}
 }
 
@@ -135,11 +136,11 @@ func TestClaimWriteCopies_ClaimErrorFailsTheWrite(t *testing.T) {
 		Return(core.CopyClaims{}, errors.New("db down"))
 	coord := newCoordinatorWithStore(store)
 
-	got, err := coord.ClaimWriteCopies(context.Background(), twoIntents("k", 4096), []string{"b1", "b2"})
+	got, err := coord.ClaimWriteCopies(context.Background(), testSpan(t), s3op.PutObject, twoIntents("k", 4096), []string{"b1", "b2"})
 	if err == nil {
 		t.Fatal("expected the claim failure to surface")
 	}
-	if errors.Is(err, core.ErrNoSpaceAvailable) {
+	if errors.Is(err, core.ErrInsufficientStorage) {
 		t.Error("a database error was reported as a full fleet")
 	}
 	if got != nil {
@@ -153,14 +154,15 @@ func TestClaimWriteCopies_ClaimErrorFailsTheWrite(t *testing.T) {
 
 // companionIntent is the intent one of a write's further copies commits under.
 func companionIntent(backendName string) *core.PendingObject {
-	p := NewPendingIntent("k", 4096, nil, nil)
+	p := NewPendingIntent("k", 4096, nil, nil, nil)
 	p.BackendName = backendName
 	p.Role = core.PendingRoleCompanion
 	return p
 }
 
 // TestCommitCompanionCopy_RecordsTheCopy asserts a copy whose intent is still
-// there is recorded and its bytes charged to the backend, with nothing deleted.
+// there is recorded with nothing deleted, and nothing charged again: the PUT
+// charged its ingress when the bytes landed.
 func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -182,8 +184,8 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 	if !recorded {
 		t.Error("a committed copy was not reported as recorded")
 	}
-	if got := loadUsage(usage.Backend(), "b2").IngressBytes; got != 4096 {
-		t.Errorf("b2 ingress = %d, want the 4096 the copy landed", got)
+	if got := loadUsage(usage.Backend(), "b2"); got.IngressBytes != 0 || got.APIRequests != 0 {
+		t.Errorf("b2 charged %d calls and %d bytes in, want nothing from the commit", got.APIRequests, got.IngressBytes)
 	}
 }
 

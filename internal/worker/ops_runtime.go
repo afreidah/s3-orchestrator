@@ -35,8 +35,8 @@ type Ops interface {
 	ReleaseAdmission()
 	GetBackend(name string) (backend.ObjectBackend, error)
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
-	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
+	Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	StreamCopy(ctx context.Context, req *backend.CopyRequest) (int64, error)
 	DeleteMany(ctx context.Context, name string, be backend.ObjectBackend, storageKeys []string) map[string]error
 	Usage() *counter.UsageTracker

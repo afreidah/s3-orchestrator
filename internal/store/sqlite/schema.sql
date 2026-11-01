@@ -298,7 +298,10 @@ CREATE TABLE IF NOT EXISTS pending_objects (
     -- A primary intent's promotion clears the key's other copies; a companion's
     -- adds to them. Postgres carries a CHECK constraint on the allowed values;
     -- SQLite cannot add one to an existing table, so the store enforces it.
-    role           TEXT NOT NULL DEFAULT 'primary'
+    role           TEXT NOT NULL DEFAULT 'primary',
+    -- The write's tag set, query-string encoded, applied if the reaper
+    -- promotes the intent. NULL when the write carried none.
+    tagging        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_objects_created
@@ -437,4 +440,4 @@ LEFT JOIN (
 LEFT JOIN backend_states st ON st.backend_name = q.backend_name;
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (34);
+INSERT INTO schema_version (version) VALUES (35);

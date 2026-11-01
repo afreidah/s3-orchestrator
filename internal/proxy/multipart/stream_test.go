@@ -18,7 +18,9 @@ import (
 	"strings"
 	"testing"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -26,13 +28,23 @@ import (
 )
 
 // newTestMultipartManager builds a minimal Manager suitable for
-// exercising stream helpers in isolation. The core is zero-valued so
-// WithTimeout is a no-op; pass an encryptor to enable the decrypt branch.
+// exercising stream helpers in isolation. The core has no backend timeout and
+// charges a local usage counter; pass an encryptor to enable the decrypt
+// branch.
 func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
+	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{partBackend}), nil)
 	return &Manager{
-		core:      infra.New(&infra.Config{}),
+		core:      infra.New(&infra.Config{Usage: usage}),
 		encryptor: enc,
 	}
+}
+
+// partBackend is the backend the streamed parts are charged to.
+const partBackend = "b1"
+
+// partSource names be as the backend the parts are read from.
+func partSource(be s3be.ObjectBackend) s3be.Endpoint {
+	return s3be.Endpoint{Name: partBackend, Backend: be}
 }
 
 // preloadPart stores body bytes at the multipart part key for the given
@@ -58,7 +70,7 @@ func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 
 	var buf bytes.Buffer
 	part := &core.MultipartPart{PartNumber: 1, SizeBytes: 25}
-	if err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part); err != nil {
+	if err := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part); err != nil {
 		t.Fatalf("streamOnePart: %v", err)
 	}
 	if got := buf.String(); got != "plaintext part 1 contents" {
@@ -76,7 +88,7 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 
 	var buf bytes.Buffer
 	part := &core.MultipartPart{PartNumber: 7}
-	err := mp.streamOnePart(context.Background(), be, &buf, "upload-x", part)
+	err := mp.streamOnePart(context.Background(), partSource(be), &buf, "upload-x", part)
 	if err == nil {
 		t.Fatal("expected error from failing backend")
 	}
@@ -101,7 +113,7 @@ func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 
 	var buf bytes.Buffer
 	part := &core.MultipartPart{PartNumber: 3}
-	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
+	err := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part)
 	if err == nil {
 		t.Fatal("expected error from failing read")
 	}
@@ -158,7 +170,7 @@ func TestStreamOnePart_FlagMismatchFailsAssembly(t *testing.T) {
 			preloadPart(be, "upload-mm", 8, tc.stored)
 
 			var buf bytes.Buffer
-			err := mp.streamOnePart(context.Background(), be, &buf, "upload-mm", tc.part)
+			err := mp.streamOnePart(context.Background(), partSource(be), &buf, "upload-mm", tc.part)
 			if !errors.Is(err, core.ErrEncryptionFlagMismatch) {
 				t.Fatalf("error = %v, want ErrEncryptionFlagMismatch", err)
 			}
@@ -199,7 +211,7 @@ func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part); err != nil {
+	if err := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part); err != nil {
 		t.Fatalf("streamOnePart: %v", err)
 	}
 	if !bytes.Equal(buf.Bytes(), plain) {
@@ -219,7 +231,7 @@ func TestStreamOnePart_EncryptedPartWithoutEncryptorFails(t *testing.T) {
 	preloadPart(be, uploadID, 2, ciphertext)
 
 	var buf bytes.Buffer
-	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
+	err := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part)
 	if !errors.Is(err, storedform.ErrNoEncryptor) {
 		t.Fatalf("error = %v, want ErrNoEncryptor", err)
 	}
@@ -246,7 +258,7 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	part.EncryptionKey = []byte("tiny")
 
 	var buf bytes.Buffer
-	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
+	err := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part)
 	if err == nil {
 		t.Fatal("expected error for malformed encryption key")
 	}
@@ -273,7 +285,7 @@ func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 	preloadPart(be, uploadID, 6, other)
 
 	var buf bytes.Buffer
-	streamErr := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
+	streamErr := mp.streamOnePart(context.Background(), partSource(be), &buf, uploadID, part)
 	if streamErr == nil {
 		t.Fatal("expected decrypt failure")
 	}
@@ -324,7 +336,7 @@ func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 		{PartNumber: 3, SizeBytes: 5},
 	}
 
-	pr, cancel := mp.streamPartsThroughPipe(context.Background(), be, uploadID, parts)
+	pr, cancel := mp.streamPartsThroughPipe(context.Background(), partSource(be), uploadID, parts)
 	defer cancel()
 
 	got, err := io.ReadAll(pr)
@@ -353,7 +365,7 @@ func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {
 		{PartNumber: 3, SizeBytes: 4},
 	}
 
-	pr, cancel := mp.streamPartsThroughPipe(context.Background(), be, uploadID, parts)
+	pr, cancel := mp.streamPartsThroughPipe(context.Background(), partSource(be), uploadID, parts)
 	defer cancel()
 
 	_, err := io.ReadAll(pr)
@@ -404,7 +416,7 @@ func TestStreamPartsThroughPipe_MixedEncryptedAndPlain(t *testing.T) {
 		{PartNumber: 3, SizeBytes: 6},
 	}
 
-	pr, cancel := mp.streamPartsThroughPipe(context.Background(), be, uploadID, parts)
+	pr, cancel := mp.streamPartsThroughPipe(context.Background(), partSource(be), uploadID, parts)
 	defer cancel()
 
 	got, err := io.ReadAll(pr)

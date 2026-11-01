@@ -169,14 +169,18 @@ func (f *fakeTimeoutBackend) HeadObject(ctx context.Context, _ string) (*backend
 	return &backend.HeadObjectResult{Size: 2}, nil
 }
 
-func TestTimeoutPolicy_GetWithTimeout_SuccessHandsBackLiveCancel(t *testing.T) {
+func TestTimeoutPolicy_Get_SuccessHandsBackLiveCancel(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
+	p, counters := newCopyRuntime(t)
 	be := &fakeTimeoutBackend{}
 
-	result, cancel, err := p.GetWithTimeout(context.Background(), be, "k", "")
+	result, cancel, err := p.Get(context.Background(), "b1", be, "k", "")
 	if err != nil {
-		t.Fatalf("GetWithTimeout err = %v, want nil", err)
+		t.Fatalf("Get err = %v, want nil", err)
+	}
+	// A successful GET's egress is the reader's to charge.
+	if got := loadUsage(counters, "b1"); got != (usageOf{}) {
+		t.Errorf("successful GET charged %+v, want nothing until the reader charges egress", got)
 	}
 	if result == nil || result.Body == nil {
 		t.Fatal("expected non-nil result with body")
@@ -192,13 +196,13 @@ func TestTimeoutPolicy_GetWithTimeout_SuccessHandsBackLiveCancel(t *testing.T) {
 	}
 }
 
-func TestTimeoutPolicy_GetWithTimeout_ErrorReleasesContext(t *testing.T) {
+func TestTimeoutPolicy_Get_ErrorReleasesContextAndCharges(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
+	p, counters := newCopyRuntime(t)
 	wantErr := errors.New("boom")
 	be := &fakeTimeoutBackend{getErr: wantErr}
 
-	result, cancel, err := p.GetWithTimeout(context.Background(), be, "k", "")
+	result, cancel, err := p.Get(context.Background(), "b1", be, "k", "")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -209,18 +213,21 @@ func TestTimeoutPolicy_GetWithTimeout_ErrorReleasesContext(t *testing.T) {
 	if be.gotCtx.Err() == nil {
 		t.Error("error path left the call context un-cancelled")
 	}
+	if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1}) {
+		t.Errorf("failed GET charged %+v, want one call", got)
+	}
 }
 
-func TestTimeoutPolicy_GetWithTimeout_RespectsTighterParentDeadline(t *testing.T) {
+func TestTimeoutPolicy_Get_RespectsTighterParentDeadline(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
+	p, _ := newCopyRuntime(t)
 	be := &fakeTimeoutBackend{}
 	parent, parentCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer parentCancel()
 
-	_, cancel, err := p.GetWithTimeout(parent, be, "k", "")
+	_, cancel, err := p.Get(parent, "b1", be, "k", "")
 	if err != nil {
-		t.Fatalf("GetWithTimeout err = %v", err)
+		t.Fatalf("Get err = %v", err)
 	}
 	defer cancel()
 	dl, ok := be.gotCtx.Deadline()
@@ -229,32 +236,50 @@ func TestTimeoutPolicy_GetWithTimeout_RespectsTighterParentDeadline(t *testing.T
 	}
 }
 
-func TestTimeoutPolicy_HeadWithTimeout_ReleasesContextOnReturn(t *testing.T) {
+// TestTimeoutPolicy_Head_ChargesEveryCall verifies a HEAD releases its context
+// on return and is charged one call whether or not it succeeded.
+func TestTimeoutPolicy_Head_ChargesEveryCall(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
-	be := &fakeTimeoutBackend{}
+	for _, headErr := range []error{nil, errors.New("nope")} {
+		p, counters := newCopyRuntime(t)
+		be := &fakeTimeoutBackend{headErr: headErr}
 
-	result, err := p.HeadWithTimeout(context.Background(), be, "k")
-	if err != nil || result == nil {
-		t.Fatalf("HeadWithTimeout = %v, %v; want result, nil", result, err)
-	}
-	// HEAD has no body, so the context is fully released before return.
-	if be.gotCtx.Err() == nil {
-		t.Error("HeadWithTimeout did not release the call context on return")
+		result, err := p.Head(context.Background(), "b1", be, "k")
+		if !errors.Is(err, headErr) || (headErr == nil && result == nil) {
+			t.Fatalf("Head = %v, %v; want the backend's answer", result, err)
+		}
+		if be.gotCtx.Err() == nil {
+			t.Error("Head did not release the call context on return")
+		}
+		if got := loadUsage(counters, "b1"); got != (usageOf{calls: 1}) {
+			t.Errorf("HEAD (err %v) charged %+v, want one call", headErr, got)
+		}
 	}
 }
 
-func TestTimeoutPolicy_HeadWithTimeout_PropagatesError(t *testing.T) {
+// TestTimeoutPolicy_Put_ChargesWhatLanded verifies a PUT that lands is charged
+// its ingress and one that fails a bare call.
+func TestTimeoutPolicy_Put_ChargesWhatLanded(t *testing.T) {
 	t.Parallel()
-	p := &BackendRuntime{backendTimeout: time.Hour}
-	wantErr := errors.New("nope")
-	be := &fakeTimeoutBackend{headErr: wantErr}
-
-	if _, err := p.HeadWithTimeout(context.Background(), be, "k"); !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want %v", err, wantErr)
+	cases := []struct {
+		name string
+		dst  backend.ObjectBackend
+		want usageOf
+	}{
+		{"landed", &recordingBackend{}, usageOf{calls: 1, ingress: 5}},
+		{"refused", writeRejectingBackend{}, usageOf{calls: 1}},
 	}
-	if be.gotCtx.Err() == nil {
-		t.Error("error path left the call context un-cancelled")
+	for _, tc := range cases {
+		p, counters := newCopyRuntime(t)
+		_, err := p.Put(context.Background(), s3op.PutObject, &backend.PutRequest{
+			Dst: ep("b2", tc.dst), Key: "k", Body: strings.NewReader("hello"), Size: 5,
+		})
+		if (err != nil) != (tc.want.ingress == 0) {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+		if got := loadUsage(counters, "b2"); got != tc.want {
+			t.Errorf("%s: charged %+v, want %+v", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -266,17 +291,17 @@ func TestErrorClassifier_MapsDBUnavailableToServiceUnavailable(t *testing.T) {
 	t.Parallel()
 	c := &BackendRuntime{}
 	_, span := noop.NewTracerProvider().Tracer("t").Start(context.Background(), "s")
-	got := c.ClassifyWriteError(span, "PutObject", core.ErrDBUnavailable)
+	got := c.ClassifyWriteError(span, s3op.PutObject, core.ErrDBUnavailable)
 	if !errors.Is(got, core.ErrServiceUnavailable) {
 		t.Errorf("got %v, want ErrServiceUnavailable", got)
 	}
 }
 
-func TestErrorClassifier_MapsNoSpaceToInsufficientStorage(t *testing.T) {
+func TestErrorClassifier_KeepsInsufficientStorage(t *testing.T) {
 	t.Parallel()
 	c := &BackendRuntime{}
 	_, span := noop.NewTracerProvider().Tracer("t").Start(context.Background(), "s")
-	got := c.ClassifyWriteError(span, "PutObject", core.ErrNoSpaceAvailable)
+	got := c.ClassifyWriteError(span, s3op.PutObject, core.ErrInsufficientStorage)
 	if !errors.Is(got, core.ErrInsufficientStorage) {
 		t.Errorf("got %v, want ErrInsufficientStorage", got)
 	}
@@ -287,7 +312,7 @@ func TestErrorClassifier_PassesThroughUnknownErrors(t *testing.T) {
 	c := &BackendRuntime{}
 	_, span := noop.NewTracerProvider().Tracer("t").Start(context.Background(), "s")
 	in := errors.New("kaboom")
-	got := c.ClassifyWriteError(span, "PutObject", in)
+	got := c.ClassifyWriteError(span, s3op.PutObject, in)
 	if !errors.Is(got, in) {
 		t.Errorf("got %v, want chain containing %v", got, in)
 	}

@@ -34,7 +34,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -208,14 +207,6 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 		Work: func(ctx context.Context) error {
 			// No observer: nothing is watching a scheduled tick.
 			sum := manager.ProcessRules(ctx, manager.Config().Rules, nil)
-			if sum.Succeeded > 0 || sum.Failed > 0 {
-				log.InfoContext(ctx, "expiration completed",
-					"deleted", sum.Succeeded, "failed", sum.Failed)
-				event.Publish(event.LifecycleCompleted, "", map[string]any{
-					"deleted": sum.Succeeded,
-					"failed":  sum.Failed,
-				})
-			}
 			if sum.Failed > 0 {
 				telemetry.LifecycleRunsTotal.WithLabelValues("partial").Inc()
 			} else {

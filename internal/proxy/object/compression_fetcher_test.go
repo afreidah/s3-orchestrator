@@ -71,9 +71,9 @@ func newFakeRangeRuntime(beName string, limits core.UsageLimits) *fakeRangeRunti
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// GetWithTimeout forwards to the backend and records the Range header asked
-// for, which is what the ciphertext translation is asserted on.
-func (f *fakeRangeRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+// Get forwards to the backend and records the Range header asked for, which
+// is what the ciphertext translation is asserted on.
+func (f *fakeRangeRuntime) Get(ctx context.Context, _ string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
 	f.mu.Lock()
 	f.ranges = append(f.ranges, rangeHeader)
 	f.mu.Unlock()

@@ -435,11 +435,10 @@ Per-backend usage and per-operation metric accounting flow through one shared he
 | Successful GET-like (bytes left the backend) | `acct.Egress(op, backend, size)` | `Usage().Record(b, op, size, 0)` |
 | Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(op, backend, size)` | `Usage().Record(b, op, 0, size)` |
 | Per-operation Prometheus histogram | `acct.Operation(op, backend, start, err)` | `RecordOperation(op, b, start, err)` |
-| Common combo: Operation + Ingress | `acct.PutSuccess(op, backend, size, start)` | both above, two lines |
 
 The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, op, 0, size)` vs `Record(b, op, size, 0)` form is eliminated because ingress vs egress is named in the method.
 
-Backend-to-backend copies (replication, rebalance, drain and the bulk rewrite passes) are charged inside `StreamCopy`, which admits both legs and records what each one moved, so their callers charge nothing.
+**Backend calls are charged where they are sent.** The runtime's `Get`, `Head`, `Put` and `Delete` (`internal/proxy/infra`) apply the backend timeout and charge the call themselves: a HEAD or DELETE whatever its outcome, a failed GET or PUT as one call, and a PUT that landed with its ingress, whether or not the write that sent it is recorded afterwards. A successful GET's egress is the only charge a caller makes, because only the reader knows how many bytes it took. Backend-to-backend copies (replication, rebalance, drain and the bulk rewrite passes) go through `StreamCopy`, which admits both legs and is built on `Get` and `Put`, so their callers charge nothing.
 
 Exception - the usage tracker's own tests in `internal/counter` call `Record` directly - they're verifying the tracker, not the accounting rule.
 
@@ -1032,8 +1031,10 @@ The S3 handlers use `writeStorageError(w, err, fallbackMsg)` to turn an error in
 `(*infra.BackendRuntime).ClassifyWriteError(span, op, err)` translates a store error on the write path into an S3 error and marks the span:
 
 - `ErrDBUnavailable` (circuit breaker open) -> `ErrServiceUnavailable`, `503`, and a degraded-write rejection is counted
-- `ErrNoSpaceAvailable` -> `ErrInsufficientStorage`, `507`
+- `ErrInsufficientStorage` (no backend has room) -> returned as is, `507`, with the span marked
 - Anything else is recorded on the span and returned unchanged
+
+The write coordinator's claim and record methods (`ClaimWriteTarget`, `ClaimWriteCopies`, `ClaimUploadTarget`, `RecordObjectAndPromoteIntent`) take the operation and classify their own errors, so no caller can answer a full backend or a database outage with the generic `502`.
 
 ### Background Operation Errors
 

@@ -124,8 +124,9 @@ func TestFinalizeCopy_Native(t *testing.T) {
 	}
 }
 
-// TestFinalizeCopy_Materialized verifies a stream-through copy charges egress
-// on the source and ingress on the destination, and leaves the span unmarked.
+// TestFinalizeCopy_Materialized verifies a stream-through copy leaves the span
+// unmarked and charges nothing itself: its GET and PUT were charged when they
+// were sent, so a charge here would count the bytes twice.
 func TestFinalizeCopy_Materialized(t *testing.T) {
 	t.Parallel()
 	store, _ := putObjectStore(t)
@@ -136,11 +137,11 @@ func TestFinalizeCopy_Materialized(t *testing.T) {
 	if nativeCopyAttr(span) {
 		t.Error("materialized copy marked as native")
 	}
-	if got := usageOf(mgr, "src").EgressBytes; got != copySize {
-		t.Errorf("source egress = %d, want %d", got, copySize)
+	if got := usageOf(mgr, "src").EgressBytes; got != 0 {
+		t.Errorf("source egress = %d, want 0", got)
 	}
-	if got := usageOf(mgr, copyDest).IngressBytes; got != copySize {
-		t.Errorf("destination ingress = %d, want %d", got, copySize)
+	if got := usageOf(mgr, copyDest).IngressBytes; got != 0 {
+		t.Errorf("destination ingress = %d, want 0", got)
 	}
 	if _, ok := mgr.LocationCache().Get(copyDest); ok {
 		t.Error("destination location hint survived the copy")

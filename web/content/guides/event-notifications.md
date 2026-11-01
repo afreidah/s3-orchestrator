@@ -104,9 +104,9 @@ These notify about infrastructure state changes. The subject field typically con
 | `integrity.corruption_detected` | Scrubber found a hash mismatch |
 | `cleanup.exhausted` | Cleanup queue item hit max retry attempts |
 | `replication.target_exhausted` | No backend has space for a replica |
-| `replication.completed` | Replication cycle finished |
-| `rebalance.completed` | Rebalance cycle finished |
-| `lifecycle.completed` | Lifecycle expiration cycle finished |
+| `replication.completed` | Replication cycle finished that copied or failed at least one object, scheduled or run by an operator |
+| `rebalance.completed` | Rebalance cycle finished that attempted at least one move, scheduled or run by an operator |
+| `lifecycle.completed` | Lifecycle expiration cycle finished that deleted or failed at least one object, scheduled or run by an operator |
 | `config.reload_failed` | SIGHUP config reload failed |
 | `service.started` | Orchestrator started |
 | `service.stopping` | Orchestrator shutting down |

@@ -131,6 +131,22 @@ func (mr *MockOpsMockRecorder) DeleteMany(ctx, name, be, storageKeys any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteMany", reflect.TypeOf((*MockOps)(nil).DeleteMany), ctx, name, be, storageKeys)
 }
 
+// Get mocks base method.
+func (m *MockOps) Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Get", ctx, name, be, key, rangeHeader)
+	ret0, _ := ret[0].(*backend.GetObjectResult)
+	ret1, _ := ret[1].(context.CancelFunc)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// Get indicates an expected call of Get.
+func (mr *MockOpsMockRecorder) Get(ctx, name, be, key, rangeHeader any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockOps)(nil).Get), ctx, name, be, key, rangeHeader)
+}
+
 // GetBackend mocks base method.
 func (m *MockOps) GetBackend(name string) (backend.ObjectBackend, error) {
 	m.ctrl.T.Helper()
@@ -146,35 +162,19 @@ func (mr *MockOpsMockRecorder) GetBackend(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackend", reflect.TypeOf((*MockOps)(nil).GetBackend), name)
 }
 
-// GetWithTimeout mocks base method.
-func (m *MockOps) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+// Head mocks base method.
+func (m *MockOps) Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWithTimeout", ctx, be, key, rangeHeader)
-	ret0, _ := ret[0].(*backend.GetObjectResult)
-	ret1, _ := ret[1].(context.CancelFunc)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// GetWithTimeout indicates an expected call of GetWithTimeout.
-func (mr *MockOpsMockRecorder) GetWithTimeout(ctx, be, key, rangeHeader any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithTimeout", reflect.TypeOf((*MockOps)(nil).GetWithTimeout), ctx, be, key, rangeHeader)
-}
-
-// HeadWithTimeout mocks base method.
-func (m *MockOps) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HeadWithTimeout", ctx, be, key)
+	ret := m.ctrl.Call(m, "Head", ctx, name, be, key)
 	ret0, _ := ret[0].(*backend.HeadObjectResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// HeadWithTimeout indicates an expected call of HeadWithTimeout.
-func (mr *MockOpsMockRecorder) HeadWithTimeout(ctx, be, key any) *gomock.Call {
+// Head indicates an expected call of Head.
+func (mr *MockOpsMockRecorder) Head(ctx, name, be, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadWithTimeout", reflect.TypeOf((*MockOps)(nil).HeadWithTimeout), ctx, be, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Head", reflect.TypeOf((*MockOps)(nil).Head), ctx, name, be, key)
 }
 
 // Quota mocks base method.

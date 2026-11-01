@@ -26,6 +26,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -146,6 +148,32 @@ func TestProcessRules_DeletesExpiredObjects(t *testing.T) {
 	}, nil)
 	if deleted, failed := sum.Succeeded, sum.Failed; deleted != 1 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 1/0", deleted, failed)
+	}
+}
+
+// TestProcessRules_PublishesCompletionOnlyWhenItWorked verifies a sweep that
+// deleted or failed something publishes one LifecycleCompleted with its counts,
+// whoever ran it, and a sweep that found nothing publishes none.
+//
+// Not parallel: records the process-global event emitter.
+func TestProcessRules_PublishesCompletionOnlyWhenItWorked(t *testing.T) {
+	published := eventtest.Record(t)
+	ctrl := gomock.NewController(t)
+	m, lister, deleter := newManager(t, ctrl)
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("tmp/")).
+		DoAndReturn(pages(objectsNamed("tmp/a", "tmp/b"))).AnyTimes()
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("none/")).Return(nil, nil).AnyTimes()
+	deleter.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).DoAndReturn(deleteResults("tmp/b")).Times(1)
+
+	m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "none/", ExpirationDays: 1}}, nil)
+	if got := eventtest.OfType(published(), event.LifecycleCompleted); len(got) != 0 {
+		t.Fatalf("a sweep that found nothing published %+v", got)
+	}
+
+	m.ProcessRules(t.Context(), []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 1}}, nil)
+	got := eventtest.OfType(published(), event.LifecycleCompleted)
+	if len(got) != 1 || got[0].Data["deleted"] != 1 || got[0].Data["failed"] != 1 {
+		t.Errorf("published %+v, want one LifecycleCompleted with 1 deleted and 1 failed", got)
 	}
 }
 

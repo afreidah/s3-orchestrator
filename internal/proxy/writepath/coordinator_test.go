@@ -702,7 +702,7 @@ func TestNewPendingIntent_CopiesStoredForm(t *testing.T) {
 		ContentHash:   "deadbeef",
 	}
 
-	got := NewPendingIntent("k", 4096, form, nil)
+	got := NewPendingIntent("k", 4096, form, nil, nil)
 
 	if got.IntentID == "" {
 		t.Fatal("expected a minted intent ID")
@@ -731,7 +731,7 @@ func TestNewPendingIntent_CopiesCompression(t *testing.T) {
 		LogicalSize:              8192,
 	}
 
-	got := NewPendingIntent("k", 4096, form, nil)
+	got := NewPendingIntent("k", 4096, form, nil, nil)
 
 	if got.CompressionAlgorithm != "zstd" {
 		t.Errorf("CompressionAlgorithm = %q, want %q", got.CompressionAlgorithm, "zstd")
@@ -768,13 +768,12 @@ func TestClaimWriteTarget_TriesTheNextCandidateWhenOneIsFull(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store)
 
-	name, err := coord.ClaimWriteTarget(context.Background(),
-		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"})
-	if err != nil {
+	intent := NewPendingIntent("k", 4096, nil, nil, nil)
+	if err := coord.ClaimWriteTarget(context.Background(), testSpan(t), s3op.PutObject, intent, []string{"b1", "b2"}); err != nil {
 		t.Fatalf("ClaimWriteTarget: %v", err)
 	}
-	if name != "b2" {
-		t.Errorf("claimed %q, want b2 after b1 declined", name)
+	if intent.BackendName != "b2" {
+		t.Errorf("claimed %q, want b2 after b1 declined", intent.BackendName)
 	}
 	if want := []string{"b1", "b2"}; !slices.Equal(claimed, want) {
 		t.Errorf("tried %v, want %v in order", claimed, want)
@@ -793,9 +792,9 @@ func TestClaimWriteTarget_NoCandidateFits(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store)
 
-	if _, err := coord.ClaimWriteTarget(context.Background(),
-		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"}); !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
+	if err := coord.ClaimWriteTarget(context.Background(), testSpan(t), s3op.PutObject,
+		NewPendingIntent("k", 4096, nil, nil, nil), []string{"b1", "b2"}); !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Errorf("err = %v, want ErrInsufficientStorage", err)
 	}
 }
 
@@ -811,16 +810,61 @@ func TestClaimWriteTarget_StoreError(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store)
 
-	name, err := coord.ClaimWriteTarget(context.Background(),
-		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"})
+	err := coord.ClaimWriteTarget(context.Background(), testSpan(t), s3op.PutObject,
+		NewPendingIntent("k", 4096, nil, nil, nil), []string{"b1", "b2"})
 	if err == nil {
 		t.Fatal("expected the insert failure to surface")
 	}
-	if errors.Is(err, core.ErrNoSpaceAvailable) {
+	if errors.Is(err, core.ErrInsufficientStorage) {
 		t.Error("a database error was reported as a full backend")
 	}
-	if name != "" {
-		t.Errorf("claimed %q, want no backend on error", name)
+}
+
+// TestSelectWriteTarget_ClaimsAnEligibleBackend verifies the selection claims
+// the first backend within its usage limits and names it on the intent.
+func TestSelectWriteTarget_ClaimsAnEligibleBackend(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), core.AcceptForWrite).Return(true, nil).Times(1)
+	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
+
+	intent := NewPendingIntent("k", 4096, nil, nil, nil)
+	if err := coord.SelectWriteTarget(context.Background(), testSpan(t), s3op.CopyObject, intent); err != nil {
+		t.Fatalf("SelectWriteTarget: %v", err)
+	}
+	if intent.BackendName != "a" {
+		t.Errorf("claimed %q, want a", intent.BackendName)
+	}
+}
+
+// TestSelectWriteTarget_NoEligibleBackendClaimsNothing verifies a write no
+// backend can take within its usage limits is refused as insufficient storage
+// before anything is claimed.
+func TestSelectWriteTarget_NoEligibleBackendClaimsNothing(t *testing.T) {
+	t.Parallel()
+	store := NewMockCoordinatorStores(gomock.NewController(t))
+	err := newCoordinatorWithStore(store).SelectWriteTarget(context.Background(), testSpan(t), s3op.CopyObject,
+		NewPendingIntent("k", 4096, nil, nil, nil))
+	if !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Errorf("err = %v, want ErrInsufficientStorage", err)
+	}
+}
+
+// TestClaimWriteTarget_DatabaseOutageIsServiceUnavailable verifies the claim
+// classifies its own errors, so every caller answers a database outage with
+// 503 rather than whichever caller remembered to classify it.
+func TestClaimWriteTarget_DatabaseOutageIsServiceUnavailable(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, core.ErrDBUnavailable).Times(1)
+
+	err := newCoordinatorWithStore(store).ClaimWriteTarget(context.Background(), testSpan(t),
+		s3op.CompleteMultipartUpload, NewPendingIntent("k", 4096, nil, nil, nil), []string{"b1"})
+	if !errors.Is(err, core.ErrServiceUnavailable) {
+		t.Errorf("err = %v, want ErrServiceUnavailable", err)
 	}
 }
 
@@ -875,7 +919,7 @@ func TestRecordObjectAndPromoteIntent_SettlesWhatTheCommitDisplaced(t *testing.T
 	events := recordAuditEvents(t)
 
 	coord := newCoordinatorWith2Backends("old", old, "stale", stale, store)
-	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq()); err != nil {
+	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), s3op.PutObject, recordReq()); err != nil {
 		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)
 	}
 	if events := events(); !slices.Contains(events, "storage.overwrite_displaced") {
@@ -892,7 +936,7 @@ func TestRecordObjectAndPromoteIntent_FreshKeyAuditsNothing(t *testing.T) {
 	events := recordAuditEvents(t)
 
 	coord := newCoordinatorWithStore(store)
-	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq()); err != nil {
+	if err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), s3op.PutObject, recordReq()); err != nil {
 		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)
 	}
 	if slices.Contains(events(), "storage.overwrite_displaced") {
@@ -917,27 +961,38 @@ func TestRankReplicaTargets_ExcludesExistingCopies(t *testing.T) {
 	}
 }
 
-// TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut verifies a failed
-// commit surfaces, still charges the PUT the backend served, and deletes
-// nothing: the intent stays for the reaper.
-func TestRecordObjectAndPromoteIntent_StoreErrorChargesThePut(t *testing.T) {
+// TestRecordObjectAndPromoteIntent_StoreErrorIsClassified verifies a failed
+// commit surfaces classified for the caller's operation, a database outage as
+// 503, and charges nothing: the PUT was charged when it was sent, and the
+// intent stays for the reaper.
+func TestRecordObjectAndPromoteIntent_StoreErrorIsClassified(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, errDBDown)
-
-	counters := counter.NewLocalCounterBackend([]string{"new"})
-	coord := New(infra.New(&infra.Config{
-		Backends: map[string]s3be.ObjectBackend{"new": backendtest.NewInMemory()},
-		Usage:    counter.NewUsageTracker(counters, nil),
-		Quota:    counter.NewQuotaTracker(),
-	}), store)
-	err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), recordReq())
-	if !errors.Is(err, errDBDown) {
-		t.Fatalf("err = %v, want the store failure", err)
+	cases := []struct {
+		name     string
+		storeErr error
+		want     error
+	}{
+		{"database outage", core.ErrDBUnavailable, core.ErrServiceUnavailable},
+		{"other failure", errDBDown, errDBDown},
 	}
-	if got := loadUsage(counters, "new").APIRequests; got != 1 {
-		t.Errorf("api calls = %d, want the one PUT charged", got)
+	for _, tc := range cases {
+		ctrl := gomock.NewController(t)
+		store := NewMockCoordinatorStores(ctrl)
+		store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return(nil, tc.storeErr)
+
+		counters := counter.NewLocalCounterBackend([]string{"new"})
+		coord := New(infra.New(&infra.Config{
+			Backends: map[string]s3be.ObjectBackend{"new": backendtest.NewInMemory()},
+			Usage:    counter.NewUsageTracker(counters, nil),
+			Quota:    counter.NewQuotaTracker(),
+		}), store)
+		err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), s3op.CopyObject, recordReq())
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+		if got := loadUsage(counters, "new").APIRequests; got != 0 {
+			t.Errorf("%s: api calls = %d, want none charged by the commit", tc.name, got)
+		}
 	}
 }
 
@@ -951,11 +1006,7 @@ func TestRecordObjectAndPromoteIntent_RejectsMultipleCopies(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store)
 
-	tracer := noop.NewTracerProvider().Tracer("test")
-	_, sp := tracer.Start(context.Background(), "test")
-	defer sp.End()
-
-	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
+	err := coord.RecordObjectAndPromoteIntent(context.Background(), testSpan(t), s3op.PutObject, &core.RecordObjectRequest{
 		Key: "k", Size: 100,
 		Copies: []core.ObjectCopy{{Backend: "b1", IntentID: "i-1"}, {Backend: "b2", IntentID: "i-2"}},
 	})
@@ -992,12 +1043,11 @@ func TestClaimUploadTarget_SkipsADecliningBackend(t *testing.T) {
 
 	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
 	params := &core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"}
-	name, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload, params)
-	if err != nil {
+	if err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload, params); err != nil {
 		t.Fatalf("ClaimUploadTarget: %v", err)
 	}
-	if name != "b" || params.BackendName != "b" {
-		t.Errorf("claimed %q (params %q), want b after a declined", name, params.BackendName)
+	if params.BackendName != "b" {
+		t.Errorf("claimed %q, want b after a declined", params.BackendName)
 	}
 	if want := []string{"a", "b"}; !slices.Equal(tried, want) {
 		t.Errorf("tried %v, want %v in order", tried, want)
@@ -1013,10 +1063,10 @@ func TestClaimUploadTarget_EveryBackendDeclines(t *testing.T) {
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, nil).Times(2)
 
 	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
-	_, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
+	err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
 		&core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"})
-	if err == nil {
-		t.Fatal("claimed an upload target when every backend declined")
+	if !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Fatalf("err = %v, want ErrInsufficientStorage when every backend declined", err)
 	}
 }
 
@@ -1029,7 +1079,7 @@ func TestClaimUploadTarget_DatabaseErrorEndsTheWalk(t *testing.T) {
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(false, errDBDown).Times(1)
 
 	coord := newCoordinatorWith2Backends("a", backendtest.NewMockObjectBackend(ctrl), "b", backendtest.NewMockObjectBackend(ctrl), store)
-	if _, err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
+	if err := coord.ClaimUploadTarget(context.Background(), testSpan(t), s3op.CreateMultipartUpload,
 		&core.CreateMultipartUploadParams{UploadID: "u-1", ObjectKey: "k"}); err == nil {
 		t.Fatal("ClaimUploadTarget returned no error for a database failure")
 	}

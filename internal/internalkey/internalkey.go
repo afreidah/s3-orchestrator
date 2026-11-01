@@ -48,5 +48,35 @@ const WriteSeparator = "!"
 // modifies a path a reader may be reading. The intent id is hex, so the last
 // separator splits a storage key even when the client's key contains a '!'.
 func StorageKey(objectKey, intentID string) string {
-	return objectKey + WriteSeparator + intentID
+	return CopyPrefix(objectKey) + intentID
+}
+
+// CopyPrefix is what every per-write path of objectKey starts with. A
+// different object can share it, such as a client's "photo.jpg!backup" beside
+// "photo.jpg", so a match on the prefix alone is not a copy; IsCopyOf is.
+func CopyPrefix(objectKey string) string {
+	return objectKey + WriteSeparator
+}
+
+// writeIDLength is the number of characters after the separator in a per-write
+// path: the intent id, 16 random bytes written as 32 lowercase hex characters.
+const writeIDLength = 32
+
+// IsCopyOf reports whether path holds bytes of objectKey: the key itself, or
+// one of its per-write paths, which is the key, the separator, then exactly 32
+// lowercase hex characters.
+func IsCopyOf(objectKey, path string) bool {
+	if path == objectKey {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, CopyPrefix(objectKey))
+	if !ok || len(id) != writeIDLength {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

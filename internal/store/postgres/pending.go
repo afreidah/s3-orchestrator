@@ -83,6 +83,7 @@ func pendingInsertParams(p *core.PendingObject, accepts core.BackendFlags) db.In
 		CompressionFormatVersion: int16Ptr(p.CompressionFormatVersion),
 		LogicalSize:              int64Ptr(p.LogicalSize),
 		Role:                     string(p.RoleOrDefault()),
+		Tagging:                  strPtr(core.EncodeTags(p.Tags)),
 		Accepts:                  int64(accepts),
 	}
 }
@@ -92,10 +93,14 @@ func pendingInsertParams(p *core.PendingObject, accepts core.BackendFlags) db.In
 func pendingFromRow(row *db.PendingObject) core.PendingObject {
 	// A decode failure leaves the intent identity-less: the promotion then
 	// records an object a later read re-learns, which is the same state every
-	// pre-identity row is in.
+	// pre-identity row is in. Tags were validated when the write was admitted,
+	// so a set that will not decode is promoted as none rather than stalling
+	// the reaper on one row.
 	id, _ := core.IdentityFromColumns(derefStr(row.Etag), derefStr(row.ContentType), row.UserMetadata)
+	tags, _ := core.DecodeTags(derefStr(row.Tagging))
 	return core.PendingObject{
 		Identity:                 id,
+		Tags:                     tags,
 		IntentID:                 row.IntentID,
 		ObjectKey:                row.ObjectKey,
 		StorageKey:               row.StorageKey,

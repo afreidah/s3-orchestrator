@@ -23,8 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/trace/noop"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -292,13 +290,13 @@ func (r *byteSliceReader) Read(p []byte) (int, error) {
 // ep names a backend for a stream copy. These tests exercise the copy legs
 // rather than the accounting, so the names only have to be distinct and carry
 // no configured limits, which is what leaves every transfer admitted.
-func ep(name string, be backend.ObjectBackend) backend.CopyEndpoint {
-	return backend.CopyEndpoint{Name: name, Backend: be}
+func ep(name string, be backend.ObjectBackend) backend.Endpoint {
+	return backend.Endpoint{Name: name, Backend: be}
 }
 
 // copyReq is a verbatim copy of k on src to k!dst on dst, admitted against
 // sizeEstimate.
-func copyReq(src, dst backend.CopyEndpoint, sizeEstimate int64) *backend.CopyRequest {
+func copyReq(src, dst backend.Endpoint, sizeEstimate int64) *backend.CopyRequest {
 	return &backend.CopyRequest{Src: src, Dst: dst, SrcKey: "k", DstKey: "k!dst", SizeEstimate: sizeEstimate}
 }
 
@@ -702,19 +700,6 @@ func TestCore_WithTimeout_ProducesUsableCancel(t *testing.T) {
 	cancel()
 	if ctx.Err() == nil {
 		t.Error("cancel() did not cancel returned ctx")
-	}
-}
-
-// -------------------------------------------------------------------------
-// ERROR CLASSIFIER FORWARDER
-// -------------------------------------------------------------------------
-
-func TestCore_ClassifyWriteError_Forwards(t *testing.T) {
-	t.Parallel()
-	c := newTestCore(t)
-	_, span := noop.NewTracerProvider().Tracer("t").Start(context.Background(), "s")
-	if err := c.ClassifyWriteError(span, "PutObject", core.ErrDBUnavailable); !errors.Is(err, core.ErrServiceUnavailable) {
-		t.Errorf("classify(DBUnavailable) = %v, want ErrServiceUnavailable", err)
 	}
 }
 

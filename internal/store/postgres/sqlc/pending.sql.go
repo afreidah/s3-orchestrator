@@ -96,7 +96,7 @@ const getStalePendingObjects = `-- name: GetStalePendingObjects :many
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role, storage_key
+       etag, content_type, user_metadata, role, storage_key, tagging
 FROM pending_objects
 WHERE created_at <= $1
 ORDER BY created_at ASC
@@ -111,8 +111,9 @@ type GetStalePendingObjectsParams struct {
 // Return pending intents older than @older_than for reaper resolution.
 // Bounded by @max_keys per call so a backlog cannot starve other queries.
 // Column order follows the table so sqlc projects the row onto the shared
-// pending_objects model rather than minting a query-specific struct; storage_key
-// is last because that is where the migration added it.
+// pending_objects model rather than minting a query-specific struct;
+// storage_key and tagging are last because that is where their migrations
+// added them.
 func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendingObjectsParams) ([]PendingObject, error) {
 	rows, err := q.db.Query(ctx, getStalePendingObjects, arg.OlderThan, arg.MaxKeys)
 	if err != nil {
@@ -142,6 +143,7 @@ func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendin
 			&i.UserMetadata,
 			&i.Role,
 			&i.StorageKey,
+			&i.Tagging,
 		); err != nil {
 			return nil, err
 		}
@@ -159,15 +161,15 @@ INSERT INTO pending_objects (
     intent_id, object_key, storage_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,
     compression_algorithm, compression_level, compression_format_version, logical_size,
-    etag, content_type, user_metadata, role
+    etag, content_type, user_metadata, role, tagging
 )
 SELECT $1, $2, $3, $4::text, $5::bigint,
        $6, $7, $8, $9, $10,
        $11, $12, $13, $14,
-       $15, $16, $17, $18
+       $15, $16, $17, $18, $19::text
 FROM backend_capacity c
 WHERE c.backend_name = $4::text
-  AND (c.flags & ~($19::bigint)) = 0
+  AND (c.flags & ~($20::bigint)) = 0
   AND (c.available_bytes IS NULL OR c.available_bytes >= $5::bigint)
 `
 
@@ -190,6 +192,7 @@ type InsertPendingObjectIfFitsParams struct {
 	ContentType              *string
 	UserMetadata             []byte
 	Role                     string
+	Tagging                  *string
 	Accepts                  int64
 }
 
@@ -238,6 +241,7 @@ func (q *Queries) InsertPendingObjectIfFits(ctx context.Context, arg InsertPendi
 		arg.ContentType,
 		arg.UserMetadata,
 		arg.Role,
+		arg.Tagging,
 		arg.Accepts,
 	)
 	if err != nil {
@@ -250,7 +254,7 @@ const lockPendingForUpdate = `-- name: LockPendingForUpdate :one
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role, storage_key
+       etag, content_type, user_metadata, role, storage_key, tagging
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE
@@ -261,8 +265,9 @@ FOR UPDATE
 // instance already resolved this intent (deleted the row); the caller
 // treats that as a benign no-op.
 // Column order follows the table so sqlc projects the row onto the shared
-// pending_objects model rather than minting a query-specific struct; storage_key
-// is last because that is where the migration added it.
+// pending_objects model rather than minting a query-specific struct;
+// storage_key and tagging are last because that is where their migrations
+// added them.
 func (q *Queries) LockPendingForUpdate(ctx context.Context, intentID string) (PendingObject, error) {
 	row := q.db.QueryRow(ctx, lockPendingForUpdate, intentID)
 	var i PendingObject
@@ -286,6 +291,7 @@ func (q *Queries) LockPendingForUpdate(ctx context.Context, intentID string) (Pe
 		&i.UserMetadata,
 		&i.Role,
 		&i.StorageKey,
+		&i.Tagging,
 	)
 	return i, err
 }

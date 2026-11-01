@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-
-	dto "github.com/prometheus/client_model/go"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event/eventtest"
 )
 
 // -------------------------------------------------------------------------
@@ -42,9 +43,7 @@ func gaugeValue(t *testing.T) float64 {
 // TestNewCircuitBreakerHook_EmitsOpenEvent confirms the closed->open
 // transition emits a BackendCircuitOpened event with failure context.
 func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
-	var emitted []event.Event
-	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
-	defer event.SetEmitter(nil)
+	published := eventtest.Record(t)
 
 	hook := NewCircuitBreakerHook("test-open")
 	hook(breaker.StateChangeInfo{
@@ -55,6 +54,7 @@ func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 		Threshold: 3,
 	})
 
+	emitted := published()
 	if len(emitted) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(emitted))
 	}
@@ -72,9 +72,7 @@ func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 // TestNewCircuitBreakerHook_EmitsClosedEvent confirms the *->closed
 // transition emits a BackendCircuitClosed event with degraded duration.
 func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
-	var emitted []event.Event
-	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
-	defer event.SetEmitter(nil)
+	published := eventtest.Record(t)
 
 	hook := NewCircuitBreakerHook("test-closed")
 	hook(breaker.StateChangeInfo{
@@ -84,6 +82,7 @@ func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
 		OpenDuration: 250 * time.Millisecond,
 	})
 
+	emitted := published()
 	if len(emitted) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(emitted))
 	}
@@ -95,14 +94,12 @@ func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
 // TestNewBackendCircuitHook_PublishesNoEvent confirms a backend's aggregate
 // hook drives the gauge but leaves events to the backend's own breakers.
 func TestNewBackendCircuitHook_PublishesNoEvent(t *testing.T) {
-	var emitted []event.Event
-	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
-	defer event.SetEmitter(nil)
+	published := eventtest.Record(t)
 
 	hook := NewBackendCircuitHook("test-aggregate")
 	hook(breaker.StateChangeInfo{Name: "test-aggregate", From: breaker.StateClosed, To: breaker.StateOpen})
 
-	if len(emitted) != 0 {
+	if emitted := published(); len(emitted) != 0 {
 		t.Errorf("expected no events from the aggregate hook, got %d", len(emitted))
 	}
 	var m dto.Metric
@@ -117,13 +114,12 @@ func TestNewBackendCircuitHook_PublishesNoEvent(t *testing.T) {
 // TestBackendCircuitEvent_CarriesTheCall confirms a breaker's open and close
 // events name the backend as subject and carry the call it guards.
 func TestBackendCircuitEvent_CarriesTheCall(t *testing.T) {
-	var emitted []event.Event
-	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
-	defer event.SetEmitter(nil)
+	published := eventtest.Record(t)
 
 	BackendCircuitEvent("c2", "GetObject", breaker.StateChangeInfo{From: breaker.StateClosed, To: breaker.StateOpen, Failures: 3})
 	BackendCircuitEvent("c2", "GetObject", breaker.StateChangeInfo{From: breaker.StateOpen, To: breaker.StateClosed})
 
+	emitted := published()
 	if len(emitted) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(emitted))
 	}

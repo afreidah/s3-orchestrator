@@ -176,7 +176,7 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 	// The final size is unknown, so nothing is claimed: each part is counted
 	// against the backend by its own row as it lands.
 	uploadID := audit.NewID()
-	backendName, err := mp.coord.ClaimUploadTarget(ctx, span, operation, &core.CreateMultipartUploadParams{
+	params := &core.CreateMultipartUploadParams{
 		UploadID:      uploadID,
 		ObjectKey:     key,
 		ContentType:   req.ContentType,
@@ -184,10 +184,11 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 		EncryptionKey: encryptionKey,
 		KeyID:         keyID,
 		Tags:          req.Tags,
-	})
-	if err != nil {
+	}
+	if err := mp.coord.ClaimUploadTarget(ctx, span, operation, params); err != nil {
 		return "", "", err
 	}
+	backendName := params.BackendName
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 	mp.core.Acct().Operation(operation, backendName, start, nil)
@@ -254,11 +255,11 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		}
 		return "", err
 	}
-	bctx, bcancel := mp.core.WithTimeout(ctx)
-	defer bcancel()
-	storedETag, err := be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, "application/octet-stream", nil)
+	storedETag, err := mp.core.Put(ctx, operation, &s3be.PutRequest{
+		Dst: s3be.Endpoint{Name: mu.BackendName, Backend: be}, Key: intent.StorageKey,
+		Body: uploadBody, Size: uploadSize, ContentType: "application/octet-stream",
+	})
 	if err != nil {
-		mp.core.Acct().APICall(ctx, s3op.UploadPart, mu.BackendName) // API call was made even on failure
 		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
@@ -276,16 +277,15 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	if err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, discarding part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		mp.core.Acct().APICall(ctx, s3op.UploadPart, mu.BackendName) // the PUT that succeeded
 		mp.coord.Discard(ctx, intent, reasonPartUnrecorded)
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
 
-	// Charged at what was sent, not at what the client handed over: an
-	// encrypted part carries its own envelope, and a large upload repeats that
-	// difference once per part.
-	mp.core.Acct().PutSuccess(ctx, operation, mu.BackendName, uploadSize, start)
+	// The PUT was charged at what was sent, not at what the client handed
+	// over: an encrypted part carries its own envelope, and a large upload
+	// repeats that difference once per part.
+	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
 	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
 	// The client is given the MD5 of its own bytes, which is what S3 returns
 	// and what it will send back in the completion manifest.
@@ -410,7 +410,7 @@ func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.Multipart
 func (mp *Manager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID string, operation s3op.Operation) (*core.MultipartUpload, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return nil, mp.core.ClassifyWriteError(span, operation.String(), err)
+		return nil, mp.core.ClassifyWriteError(span, operation, err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
 		observe.RecordSpanError(span, err)
@@ -607,7 +607,7 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	if !started {
 		// An upload aborted since the fetch is gone, not held.
 		if _, err := mp.stores.GetMultipartUpload(ctx, uploadID); err != nil {
-			return "", mp.core.ClassifyWriteError(span, operation.String(), err)
+			return "", mp.core.ClassifyWriteError(span, operation, err)
 		}
 		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
 		return "", core.ErrCompletionInProgress
@@ -687,7 +687,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 ) (string, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return "", mp.core.ClassifyWriteError(span, operation.String(), err)
+		return "", mp.core.ClassifyWriteError(span, operation, err)
 	}
 	be, err := mp.core.GetBackend(mu.BackendName)
 	if err != nil {
@@ -729,7 +729,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
-	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
+	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, s3be.Endpoint{Name: mu.BackendName, Backend: be}, uploadID, parts)
 	defer pipeCancel()
 
 	// Tee the plaintext stream through SHA-256 when integrity is on so
@@ -772,22 +772,22 @@ func (mp *Manager) completeMultipartUploadLocked(
 	//
 	// The claim is pinned to the upload's own backend because the parts are
 	// already there: a backend without room must fail, not place it elsewhere.
-	intent := writepath.NewPendingIntent(mu.ObjectKey, uploadSize, form, identity)
-	if _, err := mp.coord.ClaimWriteTarget(ctx, intent, []string{mu.BackendName}); err != nil {
-		observe.RecordSpanError(span, err)
+	intent := writepath.NewPendingIntent(mu.ObjectKey, uploadSize, form, identity, mu.Tags)
+	if err := mp.coord.ClaimWriteTarget(ctx, span, operation, intent, []string{mu.BackendName}); err != nil {
 		return "", err
 	}
 	intentID := intent.IntentID
 
-	// The pipe is fed by the part downloads, so this timeout covers the whole
-	// stream-parts, assemble and PUT pipeline.
-	wctx, wcancel := mp.core.WithTimeout(ctx)
-	defer wcancel()
-	// Assembled under the intent's own storage key, so a double completion or a
-	// concurrent write to the key leaves two distinct objects instead of two
-	// writers racing at one path. The backend's ETag describes the stored bytes
-	// and is discarded in favor of the composite.
-	_, err = be.PutObject(wctx, intent.StorageKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	// The pipe is fed by the part downloads, so the PUT's timeout covers the
+	// whole stream-parts, assemble and PUT pipeline. Assembled under the
+	// intent's own storage key, so a double completion or a concurrent write to
+	// the key leaves two distinct objects instead of two writers racing at one
+	// path. The backend's ETag describes the stored bytes and is discarded in
+	// favor of the composite.
+	_, err = mp.core.Put(ctx, s3op.PutObject, &s3be.PutRequest{
+		Dst: s3be.Endpoint{Name: mu.BackendName, Backend: be}, Key: intent.StorageKey,
+		Body: uploadBody, Size: uploadSize, ContentType: mu.ContentType, Metadata: mu.Metadata,
+	})
 	if err != nil {
 		pipeCancel()
 		pr.Close()
@@ -807,7 +807,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// The create call's tags land in the same transaction, so a completed upload
 	// is never briefly untagged. The bytes are charged from the size the ledger
 	// records.
-	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
+	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, operation, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
 		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID, StorageKey: intent.StorageKey}},
 	}); err != nil {
@@ -819,14 +819,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// cannot assemble them a second time.
 	mp.cleanupCompletedUpload(ctx, span, uploadID)
 
-	// Assembly spends egress equal to the parts and ingress equal to the result.
-	// Each Egress records its own API call for a part GET; the part deletes are
-	// charged where they are sent.
+	// The part GETs, the assembled PUT and the part deletes were each charged
+	// where they were sent.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	for i := range parts {
-		mp.core.Acct().Egress(ctx, s3op.GetObject, mu.BackendName, parts[i].SizeBytes)
-	}
-	mp.core.Acct().Ingress(ctx, s3op.PutObject, mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	return identity.ETag, nil
@@ -988,14 +983,14 @@ func (mp *Manager) buildAssembledUpload(
 // PART STREAMING
 // -------------------------------------------------------------------------
 
-// streamPartsThroughPipe spawns a goroutine that reads each part in order,
-// decrypts encrypted parts inline so the pipe carries plaintext, and writes
-// the concatenated stream to the returned reader. The caller must invoke
-// the returned cancel func to stop in-flight backend reads when assembly
-// fails downstream (e.g. the final PutObject errors out).
+// streamPartsThroughPipe spawns a goroutine that reads each part in order
+// from src, decrypts encrypted parts inline so the pipe carries plaintext, and
+// writes the concatenated stream to the returned reader. The caller must
+// invoke the returned cancel func to stop in-flight backend reads when
+// assembly fails downstream (e.g. the final PutObject errors out).
 func (mp *Manager) streamPartsThroughPipe(
 	ctx context.Context,
-	be s3be.ObjectBackend,
+	src s3be.Endpoint,
 	uploadID string,
 	parts []core.MultipartPart,
 ) (*io.PipeReader, context.CancelFunc) {
@@ -1012,7 +1007,7 @@ func (mp *Manager) streamPartsThroughPipe(
 			_ = pw.Close()
 		}()
 		for i := range parts {
-			if err := mp.streamOnePart(pipeCtx, be, bw, uploadID, &parts[i]); err != nil {
+			if err := mp.streamOnePart(pipeCtx, src, bw, uploadID, &parts[i]); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
@@ -1025,37 +1020,44 @@ func (mp *Manager) streamPartsThroughPipe(
 	return pr, pipeCancel
 }
 
-// streamOnePart fetches one part from the backend, decrypts it when the
-// part was stored encrypted, and copies the plaintext into bw. Closes the
-// backend response body and the per-call timeout context before returning.
-// Errors are wrapped with the part number so the assembly failure message
-// identifies which part failed.
+// streamOnePart fetches one part from src, decrypts it when the part was
+// stored encrypted, and copies the plaintext into bw, charging the part's
+// egress once all of it has been read. Closes the backend response body and
+// the per-call timeout context before returning. Errors are wrapped with the
+// part number so the assembly failure message identifies which part failed.
 func (mp *Manager) streamOnePart(
 	ctx context.Context,
-	be s3be.ObjectBackend,
+	src s3be.Endpoint,
 	bw io.Writer,
 	uploadID string,
 	part *core.MultipartPart,
 ) error {
-	partKey := part.Path(uploadID)
-	bctx, bcancel := mp.core.WithTimeout(ctx)
-	defer bcancel()
-
-	result, err := be.GetObject(bctx, partKey, "")
+	result, cancel, err := mp.core.Get(ctx, src.Name, src.Backend, part.Path(uploadID), "")
 	if err != nil {
 		return fmt.Errorf("failed to read part %d: %w", part.PartNumber, err)
 	}
+	defer cancel()
 	defer func() { _ = result.Body.Close() }()
 
-	src, err := storedform.Unseal(ctx, mp.encryptor, result.Body, &part.StoredForm)
+	if err := copyPart(ctx, mp.encryptor, bw, result.Body, part); err != nil {
+		mp.core.Acct().APICall(ctx, s3op.GetObject, src.Name)
+		return err
+	}
+	mp.core.Acct().Egress(ctx, s3op.GetObject, src.Name, part.SizeBytes)
+	return nil
+}
+
+// copyPart decrypts one stored part when it was stored encrypted and copies
+// the plaintext into bw.
+func copyPart(ctx context.Context, enc *encryption.Encryptor, bw io.Writer, stored io.Reader, part *core.MultipartPart) error {
+	plain, err := storedform.Unseal(ctx, enc, stored, &part.StoredForm)
 	if err != nil {
 		if errors.Is(err, encryption.ErrInvalidKeyData) {
 			return fmt.Errorf("unpack part %d key: %w", part.PartNumber, err)
 		}
 		return fmt.Errorf("open part %d: %w", part.PartNumber, err)
 	}
-
-	if _, err := bufpool.Copy(bw, src); err != nil {
+	if _, err := bufpool.Copy(bw, plain); err != nil {
 		return fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err)
 	}
 	return nil

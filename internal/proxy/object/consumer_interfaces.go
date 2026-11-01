@@ -34,9 +34,10 @@ type Runtime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendFlags(name string) core.BackendFlags
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
+	Head(ctx context.Context, name string, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
+	Put(ctx context.Context, op s3op.Operation, req *backend.PutRequest) (string, error)
 	EligibleForWrite(op s3op.Operation, egress, ingress int64) []string
-	ClassifyWriteError(span trace.Span, operation string, err error) error
+	ClassifyWriteError(span trace.Span, op s3op.Operation, err error) error
 	Quota() *counter.QuotaTracker
 }
 
@@ -45,7 +46,7 @@ type Runtime interface {
 // read issues one per frame it touches, and the fetcher doing so needs nothing
 // else.
 type RangeFetchRuntime interface {
-	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	Get(ctx context.Context, name string, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
 	Acct() *accounting.Recorder
 }
 

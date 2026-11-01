@@ -143,6 +143,13 @@ func TestPending_ClaimCopies(t *testing.T) {
 	storetest.CheckCopyClaims(t, s, "backend-full", "backend-a", "backend-c")
 }
 
+// TestPending_PromotionAppliesTheWritesTags verifies a reaper-promoted write
+// carries the tags it was sent with, not those of the object it replaced.
+func TestPending_PromotionAppliesTheWritesTags(t *testing.T) {
+	t.Parallel()
+	storetest.CheckPromotedTags(t, newTestStore(t), "backend-a")
+}
+
 // TestPending_DeleteRemovesRow verifies DeletePending decrements depth and
 // removes the matching row.
 func TestPending_DeleteRemovesRow(t *testing.T) {
