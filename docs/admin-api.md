@@ -100,7 +100,7 @@ Each changed copy is recorded as a `storage.ConversionRaced` audit event naming 
 
 ## Verifying one object
 
-`POST /admin/api/object-scrub?key=...` reads every recorded copy of one key and compares it against the stored content hash, without waiting for the scrub queue to reach it. The response reports one verdict per copy -- `verified`, `mismatch`, `unreadable`, or `not_hashed` -- so a replicated object with one good copy and one bad one names the backend at fault.
+`POST /admin/api/object-scrub?key=...` reads every recorded copy of one key and compares it against the stored content hash, without waiting for the scrub queue to reach it. The response reports one verdict per copy -- `verified`, `mismatch`, `unreadable`, `not_hashed`, or `declined` -- so a replicated object with one good copy and one bad one names the backend at fault. Each read is admitted against the backend's egress limit as a client read is, without the scrub sweep's reserve; a copy the limit refuses is reported `declined` and left unchecked.
 
 A `mismatch` is acted on, not just reported: the bad copy is discarded and replication rebuilds it from a good one. The endpoint returns `404` when no copies of the key are recorded and `409` when integrity verification is disabled.
 

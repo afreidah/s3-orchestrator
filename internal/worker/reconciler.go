@@ -42,7 +42,7 @@ type ReconcileResult struct {
 // BackendSyncer scans and reconciles one backend against the ledger.
 // *reconcile.Manager satisfies it.
 type BackendSyncer interface {
-	SyncBackend(ctx context.Context, backendName string, knownBuckets []string) (imported, skipped int, err error)
+	SyncBackend(ctx context.Context, backendName, prefix string, knownBuckets []string) (imported, skipped int, err error)
 	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*reconcile.Result, error)
 }
 
@@ -144,7 +144,7 @@ func (r *Reconciler) run(ctx context.Context) *reconcileSummary {
 
 	for _, backendName := range r.scannable() {
 		sum.Planned++
-		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucketNames)
+		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, "", bucketNames)
 		if err != nil {
 			r.log.ErrorContext(ctx, "backend scan failed",
 				"backend", backendName, "error", err)

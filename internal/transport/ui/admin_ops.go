@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -98,12 +99,13 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "backend and bucket are required")
 		return
 	}
-	if !h.validBackend(req.Backend) || !h.d.Buckets.HasPrefix(req.Bucket+"/") {
+	prefix := internalkey.Prefix(req.Bucket)
+	if !h.validBackend(req.Backend) || !h.d.Buckets.HasPrefix(prefix) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
 
-	if !h.authorizeKey(w, r, req.Bucket+"/", core.PermWrite) {
+	if !h.authorizeKey(w, r, prefix, core.PermWrite) {
 		return
 	}
 	backend := core.Resource{Kind: core.ResourceBackend, Name: req.Backend}
@@ -112,7 +114,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imported, skipped, err := h.d.Sync.SyncBackend(r.Context(), req.Backend, h.d.Buckets.Names())
+	imported, skipped, err := h.d.Sync.SyncBackend(r.Context(), req.Backend, prefix, h.d.Buckets.Names())
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "sync failed", err, "backend", req.Backend, "bucket", req.Bucket)
 		return

@@ -268,8 +268,6 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 		"mode", mode,
 	)
 
-	var totalImported, totalSkipped int
-	var totalBytes int64
 	pageNum := 0
 	pages := reconcile.PageImporter{
 		Store: run.Store,
@@ -285,21 +283,14 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 		DryRun:      opts.DryRun,
 	}
 
-	err := s3b.ListObjects(ctx, opts.Prefix, func(objects []backend.ListedObject) error {
+	// Unmetered: the CLI runs outside the server and holds no usage counters.
+	total, err := pages.ImportListing(ctx, s3b, opts.Prefix, nil, func(page, total reconcile.PageResult) {
 		pageNum++
-		page, err := pages.Import(ctx, objects)
-		if err != nil {
-			return err
-		}
-		totalImported += page.Imported
-		totalSkipped += page.Skipped
-		totalBytes += page.ImportedBytes
 		synccmdLogger().InfoContext(
 			ctx, "synced page",
 			"page", pageNum, "imported", page.Imported, "skipped", page.Skipped,
-			"total_imported", totalImported, "total_skipped", totalSkipped,
+			"total_imported", total.Imported, "total_skipped", total.Skipped,
 		)
-		return nil
 	})
 	if err != nil {
 		return err
@@ -308,9 +299,9 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) erro
 	synccmdLogger().InfoContext(
 		ctx, "sync complete",
 		"backend", run.BackendCfg.Name,
-		"imported", totalImported,
-		"skipped", totalSkipped,
-		"bytes_imported", totalBytes,
+		"imported", total.Imported,
+		"skipped", total.Skipped,
+		"bytes_imported", total.ImportedBytes,
 		"mode", mode,
 	)
 	return nil

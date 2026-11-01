@@ -155,27 +155,24 @@ func (m *Manager) logger() *slog.Logger {
 // -------------------------------------------------------------------------
 
 // SyncBackend scans a backend's bucket and imports pre-existing objects into
-// the ledger. Objects already tracked for the backend are skipped.
-// knownBuckets is the full list of configured virtual bucket names; one walk
-// covers all of them, and an object outside every one of their prefixes is
-// imported at its own key and flagged unmanaged, so it counts toward the
-// backend's quota without any worker acting on it. Returns counts of imported
-// vs skipped objects.
-func (m *Manager) SyncBackend(ctx context.Context, backendName string, knownBuckets []string) (imported, skipped int, err error) {
+// the ledger. Objects already tracked for the backend are skipped. prefix
+// narrows the listing, so a sync for one virtual bucket reads only that
+// bucket's keys; an empty prefix walks the whole backend. knownBuckets is the
+// full list of configured virtual bucket names whatever the prefix, and an
+// object outside every one of their prefixes is imported at its own key and
+// flagged unmanaged, so it counts toward the backend's quota without any worker
+// acting on it. Returns counts of imported vs skipped objects.
+func (m *Manager) SyncBackend(ctx context.Context, backendName, prefix string, knownBuckets []string) (imported, skipped int, err error) {
 	ctx = audit.WithWorkload(ctx, audit.WorkloadReconcile)
 	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {
 		return 0, 0, err
 	}
-
-	// One page of headroom is the entry price, so a pass does not start against
-	// a backend that is already spent. The per-page charge inside the walk is
-	// what holds it to the limit from there.
-	if !m.usage.Allow(backendName, s3op.ListObjects, 0, 0) {
-		return 0, 0, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
+	if err := m.admitWalk(backendName); err != nil {
+		return 0, 0, err
 	}
 
-	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName)
+	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName, "prefix", prefix)
 
 	pages := PageImporter{
 		Store:       m.stores,
@@ -183,35 +180,29 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName string, knownBuck
 		BackendName: backendName,
 		Prefixes:    BucketPrefixes(knownBuckets),
 	}
-	budget := pageBudget{usage: m.usage, backendName: backendName}
-
-	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
-		// Charged before the import so the page is paid for even if importing
-		// it fails: the listing request reached the provider either way.
-		canContinue := budget.charge(ctx)
-		page, pErr := pages.Import(ctx, objects)
-		imported += page.Imported
-		skipped += page.Skipped
-		if pErr != nil {
-			return pErr
-		}
-		if !canContinue {
-			return errBudgetExhausted
-		}
-		return nil
-	})
-
+	total, err := pages.ImportListing(ctx, s3b, prefix, m.usage, nil)
 	if errors.Is(err, errBudgetExhausted) {
 		m.reportBudgetStop(ctx, "sync", backendName)
-		return imported, skipped, nil
+		return total.Imported, total.Skipped, nil
 	}
 	if err != nil {
-		return imported, skipped, err
+		return total.Imported, total.Skipped, err
 	}
 
 	m.logger().InfoContext(ctx, "backend sync complete", "backend", backendName,
-		"imported", imported, "skipped", skipped)
-	return imported, skipped, nil
+		"imported", total.Imported, "skipped", total.Skipped)
+	return total.Imported, total.Skipped, nil
+}
+
+// admitWalk refuses a listing walk the backend cannot afford one page of. That
+// page of headroom is the entry price, so a pass does not start against a
+// backend that is already spent; the per-page charge holds it to the limit
+// from there.
+func (m *Manager) admitWalk(backendName string) error {
+	if !m.usage.Allow(backendName, s3op.ListObjects, 0, 0) {
+		return fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
+	}
+	return nil
 }
 
 // importDiscovered records one key the sorted merge found only on a backend.
@@ -250,10 +241,8 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		return nil, err
 	}
 
-	// The same entry price SyncBackend pays, which this path did not ask for at
-	// all: a reconcile could start against a backend with nothing left.
-	if !m.usage.Allow(backendName, s3op.ListObjects, 0, 0) {
-		return nil, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
+	if err := m.admitWalk(backendName); err != nil {
+		return nil, err
 	}
 
 	listedAt := time.Now()

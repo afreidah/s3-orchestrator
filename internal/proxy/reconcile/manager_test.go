@@ -40,6 +40,7 @@ type pagedLister struct {
 	pages   [][]backend.ListedObject
 	listErr error
 	calls   int
+	prefix  string
 }
 
 // newPagedLister builds a lister that also holds plaintext bytes for every key
@@ -56,6 +57,7 @@ func newPagedLister(pages [][]backend.ListedObject) *pagedLister {
 
 func (f *pagedLister) ListObjects(ctx context.Context, prefix string, fn func([]backend.ListedObject) error) error {
 	f.calls++
+	f.prefix = prefix
 	if f.listErr != nil {
 		return f.listErr
 	}
@@ -394,12 +396,35 @@ func TestSyncBackend_ImportsAndCountsSkips(t *testing.T) {
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/new", "b1", 1, false)).Return(core.ImportInserted, nil)
 	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
 	if imported != 1 || skipped != 1 {
 		t.Errorf("imported=%d skipped=%d, want 1/1", imported, skipped)
+	}
+}
+
+// TestSyncBackend_PrefixNarrowsOnlyTheListing asserts a sync for one bucket
+// lists only that bucket's keys while still classifying against every declared
+// bucket, so a key of the named bucket is imported managed.
+func TestSyncBackend_PrefixNarrowsOnlyTheListing(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	m, stores, backends, usage := newTestManager(t, ctrl)
+
+	lister := newPagedLister([][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}})
+	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+	ledgerHoldsNone(stores)
+	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).Return(core.ImportInserted, nil)
+	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
+
+	imported, _, err := m.SyncBackend(t.Context(), "b1", "vb/", []string{"other", "vb"})
+	if err != nil {
+		t.Fatalf("SyncBackend: %v", err)
+	}
+	if lister.prefix != "vb/" || imported != 1 {
+		t.Errorf("listed prefix %q imported %d, want vb/ and 1", lister.prefix, imported)
 	}
 }
 
@@ -417,7 +442,7 @@ func TestSyncBackend_SkipsKeyWithPendingDelete(t *testing.T) {
 		Return(core.ImportSkippedPendingCleanup, nil)
 	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(1)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
@@ -439,7 +464,7 @@ func TestSyncBackend_ImportErrorAborts(t *testing.T) {
 		Return(core.ImportSkippedExisting, errors.New("import boom"))
 	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err == nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"}); err == nil {
 		t.Error("expected the import error to propagate")
 	}
 }
@@ -464,7 +489,7 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 	// what let a walk finish before anything noticed it had gone over.
 	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(3)
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err != nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
 }
@@ -487,7 +512,7 @@ func TestSyncBackend_RefusedWhenOutOfAPIBudget(t *testing.T) {
 	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory()}, nil).AnyTimes()
 	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	_, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
+	_, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"})
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("SyncBackend error = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -503,7 +528,7 @@ func TestSyncBackend_NoPagesChargesNothing(t *testing.T) {
 	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory()}, nil).AnyTimes()
 	usage.EXPECT().APICall(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	imported, skipped, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"})
 	if err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
@@ -520,7 +545,7 @@ func TestSyncBackend_UnknownBackendFails(t *testing.T) {
 
 	backends.EXPECT().GetBackend(gomock.Any()).Return(nil, errors.New("unknown")).AnyTimes()
 
-	if _, _, err := m.SyncBackend(t.Context(), "nope", nil); err == nil {
+	if _, _, err := m.SyncBackend(t.Context(), "nope", "", nil); err == nil {
 		t.Error("expected an error for an unknown backend")
 	}
 }
@@ -571,7 +596,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).
 		Return(core.ImportInserted, nil)
 
-	imported, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"})
+	imported, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"})
 	if err != nil {
 		t.Fatalf("a pass that stopped at the limit did the work it could afford; want no error, got %v", err)
 	}
@@ -604,7 +629,7 @@ func TestSyncBackend_ChargesEachPageAsItGoes(t *testing.T) {
 	// already happened.
 	usage.EXPECT().APICall(gomock.Any(), s3op.ListObjects, "b1").Times(3)
 
-	if _, _, err := m.SyncBackend(t.Context(), "b1", []string{"vb"}); err != nil {
+	if _, _, err := m.SyncBackend(t.Context(), "b1", "", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
 	}
 }

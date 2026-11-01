@@ -99,9 +99,42 @@ func (p *PageImporter) Import(ctx context.Context, objects []backend.ListedObjec
 	return res, nil
 }
 
+// ImportListing lists be's keys under prefix and imports them page by page,
+// returning the totals. Each page is charged to usage before it is imported, so
+// a page whose import fails is still paid for; a nil usage leaves the walk
+// unmetered. A walk that spends the budget ends with errBudgetExhausted and the
+// totals so far. onPage, when non-nil, sees each page and the running total.
+func (p *PageImporter) ImportListing(ctx context.Context, be backend.ObjectBackend, prefix string, usage UsageRecorder, onPage func(page, total PageResult)) (PageResult, error) {
+	budget := pageBudget{usage: usage, backendName: p.BackendName}
+	var total PageResult
+	err := be.ListObjects(ctx, prefix, func(objects []backend.ListedObject) error {
+		canContinue := budget.charge(ctx)
+		page, err := p.Import(ctx, objects)
+		total.add(page)
+		if err != nil {
+			return err
+		}
+		if onPage != nil {
+			onPage(page, total)
+		}
+		if !canContinue {
+			return errBudgetExhausted
+		}
+		return nil
+	})
+	return total, err
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// add folds one page's counts into a running total.
+func (r *PageResult) add(page PageResult) {
+	r.Imported += page.Imported
+	r.Skipped += page.Skipped
+	r.ImportedBytes += page.ImportedBytes
+}
 
 // importMiss classifies and imports one path the ledger did not hold, or
 // reports it under a dry run as though it had been imported.

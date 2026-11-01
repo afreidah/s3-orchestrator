@@ -279,7 +279,7 @@ The dashboard's other actions take the same shape: `POST` starts the run and ans
 
 ### POST /ui/api/sync
 
-Imports pre-existing objects from a backend's S3 bucket into the database.
+Imports the pre-existing objects of one virtual bucket from a backend's S3 bucket into the database. Only keys under that bucket's prefix are listed; keys of other buckets on the same backend are left for their own sync or the reconciler.
 
 **Request body:**
 

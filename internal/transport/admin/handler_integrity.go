@@ -110,6 +110,7 @@ var scrubOutcomes = map[worker.CopyOutcome]adminapi.CopyScrubResult{
 	},
 	worker.CopyUnreadable: {Outcome: adminapi.CopyUnreadable, Detail: "the copy could not be read"},
 	worker.CopyNotHashed:  {Outcome: adminapi.CopyNotHashed, Detail: "no stored content hash to verify against"},
+	worker.CopyDeclined:   {Outcome: adminapi.CopyDeclined, Detail: "the backend's usage limit refused the read; the copy was not checked"},
 }
 
 // wireCopyResult renders one verdict. An outcome this handler does not know is

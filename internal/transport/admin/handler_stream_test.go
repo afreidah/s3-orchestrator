@@ -54,6 +54,33 @@ func streamReq(target string) *http.Request {
 	return req
 }
 
+// brokenConn is a response writer whose client has gone: every write fails.
+type brokenConn struct {
+	header http.Header
+	writes int
+}
+
+func (b *brokenConn) Header() http.Header { return b.header }
+func (b *brokenConn) WriteHeader(int)     {}
+
+func (b *brokenConn) Write([]byte) (int, error) {
+	b.writes++
+	return 0, errors.New("connection reset by peer")
+}
+
+// TestNewEventStream_StopsAfterAFailedWrite asserts a stream whose connection
+// broke writes nothing more, rather than encoding every later event into it.
+func TestNewEventStream_StopsAfterAFailedWrite(t *testing.T) {
+	t.Parallel()
+	w := &brokenConn{header: http.Header{}}
+	emit := newEventStream(w)
+	emit(adminstream.Event{Kind: adminstream.KindStart})
+	emit(adminstream.Event{Kind: adminstream.KindResult})
+	if w.writes != 1 {
+		t.Errorf("writes = %d, want 1: the stream kept writing to a broken connection", w.writes)
+	}
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
@@ -184,8 +211,9 @@ func TestHandleReconcile_StreamsFailure(t *testing.T) {
 	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeFailed {
 		t.Errorf("last event = %+v, want result/failed", last)
 	}
-	if last.Error != "scan failed" {
-		t.Errorf("result error = %q, want 'scan failed'", last.Error)
+	// The endpoint's message, as JSON mode answers; the cause stays in the log.
+	if last.Error != "reconcile failed" {
+		t.Errorf("result error = %q, want 'reconcile failed'", last.Error)
 	}
 }
 
@@ -362,7 +390,9 @@ func TestHandleRebalance_StreamsSkip(t *testing.T) {
 }
 
 // TestHandleRebalance_StreamsFailure asserts a failed cycle terminates the
-// stream with the error rather than a partial run the caller cannot classify.
+// stream with the endpoint's failure message rather than a partial run the
+// caller cannot classify, and without the internal error JSON mode also keeps
+// to the log.
 func TestHandleRebalance_StreamsFailure(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
@@ -376,8 +406,8 @@ func TestHandleRebalance_StreamsFailure(t *testing.T) {
 	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeFailed {
 		t.Errorf("last event = %+v, want result/failed", last)
 	}
-	if last.Error != "planning failed" {
-		t.Errorf("result error = %q, want 'planning failed'", last.Error)
+	if last.Error != "rebalance failed" {
+		t.Errorf("result error = %q, want 'rebalance failed'", last.Error)
 	}
 }
 

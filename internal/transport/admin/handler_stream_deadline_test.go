@@ -14,6 +14,7 @@
 package admin
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
@@ -57,22 +59,27 @@ func getWithWriteTimeout(t *testing.T, h http.HandlerFunc) ([]byte, error) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestStreamSteps_OutlivesTheServerWriteTimeout is the regression test for the
+// TestStreamPass_OutlivesTheServerWriteTimeout is the regression test for the
 // TUI reporting INTERNAL_ERROR on a long scrub. The pass here runs to twice the
 // write deadline; without the deadline being cleared the server kills the
 // response mid-stream and the terminal result never arrives.
-func TestStreamSteps_OutlivesTheServerWriteTimeout(t *testing.T) {
+func TestStreamPass_OutlivesTheServerWriteTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := &Handler{}
-		body, err := getWithWriteTimeout(t, func(w http.ResponseWriter, _ *http.Request) {
-			h.streamSteps(w, "slow-op", "processing", true, func(obs progress.Observer) (stepResult, error) {
-				// Two steps either side of the deadline: the first lands inside
-				// the window, so a broken stream still looks healthy until the
-				// second.
-				progress.Track(obs, "first", func() string { return progress.StatusOK })
-				time.Sleep(2 * streamWriteTimeout)
-				progress.Track(obs, "second", func() string { return progress.StatusOK })
-				return stepResult{Processed: 2, Summary: "did the work"}, nil
+		body, err := getWithWriteTimeout(t, func(w http.ResponseWriter, r *http.Request) {
+			h.streamPass(w, r, passEndpoint[int]{
+				op: "slow-op", verb: "processing", sequential: true,
+				run: func(_ context.Context, obs progress.Observer) (int, error) {
+					// Two steps either side of the deadline: the first lands
+					// inside the window, so a broken stream still looks healthy
+					// until the second.
+					progress.Track(obs, "first", func() string { return progress.StatusOK })
+					time.Sleep(2 * streamWriteTimeout)
+					progress.Track(obs, "second", func() string { return progress.StatusOK })
+					return 2, nil
+				},
+				body:    func(_ adminapi.Outcome, n int) any { return map[string]any{"processed": n} },
+				summary: func(n int) (int, string) { return n, "did the work" },
 			})
 		})
 		if err != nil {
