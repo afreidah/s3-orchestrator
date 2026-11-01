@@ -32,21 +32,23 @@ type ObjectTagsRequest struct {
 	Tags []ObjectTag `json:"tags"`
 }
 
-// ObjectTagsFrom converts a stored tag set to the wire shape, always returning
-// a non-nil slice so an untagged object serialises as [] rather than null.
+// ObjectTagsFrom converts a stored tag set to the wire shape ordered by key,
+// always returning a non-nil slice so an untagged object serialises as []
+// rather than null.
 func ObjectTagsFrom(tags []core.Tag) []ObjectTag {
 	out := make([]ObjectTag, len(tags))
-	for i, t := range tags {
-		out[i] = ObjectTag{Key: t.Key, Value: t.Value}
+	for i, t := range core.SortedTags(tags) {
+		out[i] = ObjectTag(t)
 	}
 	return out
 }
 
-// CoreTags converts the wire shape to the store's tag type.
+// CoreTags converts the wire shape to the store's tag type, keeping the
+// caller's order.
 func CoreTags(tags []ObjectTag) []core.Tag {
 	out := make([]core.Tag, len(tags))
 	for i, t := range tags {
-		out[i] = core.Tag{Key: t.Key, Value: t.Value}
+		out[i] = core.Tag(t)
 	}
 	return out
 }

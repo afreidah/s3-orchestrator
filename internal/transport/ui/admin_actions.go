@@ -21,6 +21,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -33,13 +35,11 @@ const paramMax = "max"
 // -------------------------------------------------------------------------
 
 // adminActionCounts is what any admin action reports. Count is the figure the
-// dashboard keys on; the rest partition what the pass saw. An action with
+// dashboard keys on; the tally partitions what the pass saw. An action with
 // nothing to say about a field leaves it zero and its response type omits it.
 type adminActionCounts struct {
-	Count   int
-	Skipped int
-	Failed  int
-	Total   int
+	Count int
+	adminapi.BulkRewriteTally
 }
 
 // adminActionState is the polling half of a status response, shared by every
@@ -58,18 +58,24 @@ type adminActionState struct {
 // completed action carrying the reason rather than as a failure.
 //
 // render is held on the op rather than passed to the status endpoint so the
-// trigger and the poll cannot disagree about the shape they report.
+// trigger and the poll cannot disagree about the shape they report. invalid is
+// set when the request's parameters are malformed, so the trigger answers 400.
 type adminActionOp[R any] struct {
-	name   string
-	run    func(context.Context) (adminActionCounts, error)
-	render func(adminActionState, adminActionCounts) R
+	name    string
+	run     func(context.Context) (adminActionCounts, error)
+	render  func(adminActionState, adminActionCounts) R
+	invalid error
 }
 
-// startAdminAction is the common dispatcher: it requires POST, ensures the op
-// isn't already running, then fires the work in a goroutine and returns
-// 202 Accepted. R is the action's response type.
+// startAdminAction is the common dispatcher: it requires POST, refuses
+// malformed parameters, ensures the op isn't already running, then fires the
+// work in a goroutine and returns 202 Accepted. R is the action's response type.
 func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request, op adminActionOp[R]) {
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if op.invalid != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, op.invalid.Error())
 		return
 	}
 	if !h.asyncOps.TryStart(op.name) {
@@ -94,7 +100,7 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 		}
 	}()
 
-	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
+	httputil.WriteJSON(w, http.StatusAccepted, adminActionState{Status: "started"})
 }
 
 // writeAdminActionStatus serialises the polling response for an admin action.
@@ -212,14 +218,6 @@ func (h *Handler) backfillOp(_ *http.Request) adminActionOp[backfillStatus] {
 // BULK REWRITES
 // -------------------------------------------------------------------------
 
-// bulkRewriteTally is the part of a bulk-rewrite status every pass reports
-// alike; only the name of the count the dashboard keys on differs.
-type bulkRewriteTally struct {
-	Skipped int `json:"skipped"`
-	Failed  int `json:"failed"`
-	Total   int `json:"total"`
-}
-
 // bulkRewriteOp builds one bulk-rewrite action. The request's max caps how many
 // copies the run rewrites, 0 meaning the whole fleet; it only shapes the run,
 // so a poll that carries none renders the same.
@@ -227,9 +225,9 @@ func bulkRewriteOp[R any](
 	name string,
 	r *http.Request,
 	pass func(ctx context.Context, maxObjects int) (ops.BulkRewriteResult, error),
-	render func(s adminActionState, count int, t bulkRewriteTally) R,
+	render func(s adminActionState, count int, t adminapi.BulkRewriteTally) R,
 ) adminActionOp[R] {
-	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
+	maxObjects, err := httputil.QueryCount(r.URL.Query(), paramMax, 0, httputil.NoCeiling)
 	return adminActionOp[R]{
 		name: name,
 		run: func(ctx context.Context) (adminActionCounts, error) {
@@ -237,11 +235,12 @@ func bulkRewriteOp[R any](
 			if err != nil {
 				return adminActionCounts{}, err
 			}
-			return adminActionCounts{Count: res.Succeeded, Skipped: res.Skipped, Failed: res.Failed, Total: res.Total}, nil
+			return adminActionCounts{Count: res.Succeeded, BulkRewriteTally: admin.BulkRewriteTally(res)}, nil
 		},
 		render: func(s adminActionState, c adminActionCounts) R {
-			return render(s, c.Count, bulkRewriteTally{Skipped: c.Skipped, Failed: c.Failed, Total: c.Total})
+			return render(s, c.Count, c.BulkRewriteTally)
 		},
+		invalid: err,
 	}
 }
 
@@ -249,7 +248,7 @@ func bulkRewriteOp[R any](
 type encryptExistingStatus struct {
 	adminActionState
 	Encrypted int `json:"encrypted"`
-	bulkRewriteTally
+	adminapi.BulkRewriteTally
 }
 
 // encryptOp encrypts every unencrypted object.
@@ -258,8 +257,8 @@ func (h *Handler) encryptOp(r *http.Request) adminActionOp[encryptExistingStatus
 		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
 			return h.d.Encryption.EncryptExisting(ctx, nil, n, "")
 		},
-		func(s adminActionState, count int, t bulkRewriteTally) encryptExistingStatus {
-			return encryptExistingStatus{adminActionState: s, Encrypted: count, bulkRewriteTally: t}
+		func(s adminActionState, count int, t adminapi.BulkRewriteTally) encryptExistingStatus {
+			return encryptExistingStatus{adminActionState: s, Encrypted: count, BulkRewriteTally: t}
 		})
 }
 
@@ -271,7 +270,7 @@ func (h *Handler) encryptOp(r *http.Request) adminActionOp[encryptExistingStatus
 type compressExistingStatus struct {
 	adminActionState
 	Compressed int `json:"compressed"`
-	bulkRewriteTally
+	adminapi.BulkRewriteTally
 }
 
 // compressOp compresses every object stored verbatim.
@@ -280,8 +279,8 @@ func (h *Handler) compressOp(r *http.Request) adminActionOp[compressExistingStat
 		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
 			return h.d.Compression.CompressExisting(ctx, nil, n, "")
 		},
-		func(s adminActionState, count int, t bulkRewriteTally) compressExistingStatus {
-			return compressExistingStatus{adminActionState: s, Compressed: count, bulkRewriteTally: t}
+		func(s adminActionState, count int, t adminapi.BulkRewriteTally) compressExistingStatus {
+			return compressExistingStatus{adminActionState: s, Compressed: count, BulkRewriteTally: t}
 		})
 }
 
@@ -289,7 +288,7 @@ func (h *Handler) compressOp(r *http.Request) adminActionOp[compressExistingStat
 type decompressExistingStatus struct {
 	adminActionState
 	Decompressed int `json:"decompressed"`
-	bulkRewriteTally
+	adminapi.BulkRewriteTally
 }
 
 // decompressOp rewrites every encoded object back to the bytes the client
@@ -299,8 +298,8 @@ func (h *Handler) decompressOp(r *http.Request) adminActionOp[decompressExisting
 		func(ctx context.Context, n int) (ops.BulkRewriteResult, error) {
 			return h.d.Compression.DecompressExisting(ctx, nil, n, "")
 		},
-		func(s adminActionState, count int, t bulkRewriteTally) decompressExistingStatus {
-			return decompressExistingStatus{adminActionState: s, Decompressed: count, bulkRewriteTally: t}
+		func(s adminActionState, count int, t adminapi.BulkRewriteTally) decompressExistingStatus {
+			return decompressExistingStatus{adminActionState: s, Decompressed: count, BulkRewriteTally: t}
 		})
 }
 

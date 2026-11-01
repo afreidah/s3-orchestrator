@@ -238,38 +238,40 @@ func TestHandleGetObject_RejectsKeyOutsideBucket(t *testing.T) {
 }
 
 // TestHandlePutObject_StoresBody asserts the request body is stored verbatim
-// under the path key and the ETag comes back.
+// under the path key and the ETag comes back, including a zero-byte object.
 func TestHandlePutObject_StoresBody(t *testing.T) {
 	t.Parallel()
-	_, api, mux := objectsAPIHandler(t)
-	var stored []byte
-	api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, req *object.PutObjectRequest) (string, error) {
-			if req.Key != "bucket/dir/file.txt" || req.Size != 5 || req.ContentType != "text/plain" {
-				t.Errorf("unexpected put request: %+v", req)
-			}
-			var err error
-			stored, err = io.ReadAll(req.Body)
-			return "etag-1", err
-		}).Times(1)
+	for _, body := range []string{"hello", ""} {
+		_, api, mux := objectsAPIHandler(t)
+		var stored []byte
+		api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, req *object.PutObjectRequest) (string, error) {
+				if req.Key != "bucket/dir/file.txt" || req.Size != int64(len(body)) || req.ContentType != "text/plain" {
+					t.Errorf("unexpected put request: %+v", req)
+				}
+				var err error
+				stored, err = io.ReadAll(req.Body)
+				return "etag-1", err
+			}).Times(1)
 
-	req := doAuth(t, http.MethodPut, "/admin/api/objects/bucket/dir/file.txt", "hello")
-	req.Header.Set("Content-Type", "text/plain")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+		req := doAuth(t, http.MethodPut, "/admin/api/objects/bucket/dir/file.txt", body)
+		req.Header.Set("Content-Type", "text/plain")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	if string(stored) != "hello" {
-		t.Errorf("stored %q, want hello", stored)
-	}
-	var resp adminapi.ObjectUploadResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.ETag != "etag-1" {
-		t.Errorf("etag = %q, want etag-1", resp.ETag)
+		if w.Code != http.StatusOK {
+			t.Fatalf("body %q: status = %d, want 200; body=%s", body, w.Code, w.Body.String())
+		}
+		if string(stored) != body {
+			t.Errorf("stored %q, want %q", stored, body)
+		}
+		var resp adminapi.ObjectUploadResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.ETag != "etag-1" {
+			t.Errorf("etag = %q, want etag-1", resp.ETag)
+		}
 	}
 }
 

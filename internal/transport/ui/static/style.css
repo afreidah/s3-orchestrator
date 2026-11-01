@@ -479,9 +479,9 @@ dialog#confirm-delete::backdrop {
 
 .dialog-actions button:hover { background: var(--border-strong); }
 
-.btn-danger { background: var(--danger) !important; color: var(--bg) !important; }
-.btn-danger:hover { background: var(--danger-hover) !important; }
-.btn-danger:disabled { opacity: 0.6; cursor: default; }
+.dialog-actions .btn-danger { background: var(--danger); color: var(--bg); }
+.dialog-actions .btn-danger:hover { background: var(--danger-hover); }
+.dialog-actions .btn-danger:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Upload bar --- */
 .upload-bar {

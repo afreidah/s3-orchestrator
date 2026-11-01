@@ -32,6 +32,13 @@ type BackendOperationResponse struct {
 	Backend string `json:"backend"`
 }
 
+// BackendPurgeResult is the result fields of a streamed backend purge: the
+// backend and how many of its objects were deleted.
+type BackendPurgeResult struct {
+	Backend string `json:"backend"`
+	Purged  int    `json:"purged"`
+}
+
 // DrainProgressResponse is a snapshot of a backend's drain. State is draining,
 // drained, or failed, and empty when the backend has no drain record. Active is
 // true only while the drain is in progress, and the remaining counts are read

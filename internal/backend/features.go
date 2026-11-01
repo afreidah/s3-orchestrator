@@ -34,16 +34,16 @@ import (
 // count it, since a missing feature is not a fault.
 var ErrUnsupported = errors.New("backend does not support it")
 
-// unsupportedFeatures reads the features a backend has found unsupported.
+// unsupportedReporter reads the features a backend has found unsupported.
 // *S3Backend and *CircuitBreakerBackend implement it.
-type unsupportedFeatures interface {
+type unsupportedReporter interface {
 	Unsupported() core.BackendFeatures
 }
 
 // Unsupported returns the features b has found unsupported. A backend that
 // learns nothing reports none.
 func Unsupported(b ObjectBackend) core.BackendFeatures {
-	if u, ok := b.(unsupportedFeatures); ok {
+	if u, ok := b.(unsupportedReporter); ok {
 		return u.Unsupported()
 	}
 	return 0

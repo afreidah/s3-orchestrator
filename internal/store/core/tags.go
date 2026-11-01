@@ -16,11 +16,12 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/url"
-	"sort"
+	"slices"
 )
 
 // -------------------------------------------------------------------------
@@ -44,6 +45,14 @@ const (
 type Tag struct {
 	Key   string
 	Value string
+}
+
+// SortedTags returns a copy of tags ordered by key, the order every surface
+// reports a set in, leaving the caller's slice as it was.
+func SortedTags(tags []Tag) []Tag {
+	out := slices.Clone(tags)
+	slices.SortFunc(out, func(a, b Tag) int { return cmp.Compare(a.Key, b.Key) })
+	return out
 }
 
 // -------------------------------------------------------------------------
@@ -146,8 +155,7 @@ func DecodeTags(encoded string) ([]Tag, error) {
 		}
 		tags = append(tags, Tag{Key: key, Value: vals[0]})
 	}
-	sort.Slice(tags, func(i, j int) bool { return tags[i].Key < tags[j].Key })
-	return tags, nil
+	return SortedTags(tags), nil
 }
 
 // -------------------------------------------------------------------------

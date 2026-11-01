@@ -16,7 +16,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/byterange"
 )
 
@@ -394,7 +394,7 @@ type xmlUpload struct {
 func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
 	bucketPrefix := internalkey.Prefix(bucket)
 
-	maxUploads, err := parseListingCount(r, "max-uploads", listingPageLimit, listingPageLimit)
+	maxUploads, err := httputil.QueryCount(r.URL.Query(), "max-uploads", listingPageLimit, listingPageLimit)
 	if err != nil {
 		return invalidArgument(w, err)
 	}
@@ -431,13 +431,14 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 // returned, or 0 when the page is empty, and is reported even when the page is
 // not truncated, as S3 does.
 func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
-	uploadID := r.URL.Query().Get("uploadId")
+	q := r.URL.Query()
+	uploadID := q.Get("uploadId")
 
-	maxParts, err := parseListingCount(r, "max-parts", listingPageLimit, listingPageLimit)
+	maxParts, err := httputil.QueryCount(q, "max-parts", listingPageLimit, listingPageLimit)
 	if err != nil {
 		return invalidArgument(w, err)
 	}
-	marker, err := parseListingCount(r, "part-number-marker", 0, math.MaxInt32)
+	marker, err := httputil.QueryCount(q, "part-number-marker", 0, httputil.NoCeiling)
 	if err != nil {
 		return invalidArgument(w, err)
 	}

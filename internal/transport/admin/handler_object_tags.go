@@ -16,22 +16,12 @@
 package admin
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
-
-// -------------------------------------------------------------------------
-// CONSTANTS
-// -------------------------------------------------------------------------
-
-// maxObjectTagsBody caps the tag-set request body. Ten tags at the maximum key
-// and value lengths is a few kilobytes, so this sits far above any legal
-// request while still bounding what an attacker can send.
-const maxObjectTagsBody = 64 << 10
 
 // -------------------------------------------------------------------------
 // INTERNALS
@@ -56,19 +46,17 @@ func (h *Handler) handlePutObjectTags(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue(paramKey)
 
 	var req adminapi.ObjectTagsRequest
-	body := http.MaxBytesReader(w, r.Body, maxObjectTagsBody)
-	defer body.Close()
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid tag set: "+err.Error())
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 
-	if err := h.d.Objects.SetTags(r.Context(), key, adminapi.CoreTags(req.Tags)); err != nil {
+	tags := adminapi.CoreTags(req.Tags)
+	if err := h.d.Objects.SetTags(r.Context(), key, tags); err != nil {
 		h.writeObjectTagError(w, r, err, key)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, adminapi.ObjectTagsResponse(req))
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ObjectTagsResponse{Tags: adminapi.ObjectTagsFrom(tags)})
 }
 
 // handleDeleteObjectTags clears one object's tag set.

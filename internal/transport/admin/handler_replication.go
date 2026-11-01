@@ -77,7 +77,10 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 // objects out across a worker pool, so streamed steps render as complete
 // labeled lines.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
+	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
 
 	h.servePass(w, r, passEndpoint[worker.OverReplicationSummary]{
 		op:      "over-replication",

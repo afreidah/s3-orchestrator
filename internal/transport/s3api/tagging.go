@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -61,7 +60,7 @@ type tagEntry struct {
 func (d *taggingDocument) toCoreTags() []core.Tag {
 	out := make([]core.Tag, len(d.TagSet.Tags))
 	for i, t := range d.TagSet.Tags {
-		out[i] = core.Tag{Key: t.Key, Value: t.Value}
+		out[i] = core.Tag(t)
 	}
 	return out
 }
@@ -73,10 +72,9 @@ func (d *taggingDocument) toCoreTags() []core.Tag {
 // depend on that promise holding in both engines.
 func taggingDocumentFrom(tags []core.Tag) *taggingDocument {
 	entries := make([]tagEntry, len(tags))
-	for i, t := range tags {
-		entries[i] = tagEntry{Key: t.Key, Value: t.Value}
+	for i, t := range core.SortedTags(tags) {
+		entries[i] = tagEntry(t)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
 	return &taggingDocument{TagSet: tagSet{Tags: entries}}
 }
 

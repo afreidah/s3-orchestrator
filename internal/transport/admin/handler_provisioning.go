@@ -28,10 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
-// provisioningBodyLimit caps a provisioning request body. These carry names and
-// a CORS rule set, never data.
-const provisioningBodyLimit = 64 << 10
-
 // -------------------------------------------------------------------------
 // READS
 // -------------------------------------------------------------------------
@@ -54,7 +50,7 @@ func (h *Handler) handleProvisioning(w http.ResponseWriter, r *http.Request) {
 // handleCreateBucket declares a virtual bucket.
 func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateBucketRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	b := core.Bucket{
@@ -74,7 +70,7 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 // handleUpdateBucket writes what a virtual bucket carries.
 func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.UpdateBucketRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	name := r.PathValue(paramName)
@@ -111,7 +107,7 @@ func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 // handleCreateUser declares an identity credentials can be issued against.
 func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateUserRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	u, err := h.d.Provision.CreateUser(r.Context(), req.Name)
@@ -128,7 +124,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // its credentials and grants reference in place.
 func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.RenameUserRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	id := r.PathValue(paramID)
@@ -162,7 +158,7 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // so a caller that loses it issues a replacement rather than recovering it.
 func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateCredentialRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	keys := ops.Keypair{AccessKeyID: req.AccessKeyID, SecretAccessKey: req.SecretAccessKey}
@@ -196,7 +192,7 @@ func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request)
 // handleCreateGrant lets a user reach a resource.
 func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateGrantRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	resource := core.Resource{Kind: core.ParseResourceKind(req.Kind), Name: req.Name}
@@ -219,7 +215,7 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 // not.
 func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.SetGrantRequest
-	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+	if !httputil.DecodeJSONBody(w, r, &req, maxSmallBody) {
 		return
 	}
 	userID, resource := grantTarget(r)

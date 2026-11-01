@@ -125,22 +125,28 @@ func TestLogLevel_Put(t *testing.T) {
 	}
 }
 
-// TestLogLevel_PutInvalidJSON verifies the log level put invalid json contract.
-// Asserts that status = , want.
-func TestLogLevel_PutInvalidJSON(t *testing.T) {
+// TestLogLevel_PutInvalid verifies a body that is not JSON, or names no known
+// level, is refused and leaves the running level alone.
+func TestLogLevel_PutInvalid(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
+	for _, body := range []string{`not json`, `{"level":"verbose"}`} {
+		h := newTestHandler(t)
+		mux := http.NewServeMux()
+		h.Register(mux)
+		h.d.LogLevel.Set(slog.LevelWarn)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
-		strings.NewReader(`not json`))
-	signRoot(t, req)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
+			strings.NewReader(body))
+		signRoot(t, req)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want %d", body, w.Code, http.StatusBadRequest)
+		}
+		if h.d.LogLevel.Level() != slog.LevelWarn {
+			t.Errorf("%s: logLevel = %v, want it left at WARN", body, h.d.LogLevel.Level())
+		}
 	}
 }
 

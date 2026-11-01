@@ -37,7 +37,10 @@ import (
 // and backend query parameters. A pass counts the copies it read as checked and
 // the ones it could not decode as unreadable.
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
+	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
@@ -134,10 +137,19 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 // 0 = drain all), delay_ms (pause between passes to rate-limit backend reads),
 // and backend.
 func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	batchSize := httputil.QueryPositiveInt(q.Get(paramBatchSize))
-	maxObjects := httputil.QueryPositiveInt(q.Get(paramMax))
-	pause := time.Duration(httputil.QueryPositiveInt(q.Get("delay_ms"))) * time.Millisecond
+	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
+	maxObjects, ok := httputil.RequireQueryCount(w, r, paramMax, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
+	delayMS, ok := httputil.RequireQueryCount(w, r, "delay_ms", 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
+	pause := time.Duration(delayMS) * time.Millisecond
 	backend, ok := h.backendParam(w, r)
 	if !ok {
 		return
@@ -172,7 +184,10 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 // handleListUnreadable lists copies that are encrypted with no key. Accepts an
 // optional limit query parameter.
 func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
-	limit := httputil.QueryPositiveInt(r.URL.Query().Get("limit"))
+	limit, ok := httputil.RequireQueryCount(w, r, "limit", 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
 	res, err := h.d.Integrity.ListUnreadable(r.Context(), limit)
 	if err != nil {
 		httputil.InternalError(r.Context(), h.log, w, "failed to list unreadable copies", err)
@@ -191,7 +206,10 @@ func (h *Handler) handleListUnreadable(w http.ResponseWriter, r *http.Request) {
 // handlePurgeUnreadable deletes every copy that is encrypted with no key.
 // Accepts an optional batch_size query parameter.
 func (h *Handler) handlePurgeUnreadable(w http.ResponseWriter, r *http.Request) {
-	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get(paramBatchSize))
+	batchSize, ok := httputil.RequireQueryCount(w, r, paramBatchSize, 0, httputil.NoCeiling)
+	if !ok {
+		return
+	}
 
 	h.servePass(w, r, passEndpoint[batch.Summary]{
 		op:         "purge-unreadable",

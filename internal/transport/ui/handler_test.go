@@ -426,8 +426,8 @@ func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
 	}
 }
 
-// TestLogout_ClearsCookie verifies the logout clears cookie contract.
-// Asserts that status = , want 303.
+// TestLogout_ClearsCookie verifies logout clears both the session and the CSRF
+// cookie, each with the attributes login set it with.
 func TestLogout_ClearsCookie(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -442,12 +442,14 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
+	cleared := map[string]bool{}
 	for _, c := range resp.Cookies() {
-		if c.Name == sessionCookieName && c.MaxAge < 0 {
-			return // cookie cleared
-		}
+		cleared[c.Name] = c.MaxAge < 0 && c.Path == "/ui/" && c.SameSite == http.SameSiteStrictMode &&
+			c.HttpOnly == (c.Name == sessionCookieName)
 	}
-	t.Error("logout should clear session cookie")
+	if !cleared[sessionCookieName] || !cleared[csrfCookieName] {
+		t.Errorf("cleared = %v, want both the session and CSRF cookies cleared", cleared)
+	}
 }
 
 // TestDeriveSessionKey_Deterministic verifies the derive session key deterministic path by exercising bytes.Equal.

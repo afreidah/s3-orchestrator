@@ -122,5 +122,13 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 	h.log.InfoContext(r.Context(), "manual sync completed", "backend", req.Backend, "bucket", req.Bucket,
 		"imported", imported, "skipped", skipped)
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported, "skipped": skipped})
+	httputil.WriteJSON(w, http.StatusOK, syncResponse{OK: true, Imported: imported, Skipped: skipped})
+}
+
+// syncResponse answers a backend sync with how many objects it imported and
+// how many it skipped because the ledger already tracked them.
+type syncResponse struct {
+	OK       bool `json:"ok"`
+	Imported int  `json:"imported"`
+	Skipped  int  `json:"skipped"`
 }

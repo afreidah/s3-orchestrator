@@ -206,7 +206,8 @@ func (h *logLevelHook) Apply(_ context.Context, _, newCfg *config.Config) (HookS
 	if h.level == nil {
 		return HookSkipped, nil
 	}
-	h.level.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
+	level, _ := config.ParseLogLevel(newCfg.Server.LogLevel)
+	h.level.Set(level)
 	return HookApplied, nil
 }
 

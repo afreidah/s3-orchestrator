@@ -266,7 +266,11 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, httputil.MaxJSONBody) {
 		return
 	}
-	parsed := config.ParseLogLevel(req.Level)
+	parsed, err := config.ParseLogLevel(req.Level)
+	if err != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	h.d.LogLevel.Set(parsed)
 	h.log.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
 	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: h.levelName()})

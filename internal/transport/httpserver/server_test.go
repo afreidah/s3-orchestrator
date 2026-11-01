@@ -155,7 +155,8 @@ func resolvedInjector(t *testing.T, cfg *config.Config, mode config.Mode) (do.In
 	t.Helper()
 
 	var logLevel slog.LevelVar
-	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
+	level, _ := config.ParseLogLevel(cfg.Server.LogLevel)
+	logLevel.Set(level)
 	logBuffer := telemetry.NewLogBuffer()
 	slog.SetDefault(slog.New(telemetry.NewLogHandler(io.Discard, &logLevel, logBuffer)))
 
