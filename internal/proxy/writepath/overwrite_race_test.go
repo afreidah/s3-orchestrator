@@ -60,6 +60,9 @@ func raceFleet(t *testing.T) (*Coordinator, *sqlite.Store, *backendtest.InMemory
 		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(store.Close)
+	if err := store.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
 	if err := store.SyncQuotaLimits(ctx, []config.BackendConfig{
 		{Name: fastBackend, QuotaBytes: 1 << 30},
 		{Name: slowBackend, QuotaBytes: 1 << 30},

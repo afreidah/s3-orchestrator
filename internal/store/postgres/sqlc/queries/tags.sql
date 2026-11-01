@@ -25,11 +25,7 @@ INSERT INTO object_tags (object_key, tag_key, tag_value)
 VALUES ($1, $2, $3);
 
 -- name: DeleteObjectTags :exec
+-- One statement however many keys, matching how DeleteObjectCopies removes the
+-- locations.
 DELETE FROM object_tags
-WHERE object_key = $1;
-
--- name: DeleteObjectTagsForKeys :exec
--- Batch form for the multi-key delete path. One statement rather than a
--- statement per key, matching how DeleteObjectsByKeys removes the locations.
-DELETE FROM object_tags
-WHERE object_key = ANY(sqlc.arg(object_keys)::text[]);
+WHERE object_key = ANY(@object_keys::text[]);

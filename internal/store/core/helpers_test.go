@@ -329,25 +329,15 @@ func (t *quotaTxStub) InsertObjectTag(_ context.Context, _, tagKey, tagValue str
 }
 
 // DeleteObjectTags records which keys had their tags cleared, which is what
-// the cascade tests assert on.
-func (t *quotaTxStub) DeleteObjectTags(_ context.Context, objectKey string) error {
+// the cascade tests assert on, and each call as one statement so a test can
+// tell a batch clear apart from a loop of single clears.
+func (t *quotaTxStub) DeleteObjectTags(_ context.Context, objectKeys ...string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.tagClearErr != nil {
 		return t.tagClearErr
 	}
-	t.tagsCleared = append(t.tagsCleared, objectKey)
-	return nil
-}
-
-// DeleteObjectTagsForKeys records the batch clear as one call so a test can
-// tell it apart from a loop of single clears.
-func (t *quotaTxStub) DeleteObjectTagsForKeys(_ context.Context, objectKeys []string) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.tagClearErr != nil {
-		return t.tagClearErr
-	}
+	t.tagsCleared = append(t.tagsCleared, objectKeys...)
 	t.tagKeysCleared = append(t.tagKeysCleared, slices.Clone(objectKeys))
 	return nil
 }
@@ -358,7 +348,7 @@ func (t *quotaTxStub) AcquireKeyLock(context.Context, string) error { return t.k
 
 // GetExistingCopiesForUpdate returns the seeded copy set, which is how a test
 // says whether the key holds anything.
-func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	return t.existingCopies, t.existingErr
 }
 

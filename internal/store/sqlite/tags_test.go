@@ -247,15 +247,15 @@ func TestObjectTags_ReadErrorOnClosedStore(t *testing.T) {
 	}
 }
 
-// TestObjectTags_BatchClearEmptyList verifies the batch clear short-circuits
-// on an empty list rather than issuing a statement that matches nothing.
+// TestObjectTags_BatchClearEmptyList verifies a clear of no keys succeeds,
+// matching nothing.
 func TestObjectTags_BatchClearEmptyList(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
 	if err := s.WithTx(ctx, func(ctx context.Context, tx core.TxAdapter) error {
-		return tx.DeleteObjectTagsForKeys(ctx, nil)
+		return tx.DeleteObjectTags(ctx)
 	}); err != nil {
 		t.Errorf("empty batch clear should be a no-op, got %v", err)
 	}
@@ -303,9 +303,10 @@ func TestObjectTags_UntaggedObjectReadsEmpty(t *testing.T) {
 	}
 }
 
-// TestObjectTags_DeleteRemovesSet covers the explicit delete, and the AWS rule
-// that deleting an already-empty set succeeds rather than erroring:
-// DeleteObjectTagging against an untagged object returns 204.
+// TestObjectTags_DeleteRemovesSet covers replacing the set with an empty one,
+// which is how a delete reaches the store, and the AWS rule that deleting an
+// already-empty set succeeds rather than erroring: DeleteObjectTagging against
+// an untagged object returns 204.
 func TestObjectTags_DeleteRemovesSet(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -315,8 +316,8 @@ func TestObjectTags_DeleteRemovesSet(t *testing.T) {
 	if err := s.ReplaceObjectTags(ctx, "bucket/cleared", []core.Tag{{Key: "k", Value: "v"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
-	if err := s.DeleteObjectTags(ctx, "bucket/cleared"); err != nil {
-		t.Fatalf("DeleteObjectTags: %v", err)
+	if err := s.ReplaceObjectTags(ctx, "bucket/cleared", nil); err != nil {
+		t.Fatalf("ReplaceObjectTags(nil): %v", err)
 	}
 
 	got, err := s.GetObjectTags(ctx, "bucket/cleared")
@@ -327,7 +328,7 @@ func TestObjectTags_DeleteRemovesSet(t *testing.T) {
 		t.Errorf("expected the set removed, got %v", tagNames(got))
 	}
 
-	if err := s.DeleteObjectTags(ctx, "bucket/cleared"); err != nil {
+	if err := s.ReplaceObjectTags(ctx, "bucket/cleared", nil); err != nil {
 		t.Errorf("deleting an already-empty set should be a no-op, got %v", err)
 	}
 }

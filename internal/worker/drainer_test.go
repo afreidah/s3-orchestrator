@@ -83,6 +83,9 @@ func newDrainStore(t *testing.T, backends ...string) *sqlite.Store {
 		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(s.Close)
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
 	cfgs := make([]config.BackendConfig, len(backends))
 	for i, name := range backends {
 		cfgs[i] = config.BackendConfig{Name: name, QuotaBytes: 1 << 30}

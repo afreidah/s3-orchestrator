@@ -111,10 +111,7 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 
 // CreateGrant gives a user access to one resource.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
-	if err := s.queries.CreateGrant(ctx, grantParams(g)); err != nil {
-		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
-	}
-	return nil
+	return wrapErr(s.queries.CreateGrant(ctx, grantParams(g)), "create grant "+g.UserID+" -> "+g.Resource.String())
 }
 
 // grantParams is the column set both grant writes take.
@@ -157,10 +154,7 @@ func (s *Store) RenameUser(ctx context.Context, id, name string) error {
 // grant when it is absent. The upsert is what lets a caller declare access
 // without first asking whether it is already there.
 func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
-	if err := s.queries.SetGrant(ctx, db.SetGrantParams(grantParams(g))); err != nil {
-		return fmt.Errorf("set grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
-	}
-	return nil
+	return wrapErr(s.queries.SetGrant(ctx, db.SetGrantParams(grantParams(g))), "set grant "+g.UserID+" -> "+g.Resource.String())
 }
 
 // DeleteBucket removes a stored bucket. Objects under it are unaffected, so a
@@ -193,14 +187,11 @@ func (s *Store) DeleteCredential(ctx context.Context, accessKeyID string) error 
 // DeleteGrant withdraws a user's access to one resource, leaving its other
 // grants in place.
 func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
-	if err := s.queries.DeleteGrant(ctx, db.DeleteGrantParams{
+	return wrapErr(s.queries.DeleteGrant(ctx, db.DeleteGrantParams{
 		UserID:       userID,
 		ResourceKind: string(r.Kind),
 		ResourceName: r.Name,
-	}); err != nil {
-		return fmt.Errorf("delete grant %s -> %s %s: %w", userID, r.Kind, r.Name, err)
-	}
-	return nil
+	}), "delete grant "+userID+" -> "+r.String())
 }
 
 // -------------------------------------------------------------------------

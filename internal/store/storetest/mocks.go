@@ -6,7 +6,6 @@
 //	mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 //
 
-// Package storetest is a generated GoMock package.
 package storetest
 
 import (
@@ -509,20 +508,6 @@ func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, loc *core.
 func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, loc, keepAtLeast, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, loc, keepAtLeast, reason)
-}
-
-// DeleteObjectTags mocks base method.
-func (m *MockMetadataStore) DeleteObjectTags(ctx context.Context, key string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObjectTags", ctx, key)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteObjectTags indicates an expected call of DeleteObjectTags.
-func (mr *MockMetadataStoreMockRecorder) DeleteObjectTags(ctx, key any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectTags), ctx, key)
 }
 
 // DeleteObjectsBatch mocks base method.

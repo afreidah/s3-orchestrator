@@ -198,8 +198,8 @@ func requireObjectExists(ctx context.Context, tx TxAdapter, key string) error {
 // an object and its tags commit together rather than as two calls that can
 // half-fail.
 func replaceObjectTagsTx(ctx context.Context, tx TxAdapter, key string, tags []Tag) error {
-	if err := tx.DeleteObjectTags(ctx, key); err != nil {
-		return fmt.Errorf("clear existing tags: %w", err)
+	if err := clearTagsForKey(ctx, tx, key); err != nil {
+		return err
 	}
 	for _, t := range tags {
 		if err := tx.InsertObjectTag(ctx, key, t.Key, t.Value); err != nil {
@@ -210,46 +210,16 @@ func replaceObjectTagsTx(ctx context.Context, tx TxAdapter, key string, tags []T
 }
 
 // -------------------------------------------------------------------------
-// DELETE TAGS
-// -------------------------------------------------------------------------
-
-// DeleteObjectTags removes an object's whole tag set. Deleting a set that is
-// already empty is a no-op rather than an error: AWS returns 204 for
-// DeleteObjectTagging against an untagged object.
-func (o TxOps) DeleteObjectTags(ctx context.Context, key string) error {
-	return o.runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
-		if err := tx.AcquireKeyLock(ctx, key); err != nil {
-			return err
-		}
-		if err := requireObjectExists(ctx, tx, key); err != nil {
-			return err
-		}
-		return tx.DeleteObjectTags(ctx, key)
-	})
-}
-
-// -------------------------------------------------------------------------
 // CASCADE
 // -------------------------------------------------------------------------
 
-// clearTagsForKey drops a key's tags inside a transaction that is removing or
-// replacing the object; callers hold the key lock. object_tags has no foreign
-// key to cascade from, so every path that puts a new object at a key or removes
-// its last copy must call this.
-func clearTagsForKey(ctx context.Context, tx TxAdapter, key string) error {
-	if err := tx.DeleteObjectTags(ctx, key); err != nil {
+// clearTagsForKey drops the keys' tags inside a transaction that is removing or
+// replacing their objects; callers hold the key locks. object_tags has no
+// foreign key to cascade from, so every path that puts a new object at a key or
+// removes its last copy must call this.
+func clearTagsForKey(ctx context.Context, tx TxAdapter, keys ...string) error {
+	if err := tx.DeleteObjectTags(ctx, keys...); err != nil {
 		return fmt.Errorf("clear object tags: %w", err)
-	}
-	return nil
-}
-
-// clearTagsForKeys is the batch form, for the multi-key delete path.
-func clearTagsForKeys(ctx context.Context, tx TxAdapter, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	if err := tx.DeleteObjectTagsForKeys(ctx, keys); err != nil {
-		return fmt.Errorf("clear object tags for keys: %w", err)
 	}
 	return nil
 }

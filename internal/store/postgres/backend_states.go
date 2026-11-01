@@ -54,7 +54,7 @@ func (s *Store) StartDrain(ctx context.Context, backendName string) (bool, error
 		BackendName: backendName,
 		Draining:    int64(core.FlagDraining),
 		DrainFlags:  int64(core.DrainFlags),
-		Busy:        int64(core.FlagDraining | core.FlagDrained),
+		Busy:        int64(core.DrainBusy),
 	})
 	return changed(n, err, "start drain")
 }

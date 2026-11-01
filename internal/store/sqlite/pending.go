@@ -31,6 +31,7 @@ import (
 // caller's cue to try the next candidate. SQLite serializes writers, so the
 // headroom it reads already counts every claim committed before it.
 func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.PendingObject, accepts core.BackendFlags) (bool, error) {
+	etag, contentType, userMetadata := identityColumns(p.Identity)
 	return a.execChanged(ctx, "insert pending object",
 		// created_at is set here rather than left to the column default: the
 		// default renders milliseconds while every other write renders
@@ -50,7 +51,7 @@ func (a *sqliteTxAdapter) InsertPendingIfFits(ctx context.Context, p *core.Pendi
 		p.Encrypted, p.EncryptionKey, nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash),
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
-		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
+		etag, contentType, userMetadata,
 		now(), string(p.RoleOrDefault()), nullableString(core.EncodeTags(p.Tags)),
 		p.BackendName, accepts, p.SizeBytes,
 	)
@@ -104,7 +105,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		p.Tags, _ = core.DecodeTags(nullStringValue(tagging))
 		var err error
 		if p.CreatedAt, err = parseTime(createdAt); err != nil {
-			return core.PendingObject{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.PendingObject{}, err
 		}
 		return p, nil
 	})

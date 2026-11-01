@@ -189,7 +189,7 @@ func TestStoreInt_ObjectTags_BatchClearEmptyList(t *testing.T) {
 	ctx := context.Background()
 
 	if err := s.WithTx(ctx, func(ctx context.Context, tx core.TxAdapter) error {
-		return tx.DeleteObjectTagsForKeys(ctx, nil)
+		return tx.DeleteObjectTags(ctx)
 	}); err != nil {
 		t.Errorf("empty batch clear should succeed, got %v", err)
 	}
@@ -252,20 +252,21 @@ func TestStoreInt_ObjectTags_UntaggedReadsEmpty(t *testing.T) {
 	assertNoTags(t, s, key, "expected no tags on an untagged object")
 }
 
-// TestStoreInt_ObjectTags_DeleteRemovesSet covers the explicit delete and the
-// AWS rule that deleting an already-empty set succeeds rather than erroring.
+// TestStoreInt_ObjectTags_DeleteRemovesSet covers replacing the set with an
+// empty one, which is how a delete reaches the store, and the AWS rule that
+// deleting an already-empty set succeeds rather than erroring.
 func TestStoreInt_ObjectTags_DeleteRemovesSet(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "tags-delete")
 
 	seedTaggedObject(t, s, key, "backend-a", []core.Tag{{Key: "k", Value: "v"}})
-	if err := s.DeleteObjectTags(ctx, key); err != nil {
-		t.Fatalf("DeleteObjectTags: %v", err)
+	if err := s.ReplaceObjectTags(ctx, key, nil); err != nil {
+		t.Fatalf("ReplaceObjectTags(nil): %v", err)
 	}
 	assertNoTags(t, s, key, "expected the set removed")
 
-	if err := s.DeleteObjectTags(ctx, key); err != nil {
+	if err := s.ReplaceObjectTags(ctx, key, nil); err != nil {
 		t.Errorf("deleting an already-empty set should be a no-op, got %v", err)
 	}
 }

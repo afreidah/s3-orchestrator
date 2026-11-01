@@ -311,6 +311,25 @@ func TestStoreInt_RecordObjectIdentity_SkipsAReplacedRead(t *testing.T) {
 	}
 }
 
+// TestStoreInt_BatchReadsReturnWholeRows verifies the replication scans, the
+// scrub queue and the form listing return each copy exactly as the read path
+// does.
+func TestStoreInt_BatchReadsReturnWholeRows(t *testing.T) {
+	s := adapterPgStore(t)
+	managed, unmanaged := uniqueKey(t, "managed"), uniqueKey(t, "unmanaged")
+	if err := s.SyncQuotaLimits(context.Background(), []config.BackendConfig{
+		{Name: managed, QuotaBytes: 1 << 30},
+		{Name: unmanaged, QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = s.DeleteBackendData(context.Background(), managed)
+		_ = s.DeleteBackendData(context.Background(), unmanaged)
+	})
+	storetest.CheckWholeRowReads(t, s, uniqueKey(t, "k"), managed, unmanaged)
+}
+
 // scrubAllCutoff is a re-verification floor far enough ahead that every row a
 // test wrote is due. Tests that exercise the floor itself pass their own.
 func scrubAllCutoff() time.Time {

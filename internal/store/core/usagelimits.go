@@ -307,6 +307,10 @@ const UsageBucketSize = time.Hour
 // UsageRetention is how long usage buckets are kept.
 const UsageRetention = 100 * 24 * time.Hour
 
+// UsageFlushRetention is how long an applied batch's id is kept, past the 35
+// days its staged copy can live in Redis.
+const UsageFlushRetention = 40 * 24 * time.Hour
+
 // UsageBucket returns the start of the UTC bucket t falls in. Usage is
 // recorded per bucket, independent of any backend's cycle.
 func UsageBucket(t time.Time) time.Time {

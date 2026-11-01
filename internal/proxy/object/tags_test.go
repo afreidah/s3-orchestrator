@@ -287,12 +287,13 @@ func TestPutObjectTags_SurfacesStoreError(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectTags_PassesThrough verifies the delete reaches the store.
+// TestDeleteObjectTags_PassesThrough verifies the delete reaches the store as
+// a replacement with an empty set.
 func TestDeleteObjectTags_PassesThrough(t *testing.T) {
 	t.Parallel()
 	m, store := newTagTestManager(t)
 
-	store.EXPECT().DeleteObjectTags(gomock.Any(), "k").Return(nil)
+	store.EXPECT().ReplaceObjectTags(gomock.Any(), "k", nil).Return(nil)
 
 	if err := m.DeleteObjectTags(context.Background(), "k"); err != nil {
 		t.Errorf("DeleteObjectTags: %v", err)
@@ -305,7 +306,7 @@ func TestDeleteObjectTags_SurfacesStoreError(t *testing.T) {
 	t.Parallel()
 	m, store := newTagTestManager(t)
 
-	store.EXPECT().DeleteObjectTags(gomock.Any(), "gone").Return(core.ErrObjectNotFound)
+	store.EXPECT().ReplaceObjectTags(gomock.Any(), "gone", nil).Return(core.ErrObjectNotFound)
 
 	if err := m.DeleteObjectTags(context.Background(), "gone"); !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("error = %v, want ErrObjectNotFound", err)

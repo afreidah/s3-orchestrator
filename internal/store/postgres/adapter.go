@@ -102,14 +102,17 @@ func (a *pgTxAdapter) DeletePending(ctx context.Context, intentID string) error 
 // OBJECTS TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// GetExistingCopiesForUpdate returns every copy of a key, taking row
-// locks suitable for an in-flight overwrite or promotion.
-func (a *pgTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]core.ExistingCopy, error) {
-	rows, err := a.q.GetExistingCopiesForUpdate(ctx, objectKey)
+// GetExistingCopiesForUpdate returns every copy of the keys, taking row locks
+// suitable for an in-flight overwrite, promotion or delete.
+func (a *pgTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKeys ...string) ([]core.ExistingCopy, error) {
+	if len(objectKeys) == 0 {
+		return nil, nil
+	}
+	rows, err := a.q.GetExistingCopiesForUpdate(ctx, objectKeys)
 	if err != nil {
 		return nil, fmt.Errorf("query existing copies: %w", err)
 	}
-	return existingCopiesFromRows(rows), nil
+	return mapSlice(rows, existingCopyFromRow), nil
 }
 
 // InsertObjectLocation inserts an object_locations row carrying any
@@ -121,9 +124,10 @@ func (a *pgTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Object
 	return nil
 }
 
-// DeleteObjectCopies removes every object_locations row for the key.
-func (a *pgTxAdapter) DeleteObjectCopies(ctx context.Context, objectKey string) error {
-	if err := a.q.DeleteObjectCopies(ctx, objectKey); err != nil {
+// DeleteObjectCopies removes every object_locations row for the keys, which
+// GetExistingCopiesForUpdate has already locked.
+func (a *pgTxAdapter) DeleteObjectCopies(ctx context.Context, objectKeys ...string) error {
+	if err := a.q.DeleteObjectCopies(ctx, objectKeys); err != nil {
 		return fmt.Errorf("delete object copies: %w", err)
 	}
 	return nil
@@ -143,7 +147,7 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 	if err != nil {
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
-	return &toWholeObjectLocations([]db.ObjectLocation{row})[0], true, nil
+	return new(toObjectLocation(&row)), true, nil
 }
 
 // ListedPathStates reports what the ledger says about each listed path on the
@@ -217,18 +221,11 @@ func (a *pgTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey, ta
 	return nil
 }
 
-// DeleteObjectTags removes every tag row for one object key.
-func (a *pgTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
-	if err := a.q.DeleteObjectTags(ctx, objectKey); err != nil {
+// DeleteObjectTags removes every tag row for any of the keys in one
+// statement.
+func (a *pgTxAdapter) DeleteObjectTags(ctx context.Context, objectKeys ...string) error {
+	if err := a.q.DeleteObjectTags(ctx, objectKeys); err != nil {
 		return fmt.Errorf("delete object tags: %w", err)
-	}
-	return nil
-}
-
-// DeleteObjectTagsForKeys removes every tag row for any of the given keys.
-func (a *pgTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error {
-	if err := a.q.DeleteObjectTagsForKeys(ctx, objectKeys); err != nil {
-		return fmt.Errorf("delete object tags for keys: %w", err)
 	}
 	return nil
 }
@@ -245,42 +242,6 @@ func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *
 		return false, fmt.Errorf("insert object location if not exists: %w", err)
 	}
 	return inserted, nil
-}
-
-// GetCopiesForKeysForUpdate returns every (key, backend, size) row
-// matching any key in the supplied list, locked FOR UPDATE.
-func (a *pgTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	rows, err := a.q.GetCopiesForKeysForUpdate(ctx, keys)
-	if err != nil {
-		return nil, fmt.Errorf("get copies for keys: %w", err)
-	}
-	return mapSlice(rows, keyedExistingCopyFromRow), nil
-}
-
-// keyedExistingCopyFromRow converts a sqlc GetCopiesForKeysForUpdate row
-// to core.KeyedExistingCopy.
-func keyedExistingCopyFromRow(r *db.GetCopiesForKeysForUpdateRow) core.KeyedExistingCopy {
-	return core.KeyedExistingCopy{
-		ObjectKey:   r.ObjectKey,
-		BackendName: r.BackendName,
-		StorageKey:  r.StorageKey,
-		SizeBytes:   r.SizeBytes,
-	}
-}
-
-// DeleteObjectsByKeys bulk-deletes object_locations rows for every
-// supplied key.
-func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	if err := a.q.DeleteObjectsByKeys(ctx, keys); err != nil {
-		return fmt.Errorf("delete objects by keys: %w", err)
-	}
-	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -302,13 +263,9 @@ func (a *pgTxAdapter) InsertCleanup(ctx context.Context, c *core.CleanupRequest)
 		return core.CleanupItem{}, fmt.Errorf("insert cleanup row: %w", err)
 	}
 	return core.CleanupItem{
-		ID:          row.ID,
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  c.StorageKey,
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-		Claim:       &core.CleanupClaim{At: row.ClaimedAt.Time, By: a.instanceID},
+		CleanupRequest: *c,
+		ID:             row.ID,
+		Claim:          &core.CleanupClaim{At: row.ClaimedAt.Time, By: a.instanceID},
 	}, nil
 }
 

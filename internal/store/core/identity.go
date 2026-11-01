@@ -51,6 +51,29 @@ func decodeJSONColumn[T any](b []byte, what string) (T, error) {
 	return v, nil
 }
 
+// IdentityColumns renders an optional identity as the values of its three
+// columns, each empty for a nil identity or an absent field, which both engines
+// store as NULL. A marshal failure would mean a map[string]string that cannot
+// be JSON, which does not exist, so the metadata stays empty rather than
+// failing a write over metadata a later read can re-learn.
+func IdentityColumns(id *ObjectIdentity) (etag, contentType string, userMetadata []byte) {
+	if id == nil {
+		return "", "", nil
+	}
+	userMetadata, _ = EncodeUserMetadata(id.UserMetadata)
+	return id.ETag, id.ContentType, userMetadata
+}
+
+// ListedIdentity builds the identity a listing row carries: the ETag alone,
+// which is all a Contents entry reports. An empty ETag means the object has
+// not learned one yet, and the entry carries none rather than a wrong one.
+func ListedIdentity(etag string) *ObjectIdentity {
+	if etag == "" {
+		return nil
+	}
+	return &ObjectIdentity{ETag: etag}
+}
+
 // IdentityFromColumns assembles the identity a row carries, or nil when the
 // row carries none. An ETag alone is enough to build one: it is the field a
 // read cannot answer without, and the other two are legitimately absent on an

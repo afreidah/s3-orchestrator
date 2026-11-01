@@ -54,6 +54,9 @@ func newTestStore(t *testing.T) *Store {
 		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
 
 	// Seed a backend quota entry for tests that need one.
 	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
@@ -643,6 +646,29 @@ func TestListObjects_ZeroMaxKeysIsAnEmptyPage(t *testing.T) {
 		if res.KeyCount() != 0 || res.IsTruncated || res.NextContinuationToken != "" {
 			t.Errorf("ListObjects(delimiter=%q, 0) = %+v, want an empty untruncated page", delimiter, res)
 		}
+	}
+}
+
+// TestListObjects_PrefixIsCaseSensitive verifies a prefix matches only keys
+// that start with it byte for byte, as S3 and the Postgres engine match: a
+// listing or count under bucket/photos/ leaves bucket/Photos/ out.
+func TestListObjects_PrefixIsCaseSensitive(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	mustRecordObject(t, s, "bucket/photos/a", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/Photos/b", "backend-a", 100)
+
+	for _, delimiter := range []string{"", "/"} {
+		res, err := s.ListObjects(t.Context(), "bucket/photos/", delimiter, "", 10)
+		if err != nil {
+			t.Fatalf("ListObjects(delimiter=%q): %v", delimiter, err)
+		}
+		if len(res.Objects) != 1 || res.Objects[0].ObjectKey != "bucket/photos/a" {
+			t.Errorf("ListObjects(delimiter=%q) = %+v, want only bucket/photos/a", delimiter, res.Objects)
+		}
+	}
+	if n, err := s.CountObjectsByPrefix(t.Context(), "bucket/photos/"); err != nil || n != 1 {
+		t.Errorf("CountObjectsByPrefix = %d, %v; want 1", n, err)
 	}
 }
 
@@ -1631,6 +1657,13 @@ func TestGetActiveMultipartCounts(t *testing.T) {
 // -------------------------------------------------------------------------
 // REPLICATION
 // -------------------------------------------------------------------------
+
+// TestBatchReads_ReturnWholeRows verifies the replication scans, the scrub
+// queue and the form listing return each copy exactly as the read path does.
+func TestBatchReads_ReturnWholeRows(t *testing.T) {
+	t.Parallel()
+	storetest.CheckWholeRowReads(t, newTestStore(t), "bucket/whole", "backend-a", "backend-b")
+}
 
 // TestReplication_UnderAndOver verifies detection of under- and over-replicated objects.
 func TestReplication_UnderAndOver(t *testing.T) {
@@ -2876,7 +2909,7 @@ func TestCorruptTimestamp_GetAllObjectLocations(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from corrupt timestamp, got nil")
 	}
-	if !strings.Contains(err.Error(), "invalid created_at timestamp") {
+	if !strings.Contains(err.Error(), `invalid timestamp "not-a-date"`) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

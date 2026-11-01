@@ -30,6 +30,9 @@ func newBenchStore(b *testing.B) *Store {
 		b.Fatalf("NewStore: %v", err)
 	}
 	b.Cleanup(func() { s.Close() })
+	if err := s.RunMigrations(ctx); err != nil {
+		b.Fatalf("RunMigrations: %v", err)
+	}
 	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{{Name: "backend-a", QuotaBytes: 1 << 40}}); err != nil {
 		b.Fatalf("SyncQuotaLimits: %v", err)
 	}

@@ -210,13 +210,13 @@ func (q *Queries) PruneUsageBuckets(ctx context.Context, arg PruneUsageBucketsPa
 }
 
 const pruneUsageFlushes = `-- name: PruneUsageFlushes :exec
-DELETE FROM usage_flushes WHERE applied_at < NOW() - INTERVAL '40 days'
+DELETE FROM usage_flushes WHERE applied_at < $1
 `
 
-// Drops ids older than any batch that can still be staged, whose keys expire
-// after 35 days.
-func (q *Queries) PruneUsageFlushes(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, pruneUsageFlushes)
+// Drops ids older than any batch that can still be staged; the cutoff comes
+// from core.UsageFlushRetention.
+func (q *Queries) PruneUsageFlushes(ctx context.Context, cutoff pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, pruneUsageFlushes, cutoff)
 	return err
 }
 

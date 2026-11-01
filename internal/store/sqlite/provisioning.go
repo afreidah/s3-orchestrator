@@ -169,9 +169,10 @@ func grantArgs(g *core.Grant) []any {
 	return []any{g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now()}
 }
 
-// grantLabel names a grant in an error as "user -> kind name".
+// grantLabel names a grant in an error as "user -> resource", the form core
+// uses.
 func grantLabel(userID string, r core.Resource) string {
-	return userID + " -> " + string(r.Kind) + " " + r.Name
+	return userID + " -> " + r.String()
 }
 
 // DeleteBucket removes a stored bucket. Objects under it are unaffected, so a
@@ -257,7 +258,9 @@ func scanCredential(rows *sql.Rows) (core.Credential, error) {
 	if c.CreatedAt, err = parseTime(created); err != nil {
 		return core.Credential{}, fmt.Errorf("parse credential created_at: %w", err)
 	}
-	c.LastUsedAt = parseNullableTime(lastUsed)
+	if c.LastUsedAt, err = parseNullableTime(lastUsed); err != nil {
+		return core.Credential{}, err
+	}
 	return c, nil
 }
 

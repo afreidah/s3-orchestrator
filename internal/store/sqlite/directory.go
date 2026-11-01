@@ -28,7 +28,7 @@ import (
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	stats, err := queryDirectoryStats(ctx, s, prefix, escapedPrefix)
 	if err != nil {
@@ -120,7 +120,7 @@ func queryDirectFiles(ctx context.Context, s *Store, prefix, escapedPrefix, star
 		f.Backends = splitAndSort(backendList)
 		var err error
 		if f.CreatedAt, err = parseTime(createdAt); err != nil {
-			return core.DirFile{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.DirFile{}, err
 		}
 		return f, nil
 	})

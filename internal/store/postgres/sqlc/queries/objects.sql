@@ -14,17 +14,19 @@
 SELECT pg_advisory_xact_lock(hashtext($1));
 
 -- name: GetExistingCopiesForUpdate :many
--- storage_key comes along because the caller that deletes these rows also
--- deletes their bytes, and a per-write path cannot be derived from the object
--- key.
-SELECT backend_name, storage_key, size_bytes, created_at, form
+-- Every copy of the listed keys, locked so the same transaction can delete the
+-- rows and move their quota. storage_key comes along because the caller that
+-- deletes these rows also deletes their bytes, and a per-write path cannot be
+-- derived from the object key.
+SELECT object_key, backend_name, storage_key, size_bytes, created_at, form
 FROM object_locations
-WHERE object_key = $1
+WHERE object_key = ANY(@object_keys::text[])
 FOR UPDATE;
 
 -- name: DeleteObjectCopies :exec
+-- The caller has already locked the rows through GetExistingCopiesForUpdate.
 DELETE FROM object_locations
-WHERE object_key = $1;
+WHERE object_key = ANY(@object_keys::text[]);
 
 -- name: InsertObjectLocation :exec
 -- A placed copy carries the object's write time, its compression probe and
@@ -134,7 +136,7 @@ WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
 -- tag_count serves the read path's tagging-count header without a second
 -- query. The object_tags primary key leads with object_key, so the count is an
 -- index-only scan over the one key's rows.
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at, managed,
+SELECT sqlc.embed(object_locations),
     (SELECT count(*) FROM object_tags WHERE object_tags.object_key = $1) AS tag_count
 FROM object_locations
 WHERE object_key = $1
@@ -292,7 +294,7 @@ WHERE object_key = sqlc.arg(object_key) AND backend_name = sqlc.arg(backend_name
 -- egress scales with how often the scrubber runs rather than with how stale the
 -- data is. The cutoff arrives as a timestamp rather than an interval so the
 -- comparison stays sargable against the ordering expression.
-SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT *
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
@@ -334,23 +336,6 @@ WHERE copy.object_key = sqlc.arg(object_key)
               WHERE read_copy.object_key = sqlc.arg(object_key)
                 AND read_copy.backend_name = sqlc.arg(backend_name)
                 AND read_copy.storage_key = sqlc.arg(storage_key));
-
--- name: GetCopiesForKeysForUpdate :many
--- Returns (object_key, backend_name, size_bytes) for every row matching
--- a key in the supplied list, locked FOR UPDATE so the same transaction
--- can delete the rows and decrement the corresponding backend quotas
--- atomically. Used by the batch-delete path so an N-key request is one
--- transaction instead of N.
-SELECT object_key, backend_name, storage_key, size_bytes
-FROM object_locations
-WHERE object_key = ANY(@object_keys::text[])
-FOR UPDATE;
-
--- name: DeleteObjectsByKeys :exec
--- Deletes every row whose object_key is in the supplied list. Caller
--- must have already locked the rows via GetCopiesForKeysForUpdate.
-DELETE FROM object_locations
-WHERE object_key = ANY(@object_keys::text[]);
 
 -- name: GetObjectBackendsForKeys :many
 -- Returns (object_key, backend_name) for every object_locations row whose

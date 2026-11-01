@@ -6,7 +6,6 @@
 //	mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,RuntimeOps,Mover,Replicator,Rebalancer,OverReplicationOps,ScrubberOps,UnhashedLister,AdvisoryLocker,RewriteStore,ProvisioningStore,NamespaceCounter,RegistryPublisher
 //
 
-// Package opstest is a generated GoMock package.
 package opstest
 
 import (

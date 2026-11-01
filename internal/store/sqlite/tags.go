@@ -31,20 +31,11 @@ func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object tags: %w", err)
 	}
-	tags, err := collectRows(rows, "object tags", func(rows *sql.Rows) (core.Tag, error) {
+	return collectRows(rows, "object tags", func(rows *sql.Rows) (core.Tag, error) {
 		var t core.Tag
 		if err := rows.Scan(&t.Key, &t.Value); err != nil {
 			return core.Tag{}, fmt.Errorf("failed to scan object tag: %w", err)
 		}
 		return t, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	// An untagged object has an empty set, not a nil one: the caller renders
-	// this straight into a TagSet and a nil would encode as absent.
-	if tags == nil {
-		tags = []core.Tag{}
-	}
-	return tags, nil
 }

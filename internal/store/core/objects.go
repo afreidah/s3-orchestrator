@@ -177,51 +177,14 @@ func discardOvertakenWrite(ctx context.Context, tx TxAdapter, req *RecordObjectR
 // -------------------------------------------------------------------------
 
 // DeleteObject removes all copies of an object and returns the cleanup rows it
-// queued for their bytes. Returns ErrObjectNotFound if the object doesn't
-// exist.
+// queued for their bytes. Every copy queues a row, so a delete that queued
+// none found no object and returns ErrObjectNotFound.
 func (o TxOps) DeleteObject(ctx context.Context, key string) ([]CleanupItem, error) {
-	return WithTxVal(ctx, o.runner, func(ctx context.Context, tx TxAdapter) ([]CleanupItem, error) {
-		return deleteObjectTx(ctx, tx, key)
-	})
-}
-
-// deleteObjectTx is the transactional body of DeleteObject: clear the key's
-// copies, its tags and its intents, debit what those copies held, and queue
-// their bytes.
-func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) ([]CleanupItem, error) {
-	// The key lock comes before the row read on every path, because tagging
-	// calls touch only object_tags and are excluded by the key lock alone.
-	// Taking it in the same order everywhere prevents deadlock.
-	if err := tx.AcquireKeyLock(ctx, key); err != nil {
-		return nil, err
-	}
-	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	if len(existing) == 0 {
+	cleanup, err := o.DeleteObjectsBatch(ctx, []string{key})
+	if err == nil && len(cleanup) == 0 {
 		return nil, ErrObjectNotFound
 	}
-	if err := tx.DeleteObjectCopies(ctx, key); err != nil {
-		return nil, fmt.Errorf("delete object copies: %w", err)
-	}
-	if err := clearTagsForKey(ctx, tx, key); err != nil {
-		return nil, err
-	}
-	// A delete keeps no intents: an upload still running is placing a copy of
-	// an object that no longer exists.
-	superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	deltas := make(quotaDeltas, len(existing))
-	for _, ec := range existing {
-		deltas.add(ec.BackendName, -ec.SizeBytes)
-	}
-	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
-		return nil, err
-	}
-	return enqueueRemoved(ctx, tx, key, CleanupReasonDeleted, append(removedFromExisting(existing), superseded...))
+	return cleanup, err
 }
 
 // -------------------------------------------------------------------------
@@ -239,27 +202,28 @@ func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) ([]Cleanup
 	})
 }
 
-// deleteObjectsBatchTx is the transactional body of DeleteObjectsBatch. Each
-// removed key's intents are cleared as DeleteObject clears them, so an upload
-// still running cannot commit a copy of an object the batch removed.
+// deleteObjectsBatchTx is the transactional body of DeleteObjectsBatch: clear
+// each key's copies, tags and intents, debit what the copies held, and queue
+// their bytes. A delete keeps no intents, since an upload still running is
+// placing a copy of an object that no longer exists.
 func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]CleanupItem, error) {
+	// The key locks come before the row read on every path, because tagging
+	// calls touch only object_tags and are excluded by the key lock alone.
+	// Taking them in the same order everywhere prevents deadlock.
 	if err := lockInOrder(ctx, keys, tx.AcquireKeyLock); err != nil {
 		return nil, err
 	}
-	rows, err := tx.GetCopiesForKeysForUpdate(ctx, keys)
+	rows, err := tx.GetExistingCopiesForUpdate(ctx, keys...)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	if err := tx.DeleteObjectsByKeys(ctx, keys); err != nil {
-		return nil, fmt.Errorf("delete object copies by keys: %w", err)
+	if err := tx.DeleteObjectCopies(ctx, keys...); err != nil {
+		return nil, fmt.Errorf("delete object copies: %w", err)
 	}
-	if err := clearTagsForKeys(ctx, tx, keys); err != nil {
+	if err := clearTagsForKey(ctx, tx, keys...); err != nil {
 		return nil, err
 	}
 	removed, perKey := splitRemovedCopies(rows, len(keys))
-	if err := chargeStripesByKey(ctx, tx, perKey); err != nil {
-		return nil, err
-	}
 	var cleanup []CleanupItem
 	for _, key := range slices.Sorted(maps.Keys(removed)) {
 		superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
@@ -272,13 +236,16 @@ func deleteObjectsBatchTx(ctx context.Context, tx TxAdapter, keys []string) ([]C
 		}
 		cleanup = append(cleanup, queued...)
 	}
+	if err := chargeStripesByKey(ctx, tx, perKey); err != nil {
+		return nil, err
+	}
 	return cleanup, nil
 }
 
 // splitRemovedCopies folds the removed rows into the two views the batch needs:
 // the bytes each key queues, and the per-key totals the stripe charge uses,
 // since each key's bytes belong on the stripe its own name selects.
-func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]removedCopy, map[string]quotaDeltas) {
+func splitRemovedCopies(rows []ExistingCopy, keyCount int) (map[string][]removedCopy, map[string]quotaDeltas) {
 	removed := make(map[string][]removedCopy, keyCount)
 	perKey := make(map[string]quotaDeltas, keyCount)
 	for _, r := range rows {

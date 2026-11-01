@@ -60,24 +60,28 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(timestampFormat)
 }
 
-// parseTime parses a stored timestamp. Reads accept RFC3339Nano rather than the
-// canonical format so rows written before this change, and rows written by a
-// column DEFAULT, still parse.
+// parseTime parses a stored timestamp, naming the value it could not read.
+// Reads accept RFC3339Nano rather than the canonical format so rows written
+// before this change, and rows written by a column DEFAULT, still parse.
 func parseTime(s string) (time.Time, error) {
-	return time.Parse(time.RFC3339Nano, s)
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid timestamp %q: %w", s, err)
+	}
+	return t, nil
 }
 
-// parseNullableTime returns a *time.Time parsed from a nullable timestamp
-// column, or nil when the column was NULL or unparseable.
-func parseNullableTime(s sql.NullString) *time.Time {
+// parseNullableTime parses a nullable timestamp column, returning nil for a
+// NULL and an error for a value that does not parse.
+func parseNullableTime(s sql.NullString) (*time.Time, error) {
 	if !s.Valid {
-		return nil
+		return nil, nil
 	}
 	t, err := parseTime(s.String)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return &t
+	return &t, nil
 }
 
 // -------------------------------------------------------------------------
@@ -134,14 +138,14 @@ func deref[T any](p *T) T {
 	return *p
 }
 
-// jsonList renders a string list as the JSON array json_each expands, so a
-// query takes a whole list as one fixed parameter. An empty or nil list is
+// jsonList renders a list of names or ids as the JSON array json_each expands,
+// so a query takes a whole list as one fixed parameter. An empty or nil list is
 // "[]", since json_each reads "null" as a single NULL element.
-func jsonList(values []string) string {
+func jsonList[T string | int64](values []T) string {
 	if len(values) == 0 {
 		return "[]"
 	}
-	b, _ := json.Marshal(values) // a []string always encodes
+	b, _ := json.Marshal(values) // a list of strings or integers always encodes
 	return string(b)
 }
 
@@ -154,11 +158,12 @@ func jsonList(values []string) string {
 const rowsObjectLocations = "object locations"
 
 // collectRows drains rows into a slice, calling scan once per row, then closes
-// the rows and checks rows.Err. Scan errors are returned untouched; what names
-// the rows only in the iteration error.
+// the rows and checks rows.Err. No rows is an empty slice rather than nil, as
+// sqlc returns on Postgres. Scan errors are returned untouched; what names the
+// rows only in the iteration error.
 func collectRows[T any](rows *sql.Rows, what string, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	defer func() { _ = rows.Close() }()
-	var out []T
+	out := []T{}
 	for rows.Next() {
 		v, err := scan(rows)
 		if err != nil {
@@ -231,36 +236,11 @@ func scanNameValue(rows *sql.Rows) (string, int64, error) {
 // IDENTITY COLUMN HELPERS
 // -------------------------------------------------------------------------
 
-// identityETag, identityContentType and identityMetadataJSON render the three
-// identity columns from an optional *core.ObjectIdentity. A nil identity
-// writes NULL to all three, which is the row an object whose ETag was never
-// computed carries.
-func identityETag(id *core.ObjectIdentity) sql.NullString {
-	if id == nil {
-		return sql.NullString{}
-	}
-	return nullableString(id.ETag)
-}
-
-func identityContentType(id *core.ObjectIdentity) sql.NullString {
-	if id == nil {
-		return sql.NullString{}
-	}
-	return nullableString(id.ContentType)
-}
-
-// A marshal failure would mean a map[string]string that cannot be JSON, which
-// does not exist; the column stays NULL rather than failing a write over
-// metadata a later read can re-learn.
-func identityMetadataJSON(id *core.ObjectIdentity) sql.NullString {
-	if id == nil {
-		return sql.NullString{}
-	}
-	b, err := core.EncodeUserMetadata(id.UserMetadata)
-	if err != nil || len(b) == 0 {
-		return sql.NullString{}
-	}
-	return nullableString(string(b))
+// identityColumns renders an optional identity as its three nullable columns,
+// each NULL where core.IdentityColumns leaves the value empty.
+func identityColumns(id *core.ObjectIdentity) (etag, contentType, userMetadata sql.NullString) {
+	e, ct, meta := core.IdentityColumns(id)
+	return nullableString(e), nullableString(ct), nullableString(string(meta))
 }
 
 // identityFromColumns rebuilds the identity a row carries, or nil when it

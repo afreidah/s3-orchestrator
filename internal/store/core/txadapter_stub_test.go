@@ -50,19 +50,13 @@ func (*noopTxAdapter) ClearPendingForKey(context.Context, string, []string) ([]S
 	return nil, nil
 }
 
-func (*noopTxAdapter) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+func (*noopTxAdapter) GetExistingCopiesForUpdate(context.Context, ...string) ([]ExistingCopy, error) {
 	return nil, nil
 }
 
 func (*noopTxAdapter) InsertObjectLocation(context.Context, *ObjectLocation) error { return nil }
 
-func (*noopTxAdapter) DeleteObjectCopies(context.Context, string) error { return nil }
-
-func (*noopTxAdapter) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
-	return nil, nil
-}
-
-func (*noopTxAdapter) DeleteObjectsByKeys(context.Context, []string) error { return nil }
+func (*noopTxAdapter) DeleteObjectCopies(context.Context, ...string) error { return nil }
 
 func (*noopTxAdapter) ListedPathStates(context.Context, string, []string) (map[string]PathState, error) {
 	return map[string]PathState{}, nil
@@ -83,13 +77,7 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 }
 
 func (*noopTxAdapter) InsertCleanup(_ context.Context, c *CleanupRequest) (CleanupItem, error) {
-	return CleanupItem{
-		BackendName: c.BackendName,
-		ObjectKey:   c.ObjectKey,
-		StorageKey:  c.StorageKey,
-		Reason:      c.Reason,
-		SizeBytes:   c.SizeBytes,
-	}, nil
+	return CleanupItem{CleanupRequest: *c}, nil
 }
 
 func (*noopTxAdapter) UpsertPart(context.Context, *RecordPartParams) (*MultipartPart, error) {
@@ -106,8 +94,6 @@ func (*noopTxAdapter) DeleteMultipartUpload(context.Context, string) ([]Multipar
 
 func (*noopTxAdapter) InsertObjectTag(context.Context, string, string, string) error { return nil }
 
-func (*noopTxAdapter) DeleteObjectTags(context.Context, string) error { return nil }
-
-func (*noopTxAdapter) DeleteObjectTagsForKeys(context.Context, []string) error { return nil }
+func (*noopTxAdapter) DeleteObjectTags(context.Context, ...string) error { return nil }
 
 func (*noopTxAdapter) AdjustQuotaStripe(context.Context, string, int16, int64) error { return nil }

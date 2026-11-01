@@ -15,7 +15,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -36,13 +35,9 @@ import (
 // are persisted so every UploadPart against the row can reuse the same wrapped
 // DEK; they are zero-length when proxy-side encryption is disabled.
 func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
-	var metaJSON []byte
-	if len(params.Metadata) > 0 {
-		var err error
-		metaJSON, err = json.Marshal(params.Metadata)
-		if err != nil {
-			return false, fmt.Errorf("failed to marshal metadata: %w", err)
-		}
+	metaJSON, err := core.EncodeUserMetadata(params.Metadata)
+	if err != nil {
+		return false, err
 	}
 	keyIDPtr := strPtr(params.KeyID)
 	contentTypePtr := strPtr(params.ContentType)
@@ -236,7 +231,7 @@ func (s *Store) ScanMultipartUploads(ctx context.Context, filter core.MultipartU
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
-	escapedPrefix := likeEscaper.Replace(bucketPrefix)
+	escapedPrefix := core.EscapeLike(bucketPrefix)
 	count, err := s.queries.CountActiveMultipartUploadsByPrefix(ctx, &escapedPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count active multipart uploads: %w", err)
@@ -247,7 +242,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
 		Prefix:     &escapedPrefix,

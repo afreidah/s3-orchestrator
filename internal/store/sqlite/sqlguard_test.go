@@ -19,7 +19,6 @@ import (
 // object_locations matches the copy's storage_key or is exempt for a reason.
 func TestSQL_CopyMutationsMatchStorageKey(t *testing.T) {
 	storetest.CheckMutations(t, ".", storetest.CopyMutations, map[string]string{
-		"sqliteTxAdapter.DeleteObjectsByKeys":     storetest.ExemptWholeKey,
 		"sqliteTxAdapter.DeleteObjectCopies":      storetest.ExemptWholeKey,
 		"sqliteTxAdapter.DeleteObjectFromBackend": storetest.ExemptGuardedInCore,
 		"Store.DeleteBackendData":                 storetest.ExemptBackendPurge,

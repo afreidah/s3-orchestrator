@@ -45,10 +45,16 @@ func rowLimit(n int) int32 {
 // changed reports whether an :execrows write touched a row, for the
 // conditional writes whose outcome is the answer. what prefixes the failure.
 func changed(n int64, err error, what string) (bool, error) {
+	return err == nil && n > 0, wrapErr(err, what)
+}
+
+// wrapErr prefixes a query's failure with what, and passes nil through, so a
+// binding whose whole body is one query can return it in one line.
+func wrapErr(err error, what string) error {
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", what, err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
-	return n > 0, nil
+	return nil
 }
 
 // strPtr returns a pointer to s when non-empty, nil otherwise.
@@ -136,16 +142,11 @@ func totalsByBackend[T any](rows []T, split func(T) (string, int64)) map[string]
 	return out
 }
 
-// existingCopiesFromRows maps sqlc GetExistingCopiesForUpdate rows onto
-// core.ExistingCopy values.
-func existingCopiesFromRows(rows []db.GetExistingCopiesForUpdateRow) []core.ExistingCopy {
-	return mapSlice(rows, existingCopyFromRow)
-}
-
-// existingCopyFromRow is the per-row converter used by
-// existingCopiesFromRows.
+// existingCopyFromRow converts a sqlc GetExistingCopiesForUpdate row to the
+// core.ExistingCopy the overwrite, promotion and delete paths read.
 func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy {
 	return core.ExistingCopy{
+		ObjectKey:   r.ObjectKey,
 		BackendName: r.BackendName,
 		StorageKey:  r.StorageKey,
 		SizeBytes:   r.SizeBytes,
@@ -188,14 +189,9 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 	return params
 }
 
-// identityColumns renders an optional identity as its three columns; nil
-// writes NULL to all three. A marshal failure would mean a map[string]string
-// that cannot be JSON, which does not exist, so the metadata column stays NULL
-// rather than failing a write over metadata a later read can re-learn.
+// identityColumns renders an optional identity as its three nullable columns,
+// each NULL where core.IdentityColumns leaves the value empty.
 func identityColumns(id *core.ObjectIdentity) (etag, contentType *string, userMetadata []byte) {
-	if id == nil {
-		return nil, nil, nil
-	}
-	userMetadata, _ = core.EncodeUserMetadata(id.UserMetadata)
-	return strPtr(id.ETag), strPtr(id.ContentType), userMetadata
+	e, ct, meta := core.IdentityColumns(id)
+	return strPtr(e), strPtr(ct), meta
 }

@@ -43,6 +43,10 @@ const (
 // failed.
 const DrainFlags = FlagDraining | FlagDrained | FlagDrainFailed
 
+// DrainBusy is the drain progress that refuses a new drain: one in progress or
+// finished. A failed drain can be started again.
+const DrainBusy = FlagDraining | FlagDrained
+
 // The accept masks. AcceptForWrite is what a backend may carry and still be
 // given new copies - client writes, replicas, rebalance moves and drain
 // destinations - which is nothing. AcceptForReconcile lets a cordoned backend

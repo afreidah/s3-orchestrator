@@ -13,7 +13,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -29,13 +28,9 @@ import (
 // its backend carries a flag writes do not accept, which reports false. The
 // check reads the same backend_capacity view every other admission test uses.
 func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) (bool, error) {
-	var metaJSON []byte
-	if len(params.Metadata) > 0 {
-		var err error
-		metaJSON, err = json.Marshal(params.Metadata)
-		if err != nil {
-			return false, fmt.Errorf("failed to marshal metadata: %w", err)
-		}
+	metaJSON, err := core.EncodeUserMetadata(params.Metadata)
+	if err != nil {
+		return false, err
 	}
 
 	var encKey any
@@ -159,7 +154,7 @@ func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT upload_id, object_key, content_type, created_at
@@ -184,7 +179,7 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		mu.ContentType = nullStringValue(contentType)
 		created, err := parseTime(createdAt)
 		if err != nil {
-			return core.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.MultipartUpload{}, err
 		}
 		mu.CreatedAt = created
 		return mu, nil
@@ -201,7 +196,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 	return s.countRows(ctx, "active multipart uploads",
 		`SELECT COUNT(*) FROM multipart_uploads
 		 WHERE object_key LIKE ? || '%' ESCAPE '\'`,
-		likeEscaper.Replace(bucketPrefix))
+		core.EscapeLike(bucketPrefix))
 }
 
 // ScanMultipartUploads returns up to limit uploads matching filter after
@@ -280,7 +275,7 @@ func scanMultipartUploadRow(s rowScanner, extra ...any) (core.MultipartUpload, e
 	}
 	mu.KeyID = nullStringValue(keyID)
 	if mu.CreatedAt, err = parseTime(createdAt); err != nil {
-		return core.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+		return core.MultipartUpload{}, err
 	}
 	return mu, nil
 }

@@ -12,6 +12,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -128,3 +129,20 @@ var (
 	ErrDuplicateTagKey = errors.New("duplicate tag key")
 	ErrMalformedTagSet = errors.New("malformed tag set")
 )
+
+// -------------------------------------------------------------------------
+// SCHEMA VERSION
+// -------------------------------------------------------------------------
+
+// CheckSchemaVersion compares the schema version a database records with the
+// one this binary expects. An older one means migrations partially failed; a
+// newer one means the binary is outdated. engine names the database.
+func CheckSchemaVersion(engine string, have, want int) error {
+	switch {
+	case have < want:
+		return fmt.Errorf("%s schema version %d is older than expected %d  -  migrations may have partially failed", engine, have, want)
+	case have > want:
+		return fmt.Errorf("%s schema version %d is newer than expected %d  -  binary is outdated", engine, have, want)
+	}
+	return nil
+}

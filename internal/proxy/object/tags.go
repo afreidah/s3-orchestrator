@@ -45,5 +45,5 @@ func (o *Manager) PutObjectTags(ctx context.Context, key string, tags []core.Tag
 // DeleteObjectTags removes an object's whole tag set. Removing a set that is
 // already empty succeeds: the object is still there and still has no tags.
 func (o *Manager) DeleteObjectTags(ctx context.Context, key string) error {
-	return o.stores.DeleteObjectTags(ctx, key)
+	return o.stores.ReplaceObjectTags(ctx, key, nil)
 }

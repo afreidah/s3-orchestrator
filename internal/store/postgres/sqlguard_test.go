@@ -24,7 +24,6 @@ const queriesDir = "sqlc"
 func TestSQL_CopyMutationsMatchStorageKey(t *testing.T) {
 	storetest.CheckMutations(t, queriesDir, storetest.CopyMutations, map[string]string{
 		"deleteObjectCopies":             storetest.ExemptWholeKey,
-		"deleteObjectsByKeys":            storetest.ExemptWholeKey,
 		"deleteObjectFromBackend":        storetest.ExemptGuardedInCore,
 		"deleteObjectLocationsByBackend": storetest.ExemptBackendPurge,
 	})

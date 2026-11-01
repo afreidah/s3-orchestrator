@@ -14,6 +14,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"strings"
 	"time"
 )
 
@@ -135,12 +136,14 @@ func (l *ObjectLocation) CopyAt(backend, storageKey string) *ObjectLocation {
 	return &dest
 }
 
-// ExistingCopy is the projection of an object_locations row that promotion
-// and overwrite logic needs from a SELECT-for-update read.
+// ExistingCopy is the projection of an object_locations row that promotion,
+// overwrite and delete logic needs from a SELECT-for-update read. ObjectKey
+// groups the rows of a batch by key.
 //
 // Form lets a caller choosing which copy to drop avoid destroying the last row
 // able to decrypt the object.
 type ExistingCopy struct {
+	ObjectKey   string
 	BackendName string
 	StorageKey  string
 	SizeBytes   int64
@@ -413,21 +416,17 @@ type CleanupRequest struct {
 	SizeBytes   int64
 }
 
-// CleanupItem represents a pending cleanup operation in the retry queue. The
-// worker deletes StorageKey; ObjectKey names the object for display. Claim is
-// nil when no instance holds the row. Reclaimed is set only by
-// ClaimPendingCleanups, when the claim recovered a row whose previous claim
-// aged past the grace cutoff.
+// CleanupItem represents a pending cleanup operation in the retry queue: the
+// request a transaction queued, plus the row's retry state. The worker deletes
+// StorageKey; ObjectKey names the object for display. Claim is nil when no
+// instance holds the row. Reclaimed is set only by ClaimPendingCleanups, when
+// the claim recovered a row whose previous claim aged past the grace cutoff.
 type CleanupItem struct {
-	ID          int64
-	BackendName string
-	ObjectKey   string
-	StorageKey  string
-	Reason      string
-	Attempts    int32
-	SizeBytes   int64
-	Claim       *CleanupClaim
-	Reclaimed   bool `json:"-"`
+	CleanupRequest
+	ID        int64
+	Attempts  int32
+	Claim     *CleanupClaim
+	Reclaimed bool `json:"-"`
 }
 
 // CleanupClaim is the hold one instance has on a cleanup row: when it was
@@ -450,11 +449,7 @@ const MaxCleanupAttempts = 10
 // retry budget. FirstEnqueued records when the cleanup was first queued,
 // MovedAt when it graduated to the DLQ.
 type CleanupDLQItem struct {
-	BackendName   string
-	ObjectKey     string
-	StorageKey    string
-	Reason        string
-	SizeBytes     int64
+	CleanupRequest
 	Attempts      int32
 	FirstEnqueued time.Time
 	MovedAt       time.Time
@@ -615,6 +610,16 @@ func ListPage(
 	default:
 		return flat(ctx, prefix, startAfter, maxKeys)
 	}
+}
+
+// likeEscaper escapes the LIKE wildcards and the escape character itself.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// EscapeLike escapes a prefix for a LIKE pattern with ESCAPE '\', which both
+// engines' prefix queries declare, so a key holding % or _ matches only
+// itself.
+func EscapeLike(prefix string) string {
+	return likeEscaper.Replace(prefix)
 }
 
 // BuildListPage caps a flat prefix listing at maxKeys and sets the continuation

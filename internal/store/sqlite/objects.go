@@ -23,14 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// likeEscaper escapes SQL LIKE wildcards in prefix strings.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// errInvalidTimestamp is the wrap format string used everywhere a
-// stored RFC 3339 created_at fails time.Parse. Centralised so the
-// surfaced error stays consistent across listing helpers.
-const errInvalidTimestamp = "invalid created_at timestamp %q: %w"
-
 // -------------------------------------------------------------------------
 // READ QUERIES
 // -------------------------------------------------------------------------
@@ -78,7 +70,7 @@ type keyBackend struct {
 // for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+objectColumns+`, etag, content_type, user_metadata, managed,
+		SELECT `+objectColumns+`,
 		       (SELECT count(*) FROM object_tags WHERE object_tags.object_key = ?1) AS tag_count
 		FROM object_locations
 		WHERE object_key = ?1
@@ -86,7 +78,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object locations: %w", err)
 	}
-	locs, err := collectRows(rows, rowsObjectLocations, scanIdentifiedObjectLocation)
+	locs, err := collectRows(rows, rowsObjectLocations, scanTaggedObjectLocation)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +104,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter s
 // to detect truncation. A subquery with GROUP BY deduplicates replicated
 // objects (equivalent to DISTINCT ON in PostgreSQL).
 func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
@@ -145,7 +137,7 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 	return s.countRows(ctx, "objects by prefix", `
 		SELECT COUNT(DISTINCT object_key)
 		FROM object_locations
-		WHERE object_key LIKE ? || '%' ESCAPE '\'`, likeEscaper.Replace(prefix))
+		WHERE object_key LIKE ? || '%' ESCAPE '\'`, core.EscapeLike(prefix))
 }
 
 // listDelimited groups a delimiter listing inside SQLite with a recursive CTE
@@ -153,7 +145,7 @@ func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64,
 // the CommonPrefix with its last byte incremented, or the leaf key. Ordering is
 // BINARY collation (byte order).
 func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	// dpos    = position of the first delimiter after the prefix (0 = none -> leaf)
 	// cplen   = prefix length + delimiter offset = length of the CommonPrefix
@@ -245,12 +237,12 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 			e.Leaf.ObjectKey = key
 			e.Leaf.BackendName = backend.String
 			e.Leaf.SizeBytes = sizeBytes.Int64
-			t, parseErr := parseTime(createdAt.String)
-			if parseErr != nil {
-				return core.DelimitedEntry{}, fmt.Errorf(errInvalidTimestamp, createdAt.String, parseErr)
+			t, err := parseTime(createdAt.String)
+			if err != nil {
+				return core.DelimitedEntry{}, err
 			}
 			e.Leaf.CreatedAt = t
-			e.Leaf.Identity = listedIdentity(etag)
+			e.Leaf.Identity = core.ListedIdentity(etag.String)
 		}
 		return e, nil
 	})
@@ -264,7 +256,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 // intersection. EXISTS rather than a join because the dedup subquery groups by
 // object_key and a join would multiply its input row per matching tag.
 func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
-	args := []any{likeEscaper.Replace(q.Prefix), q.After, formatTime(q.Cutoff)}
+	args := []any{core.EscapeLike(q.Prefix), q.After, formatTime(q.Cutoff)}
 
 	// Sorted keys keep the generated SQL and its arguments identical run to run.
 	var tagFilter strings.Builder
@@ -337,15 +329,6 @@ func (s *Store) ListedPathStates(ctx context.Context, backend string, paths []st
 	return s.direct().ListedPathStates(ctx, backend, paths)
 }
 
-// listedIdentity builds the identity a listing row carries: the ETag alone,
-// which is all a Contents entry reports.
-func listedIdentity(etag sql.NullString) *core.ObjectIdentity {
-	if !etag.Valid || etag.String == "" {
-		return nil
-	}
-	return &core.ObjectIdentity{ETag: etag.String}
-}
-
 // scanSlimObjectLocations consumes rows holding the slim (object_key,
 // backend_name, storage_key, size_bytes, created_at) projection. A listing
 // selects the ETag after it, because a Contents entry reports one; NULL leaves
@@ -366,9 +349,9 @@ func scanSlimObjectLocations(rows *sql.Rows, withETag bool) ([]core.ObjectLocati
 		}
 		var err error
 		if loc.CreatedAt, err = parseTime(createdAt); err != nil {
-			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.ObjectLocation{}, err
 		}
-		loc.Identity = listedIdentity(etag)
+		loc.Identity = core.ListedIdentity(etag.String)
 		return loc, nil
 	})
 }
@@ -389,7 +372,7 @@ func (s *Store) BackendObjectStats(ctx context.Context, backendName string) (int
 // DeleteBackendData removes all database records for a backend in FK-safe order.
 // Runs in a single transaction.
 func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(a *sqliteTxAdapter) error {
 		stmts := []string{
 			`DELETE FROM cleanup_queue WHERE backend_name = ?`,
 			`DELETE FROM cleanup_dlq WHERE backend_name = ?`,
@@ -402,8 +385,8 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 			`DELETE FROM backend_quotas WHERE backend_name = ?`,
 		}
 		for _, stmt := range stmts {
-			if _, err := tx.ExecContext(ctx, stmt, backendName); err != nil {
-				return fmt.Errorf("failed to execute %q: %w", stmt, err)
+			if err := a.exec(ctx, fmt.Sprintf("failed to execute %q", stmt), stmt, backendName); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -469,7 +452,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 		t = *f.Candidates
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+objectColumns+`, etag
+		SELECT `+objectColumns+`
 		FROM object_locations
 		WHERE (form & ?) = ? AND (form & ?) = 0
 		  AND (NOT ? OR managed)
@@ -497,7 +480,7 @@ func (s *Store) ListCopiesByForm(ctx context.Context, f *core.FormFilter, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list copies by form: %w", err)
 	}
-	return collectRows(rows, "copies by form", scanETaggedObjectLocation)
+	return collectRows(rows, "copies by form", scanObjectLocation)
 }
 
 // CountCopiesByForm reports how many copies carry every flag of with and none
@@ -512,60 +495,21 @@ func (s *Store) CountCopiesByForm(ctx context.Context, with, without core.Stored
 // ROW SCANNERS
 // -------------------------------------------------------------------------
 
-// scanIdentifiedObjectLocation scans a row that also selects the three
-// identity columns, the managed flag, and the key's tag count, which only the
-// read path's query selects. These columns come last, after the ones the
-// shared scanner reads.
-func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
-	var (
-		loc          core.ObjectLocation
-		cols         scannedObjectColumns
-		etag         sql.NullString
-		contentType  sql.NullString
-		userMetadata sql.NullString
-		managed      bool
-	)
-	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata, &managed, &loc.TagCount)
-	if err := rows.Scan(dest...); err != nil {
-		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
-	}
-	if err := cols.apply(&loc); err != nil {
-		return core.ObjectLocation{}, err
-	}
-	loc.Identity = identityFromColumns(etag, contentType, userMetadata)
-	loc.Unmanaged = !managed
-	return loc, nil
-}
-
-// scanETaggedObjectLocation scans a full row followed by its ETag, which a bulk
-// pass commits against.
-func scanETaggedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
-	var (
-		loc  core.ObjectLocation
-		cols scannedObjectColumns
-		etag sql.NullString
-	)
-	if err := rows.Scan(append(cols.scanDest(&loc), &etag)...); err != nil {
-		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
-	}
-	if err := cols.apply(&loc); err != nil {
-		return core.ObjectLocation{}, err
-	}
-	loc.Identity = listedIdentity(etag)
-	return loc, nil
-}
-
-// scanObjectLocation scans a full object location row including all encryption
-// and integrity columns.
+// scanObjectLocation scans a whole object_locations row selected as
+// objectColumns.
 func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
-	var (
-		loc  core.ObjectLocation
-		cols scannedObjectColumns
-	)
-	if err := rows.Scan(cols.scanDest(&loc)...); err != nil {
-		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
+	var loc core.ObjectLocation
+	if err := scanObjectRow(rows, &loc); err != nil {
+		return core.ObjectLocation{}, err
 	}
-	if err := cols.apply(&loc); err != nil {
+	return loc, nil
+}
+
+// scanTaggedObjectLocation scans a whole row followed by the key's tag count,
+// which only the read path's query selects.
+func scanTaggedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
+	var loc core.ObjectLocation
+	if err := scanObjectRow(rows, &loc, &loc.TagCount); err != nil {
 		return core.ObjectLocation{}, err
 	}
 	return loc, nil
@@ -603,46 +547,58 @@ func (c *storedFormColumns) apply(f *core.StoredForm) {
 }
 
 // scannedObjectColumns holds the nullable columns of an object_locations row
-// between the scan and the conversion. Both scanners share it, so the column
-// order and the NULL handling are each stated once - the identified scanner
-// appends its three columns to this list rather than restating it.
+// between the scan and the conversion, so the column order and the NULL
+// handling are each stated once.
 type scannedObjectColumns struct {
 	storedFormColumns
 	createdAt    string
 	probeSize    *int64
 	probeLevel   *string
 	lastScrubbed *string
+	etag         sql.NullString
+	contentType  sql.NullString
+	userMetadata sql.NullString
+	managed      bool
 }
 
-// objectColumns is the projection scanDest reads, in its order.
+// objectColumns is every column of an object_locations row a copy is built
+// from, in the order scanObjectRow reads them.
 const objectColumns = `object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 	key_id, plaintext_size, content_hash,
 	compression_algorithm, compression_level, compression_format_version, logical_size,
 	compression_probe_size, compression_probe_level,
-	created_at, last_scrubbed_at`
+	created_at, last_scrubbed_at, etag, content_type, user_metadata, managed`
 
-// scanDest returns the scan targets in the order every object_locations query
-// selects them.
-func (c *scannedObjectColumns) scanDest(loc *core.ObjectLocation) []any {
+// scanObjectRow reads one row selected as objectColumns into loc, then any
+// extra columns the query selects after them.
+func scanObjectRow(rows *sql.Rows, loc *core.ObjectLocation, extra ...any) error {
+	var c scannedObjectColumns
 	dest := []any{&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes}
-	dest = append(dest, c.storedFormColumns.scanDest(&loc.StoredForm)...)
-	return append(dest, &c.probeSize, &c.probeLevel, &c.createdAt, &c.lastScrubbed)
+	dest = append(dest, c.scanDest(&loc.StoredForm)...)
+	dest = append(dest, &c.probeSize, &c.probeLevel, &c.createdAt, &c.lastScrubbed,
+		&c.etag, &c.contentType, &c.userMetadata, &c.managed)
+	if err := rows.Scan(append(dest, extra...)...); err != nil {
+		return fmt.Errorf("failed to scan object location: %w", err)
+	}
+	return c.apply(loc)
 }
 
-// apply dereferences the scanned columns onto loc.
+// apply dereferences the scanned columns onto loc. A metadata decode failure
+// leaves the identity nil, costing a backend round trip rather than the read.
 func (c *scannedObjectColumns) apply(loc *core.ObjectLocation) error {
-	var parseErr error
-	loc.CreatedAt, parseErr = parseTime(c.createdAt)
-	if parseErr != nil {
-		return fmt.Errorf(errInvalidTimestamp, c.createdAt, parseErr)
+	var err error
+	if loc.CreatedAt, err = parseTime(c.createdAt); err != nil {
+		return err
 	}
 	c.storedFormColumns.apply(&loc.StoredForm)
 	loc.CompressionProbeSize = deref(c.probeSize)
 	loc.CompressionProbeLevel = deref(c.probeLevel)
+	loc.Identity = identityFromColumns(c.etag, c.contentType, c.userMetadata)
+	loc.Unmanaged = !c.managed
 	if c.lastScrubbed != nil {
 		scrubbed, err := parseTime(*c.lastScrubbed)
 		if err != nil {
-			return fmt.Errorf(errInvalidTimestamp, *c.lastScrubbed, err)
+			return err
 		}
 		loc.LastScrubbedAt = &scrubbed
 	}
@@ -662,7 +618,8 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocati
 	if id == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
+	etag, contentType, userMetadata := identityColumns(id)
+	return s.exec(ctx, "record object identity", `
 		UPDATE object_locations
 		SET etag          = COALESCE(etag, ?),
 		    content_type  = COALESCE(content_type, ?),
@@ -672,12 +629,8 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocati
 		              WHERE read_copy.object_key = ?
 		                AND read_copy.backend_name = ?
 		                AND read_copy.storage_key = ?)`,
-		identityETag(id), identityContentType(id), identityMetadataJSON(id),
+		etag, contentType, userMetadata,
 		loc.ObjectKey, loc.ObjectKey, loc.BackendName, loc.StorageKey)
-	if err != nil {
-		return fmt.Errorf("record object identity: %w", err)
-	}
-	return nil
 }
 
 // UpdateCopyMetadata writes a patch to the copy loc names, or returns

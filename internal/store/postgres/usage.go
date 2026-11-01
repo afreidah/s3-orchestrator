@@ -15,6 +15,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -52,7 +53,7 @@ func applyWorkloadUsage(ctx context.Context, q *db.Queries, backend string, buck
 		EgressBytes:  u.EgressBytes,
 		IngressBytes: u.IngressBytes,
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to flush usage deltas: %w", err)
 	}
 	for pool, requests := range u.Pools {
 		if requests == 0 {
@@ -65,7 +66,7 @@ func applyWorkloadUsage(ctx context.Context, q *db.Queries, backend string, buck
 			Pool:        pool,
 			Requests:    requests,
 		}); err != nil {
-			return err
+			return fmt.Errorf("failed to flush pool deltas: %w", err)
 		}
 	}
 	return nil
@@ -76,9 +77,12 @@ func applyWorkloadUsage(ctx context.Context, q *db.Queries, backend string, buck
 func pruneUsageBuckets(ctx context.Context, q *db.Queries, backend string) error {
 	cutoff := pgTimestamptz(time.Now().Add(-core.UsageRetention))
 	if err := q.PruneUsageBuckets(ctx, db.PruneUsageBucketsParams{BackendName: backend, Cutoff: cutoff}); err != nil {
-		return err
+		return fmt.Errorf("prune backend_usage: %w", err)
 	}
-	return q.PrunePoolUsageBuckets(ctx, db.PrunePoolUsageBucketsParams{BackendName: backend, Cutoff: cutoff})
+	if err := q.PrunePoolUsageBuckets(ctx, db.PrunePoolUsageBucketsParams{BackendName: backend, Cutoff: cutoff}); err != nil {
+		return fmt.Errorf("prune backend_request_usage: %w", err)
+	}
+	return nil
 }
 
 // recordUsageFlush records a shared batch's id and prunes old ones, reporting
@@ -89,10 +93,16 @@ func recordUsageFlush(ctx context.Context, q *db.Queries, id string) (bool, erro
 		return true, nil
 	}
 	fresh, err := q.RecordUsageFlush(ctx, id)
-	if err != nil || fresh == 0 {
-		return false, err
+	if err != nil {
+		return false, fmt.Errorf("record usage flush: %w", err)
 	}
-	return true, q.PruneUsageFlushes(ctx)
+	if fresh == 0 {
+		return false, nil
+	}
+	if err := q.PruneUsageFlushes(ctx, pgTimestamptz(time.Now().Add(-core.UsageFlushRetention))); err != nil {
+		return false, fmt.Errorf("prune usage flushes: %w", err)
+	}
+	return true, nil
 }
 
 // GetUsageSince sums each backend's buckets from its own start onward, by
@@ -109,7 +119,7 @@ func (s *Store) GetUsageSince(ctx context.Context, starts map[string]time.Time) 
 	}
 	rows, err := s.queries.GetUsageSince(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err, "failed to query usage")
 	}
 
 	usage := make(map[string]core.WorkloadUsage)

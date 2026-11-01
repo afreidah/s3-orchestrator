@@ -239,37 +239,21 @@ func TestPendingFromRow_NullableFieldsDereferencedWhenSet(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// existingCopiesFromRows
+// existingCopyFromRow
 // -------------------------------------------------------------------------
 
-// TestExistingCopiesFromRows_EmptyInput verifies the empty-slice case.
-func TestExistingCopiesFromRows_EmptyInput(t *testing.T) {
+// TestExistingCopyFromRow_PreservesFields verifies every column of a locked
+// row lands on the core.ExistingCopy, the key that groups a batch included.
+func TestExistingCopyFromRow_PreservesFields(t *testing.T) {
 	t.Parallel()
-	got := existingCopiesFromRows(nil)
-	if len(got) != 0 {
-		t.Errorf("expected empty slice, got %d entries", len(got))
-	}
-}
-
-// TestExistingCopiesFromRows_PreservesFields verifies every row's
-// columns land on the corresponding core.ExistingCopy.
-func TestExistingCopiesFromRows_PreservesFields(t *testing.T) {
-	t.Parallel()
-	t1 := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
-	t2 := t1.Add(time.Minute)
-	rows := []db.GetExistingCopiesForUpdateRow{
-		{BackendName: "b1", SizeBytes: 100, CreatedAt: pgtype.Timestamptz{Time: t1, Valid: true}},
-		{BackendName: "b2", SizeBytes: 200, CreatedAt: pgtype.Timestamptz{Time: t2, Valid: true}},
-	}
-	got := existingCopiesFromRows(rows)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(got))
-	}
-	if got[0].BackendName != "b1" || got[0].SizeBytes != 100 || !got[0].CreatedAt.Equal(t1) {
-		t.Errorf("entry 0 mismatch: %+v", got[0])
-	}
-	if got[1].BackendName != "b2" || got[1].SizeBytes != 200 || !got[1].CreatedAt.Equal(t2) {
-		t.Errorf("entry 1 mismatch: %+v", got[1])
+	created := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	got := existingCopyFromRow(&db.GetExistingCopiesForUpdateRow{
+		ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 100,
+		CreatedAt: pgtype.Timestamptz{Time: created, Valid: true}, Form: int64(core.StoredEncrypted),
+	})
+	want := core.ExistingCopy{ObjectKey: "k", BackendName: "b1", StorageKey: "k!a", SizeBytes: 100, CreatedAt: created, Form: core.StoredEncrypted}
+	if got != want {
+		t.Errorf("existingCopyFromRow = %+v, want %+v", got, want)
 	}
 }
 

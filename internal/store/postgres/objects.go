@@ -74,7 +74,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, delimiter, startAfter s
 // listFlat returns the keys under prefix sorted by key, fetching one extra row
 // to detect truncation.
 func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	// Fetch one extra to detect truncation
 	rows, err := s.queries.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{
@@ -88,7 +88,7 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 
 	objects := toSlimObjectLocations(rows)
 	for i := range rows {
-		objects[i].Identity = listedIdentity(rows[i].Etag)
+		objects[i].Identity = core.ListedIdentity(derefStr(rows[i].Etag))
 	}
 	return core.BuildListPage(objects, maxKeys), nil
 }
@@ -96,22 +96,11 @@ func (s *Store) listFlat(ctx context.Context, prefix, startAfter string, maxKeys
 // CountObjectsByPrefix returns how many distinct keys live under a prefix,
 // which is what answers whether a bucket still holds anything.
 func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
-	n, err := s.queries.CountObjectsByPrefix(ctx, likeEscaper.Replace(prefix))
+	n, err := s.queries.CountObjectsByPrefix(ctx, core.EscapeLike(prefix))
 	if err != nil {
 		return 0, fmt.Errorf("failed to count objects by prefix: %w", err)
 	}
 	return n, nil
-}
-
-// listedIdentity builds the identity a listing row carries. A listing selects
-// the ETag and nothing else of the identity, which is all a Contents entry
-// reports; NULL means the object has not learned one yet and the entry carries
-// no ETag rather than a wrong one.
-func listedIdentity(etag *string) *core.ObjectIdentity {
-	if etag == nil || *etag == "" {
-		return nil
-	}
-	return &core.ObjectIdentity{ETag: *etag}
 }
 
 // listDelimited groups a delimiter listing in Postgres with a recursive-CTE
@@ -119,7 +108,7 @@ func listedIdentity(etag *string) *core.ObjectIdentity {
 // COLLATE "C", backed by idx_object_locations_key_collate_c, so groups come
 // back in the byte order SQLite and S3 use.
 func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	rows, err := s.queries.ListObjectsDelimited(ctx, db.ListObjectsDelimitedParams{
 		Escprefix:  escapedPrefix,
@@ -142,7 +131,7 @@ func (s *Store) listDelimited(ctx context.Context, prefix, delimiter, startAfter
 				BackendName: r.BackendName,
 				SizeBytes:   r.SizeBytes,
 				CreatedAt:   r.CreatedAt.Time,
-				Identity:    listedIdentity(&r.Etag),
+				Identity:    core.ListedIdentity(r.Etag),
 			}
 		}
 		entries[i] = e
@@ -170,7 +159,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 		return nil, fmt.Errorf("failed to encode lifecycle tag filter: %w", err)
 	}
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
-		Prefix:   likeEscaper.Replace(q.Prefix),
+		Prefix:   core.EscapeLike(q.Prefix),
 		AfterKey: q.After,
 		Cutoff:   pgTimestamptz(q.Cutoff),
 		TagCount: int32(len(q.Tags)), //nolint:gosec // G115: capped at MaxTagsPerObject by config validation
@@ -191,10 +180,10 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 // with aggregate stats for subdirectories. Files include backend and creation
 // time. Prefix must end with "/" (or be "" for root).
 func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+	escapedPrefix := core.EscapeLike(prefix)
 
 	// Get aggregate stats for all immediate children (dirs + files). NameStart
-	// uses the unescaped prefix length so likeEscaper's '\_' insertions don't
+	// uses the unescaped prefix length so EscapeLike's '\_' insertions don't
 	// shift the child-name substring offset (see GetDirectoryStats).
 	stats, err := s.queries.GetDirectoryStats(ctx, db.GetDirectoryStatsParams{
 		Prefix:    escapedPrefix,
@@ -232,18 +221,9 @@ func (s *Store) RecordObjectIdentity(ctx context.Context, loc *core.ObjectLocati
 	if id == nil {
 		return nil
 	}
-	meta, err := core.EncodeUserMetadata(id.UserMetadata)
-	if err != nil {
-		return err
-	}
-	if err := s.queries.RecordObjectIdentity(ctx, db.RecordObjectIdentityParams{
-		ObjectKey:    loc.ObjectKey,
-		BackendName:  loc.BackendName,
-		StorageKey:   loc.StorageKey,
-		Etag:         strPtr(id.ETag),
-		ContentType:  strPtr(id.ContentType),
-		UserMetadata: meta,
-	}); err != nil {
+	p := db.RecordObjectIdentityParams{ObjectKey: loc.ObjectKey, BackendName: loc.BackendName, StorageKey: loc.StorageKey}
+	p.Etag, p.ContentType, p.UserMetadata = identityColumns(id)
+	if err := s.queries.RecordObjectIdentity(ctx, p); err != nil {
 		return fmt.Errorf("record object identity: %w", err)
 	}
 	return nil

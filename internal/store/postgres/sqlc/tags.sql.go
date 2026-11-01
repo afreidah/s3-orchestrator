@@ -11,23 +11,13 @@ import (
 
 const deleteObjectTags = `-- name: DeleteObjectTags :exec
 DELETE FROM object_tags
-WHERE object_key = $1
-`
-
-func (q *Queries) DeleteObjectTags(ctx context.Context, objectKey string) error {
-	_, err := q.db.Exec(ctx, deleteObjectTags, objectKey)
-	return err
-}
-
-const deleteObjectTagsForKeys = `-- name: DeleteObjectTagsForKeys :exec
-DELETE FROM object_tags
 WHERE object_key = ANY($1::text[])
 `
 
-// Batch form for the multi-key delete path. One statement rather than a
-// statement per key, matching how DeleteObjectsByKeys removes the locations.
-func (q *Queries) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error {
-	_, err := q.db.Exec(ctx, deleteObjectTagsForKeys, objectKeys)
+// One statement however many keys, matching how DeleteObjectCopies removes the
+// locations.
+func (q *Queries) DeleteObjectTags(ctx context.Context, objectKeys []string) error {
+	_, err := q.db.Exec(ctx, deleteObjectTags, objectKeys)
 	return err
 }
 

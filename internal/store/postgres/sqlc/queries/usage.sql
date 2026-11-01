@@ -83,6 +83,6 @@ INSERT INTO usage_flushes (flush_id) VALUES (@flush_id)
 ON CONFLICT (flush_id) DO NOTHING;
 
 -- name: PruneUsageFlushes :exec
--- Drops ids older than any batch that can still be staged, whose keys expire
--- after 35 days.
-DELETE FROM usage_flushes WHERE applied_at < NOW() - INTERVAL '40 days';
+-- Drops ids older than any batch that can still be staged; the cutoff comes
+-- from core.UsageFlushRetention.
+DELETE FROM usage_flushes WHERE applied_at < @cutoff;

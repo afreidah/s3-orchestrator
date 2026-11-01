@@ -42,7 +42,7 @@ under_replicated AS (
     HAVING COUNT(*) + COALESCE(i.copies, 0) < @factor::bigint
     LIMIT @max_keys
 )
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.*
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
@@ -56,7 +56,7 @@ WITH over_replicated AS (
     HAVING COUNT(*) > @factor::bigint
     LIMIT @max_keys
 )
-SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.*
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
