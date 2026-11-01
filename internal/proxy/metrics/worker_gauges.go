@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 )
@@ -38,7 +37,7 @@ func (mc *Collector) workerGauges(source string) sharedstate.Value[telemetry.Wor
 func (mc *Collector) PublishWorkerGauges(ctx context.Context, source string, g telemetry.WorkerGauges) {
 	g.Apply()
 	if err := mc.workerGauges(source).Put(ctx, &g); err != nil {
-		mc.log.WarnContext(ctx, "failed to publish worker gauges", "source", source, logfmt.Err(err))
+		mc.log.WarnContext(ctx, "failed to publish worker gauges", "source", source, "error", err)
 	}
 }
 

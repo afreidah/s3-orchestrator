@@ -19,7 +19,6 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -44,7 +43,7 @@ const cacheDisabledReason = "object data cache is not enabled"
 func (h *Handler) invalidateCache(ctx context.Context, inv cache.Invalidation) int {
 	dropped := inv.Apply(h.d.ObjectCache)
 	if err := h.cacheTopic.Publish(ctx, inv); err != nil {
-		h.log.WarnContext(ctx, "cache change not announced to other instances", logfmt.Err(err))
+		h.log.WarnContext(ctx, "cache change not announced to other instances", "error", err)
 	}
 	return dropped
 }

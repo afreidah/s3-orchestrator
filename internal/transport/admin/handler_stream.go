@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -102,7 +101,7 @@ func (ep *passEndpoint[R]) settle(ctx context.Context, log *slog.Logger, err err
 	case skipped:
 		return passOutcome{result: adminstream.OutcomeSkipped, message: reason}
 	case err != nil:
-		log.ErrorContext(ctx, ep.failMsg, logfmt.Err(err))
+		log.ErrorContext(ctx, ep.failMsg, "error", err)
 		return passOutcome{result: adminstream.OutcomeFailed, message: ep.failMsg, status: http.StatusInternalServerError}
 	}
 	return passOutcome{result: adminstream.OutcomeOK}

@@ -84,7 +84,7 @@ func handleRecoveredPanic(r *http.Request, w http.ResponseWriter, log *slog.Logg
 		"path", r.URL.Path,
 		"panic", err.Error(),
 		"stack", string(stack),
-		logfmt.Err(err),
+		"error", err,
 	)
 
 	audit.Log(ctx, "http.PanicRecovered",

@@ -101,6 +101,6 @@ func (p *RecoveryProber) Probe(ctx context.Context) {
 	p.backoff = min(p.backoff*2, max(p.recovery.MaxBackoff, cb.openTimeout, DefaultWatchdogInterval))
 	p.nextDue = now.Add(p.backoff)
 	p.log.WarnContext(ctx, "recovery check failed; circuit stays open",
-		logfmt.Err(err),
+		"error", err,
 		"next_check_in", p.backoff)
 }

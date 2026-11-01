@@ -47,10 +47,10 @@ linters:
         - name: exported
     sloglint:
       context: "all"
-      # `logfmt.Err` returns a slog.Attr that callers may mix with
-      # key-value pairs; the handler-enforced contract documented in
-      # docs/contributing/logging.md treats both forms as canonical, so
-      # the lint allows mixed args by design.
+      # The logfmt helpers return slog.Attr values that callers mix with
+      # key-value pairs: `logfmt.Component`, and `logfmt.Err` where the
+      # error may be nil (docs/contributing/logging.md), so the lint
+      # allows mixed args by design.
       no-mixed-args: false
       # Snake-case keys match the project's attribute glossary in
       # docs/contributing/logging.md.

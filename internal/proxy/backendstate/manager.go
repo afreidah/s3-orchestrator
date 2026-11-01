@@ -270,7 +270,7 @@ func (d *Manager) CancelDrain(ctx context.Context, name string) error {
 // already written, and admission reads it directly.
 func (d *Manager) refreshAfterChange(ctx context.Context) {
 	if err := d.Refresh(ctx); err != nil {
-		d.log.WarnContext(ctx, "failed to refresh backend states", logfmt.Err(err))
+		d.log.WarnContext(ctx, "failed to refresh backend states", "error", err)
 	}
 }
 

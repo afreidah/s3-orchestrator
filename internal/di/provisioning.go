@@ -156,7 +156,7 @@ func (p *RegistryPublisher) announce(ctx context.Context) {
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "provisioning change not announced to other instances",
-			logfmt.Component("di"), logfmt.Err(err))
+			logfmt.Component("di"), "error", err)
 	}
 }
 

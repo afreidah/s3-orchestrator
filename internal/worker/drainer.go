@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -288,7 +287,7 @@ func (d *Drainer) fail(ctx context.Context, rec *core.BackendStateRecord, movedT
 		"objects_moved": moved,
 		"error":         cause.Error(),
 	})
-	d.log.ErrorContext(ctx, "backend drain failed", "backend", rec.BackendName, logfmt.Err(cause))
+	d.log.ErrorContext(ctx, "backend drain failed", "backend", rec.BackendName, "error", cause)
 	return nil
 }
 
@@ -334,7 +333,7 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, srcName string, obj *core
 		return false
 	case err != nil:
 		d.log.WarnContext(ctx, "failed to delete source location",
-			"key", obj.ObjectKey, "backend", srcName, logfmt.Err(err))
+			"key", obj.ObjectKey, "backend", srcName, "error", err)
 		return false
 	}
 	d.placement.Settle(ctx, removed)
@@ -362,7 +361,7 @@ func (d *Drainer) moveOff(ctx context.Context, srcName string, obj *core.ObjectL
 	if err != nil {
 		if !core.PlacementDeclined(err) {
 			d.log.WarnContext(ctx, "drain move failed",
-				"key", obj.ObjectKey, "src_backend", srcName, "dst_backend", destName, logfmt.Err(err))
+				"key", obj.ObjectKey, "src_backend", srcName, "dst_backend", destName, "error", err)
 		}
 		return false
 	}

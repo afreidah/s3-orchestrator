@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -179,7 +178,7 @@ func (r *Reconciler) run(ctx context.Context) *reconcileSummary {
 func (r *Reconciler) reconcileUsage(ctx context.Context) {
 	adjustments, err := r.usage.ReconcileUsage(ctx)
 	if err != nil {
-		r.log.WarnContext(ctx, "usage reconciliation failed", logfmt.Err(err))
+		r.log.WarnContext(ctx, "usage reconciliation failed", "error", err)
 		return
 	}
 	if len(adjustments) == 0 {

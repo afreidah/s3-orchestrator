@@ -187,7 +187,7 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 		cb.Trip(err)
 		r.log.ErrorContext(ctx, "Redis unreachable at startup, running on local counters until it answers",
 			"address", cfg.Address,
-			logfmt.Err(err),
+			"error", err,
 		)
 	} else {
 		r.log.InfoContext(ctx, "initialized",
@@ -605,7 +605,7 @@ func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel stri
 	}
 	if first {
 		r.log.WarnContext(ctx, "shared state subscription lost, resubscribing",
-			"channel", channel, logfmt.Err(err))
+			"channel", channel, "error", err)
 	}
 	select {
 	case <-ctx.Done():

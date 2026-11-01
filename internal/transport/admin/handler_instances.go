@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/sharedstate"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -87,7 +86,7 @@ func (h *Handler) instanceReport(context.Context) adminapi.InstanceReport {
 func (h *Handler) listInstances(ctx context.Context) []adminapi.InstanceReport {
 	reports, err := h.instances.List(ctx)
 	if err != nil {
-		h.log.WarnContext(ctx, "instance reports not fully read", logfmt.Err(err))
+		h.log.WarnContext(ctx, "instance reports not fully read", "error", err)
 	}
 	return reports
 }

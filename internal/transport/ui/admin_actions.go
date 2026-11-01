@@ -19,7 +19,6 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -92,7 +91,7 @@ func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request
 			h.log.InfoContext(ctx, op.name+" skipped", "reason", reason)
 			h.asyncOps.Complete(op.name, &asyncResult{Counts: counts, Skipped: reason})
 		case err != nil:
-			h.log.ErrorContext(ctx, op.name+" failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, op.name+" failed", "error", err)
 			h.asyncOps.Complete(op.name, &asyncResult{Error: op.name + " failed"})
 		default:
 			h.log.InfoContext(ctx, op.name+" completed", "count", counts.Count)
